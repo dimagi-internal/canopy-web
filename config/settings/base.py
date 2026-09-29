@@ -482,6 +482,17 @@ CANOPY_OAUTH_EPHEMERAL_KEYS = env.bool("CANOPY_OAUTH_EPHEMERAL_KEYS", default=DE
 # off (every host endpoint answers 503 and no grant is issued); with
 # CANOPY_OAUTH_EPHEMERAL_KEYS (dev, tests) one is generated per process.
 CANOPY_HOST_SIGNING_KEY = env("CANOPY_HOST_SIGNING_KEY", default="").replace("\\n", "\n")
+# The dedicated user canopy's LIVE PROBE acts as at canopy's own MCP (the probe
+# of the `canopy-web` Connected site; apps/tokens/live_probe.py). Non-secret. Empty
+# = the probe endpoint 404s. The user is created by tokens/0026_probe_user: a
+# non-admin with no password, no email and no membership, so `list_insights`
+# runs as a real account and reads nothing.
+CANOPY_HOST_PROBE_USERNAME = env("CANOPY_HOST_PROBE_USERNAME", default="")
+# Whether the scheduled live probe of every Connected site runs (every 30 min per
+# site, driven by runner session reports; apps/tokens/live_probe.py::sweep). Test
+# connection runs it on demand regardless. Off in tests: a background probe
+# thread must not wander into another test's database.
+CANOPY_LIVE_PROBE_SWEEP = env.bool("CANOPY_LIVE_PROBE_SWEEP", default=True)
 
 GITHUB_APP_CLIENT_ID = env("GITHUB_APP_CLIENT_ID", default="")
 GITHUB_APP_CLIENT_SECRET = env("GITHUB_APP_CLIENT_SECRET", default="")

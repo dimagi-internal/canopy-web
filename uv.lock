@@ -873,7 +873,7 @@ wheels = [
 
 [[package]]
 name = "dimagi-canopy"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "sdk/python" }
 dependencies = [
     { name = "pyjwt", extra = ["crypto"] },

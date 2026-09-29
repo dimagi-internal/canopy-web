@@ -49,6 +49,11 @@ reach no more than the visitor's own ACL already does; and the gateway narrows
 each call again to the page's declared `backing_tool`. A browser that names the
 wrong page picks among read-only views of its own data, nothing more.
 
+**Probed like any other host.** `/oauth/probe` is the SDK's `ProbeHandler` for
+canopy's own client only: a real ID-JAG for the dedicated `canopy-probe` user
+(`CANOPY_HOST_PROBE_USERNAME`; no membership, so `list_insights` reads nothing),
+which `live_probe.py` redeems and uses exactly as it does for a connected site.
+
 **Off until configured.** Needs `CANOPY_HOST_SIGNING_KEY` (Ed25519 or P-256 PEM;
 "PLACEHOLDER" reads as unset; dev and tests generate one per process) AND
 canopy's client keys (`client_identity.configured()`), and a grant is issued only
@@ -63,7 +68,8 @@ import threading
 from canopy_sdk import contract, fetch
 from canopy_sdk.host import (
     ClientKeyResolver, GrantHandler, GrantRefused, HostConfig, HostNotConfigured, PageRegistry,
-    ResourceVerifier, authorization_server_metadata, issue_id_jag, protected_resource_metadata,
+    ProbeDisabled, ProbeHandler, ProbeIdentity, ResourceVerifier, authorization_server_metadata,
+    issue_id_jag, protected_resource_metadata,
 )
 from django.conf import settings
 
@@ -117,6 +123,42 @@ def token_endpoint() -> str:
     return f"{issuer()}/oauth/token"
 
 
+def probe_endpoint() -> str:
+    """canopy's live probe of its OWN host half (`canopy_sdk.host.ProbeHandler`)."""
+    return f"{issuer()}/oauth/probe"
+
+
+#: canopy-web's own probe: the one read-only call the live probe makes as the
+#: dedicated probe user, and a tool outside that scope the MCP must refuse.
+PROBE_SCOPE = "insights:read"
+PROBE_TOOL = "list_insights"
+PROBE_DENIED_TOOL = "list_items"
+PROBE_PAGE = "insights"
+
+
+def probe_user():
+    """The dedicated probe user (`CANOPY_HOST_PROBE_USERNAME`, created by
+    `tokens/0026_probe_user`), or None — which turns the probe off. It must be
+    active, and it holds no membership, so `list_insights` runs as a real user
+    and returns nothing: the call is meaningful (the whole chain ran, as that
+    user, within its scope) without the probe reading anyone's data."""
+    from django.contrib.auth import get_user_model
+
+    username = (getattr(settings, "CANOPY_HOST_PROBE_USERNAME", "") or "").strip()
+    if not username:
+        return None
+    return get_user_model().objects.filter(username=username, is_active=True).first()
+
+
+def probe_identity() -> ProbeIdentity | None:
+    user = probe_user()
+    if user is None:
+        return None
+    return ProbeIdentity(endpoint=probe_endpoint(), subject=str(user.pk), scope=PROBE_SCOPE,
+                         tool=PROBE_TOOL, arguments={"limit": 1}, denied_tool=PROBE_DENIED_TOOL,
+                         page=PROBE_PAGE)
+
+
 def jwks_url() -> str:
     """Where the HOST signing key's public half is published — what the
     `canopy-web` Connected site's `jwks_url` names. Distinct from
@@ -150,8 +192,12 @@ def configured() -> bool:
         return False
 
 
-def config() -> HostConfig:
-    """The SDK's `HostConfig` for canopy-web-as-host. Raises `HostNotConfigured`."""
+def config(*, with_probe: bool = False) -> HostConfig:
+    """The SDK's `HostConfig` for canopy-web-as-host. Raises `HostNotConfigured`.
+
+    `with_probe` looks the probe user up (a database read), so only the probe
+    endpoint and the metadata ask for it: the DPoP gate builds its verifier
+    from here in ASYNC context, where a query is not allowed."""
     key = _signing_key()
     if key is None:
         raise HostNotConfigured("CANOPY_HOST_SIGNING_KEY is not set")
@@ -166,6 +212,7 @@ def config() -> HostConfig:
         token_endpoint=token_endpoint(),
         canopy_client_id=client_identity.client_id(),
         scope_tools=SCOPE_TOOLS,
+        probe=probe_identity() if with_probe else None,
     )
 
 
@@ -232,8 +279,29 @@ def handle_token_request(form, dpop: str | None) -> tuple[int, dict, dict]:
     return 200, result.body(), result.headers()
 
 
+def probe_handler() -> ProbeHandler:
+    from canopy_sdk.django.stores import DjangoJtiStore
+
+    return ProbeHandler(config(with_probe=True), jti_store=DjangoJtiStore(),
+                        client_keys=ClientKeyResolver(fetch_json=_own_client_document),
+                        subject_active=subject_active)
+
+
+def handle_probe_request(form, dpop: str | None) -> tuple[int, dict, dict]:
+    """The probe endpoint: `(status, body, headers)`. 404 while no probe user
+    exists (or canopy is not a host). Never logs the form."""
+    no_store = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+    try:
+        result = probe_handler().handle(form, dpop)
+    except (ProbeDisabled, HostNotConfigured):
+        return 404, {"error": "not_found", "error_description": "No probe is configured here."}, no_store
+    except GrantRefused as refused:
+        return refused.status, refused.body(), refused.headers()
+    return 200, result.body(), result.headers()
+
+
 def as_metadata() -> dict:
-    return authorization_server_metadata(config())
+    return authorization_server_metadata(config(with_probe=True))
 
 
 def pr_metadata() -> dict:
@@ -246,7 +314,7 @@ def pr_metadata() -> dict:
 def _loopback_urls() -> set[str]:
     return {contract.normalize_url(u) for u in (
         contract.metadata_url(issuer()), contract.protected_resource_metadata_url(resource()),
-        jwks_url(), token_endpoint())}
+        jwks_url(), token_endpoint(), probe_endpoint())}
 
 
 def is_loopback_url(url: str) -> bool:
@@ -271,10 +339,16 @@ def loopback_get(url: str) -> dict | None:
 
 
 def loopback_post(url: str, data, headers) -> tuple[int, dict, dict] | None:
-    """The token endpoint's answer if `url` is canopy-web's own, else None."""
-    if not configured() or contract.normalize_url(url) != contract.normalize_url(token_endpoint()):
+    """The token (or probe) endpoint's answer if `url` is canopy-web's own, else None."""
+    if not configured():
         return None
-    return handle_token_request(dict(data), (headers or {}).get(contract.DPOP_HEADER))
+    target = contract.normalize_url(url)
+    dpop = (headers or {}).get(contract.DPOP_HEADER)
+    if target == contract.normalize_url(token_endpoint()):
+        return handle_token_request(dict(data), dpop)
+    if target == contract.normalize_url(probe_endpoint()):
+        return handle_probe_request(dict(data), dpop)
+    return None
 
 
 # --- the issuer side: a grant for a visitor on one of canopy's pages ----------------

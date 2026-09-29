@@ -22,6 +22,62 @@ def _frozen_scope_tools(value) -> dict[str, frozenset[str]]:
 
 
 @dataclass(frozen=True)
+class ProbeIdentity:
+    """Who canopy's LIVE PROBE acts as at this host, and the one call it makes.
+
+    The probe (``canopy_sdk.host.ProbeHandler``) lets canopy prove, on a
+    schedule and with nobody at a keyboard, that a real grant can be issued,
+    redeemed and USED against this host — the part conformance cannot reach
+    without a visitor. So it needs a principal of its own:
+
+    * ``subject`` — the host's own id for a DEDICATED, low-privilege principal
+      (never a real person's account). The only subject the probe ever issues
+      for, whatever the request says.
+    * ``scope`` — one READ-ONLY scope (``<x>:read``) from ``scope_tools``.
+    * ``tool`` + ``arguments`` — the one call canopy makes with the token; the
+      tool must be one ``scope`` unlocks, and the call should be meaningful for
+      the principal (it must succeed).
+    * ``denied_tool`` — optional: a real tool OUTSIDE ``scope``, which canopy
+      asks for and your MCP must refuse. Without one canopy asks for a name no
+      server offers, which proves less.
+    * ``endpoint`` — the probe endpoint's public URL (a DPoP proof's ``htu``).
+    * ``page`` — optional: the page key the probe stands in for, for your audit.
+    """
+
+    endpoint: str
+    subject: str
+    scope: str
+    tool: str
+    arguments: Mapping = field(default_factory=dict)
+    denied_tool: str = ""
+    page: str = ""
+
+    def __post_init__(self):
+        set_ = object.__setattr__
+        for name in ("endpoint", "subject", "scope", "tool", "denied_tool", "page"):
+            set_(self, name, str(getattr(self, name) or "").strip())
+        if not isinstance(self.arguments, Mapping):
+            raise ValueError("the probe's arguments must be a mapping")
+        set_(self, "arguments", dict(self.arguments))
+        for name in ("endpoint", "subject", "scope", "tool"):
+            if not getattr(self, name):
+                raise ValueError(f"the probe identity needs a {name}")
+        if not self.scope.endswith(":read"):
+            raise ValueError(f"the probe scope must be read-only (<x>:read), not {self.scope!r}")
+
+    @classmethod
+    def from_mapping(cls, value: Mapping) -> ProbeIdentity:
+        """From ``{"ENDPOINT", "SUBJECT", "SCOPE", "TOOL", "ARGUMENTS",
+        "DENIED_TOOL", "PAGE"}`` (the Django setting's shape; lower-case keys
+        work too)."""
+        get = {str(k).lower(): v for k, v in (value or {}).items()}.get
+        return cls(endpoint=get("endpoint") or "", subject=get("subject") or "",
+                   scope=get("scope") or "", tool=get("tool") or "",
+                   arguments=get("arguments") or {}, denied_tool=get("denied_tool") or "",
+                   page=get("page") or "")
+
+
+@dataclass(frozen=True)
 class HostConfig:
     """Everything the host half needs. Nothing is read from settings here —
     ``canopy_sdk.django.conf`` builds one from Django settings, and any other
@@ -65,6 +121,9 @@ class HostConfig:
     assertion_ttl: int = 60
     id_jag_ttl: int = 120
     access_token_ttl: int = contract.ACCESS_TOKEN_MAX_LIFETIME
+    #: canopy's live probe (``ProbeIdentity``). ``None`` — the default — turns
+    #: the probe endpoint off (404) and keeps it out of the metadata.
+    probe: ProbeIdentity | None = None
 
     def __post_init__(self):
         set_ = object.__setattr__
@@ -81,6 +140,17 @@ class HostConfig:
             raise ValueError(f"id_jag_ttl must be 1..{contract.ID_JAG_MAX_LIFETIME}s")
         if not 0 < self.access_token_ttl <= contract.ACCESS_TOKEN_MAX_LIFETIME:
             raise ValueError(f"access_token_ttl must be 1..{contract.ACCESS_TOKEN_MAX_LIFETIME}s")
+        if isinstance(self.probe, Mapping):
+            set_(self, "probe", ProbeIdentity.from_mapping(self.probe))
+        if self.probe is not None:
+            probe = self.probe
+            unlocked = self.scope_tools.get(probe.scope)
+            if unlocked is None:
+                raise ValueError(f"the probe scope {probe.scope!r} is not in scope_tools")
+            if probe.tool not in unlocked:
+                raise ValueError(f"the probe tool {probe.tool!r} is not one {probe.scope!r} unlocks")
+            if probe.denied_tool and probe.denied_tool in unlocked:
+                raise ValueError(f"the probe's denied_tool {probe.denied_tool!r} is inside its own scope")
 
     # --- derived ---------------------------------------------------------------
 
@@ -92,6 +162,11 @@ class HostConfig:
     def grant_enabled(self) -> bool:
         """Every value the grant names must be present, or none of it runs."""
         return bool(self.canopy_client_id and self.issuer and self.resource and self.token_endpoint)
+
+    @property
+    def probe_enabled(self) -> bool:
+        """The probe runs only on top of a working grant."""
+        return self.grant_enabled and self.probe is not None
 
     @property
     def audience(self) -> str:

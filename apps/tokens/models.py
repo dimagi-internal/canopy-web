@@ -283,6 +283,17 @@ class AppCredential(models.Model):
     #: The site's MCP server as its RFC 9728 `resource` — the ONE URL a grant is
     #: audience-bound to, and the only URL canopy's gateway will call with it.
     host_mcp_resource = models.URLField(blank=True, default="", max_length=500)
+    #: canopy's LIVE PROBE of this site's grant chain (`apps/tokens/live_probe.py`):
+    #: a real ID-JAG for the site's dedicated probe principal, redeemed and used
+    #: through the same code a visitor's turn takes. `last_probe_ok` is None
+    #: until a probe has run to a verdict — including while the site offers no
+    #: probe endpoint, which is "not set up", not a failure.
+    last_probe_at = models.DateTimeField(null=True, blank=True)
+    last_probe_ok = models.BooleanField(null=True, blank=True)
+    #: The first step that did not pass (`live_probe.STEPS`), and why — in words
+    #: that never contain a credential. Blank on a pass.
+    last_probe_step = models.CharField(max_length=64, blank=True, default="")
+    last_probe_reason = models.CharField(max_length=500, blank=True, default="")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

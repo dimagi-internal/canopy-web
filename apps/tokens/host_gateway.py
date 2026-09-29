@@ -77,6 +77,9 @@ class SiteContext:
     ceiling: list[str]
     backing: list[str]
     _token: str = field(repr=False, default="")
+    #: The Connected site's row, so an audit line names the site unambiguously
+    #: (a site NAME is unique only per tenant).
+    app_id: int | None = None
 
     def allows(self, tool: str) -> bool:
         return tool_allowed(tool, ceiling=self.ceiling, backing=self.backing)
@@ -131,10 +134,8 @@ def _backing_tools(session) -> list[str]:
 
 def resolve(turn_id: str) -> SiteContext:
     """The site, grant and effective tools for this turn — or a refusal."""
-    from apps.common.encryption import decrypt_secret
     from apps.harness.models import Turn
 
-    from . import client_identity
     from .models import AppCredential, HostGrant
 
     turn = (Turn.objects.select_related("agent", "chat_session", "chat_session__agent",
@@ -174,6 +175,21 @@ def resolve(turn_id: str) -> SiteContext:
     if grant is None:
         raise GatewayRefusal("no_grant",
                              f"{site} has not given me access on your behalf — " + BACK_ON_THE_PAGE)
+    return context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
+                             ceiling=list(cap.get("ceiling") or []), backing=_backing_tools(session))
+
+
+def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: list[str],
+                      backing: list[str]) -> SiteContext:
+    """A `SiteContext` for ONE stored grant — or a refusal if the grant cannot
+    be used: expired, for a resource the site no longer names, or bound to a
+    DPoP key canopy no longer holds. `resolve` reaches it for a visitor's turn;
+    the live probe (`live_probe.py`) reaches it for the probe's own grant, so
+    both are held to the same checks and call through the same client."""
+    from apps.common.encryption import decrypt_secret
+
+    from . import client_identity
+
     if grant.expires_at <= timezone.now() + EXPIRY_MARGIN:
         raise GatewayRefusal("expired", BACK_ON_THE_PAGE)
     if grant.resource.rstrip("/") != app.host_mcp_resource.rstrip("/"):
@@ -187,10 +203,10 @@ def resolve(turn_id: str) -> SiteContext:
         raise GatewayRefusal("stale_grant", BACK_ON_THE_PAGE)
 
     return SiteContext(
-        turn_id=str(turn.pk), agent_slug=agent.slug, site=site,
+        turn_id=turn_id, agent_slug=agent_slug, site=app.name,
         resource=app.host_mcp_resource, scope=grant.scope, expires_at=grant.expires_at,
-        ceiling=list(cap.get("ceiling") or []), backing=_backing_tools(session),
-        _token=decrypt_secret(grant.access_token_enc),
+        ceiling=list(ceiling), backing=list(backing),
+        _token=decrypt_secret(grant.access_token_enc), app_id=app.pk,
     )
 
 
@@ -201,12 +217,25 @@ def resolve(turn_id: str) -> SiteContext:
 _transport_override = None
 
 
-def _auth(ctx: SiteContext):
+#: How a request proves possession. Only `dpop` is ever used for a real call;
+#: the rest exist so the live probe can show the host REFUSES a bound token
+#: without a valid proof — through this same client, not a hand-built request.
+PROOF_MODES = ("dpop", "no_proof", "stranger_key", "bearer")
+
+
+def _auth(ctx: SiteContext, mode: str = "dpop"):
     import httpx2
 
     from . import client_identity
 
+    if mode not in PROOF_MODES:
+        raise ValueError(f"unknown proof mode {mode!r}")
     token = ctx._token
+    stranger = None
+    if mode == "stranger_key":
+        from canopy_sdk.keys import generate_private_key
+
+        stranger = generate_private_key("EdDSA")
 
     class _DPoP(httpx2.Auth):
         """A fresh proof on EVERY request of the MCP session (initialize,
@@ -215,12 +244,20 @@ def _auth(ctx: SiteContext):
 
         def auth_flow(self, request):
             htu = str(request.url.copy_with(query=None, fragment=None))
+            if mode == "bearer":
+                request.headers["Authorization"] = f"Bearer {token}"
+                yield request
+                return
             request.headers["Authorization"] = consumer.dpop_authorization(token)
-            request.headers[contract.DPOP_HEADER] = client_identity.dpop_proof(
-                request.method, htu, access_token=token)
+            if mode == "stranger_key":
+                request.headers[contract.DPOP_HEADER] = consumer.dpop_proof(
+                    stranger, request.method, htu, access_token=token)
+            elif mode == "dpop":
+                request.headers[contract.DPOP_HEADER] = client_identity.dpop_proof(
+                    request.method, htu, access_token=token)
             response = yield request
             nonce = response.headers.get(contract.DPOP_NONCE_HEADER)
-            if response.status_code == 401 and nonce:
+            if mode == "dpop" and response.status_code == 401 and nonce:
                 request.headers[contract.DPOP_HEADER] = client_identity.dpop_proof(
                     request.method, htu, access_token=token, nonce=nonce)
                 yield request
@@ -228,10 +265,13 @@ def _auth(ctx: SiteContext):
     return _DPoP()
 
 
-def _client(ctx: SiteContext):
+def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = None):
     import httpx2
     from fastmcp import Client
     from fastmcp.client.transports import StreamableHttpTransport
+
+    async def record(response):
+        statuses.append(response.status_code)
 
     def factory(headers=None, timeout=None, auth=None, **_kw):
         kwargs = {
@@ -241,12 +281,14 @@ def _client(ctx: SiteContext):
             "follow_redirects": False,
             "timeout": timeout or httpx2.Timeout(10.0, read=60.0),
         }
+        if statuses is not None:
+            kwargs["event_hooks"] = {"response": [record]}
         if _transport_override is not None:
             kwargs["transport"] = _transport_override
         return httpx2.AsyncClient(**kwargs)
 
     transport = StreamableHttpTransport(
-        ctx.resource, headers={ACTOR_HEADER: ctx.agent_slug}, auth=_auth(ctx),
+        ctx.resource, headers={ACTOR_HEADER: ctx.agent_slug}, auth=_auth(ctx, mode),
         httpx_client_factory=factory)
     return Client(transport)
 
@@ -301,3 +343,49 @@ async def call_tool(ctx: SiteContext, tool: str, arguments: dict) -> dict:
                        else block.model_dump(mode="json", exclude_none=True))
     return {"site": ctx.site, "tool": name, "is_error": bool(result.is_error),
             "content": content, "structured": result.structured_content}
+
+
+# --- the live probe's view of a call -------------------------------------------
+
+
+@dataclass
+class CallOutcome:
+    """How ONE call ended, for the live probe — which must tell "the host
+    refused" apart from "the host is down", something `call_tool` (which only
+    has to say "that did not work" to an agent) never needed to.
+
+    * ``ok`` — the tool ran and did not flag an error;
+    * ``tool_error`` — the host answered, and the tool (or the host's scope
+      check) refused: a JSON-RPC error or ``isError``;
+    * ``unauthorized`` — the host refused the credential (HTTP 401/403);
+    * ``unreachable`` — anything else (transport, 5xx, a malformed answer).
+    """
+
+    kind: str
+    detail: str = ""
+    statuses: list = field(default_factory=list)
+
+
+async def probe_call(ctx: SiteContext, tool: str, arguments: dict, *, mode: str = "dpop") -> CallOutcome:
+    """Call ONE tool for the live probe, through the same client every visitor's
+    call uses, with the proof `mode` chooses. Never raises for the host's
+    answer; the outcome says what happened. The token never reaches `detail`."""
+    from mcp.shared.exceptions import MCPError as McpError
+
+    await _check_target(ctx)
+    statuses: list[int] = []
+    name = host_tool_name(tool)
+    try:
+        async with _client(ctx, mode=mode, statuses=statuses) as client:
+            result = await client.call_tool(name, arguments or {}, raise_on_error=False)
+    except McpError as exc:
+        return CallOutcome("tool_error", str(getattr(exc, "error", exc))[:200], statuses)
+    except Exception as exc:  # noqa: BLE001 - classified by what the host answered
+        refused = [s for s in statuses if s in (401, 403)]
+        if refused:
+            return CallOutcome("unauthorized", f"HTTP {refused[0]}", statuses)
+        return CallOutcome("unreachable", type(exc).__name__, statuses)
+    if result.is_error:
+        text = " ".join(getattr(b, "text", "") or "" for b in (result.content or []))
+        return CallOutcome("tool_error", text[:200], statuses)
+    return CallOutcome("ok", "", statuses)

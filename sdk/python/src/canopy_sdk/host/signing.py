@@ -74,7 +74,8 @@ def sign_visitor_assertion(config: HostConfig, subject: str, *, name: str = "", 
     return sign(claims, config.signing_key, headers={"kid": config.kid})
 
 
-def issue_id_jag(config: HostConfig, subject: str, scopes, *, now: float | None = None) -> str:
+def issue_id_jag(config: HostConfig, subject: str, scopes, *, now: float | None = None,
+                 extra_claims: dict | None = None) -> str:
     """An ID-JAG letting canopy act as ``subject`` at this host's MCP, within ``scopes``.
 
     The host is both issuer and audience (it grants for its own authorization
@@ -82,7 +83,9 @@ def issue_id_jag(config: HostConfig, subject: str, scopes, *, now: float | None 
     key), and it is signed with the same key as the visitor assertion so canopy
     needs no second key. ``sub`` MUST equal the assertion's ``sub``.
 
-    Unknown scopes are dropped; none left is a ``ValueError``.
+    Unknown scopes are dropped; none left is a ``ValueError``. ``extra_claims``
+    sit beside the contract's claims, which always win — the probe marks its
+    ID-JAGs with ``canopy_probe: true`` this way.
     """
     if not config.grant_enabled:
         raise HostNotConfigured("canopy_client_id, issuer, resource and token_endpoint are required")
@@ -94,6 +97,7 @@ def issue_id_jag(config: HostConfig, subject: str, scopes, *, now: float | None 
         raise ValueError("an ID-JAG needs the host's own id for the visitor")
     issued = int(time.time() if now is None else now)
     claims = {
+        **(extra_claims or {}),
         "iss": config.issuer,
         "aud": config.issuer,
         "sub": subject,

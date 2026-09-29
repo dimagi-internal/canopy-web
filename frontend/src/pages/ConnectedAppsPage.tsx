@@ -5,6 +5,7 @@ import { WorkbenchSubHeader } from 'canopy-ui'
 
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { listAgents, type AgentOut } from '@/api/agents'
+import { relativeTime } from '@/components/activity/turnLog'
 import {
   connectApp,
   disconnectApp,
@@ -175,41 +176,160 @@ const STATUS_STYLE: Record<ConnectionCheck['status'], string> = {
   skip: 'bg-muted text-muted-foreground border-border',
 }
 
-/** The checks a connection test ran, one row each: status, what, why. */
+/** One row per check: status, what, why. Shared by the settings checks and the
+ *  live probe, which report in the same shape. */
+function CheckRows({ checks }: { checks: readonly ConnectionCheck[] }): JSX.Element {
+  return (
+    <table className="w-full border-collapse text-xs">
+      <thead>
+        <tr className="border-b border-border text-left text-muted-foreground">
+          <th className="w-14 py-1 pr-2 font-normal">Result</th>
+          <th className="py-1 pr-2 font-normal">Check</th>
+          <th className="py-1 font-normal">Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {checks.map((c, i) => (
+          <tr key={`${c.name}-${i}`} className="border-b border-border align-top last:border-0">
+            <td className="py-1 pr-2">
+              <span className={`inline-block rounded border px-1.5 text-[10px] uppercase ${STATUS_STYLE[c.status]}`}>
+                {c.status}
+              </span>
+            </td>
+            <td className="py-1 pr-2 text-foreground" title={c.name}>
+              {c.label}
+            </td>
+            <td className="break-all py-1 font-mono text-[11px] text-foreground-secondary">{c.detail}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+/** What the live probe concluded, in one sentence. */
+export function liveProbeSummary(result: Pick<ConnectionTest, 'live_probe' | 'live_probe_ok'>): string {
+  const steps = result.live_probe ?? []
+  if (result.live_probe_ok === true) {
+    return 'Live probe passed: a real grant was issued, redeemed and used.'
+  }
+  const failed = steps.find((s) => s.status === 'fail')
+  if (result.live_probe_ok === false && failed) return `Live probe failed: ${failed.label}.`
+  const skipped = steps.find((s) => s.status === 'skip')
+  return `Live probe not run: ${skipped?.detail || 'no verdict'}.`
+}
+
+/** The checks a connection test ran — the settings, then the live probe. */
 export function ConnectionTestTable({ result }: { result: ConnectionTest }): JSX.Element {
   const failed = result.checks.filter((c) => c.status === 'fail').length
+  const probe = result.live_probe ?? []
   return (
-    <div className="space-y-1">
-      <p className={`text-xs ${result.ok ? 'text-success' : 'text-destructive'}`}>
-        {result.ok
-          ? 'Every check passed.'
-          : `${failed} of ${result.checks.length} checks failed.`}
-      </p>
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <p className={`text-xs ${failed === 0 ? 'text-success' : 'text-destructive'}`}>
+          {failed === 0
+            ? 'Every check passed.'
+            : `${failed} of ${result.checks.length} checks failed.`}
+        </p>
+        <CheckRows checks={result.checks} />
+      </div>
+      {probe.length > 0 && (
+        <div className="space-y-1">
+          <h3 className="text-xs font-medium text-foreground">Live probe</h3>
+          <p
+            className={`text-xs ${
+              result.live_probe_ok === true
+                ? 'text-success'
+                : result.live_probe_ok === false
+                  ? 'text-destructive'
+                  : 'text-muted-foreground'
+            }`}
+          >
+            {liveProbeSummary(result)}
+          </p>
+          <CheckRows checks={probe} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ago(iso: string | null | undefined, now: Date): string {
+  return iso ? relativeTime(iso, now) : '—'
+}
+
+/** The live probe's last verdict as a badge: pass, fail, or not set up. */
+function ProbeBadge({ probe }: { probe: ConnectedApp['live_probe'] }): JSX.Element {
+  const [label, style] =
+    probe.ok === true
+      ? ['pass', STATUS_STYLE.pass]
+      : probe.ok === false
+        ? ['fail', STATUS_STYLE.fail]
+        : [probe.at ? 'not set up' : 'not run', STATUS_STYLE.skip]
+  return (
+    <span className={`inline-block rounded border px-1.5 text-[10px] uppercase ${style}`}>{label}</span>
+  )
+}
+
+/**
+ * Every site that lets an agent act as its visitors, and whether that works:
+ * canopy's live probe (a real grant for the site's probe user, every 30 minutes)
+ * beside what real visitors' traffic says. A site that stops working shows here
+ * before a visitor finds out.
+ */
+export function SiteHealthTable({
+  apps,
+  now = new Date(),
+}: {
+  apps: readonly ConnectedApp[]
+  now?: Date
+}): JSX.Element | null {
+  const rows = apps.filter((a) => a.issues_host_grants && !a.revoked)
+  if (rows.length === 0) return null
+  return (
+    <section className="space-y-2">
+      <h2 className="text-sm font-medium text-foreground">Acting as visitors</h2>
       <table className="w-full border-collapse text-xs">
         <thead>
           <tr className="border-b border-border text-left text-muted-foreground">
-            <th className="w-14 py-1 pr-2 font-normal">Result</th>
-            <th className="py-1 pr-2 font-normal">Check</th>
-            <th className="py-1 font-normal">Detail</th>
+            <th className="py-1 pr-2 font-normal">Site</th>
+            <th className="py-1 pr-2 font-normal">Live probe</th>
+            <th className="py-1 pr-2 font-normal">Probed</th>
+            <th className="py-1 pr-2 font-normal">Last grant</th>
+            <th className="py-1 pr-2 font-normal">Last call</th>
+            <th className="py-1 pr-2 text-right font-normal">Refusals 24h</th>
           </tr>
         </thead>
         <tbody>
-          {result.checks.map((c, i) => (
-            <tr key={`${c.name}-${i}`} className="border-b border-border align-top last:border-0">
+          {rows.map((app) => (
+            <tr key={app.id} className="border-b border-border align-top last:border-0">
+              <td className="py-1 pr-2 text-foreground">{app.name}</td>
               <td className="py-1 pr-2">
-                <span className={`inline-block rounded border px-1.5 text-[10px] uppercase ${STATUS_STYLE[c.status]}`}>
-                  {c.status}
-                </span>
+                <ProbeBadge probe={app.live_probe} />
+                {app.live_probe.ok !== true && app.live_probe.step_label && (
+                  <span
+                    className="ml-2 text-foreground-secondary"
+                    title={app.live_probe.reason}
+                  >
+                    {app.live_probe.ok === false ? app.live_probe.step_label : app.live_probe.reason}
+                  </span>
+                )}
               </td>
-              <td className="py-1 pr-2 text-foreground" title={c.name}>
-                {c.label}
+              <td className="py-1 pr-2 text-muted-foreground">{ago(app.live_probe.at, now)}</td>
+              <td className="py-1 pr-2 text-muted-foreground">{ago(app.traffic.last_redeemed_at, now)}</td>
+              <td className="py-1 pr-2 text-muted-foreground">{ago(app.traffic.last_site_call_at, now)}</td>
+              <td
+                className={`py-1 pr-2 text-right tabular-nums ${
+                  app.traffic.refusals_24h > 0 ? 'text-warning' : 'text-muted-foreground'
+                }`}
+              >
+                {app.traffic.refusals_24h}
               </td>
-              <td className="break-all py-1 font-mono text-[11px] text-foreground-secondary">{c.detail}</td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
+    </section>
   )
 }
 
@@ -240,7 +360,8 @@ export function ConnectionTester({ slug, app }: { slug: string; app: ConnectedAp
           {running ? 'Testing…' : 'Test connection'}
         </Button>
         <span className="text-xs text-muted-foreground">
-          Reads its keys and discovery documents, and asks whether it accepts canopy — from canopy&apos;s server.
+          Reads its keys and discovery documents, asks whether it accepts canopy, then runs the live
+          probe — from canopy&apos;s server.
         </span>
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
@@ -345,6 +466,8 @@ export function ConnectedAppsPage(): JSX.Element | null {
       )}
       {loadError && <p className="text-sm text-destructive">{loadError}</p>}
       {error && <p className="text-sm text-destructive">{error}</p>}
+
+      {apps && <SiteHealthTable apps={apps} />}
 
       {/* Everything already connected. */}
       <section className="space-y-3">

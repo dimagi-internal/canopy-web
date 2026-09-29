@@ -34,6 +34,20 @@
         "PANEL_TOKEN_URL": "",       # a literal URL, or
         "PANEL_TOKEN_URL_NAME": "",  # a URL name of the host's own, reversed per request
         "PANEL": {"launcher_label": "Ask an agent", "mode": "overlay", "theme": {}},
+        # canopy's live probe (optional; absent = the probe endpoint 404s and is
+        # not advertised). A DEDICATED low-privilege principal — never a real
+        # person — one read-only scope, and the one call canopy makes with it.
+        # Mount views.probe_endpoint (in urls.py as canopy_host:probe) at ENDPOINT.
+        "PROBE": {
+            "ENDPOINT": "https://labs.connect.dimagi.com/canopy-host/probe/",
+            "SUBJECT": "1234",            # the host's own id for the probe user, or
+            "SUBJECT_RESOLVER": None,     # a callable/dotted path -> str, read per request
+            "SCOPE": "marketplace:read",
+            "TOOL": "marketplace_rounds_list",
+            "ARGUMENTS": {},
+            "DENIED_TOOL": "",            # a real tool outside SCOPE your MCP must refuse
+            "PAGE": "marketplace:network",
+        },
     }
 
 ``CANOPY_HOST`` may also be a CALLABLE returning that dict (or a dotted path to
@@ -57,13 +71,16 @@ host's tests takes effect.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 
 from django.conf import settings
 from django.utils.module_loading import import_string
 
-from ..host.config import HostConfig, HostNotConfigured
+from ..host.config import HostConfig, HostNotConfigured, ProbeIdentity
 from ..host.pages import KEY, MODES, SIGNED, PageRegistry, PageTokens
+
+log = logging.getLogger("canopy_sdk.django")
 
 
 def raw() -> dict:
@@ -104,7 +121,59 @@ def get_host_config() -> HostConfig:
         canopy_audience=cfg.get("CANOPY_AUDIENCE", ""),
         scope_tools=cfg.get("SCOPE_TOOLS") or {},
         retired_keys=tuple(cfg.get("RETIRED_KEYS") or ()),
+        probe=_probe_or_none(cfg),
     )
+
+
+def _probe_or_none(cfg: Mapping) -> ProbeIdentity | None:
+    # A broken probe block must not take the real grant down with it: visitors'
+    # grants keep working, the probe is off, and the log says why.
+    try:
+        probe = probe_identity(cfg)
+        if probe is not None:
+            unlocked = (cfg.get("SCOPE_TOOLS") or {}).get(probe.scope) or ()
+            unlocked = [unlocked] if isinstance(unlocked, str) else list(unlocked)
+            if probe.tool not in unlocked or (probe.denied_tool and probe.denied_tool in unlocked):
+                raise ValueError("the probe's TOOL must be one its SCOPE unlocks, and DENIED_TOOL must not")
+        return probe
+    except Exception:  # noqa: BLE001
+        log.exception("CANOPY_HOST['PROBE'] is not usable; the live probe is off")
+        return None
+
+
+def _in_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def probe_identity(cfg: Mapping | None = None) -> ProbeIdentity | None:
+    """``CANOPY_HOST["PROBE"]`` as a ``ProbeIdentity``, or ``None`` when it is
+    absent or its subject resolves to nothing (the probe user does not exist
+    here yet). ``SUBJECT_RESOLVER`` — a callable or dotted path returning the
+    subject — wins over a literal ``SUBJECT``, so a host can look its probe
+    user up by name at request time. A malformed block raises: a probe that is
+    half-configured is a deployment fault, not a quiet "off"."""
+    block = (raw() if cfg is None else cfg).get("PROBE")
+    if not block:
+        return None
+    block = dict(block)
+    resolver = block.get("SUBJECT_RESOLVER")
+    if resolver and _in_event_loop():
+        # The MCP DPoP gate builds its config on the event loop, where a
+        # resolver's database read is forbidden — and it never needs the probe,
+        # which is served (and advertised) only by synchronous views.
+        return None
+    if resolver:
+        fn = import_string(resolver) if isinstance(resolver, str) else resolver
+        block["SUBJECT"] = fn() or ""
+    if not str(block.get("SUBJECT") or "").strip():
+        return None
+    return ProbeIdentity.from_mapping(block)
 
 
 def page_mode() -> str:

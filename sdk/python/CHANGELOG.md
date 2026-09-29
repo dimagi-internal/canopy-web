@@ -2,6 +2,39 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.4.0 — 2026-09-28
+
+The live probe: canopy can exercise a REAL grant against a host on a schedule,
+without a visitor. Minor: new public API, nothing removed, contract version
+unchanged (every new field is an optional extension).
+
+- **`canopy_sdk.host.ProbeIdentity` + `ProbeHandler`** — a host configures a
+  dedicated low-privilege probe principal, one read-only scope, one tool (+
+  arguments), an optional out-of-scope `denied_tool` and page key. The probe
+  endpoint accepts ONLY canopy's configured client (`private_key_jwt`, verified
+  by the token endpoint's own code, `aud` = issuer or the probe URL) plus a
+  DPoP proof; refuses any request naming a principal, tool, arguments, or a
+  scope/resource other than the probe's; spends every `jti` only after all
+  checks; and returns a real ID-JAG for the probe principal (≤ 300 s,
+  single-use `jti`, marked `canopy_probe: true`). `HostConfig(probe=...)`,
+  `HostConfig.probe_enabled`. Unconfigured = `ProbeDisabled` (404).
+- **Metadata** — `authorization_server_metadata` adds
+  `canopy_probe_endpoint` while a probe is configured.
+- **Django** — `CANOPY_HOST["PROBE"]` (`ENDPOINT`, `SUBJECT` or
+  `SUBJECT_RESOLVER`, `SCOPE`, `TOOL`, `ARGUMENTS`, `DENIED_TOOL`, `PAGE`),
+  `views.probe_endpoint` at `canopy_host:probe` (`probe/`). A broken `PROBE`
+  block logs and turns the probe off — never the grant. `SUBJECT_RESOLVER` is
+  never called on the event loop (the MCP DPoP gate builds its config there,
+  where a database read is forbidden, and never needs the probe).
+- **`issue_id_jag(..., extra_claims=)`** — claims beside the contract's, which
+  always win.
+- **`GrantHandler` logs `probe=True`** for a probe ID-JAG it redeems.
+- **`canopy_sdk.conformance.live`** — `request_probe`, `check_live_grant`
+  (probe → normal redemption → token material), and the three assertions:
+  `check_probe_tool` (a), `check_out_of_scope_refused` (b),
+  `check_requires_dpop` (c: no proof, a stranger's key, a plain bearer);
+  `run_live` for all of it.
+
 ## 0.3.0 — 2026-09-27
 
 Fixes for the gaps three hosts (connect-labs, ace-web, canopy-web) found

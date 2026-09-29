@@ -36,6 +36,11 @@ FORCE_SCRIPT_NAME = env("FORCE_SCRIPT_NAME", default="/canopy")
 # from this (apps/harness/services.py::start_drill).
 CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="https://labs.connect.dimagi.com/canopy")
 
+# canopy's live probe of its OWN host half (the `canopy-web` Connected site):
+# the dedicated, non-admin user tokens/0026_probe_user creates. Non-secret, and
+# ON here so the probe runs once deployed (apps/tokens/live_probe.py).
+CANOPY_HOST_PROBE_USERNAME = env("CANOPY_HOST_PROBE_USERNAME", default="canopy-probe")
+
 # The labs account's verified SES domain (see apps/common/email.py). Never a
 # domain prod Connect sends from: labs' reputation must not touch anyone else's.
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Canopy <noreply@labs.connect.dimagi.com>")

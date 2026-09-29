@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.3.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.4.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.3.0/dimagi_canopy-0.3.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.4.0/dimagi_canopy-0.4.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`.
@@ -41,12 +41,12 @@ library, address-pinned.
 | Module | For | Key names |
 |---|---|---|
 | `canopy_sdk.contract` | both sides | `CONTRACT_VERSION`, `ID_JAG_TYP`, `JWT_BEARER_GRANT`, `CLIENT_ASSERTION_TYPE`, lifetime caps, `ASSERTION_ALGORITHMS`, `GRANT_ALGORITHMS`, `jwk_thumbprint`, `ath`, `metadata_url`, `normalize_htu` |
-| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `authorization_server_metadata`, `protected_resource_metadata` |
+| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
 | `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
 | `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `{% canopy_panel %}` |
-| `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; pytest fixtures |
+| `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
 
 ## A Django host in five steps
 
@@ -217,6 +217,66 @@ addopts = "-p canopy_sdk.conformance.pytest_plugin"
 (`pytest -p canopy_sdk.conformance.pytest_plugin` does the same for one run.)
 Not `pytest_plugins = [...]` in a conftest: pytest accepts that only in the
 rootdir's top-level `conftest.py` and refuses it anywhere else.
+
+## The live probe (optional, recommended)
+
+Conformance stops where a visitor starts: a REAL grant needs an ID-JAG signed by
+your key, which canopy never holds — so a broken chain used to surface only when
+a visitor asked an agent for something and it could not do it. A **probe
+identity** lets canopy walk the whole chain on a schedule, with nobody at a
+keyboard: your probe endpoint signs a real ID-JAG for ONE dedicated principal,
+canopy redeems it through the normal jwt-bearer path, and makes real MCP calls
+with the token.
+
+```python
+CANOPY_HOST = {
+    ...,
+    "PROBE": {
+        "ENDPOINT": "https://labs.example.org/canopy/probe/",  # its public URL (DPoP htu)
+        "SUBJECT_RESOLVER": "myapp.canopy.probe_user_id",       # -> str; or "SUBJECT": "1234"
+        "SCOPE": "marketplace:read",                            # must be <x>:read
+        "TOOL": "marketplace_rounds_list",                      # one SCOPE unlocks
+        "ARGUMENTS": {},
+        "DENIED_TOOL": "marketplace_orgs_update",               # optional: a real tool OUTSIDE SCOPE
+        "PAGE": "marketplace:network",                          # optional, for your audit
+    },
+}
+# urls.py — views.probe_endpoint is canopy_host:probe in canopy_sdk.django.urls
+```
+
+**The principal is a dedicated, low-privilege account — never a real person's.**
+It must be active (your `SUBJECT_ACTIVE`), and the tool call must be meaningful
+for it (it must succeed). A subject that resolves to nothing turns the probe off.
+
+What the endpoint does (`canopy_sdk.host.ProbeHandler`): accepts ONLY canopy's
+configured client, authenticated with `private_key_jwt` (the token endpoint's own
+check; `aud` = your issuer or the probe URL) plus a DPoP proof for the probe URL
+by a key that is not the client key; refuses any request that names a principal,
+tool or arguments (`sub`, `subject`, `login_hint`, `user_id`, …) or a scope or
+resource other than the probe's; spends every `jti` only after every check
+passed; and answers with a real ID-JAG (≤ 300 s, single-use `jti`, carrying
+`"canopy_probe": true` so your audit can tell probe traffic from a visitor's)
+plus the tool and arguments to call:
+
+```json
+{"id_jag": "…", "subject": "1234", "scope": "marketplace:read", "resource": "https://…/mcp/",
+ "tool": "marketplace_rounds_list", "arguments": {}, "denied_tool": "…", "page": "…", "expires_in": 120}
+```
+
+Unconfigured, the endpoint answers 404 and your RFC 8414 metadata does not name
+it. Configured, the metadata carries `"canopy_probe_endpoint": "<ENDPOINT>"`.
+
+canopy asserts, every 30 minutes per Connected site and on **Test connection**:
+(a) the probe tool succeeds, (b) a tool outside the scope is not listed and is
+refused when called, (c) the same call without a valid DPoP proof (none, a
+stranger's key, a plain bearer) is refused. The same steps for your own CI or a
+script:
+
+```python
+from canopy_sdk import conformance
+report = conformance.run_live(issuer, resource, credentials=canopy_client_credentials)
+# or step by step: check_live_grant -> check_probe_tool / check_out_of_scope_refused / check_requires_dpop
+```
 
 canopy-web's own CI runs this package's host half against its real arrival and
 redemption code (`tests/test_sdk_round_trip.py`), so the two sides cannot drift.
