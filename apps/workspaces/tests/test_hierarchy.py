@@ -157,3 +157,95 @@ def test_delete_refuses_parent_with_children(tree):
     r = _client(tree["org_owner"]).delete("/api/workspaces/dimagi/")
     assert r.status_code == 409
     assert "strategy" in r.json()["detail"]
+
+
+# --- The agent list, across the tree -----------------------------------------
+#
+# The tests above asserted that the tree grants the right ACCESS, and every one
+# passed while the Agents page broke on labs. Two gaps: nothing asserted the
+# ORDER of `GET /api/workspaces/` (the client's default workspace is its first
+# entry), and nothing looked at which AGENTS a tenant URL returns — only its
+# status code. The fixture also built the parent before its children, which is
+# the one shape that hides the ordering bug: on labs the divisions were created
+# AFTER the memberships that already existed.
+
+
+def _agent(slug, ws, owner):
+    from apps.agents.models import Agent
+
+    return Agent.objects.create(slug=slug, name=slug.title(), workspace=ws, owner=owner)
+
+
+def _agent_slugs(c, url):
+    r = c.get(url)
+    assert r.status_code == 200, r.content
+    return sorted(a["slug"] for a in r.json()["items"])
+
+
+@pytest.fixture
+def labs_shape():
+    """What labs actually looked like: an owner of `dimagi` (org) and `connect`
+    (the division with the agents), and then — created LATER — new empty
+    divisions under `dimagi` that the owner holds only by inheritance."""
+    owner = _user("jj@dimagi.com")
+    dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=owner)
+    connect = Workspace.objects.create(
+        slug="connect", display_name="Connect", created_by=owner, parent=dimagi,
+    )
+    WorkspaceMembership.objects.create(workspace=dimagi, user=owner, role=OWNER)
+    WorkspaceMembership.objects.create(workspace=connect, user=owner, role=OWNER)
+    strategy = Workspace.objects.create(
+        slug="strategy", display_name="Strategy", created_by=owner, parent=dimagi,
+    )
+    ops = Workspace.objects.create(
+        slug="operations", display_name="Operations", created_by=owner, parent=dimagi,
+    )
+    for slug in ("ace", "hal"):
+        _agent(slug, connect, owner)
+    _agent("eva", dimagi, owner)
+    _agent("fizzy", strategy, owner)
+    return {"owner": owner, "dimagi": dimagi, "connect": connect, "strategy": strategy, "ops": ops}
+
+
+def test_default_workspace_is_a_direct_membership_not_a_newer_inherited_one(labs_shape):
+    """The regression: `/` and `/agents` land on the FIRST workspace listed.
+    Sorting direct and inherited rows together by `created_at` made that an
+    empty division created minutes ago instead of `connect`."""
+    rows = _client(labs_shape["owner"]).get("/api/workspaces/").json()
+    assert [w["slug"] for w in rows] == ["connect", "dimagi", "operations", "strategy"]
+    assert [w["inherited"] for w in rows] == [False, False, True, True]
+
+
+def test_each_tenant_url_lists_exactly_its_own_agents(labs_shape):
+    c = _client(labs_shape["owner"])
+    assert _agent_slugs(c, "/api/w/connect/agents/") == ["ace", "hal"]
+    assert _agent_slugs(c, "/api/w/dimagi/agents/") == ["eva"]  # a parent does not absorb its children
+    assert _agent_slugs(c, "/api/w/strategy/agents/") == ["fizzy"]  # inherited ownership lists them
+    assert _agent_slugs(c, "/api/w/operations/agents/") == []
+
+
+def test_flat_agent_list_spans_owned_descendants(labs_shape):
+    c = _client(labs_shape["owner"])
+    assert _agent_slugs(c, "/api/agents/") == ["ace", "eva", "fizzy", "hal"]
+    # …and every agent the list shows must also open, or the list is a lie.
+    for slug in ("ace", "eva", "fizzy", "hal"):
+        assert c.get(f"/api/agents/{slug}/").status_code == 200
+
+
+def test_org_editor_sees_org_agents_but_no_division_agents(labs_shape):
+    staff = _user("staff@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=labs_shape["dimagi"], user=staff, role=EDITOR)
+    c = _client(staff)
+    assert [w["slug"] for w in c.get("/api/workspaces/").json()] == ["dimagi"]
+    assert _agent_slugs(c, "/api/agents/") == ["eva"]
+    assert c.get("/api/w/connect/agents/").status_code == 404
+    assert c.get("/api/agents/ace/").status_code == 404
+
+
+def test_division_owner_sees_only_their_division(labs_shape):
+    lead = _user("lead@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=labs_shape["strategy"], user=lead, role=OWNER)
+    c = _client(lead)
+    assert [w["slug"] for w in c.get("/api/workspaces/").json()] == ["strategy"]
+    assert _agent_slugs(c, "/api/agents/") == ["fizzy"]
+    assert c.get("/api/w/dimagi/agents/").status_code == 404
