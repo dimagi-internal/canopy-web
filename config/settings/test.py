@@ -11,7 +11,6 @@ DEBUG = True
 # (apps/tokens/client_identity.py). A deployment never does this.
 CANOPY_OAUTH_EPHEMERAL_KEYS = True
 # The scheduled live probe starts a background thread; never in a test run.
-CANOPY_LIVE_PROBE_SWEEP = False
 
 DATABASES = {
     "default": {

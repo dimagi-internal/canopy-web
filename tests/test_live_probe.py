@@ -9,7 +9,6 @@ traffic says beside it.
 """
 from __future__ import annotations
 
-from datetime import timedelta
 from unittest import mock
 
 import httpx2
@@ -25,7 +24,6 @@ from canopy_sdk.stores import MemoryCache, MemoryJtiStore, MemoryTokenStore
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.test import Client, override_settings
-from django.utils import timezone
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware
 from starlette.applications import Starlette
@@ -381,37 +379,17 @@ def test_only_workspace_owners_are_pushed(site, ws):
     assert [c.args[0].username for c in push.call_args_list] == ["op"]
 
 
-# --- the schedule -------------------------------------------------------------------------------------
+# --- on demand only -----------------------------------------------------------------------------------
 
 
-def test_the_sweep_probes_the_most_overdue_site_once_per_tick(owner, ws):
-    old = _site(owner, ws)
-    AppCredential.objects.filter(pk=old.pk).update(last_probe_at=timezone.now() - timedelta(hours=2))
-    fresh = AppCredential.create_credential(name="fresh", created_by=owner, workspace=ws)
-    AppCredential.objects.filter(pk=fresh.pk).update(host_issuer=ISSUER, host_mcp_resource=RESOURCE,
-                                                     last_probe_at=timezone.now())
-    never = AppCredential.create_credential(name="never", created_by=owner, workspace=ws)
-    AppCredential.objects.filter(pk=never.pk).update(host_issuer=ISSUER, host_mcp_resource=RESOURCE)
-    AppCredential.create_credential(name="no-grants", created_by=owner, workspace=ws)
-
-    assert [a.name for a in live_probe.due_sites()] == ["never", "connect-labs"]
-    with override_settings(CANOPY_LIVE_PROBE_SWEEP=True), \
-            mock.patch.object(live_probe, "probe_and_record") as probe:
-        assert live_probe.sweep(background=False) == 1
-        assert live_probe.sweep(background=False) == 0, "one tick per SWEEP_EVERY_SECONDS, fleet-wide"
-    assert probe.call_args.args[0].name == "never"
-
-
-def test_the_sweep_is_off_in_tests_and_where_disabled(site):
+def test_nothing_probes_on_a_clock():
+    # It swept every 30 min per site off runner reports until 2026-09-29; it is
+    # on demand now (Test connection). Every probe mints a real grant and calls
+    # a real host, so nothing may start one that a person did not ask for.
     with mock.patch.object(live_probe, "probe_and_record") as probe:
-        assert live_probe.sweep(background=False) == 0
-    assert not probe.called
-
-
-def test_the_sweep_rides_runner_session_reports():
-    with mock.patch.object(live_probe, "sweep") as sweep:
         sessions_reported.send(sender=None, runner=mock.Mock(paired_by_id=None))
-    assert sweep.called
+    assert not probe.called
+    assert not hasattr(live_probe, "sweep")
 
 
 def test_a_probe_already_running_for_a_site_is_not_started_twice(site):
