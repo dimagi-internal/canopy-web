@@ -187,11 +187,23 @@ def probe(*, port: int = 9222) -> dict:
     return _run("probe", {"port": port}, timeout=30)
 
 
+def _argv_safe(prompt: str) -> str:
+    """Keep a new task's initial prompt from being parsed as a CLI option.
+
+    emdash launches Claude as `claude <prompt>` — the prompt is a bare positional,
+    with no `--` before it — so a message that starts with `-` ("- lets pick back
+    up…", a Slack bullet) dies at launch with `error: unknown option` and the task
+    never gets a transcript. A markdown escape keeps the text's meaning and is not
+    whitespace, so nothing between here and argv can trim it away.
+    """
+    return "\\" + prompt if prompt.startswith("-") else prompt
+
+
 def create_task(project: str, prompt: str, *, task_name: str = "", port: int = 9222) -> dict:
     """Create a NEW emdash task under `project` with `prompt` as the initial message.
     Pass `task_name` for a deterministic, reusable name (recommended — the auto-name
     diff is unreliable under sidebar virtualization). Returns {..., "task": name}."""
-    args = {"port": port, "project": project, "prompt": prompt}
+    args = {"port": port, "project": project, "prompt": _argv_safe(prompt)}
     if task_name:
         args["taskName"] = task_name
     return _run("create", args)
