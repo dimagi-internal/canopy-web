@@ -401,7 +401,9 @@ function TaskActions({
       {isInProgress && (
         <div className="flex items-center gap-3">
           <ActionButton tone="primary" disabled={busy} onClick={() => run('dispatch')}>
-            Echo, do this now
+            {/* Every agent's board renders this card, so the name comes from the
+                task — it was hardcoded to the first agent the board was built for. */}
+            {agentDisplayName(task.agent_slug)}, do this now
           </ActionButton>
           <ActionButton tone="muted" disabled={busy} onClick={() => run('done')}>
             Mark done
@@ -412,6 +414,12 @@ function TaskActions({
       {error && <p className="mt-1.5 text-[10px] text-destructive">{error}</p>}
     </div>
   )
+}
+
+/** `jarvis` → `Jarvis`. Slugs are lowercase `[a-z0-9-]`, so capitalising the
+ *  first letter is the agent's display name in every case the fleet has. */
+export function agentDisplayName(slug: string): string {
+  return slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : 'Agent'
 }
 
 // ── Card ────────────────────────────────────────────────────────────────────
