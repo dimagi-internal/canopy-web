@@ -141,6 +141,16 @@ def _probe_or_none(cfg: Mapping) -> ProbeIdentity | None:
         return None
 
 
+def _in_event_loop() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 def probe_identity(cfg: Mapping | None = None) -> ProbeIdentity | None:
     """``CANOPY_HOST["PROBE"]`` as a ``ProbeIdentity``, or ``None`` when it is
     absent or its subject resolves to nothing (the probe user does not exist
@@ -153,6 +163,11 @@ def probe_identity(cfg: Mapping | None = None) -> ProbeIdentity | None:
         return None
     block = dict(block)
     resolver = block.get("SUBJECT_RESOLVER")
+    if resolver and _in_event_loop():
+        # The MCP DPoP gate builds its config on the event loop, where a
+        # resolver's database read is forbidden — and it never needs the probe,
+        # which is served (and advertised) only by synchronous views.
+        return None
     if resolver:
         fn = import_string(resolver) if isinstance(resolver, str) else resolver
         block["SUBJECT"] = fn() or ""

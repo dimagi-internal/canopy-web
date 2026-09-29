@@ -130,3 +130,22 @@ def token(request: HttpRequest) -> JsonResponse:
     for key, value in headers.items():
         resp[key] = value
     return resp
+
+
+@csrf_exempt
+@require_POST
+def probe(request: HttpRequest) -> JsonResponse:
+    """canopy's live probe of its own host half: a real ID-JAG for the dedicated
+    probe user (`CANOPY_HOST_PROBE_USERNAME`), for canopy's own client only,
+    authenticated exactly like the token endpoint. 404 while there is no probe
+    user. Never logs the form."""
+    from canopy_sdk import contract
+
+    from . import self_host
+
+    status, body, headers = self_host.handle_probe_request(
+        request.POST.dict(), request.headers.get(contract.DPOP_HEADER))
+    resp = JsonResponse(body, status=status)
+    for key, value in headers.items():
+        resp[key] = value
+    return resp

@@ -44,6 +44,7 @@ urlpatterns = [
     # RFC 8414 / RFC 9728 documents. All 503 until CANOPY_HOST_SIGNING_KEY and
     # the client keys are set. Public, like the two above.
     path("oauth/token", views_oauth.token, name="oauth-token"),
+    path("oauth/probe", views_oauth.probe, name="oauth-probe"),
     path("oauth/host/jwks.json", views_oauth.host_jwks, name="oauth-host-jwks"),
     path(".well-known/oauth-authorization-server", views_oauth.authorization_server_metadata),
     path(".well-known/oauth-authorization-server/<path:rest>", views_oauth.authorization_server_metadata),

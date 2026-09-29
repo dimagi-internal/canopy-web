@@ -455,3 +455,34 @@ def test_a_probe_answer_that_is_not_marked_as_a_probe_is_refused(world):
     with pytest.raises(conformance.ProbeError) as info:
         conformance.request_probe(ISSUER, world.client, fetch_json=t.fetch_json, post_form=unmarked)
     assert info.value.code == "bad_probe_response"
+
+
+def _resolver_that_must_not_run():
+    raise AssertionError("the subject resolver ran on the event loop")
+
+
+@pytest.mark.django_db
+def test_the_subject_resolver_never_runs_on_the_event_loop(world):
+    """The MCP DPoP gate builds its config on the event loop, where a
+    resolver's database read raises SynchronousOnlyOperation. It never needs the
+    probe, so the probe is simply absent there — and present in sync views."""
+    import asyncio
+
+    from canopy_sdk.django import conf
+
+    settings = {"SIGNING_KEY": private_pem(world.host_key), "CLIENT_ID": CLIENT_ID, "ISSUER": ISSUER,
+                "RESOURCE": RESOURCE, "TOKEN_ENDPOINT": TOKEN_ENDPOINT,
+                "SCOPE_TOOLS": {"marketplace:read": ["marketplace_rounds_list"]},
+                "PROBE": {"ENDPOINT": PROBE_ENDPOINT, "SCOPE": "marketplace:read",
+                          "TOOL": "marketplace_rounds_list",
+                          "SUBJECT_RESOLVER": "tests.test_probe._resolver_that_must_not_run"}}
+
+    async def on_the_loop():
+        return conf.get_host_config()
+
+    with override_settings(CANOPY_HOST=settings):
+        config = asyncio.run(on_the_loop())
+        assert config.grant_enabled and config.probe is None
+    sync_ok = {**settings, "PROBE": {**settings["PROBE"], "SUBJECT_RESOLVER": lambda: "7"}}
+    with override_settings(CANOPY_HOST=sync_ok):
+        assert conf.get_host_config().probe.subject == "7"

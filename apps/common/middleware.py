@@ -56,6 +56,9 @@ PUBLIC_PATH_PREFIXES = (
     # signed grant, one allowed client), the host key's PUBLIC half, and the
     # discovery documents. Nothing here can sign or read tenant data.
     "/oauth/token",
+    # canopy's live probe of its OWN host half: a real ID-JAG for the dedicated
+    # probe user, for canopy's own client only (same private_key_jwt + DPoP).
+    "/oauth/probe",
     "/oauth/host/jwks.json",
     "/.well-known/oauth-authorization-server",
     "/.well-known/oauth-protected-resource",

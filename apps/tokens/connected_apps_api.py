@@ -47,6 +47,34 @@ class ConnectedAgentOut(Schema):
     name: str
 
 
+class LiveProbeOut(Schema):
+    """canopy's last live probe of this site: a real grant for the site's
+    dedicated probe user, redeemed and used the way a visitor's turn uses one."""
+
+    #: When it last ran; null if it never has.
+    at: str | None
+    #: true = every step passed; false = a step failed; null = no verdict (the
+    #: site offers no probe, or it has not run yet).
+    ok: bool | None
+    #: The first step that failed, or why there was no verdict. Blank on a pass.
+    step: str
+    step_label: str
+    #: Why, in words. Never contains a credential.
+    reason: str
+
+
+class TrafficHealthOut(Schema):
+    """What real visitors' traffic says about this site."""
+
+    #: The last time canopy redeemed a visitor's grant from this site.
+    last_redeemed_at: str | None
+    #: The last time an agent's call into this site, as a visitor, succeeded.
+    last_site_call_at: str | None
+    #: Refusals seen in the last 24 hours: refused redemptions (one per reason)
+    #: plus refused calls.
+    refusals_24h: int
+
+
 class ConnectedAppOut(Schema):
     """A site connected to canopy.
 
@@ -77,6 +105,8 @@ class ConnectedAppOut(Schema):
     created_at: str
     last_used_at: str | None
     revoked: bool
+    live_probe: LiveProbeOut
+    traffic: TrafficHealthOut
 
 
 class ConnectIn(Schema):
@@ -98,6 +128,28 @@ class UpdateIn(Schema):
     host_issuer: str | None = None
     host_mcp_resource: str | None = None
     show_on_canopy_pages: bool | None = None
+
+
+def _iso(value) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _probe_out(app: AppCredential) -> LiveProbeOut:
+    from . import live_probe
+
+    return LiveProbeOut(at=_iso(app.last_probe_at), ok=app.last_probe_ok,
+                        step=app.last_probe_step or "",
+                        step_label=live_probe.STEPS.get(app.last_probe_step or "", app.last_probe_step or ""),
+                        reason=app.last_probe_reason or "")
+
+
+def _traffic_out(app: AppCredential) -> TrafficHealthOut:
+    from . import live_probe
+
+    health = live_probe.traffic_health(app)
+    return TrafficHealthOut(last_redeemed_at=_iso(health.last_redeemed_at),
+                            last_site_call_at=_iso(health.last_site_call_at),
+                            refusals_24h=health.refusals_24h)
 
 
 def _out(app: AppCredential) -> ConnectedAppOut:
@@ -122,6 +174,8 @@ def _out(app: AppCredential) -> ConnectedAppOut:
         created_at=app.created_at.isoformat(),
         last_used_at=app.last_used_at.isoformat() if app.last_used_at else None,
         revoked=app.revoked_at is not None,
+        live_probe=_probe_out(app),
+        traffic=_traffic_out(app),
     )
 
 
@@ -227,9 +281,16 @@ class ConnectionCheckOut(Schema):
 class ConnectionTestOut(Schema):
     """What canopy found when it tried this site's settings, from its own server."""
 
-    #: True when no check failed (skipped checks do not count against it).
+    #: True when no check failed — the settings checks or the live probe
+    #: (skipped checks do not count against it).
     ok: bool
     checks: list[ConnectionCheckOut]
+    #: The live probe: a real grant for the site's dedicated probe user, issued,
+    #: redeemed and used. Each step passes, fails or is skipped (a site with no
+    #: probe identity skips it).
+    live_probe: list[ConnectionCheckOut]
+    #: true = the live probe passed; false = it failed; null = no verdict.
+    live_probe_ok: bool | None
 
 
 @connected_apps_router.post("/{slug}/connected-apps/{int:app_id}/test", response=ConnectionTestOut,
@@ -239,23 +300,41 @@ def test_connected_app(request: HttpRequest, slug: str, app_id: int) -> Connecti
 
     Reads the site's published keys, and — when it lets the agent act as the
     visitor — its sign-in and MCP discovery documents, then asks its token
-    endpoint whether it accepts canopy as a client. That last step sends a
-    grant the site must refuse, so nothing is issued or used up there. Each
-    step comes back as pass, fail or skip, with the reason.
+    endpoint whether it accepts canopy as a client. That step sends a grant the
+    site must refuse, so nothing is issued or used up there.
+
+    Then the live probe, when the site offers one: canopy asks the site for a
+    grant for its dedicated probe user, redeems it, calls the probe's tool with
+    it, and checks that a tool outside its scope and a call without a valid
+    proof are both refused. The result is recorded on the site, as it is when
+    the probe runs on its schedule. Each step comes back as pass, fail or skip,
+    with the reason.
     """
     # Rationale (not in the docstring — it is published): every URL here was
     # typed by a tenant, so every request goes through `outbound.py` (https,
-    # no private address space, no redirects, bounded). A real grant cannot be
-    # redeemed from here: that needs an ID-JAG signed by the host's key, which
-    # canopy never holds. See apps/tokens/connection_test.py.
-    from . import connection_test
+    # no private address space, no redirects, bounded). The settings checks
+    # cannot redeem a real grant (that needs an ID-JAG signed by the host's
+    # key); the live probe can, because the HOST signs one for its own probe
+    # principal. See apps/tokens/connection_test.py and live_probe.py.
+    from . import connection_test, live_probe
 
     app = _app_or_404(request, slug, app_id)
     rows = connection_test.run(app)
+    probe = live_probe.probe_and_record(app, trigger="test")
+    if probe is None:
+        probe_rows = [ConnectionCheckOut(name="probe_issued", label=live_probe.STEPS["probe_issued"],
+                                         status="skip", detail="a probe of this site is already running")]
+        probe_ok = None
+    else:
+        probe_rows = [ConnectionCheckOut(name=s.name, label=s.label, status=s.status, detail=s.detail)
+                      for s in probe.steps]
+        probe_ok = probe.ok
     return ConnectionTestOut(
-        ok=not any(r.status == "fail" for r in rows),
+        ok=not any(r.status == "fail" for r in rows) and probe_ok is not False,
         checks=[ConnectionCheckOut(name=r.name, label=r.label, status=r.status, detail=r.detail)
                 for r in rows],
+        live_probe=probe_rows,
+        live_probe_ok=probe_ok,
     )
 
 

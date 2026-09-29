@@ -22,7 +22,9 @@ would do with those settings, and says which step fails and why:
   keys). Spends nothing at the host.
 
 What it cannot do is redeem a REAL grant: that needs an ID-JAG signed by the
-host's key, which canopy never holds. The first real visitor does that.
+host's key, which canopy never holds. A host with a probe identity signs one for
+its dedicated probe principal, and `live_probe.py` walks that chain — Test
+connection runs both.
 
 Every request goes through `outbound.py` — https only, no private address
 space, no redirects, bounded — because each URL here is one a tenant typed.

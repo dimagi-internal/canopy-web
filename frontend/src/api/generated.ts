@@ -3400,9 +3400,15 @@ export interface paths {
          *
          *     Reads the site's published keys, and — when it lets the agent act as the
          *     visitor — its sign-in and MCP discovery documents, then asks its token
-         *     endpoint whether it accepts canopy as a client. That last step sends a
-         *     grant the site must refuse, so nothing is issued or used up there. Each
-         *     step comes back as pass, fail or skip, with the reason.
+         *     endpoint whether it accepts canopy as a client. That step sends a grant the
+         *     site must refuse, so nothing is issued or used up there.
+         *
+         *     Then the live probe, when the site offers one: canopy asks the site for a
+         *     grant for its dedicated probe user, redeems it, calls the probe's tool with
+         *     it, and checks that a tool outside its scope and a call without a valid
+         *     proof are both refused. The result is recorded on the site, as it is when
+         *     the probe runs on its schedule. Each step comes back as pass, fail or skip,
+         *     with the reason.
          */
         readonly post: operations["apps_tokens_connected_apps_api_test_connected_app"];
         readonly delete?: never;
@@ -11364,6 +11370,37 @@ export interface components {
             readonly last_used_at: string | null;
             /** Revoked */
             readonly revoked: boolean;
+            readonly live_probe: components["schemas"]["LiveProbeOut"];
+            readonly traffic: components["schemas"]["TrafficHealthOut"];
+        };
+        /**
+         * LiveProbeOut
+         * @description canopy's last live probe of this site: a real grant for the site's
+         *     dedicated probe user, redeemed and used the way a visitor's turn uses one.
+         */
+        readonly LiveProbeOut: {
+            /** At */
+            readonly at: string | null;
+            /** Ok */
+            readonly ok: boolean | null;
+            /** Step */
+            readonly step: string;
+            /** Step Label */
+            readonly step_label: string;
+            /** Reason */
+            readonly reason: string;
+        };
+        /**
+         * TrafficHealthOut
+         * @description What real visitors' traffic says about this site.
+         */
+        readonly TrafficHealthOut: {
+            /** Last Redeemed At */
+            readonly last_redeemed_at: string | null;
+            /** Last Site Call At */
+            readonly last_site_call_at: string | null;
+            /** Refusals 24H */
+            readonly refusals_24h: number;
         };
         /** ConnectIn */
         readonly ConnectIn: {
@@ -11448,6 +11485,10 @@ export interface components {
             readonly ok: boolean;
             /** Checks */
             readonly checks: readonly components["schemas"]["ConnectionCheckOut"][];
+            /** Live Probe */
+            readonly live_probe: readonly components["schemas"]["ConnectionCheckOut"][];
+            /** Live Probe Ok */
+            readonly live_probe_ok: boolean | null;
         };
         /** ActivityEventOut */
         readonly ActivityEventOut: {

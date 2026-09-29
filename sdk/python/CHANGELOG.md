@@ -23,7 +23,9 @@ unchanged (every new field is an optional extension).
 - **Django** — `CANOPY_HOST["PROBE"]` (`ENDPOINT`, `SUBJECT` or
   `SUBJECT_RESOLVER`, `SCOPE`, `TOOL`, `ARGUMENTS`, `DENIED_TOOL`, `PAGE`),
   `views.probe_endpoint` at `canopy_host:probe` (`probe/`). A broken `PROBE`
-  block logs and turns the probe off — never the grant.
+  block logs and turns the probe off — never the grant. `SUBJECT_RESOLVER` is
+  never called on the event loop (the MCP DPoP gate builds its config there,
+  where a database read is forbidden, and never needs the probe).
 - **`issue_id_jag(..., extra_claims=)`** — claims beside the contract's, which
   always win.
 - **`GrantHandler` logs `probe=True`** for a probe ID-JAG it redeems.

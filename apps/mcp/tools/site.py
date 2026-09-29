@@ -87,7 +87,10 @@ async def site_call(tool: str, arguments: dict | None = None) -> dict:
     from apps.tokens import host_gateway
 
     ctx = await _context("site_call")
-    summary = f"turn={ctx.turn_id} site={ctx.site} tool={host_gateway.host_tool_name(tool)}"
+    # `app=<pk>` names the Connected site unambiguously (a site NAME is unique
+    # only per tenant); the Connected sites table reads it for real-traffic health.
+    summary = (f"turn={ctx.turn_id} site={ctx.site} app={ctx.app_id} "
+               f"tool={host_gateway.host_tool_name(tool)}")
     if not ctx.allows(tool):
         await write_audit(user_id=current_user_id(), tool="site_call",
                           args_summary=summary, ok=False, error="not_allowed")
