@@ -84,4 +84,19 @@ describe('AppLayout — WorkspaceSwitcher gating', () => {
     expect(options.at(-1)).toBe('+ New workspace…')
     expect(screen.queryByText('+ Workspace')).toBeNull()
   })
+
+  it('nested workspaces show plain names — tree order, no branch glyph or indent', async () => {
+    // Jonathan, 2026-09-29: the "↳ CommCare" marker looked noisy, and to someone
+    // who is only in the division it points at an org they cannot open.
+    listWorkspaces.mockResolvedValue([
+      { slug: 'commcare', display_name: 'CommCare', parent: 'dimagi' },
+      { slug: 'dimagi', display_name: 'Dimagi', parent: null },
+    ] as WorkspaceOut[])
+
+    renderAs('authenticated')
+
+    const picker = (await screen.findByLabelText('Workspace')) as HTMLSelectElement
+    const options = [...picker.options].map((o) => o.text)
+    expect(options).toEqual(['Dimagi', 'CommCare', '+ New workspace…'])
+  })
 })
