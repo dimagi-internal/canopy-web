@@ -172,6 +172,12 @@ safe: the host's own ACL decides what each person reaches. Before step 4 exists
 for a host, its ceiling must stay read-only, because the calls still run as the
 agent.
 
+> **Amended 2026-09-29.** With a host grant, the page's `backing_tool`(s) are no
+> longer a filter and `ceiling:` is optional: a turn may call what the host lists
+> for the visitor's grant, narrowed by a ceiling only if the owner sets one. Page
+> state is written by the page's own JavaScript, so the backing filter never
+> bounded a hostile page, and it made canopy hold each host's tool names.
+
 ### Per-call authorization
 
 EMA deliberately stops at connection time, so per-call checks come from two

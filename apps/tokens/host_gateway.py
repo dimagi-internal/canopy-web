@@ -27,15 +27,23 @@ credential, which would hand the visitor whatever the agent can reach — the sa
 URL it is audience-bound to, and dropped. Nothing about it goes into a return
 value, an exception message, a log line or the audit row.
 
-**The effective set** is what three independent parties allow, intersected:
+**The effective set is the host's.** With a host grant every call runs AS the
+visitor, and the host both lists (`tools/list`) and enforces (per call) only the
+tools the grant's scopes map to, under that person's own ACL. So what a turn may
+call is what the host lists for this token. canopy adds a narrowing only on the
+agent owner's word:
 
-* the owner's per-site **ceiling** (`ceiling:` on the capability);
-* the tools the **page** says back its view (`page_state.backing_tool`) — a
-  narrowing only, since the page's JavaScript is untrusted; and
-* the **host's** own scopes and ACL, enforced by the host as the visitor.
+* the owner's per-site **ceiling** (`ceiling:` on the capability) — OPTIONAL. Absent
+  or empty, canopy adds nothing and the host's grant decides; present, it narrows
+  (an owner keeping an agent off part of a site). It can never widen: the host
+  still refuses anything outside the grant.
 
-canopy enforces the first two; a page that declares no backing tool unlocks
-nothing.
+The page's `backing_tool(s)` are a HINT — carried to the agent in its caller
+context so it knows where to read the rows on screen — and no longer a filter.
+They were one until 2026-09-29, but page state is written by the page's own
+JavaScript, so that filter never bounded a hostile page (the grant's scopes do),
+and it made every host re-list in its page state the tools its own grant had
+already decided — canopy holding the host's tool names twice over.
 """
 from __future__ import annotations
 
@@ -75,14 +83,13 @@ class SiteContext:
     scope: str
     expires_at: object
     ceiling: list[str]
-    backing: list[str]
     _token: str = field(repr=False, default="")
     #: The Connected site's row, so an audit line names the site unambiguously
     #: (a site NAME is unique only per tenant).
     app_id: int | None = None
 
     def allows(self, tool: str) -> bool:
-        return tool_allowed(tool, ceiling=self.ceiling, backing=self.backing)
+        return tool_allowed(tool, ceiling=self.ceiling)
 
 
 # --- names --------------------------------------------------------------------
@@ -91,9 +98,8 @@ class SiteContext:
 def host_tool_name(name: str) -> str:
     """A tool's name AT THE HOST, from however it is written here.
 
-    Owners write ceilings in Claude Code's naming (`mcp__*connect_labs__*`),
-    and pages may name a backing tool the same way or bare
-    (`marketplace_orgs_get`). The server segment is dropped: the gateway only
+    Owners write ceilings in Claude Code's naming (`mcp__*connect_labs__*`), or
+    bare (`marketplace_*`). The server segment is dropped: the gateway only
     ever calls one server, the site's own, so the host's tool name is what
     matters.
     """
@@ -106,27 +112,19 @@ def host_tool_name(name: str) -> str:
     return value
 
 
-def tool_allowed(tool: str, *, ceiling: list[str], backing: list[str]) -> bool:
-    """Inside the ceiling AND named by the page. Fails closed on either empty."""
+def tool_allowed(tool: str, *, ceiling: list[str]) -> bool:
+    """Inside the owner's ceiling, if the owner set one.
+
+    An empty ceiling narrows nothing: the host's grant decides (it lists and
+    enforces its own tools, as the visitor). A tool with no name is never allowed.
+    """
     name = host_tool_name(tool)
     if not name:
         return False
-    globs = [g for g in (host_tool_name(c) for c in ceiling) if g]
-    if not any(fnmatch.fnmatchcase(name, g) for g in globs):
-        return False
-    return name in {host_tool_name(b) for b in backing}
-
-
-def _backing_tools(session) -> list[str]:
-    state = (getattr(session, "page_state", None) or {}) if session is not None else {}
-    out: list[str] = []
-    for key in ("backing_tool", "backing_tools"):
-        value = state.get(key)
-        if isinstance(value, str) and value.strip():
-            out.append(value.strip())
-        elif isinstance(value, list):
-            out.extend(v.strip() for v in value if isinstance(v, str) and v.strip())
-    return out
+    globs = [g for g in (host_tool_name(c) for c in ceiling or []) if g]
+    if not globs:
+        return True
+    return any(fnmatch.fnmatchcase(name, g) for g in globs)
 
 
 # --- resolution ----------------------------------------------------------------
@@ -176,11 +174,10 @@ def resolve(turn_id: str) -> SiteContext:
         raise GatewayRefusal("no_grant",
                              f"{site} has not given me access on your behalf — " + BACK_ON_THE_PAGE)
     return context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
-                             ceiling=list(cap.get("ceiling") or []), backing=_backing_tools(session))
+                             ceiling=list(cap.get("ceiling") or []))
 
 
-def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: list[str],
-                      backing: list[str]) -> SiteContext:
+def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: list[str]) -> SiteContext:
     """A `SiteContext` for ONE stored grant — or a refusal if the grant cannot
     be used: expired, for a resource the site no longer names, or bound to a
     DPoP key canopy no longer holds. `resolve` reaches it for a visitor's turn;
@@ -205,7 +202,7 @@ def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: lis
     return SiteContext(
         turn_id=turn_id, agent_slug=agent_slug, site=app.name,
         resource=app.host_mcp_resource, scope=grant.scope, expires_at=grant.expires_at,
-        ceiling=list(ceiling), backing=list(backing),
+        ceiling=list(ceiling),
         _token=decrypt_secret(grant.access_token_enc), app_id=app.pk,
     )
 
@@ -307,8 +304,8 @@ async def _check_target(ctx: SiteContext) -> None:
 
 
 async def list_tools(ctx: SiteContext) -> list[dict]:
-    """The host's tools this turn may use: what the host lists (as the
-    visitor) ∩ the effective set."""
+    """The host's tools this turn may use: what the host lists for the
+    visitor's grant, narrowed by the owner's ceiling if there is one."""
     await _check_target(ctx)
     try:
         async with _client(ctx) as client:

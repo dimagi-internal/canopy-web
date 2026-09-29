@@ -50,22 +50,24 @@ registered origin, to open a conversation at all.
 **`pages:` is superseded by `sites:` + `ceiling:`** (host grant contract v1,
 2026-09-26) and kept only so interfaces already published keep working. A
 per-page tool list had to be written by hand, page by page, and every tool on it
-ran as the AGENT. A site capability instead names a registered Connected site
-and the most any page on it may unlock:
+ran as the AGENT. A site capability instead names a registered Connected site:
 
     capabilities:
       connect:
         callers: [contact, member]
         sites: [connect-labs]               # a Connected site, by name
-        ceiling: ["mcp__*connect_labs__*"]  # host tools, at most
+        # ceiling: ["mcp__*connect_labs__marketplace_*"]   # OPTIONAL narrowing
 
 A conversation held on that site (its server-owned `embed_app`) selects the
 capability, and its confined profile gains canopy's gateway tools (`site_tools`,
 `site_call`) automatically. Through them the agent calls the host's tools AS THE
 VISITOR, with a grant the host issued for the page they are on — so what one
-turn may call is the page's declared `backing_tool` ∩ this ceiling ∩ the host's
-own scopes and ACL (`apps/tokens/host_gateway.py`). Because the calls run as the
-visitor, a broad ceiling is safe; the host's ACL decides what each person gets.
+turn may call is what the HOST grants: its scopes for that page and its ACL for
+that person (`apps/tokens/host_gateway.py`). canopy holds no list of the host's
+tools. `ceiling:` is an optional narrowing on the owner's word (keep an agent off
+part of a site); absent, canopy adds none. It can never widen what the host
+granted. The page's `backing_tool` tells the agent where to read the rows on
+screen; it is not a filter (until 2026-09-29 it was).
 
 **Default deny.** An agent that has published no interface is reachable by its
 workspace's members (in its full profile, as before) and by nobody else: a
@@ -230,9 +232,8 @@ def _sites(cap: dict, name: str) -> dict:
     """`sites:` (Connected site names) and `ceiling:` (tool globs), validated.
 
     A ceiling with no site is refused: it would read as a grant and apply to
-    nothing. A site with no ceiling is allowed and unlocks no host tool — the
-    conversation still selects the capability, which is the fail-closed way to
-    stage one.
+    nothing. A site with no ceiling defers to the host: what the visitor's grant
+    reaches is the host's decision (`host_gateway.tool_allowed`).
     """
     sites = _strings(cap.get("sites"), "sites", name)
     for site in sites:

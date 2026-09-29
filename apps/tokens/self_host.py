@@ -45,9 +45,11 @@ sign whatever the browser asked for. So canopy uses the SDK's KEY mode
 that matters is decided here: an unregistered key gets
 no grant; a registered one gets the scopes this registry says, never scopes the
 browser sent; every scope is read-only; the tools run as the visitor, so they
-reach no more than the visitor's own ACL already does; and the gateway narrows
-each call again to the page's declared `backing_tool`. A browser that names the
-wrong page picks among read-only views of its own data, nothing more.
+reach no more than the visitor's own ACL already does. A browser that names the
+wrong page picks among read-only views of its own data, nothing more. (The
+gateway used to narrow each call again to the page's declared `backing_tool`;
+it no longer does. Page state is written by that same browser, so the narrowing
+never bounded a page that lies — the read-only scopes above do.)
 
 **Probed like any other host.** `/oauth/probe` is the SDK's `ProbeHandler` for
 canopy's own client only: a real ID-JAG for the dedicated `canopy-probe` user
@@ -89,8 +91,8 @@ SCOPE_TOOLS: dict[str, tuple[str, ...]] = {
 #: Page key → the scopes a visitor on that page grants. Keys are what the
 #: widget sends (`frontend/src/widget/grantPage.ts` derives them from the
 #: route); every page here declares its selection with `usePageState` and a
-#: `backing_tool` among its scope's tools, because the gateway unlocks only the
-#: page's backing tool — a page with none would unlock nothing.
+#: `backing_tool` among its scope's tools — a hint that tells the agent where to
+#: read the rows on screen. What a grant reaches is its scopes' tools, here.
 PAGE_SCOPES: dict[str, tuple[str, ...]] = {
     "insights": ("insights:read",),               # /insights — backing_tool list_insights
     "agent.inbox": ("items:read",),               # /w/:ws/agents/:slug/inbox — list_items

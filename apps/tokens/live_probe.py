@@ -170,10 +170,10 @@ def _exercise(report: ProbeReport, app, grant, probe, host_gateway) -> None:
 
     denied = probe.denied_tool or "canopy_probe_out_of_scope"
     try:
-        # canopy's OWN narrowing (ceiling ∩ page) is opened to exactly the two
-        # tools the probe names, so what refuses the denied tool is the HOST.
+        # canopy's OWN narrowing (the ceiling) is set to exactly the two tools
+        # the probe names, so what refuses the denied tool is the HOST.
         ctx = host_gateway.context_for_grant(app, grant, turn_id="probe", agent_slug="canopy-probe",
-                                             ceiling=[probe.tool, denied], backing=[probe.tool, denied])
+                                             ceiling=[probe.tool, denied])
     except host_gateway.GatewayRefusal as exc:
         report.add("probe_tool_succeeds", "fail", f"{exc.code}: {exc.message}")
         return
