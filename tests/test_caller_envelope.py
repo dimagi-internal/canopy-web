@@ -459,3 +459,55 @@ def test_someone_elses_repo_chat_on_someone_elses_box_is_not_theirs(ctx):
     box = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, paired_by=owner)
     env = caller_context.build(_repo_turn(ws, stranger, creator=owner, runner=box))
     assert env["relationship"] == caller_context.CALLER
+
+
+# --- an agent's own login dispatching onto its owner's runner (canopy-web#1011) ------
+#
+# 2026-09-28: Jonathan asked an ACE session on emdash to dispatch a validation session
+# onto his `haldimagi-mbp-cdp` runner. The dispatch called canopy with ACE's own PAT and
+# no agent on the turn, so `_relationship_without_agent` saw a user who neither paired
+# the runner nor owns a session — CALLER. The session then refused, correctly by its
+# envelope, to merge on the owner's typed "I approve", twice.
+
+def _dispatched_turn(asker, runner):
+    # A repo-targeted turn: no agent, no chat session (the shape the 2026-09-28 envelope
+    # showed — `agent: null`, `session_id: null`).
+    return Turn.objects.create(origin=Turn.ORIGIN_API, idempotency_key=f"dispatch-{runner.pk}",
+                               prompt="validate", claimed_by=runner, project="ace",
+                               **who.for_user(asker, via="api", assurance="pat").fields())
+
+
+def test_an_agents_own_login_on_its_owners_runner_is_the_agent_itself(ctx):
+    from apps.harness.models import Runner
+
+    owner, _ws, agent = ctx
+    agent.user = User.objects.create_user("ace-bot", "ace@dimagi-ai.com", "pw")
+    agent.save(update_fields=["user"])
+    box = Runner.objects.create(name="haldimagi-mbp-cdp", kind=Runner.EMDASH, paired_by=owner)
+    env = caller_context.build(_dispatched_turn(agent.user, box))
+    assert env["relationship"] == caller_context.SYSTEM
+
+
+def test_an_agents_login_on_someone_elses_runner_stays_a_caller(ctx):
+    # The #983 guard, restated for the no-agent path: an agent's login is the agent
+    # only where its OWNER's authority already runs.
+    from apps.harness.models import Runner
+
+    _owner, _ws, agent = ctx
+    agent.user = User.objects.create_user("ace-bot", "ace@dimagi-ai.com", "pw")
+    agent.save(update_fields=["user"])
+    other = User.objects.create_user("x", "x@example.org", "pw")
+    box = Runner.objects.create(name="x-mbp", kind=Runner.EMDASH, paired_by=other)
+    env = caller_context.build(_dispatched_turn(agent.user, box))
+    assert env["relationship"] == caller_context.CALLER
+
+
+def test_a_plain_user_on_the_owners_runner_is_still_a_caller(ctx):
+    # Only an agent login is lifted — the owner's box does not vouch for strangers.
+    from apps.harness.models import Runner
+
+    owner, _ws, _agent = ctx
+    stranger = User.objects.create_user("y", "y@example.org", "pw")
+    box = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, paired_by=owner)
+    env = caller_context.build(_dispatched_turn(stranger, box))
+    assert env["relationship"] == caller_context.CALLER
