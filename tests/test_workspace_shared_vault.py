@@ -42,7 +42,7 @@ def test_an_owner_sets_the_vault_and_its_key(tenant):
         content_type="application/json",
     )
     assert res.status_code == 200
-    assert res.json() == {"vault": "Acme-Shared", "key_set": True}
+    assert res.json() == {"vault": "Acme-Shared", "key_set": True, "inherited_from": ""}
     tenant["ws"].refresh_from_db()
     assert tenant["ws"].shared_op_vault == "Acme-Shared"
 
@@ -58,7 +58,7 @@ def test_the_key_is_encrypted_and_never_returned(tenant):
     assert "shared_tok" not in tenant["ws"].shared_op_sa_token_enc
     # And the GET is masked too — key_set is a boolean, not the key.
     got = tenant["client"].get(URL)
-    assert got.json() == {"vault": "Acme-Shared", "key_set": True}
+    assert got.json() == {"vault": "Acme-Shared", "key_set": True, "inherited_from": ""}
     assert "shared_tok" not in got.content.decode()
 
 
@@ -70,7 +70,7 @@ def test_renaming_the_vault_does_not_wipe_the_key(tenant):
                          content_type="application/json")
     res = tenant["client"].put(URL, data={"vault": "Acme-Shared-2"},
                                content_type="application/json")
-    assert res.json() == {"vault": "Acme-Shared-2", "key_set": True}
+    assert res.json() == {"vault": "Acme-Shared-2", "key_set": True, "inherited_from": ""}
 
 
 def test_an_editor_may_not_set_it(tenant):
@@ -95,7 +95,7 @@ def test_a_non_member_gets_404_not_403(tenant):
 
 
 def test_an_unset_tenant_reports_empty_not_an_error(tenant):
-    assert tenant["client"].get(URL).json() == {"vault": "", "key_set": False}
+    assert tenant["client"].get(URL).json() == {"vault": "", "key_set": False, "inherited_from": ""}
 
 
 def test_a_blank_key_leaves_an_existing_one_alone(tenant):
@@ -106,3 +106,17 @@ def test_a_blank_key_leaves_an_existing_one_alone(tenant):
     res = tenant["client"].put(URL, data={"vault": "Acme-Shared", "service_key": ""},
                                content_type="application/json")
     assert res.json()["key_set"] is True
+
+
+def test_a_division_reports_the_vault_it_inherits(tenant):
+    """Masked the same way, and says WHOSE it is — a blank page on a division
+    whose agents are reading the org's vault would be a false alarm."""
+    org = Workspace.objects.create(
+        slug="org", display_name="Org", created_by=tenant["owner"],
+        shared_op_vault="Canopy-Shared", shared_op_sa_token_enc=encrypt_secret("org_tok"),
+    )
+    tenant["ws"].parent = org
+    tenant["ws"].save()
+    got = tenant["client"].get(URL)
+    assert got.json() == {"vault": "Canopy-Shared", "key_set": True, "inherited_from": "org"}
+    assert "org_tok" not in got.content.decode()

@@ -358,3 +358,62 @@ def test_the_shared_key_is_encrypted_at_rest(fleet):
     ws.save(update_fields=["shared_op_sa_token_enc"])
     ws.refresh_from_db()
     assert ws.shared_op_sa_token_enc and "shared_tok" not in ws.shared_op_sa_token_enc
+
+
+# ---- a division inherits its org's shared vault (2026-09-29) -----------------
+
+
+def _division(fleet, *, parent_vault="Canopy-Shared", parent_tok="org_tok"):
+    """Put the agent's workspace UNDER an org that holds the shared vault."""
+    jj = fleet["user"]
+    org = Workspace.objects.create(
+        slug="dimagi", display_name="Dimagi", created_by=jj,
+        shared_op_vault=parent_vault,
+        shared_op_sa_token_enc=encrypt_secret(parent_tok) if parent_tok else "",
+    )
+    ws = fleet["agent"].workspace
+    ws.parent = org
+    ws.save()
+    return org, ws
+
+
+def _resolve(fleet):
+    return Client().get(
+        "/api/agents/ace/credentials/resolve",
+        HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
+    ).json()
+
+
+def test_an_unconfigured_division_uses_its_orgs_shared_vault(fleet):
+    """Jonathan, 2026-09-29: every division points at the SAME Canopy-Shared
+    vault its org uses — one key to rotate, not one per division."""
+    _division(fleet)
+    body = _resolve(fleet)
+    assert body["shared_op_vault"] == "Canopy-Shared"
+    assert body["shared_op_sa_token"] == "org_tok"
+
+
+def test_a_division_with_its_own_vault_keeps_it(fleet):
+    """Nearest wins — a division that set one overrides the org's."""
+    _, ws = _division(fleet)
+    ws.shared_op_vault = "Division-Shared"
+    ws.shared_op_sa_token_enc = encrypt_secret("div_tok")
+    ws.save(update_fields=["shared_op_vault", "shared_op_sa_token_enc"])
+    body = _resolve(fleet)
+    assert (body["shared_op_vault"], body["shared_op_sa_token"]) == ("Division-Shared", "div_tok")
+
+
+def test_vault_and_key_never_come_from_different_workspaces(fleet):
+    """A division that set only a vault NAME does not borrow the org's key for
+    it — that key is scoped to the org's vault and could not read another."""
+    _, ws = _division(fleet)
+    ws.shared_op_vault = "Division-Shared"
+    ws.save(update_fields=["shared_op_vault"])
+    body = _resolve(fleet)
+    assert (body["shared_op_vault"], body["shared_op_sa_token"]) == ("Division-Shared", "")
+
+
+def test_an_unconfigured_org_leaves_the_division_empty(fleet):
+    _division(fleet, parent_vault="", parent_tok="")
+    body = _resolve(fleet)
+    assert (body["shared_op_vault"], body["shared_op_sa_token"]) == ("", "")

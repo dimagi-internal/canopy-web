@@ -863,7 +863,9 @@ def shared_vault_status(workspace):
     """Masked status — the name, and WHETHER a key is set. Never the key."""
     from .schemas import SharedVaultOut
 
+    source = workspace.shared_vault_source() or workspace
     return SharedVaultOut(
-        vault=workspace.shared_op_vault,
-        key_set=bool(workspace.shared_op_sa_token_enc),
+        vault=source.shared_op_vault,
+        key_set=bool(source.shared_op_sa_token_enc),
+        inherited_from="" if source.pk == workspace.pk else source.slug,
     )

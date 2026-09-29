@@ -1028,7 +1028,7 @@ def resolve_shared_vault(agent) -> tuple[str, str]:
     """
     from apps.common.encryption import decrypt_secret
 
-    ws = agent.workspace
+    ws = agent.workspace.shared_vault_source() if agent.workspace else None
     if ws is None:
         return "", ""
     token = decrypt_secret(ws.shared_op_sa_token_enc) if ws.shared_op_sa_token_enc else ""
