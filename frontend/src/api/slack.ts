@@ -30,6 +30,21 @@ export async function clearSlackConfigToken(workspace: string): Promise<SlackCon
   return res.data as SlackConfigOut
 }
 
+// `@canopy <agent> --history <minutes> <ask>`: may an ask read the channel's
+// recent past, and how far back. Owners only.
+export async function setSlackHistory(
+  workspace: string,
+  enabled: boolean,
+  maxMinutes: number,
+): Promise<SlackConfigOut> {
+  const res = await apiV2.PUT('/api/slack-config/{workspace}/history', {
+    params: { path: { workspace } },
+    body: { enabled, max_minutes: maxMinutes },
+  })
+  if (!res.response.ok) throw new Error(problemMessage(res.error, 'Failed to save the history setting'))
+  return res.data as SlackConfigOut
+}
+
 export async function syncSlackCommands(workspace: string): Promise<SlackSyncOut> {
   const res = await apiV2.POST('/api/slack-config/{workspace}/sync', { params: { path: { workspace } } })
   if (!res.response.ok) throw new Error(problemMessage(res.error, 'Sync failed'))

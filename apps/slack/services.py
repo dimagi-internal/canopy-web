@@ -38,7 +38,7 @@ from apps.harness.models import Turn
 from apps.workspaces import services as wsvc
 
 from . import client, window
-from .models import SlackInstallation, SlackUserLink
+from .models import SlackInstallation, SlackUserLink, SlackWorkspaceLink
 
 logger = logging.getLogger(__name__)
 
@@ -440,10 +440,19 @@ def handle_message(inbound: Inbound) -> Outcome:
     if not prompt:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
     title = prompt
-    try:
-        minutes, ask = window.parse(prompt)
-    except window.HistoryFlagError as e:
-        return Outcome(WINDOW_REFUSED, str(e), agent=agent, workspace_id=agent.workspace_id)
+    minutes, ask = None, prompt
+    if window.has_flag(prompt):
+        # The agent's tenant decides, not the Slack's: a Slack can serve several.
+        link = SlackWorkspaceLink.objects.filter(installation=installation,
+                                                 workspace_id=agent.workspace_id).first()
+        if link is None or not link.history_enabled:
+            return Outcome(WINDOW_REFUSED, "Reading channel history is turned off for this workspace. "
+                           "A workspace owner can turn it on in canopy's Slack settings.",
+                           agent=agent, workspace_id=agent.workspace_id)
+        try:
+            minutes, ask = window.parse(prompt, max_minutes=link.history_max_minutes)
+        except window.HistoryFlagError as e:
+            return Outcome(WINDOW_REFUSED, str(e), agent=agent, workspace_id=agent.workspace_id)
     if minutes is not None:
         prompt, refusal = _with_window(installation, principal, agent, inbound, minutes, ask)
         if refusal is not None:

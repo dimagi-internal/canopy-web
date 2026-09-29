@@ -16,16 +16,19 @@ import pytest
 from apps.events.models import Event
 from apps.harness.models import Turn
 from apps.slack import window
+from apps.slack.models import SlackWorkspaceLink
 from tests.test_slack import (  # noqa: F401
     ALICE,
     BOB,
     TEAM,
+    _link_client,
     alice,
     configured,
     hal,
     installation,
     linked,
     mention,
+    owner_client,
     slack,
     ws,
 )
@@ -98,9 +101,10 @@ def _turn() -> Turn:
     ("--history=15 what did we decide?", 15, "what did we decide?"),
     ("—history 5 summarise", 5, "summarise"),         # Slack auto-corrects -- to an em dash
     ("--HISTORY 60 file an issue", 60, "file an issue"),
+    ("--history 120", 120, ""),                       # two hours: the default cap
 ])
 def test_the_flag_is_recognised(text, minutes, ask):
-    assert window.parse(text) == (minutes, ask)
+    assert window.parse(text, max_minutes=120) == (minutes, ask)
 
 
 @pytest.mark.parametrize("text", [
@@ -109,12 +113,12 @@ def test_the_flag_is_recognised(text, minutes, ask):
     "--history 10m",            # minutes are a bare number
     "--history 1h",
     "--history 0",
-    "--history 61",             # over the cap: refused, not clamped
+    "--history 121",            # over the default cap: refused, not clamped
     "--history 2.5",
 ])
 def test_a_malformed_flag_is_refused_not_guessed(text):
     with pytest.raises(window.HistoryFlagError):
-        window.parse(text)
+        window.parse(text, max_minutes=120)
 
 
 @pytest.mark.parametrize("text", [
@@ -124,7 +128,19 @@ def test_a_malformed_flag_is_refused_not_guessed(text):
     "fix the export timeout",
 ])
 def test_anything_else_is_an_ordinary_ask(text):
-    assert window.parse(text) == (None, text)
+    assert window.parse(text, max_minutes=120) == (None, text)
+
+
+def test_the_cap_is_the_callers_policy():
+    assert window.parse("--history 180 catch me up", max_minutes=240) == (180, "catch me up")
+    with pytest.raises(window.HistoryFlagError, match="1–30"):
+        window.parse("--history 45", max_minutes=30)
+
+
+def test_the_message_ceiling_is_server_policy(channel, settings):
+    settings.SLACK_HISTORY_MESSAGE_CEILING = 1
+    lines = window.fetch("xoxb-test", channel_id="C1", minutes=10)
+    assert window.count(lines) <= 2          # one parent, plus at most the one reply it can still afford
 
 
 # ---- the front door ------------------------------------------------------------
@@ -211,3 +227,57 @@ def test_a_channel_canopy_cannot_read_says_why(channel, linked, hal):
     assert Event.objects.filter(kind="slack.window_failed").exists()
     told = channel.said("chat.postEphemeral") + channel.said("chat.postMessage")
     assert any("not_in_channel" in (p.get("text") or "") for p in told)
+
+
+# ---- the workspace's policy (Slack settings page) -------------------------------
+
+def _policy(ws, **kw):
+    SlackWorkspaceLink.objects.filter(workspace=ws).update(**kw)
+
+
+def test_history_is_on_for_two_hours_by_default(installation, ws):
+    link = SlackWorkspaceLink.objects.get(workspace=ws)
+    assert link.history_enabled is True and link.history_max_minutes == 120
+
+
+def test_turned_off_it_reads_nothing_and_says_where_to_turn_it_on(channel, linked, hal, ws):
+    _policy(ws, history_enabled=False)
+    mention("<@UBOT> hal --history 10", ts=_ts(0))
+    assert not channel.said("conversations.history")
+    assert not Turn.objects.exists()
+    told = channel.said("chat.postEphemeral") + channel.said("chat.postMessage")
+    assert any("turned off" in (p.get("text") or "") for p in told)
+
+
+def test_the_workspaces_limit_is_what_the_flag_is_checked_against(channel, linked, hal, ws):
+    _policy(ws, history_max_minutes=30)
+    mention("<@UBOT> hal --history 45", ts=_ts(0))
+    assert not channel.said("conversations.history")
+    _policy(ws, history_max_minutes=240)
+    mention("<@UBOT> hal --history 180", ts=_ts(0.5))
+    (call,) = channel.said("conversations.history")
+    assert float(call["oldest"]) < time.time() - 179 * 60
+
+
+def test_an_owner_sets_the_policy_and_the_config_read_shows_it(installation, ws, owner_client):
+    assert owner_client.get(f"/api/slack-config/{ws.slug}").json()["history"] == {"enabled": True, "max_minutes": 120}
+    resp = owner_client.put(f"/api/slack-config/{ws.slug}/history", {"enabled": False, "max_minutes": 240},
+                            content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["history"] == {"enabled": False, "max_minutes": 240}
+    link = SlackWorkspaceLink.objects.get(workspace=ws)
+    assert (link.history_enabled, link.history_max_minutes) == (False, 240)
+
+
+@pytest.mark.parametrize("minutes", [0, 24 * 60 + 1])
+def test_the_policy_is_bounded(installation, ws, owner_client, minutes):
+    resp = owner_client.put(f"/api/slack-config/{ws.slug}/history", {"enabled": True, "max_minutes": minutes},
+                            content_type="application/json")
+    assert resp.status_code == 422
+
+
+def test_only_an_owner_sets_the_policy(installation, ws, alice):
+    resp = _link_client(alice).put(f"/api/slack-config/{ws.slug}/history", {"enabled": True, "max_minutes": 600},
+                                   content_type="application/json")
+    assert resp.status_code == 403
+    assert SlackWorkspaceLink.objects.get(workspace=ws).history_max_minutes == 120

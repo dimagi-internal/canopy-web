@@ -106,6 +106,12 @@ class SlackWorkspaceLink(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
     )
     linked_at = models.DateTimeField(auto_now_add=True)
+    # `--history <minutes>` (apps/slack/window.py): whether an ask in Slack may
+    # hand an agent this channel's recent past, and how far back. Per tenant,
+    # because the agent that receives it is this tenant's; set by an owner on
+    # the Slack settings page.
+    history_enabled = models.BooleanField(default=True)
+    history_max_minutes = models.PositiveIntegerField(default=120)
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.installation} -> {self.workspace_id}"

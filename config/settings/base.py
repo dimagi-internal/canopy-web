@@ -508,6 +508,10 @@ INBOUND_EMAIL_AUTHSERV_ID = env("INBOUND_EMAIL_AUTHSERV_ID", default="mx.google.
 SLACK_CLIENT_ID = env("SLACK_CLIENT_ID", default="")
 SLACK_CLIENT_SECRET = env("SLACK_CLIENT_SECRET", default="")
 SLACK_SIGNING_SECRET = env("SLACK_SIGNING_SECRET", default="")
+# `--history <minutes>` (apps/slack/window.py): how many messages one read may
+# pull however long the window — an operational guard. Whether history may be
+# read at all, and how far back, is each workspace's own setting (Slack page).
+SLACK_HISTORY_MESSAGE_CEILING = env.int("SLACK_HISTORY_MESSAGE_CEILING", default=500)
 
 # This deployment's own externally-reachable base URL — no request context to derive
 # it from when services.py builds a callback URL for a drilled agent to POST back to

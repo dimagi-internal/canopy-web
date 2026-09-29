@@ -9,12 +9,16 @@ const base = {
   installed_at: '', install_url: 'https://canopy.test/canopy/auth/slack/install/?workspace=connect',
   commands: { managed: false, app_id: 'A1', set_by_email: '', synced_at: '', error: '' },
   agent: { declared: false, declared_at: '' },
+  history: { enabled: true, max_minutes: 120 },
 }
 
 vi.mock('@/api/slack', async (orig) => ({
   ...(await orig<typeof import('@/api/slack')>()),
   getSlackConfig: vi.fn(async () => base),
   setSlackConfigToken: vi.fn(async () => ({ status: 'synced', detail: '', added: ['/hal'], removed: [], unfit: [] })),
+  setSlackHistory: vi.fn(async (_ws: string, enabled: boolean, max_minutes: number) => ({
+    ...base, history: { enabled, max_minutes },
+  })),
   declareSlackAgent: vi.fn(async () => ({
     status: 'declared', detail: 'Slack will draw its own working indicator once the app is re-installed.',
     changed: ['features.agent_view'], reinstall_required: true, install_url: 'https://canopy.test/i',
@@ -86,5 +90,42 @@ describe('SlackSettingsPage — working indicator', () => {
     renderManaged()
     fireEvent.click(await screen.findByRole('button', { name: 'Declare as agent' }))
     expect(slack.declareSlackAgent).not.toHaveBeenCalled()
+  })
+})
+
+describe('SlackSettingsPage — channel history', () => {
+  afterEach(cleanup)
+
+  it('shows the workspace policy and saves a new limit', async () => {
+    vi.mocked(slack.getSlackConfig).mockResolvedValue(base)
+    renderPage()
+    const allow = (await screen.findByLabelText('Allow history read')) as HTMLInputElement
+    const minutes = screen.getByLabelText('How far back, in minutes') as HTMLInputElement
+    expect(allow.checked).toBe(true)
+    expect(minutes.value).toBe('120')
+    const save = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement
+    expect(save.disabled).toBe(true)                       // nothing changed yet
+    fireEvent.change(minutes, { target: { value: '240' } })
+    fireEvent.click(save)
+    expect((await screen.findByTestId('slack-note')).textContent).toBe(
+      'History reads allowed, up to 240 minutes back.')
+    expect(slack.setSlackHistory).toHaveBeenCalledWith('connect', true, 240)
+  })
+
+  it('turns history reads off', async () => {
+    vi.mocked(slack.getSlackConfig).mockResolvedValue(base)
+    renderPage()
+    fireEvent.click(await screen.findByLabelText('Allow history read'))
+    expect((screen.getByLabelText('How far back, in minutes') as HTMLInputElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect((await screen.findByTestId('slack-note')).textContent).toBe('History reads are off.')
+    expect(slack.setSlackHistory).toHaveBeenLastCalledWith('connect', false, 120)
+  })
+
+  it('will not save a limit outside a day', async () => {
+    vi.mocked(slack.getSlackConfig).mockResolvedValue(base)
+    renderPage()
+    fireEvent.change(await screen.findByLabelText('How far back, in minutes'), { target: { value: '2000' } })
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
   })
 })

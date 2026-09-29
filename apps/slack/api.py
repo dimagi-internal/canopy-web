@@ -17,7 +17,13 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 from . import commands, services
 from .models import SlackInstallation, SlackWorkspaceLink
-from .schemas import SlackConfigOut, SlackConfigTokenIn, SlackDeclareAgentOut, SlackSyncOut
+from .schemas import (
+    SlackConfigOut,
+    SlackConfigTokenIn,
+    SlackDeclareAgentOut,
+    SlackHistoryIn,
+    SlackSyncOut,
+)
 
 router = Router(auth=session_auth, tags=["slack"])
 
@@ -68,6 +74,11 @@ def _out(ws: Workspace) -> dict:
             "declared": bool(inst and inst.agent_declared_at),
             "declared_at": iso(inst.agent_declared_at) if inst else "",
         },
+        "history": {
+            "enabled": bool(link and link.history_enabled),
+            "max_minutes": link.history_max_minutes if link else
+            SlackWorkspaceLink._meta.get_field("history_max_minutes").default,
+        },
     }
 
 
@@ -95,6 +106,18 @@ def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigT
 def clear_config_token(request: HttpRequest, workspace: str) -> dict:
     ws = _owner_workspace_or_404(request.user, workspace)
     commands.clear_config_token(_installation_or_409(ws))
+    return _out(ws)
+
+
+@router.put("/{workspace}/history", response=SlackConfigOut,
+            summary="Allow reading channel history, and how far back (owner)")
+def set_history(request: HttpRequest, workspace: str, payload: SlackHistoryIn) -> dict:
+    """The policy for `@canopy <agent> --history <minutes> <ask>` in this workspace:
+    whether it may read the channel's recent past at all, and the longest window."""
+    ws = _owner_workspace_or_404(request.user, workspace)
+    _installation_or_409(ws)
+    SlackWorkspaceLink.objects.filter(workspace=ws).update(
+        history_enabled=payload.enabled, history_max_minutes=payload.max_minutes)
     return _out(ws)
 
 
