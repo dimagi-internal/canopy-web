@@ -220,6 +220,12 @@ export function AppLayout() {
 
 function AppShell() {
   const location = useLocation()
+  // The page subtree is keyed on the tenant. React Router reuses a route's
+  // element when only a PARAM changes, so switching /w/a/agents → /w/b/agents
+  // kept AgentsPage (and every other tenant page that fetches on mount) alive
+  // showing workspace a's rows under workspace b's name. Keying here fixes it
+  // for every tenant page at once instead of asking each to depend on the slug.
+  const { workspace: tenantKey } = useParams()
   const auth = useAuth()
   const { active } = useWorkspace()
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -396,13 +402,13 @@ function AppShell() {
         // 69px, so every full-bleed page was 16px taller than the screen and
         // scrolled past its own bottom. `dvh` also follows the mobile URL bar,
         // which `vh` does not.
-        <main className="min-h-0 flex-1"><Outlet /></main>
+        <main className="min-h-0 flex-1"><Outlet key={tenantKey ?? ''} /></main>
       ) : (
         // `px-6` unconditionally, on top of the `p-6` several pages set for
         // themselves, spent 96px of a 375px screen on padding — a quarter of the
         // width, before any content. The gutter now scales with the viewport;
         // the header above already did this.
-        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8"><Outlet /></main>
+        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8"><Outlet key={tenantKey ?? ''} /></main>
       )}
       {/* Inside the authenticated shell only: it mints a token for the signed-in
           user, and a launcher on a chrome-less public viewer (/share, /storyboard,

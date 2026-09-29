@@ -147,13 +147,21 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
 def list_workspaces(request: HttpRequest) -> list[WorkspaceOut]:
     # Direct memberships PLUS workspaces owned by inheritance (descendants of
     # one the caller owns) — read through `services`, the sole authorizer.
+    #
+    # ORDER IS A CONTRACT: the client's default workspace — where `/` and every
+    # legacy flat route (`/agents`, …) land — is the FIRST entry. Before the
+    # tree it was "your newest direct membership", and inherited rows must not
+    # displace that: sorting everything by `created_at` put four divisions
+    # created minutes earlier (all empty) ahead of `connect`, so the Agents
+    # page opened on a workspace with no agents. Direct memberships first
+    # (newest first, as before), then inherited ones.
     slugs = services.user_workspace_slugs(request.user)
-    out = []
+    rows = []
     for ws in Workspace.objects.filter(slug__in=slugs).order_by("-created_at"):
         m = services.membership(request.user, ws)
         if m is not None:
-            out.append(_m_out(m))
-    return out
+            rows.append(_m_out(m))
+    return sorted(rows, key=lambda w: w.inherited)  # stable: keeps -created_at within each group
 
 
 @router.get("/{slug}/", response=WorkspaceOut, summary="Get a workspace (member-only)",)
