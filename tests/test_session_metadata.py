@@ -32,11 +32,13 @@ def _clean_cache():
 def test_the_list_names_every_key_its_owner_writes():
     """Spelled as strings to avoid framework import cycles — so pinned here."""
     from apps.canopy_sessions.api import EMBED_APP_KEY
+    from apps.harness.runner_requirements import METADATA_KEY as RUNNER_REQUIREMENTS_KEY
     from apps.harness.services import EMAIL_THREAD_KEY
     from apps.slack.services import SLACK_THREAD_KEY
 
     owned = services.SERVER_OWNED_METADATA
-    assert {EMBED_APP_KEY, EMAIL_THREAD_KEY, SLACK_THREAD_KEY, services.TRANSCRIPT_SOURCED} <= owned
+    assert {EMBED_APP_KEY, EMAIL_THREAD_KEY, SLACK_THREAD_KEY, services.TRANSCRIPT_SOURCED,
+            RUNNER_REQUIREMENTS_KEY} <= owned
     assert {"slack_team", "slack_channel", "slack_thread_ts", "requested_runner_id"} <= owned
 
 
@@ -53,7 +55,7 @@ def member():
 
 HIJACK = {"slack_thread": "T1:C1:1.0", "slack_team": "T1", "slack_channel": "C-anyone",
           "slack_thread_ts": "1.0", "email_thread_key": "ace:18c9abc", "transcript_sourced": False,
-          "embed_app": "someone-else", "requested_runner_id": "x"}
+          "embed_app": "someone-else", "requested_runner_id": "x", "runner_requirements": ["zdr"]}
 
 
 def test_a_member_cannot_aim_the_slack_relay_or_capture_an_email_thread(member):

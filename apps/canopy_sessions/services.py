@@ -861,6 +861,9 @@ SERVER_OWNED_METADATA = frozenset({
     "embed_app", "requested_runner_id", "transcript_sourced",
     "slack_thread", "slack_team", "slack_channel", "slack_thread_ts",
     "email_thread_key", "via", "capability",
+    # A host's runner requirements (ZDR, apps/harness/runner_requirements.py),
+    # copied from the token that started or sent into the session.
+    "runner_requirements",
 })
 MAX_HOST_METADATA_KEYS = 20
 MAX_HOST_METADATA_BYTES = 4096
@@ -880,6 +883,29 @@ def host_metadata(raw) -> dict:
         raise ValueError(f"session metadata is limited to {MAX_HOST_METADATA_KEYS} keys "
                          f"and {MAX_HOST_METADATA_BYTES} bytes")
     return out
+
+
+def add_runner_requirements(session: Session, reqs) -> None:
+    """Union `reqs` into the session's requirements. Never removes one: a
+    conversation that held a host's data keeps the host's floor, whatever token
+    touches it next (spec 2026-09-30-zdr-runners)."""
+    from apps.harness import runner_requirements as rr
+
+    reqs = set(reqs or ())
+    if not reqs:
+        return
+    with transaction.atomic():
+        s = Session.objects.select_for_update().get(pk=session.pk)
+        meta = dict(s.metadata or {})
+        # A malformed stored value reads as {UNSATISFIABLE}; the union keeps it,
+        # so the session stays unclaimable — the fail-closed answer.
+        current = set(rr.requirements_of_session(s))
+        merged = sorted(current | reqs)
+        if merged == sorted(current):
+            return
+        meta[rr.METADATA_KEY] = merged
+        Session.objects.filter(pk=s.pk).update(metadata=meta)
+    session.metadata = meta
 
 
 def create_session(*, workspace, created_by=None, agent=None, project: str = "", title: str = "",

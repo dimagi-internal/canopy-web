@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 
+from canopy_sdk import contract
 from django.http import HttpRequest
 from ninja import Router, Schema
 
@@ -184,6 +185,21 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
               reason=exc.code, detail="signed assertion")
         raise HttpError(_STATUS.get(exc.code, 401), f"{exc.code}: {exc.message}")
 
+    # What the site requires of the runner its visitor's conversations run on
+    # (ZDR). Read only from a VERIFIED assertion, carried on the token minted
+    # below, and stamped from there onto every session that token touches.
+    try:
+        runner_reqs = contract.parse_runner_requirements(
+            claims.get(contract.RUNNER_REQUIREMENTS_CLAIM))
+    except ValueError as exc:
+        # Refused, not ignored: ignoring it would drop a requirement the host
+        # believes it made, and run its visitor wherever routing says.
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+              reason="bad_runner_requirements", detail=str(exc)[:200])
+        raise HttpError(400, f"bad_runner_requirements: {exc}")
+    if list(runner_reqs) != (app.last_runner_requirements or []):
+        type(app).objects.filter(pk=app.pk).update(last_runner_requirements=list(runner_reqs))
+
     try:
         workspace = _tenant_for(app, payload.agent_slug)
     except HttpError:
@@ -218,7 +234,8 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         from .models import DelegatedToken
 
         raw, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=ttl,
-                                          assurance=DelegatedToken.ASSURANCE_HOST_SIGNED)
+                                          assurance=DelegatedToken.ASSURANCE_HOST_SIGNED,
+                                          runner_requirements=runner_reqs)
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, subject=user,
               detail=f"contact={contact.identity} arrived as user {user.pk} "
                      f"(assurance=host_signed) ttl={ttl}s host_grant={granted}")
@@ -226,7 +243,8 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
                                contact_id=contact.pk, display_name=contact.display_name,
                                kind="user", host_grant=granted)
 
-    raw, token = ContactToken.issue(app=app, contact=contact, ttl_seconds=ttl)
+    raw, token = ContactToken.issue(app=app, contact=contact, ttl_seconds=ttl,
+                                    runner_requirements=runner_reqs)
     audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app,
           detail=f"contact={contact.identity} grade=app_signed ttl={ttl}s host_grant={granted}")
     return ContactTokenOut(
@@ -427,6 +445,9 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
     except ValueError as exc:
         raise HttpError(422, str(exc))
     metadata["embed_app"] = app.name          # server-owned: which site, from the token
+    reqs = getattr(request, "runner_requirements", ())
+    if reqs:
+        metadata["runner_requirements"] = list(reqs)   # server-owned: from the token
     # The same constructor a user's session goes through — so a contact's
     # conversation is recorded the same way (its transcript is its record under a
     # real runner) — with no `created_by`: there is no user, and leaving it null is
@@ -476,6 +497,9 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
     session = _session_or_404(request, session_id)
     if not payload.text.strip():
         raise HttpError(422, "message text is required")
+    # Before the send, so the turn it enqueues is routed under the site's floor.
+    # A union: a token without the claim never lifts one an earlier token set.
+    session_services.add_runner_requirements(session, getattr(request, "runner_requirements", ()))
     try:
         # `user` is the anonymous request user. `enqueue_turn` ignores an
         # unauthenticated one, so the turn simply carries no `enqueued_by` —

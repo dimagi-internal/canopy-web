@@ -401,6 +401,11 @@ class AppCredential(models.Model):
     #: that never contain a credential. Blank on a pass.
     last_probe_step = models.CharField(max_length=64, blank=True, default="")
     last_probe_reason = models.CharField(max_length=500, blank=True, default="")
+    #: The runner requirements (`canopy_runner_requirements`, e.g. ["zdr"]) the
+    #: site's most recent verified arrival carried — so an owner can see what the
+    #: host is asking for without reading a token. Informational: each TOKEN
+    #: carries its own copy, and that copy is what reaches a session.
+    last_runner_requirements = models.JSONField(default=list, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -527,17 +532,23 @@ class DelegatedToken(models.Model):
     #: interface may treat as such.
     ASSURANCE_DELEGATED, ASSURANCE_HOST_SIGNED = "delegated", "host_signed"
     assurance = models.CharField(max_length=16, default=ASSURANCE_DELEGATED)
+    #: Runner flags the SITE required of this visitor's conversations (its
+    #: signed `canopy_runner_requirements` claim). Stamped onto every session
+    #: this token starts or sends into. Empty for canopy's own widget.
+    runner_requirements = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "delegated_tokens"
         ordering = ["-created_at"]
 
     @classmethod
-    def issue(cls, *, app, user, ttl_seconds, assurance: str = "delegated"):
+    def issue(cls, *, app, user, ttl_seconds, assurance: str = "delegated",
+              runner_requirements=()):
         from django.utils import timezone
         raw = secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, user=user, assurance=assurance,
+            runner_requirements=list(runner_requirements),
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )
@@ -788,18 +799,21 @@ class ContactToken(models.Model):
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(db_index=True)
+    #: Runner flags the site required of this visitor's conversations — the
+    #: same field, for the same reason, as `DelegatedToken.runner_requirements`.
+    runner_requirements = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "contact_tokens"
         ordering = ["-created_at"]
 
     @classmethod
-    def issue(cls, *, app, contact, ttl_seconds):
+    def issue(cls, *, app, contact, ttl_seconds, runner_requirements=()):
         from django.utils import timezone
 
         raw = secrets.token_urlsafe(32)
         token = cls.objects.create(
-            app=app, contact=contact,
+            app=app, contact=contact, runner_requirements=list(runner_requirements),
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )
