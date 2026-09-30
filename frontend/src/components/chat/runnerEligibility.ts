@@ -15,13 +15,30 @@ export function isSessionCapable(runner: Pick<RunnerOut, "capabilities">): boole
   return runner.capabilities?.sessions === true;
 }
 
+/**
+ * Whether a runner declares every flag a conversation requires (e.g. `zdr`,
+ * from `SessionOut.runner_requirements`). The server refuses a placement that
+ * fails this, so offering one would only produce an error.
+ */
+export function satisfiesRequirements(
+  runner: { flags?: readonly string[] | null },
+  requires: readonly string[] | null | undefined,
+): boolean {
+  const flags = runner.flags ?? [];
+  return (requires ?? []).every((f) => flags.includes(f));
+}
+
 /** Online + session-capable runners from the fleet — the eligible set for
  * directed placement (new-chat "Run on" for a project chat, and the offline
- * banner's "Continue on…"). */
+ * banner's "Continue on…") — narrowed to those satisfying the conversation's
+ * runner requirements when it has any. */
 export function onlineSessionCapableRunners(
   fleet: readonly RunnerOut[],
+  requires: readonly string[] | null | undefined = [],
 ): RunnerOut[] {
-  return fleet.filter((r) => r.status === "online" && isSessionCapable(r));
+  return fleet.filter(
+    (r) => r.status === "online" && isSessionCapable(r) && satisfiesRequirements(r, requires),
+  );
 }
 
 /**

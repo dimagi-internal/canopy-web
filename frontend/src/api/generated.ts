@@ -8822,6 +8822,11 @@ export interface components {
              * @default false
              */
             readonly notify_every_completion: boolean;
+            /**
+             * Runner Requirements
+             * @default []
+             */
+            readonly runner_requirements: readonly string[];
             /** Messages */
             readonly messages: readonly components["schemas"]["MessageOut"][];
             /** Menu */
@@ -13164,6 +13169,11 @@ export interface components {
              * @default false
              */
             readonly notify_every_completion: boolean;
+            /**
+             * Runner Requirements
+             * @default []
+             */
+            readonly runner_requirements: readonly string[];
         };
         /** SessionCreateIn */
         readonly SessionCreateIn: {

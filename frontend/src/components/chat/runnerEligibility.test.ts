@@ -7,6 +7,7 @@ import {
   parkedReason,
   parkedSummary,
   partitionByRunnerReachability,
+  satisfiesRequirements,
 } from "./runnerEligibility";
 import type { RunnerOut } from "@/api/harness";
 
@@ -68,6 +69,28 @@ describe("onlineSessionCapableRunners", () => {
 
   it("returns an empty array for an empty fleet", () => {
     expect(onlineSessionCapableRunners([])).toEqual([]);
+  });
+
+  it("offers only runners declaring every flag the conversation requires", () => {
+    const fleet = [
+      runner({ id: "plain", flags: [] }),
+      runner({ id: "zdr", flags: ["zdr"] }),
+      runner({ id: "zdr-offline", status: "offline", flags: ["zdr"] }),
+    ];
+    expect(onlineSessionCapableRunners(fleet, ["zdr"]).map((r) => r.id)).toEqual(["zdr"]);
+    // No requirement: nothing narrows.
+    expect(onlineSessionCapableRunners(fleet, []).map((r) => r.id)).toEqual(["plain", "zdr"]);
+    // A requirement no runner can declare (a malformed stored value) offers nothing.
+    expect(onlineSessionCapableRunners(fleet, ["__malformed__"])).toEqual([]);
+  });
+});
+
+describe("satisfiesRequirements", () => {
+  it("is true only when every requirement is among the runner's flags", () => {
+    expect(satisfiesRequirements({ flags: ["zdr"] }, ["zdr"])).toBe(true);
+    expect(satisfiesRequirements({ flags: [] }, ["zdr"])).toBe(false);
+    expect(satisfiesRequirements({ flags: [] }, [])).toBe(true);
+    expect(satisfiesRequirements({ flags: [] }, undefined)).toBe(true);
   });
 });
 

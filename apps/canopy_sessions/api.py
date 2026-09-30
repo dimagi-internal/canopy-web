@@ -18,6 +18,7 @@ from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
 from apps.harness import initiator as who
+from apps.harness import runner_requirements as rr
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
@@ -148,6 +149,7 @@ def _out(session: Session) -> dict:
         # absence.
         "backfill_pending": bool(binding and binding.backfill_requested),
         "notify_every_completion": session.notify_every_completion,
+        "runner_requirements": sorted(rr.requirements_of_session(session)),
     }
 
 

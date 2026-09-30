@@ -1089,6 +1089,34 @@ def _index_offset(session) -> int:
 
 
 def _placeable_runner(session: Session, runner_id):
+    """`_eligible_runner`, then the conversation's runner requirements (ZDR)."""
+    from apps.harness import runner_requirements as rr
+
+    runner = _eligible_runner(session, runner_id)
+    if runner is None:
+        return None
+    # A box the conversation's host does not allow is no placement at all: a pin
+    # to it would sit unclaimable forever (claim_next_turn refuses it above pins).
+    if not rr.satisfies(runner.flags, rr.requirements_of_session(session)):
+        return None
+    return runner
+
+
+def _placement_refused(session: Session, runner_id, default: str) -> ValueError:
+    """The error for a placement `_placeable_runner` refused. Names the
+    requirement when the runner is one the caller could otherwise place on —
+    "unknown runner" would be false for a box their own fleet lists — and
+    `default` otherwise (an invisible id stays indistinguishable from a
+    nonexistent one)."""
+    from apps.harness import runner_requirements as rr
+
+    if _eligible_runner(session, runner_id) is not None:
+        reqs = rr.requirements_of_session(session)
+        return ValueError(f"this conversation requires a {rr.describe(reqs)} runner")
+    return ValueError(default)
+
+
+def _eligible_runner(session: Session, runner_id):
     """A runner may be a placement target only if it could actually CLAIM this
     session's turns — its pairer belongs to the session's workspace (mirrors
     claim_next_turn's tenant derivation from paired_by; a foreign or orphaned
@@ -1118,12 +1146,6 @@ def _placeable_runner(session: Session, runner_id):
         return None
     if not wsvc.is_member(runner.paired_by, session.workspace_id):
         return None
-    from apps.harness import runner_requirements as rr
-
-    # A box the conversation's host does not allow is no placement at all: a pin
-    # to it would sit unclaimable forever (claim_next_turn refuses it above pins).
-    if not rr.satisfies(runner.flags, rr.requirements_of_session(session)):
-        return None
     return runner
 
 
@@ -1143,7 +1165,7 @@ def _resolve_placement(session: Session, placement: str | None):
     if placement:
         pinned = _placeable_runner(session, placement)
         if pinned is None:
-            raise ValueError("unknown runner for placement")
+            raise _placement_refused(session, placement, "unknown runner for placement")
         return pinned
     if not getattr(session, "runner_binding", None):
         rid = (session.metadata or {}).get("requested_runner_id")
@@ -1222,7 +1244,7 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
     """
     target = _placeable_runner(session, placement)
     if target is None:
-        raise ValueError("unknown runner for transfer")
+        raise _placement_refused(session, placement, "unknown runner for transfer")
     if session.status != Session.ACTIVE:
         raise ValueError("cannot transfer an archived session")
     if Turn.objects.filter(
@@ -1618,7 +1640,7 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
     else:
         runner = _placeable_runner(session, placement)
         if runner is None:
-            raise ValueError("unknown runner")
+            raise _placement_refused(session, placement, "unknown runner")
         turn.pinned_runner = runner
     turn.save(update_fields=["pinned_runner"])
     return turn
@@ -1667,7 +1689,7 @@ def move_queued_turns(*, session: Session, placement: str, user=None, initiator=
     """
     target = _placeable_runner(session, placement)
     if target is None:
-        raise ValueError("unknown runner")
+        raise _placement_refused(session, placement, "unknown runner")
     queued = list(Turn.objects.filter(chat_session=session, status=Turn.QUEUED).order_by("created_at"))
     if not queued:
         raise LookupError("no queued turn to move")

@@ -212,9 +212,12 @@ export function ChatPage() {
     fleetRunners,
     meta?.runner_online,
   )
+  // Only runners the conversation's host allows (ZDR): the server refuses any
+  // other placement, so offering one would only produce an error.
+  const runnerRequirements = meta?.runner_requirements
   const continueOptions = useMemo(
-    () => onlineSessionCapableRunners(fleetRunners),
-    [fleetRunners],
+    () => onlineSessionCapableRunners(fleetRunners, runnerRequirements),
+    [fleetRunners, runnerRequirements],
   )
   // The bound runner's fleet row — the id `Resume` needs, and the `paused` /
   // `can_manage` flags that decide whether resuming is even on offer here.
