@@ -179,3 +179,19 @@ jwt.encode({"iss": "ace-web", "sub": email,
 
 Passing this with **no pasted key registered** is the thing that proves the
 JWKS path is live rather than merely configured.
+
+## Requiring ZDR runners for your visitors
+
+Some hosts must not have their visitors' conversations run on a box that uses
+retaining Claude keys. Two steps, one on each side:
+
+1. **The runner's owner declares the flag** on the box that qualifies: `/supervisor`
+   → Runners → the box → ZDR. canopy cannot verify it (it is an attestation, recorded
+   with who made it), so declare it only for a box that uses zero-data-retention keys.
+2. **The host asks for it**: set `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["zdr"]` and pin
+   `dimagi-canopy` 0.6.0. Every visitor assertion then carries the requirement, and
+   that visitor's conversation runs only on a flagged runner. There is no fallback: with
+   no ZDR runner online the turn says so and waits.
+
+The Connected site shows the last requirement the host sent. Spec:
+`docs/superpowers/specs/2026-09-30-zdr-runners-design.md`.
