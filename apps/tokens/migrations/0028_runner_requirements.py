@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("tokens", "0026_probe_user"),
+        ("tokens", "0027_mcp_oauth_login"),
     ]
 
     operations = [
