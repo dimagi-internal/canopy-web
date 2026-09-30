@@ -14,14 +14,20 @@ function unwrap<T>(res: { data?: T; error?: unknown }, what: string): T {
   return res.data
 }
 
+// openapi-fetch's Readable<T> helper degrades `readonly Foo[]` into an
+// ArrayLike-shaped object (numeric index + length, no Symbol.iterator) — see
+// ./agents.ts's toPage comment for the full explanation. That reaches INTO a
+// runner too (`flags`, `known_flags`), so a response row does not type-check as
+// RunnerOut although at runtime it is plain JSON with real arrays. This is the
+// one place that says so; every runner-returning call goes through it.
+function toRunner(row: unknown): RunnerOut {
+  return row as RunnerOut
+}
+
 export async function listRunners(): Promise<RunnerOut[]> {
   const res = await apiV2.GET('/api/harness/runners/')
-  // openapi-fetch's Readable<T> helper degrades `readonly Foo[]` into an
-  // ArrayLike-shaped object (numeric index + length, no Symbol.iterator) — see
-  // ./agents.ts's toPage comment for the full explanation. Array.from rebuilds
-  // a real array rather than casting.
-  // Readable<T> also degrades the nested `flags: readonly string[]`, so rebuild.
-  return Array.from(unwrap(res, 'listRunners')) as unknown as RunnerOut[]
+  // Array.from rebuilds a real outer array; toRunner is the per-row step above.
+  return Array.from(unwrap(res, 'listRunners'), toRunner)
 }
 
 // Retire a runner — permanent (re-pairing mints a fresh row). The supervisor's
@@ -43,14 +49,14 @@ export async function pauseRunner(runnerId: string, note = ''): Promise<RunnerOu
     params: { path: { runner_id: runnerId } },
     body: { note },
   })
-  return unwrap(res, 'pauseRunner') as unknown as RunnerOut
+  return toRunner(unwrap(res, 'pauseRunner'))
 }
 
 export async function unpauseRunner(runnerId: string): Promise<RunnerOut> {
   const res = await apiV2.POST('/api/harness/runners/{runner_id}/unpause', {
     params: { path: { runner_id: runnerId } },
   })
-  return unwrap(res, 'unpauseRunner') as unknown as RunnerOut
+  return toRunner(unwrap(res, 'unpauseRunner'))
 }
 
 // Ask a box to refresh itself (re-run its bootstrap: plugins, the canopy CLI,
@@ -61,7 +67,7 @@ export async function refreshRunner(runnerId: string): Promise<RunnerOut> {
   const res = await apiV2.POST('/api/harness/runners/{runner_id}/refresh', {
     params: { path: { runner_id: runnerId } },
   })
-  return unwrap(res, 'refreshRunner') as unknown as RunnerOut
+  return toRunner(unwrap(res, 'refreshRunner'))
 }
 
 // Dispatch a turn from the phone composer — to an agent OR a repo.
@@ -235,12 +241,12 @@ export async function revokeRunnerAdmin(runnerId: string, userId: number): Promi
   if (error) throw new Error(`revokeRunnerAdmin failed: ${JSON.stringify(error)}`)
 }
 
-// Declare what a box guarantees (`zdr`). Human-only and admin-only on the server;
+// Declare what a box's owner vouches for (`zdr`). Human-only, and only its pairer or a runner admin;
 // an unknown flag is a 422 that names it.
 export async function setRunnerFlags(runnerId: string, flags: string[]): Promise<RunnerOut> {
   const res = await apiV2.PUT('/api/harness/runners/{runner_id}/flags', {
     params: { path: { runner_id: runnerId } },
     body: { flags },
   })
-  return unwrap(res, 'setRunnerFlags') as unknown as RunnerOut
+  return toRunner(unwrap(res, 'setRunnerFlags'))
 }

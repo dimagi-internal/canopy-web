@@ -185,9 +185,10 @@ JWKS path is live rather than merely configured.
 Some hosts must not have their visitors' conversations run on a box that uses
 retaining Claude keys. Two steps, one on each side:
 
-1. **The runner's owner declares the flag** on the box that qualifies: `/supervisor`
-   → Runners → the box → ZDR. canopy cannot verify it (it is an attestation, recorded
-   with who made it), so declare it only for a box that uses zero-data-retention keys.
+1. **The box's pairer or a runner admin declares the flag** on the box that qualifies:
+   `/supervisor` → Runners → the box → **Declared by the owner** → ZDR. canopy cannot
+   verify it (it is an attestation, recorded with who made it), so declare it only for
+   a box that uses zero-data-retention keys.
 2. **The host asks for it**: set `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["zdr"]` and pin
    `dimagi-canopy` 0.6.0. Every visitor assertion then carries the requirement, and
    that visitor's conversation runs only on a flagged runner. There is no fallback: with

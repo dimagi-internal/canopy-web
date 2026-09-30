@@ -22,6 +22,12 @@ afterEach(() => {
 })
 
 describe('RunnerFlags', () => {
+  it('heads the panel with who is speaking, not a guarantee canopy cannot make', () => {
+    render(<RunnerFlags runner={runner} onChange={onChange} />)
+    expect(screen.getByText('Declared by the owner')).toBeTruthy()
+    expect(screen.queryByText(/Guarantees/i)).toBeNull()
+  })
+
   it('declares zdr with the vouching sentence visible', async () => {
     const updated = { ...runner, flags: ['zdr'] } as unknown as RunnerOut
     setRunnerFlags.mockResolvedValue(updated)

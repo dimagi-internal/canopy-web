@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { setRunnerFlags, type RunnerOut } from '@/api/harness'
 
-// What this box guarantees, declared by the person who runs it.
+// What this box's owner declares about it. Headed by WHO is speaking, not
+// "Guarantees": canopy cannot check a declaration, so it guarantees nothing.
 //
 // The list of declarable flags comes from the server (`known_flags`); this file
 // keeps only the WORDING for each, so a flag the server learns before the UI does
@@ -47,7 +48,7 @@ export function RunnerFlags({
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" data-testid="runner-flags">
-      <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Guarantees</span>
+      <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Declared by the owner</span>
       {runner.known_flags.map((flag) => {
         const { label, sentence } = wordsFor(flag)
         return (

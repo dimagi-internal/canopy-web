@@ -216,10 +216,12 @@ export function RunnerDetail({
       {!runner.can_manage && (
         <p className="text-[12px] text-muted-foreground" data-testid="runner-detail-readonly">
           {runner.can_administer
-            ? `You can sign this box in and set its credentials. Checking its readiness belongs to
-               ${runner.paired_by_email ?? 'whoever paired it'}, who paired it.`
+            ? `You can sign this box in, set its credentials and declare what it runs with (ZDR).
+               Checking its readiness belongs to ${runner.paired_by_email ?? 'whoever paired it'},
+               who paired it.`
             : `Read-only — this runner was paired by ${runner.paired_by_email ?? 'someone else'},
-               who can check its readiness, change what it declares, or grant you administration.`}
+               who can check its readiness or grant you administration; they or a runner admin
+               can change what it declares.`}
         </p>
       )}
 

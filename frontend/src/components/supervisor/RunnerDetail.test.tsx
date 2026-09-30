@@ -121,6 +121,18 @@ describe('RunnerDetail', () => {
     const note = screen.getByTestId('runner-detail-readonly')
     expect(note.textContent).toContain('jjackson@dimagi.com')
   })
+
+  it('tells an admin who is not the pairer that they may declare the box ZDR', () => {
+    render(<RunnerDetail runner={runner({ can_manage: false, can_administer: true })} agents={agents} onBack={() => {}} />)
+    const note = screen.getByTestId('runner-detail-readonly')
+    expect(note.textContent).toMatch(/declare what it runs with/)
+  })
+
+  it('tells someone read-only that a runner admin can change what it declares', () => {
+    render(<RunnerDetail runner={runner({ can_manage: false, can_administer: false })} agents={agents} onBack={() => {}} />)
+    const note = screen.getByTestId('runner-detail-readonly')
+    expect(note.textContent).toMatch(/or a runner admin\s+can change what it declares/)
+  })
 })
 
 // The remote half of ~/.canopy/PAUSED — and the ONLY way to park a box from a
