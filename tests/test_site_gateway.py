@@ -400,3 +400,42 @@ def test_a_conversation_on_the_site_selects_the_site_capability(w):
 ])
 def test_host_tool_names_normalise(name, expected):
     assert host_gateway.host_tool_name(name) == expected
+
+
+# --- a host's runner requirements are a floor under the gateway too ----------------
+
+
+def _zdr_turn(w, *, flags=(), runner=True):
+    from apps.harness.models import Runner, RunnerFlag
+
+    w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["zdr"]}
+    w["session"].save()
+    if runner:
+        r = Runner.objects.create(name="box", workspace=w["ws"], kind=Runner.CLOUD,
+                                  status=Runner.ONLINE, paired_by=w["owner"], host="box")
+        for f in flags:
+            RunnerFlag.objects.create(runner=r, flag=f, declared_by=w["owner"])
+        Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=r)
+
+
+def test_a_zdr_conversation_on_a_non_zdr_runner_is_refused(w):
+    _grant(w)
+    _zdr_turn(w)
+    with pytest.raises(host_gateway.GatewayRefusal) as exc:
+        host_gateway.resolve(str(w["turn"].pk))
+    assert exc.value.code == "runner_requirements"
+    assert "ZDR" in exc.value.message
+
+
+def test_a_zdr_conversation_with_no_claiming_runner_is_refused(w):
+    _grant(w)
+    _zdr_turn(w, runner=False)
+    with pytest.raises(host_gateway.GatewayRefusal) as exc:
+        host_gateway.resolve(str(w["turn"].pk))
+    assert exc.value.code == "runner_requirements"
+
+
+def test_the_same_turn_on_a_zdr_runner_resolves(w):
+    _grant(w)
+    _zdr_turn(w, flags=("zdr",))
+    assert host_gateway.resolve(str(w["turn"].pk)).site == "connect-labs"
