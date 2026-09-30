@@ -133,7 +133,7 @@ would be a second copy of the host's intent that can drift from it.
   that has touched it, and nothing removes one (a later token without `zdr` does not
   downgrade an existing conversation — the PII already in it does not go away).
 - The Connected site row records the last value the host sent
-  (`EmbeddedApp.last_runner_requirements`, display only) so the Connected sites page
+  (`AppCredential.last_runner_requirements`, display only) so the Connected sites page
   can show *"Requires runners: ZDR (declared by the host)"*. It is informational; nothing
   routes on it.
 
