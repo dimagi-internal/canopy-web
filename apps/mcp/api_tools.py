@@ -343,12 +343,33 @@ class CanopyAPIProvider(OpenAPIProvider):
         self._tools[tool.name] = tool
 
 
-def build_provider() -> CanopyAPIProvider:
+def api_schema() -> dict:
+    """The API's OpenAPI document with paths as Django routes them (`/api/…`).
+
+    Two corrections to what Ninja returns. Through JSON, exactly as
+    `/api/openapi.json` serves it: Ninja keys responses by int status, which
+    the OpenAPI parser rejects. And WITHOUT the deployment's script prefix:
+    under `FORCE_SCRIPT_NAME=/canopy` (labs) Ninja writes every path as
+    `/canopy/api/…`, and everything here — the exclusions, the `workspace`
+    rewrite, the in-process request — speaks the unprefixed path Django's
+    handler resolves. Left prefixed, on labs the `workspace` argument was
+    silently ignored and the excluded surfaces became tools (2026-09-30)."""
+    from django.urls import get_script_prefix
+
     from apps.api.api import api
 
-    # Through JSON, exactly as `/api/openapi.json` serves it: Ninja's dict keys
-    # responses by int status, which the OpenAPI parser rejects.
-    spec = tool_spec(json.loads(json.dumps(api.get_openapi_schema(), default=str)))
+    schema = json.loads(json.dumps(api.get_openapi_schema(), default=str))
+    prefix = get_script_prefix().rstrip("/")
+    if prefix:
+        schema["paths"] = {
+            (path[len(prefix):] if path.startswith(prefix + "/") else path): item
+            for path, item in schema.get("paths", {}).items()
+        }
+    return schema
+
+
+def build_provider() -> CanopyAPIProvider:
+    spec = tool_spec(api_schema())
     # Output schemas are not enforced: a route's response model already is, and
     # a mismatch between the two would fail a call the API answered correctly.
     return CanopyAPIProvider(openapi_spec=spec, client=_client(), validate_output=False)
