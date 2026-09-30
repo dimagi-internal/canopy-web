@@ -47,8 +47,9 @@ def _turn(status=Turn.QUEUED, *, claimed=None, pinned=None, agent_slug=None,
     return t
 
 
-def _reach(kind, runners=()):
-    return types.SimpleNamespace(kind=kind, runners=list(runners))
+def _reach(kind, runners=(), blocked_by_requirements=False):
+    return types.SimpleNamespace(kind=kind, runners=list(runners),
+                                 blocked_by_requirements=blocked_by_requirements)
 
 
 # -- the three queued states: same wait, different thing to do about it --------
@@ -251,10 +252,17 @@ def _zdr_turn(status=Turn.QUEUED):
     return t
 
 
-def test_a_queued_zdr_turn_carries_its_requirement():
-    st = ts.derive(_zdr_turn(), reach=_reach("unrouted"))
+def test_a_queued_zdr_turn_carries_its_requirement_when_it_is_the_blocker():
+    st = ts.derive(_zdr_turn(), reach=_reach("unrouted", blocked_by_requirements=True))
     assert st.requires == ("zdr",)
     assert st.as_dict()["requires"] == ["zdr"]
+
+
+def test_a_queued_zdr_turn_blocked_by_something_else_does_not_blame_zdr():
+    # e.g. the ZDR box exists but cannot confine a caller's turn: the fix is the
+    # runner's update, not a ZDR declaration.
+    st = ts.derive(_zdr_turn(), reach=_reach("unrouted"))
+    assert st.requires == ()
 
 
 def test_a_turn_without_one_carries_none():

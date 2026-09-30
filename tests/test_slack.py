@@ -256,8 +256,13 @@ def test_unrouted_line_names_a_zdr_requirement(slack, linked, hal):
     turn = Turn.objects.select_related("chat_session__agent").get()
     turn.chat_session.metadata = {**turn.chat_session.metadata, "runner_requirements": ["zdr"]}
     turn.chat_session.save(update_fields=["metadata"])
-    text, _ = slack_status.render(turn, reach=SimpleNamespace(kind=harness_services.UNROUTED, runners=[]))
+    text, _ = slack_status.render(turn, reach=SimpleNamespace(
+        kind=harness_services.UNROUTED, runners=[], blocked_by_requirements=True))
     assert "needs a ZDR runner" in text and "none of `hal`'s runners is declared ZDR" in text
+    # Not the blocker (the routing is): the ordinary unrouted line, no ZDR.
+    text, _ = slack_status.render(turn, reach=SimpleNamespace(
+        kind=harness_services.UNROUTED, runners=[], blocked_by_requirements=False))
+    assert "ZDR" not in text and "no runner is set up" in text
 
 
 def test_slack_redelivery_does_not_ask_the_agent_twice(slack, linked, hal):

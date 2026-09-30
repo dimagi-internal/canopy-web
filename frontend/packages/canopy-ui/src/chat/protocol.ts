@@ -217,7 +217,9 @@ export interface TurnStatus {
    *  conversation has since moved past. Absent on an older server. */
   finished_at?: string | null;
   /** What the conversation's host requires of the runner (e.g. `zdr`). Only
-   *  set while queued. Absent on an older server. */
+   *  set while queued, and only when the requirement is what blocks the turn
+   *  (some runner would take it without one) — so render it as the reason.
+   *  Absent on an older server. */
   requires?: string[];
   /** Nothing more will happen without someone asking for it. */
   settled: boolean;

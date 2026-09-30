@@ -223,3 +223,69 @@ def test_turn_reach_agrees_with_claiming(fleet):
 
     assert services.turn_reach(turn).kind == services.UNROUTED
     assert services.claim_next_turn(laptop) is None
+
+
+# --- ZDR is named only when it is the blocker ----------------------------------------
+
+
+def test_a_zdr_box_that_cannot_confine_reports_the_profile_reason_not_zdr(fleet):
+    """The ZDR box exists and is assigned; what stops the caller's turn is that it
+    cannot confine one. Blaming ZDR would send the owner to the wrong fix."""
+    from apps.harness import turn_status as ts
+
+    a, cloud = fleet["agent"], fleet["cloud"]
+    _sessions(cloud)
+    _zdr(cloud)
+    RunnerAssignment.objects.create(agent=a, runner=cloud, rank=0)
+    turn, _s = _zdr_turn(a, capability="ask")
+    _age(turn)
+
+    [stuck] = services.unclaimable_queued_turns(fleet["user"])
+    assert stuck["kind"] == "config"
+    assert "confined" in stuck["reason"] and "ZDR" not in stuck["reason"]
+
+    reach = services.turn_reach(turn)
+    assert reach.kind == services.UNROUTED and not reach.blocked_by_requirements
+    assert ts.resolve(turn).requires == ()
+
+
+def test_no_routing_at_all_reports_the_routing_reason_not_zdr(fleet):
+    a = fleet["agent"]
+    turn, _s = _zdr_turn(a)
+    _age(turn)
+
+    [stuck] = services.unclaimable_queued_turns(fleet["user"])
+    assert stuck["kind"] == "config" and "ZDR" not in stuck["reason"]
+    assert not services.turn_reach(turn).blocked_by_requirements
+
+
+def test_a_non_zdr_box_that_would_cover_it_names_zdr_as_the_blocker(fleet):
+    from apps.harness import turn_status as ts
+
+    a, laptop = fleet["agent"], fleet["laptop"]
+    _sessions(laptop)
+    RunnerAssignment.objects.create(agent=a, runner=laptop, rank=0)
+    turn, _s = _zdr_turn(a)
+    _age(turn)
+
+    [stuck] = services.unclaimable_queued_turns(fleet["user"])
+    assert stuck["kind"] == "config" and "ZDR" in stuck["reason"]
+    reach = services.turn_reach(turn)
+    assert reach.kind == services.UNROUTED and reach.blocked_by_requirements
+    assert ts.resolve(turn).requires == ("zdr",)
+
+
+def test_an_offline_zdr_box_names_zdr_only_when_a_non_zdr_box_is_live(fleet):
+    a, laptop, cloud = fleet["agent"], fleet["laptop"], fleet["cloud"]
+    _sessions(laptop, cloud)
+    _zdr(cloud)
+    RunnerAssignment.objects.create(agent=a, runner=cloud, rank=0)
+    _offline(cloud)
+    turn, _s = _zdr_turn(a)
+    # Only the ZDR box serves it: it is simply offline, and waiting fixes that.
+    reach = services.turn_reach(turn)
+    assert reach.kind == services.OFFLINE and not reach.blocked_by_requirements
+    # A live non-ZDR box WOULD take it: the requirement is why it waits.
+    RunnerAssignment.objects.create(agent=a, runner=laptop, rank=1)
+    reach = services.turn_reach(turn)
+    assert reach.kind == services.OFFLINE and reach.blocked_by_requirements

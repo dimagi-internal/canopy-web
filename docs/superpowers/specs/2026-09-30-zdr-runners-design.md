@@ -168,6 +168,11 @@ There is no fallback and no override.
   remedy is routing, i.e. `unrouted`) vs *"…ace's ZDR runners are offline"*
   (`waiting_runner`). Every channel (chat page, widget, Slack) renders it for free,
   since they all render `turn_status`.
+  **ZDR is named only when it is the blocker** (`Reach.blocked_by_requirements`): some
+  runner would take the turn if the conversation required nothing (for
+  `waiting_runner`, a LIVE one). A turn stuck because no runner is routed at all, or
+  because the ZDR box cannot confine a caller's turn, reports that reason instead — the
+  same rule in the stuck-turn report (`unclaimable_queued_turns`).
 - **Second check at the data seam (defence in depth):** `host_gateway.site_call`,
   which attaches the visitor's grant and is where the host's PII actually flows into
   a turn, refuses when the runner executing the turn does not satisfy the session's

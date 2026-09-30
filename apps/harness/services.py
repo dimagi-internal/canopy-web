@@ -768,11 +768,16 @@ def _assignment_rows_for_turns(turns) -> tuple[dict, dict]:
     return load_assignment_rows(agent_ids)
 
 
-def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict) -> bool:
+def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
+                    *, ignore_requirements: bool = False) -> bool:
     """The per-candidate refinements claim_next_turn applies after the coarse
     target match — same checks, same ORDER, so coverage can't overstate what
-    claiming will do."""
-    reqs = rr.requirements_of(t)
+    claiming will do.
+
+    `ignore_requirements` answers the counterfactual "would this runner take it
+    if the conversation required nothing?" — only ever asked to decide whether
+    a requirement is what BLOCKS a turn, never to route one."""
+    reqs = frozenset() if ignore_requirements else rr.requirements_of(t)
     if not rr.satisfies(r.flags, reqs):
         return False  # above the pin and the binding, as in claim_next_turn
     # A pin trumps everything below it (claim_next_turn's `pinned_here`).
@@ -828,10 +833,14 @@ def profile_q(runner) -> Q:
     return Q(capability="")
 
 
-def _coverage(ids, runners, defaults: dict, priorities: dict) -> dict:
+def _coverage(ids, runners, defaults: dict, priorities: dict,
+              *, ignore_requirements: bool = False) -> dict:
     """{runner: {turn pk it could claim}} over `ids` — the coverage half of both
     `unclaimable_queued_turns` and `turn_reach`, one implementation so the web
-    warning and the Slack acknowledgement cannot disagree about the same turn."""
+    warning and the Slack acknowledgement cannot disagree about the same turn.
+
+    `ignore_requirements=True` is the counterfactual used only to diagnose: which
+    runners would take the turn if its conversation required nothing."""
     out: dict = {}
     for r in runners:
         # Same coarse target predicate the claim path uses (assignments +
@@ -850,7 +859,8 @@ def _coverage(ids, runners, defaults: dict, priorities: dict) -> dict:
             # Then the per-source refinement. A runner assigned the agent but
             # excluded by a strict rule for THIS turn's source does not cover
             # it, and saying otherwise would mask a genuinely parked queue.
-            if _refined_allows(r, t, defaults, priorities):
+            if _refined_allows(r, t, defaults, priorities,
+                               ignore_requirements=ignore_requirements):
                 covered.add(t.pk)
         out[r] = covered
     return out
@@ -870,6 +880,12 @@ class Reach:
 
     kind: str
     runners: list
+    #: True only when the conversation's runner requirements (ZDR) are what
+    #: keeps it from a live runner: some runner would take it without them. A
+    #: turn stuck for another reason (no routing, a box that cannot confine a
+    #: caller's turn) must not be blamed on ZDR — that sends its owner to the
+    #: wrong fix.
+    blocked_by_requirements: bool = False
 
 
 def turn_reach(turn: Turn) -> Reach:
@@ -900,9 +916,23 @@ def turn_reach(turn: Turn) -> Reach:
     live = [r for r in covering if r.live_status == Runner.ONLINE]
     if live:
         return Reach(LIVE, live)
+
+    def blocked_by_requirements(*, live_only: bool) -> bool:
+        # Would a runner take it if the conversation required nothing? Only
+        # then is the requirement the reason it waits.
+        if not rr.requirements_of(turn):
+            return False
+        without = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities,
+                                             ignore_requirements=True).items() if pks]
+        if live_only:
+            without = [r for r in without if r.live_status == Runner.ONLINE]
+        return bool(without)
+
     if covering:
-        return Reach(OFFLINE, covering)
-    return Reach(UNROUTED, [])
+        # Its own runners are merely offline; the requirement is the blocker
+        # only if a runner that IS live would otherwise have taken it.
+        return Reach(OFFLINE, covering, blocked_by_requirements(live_only=True))
+    return Reach(UNROUTED, [], blocked_by_requirements(live_only=False))
 
 
 def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[dict]:
@@ -964,6 +994,12 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     # "temporarily unreachable" — the difference between "fix the routing matrix"
     # and "wait, or check the runner".
     claimable_ever = set().union(*_coverage(ids, runners, defaults, priorities).values())
+    # Counterfactual, for turns whose conversation requires something and that no
+    # runner will ever take: would one take it WITHOUT the requirement? Only then
+    # is the requirement the blocker; otherwise the ordinary reason applies.
+    required = {t.pk for t in queued if t.pk not in claimable_ever and rr.requirements_of(t)}
+    blocked_by_reqs = set().union(*_coverage(required, runners, defaults, priorities,
+                                             ignore_requirements=True).values()) if required else set()
 
     out = []
     for t in queued:
@@ -976,7 +1012,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         else:
             target, what = f"project {t.project}", f"declares the repo '{t.project}'"
         reqs = rr.requirements_of(t)
-        if reqs and t.pk not in claimable_ever:
+        if reqs and t.pk in blocked_by_reqs:
             kind = "config"
             reason = (f"this conversation's site requires a {rr.describe(reqs)} runner, and "
                       f"no runner that serves it is declared {rr.describe(reqs)}")
