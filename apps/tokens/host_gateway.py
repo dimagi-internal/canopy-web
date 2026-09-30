@@ -185,6 +185,23 @@ def resolve(turn_id: str) -> SiteContext:
     if grant is None:
         raise GatewayRefusal("no_grant",
                              f"{site} has not given me access on your behalf — " + BACK_ON_THE_PAGE)
+
+    # The grant is per (site, visitor), not per conversation: a visitor who
+    # arrived under ZDR can reach it from an OLDER conversation that no ZDR
+    # arrival stamped. So the grant's own requirements count too, and they are
+    # written onto the conversation — refused or not — so its next turn routes
+    # to a runner that satisfies them.
+    grant_reqs = rr.requirements_of_grant(grant)
+    if grant_reqs - reqs:
+        from apps.canopy_sessions.services import add_runner_requirements
+
+        add_runner_requirements(session, grant_reqs)
+    effective = reqs | grant_reqs
+    if effective and (turn.claimed_by is None
+                      or not rr.satisfies(turn.claimed_by.flags, effective)):
+        raise GatewayRefusal(
+            "runner_requirements",
+            f"this conversation must run on a {rr.describe(effective)} runner, and this one is not")
     return context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
                              ceiling=list(cap.get("ceiling") or []))
 

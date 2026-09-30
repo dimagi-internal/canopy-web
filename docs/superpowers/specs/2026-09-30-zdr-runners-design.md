@@ -173,6 +173,13 @@ There is no fallback and no override.
   a turn, refuses when the runner executing the turn does not satisfy the session's
   requirements. Claim routing should make this unreachable; the gateway check means a
   future routing bug fails as a refusal rather than a leak.
+  **The grant carries requirements too.** A `HostGrant` is per (site, visitor), not per
+  conversation, so a visitor who arrived under ZDR could reach their fresh grant from an
+  OLDER conversation on the same site that no ZDR arrival stamped (canopy's own chat
+  page, or MCP with a `conversation_id`). So redemption records the arrival's
+  requirements on the grant (`HostGrant.runner_requirements`), the gateway enforces the
+  session's ∪ the grant's, and it unions the grant's into the session's stamp so the
+  conversation's next turn routes correctly.
 
 ### Worked example
 

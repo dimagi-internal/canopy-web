@@ -16,15 +16,23 @@ UNSATISFIABLE = "__malformed__"
 _LABELS = {"zdr": "ZDR"}
 
 __all__ = ["METADATA_KEY", "RUNNER_FLAGS", "UNSATISFIABLE", "describe", "requirements_of",
-           "requirements_of_session", "satisfies"]
+           "requirements_of_grant", "requirements_of_session", "satisfies"]
 
 
-def requirements_of_session(session) -> frozenset[str]:
-    raw = (getattr(session, "metadata", None) or {}).get(METADATA_KEY)
+def _parse_stored(raw) -> frozenset[str]:
     try:
         return frozenset(parse_runner_requirements(raw))
     except ValueError:
         return frozenset({UNSATISFIABLE})
+
+
+def requirements_of_session(session) -> frozenset[str]:
+    return _parse_stored((getattr(session, "metadata", None) or {}).get(METADATA_KEY))
+
+
+def requirements_of_grant(grant) -> frozenset[str]:
+    """The requirements a `HostGrant` was minted under (fail-closed like a session's)."""
+    return _parse_stored(getattr(grant, "runner_requirements", None))
 
 
 def requirements_of(turn) -> frozenset[str]:

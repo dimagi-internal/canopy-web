@@ -76,11 +76,11 @@ def _now():
     return int(dt.datetime.now(dt.timezone.utc).timestamp())
 
 
-def _assertion(priv, sub="u-42"):
+def _assertion(priv, sub="u-42", **extra):
     now = _now()
     return jwt.encode({"iss": "connect-labs", "sub": sub, "aud": assertions.audience(),
                        "iat": now, "exp": now + 60, "jti": str(uuid.uuid4()),
-                       "name": "Gillian"}, priv, algorithm="EdDSA")
+                       "name": "Gillian", **extra}, priv, algorithm="EdDSA")
 
 
 def _id_jag(priv, *, typ="oauth-id-jag+jwt", lifetime=120, key=None, **over):
@@ -123,8 +123,8 @@ def host(monkeypatch):
     return fake
 
 
-def _arrive(site, *, id_jag=None, sub="u-42"):
-    body = {"assertion": _assertion(site["priv"], sub=sub), "agent_slug": "ace"}
+def _arrive(site, *, id_jag=None, sub="u-42", **extra):
+    body = {"assertion": _assertion(site["priv"], sub=sub, **extra), "agent_slug": "ace"}
     if id_jag is not None:
         body["id_jag"] = id_jag
     return Client().post("/api/auth/contact-token", data=body, content_type="application/json")
@@ -229,6 +229,21 @@ def test_an_id_jag_is_redeemed_per_the_contract_and_stored_encrypted(site, host)
     expires = dt.datetime.fromisoformat(r.json()["expires_at"])
     assert expires <= timezone.now() + dt.timedelta(minutes=5, seconds=5)
     assert Event.objects.filter(kind="host_grant.redeemed").exists()
+
+
+def test_the_grant_remembers_the_runner_requirements_it_was_minted_under(site, host):
+    """A grant is per (visitor, site), not per conversation — so the arrival's
+    requirements must travel WITH it, or an older, unstamped conversation could
+    carry it to a runner the host excludes."""
+    from canopy_sdk import contract
+
+    r = _arrive(site, id_jag=_id_jag(site["priv"]),
+                **{contract.RUNNER_REQUIREMENTS_CLAIM: ["zdr"]})
+    assert r.status_code == 200, r.content
+    assert HostGrant.objects.get().runner_requirements == ["zdr"]
+    # A later arrival is the host's current word: it replaces, like the token.
+    r = _arrive(site, id_jag=_id_jag(site["priv"]))
+    assert HostGrant.objects.get().runner_requirements == []
 
 
 def test_no_id_jag_means_no_grant_and_the_arrival_is_unchanged(site, host):

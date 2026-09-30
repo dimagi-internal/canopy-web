@@ -891,6 +891,12 @@ class HostGrant(models.Model):
     #: The thumbprint of the DPoP key the token is bound to. A rotated DPoP key
     #: makes every stored token useless, and this says so instead of a 401.
     dpop_jkt = models.CharField(max_length=64)
+    #: The runner requirements (ZDR) of the arrival that minted this grant.
+    #: A grant is per (site, visitor), NOT per conversation, so it can be
+    #: reached from a conversation no ZDR arrival ever stamped; the gateway
+    #: enforces these alongside the session's own and stamps them onto it.
+    #: Replaced by each redemption: the latest arrival is the host's word.
+    runner_requirements = models.JSONField(default=list, blank=True)
     expires_at = models.DateTimeField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

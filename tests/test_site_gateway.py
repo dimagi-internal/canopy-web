@@ -439,3 +439,58 @@ def test_the_same_turn_on_a_zdr_runner_resolves(w):
     _grant(w)
     _zdr_turn(w, flags=("zdr",))
     assert host_gateway.resolve(str(w["turn"].pk)).site == "connect-labs"
+
+
+# --- the GRANT carries its arrival's requirements (a grant outlives a session) ----
+
+
+def _runner(w, *, flags=()):
+    from apps.harness.models import Runner, RunnerFlag
+
+    r = Runner.objects.create(name="box", workspace=w["ws"], kind=Runner.CLOUD,
+                              status=Runner.ONLINE, paired_by=w["owner"], host="box")
+    for f in flags:
+        RunnerFlag.objects.create(runner=r, flag=f, declared_by=w["owner"])
+    Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=r)
+    return r
+
+
+def test_an_unstamped_session_cannot_carry_a_zdr_grant_to_a_non_zdr_runner(w):
+    """The leak: a visitor arrived under ZDR (fresh grant) but continues an OLDER
+    conversation on the same site that no ZDR arrival ever touched."""
+    from apps.harness import runner_requirements as rr
+
+    _grant(w, runner_requirements=["zdr"])
+    _runner(w)
+    assert not rr.requirements_of_session(w["session"])
+    with pytest.raises(host_gateway.GatewayRefusal) as exc:
+        host_gateway.resolve(str(w["turn"].pk))
+    assert exc.value.code == "runner_requirements"
+    assert "ZDR" in exc.value.message
+    # ...and the conversation now carries the floor, so its NEXT turn routes right.
+    w["session"].refresh_from_db()
+    assert rr.requirements_of_session(w["session"]) == frozenset({"zdr"})
+
+
+def test_a_zdr_grant_on_a_zdr_runner_resolves_and_stamps_the_session(w):
+    from apps.harness import runner_requirements as rr
+
+    _grant(w, runner_requirements=["zdr"])
+    _runner(w, flags=("zdr",))
+    assert host_gateway.resolve(str(w["turn"].pk)).site == "connect-labs"
+    w["session"].refresh_from_db()
+    assert rr.requirements_of_session(w["session"]) == frozenset({"zdr"})
+
+
+@pytest.mark.parametrize("where", ["grant", "session"])
+def test_a_malformed_requirement_at_the_gateway_is_refused(w, where):
+    if where == "grant":
+        _grant(w, runner_requirements=["not-a-flag"])
+    else:
+        _grant(w)
+        w["session"].metadata = {**w["session"].metadata, "runner_requirements": "zdr"}
+        w["session"].save()
+    _runner(w, flags=("zdr",))
+    with pytest.raises(host_gateway.GatewayRefusal) as exc:
+        host_gateway.resolve(str(w["turn"].pk))
+    assert exc.value.code == "runner_requirements"

@@ -227,7 +227,7 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
 
     user = contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
     granted = _redeem_host_grant(request, app, payload.id_jag, claims=claims,
-                                 contact=contact, user=user)
+                                 contact=contact, user=user, runner_requirements=runner_reqs)
     ttl = HOST_GRANT_REMINT_SECONDS if granted else CONTACT_TOKEN_TTL_SECONDS
     if user is not None:
         # An existing canopy account arrives AS ITSELF: a delegated user token,
@@ -258,7 +258,8 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     )
 
 
-def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user) -> bool:
+def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user,
+                       runner_requirements=()) -> bool:
     """Redeem the site's ID-JAG, if it sent one. Never fails the arrival.
 
     Only ever called AFTER the arrival assertion verified, so the visitor it
@@ -277,7 +278,8 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
         return False
     try:
         grant = host_grants.redeem(app, id_jag.strip(), subject=subject,
-                                   contact=contact, user=user)
+                                   contact=contact, user=user,
+                                   runner_requirements=runner_requirements)
     except host_grants.HostGrantError as exc:
         log.warning("host grant refused for %s: %s", app.name, exc.code)
         host_grants.record_outcome(app, ok=False, subject=subject, code=exc.code,
