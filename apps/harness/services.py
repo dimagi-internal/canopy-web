@@ -33,12 +33,25 @@ from .models import (
     Runner,
     RunnerAssignment,
     RunnerDrill,
+    RunnerFlag,
     Turn,
     TurnEvent,
     TurnTranscript,
 )
 
 logger = logging.getLogger(__name__)
+
+def set_runner_flags(runner: Runner, flags: set[str], *, by) -> tuple[set, set]:
+    """Make the runner's declared flags exactly `flags`. Stamps only ADDED ones,
+    so re-saving does not rewrite who first vouched. Returns (added, removed)."""
+    current = set(runner.flags)
+    added, removed = flags - current, current - flags
+    with transaction.atomic():
+        RunnerFlag.objects.filter(runner=runner, flag__in=removed).delete()
+        for f in sorted(added):
+            RunnerFlag.objects.create(runner=runner, flag=f, declared_by=by)
+    return added, removed
+
 
 DEFAULT_LEASE_SECONDS = 900
 # How many times a turn that died BEFORE its session existed goes back on the queue
