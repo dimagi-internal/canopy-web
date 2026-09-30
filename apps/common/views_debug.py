@@ -30,8 +30,9 @@ DEBUG_SESSION_MARKER = "_canopy_debug_session"
 
 def is_machine(request) -> bool:
     """True when a token, not a person signed in through the browser, is behind
-    this request: any Authorization header, or a session minted from a token."""
-    if request.META.get("HTTP_AUTHORIZATION"):
+    this request: any Authorization header, an MCP tool call (dispatched
+    in-process, so it carries no header), or a session minted from a token."""
+    if request.META.get("HTTP_AUTHORIZATION") or getattr(request, "via_mcp", False):
         return True
     session = getattr(request, "session", None)
     try:

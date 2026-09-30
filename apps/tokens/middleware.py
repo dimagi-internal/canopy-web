@@ -46,6 +46,8 @@ class BearerTokenAuthMiddleware:
 
     @staticmethod
     def _authenticate(request: HttpRequest) -> HttpResponse | None:
+        if _authenticate_mcp_call(request):
+            return None
         header = request.META.get("HTTP_AUTHORIZATION", "")
         raw = header[len("Bearer "):].strip() if header.startswith("Bearer ") else ""
         if not raw:
@@ -133,3 +135,28 @@ class BearerTokenAuthMiddleware:
         # cross-site attacker cannot set an `Authorization` header on a request
         # the browser will send without a preflight canopy would refuse.
         request._dont_enforce_csrf_checks = True
+
+
+def _authenticate_mcp_call(request: HttpRequest) -> bool:
+    """An MCP tool call dispatched in-process (`apps/mcp/api_tools.py`).
+
+    The MCP server already authenticated the caller; it hands the result over
+    in the ASGI scope, which only that in-process transport builds — no network
+    request can put a key there. The request then runs exactly as the caller's
+    own token would against REST: their user, their `auth_method`, no CSRF (it
+    is stateless), and it counts as a machine (`is_machine`), so the gates that
+    refuse tokens refuse it too.
+    """
+    scope = getattr(request, "scope", None)
+    principal = scope.get("canopy.mcp_principal") if isinstance(scope, dict) else None
+    if not principal:
+        return False
+    from django.contrib.auth import get_user_model
+
+    user = get_user_model().objects.filter(pk=principal.get("user_id"), is_active=True).first()
+    if user is not None:
+        request.user = user
+        request.auth_method = principal.get("auth_method") or "pat"
+    request.via_mcp = True
+    request._dont_enforce_csrf_checks = True
+    return True

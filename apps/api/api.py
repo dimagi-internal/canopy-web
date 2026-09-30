@@ -25,7 +25,48 @@ from .renderers import OrjsonRenderer
 logger = logging.getLogger(__name__)
 
 
-api = NinjaAPI(
+class CanopyNinjaAPI(NinjaAPI):
+    """NinjaAPI whose operationIds are the view's own name.
+
+    Ninja's default is ``<module>_<function>`` (``apps_agents_api_list_agents``).
+    The operationId is also the MCP tool's name (``apps/mcp/api_tools.py``), so
+    one name now serves the schema, ``generated.ts`` and the MCP surface. A name
+    two modules share is qualified by its app (``chat_sessions_send``) so it
+    stays unique — and it is the SAME rule for every name, not a hand-kept map.
+    """
+
+    def get_openapi_operation_id(self, operation) -> str:
+        name = operation.view_func.__name__
+        if name in self._shared_view_names():
+            return f"{_app_label(operation.view_func.__module__)}_{name}"
+        return name
+
+    def _shared_view_names(self) -> frozenset[str]:
+        cached = getattr(self, "_shared_names_cache", None)
+        if cached is not None:
+            return cached
+        modules: dict[str, set[str]] = {}
+        for bound in self._get_bound_routers():
+            for path_view in bound.path_operations.values():
+                for op in path_view.operations:
+                    fn = op.view_func
+                    modules.setdefault(fn.__name__, set()).add(fn.__module__)
+        shared = frozenset(n for n, mods in modules.items() if len(mods) > 1)
+        self._shared_names_cache = shared
+        return shared
+
+
+def _app_label(module: str) -> str:
+    """``apps.canopy_sessions.contact_api`` → ``canopy_sessions_contact``."""
+    parts = module.split(".")
+    if parts[0] == "apps":
+        parts = parts[1:]
+    if parts and parts[-1] == "api":
+        parts = parts[:-1]
+    return "_".join(p.removesuffix("_api") for p in parts)
+
+
+api = CanopyNinjaAPI(
     title="canopy-web API",
     version="2.0.0",
     description=(

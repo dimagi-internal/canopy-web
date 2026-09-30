@@ -15,7 +15,7 @@ export interface paths {
          * Auth Smoke
          * @description Internal smoke route — verifies session auth works.
          */
-        readonly get: operations["apps_api_api__auth_smoke"];
+        readonly get: operations["_auth_smoke"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -32,10 +32,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List projects */
-        readonly get: operations["apps_projects_api_list_projects"];
+        readonly get: operations["projects_list_projects"];
         readonly put?: never;
         /** Create project */
-        readonly post: operations["apps_projects_api_create_project"];
+        readonly post: operations["projects_create_project"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -53,7 +53,7 @@ export interface paths {
          * List project slugs
          * @description Slim machine-readable slug list (Bearer-readable), workspace-scoped.
          */
-        readonly get: operations["apps_projects_api_get_project_slugs"];
+        readonly get: operations["get_project_slugs"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -72,7 +72,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Seed projects */
-        readonly post: operations["apps_projects_api_seed_projects"];
+        readonly post: operations["seed_projects"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -92,7 +92,7 @@ export interface paths {
          * Batch create context entries
          * @description Create context entries across multiple projects. Bearer-writable xfail (Phase 5.4).
          */
-        readonly post: operations["apps_projects_api_batch_context"];
+        readonly post: operations["batch_context"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -112,7 +112,7 @@ export interface paths {
          * Batch create action entries
          * @description Create action entries across multiple projects. Bearer-writable xfail (Phase 5.4).
          */
-        readonly post: operations["apps_projects_api_batch_actions"];
+        readonly post: operations["batch_actions"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -127,15 +127,15 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get project detail */
-        readonly get: operations["apps_projects_api_get_project"];
+        readonly get: operations["projects_get_project"];
         readonly put?: never;
         readonly post?: never;
         /** Delete project */
-        readonly delete: operations["apps_projects_api_delete_project"];
+        readonly delete: operations["delete_project"];
         readonly options?: never;
         readonly head?: never;
         /** Patch project */
-        readonly patch: operations["apps_projects_api_patch_project"];
+        readonly patch: operations["projects_patch_project"];
         readonly trace?: never;
     };
     readonly "/api/projects/{slug}/context/": {
@@ -146,13 +146,13 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List context entries */
-        readonly get: operations["apps_projects_api_list_context"];
+        readonly get: operations["list_context"];
         readonly put?: never;
         /**
          * Create context entry
          * @description Bearer-writable xfail (Phase 5.4).
          */
-        readonly post: operations["apps_projects_api_create_context"];
+        readonly post: operations["create_context"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -167,7 +167,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Latest context per type */
-        readonly get: operations["apps_projects_api_get_context_latest"];
+        readonly get: operations["get_context_latest"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -184,13 +184,13 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List actions */
-        readonly get: operations["apps_projects_api_list_actions"];
+        readonly get: operations["list_actions"];
         readonly put?: never;
         /**
          * Create action
          * @description Bearer-writable xfail (Phase 5.4).
          */
-        readonly post: operations["apps_projects_api_create_action"];
+        readonly post: operations["create_action"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -205,7 +205,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Latest action per skill */
-        readonly get: operations["apps_projects_api_get_actions_summary"];
+        readonly get: operations["get_actions_summary"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -222,10 +222,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List origin records */
-        readonly get: operations["apps_issues_api_list_issues"];
+        readonly get: operations["list_issues"];
         readonly put?: never;
         /** Upsert an origin record */
-        readonly post: operations["apps_issues_api_upsert_issue"];
+        readonly post: operations["upsert_issue"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -240,11 +240,11 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get an origin record */
-        readonly get: operations["apps_issues_api_get_issue"];
+        readonly get: operations["get_issue"];
         readonly put?: never;
         readonly post?: never;
         /** Delete an origin record (cleanup) */
-        readonly delete: operations["apps_issues_api_delete_issue"];
+        readonly delete: operations["delete_issue"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -261,7 +261,7 @@ export interface paths {
          * List insights
          * @description Bearer-readable xfail (Phase 5.4).
          */
-        readonly get: operations["apps_projects_api_list_insights"];
+        readonly get: operations["list_insights"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -291,7 +291,7 @@ export interface paths {
          *
          *     A body with no filters ({}) clears ALL insights — this is intended.
          */
-        readonly post: operations["apps_projects_api_clear_insights"];
+        readonly post: operations["clear_insights"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -309,7 +309,7 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /** Dismiss insight */
-        readonly delete: operations["apps_projects_api_dismiss_insight"];
+        readonly delete: operations["dismiss_insight"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -323,7 +323,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Current user */
-        readonly get: operations["apps_common_api_me"];
+        readonly get: operations["me"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -340,14 +340,14 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get the current user's presence visibility preference */
-        readonly get: operations["apps_common_api_get_presence_preference"];
+        readonly get: operations["get_presence_preference"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         /** Set the current user's presence visibility preference */
-        readonly patch: operations["apps_common_api_set_presence_preference"];
+        readonly patch: operations["set_presence_preference"];
         readonly trace?: never;
     };
     readonly "/api/health/": {
@@ -358,7 +358,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Health check */
-        readonly get: operations["apps_common_api_health"];
+        readonly get: operations["health"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -375,10 +375,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List walkthroughs */
-        readonly get: operations["apps_walkthroughs_api_list_walkthroughs"];
+        readonly get: operations["list_walkthroughs"];
         readonly put?: never;
         /** Upload a walkthrough (multipart) */
-        readonly post: operations["apps_walkthroughs_api_upload_walkthrough"];
+        readonly post: operations["upload_walkthrough"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -393,15 +393,15 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get walkthrough detail */
-        readonly get: operations["apps_walkthroughs_api_get_walkthrough"];
+        readonly get: operations["get_walkthrough"];
         readonly put?: never;
         readonly post?: never;
         /** Delete walkthrough (owner only) */
-        readonly delete: operations["apps_walkthroughs_api_delete_walkthrough"];
+        readonly delete: operations["delete_walkthrough"];
         readonly options?: never;
         readonly head?: never;
         /** Update walkthrough (owner only) */
-        readonly patch: operations["apps_walkthroughs_api_patch_walkthrough"];
+        readonly patch: operations["patch_walkthrough"];
         readonly trace?: never;
     };
     readonly "/api/walkthroughs/{wid}/rotate-token": {
@@ -421,7 +421,7 @@ export interface paths {
          *     anonymous caller is rejected before reaching this body. An *authenticated*
          *     non-owner still gets a manual 404 (not 403) to avoid leaking existence.
          */
-        readonly post: operations["apps_walkthroughs_api_rotate_walkthrough_token"];
+        readonly post: operations["rotate_walkthrough_token"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -436,10 +436,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List my tokens */
-        readonly get: operations["apps_tokens_api_list_tokens"];
+        readonly get: operations["list_tokens"];
         readonly put?: never;
         /** Mint a token */
-        readonly post: operations["apps_tokens_api_create_token"];
+        readonly post: operations["create_token"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -457,7 +457,7 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /** Revoke a token (mine only) */
-        readonly delete: operations["apps_tokens_api_revoke_token"];
+        readonly delete: operations["revoke_token"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -479,7 +479,7 @@ export interface paths {
          *     of a third party. Staleness is not a risk: the only thing it could be stale
          *     about is `needs_reconnect`, which the next real operation stamps anyway.
          */
-        readonly get: operations["apps_tokens_api_github_connection"];
+        readonly get: operations["github_connection"];
         readonly put?: never;
         readonly post?: never;
         /**
@@ -495,7 +495,7 @@ export interface paths {
          *     GitHub's own settings, which the UI links to. Claiming to revoke upstream
          *     and silently failing would be worse than saying which half this does.
          */
-        readonly delete: operations["apps_tokens_api_github_disconnect"];
+        readonly delete: operations["github_disconnect"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -520,7 +520,7 @@ export interface paths {
          *     A 409 (not 500) when the grant is unusable, because the remedy is a user
          *     action — press Connect — rather than anything a retry would fix.
          */
-        readonly get: operations["apps_tokens_api_github_installations"];
+        readonly get: operations["github_installations"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -537,7 +537,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List feedback */
-        readonly get: operations["apps_feedback_api_list_feedback"];
+        readonly get: operations["list_feedback"];
         readonly put?: never;
         /**
          * Ingest feedback (batch, idempotent)
@@ -545,7 +545,7 @@ export interface paths {
          *     is safe. ``submitted_by`` is the CALLER (the agent's PAT user, or the logged
          *     in human) — never the external author, who has no account here.
          */
-        readonly post: operations["apps_feedback_api_ingest_feedback"];
+        readonly post: operations["ingest_feedback"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -567,7 +567,7 @@ export interface paths {
          *     what somebody said, and editing that after the fact would make the pool
          *     untrustworthy as a record.
          */
-        readonly post: operations["apps_feedback_api_resolve_feedback"];
+        readonly post: operations["resolve_feedback"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -587,7 +587,7 @@ export interface paths {
          *     ``?source=runner`` covers every runner subsystem without the caller
          *     knowing the full dotted names.
          */
-        readonly get: operations["apps_events_api_list_events"];
+        readonly get: operations["list_events"];
         readonly put?: never;
         /**
          * Record events (batch, coalescing)
@@ -595,7 +595,7 @@ export interface paths {
          *     count, so a permanently-stuck retry loop stays one row instead of one row
          *     per tick. A blank key never coalesces.
          */
-        readonly post: operations["apps_events_api_record_events"];
+        readonly post: operations["record_events"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -619,7 +619,7 @@ export interface paths {
          *     ``{emailAddress, historyId}`` and no content, so the runner — which owns the
          *     per-agent ``gog`` OAuth clients — does the read it already does on its poll.
          */
-        readonly post: operations["apps_inbound_api_gmail_push"];
+        readonly post: operations["gmail_push"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -634,9 +634,9 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Read push config */
-        readonly get: operations["apps_inbound_api_get_push_config"];
+        readonly get: operations["get_push_config"];
         /** Set push config (owner) */
-        readonly put: operations["apps_inbound_api_set_push_config"];
+        readonly put: operations["set_push_config"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -652,10 +652,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List mailboxes */
-        readonly get: operations["apps_inbound_api_list_mailboxes"];
+        readonly get: operations["list_mailboxes"];
         readonly put?: never;
         /** Register a mailbox (owner) */
-        readonly post: operations["apps_inbound_api_create_mailbox"];
+        readonly post: operations["create_mailbox"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -673,11 +673,11 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /** Remove a mailbox (owner) */
-        readonly delete: operations["apps_inbound_api_delete_mailbox"];
+        readonly delete: operations["delete_mailbox"];
         readonly options?: never;
         readonly head?: never;
         /** Update a mailbox (owner) */
-        readonly patch: operations["apps_inbound_api_update_mailbox"];
+        readonly patch: operations["update_mailbox"];
         readonly trace?: never;
     };
     readonly "/api/inbound/runner-mailboxes": {
@@ -696,7 +696,7 @@ export interface paths {
          *     here makes the UI the single place it is set; the runner intersects this with
          *     the mailboxes it actually holds credentials for.
          */
-        readonly get: operations["apps_inbound_api_runner_mailboxes"];
+        readonly get: operations["runner_mailboxes"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -730,7 +730,7 @@ export interface paths {
          *     Caller-authed (session or PAT), not push-verified: this is our own fleet
          *     reporting state, not Google calling in.
          */
-        readonly post: operations["apps_inbound_api_report_watch"];
+        readonly post: operations["report_watch"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -745,7 +745,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** This workspace's Slack connection */
-        readonly get: operations["apps_slack_api_get_config"];
+        readonly get: operations["get_config"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -767,10 +767,10 @@ export interface paths {
          * @description Takes the REFRESH token of a Slack app configuration token, then syncs
          *     the app's slash commands to the agents that are on for Slack.
          */
-        readonly put: operations["apps_slack_api_set_config_token"];
+        readonly put: operations["set_config_token"];
         readonly post?: never;
         /** Stop managing the Slack app's slash commands (owner) */
-        readonly delete: operations["apps_slack_api_clear_config_token"];
+        readonly delete: operations["clear_config_token"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -789,7 +789,7 @@ export interface paths {
          * @description The policy for `@canopy <agent> --history <minutes> <ask>` in this workspace:
          *     whether it may read the channel's recent past at all, and the longest window.
          */
-        readonly put: operations["apps_slack_api_set_history"];
+        readonly put: operations["set_history"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -807,7 +807,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Sync slash commands now (owner) */
-        readonly post: operations["apps_slack_api_sync"];
+        readonly post: operations["sync"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -838,7 +838,7 @@ export interface paths {
          *     The new scope lands only on a re-install, so the response says so and
          *     carries the URL.
          */
-        readonly post: operations["apps_slack_api_declare_agent"];
+        readonly post: operations["declare_agent"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -853,10 +853,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List storyboards */
-        readonly get: operations["apps_storyboards_api_list_storyboards"];
+        readonly get: operations["list_storyboards"];
         readonly put?: never;
         /** Create a storyboard */
-        readonly post: operations["apps_storyboards_api_create_storyboard"];
+        readonly post: operations["create_storyboard"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -874,14 +874,14 @@ export interface paths {
          * Read a storyboard (public via ?t=<share_token>)
          * @description Anonymous-capable; the handler self-enforces. See the module docstring.
          */
-        readonly get: operations["apps_storyboards_api_get_storyboard"];
+        readonly get: operations["get_storyboard"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         /** Edit a storyboard */
-        readonly patch: operations["apps_storyboards_api_patch_storyboard"];
+        readonly patch: operations["patch_storyboard"];
         readonly trace?: never;
     };
     readonly "/api/storyboards/{slug}/rotate-token": {
@@ -894,7 +894,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Re-mint the share link, killing every link already sent */
-        readonly post: operations["apps_storyboards_api_rotate_token"];
+        readonly post: operations["storyboards_rotate_token"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -911,7 +911,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Mint the share link if it does not exist yet */
-        readonly post: operations["apps_storyboards_api_ensure_token"];
+        readonly post: operations["ensure_token"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -936,7 +936,7 @@ export interface paths {
          *     own channel or target kind — the server fills those in, so an outsider
          *     cannot file feedback against something this board does not contain.
          */
-        readonly post: operations["apps_storyboards_api_leave_feedback"];
+        readonly post: operations["leave_feedback"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -963,7 +963,7 @@ export interface paths {
          *     ``_owned_or_404`` (membership), not ``_readable_or_404`` (membership OR
          *     token).
          */
-        readonly get: operations["apps_storyboards_api_list_notes"];
+        readonly get: operations["list_notes"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -986,7 +986,7 @@ export interface paths {
          *     404s when the narrative is not on this board — a link to one arc must not be
          *     a read handle for every narrative in the workspace.
          */
-        readonly get: operations["apps_storyboards_api_get_board_narrative"];
+        readonly get: operations["get_board_narrative"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1014,7 +1014,7 @@ export interface paths {
          *     Each row carries the workspace a session started with that agent will
          *     belong to.
          */
-        readonly get: operations["apps_tokens_embed_api_list_embeddable_agents"];
+        readonly get: operations["list_embeddable_agents"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1038,7 +1038,7 @@ export interface paths {
          *     `/api/embed/agents`, which answers for the caller and is the only place
          *     that intersects the app's allowlist with the viewer's memberships.
          */
-        readonly get: operations["apps_tokens_embed_api_embed_self"];
+        readonly get: operations["embed_self"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1075,7 +1075,7 @@ export interface paths {
          *     a short grant to its own tools for that page; `host_grant` says whether it
          *     did. Any other value, or none, is simply no grant.
          */
-        readonly post: operations["apps_tokens_embed_api_embed_self_token"];
+        readonly post: operations["embed_self_token"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1098,7 +1098,7 @@ export interface paths {
          *     they do not have — the same three-way question `/api/embed/agents` answers
          *     for users, minus the leg that does not apply.
          */
-        readonly get: operations["apps_tokens_contact_api_contact_me"];
+        readonly get: operations["contact_me"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1120,7 +1120,7 @@ export interface paths {
          *     conversations only — a filter narrows, it never widens what `contact_session_q`
          *     already allows.
          */
-        readonly get: operations["apps_tokens_contact_api_list_sessions"];
+        readonly get: operations["tokens_contact_list_sessions"];
         readonly put?: never;
         /**
          * Start a conversation with an agent this site offers
@@ -1130,7 +1130,7 @@ export interface paths {
          *     membership. So this is the app's allowlist intersected with the contact's
          *     own workspace, and there is deliberately no third leg.
          */
-        readonly post: operations["apps_tokens_contact_api_start_session"];
+        readonly post: operations["start_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1145,7 +1145,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** One of my conversations */
-        readonly get: operations["apps_tokens_contact_api_get_session"];
+        readonly get: operations["tokens_contact_get_session"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1164,7 +1164,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Say something */
-        readonly post: operations["apps_tokens_contact_api_send"];
+        readonly post: operations["tokens_contact_send"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1186,7 +1186,7 @@ export interface paths {
          *     (It used to hand-build rows from `m.body`, a field `Message` does not have —
          *     every call on a conversation with a message in it was a 500.)
          */
-        readonly get: operations["apps_tokens_contact_api_messages"];
+        readonly get: operations["messages"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1209,7 +1209,7 @@ export interface paths {
          * @description The same viewer signal a user's chat sends, so a contact watching their
          *     own conversation sees the agent's reply as it is written, not when it lands.
          */
-        readonly post: operations["apps_tokens_contact_api_attach"];
+        readonly post: operations["attach"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1226,7 +1226,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** I stopped watching */
-        readonly post: operations["apps_tokens_contact_api_detach"];
+        readonly post: operations["detach"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1248,7 +1248,7 @@ export interface paths {
          *     A state over the server's cap is refused with `too_large`: send the
          *     selection (ids, filters) and the tool that resolves it, not the rows.
          */
-        readonly put: operations["apps_tokens_contact_api_declare_page_state"];
+        readonly put: operations["tokens_contact_declare_page_state"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -1269,7 +1269,7 @@ export interface paths {
          * @description Replaces the declaration wholesale — merging would leave the agent able
          *     to call into a page the visitor has left.
          */
-        readonly put: operations["apps_tokens_contact_api_declare_page_actions"];
+        readonly put: operations["tokens_contact_declare_page_actions"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -1294,7 +1294,7 @@ export interface paths {
          *     one page cannot resolve another's — the same two gates as the user route,
          *     with contact ownership standing where membership stands there.
          */
-        readonly post: operations["apps_tokens_contact_api_resolve_page_action"];
+        readonly post: operations["tokens_contact_resolve_page_action"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1311,7 +1311,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Cancel every unfinished turn in my conversation */
-        readonly post: operations["apps_tokens_contact_api_stop"];
+        readonly post: operations["stop"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1326,7 +1326,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** My queued turns no online runner can take */
-        readonly get: operations["apps_tokens_contact_api_my_unclaimable"];
+        readonly get: operations["my_unclaimable"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1343,7 +1343,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** One turn of my conversation */
-        readonly get: operations["apps_tokens_contact_api_my_turn"];
+        readonly get: operations["my_turn"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1360,7 +1360,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** That turn's raw transcript */
-        readonly get: operations["apps_tokens_contact_api_my_turn_transcript"];
+        readonly get: operations["my_turn_transcript"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1390,7 +1390,7 @@ export interface paths {
          *     The workspace comes from the app's own row, never the assertion. A host
          *     cannot name the tenant it wants its visitor placed in.
          */
-        readonly post: operations["apps_tokens_contact_api_contact_token"];
+        readonly post: operations["contact_token"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1414,7 +1414,7 @@ export interface paths {
          *     and `order` ∈ {-last_activity, last_activity, -created, created, narrative_slug}.
          *     Default sort is most-recently-edited first.
          */
-        readonly get: operations["apps_reviews_api_list_reviews"];
+        readonly get: operations["list_reviews"];
         readonly put?: never;
         /**
          * Create a review request (orchestrator)
@@ -1423,7 +1423,7 @@ export interface paths {
          *     The orchestrator authenticates via a Personal Access Token (PAT).
          *     Returns the review's UUID and the share URL the human will visit.
          */
-        readonly post: operations["apps_reviews_api_create_review"];
+        readonly post: operations["create_review"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1446,7 +1446,7 @@ export interface paths {
          *     - Unauthenticated callers may read if visibility=="link" (no token required).
          *     - Otherwise → 404 (don't leak existence).
          */
-        readonly get: operations["apps_reviews_api_get_review"];
+        readonly get: operations["get_review"];
         readonly put?: never;
         readonly post?: never;
         /**
@@ -1460,7 +1460,7 @@ export interface paths {
          *     it's the tenant boundary: a non-member gets a 404, not the ability to delete
          *     another workspace's review.
          */
-        readonly delete: operations["apps_reviews_api_delete_review"];
+        readonly delete: operations["delete_review"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1482,7 +1482,7 @@ export interface paths {
          *     Flips status to "resolved" and stamps resolved_at.  Can only be submitted
          *     once; re-submission on an already-resolved review → 403.
          */
-        readonly post: operations["apps_reviews_api_submit_review"];
+        readonly post: operations["submit_review"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1509,7 +1509,7 @@ export interface paths {
          *     attacker cannot forge a cross-site POST without knowing the token. A dimagi
          *     member should resolve the gate via /submit/ instead.
          */
-        readonly post: operations["apps_reviews_api_suggest_review"];
+        readonly post: operations["suggest_review"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1524,7 +1524,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List DDD narratives */
-        readonly get: operations["apps_runs_api_list_narratives"];
+        readonly get: operations["list_narratives"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1541,11 +1541,11 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get a narrative + its runs */
-        readonly get: operations["apps_runs_api_get_narrative"];
+        readonly get: operations["get_narrative"];
         readonly put?: never;
         readonly post?: never;
         /** Delete an entire narrative (all versions + runs) */
-        readonly delete: operations["apps_runs_api_delete_narrative"];
+        readonly delete: operations["delete_narrative"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1559,11 +1559,11 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get a run package (video + deck + narrative + links) */
-        readonly get: operations["apps_runs_api_get_run"];
+        readonly get: operations["runs_get_run"];
         readonly put?: never;
         readonly post?: never;
         /** Delete a run (its walkthroughs + reviews) */
-        readonly delete: operations["apps_runs_api_delete_run"];
+        readonly delete: operations["delete_run"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1582,7 +1582,7 @@ export interface paths {
          *     matching ``?t=`` share token) inside ``build_release`` — the middleware
          *     allowlist only lets the request reach here.
          */
-        readonly get: operations["apps_runs_api_get_run_release"];
+        readonly get: operations["get_run_release"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1605,7 +1605,7 @@ export interface paths {
         readonly options?: never;
         readonly head?: never;
         /** Set visibility for an entire narrative (cascades to all artifacts + reviews) */
-        readonly patch: operations["apps_runs_api_set_narrative_visibility"];
+        readonly patch: operations["set_narrative_visibility"];
         readonly trace?: never;
     };
     readonly "/api/ddd/narratives/{slug}/versions/{version}/": {
@@ -1619,7 +1619,7 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /** Delete a narrative version (and the runs under it) */
-        readonly delete: operations["apps_runs_api_delete_version"];
+        readonly delete: operations["delete_version"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1648,7 +1648,7 @@ export interface paths {
          *     Requires membership of BOTH sides — you may not move something out of a
          *     workspace you cannot see, nor into one you do not belong to.
          */
-        readonly post: operations["apps_runs_api_move_narrative"];
+        readonly post: operations["move_narrative"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1670,7 +1670,7 @@ export interface paths {
          *     mount, every workspace the caller is a member of (the PAT resolves to a real
          *     user, so machine producers see their tenant's rows too).
          */
-        readonly get: operations["apps_shareouts_api_list_shareouts"];
+        readonly get: operations["list_shareouts"];
         readonly put?: never;
         /**
          * Create shareouts (batch, idempotent per period+source)
@@ -1680,7 +1680,7 @@ export interface paths {
          *     Rows are assigned to a workspace you already belong to: the `/w/{ws}` prefix
          *     pins it, otherwise it resolves to your default. 422 if you belong to none.
          */
-        readonly post: operations["apps_shareouts_api_create_shareouts"];
+        readonly post: operations["create_shareouts"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1702,7 +1702,7 @@ export interface paths {
          *     An empty body clears all of THE CALLER'S shareouts (the pinned /w/{ws} one, or
          *     the union of their memberships) — never another tenant's.
          */
-        readonly post: operations["apps_shareouts_api_clear_shareouts"];
+        readonly post: operations["clear_shareouts"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1719,7 +1719,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Upload a Claude .jsonl transcript (multipart) */
-        readonly post: operations["apps_session_sharing_api_upload_session"];
+        readonly post: operations["upload_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1734,7 +1734,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List shared sessions */
-        readonly get: operations["apps_session_sharing_api_list_sessions"];
+        readonly get: operations["session_sharing_list_sessions"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1751,10 +1751,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List arcs */
-        readonly get: operations["apps_session_sharing_api_list_arcs"];
+        readonly get: operations["list_arcs"];
         readonly put?: never;
         /** Create an arc from owned sessions (ordered) */
-        readonly post: operations["apps_session_sharing_api_create_arc"];
+        readonly post: operations["create_arc"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1769,15 +1769,15 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get one arc (owner) */
-        readonly get: operations["apps_session_sharing_api_get_arc"];
+        readonly get: operations["get_arc"];
         readonly put?: never;
         readonly post?: never;
         /** Delete an arc (owner) */
-        readonly delete: operations["apps_session_sharing_api_delete_arc"];
+        readonly delete: operations["delete_arc"];
         readonly options?: never;
         readonly head?: never;
         /** Update an arc (owner) */
-        readonly patch: operations["apps_session_sharing_api_patch_arc"];
+        readonly patch: operations["patch_arc"];
         readonly trace?: never;
     };
     readonly "/api/sessions/arcs/{slug}/rotate-token": {
@@ -1790,7 +1790,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Rotate arc share token (owner) */
-        readonly post: operations["apps_session_sharing_api_rotate_arc_token"];
+        readonly post: operations["rotate_arc_token"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1805,15 +1805,15 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get one session (owner) */
-        readonly get: operations["apps_session_sharing_api_get_session"];
+        readonly get: operations["session_sharing_get_session"];
         readonly put?: never;
         readonly post?: never;
         /** Delete a session (owner) */
-        readonly delete: operations["apps_session_sharing_api_delete_session"];
+        readonly delete: operations["delete_session"];
         readonly options?: never;
         readonly head?: never;
         /** Update a session (owner) */
-        readonly patch: operations["apps_session_sharing_api_patch_session"];
+        readonly patch: operations["patch_session"];
         readonly trace?: never;
     };
     readonly "/api/sessions/{slug}/rotate-token": {
@@ -1826,7 +1826,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Rotate share token (owner) */
-        readonly post: operations["apps_session_sharing_api_rotate_token"];
+        readonly post: operations["session_sharing_rotate_token"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1841,10 +1841,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List agents */
-        readonly get: operations["apps_agents_api_list_agents"];
+        readonly get: operations["list_agents"];
         readonly put?: never;
         /** Create or update an agent (upsert by slug) */
-        readonly post: operations["apps_agents_api_upsert_agent"];
+        readonly post: operations["upsert_agent"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -1859,7 +1859,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Agent detail (with counts) */
-        readonly get: operations["apps_agents_api_get_agent"];
+        readonly get: operations["get_agent"];
         readonly put?: never;
         readonly post?: never;
         /**
@@ -1886,7 +1886,7 @@ export interface paths {
          *     this is a real delete rather than a soft flag — nothing is left dangling
          *     and nothing blocks it.
          */
-        readonly delete: operations["apps_agents_api_delete_agent"];
+        readonly delete: operations["delete_agent"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1905,7 +1905,7 @@ export interface paths {
          * @description The canopy user account this agent's own token signs in as. `user_id`
          *     null unlinks it.
          */
-        readonly put: operations["apps_agents_api_link_canopy_user"];
+        readonly put: operations["link_canopy_user"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -1922,7 +1922,7 @@ export interface paths {
         };
         readonly get?: never;
         /** Transfer the agent's ownership to a member of its workspace (canopy UI only) */
-        readonly put: operations["apps_agents_api_transfer_owner"];
+        readonly put: operations["transfer_owner"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -1938,12 +1938,12 @@ export interface paths {
             readonly cookie?: never;
         };
         /** What this agent offers callers — its declared interface */
-        readonly get: operations["apps_agents_api_get_interface"];
+        readonly get: operations["get_interface"];
         /** Save the agent's declared interface (YAML source, or a parsed mapping) */
-        readonly put: operations["apps_agents_api_publish_interface"];
+        readonly put: operations["publish_interface"];
         readonly post?: never;
         /** Unpublish the declared interface: every turn runs in the full profile again */
-        readonly delete: operations["apps_agents_api_unpublish_interface"];
+        readonly delete: operations["unpublish_interface"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1957,7 +1957,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Who holds this agent's keys: its owner and admins */
-        readonly get: operations["apps_agents_api_list_admins"];
+        readonly get: operations["list_admins"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1981,7 +1981,7 @@ export interface paths {
          *     or nothing. `outsiders` lists the interface rules that reach people outside
          *     the workspace. Readable by any member, like the admin list.
          */
-        readonly get: operations["apps_agents_api_agent_access"];
+        readonly get: operations["agent_access"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1999,10 +1999,10 @@ export interface paths {
         };
         readonly get?: never;
         /** Make a workspace member an admin of this agent (canopy UI only) */
-        readonly put: operations["apps_agents_api_grant_admin"];
+        readonly put: operations["grant_admin"];
         readonly post?: never;
         /** Revoke an admin of this agent (canopy UI only) */
-        readonly delete: operations["apps_agents_api_revoke_admin"];
+        readonly delete: operations["revoke_admin"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -2029,7 +2029,7 @@ export interface paths {
          *     clobber of the agent's other fields. Honored at claim time — see
          *     harness.services.claim_next_turn.
          */
-        readonly patch: operations["apps_agents_api_set_runner_preference"];
+        readonly patch: operations["set_runner_preference"];
         readonly trace?: never;
     };
     readonly "/api/agents/{slug}/turn-mode": {
@@ -2052,7 +2052,7 @@ export interface paths {
          *     A human decision made from the board; the agent-repo upsert (POST /) cannot
          *     touch this field.
          */
-        readonly patch: operations["apps_agents_api_set_turn_mode"];
+        readonly patch: operations["set_turn_mode"];
         readonly trace?: never;
     };
     readonly "/api/agents/{slug}/slack": {
@@ -2074,7 +2074,7 @@ export interface paths {
          *     (by mention, DM, `/canopy <slug>` or `/<slug>`). Owner only. Adds or removes
          *     the agent's `/<slug>` command in the Slack app when canopy manages it.
          */
-        readonly patch: operations["apps_agents_api_set_slack_enabled"];
+        readonly patch: operations["set_slack_enabled"];
         readonly trace?: never;
     };
     readonly "/api/agents/{slug}/runtime": {
@@ -2091,7 +2091,7 @@ export interface paths {
          *     names to resolve, the engine preference, and the tenant. Tenant-gated exactly
          *     like every other agent read.
          */
-        readonly get: operations["apps_agents_api_get_agent_runtime"];
+        readonly get: operations["get_agent_runtime"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2108,7 +2108,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List the agent's ordered runner assignments */
-        readonly get: operations["apps_agents_api_list_agent_runners"];
+        readonly get: operations["list_agent_runners"];
         /**
          * Replace the agent's ordered runner list (index = rank)
          * @description Replace the agent's ORDERED runner list (index = rank) — the single
@@ -2120,7 +2120,7 @@ export interface paths {
          *     stays in the list, rank preserved, but never routes) or the legacy
          *     `runner_ids` (ordered ids, all implicitly enabled).
          */
-        readonly put: operations["apps_agents_api_replace_agent_runners"];
+        readonly put: operations["replace_agent_runners"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -2141,7 +2141,7 @@ export interface paths {
          *     2026-07-27). One rule per source, max — the priority runner, and whether it is
          *     the only one allowed to take that source's work.
          */
-        readonly get: operations["apps_agents_api_list_agent_runner_rules"];
+        readonly get: operations["list_agent_runner_rules"];
         /**
          * Replace the agent's per-source routing rules
          * @description Wholesale replace, scoped to non-empty-source rows — the default ordered
@@ -2151,7 +2151,7 @@ export interface paths {
          *     the other's rows (they share one table), and so the existing GET response
          *     shape stays what the frontend already consumes.
          */
-        readonly put: operations["apps_agents_api_replace_agent_runner_rules"];
+        readonly put: operations["replace_agent_runner_rules"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -2167,10 +2167,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List the agent's syncs */
-        readonly get: operations["apps_agents_api_list_syncs"];
+        readonly get: operations["list_syncs"];
         readonly put?: never;
         /** Post a Google-Doc sync (idempotent per period+source) */
-        readonly post: operations["apps_agents_api_create_sync"];
+        readonly post: operations["create_sync"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2192,7 +2192,7 @@ export interface paths {
          * @description POST upserts per (period, source), so re-posting only corrects a sync for the
          *     SAME window — a sync filed under the wrong period is otherwise unreachable.
          */
-        readonly delete: operations["apps_agents_api_delete_sync"];
+        readonly delete: operations["delete_sync"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -2206,10 +2206,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List the agent's turns */
-        readonly get: operations["apps_agents_api_list_turns"];
+        readonly get: operations["agents_list_turns"];
         readonly put?: never;
         /** Package a turn (idempotent per cli_session_id) */
-        readonly post: operations["apps_agents_api_create_turn"];
+        readonly post: operations["create_turn"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2224,10 +2224,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List the agent's work products */
-        readonly get: operations["apps_agents_api_list_work_products"];
+        readonly get: operations["list_work_products"];
         readonly put?: never;
         /** Add/update work products (upsert by url) */
-        readonly post: operations["apps_agents_api_add_work_products"];
+        readonly post: operations["add_work_products"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2242,9 +2242,9 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List the agent's skill catalog */
-        readonly get: operations["apps_agents_api_list_skills"];
+        readonly get: operations["list_skills"];
         /** Replace the agent's skill catalog */
-        readonly put: operations["apps_agents_api_replace_skills"];
+        readonly put: operations["replace_skills"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -2260,7 +2260,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** How the agent's skills changed, from its repository's history */
-        readonly get: operations["apps_agents_api_get_skill_history"];
+        readonly get: operations["get_skill_history"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2279,7 +2279,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Re-read the agent's skill history from its repository now */
-        readonly post: operations["apps_agents_api_sync_skill_history"];
+        readonly post: operations["sync_skill_history"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2294,10 +2294,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List the agent's projects */
-        readonly get: operations["apps_agents_api_list_projects"];
+        readonly get: operations["agents_list_projects"];
         readonly put?: never;
         /** Create a project */
-        readonly post: operations["apps_agents_api_create_project"];
+        readonly post: operations["agents_create_project"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2312,14 +2312,14 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get one project */
-        readonly get: operations["apps_agents_api_get_project"];
+        readonly get: operations["agents_get_project"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         /** Update a project */
-        readonly patch: operations["apps_agents_api_patch_project"];
+        readonly patch: operations["agents_patch_project"];
         readonly trace?: never;
     };
     readonly "/api/agents/{slug}/tasks/": {
@@ -2330,10 +2330,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List the agent's tasks (board) */
-        readonly get: operations["apps_agents_api_list_tasks"];
+        readonly get: operations["list_tasks"];
         readonly put?: never;
         /** Create a task */
-        readonly post: operations["apps_agents_api_create_task"];
+        readonly post: operations["create_task"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2355,7 +2355,7 @@ export interface paths {
          *     cannot notify a string, and the fleet's boards spell one person three ways
          *     ("Jonathan", "Jonathan Jackson", "jjackson@dimagi.com").
          */
-        readonly get: operations["apps_agents_api_list_waiting_tasks"];
+        readonly get: operations["list_waiting_tasks"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2374,7 +2374,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Upsert the agent's tasks from the (legacy) source sheet */
-        readonly post: operations["apps_agents_api_sync_tasks"];
+        readonly post: operations["sync_tasks"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2395,7 +2395,7 @@ export interface paths {
         readonly options?: never;
         readonly head?: never;
         /** Update a task */
-        readonly patch: operations["apps_agents_api_patch_task"];
+        readonly patch: operations["patch_task"];
         readonly trace?: never;
     };
     readonly "/api/agents/{slug}/tasks/{task_id}/commands": {
@@ -2408,7 +2408,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Post a board action (accept/decline/dispatch/…) on a task */
-        readonly post: operations["apps_agents_api_post_command"];
+        readonly post: operations["post_command"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2423,7 +2423,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List commands (the agent reads ?status=pending) */
-        readonly get: operations["apps_agents_api_list_commands"];
+        readonly get: operations["list_commands"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2442,7 +2442,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Mark a command applied (the agent calls this after acting) */
-        readonly post: operations["apps_agents_api_apply_command"];
+        readonly post: operations["apply_command"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2465,7 +2465,7 @@ export interface paths {
          *     so even the caller who just wrote a value cannot read one back through the
          *     browser.
          */
-        readonly put: operations["apps_agents_api_set_agent_credentials"];
+        readonly put: operations["set_agent_credentials"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -2485,7 +2485,7 @@ export interface paths {
          * @description The question this answers is 'what is stopping this agent from running',
          *     which today requires SSH-ing to a box and reading a keyring.
          */
-        readonly get: operations["apps_agents_api_agent_credential_status"];
+        readonly get: operations["agent_credential_status"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2519,7 +2519,7 @@ export interface paths {
          *     Every read is recorded, so a credential fetch is visible in the fleet log
          *     rather than silent.
          */
-        readonly get: operations["apps_agents_api_resolve_agent_credentials"];
+        readonly get: operations["resolve_agent_credentials"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2536,7 +2536,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** This agent's 1Password vault (masked — never the key) */
-        readonly get: operations["apps_agents_api_get_agent_vault"];
+        readonly get: operations["get_agent_vault"];
         /**
          * Set the vault + its service-account token (write-only)
          * @description The key is scoped to ONE agent's vault by design.
@@ -2545,7 +2545,7 @@ export interface paths {
          *     canopy-web worth attacking for every agent's secrets at once; this bounds a
          *     compromise to the one agent whose key was taken (Jonathan, 2026-09-06).
          */
-        readonly put: operations["apps_agents_api_set_agent_vault"];
+        readonly put: operations["set_agent_vault"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -2565,7 +2565,7 @@ export interface paths {
          * @description Whose GitHub identity this agent's pull requests use, when that token
          *     expires, and whether it can open a pull request on the agent's repo.
          */
-        readonly get: operations["apps_agents_api_get_agent_github"];
+        readonly get: operations["get_agent_github"];
         /**
          * Lend this agent your GitHub identity (owner only, write-only)
          * @description Store the owner's fine-grained GitHub token for this agent.
@@ -2574,14 +2574,14 @@ export interface paths {
          *     open a pull request on the agent's own repo. A token that fails is refused
          *     with the reason, never saved.
          */
-        readonly put: operations["apps_agents_api_set_agent_github"];
+        readonly put: operations["set_agent_github"];
         readonly post?: never;
         /**
          * Withdraw your GitHub identity from this agent
          * @description Removes the CALLER's own delegation — nobody can withdraw someone
          *     else's, and an agent admin who is not its owner has none to withdraw.
          */
-        readonly delete: operations["apps_agents_api_delete_agent_github"];
+        readonly delete: operations["delete_agent_github"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -2597,7 +2597,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Re-check this agent's GitHub token against GitHub */
-        readonly post: operations["apps_agents_api_check_agent_github"];
+        readonly post: operations["check_agent_github"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2615,7 +2615,7 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /** Remove one named secret */
-        readonly delete: operations["apps_agents_api_delete_agent_credential"];
+        readonly delete: operations["delete_agent_credential"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -2644,7 +2644,7 @@ export interface paths {
          *     the client its config DECLARES. Read `turn_ready` for "can this agent run a
          *     turn"; `mailbox_ok` only says some client works.
          */
-        readonly get: operations["apps_agents_api_agent_readiness"];
+        readonly get: operations["agent_readiness"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2669,7 +2669,7 @@ export interface paths {
          *     write is a readiness signal nobody can trust — and this one is meant to be
          *     trusted over the control plane's own record of what it stored.
          */
-        readonly post: operations["apps_agents_api_post_bootstrap_report"];
+        readonly post: operations["post_bootstrap_report"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2690,7 +2690,7 @@ export interface paths {
          *     Served only for an agent that has published a capability for contacts or
          *     unknown callers; any other slug is a 404. Supports `If-None-Match`.
          */
-        readonly get: operations["apps_agents_a2a_api_public_agent_card"];
+        readonly get: operations["public_agent_card"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2713,7 +2713,7 @@ export interface paths {
          *     The public card's skills plus every capability the caller may invoke
          *     themselves. A 404 when that is nothing. Supports `If-None-Match`.
          */
-        readonly get: operations["apps_agents_a2a_api_extended_agent_card"];
+        readonly get: operations["extended_agent_card"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2730,10 +2730,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List an agent's runs */
-        readonly get: operations["apps_agent_runs_api_list_runs"];
+        readonly get: operations["list_runs"];
         readonly put?: never;
         /** Create a run */
-        readonly post: operations["apps_agent_runs_api_create_run"];
+        readonly post: operations["create_run"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2748,7 +2748,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Full run read model */
-        readonly get: operations["apps_agent_runs_api_get_run"];
+        readonly get: operations["agent_runs_get_run"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2765,7 +2765,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** A run's steps */
-        readonly get: operations["apps_agent_runs_api_list_steps"];
+        readonly get: operations["list_steps"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2784,7 +2784,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Record a gate decision on a step */
-        readonly post: operations["apps_agent_runs_api_record_gate"];
+        readonly post: operations["record_gate"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2801,7 +2801,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Record a judge/QA verdict on a step */
-        readonly post: operations["apps_agent_runs_api_record_verdict"];
+        readonly post: operations["record_verdict"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2818,7 +2818,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Fork a run */
-        readonly post: operations["apps_agent_runs_api_fork_run"];
+        readonly post: operations["fork_run"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2841,7 +2841,7 @@ export interface paths {
          *     page do a top-level navigation, which is the only thing that can show a
          *     consent screen.
          */
-        readonly get: operations["apps_agents_oauth_api_start_google_mint"];
+        readonly get: operations["start_google_mint"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2858,7 +2858,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Google returns here; the token is stored */
-        readonly get: operations["apps_agents_oauth_api_google_callback"];
+        readonly get: operations["google_callback"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2883,7 +2883,7 @@ export interface paths {
          *     `mine=true` narrows to schedules the CALLER created — the actually-personal
          *     calendar, vs. the default 'everything in my workspaces'.
          */
-        readonly get: operations["apps_harness_api_schedules_schedule_week"];
+        readonly get: operations["schedule_week"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2900,10 +2900,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List an agent's recurring schedules */
-        readonly get: operations["apps_harness_api_schedules_list_schedules"];
+        readonly get: operations["list_schedules"];
         readonly put?: never;
         /** Create a recurring schedule */
-        readonly post: operations["apps_harness_api_schedules_create_schedule"];
+        readonly post: operations["create_schedule"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2924,7 +2924,7 @@ export interface paths {
          * @description Answer 'when would this actually run?' at edit time. Computed with the same
          *     next_slots() the firing path uses — the client must never re-implement cron.
          */
-        readonly post: operations["apps_harness_api_schedules_preview_schedule"];
+        readonly post: operations["preview_schedule"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2942,11 +2942,11 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /** Delete a recurring schedule */
-        readonly delete: operations["apps_harness_api_schedules_delete_schedule"];
+        readonly delete: operations["delete_schedule"];
         readonly options?: never;
         readonly head?: never;
         /** Update a recurring schedule */
-        readonly patch: operations["apps_harness_api_schedules_update_schedule"];
+        readonly patch: operations["update_schedule"];
         readonly trace?: never;
     };
     readonly "/api/agents/{slug}/schedules/{schedule_id}/run-now": {
@@ -2959,7 +2959,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Trigger a schedule off-cycle, now */
-        readonly post: operations["apps_harness_api_schedules_run_now"];
+        readonly post: operations["run_now"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2974,10 +2974,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List an agent's items */
-        readonly get: operations["apps_harness_items_api_list_items"];
+        readonly get: operations["list_items"];
         readonly put?: never;
         /** Raise items for an agent (batch, idempotent) */
-        readonly post: operations["apps_harness_items_api_create_items"];
+        readonly post: operations["create_items"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2999,7 +2999,7 @@ export interface paths {
          *     reuses the single agent-visibility predicate, so it can never show an ask
          *     whose agent the agents list would hide.
          */
-        readonly get: operations["apps_harness_items_api_list_fleet_items"];
+        readonly get: operations["list_fleet_items"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3016,7 +3016,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get an item */
-        readonly get: operations["apps_harness_items_api_get_item"];
+        readonly get: operations["get_item"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3035,7 +3035,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Decide an item (implement dispatches its work) */
-        readonly post: operations["apps_harness_items_api_decide_item"];
+        readonly post: operations["decide_item"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3052,7 +3052,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Dismiss an item */
-        readonly post: operations["apps_harness_items_api_dismiss_item"];
+        readonly post: operations["dismiss_item"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3067,10 +3067,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List my workspaces */
-        readonly get: operations["apps_workspaces_api_list_workspaces"];
+        readonly get: operations["list_workspaces"];
         readonly put?: never;
         /** Create a workspace */
-        readonly post: operations["apps_workspaces_api_create_workspace"];
+        readonly post: operations["create_workspace"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3085,7 +3085,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get a workspace (member-only) */
-        readonly get: operations["apps_workspaces_api_get_workspace"];
+        readonly get: operations["get_workspace"];
         readonly put?: never;
         readonly post?: never;
         /**
@@ -3109,7 +3109,7 @@ export interface paths {
          *       caller deletes the agents (or moves them) and retries. Memberships and
          *       invites are the workspace's own bookkeeping and cascade with it.
          */
-        readonly delete: operations["apps_workspaces_api_delete_workspace"];
+        readonly delete: operations["delete_workspace"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -3131,7 +3131,7 @@ export interface paths {
          *     administers it) and of the new parent (its owners gain this workspace).
          *     A cycle is refused by `Workspace.save` and surfaces as 422.
          */
-        readonly put: operations["apps_workspaces_api_set_workspace_parent"];
+        readonly put: operations["set_workspace_parent"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -3153,7 +3153,7 @@ export interface paths {
          *     they are not already a member of. Never enumerate anything else — see
          *     `services.joinable_workspaces`.
          */
-        readonly get: operations["apps_workspaces_api_list_joinable_workspaces"];
+        readonly get: operations["list_joinable_workspaces"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3183,7 +3183,7 @@ export interface paths {
          *     second time — or calling it as an existing member — never changes an
          *     existing role. See `services.join_workspace`.
          */
-        readonly post: operations["apps_workspaces_api_join_workspace"];
+        readonly post: operations["join_workspace"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3198,7 +3198,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List members (member-only) */
-        readonly get: operations["apps_workspaces_api_list_members"];
+        readonly get: operations["list_members"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3218,11 +3218,11 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /** Remove a member (owner-only) */
-        readonly delete: operations["apps_workspaces_api_remove_member"];
+        readonly delete: operations["remove_member"];
         readonly options?: never;
         readonly head?: never;
         /** Change a member's role (owner-only) */
-        readonly patch: operations["apps_workspaces_api_set_member_role"];
+        readonly patch: operations["set_member_role"];
         readonly trace?: never;
     };
     readonly "/api/workspaces/{slug}/invites/": {
@@ -3233,7 +3233,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List invites (member-only) */
-        readonly get: operations["apps_workspaces_api_list_invites"];
+        readonly get: operations["list_invites"];
         readonly put?: never;
         /**
          * Invite by email (owner-only)
@@ -3242,7 +3242,7 @@ export interface paths {
          *     Inviting an address that already has an outstanding invite returns that
          *     invite and emails its link again (at most once a minute).
          */
-        readonly post: operations["apps_workspaces_api_create_invite"];
+        readonly post: operations["create_invite"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3259,7 +3259,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Revoke an invite (owner-only) */
-        readonly post: operations["apps_workspaces_api_revoke_invite"];
+        readonly post: operations["revoke_invite"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3283,7 +3283,7 @@ export interface paths {
          *     invite the address again instead. 429 if this invite was emailed under a
          *     minute ago.
          */
-        readonly post: operations["apps_workspaces_api_reissue_invite"];
+        readonly post: operations["reissue_invite"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3298,7 +3298,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Preview an invite before login (pre-auth, minimal disclosure) */
-        readonly get: operations["apps_workspaces_api_preview_invite"];
+        readonly get: operations["preview_invite"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3317,7 +3317,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Accept an invite by token */
-        readonly post: operations["apps_workspaces_api_accept_invite"];
+        readonly post: operations["accept_invite"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3339,7 +3339,7 @@ export interface paths {
          *     which vault a tenant reads is administrative, and an editor acts *within* a
          *     tenant rather than over its credential configuration.
          */
-        readonly get: operations["apps_workspaces_api_get_shared_vault"];
+        readonly get: operations["get_shared_vault"];
         /**
          * Set the shared vault + its service-account token (write-only)
          * @description The key here must be scoped to the SHARED vault and nothing else.
@@ -3350,7 +3350,7 @@ export interface paths {
          *     stays narrow. Nothing here can enforce that — 1Password grants it — so it is
          *     stated where whoever sets it will read it.
          */
-        readonly put: operations["apps_workspaces_api_set_shared_vault"];
+        readonly put: operations["set_shared_vault"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -3369,13 +3369,13 @@ export interface paths {
          * Sites connected to this workspace
          * @description Every site this workspace has connected, with what each may do.
          */
-        readonly get: operations["apps_tokens_connected_apps_api_list_connected_apps"];
+        readonly get: operations["list_connected_apps"];
         readonly put?: never;
         /**
          * Connect a site
          * @description Register a site in this workspace.
          */
-        readonly post: operations["apps_tokens_connected_apps_api_connect_app"];
+        readonly post: operations["connect_app"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3399,11 +3399,11 @@ export interface paths {
          *     Retired rather than deleted: the row is what this workspace's visitors'
          *     records hang off, and the audit trail of what it once allowed.
          */
-        readonly delete: operations["apps_tokens_connected_apps_api_disconnect_app"];
+        readonly delete: operations["disconnect_app"];
         readonly options?: never;
         readonly head?: never;
         /** Change what a connected site may do */
-        readonly patch: operations["apps_tokens_connected_apps_api_update_connected_app"];
+        readonly patch: operations["update_connected_app"];
         readonly trace?: never;
     };
     readonly "/api/workspaces/{slug}/connected-apps/{app_id}/test": {
@@ -3431,7 +3431,7 @@ export interface paths {
          *     the probe runs on its schedule. Each step comes back as pass, fail or skip,
          *     with the reason.
          */
-        readonly post: operations["apps_tokens_connected_apps_api_test_connected_app"];
+        readonly post: operations["test_connected_app"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3454,7 +3454,7 @@ export interface paths {
          *     - ``before``: opaque cursor from a prior page's ``next_before`` — return only
          *       events older than it.
          */
-        readonly get: operations["apps_timeline_api_list_timeline"];
+        readonly get: operations["list_timeline"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3474,7 +3474,7 @@ export interface paths {
          * Overview
          * @description Full capability catalog grouped by family (list shape — no markdown body).
          */
-        readonly get: operations["apps_system_api_overview"];
+        readonly get: operations["overview"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3501,7 +3501,7 @@ export interface paths {
          *     segments, so it cannot capture this single-segment route — the order is
          *     not load-bearing.
          */
-        readonly get: operations["apps_system_api_public_stats"];
+        readonly get: operations["public_stats"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3521,7 +3521,7 @@ export interface paths {
          * Detail
          * @description One capability with its full markdown body.
          */
-        readonly get: operations["apps_system_api_detail"];
+        readonly get: operations["detail"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3538,7 +3538,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Public read-only view of a shared session or arc */
-        readonly get: operations["apps_session_sharing_api_public_share_view"];
+        readonly get: operations["public_share_view"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3564,10 +3564,10 @@ export interface paths {
          *     Each row carries `can_manage` for the ownership half. Retired runners are
          *     excluded at lookup, as everywhere else.
          */
-        readonly get: operations["apps_harness_api_list_runners"];
+        readonly get: operations["list_runners"];
         readonly put?: never;
         /** Pair Runner */
-        readonly post: operations["apps_harness_api_pair_runner"];
+        readonly post: operations["pair_runner"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3588,7 +3588,7 @@ export interface paths {
          *     caller) — the same trust boundary that lets that caller claim turns as the
          *     runner. Laptop/emdash runners never call this (they use ambient auth).
          */
-        readonly get: operations["apps_harness_api_get_runner_credential"];
+        readonly get: operations["get_runner_credential"];
         readonly put?: never;
         /**
          * Set a cloud runner's credential bundle (owner only)
@@ -3598,7 +3598,7 @@ export interface paths {
          *     like heartbeat/claim (paired_by == caller). Non-clobbering per field. Encrypted
          *     at rest; the response is masked (booleans, never values).
          */
-        readonly post: operations["apps_harness_api_set_runner_credential"];
+        readonly post: operations["set_runner_credential"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3620,7 +3620,7 @@ export interface paths {
          *     login keeps its name. The runner reads the new order the next time it
          *     re-reads its bundle.
          */
-        readonly post: operations["apps_harness_api_swap_runner_logins"];
+        readonly post: operations["swap_runner_logins"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3644,7 +3644,7 @@ export interface paths {
          *     WROTE, bumping `updated_at`/`updated_by` and destroying the one signal that
          *     says when a credential was last actually rotated.
          */
-        readonly get: operations["apps_harness_api_get_runner_credential_status"];
+        readonly get: operations["get_runner_credential_status"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3669,7 +3669,7 @@ export interface paths {
          *     runner only names the turn. Refused (409, with the reason) when the owner
          *     has lent none or it has expired; there is no shared fallback.
          */
-        readonly post: operations["apps_harness_api_turn_github_token"];
+        readonly post: operations["turn_github_token"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3689,7 +3689,7 @@ export interface paths {
          *     this when it boots so a missing, expired or under-scoped token is a health
          *     check going red, not a 403 in the middle of a turn.
          */
-        readonly get: operations["apps_harness_api_runner_github_readiness"];
+        readonly get: operations["runner_github_readiness"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3710,7 +3710,7 @@ export interface paths {
          * @description What the waiting human's screen renders: whether the URL is up yet, and
          *     how the attempt ended. Null when no sign-in has ever been started.
          */
-        readonly get: operations["apps_harness_api_get_runner_mint"];
+        readonly get: operations["get_runner_mint"];
         readonly put?: never;
         /**
          * Ask a runner to start a browser sign-in
@@ -3726,7 +3726,7 @@ export interface paths {
          *     `slot` names which login the new token replaces — `primary` (the default)
          *     or `secondary`, the fallback subscription.
          */
-        readonly post: operations["apps_harness_api_start_runner_mint"];
+        readonly post: operations["start_runner_mint"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3755,7 +3755,7 @@ export interface paths {
          *     second delivery could only fail, and a used code left in the row would be a
          *     credential nobody is accounting for.
          */
-        readonly get: operations["apps_harness_api_claim_runner_mint"];
+        readonly get: operations["claim_runner_mint"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3774,7 +3774,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** The runner reports the URL a human must open */
-        readonly post: operations["apps_harness_api_post_runner_mint_url"];
+        readonly post: operations["post_runner_mint_url"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3794,7 +3794,7 @@ export interface paths {
          * A human submits the authorization code
          * @description The one secret a human handles in this flow, and it is single-use.
          */
-        readonly post: operations["apps_harness_api_post_runner_mint_code"];
+        readonly post: operations["post_runner_mint_code"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3816,7 +3816,7 @@ export interface paths {
          *     into the encrypted credential bundle, so the only secret that ever reaches a
          *     human's screen is the single-use authorization code.
          */
-        readonly post: operations["apps_harness_api_post_runner_mint_result"];
+        readonly post: operations["post_runner_mint_result"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3835,7 +3835,7 @@ export interface paths {
          * @description Visible to anyone who can already administer the box — the answer to
          *     "who else can fix this", which is the question a stuck box raises.
          */
-        readonly get: operations["apps_harness_api_list_runner_admins"];
+        readonly get: operations["list_runner_admins"];
         readonly put?: never;
         /**
          * Grant someone administration of this runner (pairer only)
@@ -3845,7 +3845,7 @@ export interface paths {
          *     them mint more administrators makes the grant self-propagating, and then the
          *     explicit list stops being a list of people the owner actually trusted.
          */
-        readonly post: operations["apps_harness_api_grant_runner_admin"];
+        readonly post: operations["grant_runner_admin"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3863,7 +3863,7 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /** Revoke administration (pairer only) */
-        readonly delete: operations["apps_harness_api_revoke_runner_admin"];
+        readonly delete: operations["revoke_runner_admin"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -3901,7 +3901,7 @@ export interface paths {
          *     omits it — it belongs to the runner now, so a capabilities PATCH must not drop
          *     it as a side effect.
          */
-        readonly patch: operations["apps_harness_api_update_runner_capabilities"];
+        readonly patch: operations["update_runner_capabilities"];
         readonly trace?: never;
     };
     readonly "/api/harness/runners/{runner_id}/retire": {
@@ -3935,7 +3935,7 @@ export interface paths {
          *     its bindings/credentials; its routing membership is intentionally not
          *     resurrected, since the fleet may have moved on while it was retired.
          */
-        readonly post: operations["apps_harness_api_retire_runner"];
+        readonly post: operations["retire_runner"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -3968,7 +3968,7 @@ export interface paths {
          *     next heartbeat is what makes it online (Runner.live_status). Idempotent for an
          *     already-live runner.
          */
-        readonly post: operations["apps_harness_api_unretire_runner"];
+        readonly post: operations["unretire_runner"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4017,7 +4017,7 @@ export interface paths {
          *     Idempotent — pausing an already-paused runner refreshes the note and returns
          *     200 rather than erroring, so a retry after a dropped response is safe.
          */
-        readonly post: operations["apps_harness_api_pause_runner"];
+        readonly post: operations["pause_runner"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4046,7 +4046,7 @@ export interface paths {
          *     it is, exactly as `unretire` restores DISCONNECTED rather than ONLINE. Liveness
          *     is observed, never asserted. Idempotent on an already-running runner.
          */
-        readonly post: operations["apps_harness_api_unpause_runner"];
+        readonly post: operations["unpause_runner"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4063,7 +4063,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Runner Heartbeat */
-        readonly post: operations["apps_harness_api_runner_heartbeat"];
+        readonly post: operations["runner_heartbeat"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4086,7 +4086,7 @@ export interface paths {
          *     agent's provisioning, then restart. `refresh_pending` stays true until the
          *     runner reports a bootstrap newer than the request.
          */
-        readonly post: operations["apps_harness_api_refresh_runner"];
+        readonly post: operations["refresh_runner"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4109,7 +4109,7 @@ export interface paths {
          *     their queued turns so nothing is claimed-then-released. Omitted by older runners
          *     (backward-compatible: no exclusions).
          */
-        readonly post: operations["apps_harness_api_claim_turn"];
+        readonly post: operations["claim_turn"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4131,7 +4131,7 @@ export interface paths {
          *     emdash session (it owns the live hint) or must spawn fresh + rehydrate context.
          *     Runner-scoped because reuse depends on the caller's macOS host.
          */
-        readonly post: operations["apps_harness_api_resolve_session"];
+        readonly post: operations["resolve_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4152,7 +4152,7 @@ export interface paths {
          * @description Upsert the durable link and point its live-session hint at THIS runner/host,
          *     after a session was created or reused for the thread. Returns the fresh resolution.
          */
-        readonly post: operations["apps_harness_api_record_session"];
+        readonly post: operations["record_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4175,7 +4175,7 @@ export interface paths {
          *     default to the runner's workspace (dimagi in practice), which the pairer is a
          *     member of by construction.
          */
-        readonly post: operations["apps_harness_api_report_sessions"];
+        readonly post: operations["report_sessions"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4213,7 +4213,7 @@ export interface paths {
          *     only ever append above the high-water mark and so can never fill a hole below
          *     it, which is how a session ended up stuck at 8.6% with no way to self-heal.
          */
-        readonly get: operations["apps_harness_api_list_streams"];
+        readonly get: operations["list_streams"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4241,7 +4241,7 @@ export interface paths {
          *     seq:<n> message ids). User events are persisted but never live-pushed — the
          *     sender's client already echoed them optimistically.
          */
-        readonly post: operations["apps_harness_api_post_session_stream"];
+        readonly post: operations["post_session_stream"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4259,7 +4259,7 @@ export interface paths {
          * List Backfills
          * @description Sessions this runner has been asked to ship full history for.
          */
-        readonly get: operations["apps_harness_api_list_backfills"];
+        readonly get: operations["list_backfills"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4284,7 +4284,7 @@ export interface paths {
          *     API answers `ok:true`. Drained on the poll tick, so a lost frame costs a tick
          *     rather than leaving the emdash task open and the session active forever.
          */
-        readonly get: operations["apps_harness_api_list_closes"];
+        readonly get: operations["list_closes"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4313,7 +4313,7 @@ export interface paths {
          *
          *     Drained on the poll tick the runner already runs, same as `/backfills`.
          */
-        readonly get: operations["apps_harness_api_list_menu_answers"];
+        readonly get: operations["list_menu_answers"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4339,7 +4339,7 @@ export interface paths {
          *     a session that has already moved on, so a result for an answer that has since
          *     been replaced must NOT clear the newer one.
          */
-        readonly post: operations["apps_harness_api_post_menu_answer_result"];
+        readonly post: operations["post_menu_answer_result"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4360,7 +4360,7 @@ export interface paths {
          * @description The runner ships a session's full transcript; the server writes Message rows
          *     once and clears the request. Runner-owned-binding gated.
          */
-        readonly post: operations["apps_harness_api_post_session_backfill"];
+        readonly post: operations["post_session_backfill"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4379,7 +4379,7 @@ export interface paths {
          * @description A queued turn addressed to an agent/repo nothing declares sits forever with
          *     no signal (one sat 12h). Surfacing it turns a silent stall into a warning.
          */
-        readonly get: operations["apps_harness_api_list_unclaimable_turns"];
+        readonly get: operations["list_unclaimable_turns"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4396,10 +4396,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List Turns */
-        readonly get: operations["apps_harness_api_list_turns"];
+        readonly get: operations["harness_list_turns"];
         readonly put?: never;
         /** Enqueue Turn */
-        readonly post: operations["apps_harness_api_enqueue_turn"];
+        readonly post: operations["enqueue_turn"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4418,7 +4418,7 @@ export interface paths {
          * @description Open emdash sessions the caller can see — across their workspaces, live runners
          *     only, newest-first. Drives the phone's Open Sessions list.
          */
-        readonly get: operations["apps_harness_api_list_sessions"];
+        readonly get: operations["harness_list_sessions"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4435,7 +4435,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get Turn */
-        readonly get: operations["apps_harness_api_get_turn"];
+        readonly get: operations["get_turn"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4457,7 +4457,7 @@ export interface paths {
          *     message), their relationship to the agent, and the contact profile canopy
          *     holds. The same document the claiming runner receives.
          */
-        readonly get: operations["apps_harness_api_get_turn_caller_context"];
+        readonly get: operations["get_turn_caller_context"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4474,10 +4474,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Read Turn Events */
-        readonly get: operations["apps_harness_api_read_turn_events"];
+        readonly get: operations["read_turn_events"];
         readonly put?: never;
         /** Append Turn Events */
-        readonly post: operations["apps_harness_api_append_turn_events"];
+        readonly post: operations["append_turn_events"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4517,7 +4517,7 @@ export interface paths {
          *     bytes `services.read_transcript` would return, with none of its
          *     all-at-once memory cost.
          */
-        readonly get: operations["apps_harness_api_read_turn_transcript"];
+        readonly get: operations["read_turn_transcript"];
         readonly put?: never;
         /**
          * Append Turn Transcript
@@ -4538,7 +4538,7 @@ export interface paths {
          *     turn's transcript getting long is not a reason to fail a live run;
          *     `truncated` in the response tells the caller that happened.
          */
-        readonly post: operations["apps_harness_api_append_turn_transcript"];
+        readonly post: operations["append_turn_transcript"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4555,7 +4555,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Start Turn */
-        readonly post: operations["apps_harness_api_start_turn"];
+        readonly post: operations["start_turn"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4572,7 +4572,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Finish Turn */
-        readonly post: operations["apps_harness_api_finish_turn"];
+        readonly post: operations["finish_turn"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4599,7 +4599,7 @@ export interface paths {
          *     see `services.cancel_turn`, which signals the runner instead and is
          *     deliberately not wired to this route yet.
          */
-        readonly post: operations["apps_harness_api_cancel_turn"];
+        readonly post: operations["cancel_turn"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4625,7 +4625,7 @@ export interface paths {
          *     runner in the tenant claims it). Gating here would impose a boot-order dependency
          *     — a fresh daemon would have to sync before its first heartbeat.
          */
-        readonly get: operations["apps_harness_api_sync_schedules"];
+        readonly get: operations["sync_schedules"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4644,7 +4644,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Report a due slot; the server materializes the turn */
-        readonly post: operations["apps_harness_api_fire_schedule_route"];
+        readonly post: operations["fire_schedule_route"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4668,7 +4668,7 @@ export interface paths {
          *     standby actually works before flipping it live), so a disabled row must
          *     stay drillable even though it can never claim routed traffic.
          */
-        readonly post: operations["apps_harness_api_start_runner_drill"];
+        readonly post: operations["start_runner_drill"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4683,7 +4683,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List Runner Drills */
-        readonly get: operations["apps_harness_api_list_runner_drills"];
+        readonly get: operations["list_runner_drills"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4706,7 +4706,7 @@ export interface paths {
          * @description The drilled agent's callback: accepted with the run's signed report link
          *     (`t`), from the drilled agent's own login, or from the runner's owner.
          */
-        readonly post: operations["apps_harness_api_report_drill"];
+        readonly post: operations["report_drill"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4726,7 +4726,7 @@ export interface paths {
          *     bundle anyway. 503 when unconfigured so a push-less deployment says so
          *     plainly rather than handing the browser an empty key it would fail on.
          */
-        readonly get: operations["apps_push_api_vapid_public_key"];
+        readonly get: operations["vapid_public_key"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4751,13 +4751,13 @@ export interface paths {
          *     re-point the row at the caller: the endpoint belongs to the BROWSER, not the
          *     person, so on a shared device it must follow whoever is logged in now.
          */
-        readonly post: operations["apps_push_api_subscribe"];
+        readonly post: operations["subscribe"];
         /**
          * Unregister this browser
          * @description Idempotent, and scoped to the caller: unsubscribing an endpoint you don't
          *     own is a silent no-op, not a 404 — no existence leak either way.
          */
-        readonly delete: operations["apps_push_api_unsubscribe"];
+        readonly delete: operations["unsubscribe"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -4775,7 +4775,7 @@ export interface paths {
          * @description `session_idle_minutes`: how long a chat must stay quiet after its agent
          *     finishes before you are notified that it is done (0 = never).
          */
-        readonly get: operations["apps_push_api_get_preferences"];
+        readonly get: operations["get_preferences"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4785,7 +4785,7 @@ export interface paths {
          * Change your notification settings
          * @description Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you.
          */
-        readonly patch: operations["apps_push_api_set_preferences"];
+        readonly patch: operations["set_preferences"];
         readonly trace?: never;
     };
     readonly "/api/canopy-sessions/": {
@@ -4796,10 +4796,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List sessions (web + runner-discovered) */
-        readonly get: operations["apps_canopy_sessions_api_list_sessions"];
+        readonly get: operations["canopy_sessions_list_sessions"];
         readonly put?: never;
         /** Create a chat session */
-        readonly post: operations["apps_canopy_sessions_api_create_session"];
+        readonly post: operations["create_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4825,7 +4825,7 @@ export interface paths {
          *     report re-creates any whose task is still open. Chats a human started are
          *     never pruned.
          */
-        readonly post: operations["apps_canopy_sessions_api_reset_sessions"];
+        readonly post: operations["reset_sessions"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4840,7 +4840,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Get a session + transcript tail */
-        readonly get: operations["apps_canopy_sessions_api_get_session"];
+        readonly get: operations["canopy_sessions_get_session"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4857,7 +4857,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Load earlier transcript (scroll-back) */
-        readonly get: operations["apps_canopy_sessions_api_list_messages"];
+        readonly get: operations["list_messages"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -4881,7 +4881,7 @@ export interface paths {
          *     report it archived — and for force-retiring a row without touching emdash.
          *     Idempotent, and never destructive: /unarchive brings it straight back.
          */
-        readonly post: operations["apps_canopy_sessions_api_archive_session"];
+        readonly post: operations["archive_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4912,7 +4912,7 @@ export interface paths {
          *     `runner_unreachable` (its box is offline — try again when it's back). Turns
          *     and their event ledger are never touched; nothing can rebuild those.
          */
-        readonly post: operations["apps_canopy_sessions_api_reset_session"];
+        readonly post: operations["reset_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4934,7 +4934,7 @@ export interface paths {
          *     is also past SESSION_STALE_AFTER stays out of `state=active` until its runner
          *     reports it again, because that half is derived on every read.
          */
-        readonly post: operations["apps_canopy_sessions_api_unarchive_session"];
+        readonly post: operations["unarchive_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -4955,7 +4955,7 @@ export interface paths {
          *     session finishes. Off (the default), one notification is sent once the session
          *     has been quiet for your chosen number of minutes.
          */
-        readonly put: operations["apps_canopy_sessions_api_set_session_notify"];
+        readonly put: operations["set_session_notify"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -4974,14 +4974,14 @@ export interface paths {
          * Who has been given this chat
          * @description Everyone explicitly in this conversation, with their role.
          */
-        readonly get: operations["apps_canopy_sessions_api_list_participants"];
+        readonly get: operations["list_participants"];
         readonly put?: never;
         /**
          * Give a teammate this chat
          * @description Owner only. The teammate must already be a member of the chat's
          *     workspace; adding someone again changes their role.
          */
-        readonly post: operations["apps_canopy_sessions_api_add_participant"];
+        readonly post: operations["add_participant"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5002,7 +5002,7 @@ export interface paths {
          * Take a chat away from someone
          * @description The owner can remove anyone but themselves; anyone can remove themselves.
          */
-        readonly delete: operations["apps_canopy_sessions_api_remove_participant"];
+        readonly delete: operations["remove_participant"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -5018,7 +5018,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Send a message */
-        readonly post: operations["apps_canopy_sessions_api_send"];
+        readonly post: operations["canopy_sessions_send"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5035,7 +5035,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Re-pin a session's oldest queued turn to a runner */
-        readonly post: operations["apps_canopy_sessions_api_place"];
+        readonly post: operations["place"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5067,7 +5067,7 @@ export interface paths {
          *     succeed once the source box is idle, which is a state conflict rather than a
          *     bad body. Stop the session (`POST /{id}/stop`) and retry.
          */
-        readonly post: operations["apps_canopy_sessions_api_transfer"];
+        readonly post: operations["transfer"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5092,7 +5092,7 @@ export interface paths {
          *     runner can go offline in between — both ordinary, neither a client error.
          *     Same shape `reset` uses for the same reason.
          */
-        readonly post: operations["apps_canopy_sessions_api_answer_menu"];
+        readonly post: operations["answer_menu"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5122,7 +5122,7 @@ export interface paths {
          *     There is deliberately no `unbound` refusal: a session with no binding has
          *     nothing on a box, which is the second branch rather than an error.
          */
-        readonly post: operations["apps_canopy_sessions_api_close_session"];
+        readonly post: operations["close_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5139,7 +5139,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Cancel every non-terminal turn on this session */
-        readonly post: operations["apps_canopy_sessions_api_stop_session_turn"];
+        readonly post: operations["stop_session_turn"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5156,7 +5156,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Attach a viewer (start live streaming) */
-        readonly post: operations["apps_canopy_sessions_api_attach_session"];
+        readonly post: operations["attach_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5173,7 +5173,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Detach a viewer (stop when last leaves) */
-        readonly post: operations["apps_canopy_sessions_api_detach_session"];
+        readonly post: operations["detach_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5190,7 +5190,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Request full history from the runner */
-        readonly post: operations["apps_canopy_sessions_api_request_backfill"];
+        readonly post: operations["request_backfill"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5214,7 +5214,7 @@ export interface paths {
          *     still typing, so the message it belongs to does not exist yet. Sending binds
          *     it. That ordering is also what lets the UI show a thumbnail before send.
          */
-        readonly post: operations["apps_canopy_sessions_api_upload_attachment"];
+        readonly post: operations["upload_attachment"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5237,7 +5237,7 @@ export interface paths {
          *     Gated on who can read the session, not on who uploaded it — a session is
          *     multiplayer, so a teammate who can read it must see what was shared in it.
          */
-        readonly get: operations["apps_canopy_sessions_api_attachment_content"];
+        readonly get: operations["attachment_content"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -5264,7 +5264,7 @@ export interface paths {
          *     deleting it would leave the agent's reply referring to something nobody else
          *     can see.
          */
-        readonly delete: operations["apps_canopy_sessions_api_delete_attachment"];
+        readonly delete: operations["delete_attachment"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -5282,7 +5282,7 @@ export interface paths {
          * @description How the agent discovers its options. An empty list means no page is
          *     attached — not that the page can do nothing.
          */
-        readonly get: operations["apps_canopy_sessions_api_list_page_actions"];
+        readonly get: operations["list_page_actions"];
         /**
          * Declare what the attached page can do
          * @description Called by the page itself as it mounts, and whenever its actions change.
@@ -5290,7 +5290,7 @@ export interface paths {
          *     Replaces the declaration wholesale — see `set_declared_actions` for why
          *     merging would leave the agent able to call into a page the user has left.
          */
-        readonly put: operations["apps_canopy_sessions_api_declare_page_actions"];
+        readonly put: operations["canopy_sessions_declare_page_actions"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -5309,7 +5309,7 @@ export interface paths {
          * What the attached page is showing
          * @description How a surface other than the agent's MCP tool reads the current view.
          */
-        readonly get: operations["apps_canopy_sessions_api_read_page_state"];
+        readonly get: operations["read_page_state"];
         /**
          * Declare what the attached page is showing
          * @description Called by the page as it mounts and whenever its view changes.
@@ -5318,7 +5318,7 @@ export interface paths {
          *     rejected with `too_large`: send the selection (ids, filters) and the tool
          *     that resolves it, not the rows themselves.
          */
-        readonly put: operations["apps_canopy_sessions_api_declare_page_state"];
+        readonly put: operations["canopy_sessions_declare_page_state"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -5346,7 +5346,7 @@ export interface paths {
          *     A `state` larger than the server's cap is rejected with `too_large`: send
          *     the selection (ids, filters) and the tool that resolves it, not the rows.
          */
-        readonly put: operations["apps_canopy_sessions_api_declare_run_input"];
+        readonly put: operations["declare_run_input"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -5371,7 +5371,7 @@ export interface paths {
          *     (`no_page`, `unknown_action`, `bad_arguments`, `timeout`, `refused`) — a
          *     caller must never be able to read "the tab was closed" as "done".
          */
-        readonly post: operations["apps_canopy_sessions_api_invoke_page_action"];
+        readonly post: operations["invoke_page_action"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5394,7 +5394,7 @@ export interface paths {
          *     Membership-gated like every other by-id read, and scoped to the session, so
          *     one page cannot resolve another's action.
          */
-        readonly post: operations["apps_canopy_sessions_api_resolve_page_action"];
+        readonly post: operations["canopy_sessions_resolve_page_action"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5409,14 +5409,14 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Secrets shared with this chat (names only, never values) */
-        readonly get: operations["apps_canopy_sessions_api_list_secrets"];
+        readonly get: operations["list_secrets"];
         readonly put?: never;
         /**
          * Share a secret with this chat (write-only)
          * @description Stores the value encrypted. Posts NOTHING into the chat: the person just
          *     refers to it by name, and the session finds it with `canopy secret list`.
          */
-        readonly post: operations["apps_canopy_sessions_api_share_secret"];
+        readonly post: operations["share_secret"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5434,7 +5434,7 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         /** Forget a shared secret */
-        readonly delete: operations["apps_canopy_sessions_api_delete_secret"];
+        readonly delete: operations["delete_secret"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -5448,7 +5448,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** Secrets shared with the chat this key was issued for (names only) */
-        readonly get: operations["apps_canopy_sessions_secrets_api_list_for_key"];
+        readonly get: operations["list_for_key"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -5465,7 +5465,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** PLAINTEXT — for `canopy secret exec` in the session holding this chat's key */
-        readonly get: operations["apps_canopy_sessions_secrets_api_value_for_key"];
+        readonly get: operations["value_for_key"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -5485,7 +5485,7 @@ export interface paths {
          * People this workspace knows
          * @description Scoped to the caller's tenants. `q` filters on address or display name.
          */
-        readonly get: operations["apps_contacts_api_list_contacts"];
+        readonly get: operations["list_contacts"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -5502,7 +5502,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** One person */
-        readonly get: operations["apps_contacts_api_get_contact"];
+        readonly get: operations["get_contact"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -5517,7 +5517,7 @@ export interface paths {
          *     a non-member gets 404 from `_contact_or_404` above and never reaches the
          *     403, so this never confirms a contact exists to someone who cannot see it.
          */
-        readonly patch: operations["apps_contacts_api_patch_contact"];
+        readonly patch: operations["patch_contact"];
         readonly trace?: never;
     };
 }
@@ -13464,7 +13464,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    readonly apps_api_api__auth_smoke: {
+    readonly _auth_smoke: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13486,7 +13486,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_list_projects: {
+    readonly projects_list_projects: {
         readonly parameters: {
             readonly query?: {
                 readonly offset?: number;
@@ -13509,7 +13509,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_create_project: {
+    readonly projects_create_project: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13533,7 +13533,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_get_project_slugs: {
+    readonly get_project_slugs: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13553,7 +13553,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_seed_projects: {
+    readonly seed_projects: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13577,7 +13577,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_batch_context: {
+    readonly batch_context: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13603,7 +13603,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_batch_actions: {
+    readonly batch_actions: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13629,7 +13629,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_get_project: {
+    readonly projects_get_project: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13651,7 +13651,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_delete_project: {
+    readonly delete_project: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13671,7 +13671,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_patch_project: {
+    readonly projects_patch_project: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13697,7 +13697,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_list_context: {
+    readonly list_context: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13719,7 +13719,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_create_context: {
+    readonly create_context: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13745,7 +13745,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_get_context_latest: {
+    readonly get_context_latest: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13767,7 +13767,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_list_actions: {
+    readonly list_actions: {
         readonly parameters: {
             readonly query?: {
                 readonly skill?: string | null;
@@ -13791,7 +13791,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_create_action: {
+    readonly create_action: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13817,7 +13817,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_get_actions_summary: {
+    readonly get_actions_summary: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13839,7 +13839,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_issues_api_list_issues: {
+    readonly list_issues: {
         readonly parameters: {
             readonly query?: {
                 readonly initiative?: string | null;
@@ -13864,7 +13864,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_issues_api_upsert_issue: {
+    readonly upsert_issue: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13897,7 +13897,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_issues_api_get_issue: {
+    readonly get_issue: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13920,7 +13920,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_issues_api_delete_issue: {
+    readonly delete_issue: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13941,7 +13941,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_list_insights: {
+    readonly list_insights: {
         readonly parameters: {
             readonly query?: {
                 readonly category?: string | null;
@@ -13966,7 +13966,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_clear_insights: {
+    readonly clear_insights: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -13990,7 +13990,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_projects_api_dismiss_insight: {
+    readonly dismiss_insight: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14012,7 +14012,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_common_api_me: {
+    readonly me: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14032,7 +14032,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_common_api_get_presence_preference: {
+    readonly get_presence_preference: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14052,7 +14052,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_common_api_set_presence_preference: {
+    readonly set_presence_preference: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14076,7 +14076,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_common_api_health: {
+    readonly health: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14096,7 +14096,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_walkthroughs_api_list_walkthroughs: {
+    readonly list_walkthroughs: {
         readonly parameters: {
             readonly query?: {
                 readonly project?: string;
@@ -14120,7 +14120,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_walkthroughs_api_upload_walkthrough: {
+    readonly upload_walkthrough: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14201,7 +14201,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_walkthroughs_api_get_walkthrough: {
+    readonly get_walkthrough: {
         readonly parameters: {
             readonly query?: {
                 readonly t?: string;
@@ -14225,7 +14225,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_walkthroughs_api_delete_walkthrough: {
+    readonly delete_walkthrough: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14245,7 +14245,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_walkthroughs_api_patch_walkthrough: {
+    readonly patch_walkthrough: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14271,7 +14271,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_walkthroughs_api_rotate_walkthrough_token: {
+    readonly rotate_walkthrough_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14293,7 +14293,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_api_list_tokens: {
+    readonly list_tokens: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14313,7 +14313,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_api_create_token: {
+    readonly create_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14337,7 +14337,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_api_revoke_token: {
+    readonly revoke_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14357,7 +14357,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_api_github_connection: {
+    readonly github_connection: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14377,7 +14377,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_api_github_disconnect: {
+    readonly github_disconnect: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14395,7 +14395,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_api_github_installations: {
+    readonly github_installations: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14415,7 +14415,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_feedback_api_list_feedback: {
+    readonly list_feedback: {
         readonly parameters: {
             readonly query?: {
                 readonly target_kind?: string | null;
@@ -14440,7 +14440,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_feedback_api_ingest_feedback: {
+    readonly ingest_feedback: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14464,7 +14464,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_feedback_api_resolve_feedback: {
+    readonly resolve_feedback: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14490,7 +14490,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_events_api_list_events: {
+    readonly list_events: {
         readonly parameters: {
             readonly query?: {
                 readonly source?: string | null;
@@ -14516,7 +14516,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_events_api_record_events: {
+    readonly record_events: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14540,7 +14540,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_inbound_api_gmail_push: {
+    readonly gmail_push: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14566,7 +14566,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_inbound_api_get_push_config: {
+    readonly get_push_config: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14588,7 +14588,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_inbound_api_set_push_config: {
+    readonly set_push_config: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14614,7 +14614,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_inbound_api_list_mailboxes: {
+    readonly list_mailboxes: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14636,7 +14636,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_inbound_api_create_mailbox: {
+    readonly create_mailbox: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14662,7 +14662,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_inbound_api_delete_mailbox: {
+    readonly delete_mailbox: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14683,7 +14683,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_inbound_api_update_mailbox: {
+    readonly update_mailbox: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14710,7 +14710,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_inbound_api_runner_mailboxes: {
+    readonly runner_mailboxes: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14730,7 +14730,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_inbound_api_report_watch: {
+    readonly report_watch: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14754,7 +14754,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_slack_api_get_config: {
+    readonly get_config: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14776,7 +14776,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_slack_api_set_config_token: {
+    readonly set_config_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14802,7 +14802,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_slack_api_clear_config_token: {
+    readonly clear_config_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14824,7 +14824,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_slack_api_set_history: {
+    readonly set_history: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14850,7 +14850,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_slack_api_sync: {
+    readonly sync: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14872,7 +14872,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_slack_api_declare_agent: {
+    readonly declare_agent: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14894,7 +14894,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_storyboards_api_list_storyboards: {
+    readonly list_storyboards: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14914,7 +14914,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_storyboards_api_create_storyboard: {
+    readonly create_storyboard: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14938,7 +14938,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_storyboards_api_get_storyboard: {
+    readonly get_storyboard: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14960,7 +14960,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_storyboards_api_patch_storyboard: {
+    readonly patch_storyboard: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -14986,7 +14986,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_storyboards_api_rotate_token: {
+    readonly storyboards_rotate_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15008,7 +15008,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_storyboards_api_ensure_token: {
+    readonly ensure_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15030,7 +15030,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_storyboards_api_leave_feedback: {
+    readonly leave_feedback: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15058,7 +15058,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_storyboards_api_list_notes: {
+    readonly list_notes: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15080,7 +15080,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_storyboards_api_get_board_narrative: {
+    readonly get_board_narrative: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15103,7 +15103,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_embed_api_list_embeddable_agents: {
+    readonly list_embeddable_agents: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15123,7 +15123,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_embed_api_embed_self: {
+    readonly embed_self: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15143,7 +15143,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_embed_api_embed_self_token: {
+    readonly embed_self_token: {
         readonly parameters: {
             readonly query?: {
                 readonly page?: string;
@@ -15165,7 +15165,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_contact_me: {
+    readonly contact_me: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15185,7 +15185,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_list_sessions: {
+    readonly tokens_contact_list_sessions: {
         readonly parameters: {
             readonly query?: {
                 readonly source?: string;
@@ -15212,7 +15212,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_start_session: {
+    readonly start_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15236,7 +15236,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_get_session: {
+    readonly tokens_contact_get_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15258,7 +15258,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_send: {
+    readonly tokens_contact_send: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15286,7 +15286,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_messages: {
+    readonly messages: {
         readonly parameters: {
             readonly query: {
                 readonly before: number;
@@ -15311,7 +15311,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_attach: {
+    readonly attach: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15335,7 +15335,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_detach: {
+    readonly detach: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15359,7 +15359,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_declare_page_state: {
+    readonly tokens_contact_declare_page_state: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15385,7 +15385,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_declare_page_actions: {
+    readonly tokens_contact_declare_page_actions: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15411,7 +15411,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_resolve_page_action: {
+    readonly tokens_contact_resolve_page_action: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15438,7 +15438,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_stop: {
+    readonly stop: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15462,7 +15462,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_my_unclaimable: {
+    readonly my_unclaimable: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15484,7 +15484,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_my_turn: {
+    readonly my_turn: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15506,7 +15506,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_my_turn_transcript: {
+    readonly my_turn_transcript: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15526,7 +15526,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_contact_api_contact_token: {
+    readonly contact_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15550,7 +15550,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_reviews_api_list_reviews: {
+    readonly list_reviews: {
         readonly parameters: {
             readonly query?: {
                 readonly q?: string;
@@ -15574,7 +15574,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_reviews_api_create_review: {
+    readonly create_review: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15598,7 +15598,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_reviews_api_get_review: {
+    readonly get_review: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15620,7 +15620,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_reviews_api_delete_review: {
+    readonly delete_review: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15640,7 +15640,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_reviews_api_submit_review: {
+    readonly submit_review: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15666,7 +15666,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_reviews_api_suggest_review: {
+    readonly suggest_review: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15692,7 +15692,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_runs_api_list_narratives: {
+    readonly list_narratives: {
         readonly parameters: {
             readonly query?: {
                 readonly project?: string;
@@ -15715,7 +15715,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_runs_api_get_narrative: {
+    readonly get_narrative: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15737,7 +15737,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_runs_api_delete_narrative: {
+    readonly delete_narrative: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15757,7 +15757,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_runs_api_get_run: {
+    readonly runs_get_run: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15779,7 +15779,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_runs_api_delete_run: {
+    readonly delete_run: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15799,7 +15799,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_runs_api_get_run_release: {
+    readonly get_run_release: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15821,7 +15821,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_runs_api_set_narrative_visibility: {
+    readonly set_narrative_visibility: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15847,7 +15847,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_runs_api_delete_version: {
+    readonly delete_version: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15868,7 +15868,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_runs_api_move_narrative: {
+    readonly move_narrative: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15894,7 +15894,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_shareouts_api_list_shareouts: {
+    readonly list_shareouts: {
         readonly parameters: {
             readonly query?: {
                 readonly date_from?: string | null;
@@ -15919,7 +15919,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_shareouts_api_create_shareouts: {
+    readonly create_shareouts: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15943,7 +15943,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_shareouts_api_clear_shareouts: {
+    readonly clear_shareouts: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -15967,7 +15967,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_upload_session: {
+    readonly upload_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16028,7 +16028,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_list_sessions: {
+    readonly session_sharing_list_sessions: {
         readonly parameters: {
             readonly query?: {
                 readonly project?: string;
@@ -16050,7 +16050,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_list_arcs: {
+    readonly list_arcs: {
         readonly parameters: {
             readonly query?: {
                 readonly project?: string;
@@ -16072,7 +16072,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_create_arc: {
+    readonly create_arc: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16096,7 +16096,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_get_arc: {
+    readonly get_arc: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16118,7 +16118,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_delete_arc: {
+    readonly delete_arc: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16138,7 +16138,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_patch_arc: {
+    readonly patch_arc: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16164,7 +16164,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_rotate_arc_token: {
+    readonly rotate_arc_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16186,7 +16186,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_get_session: {
+    readonly session_sharing_get_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16208,7 +16208,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_delete_session: {
+    readonly delete_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16228,7 +16228,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_patch_session: {
+    readonly patch_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16254,7 +16254,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_rotate_token: {
+    readonly session_sharing_rotate_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16276,7 +16276,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_agents: {
+    readonly list_agents: {
         readonly parameters: {
             readonly query?: {
                 readonly limit?: number;
@@ -16298,7 +16298,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_upsert_agent: {
+    readonly upsert_agent: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16322,7 +16322,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_get_agent: {
+    readonly get_agent: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16344,7 +16344,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_delete_agent: {
+    readonly delete_agent: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16364,7 +16364,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_link_canopy_user: {
+    readonly link_canopy_user: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16390,7 +16390,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_transfer_owner: {
+    readonly transfer_owner: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16416,7 +16416,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_get_interface: {
+    readonly get_interface: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16438,7 +16438,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_publish_interface: {
+    readonly publish_interface: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16464,7 +16464,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_unpublish_interface: {
+    readonly unpublish_interface: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16486,7 +16486,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_admins: {
+    readonly list_admins: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16508,7 +16508,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_agent_access: {
+    readonly agent_access: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16530,7 +16530,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_grant_admin: {
+    readonly grant_admin: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16553,7 +16553,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_revoke_admin: {
+    readonly revoke_admin: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16576,7 +16576,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_set_runner_preference: {
+    readonly set_runner_preference: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16602,7 +16602,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_set_turn_mode: {
+    readonly set_turn_mode: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16628,7 +16628,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_set_slack_enabled: {
+    readonly set_slack_enabled: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16654,7 +16654,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_get_agent_runtime: {
+    readonly get_agent_runtime: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16676,7 +16676,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_agent_runners: {
+    readonly list_agent_runners: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16698,7 +16698,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_replace_agent_runners: {
+    readonly replace_agent_runners: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16724,7 +16724,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_agent_runner_rules: {
+    readonly list_agent_runner_rules: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16746,7 +16746,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_replace_agent_runner_rules: {
+    readonly replace_agent_runner_rules: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16772,7 +16772,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_syncs: {
+    readonly list_syncs: {
         readonly parameters: {
             readonly query?: {
                 readonly limit?: number;
@@ -16796,7 +16796,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_create_sync: {
+    readonly create_sync: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16822,7 +16822,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_delete_sync: {
+    readonly delete_sync: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16843,7 +16843,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_turns: {
+    readonly agents_list_turns: {
         readonly parameters: {
             readonly query?: {
                 readonly limit?: number;
@@ -16867,7 +16867,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_create_turn: {
+    readonly create_turn: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16893,7 +16893,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_work_products: {
+    readonly list_work_products: {
         readonly parameters: {
             readonly query?: {
                 readonly limit?: number;
@@ -16917,7 +16917,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_add_work_products: {
+    readonly add_work_products: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16943,7 +16943,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_skills: {
+    readonly list_skills: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16965,7 +16965,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_replace_skills: {
+    readonly replace_skills: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -16991,7 +16991,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_get_skill_history: {
+    readonly get_skill_history: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17013,7 +17013,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_sync_skill_history: {
+    readonly sync_skill_history: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17035,7 +17035,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_projects: {
+    readonly agents_list_projects: {
         readonly parameters: {
             readonly query?: {
                 readonly status?: string;
@@ -17059,7 +17059,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_create_project: {
+    readonly agents_create_project: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17085,7 +17085,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_get_project: {
+    readonly agents_get_project: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17108,7 +17108,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_patch_project: {
+    readonly agents_patch_project: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17135,7 +17135,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_tasks: {
+    readonly list_tasks: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17157,7 +17157,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_create_task: {
+    readonly create_task: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17183,7 +17183,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_waiting_tasks: {
+    readonly list_waiting_tasks: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17205,7 +17205,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_sync_tasks: {
+    readonly sync_tasks: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17231,7 +17231,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_patch_task: {
+    readonly patch_task: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17258,7 +17258,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_post_command: {
+    readonly post_command: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17285,7 +17285,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_list_commands: {
+    readonly list_commands: {
         readonly parameters: {
             readonly query?: {
                 readonly status?: string | null;
@@ -17309,7 +17309,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_apply_command: {
+    readonly apply_command: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17336,7 +17336,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_set_agent_credentials: {
+    readonly set_agent_credentials: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17362,7 +17362,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_agent_credential_status: {
+    readonly agent_credential_status: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17384,7 +17384,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_resolve_agent_credentials: {
+    readonly resolve_agent_credentials: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17406,7 +17406,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_get_agent_vault: {
+    readonly get_agent_vault: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17428,7 +17428,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_set_agent_vault: {
+    readonly set_agent_vault: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17454,7 +17454,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_get_agent_github: {
+    readonly get_agent_github: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17476,7 +17476,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_set_agent_github: {
+    readonly set_agent_github: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17502,7 +17502,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_delete_agent_github: {
+    readonly delete_agent_github: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17524,7 +17524,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_check_agent_github: {
+    readonly check_agent_github: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17546,7 +17546,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_delete_agent_credential: {
+    readonly delete_agent_credential: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17569,7 +17569,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_agent_readiness: {
+    readonly agent_readiness: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17591,7 +17591,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_api_post_bootstrap_report: {
+    readonly post_bootstrap_report: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17617,7 +17617,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_a2a_api_public_agent_card: {
+    readonly public_agent_card: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17646,7 +17646,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_a2a_api_extended_agent_card: {
+    readonly extended_agent_card: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17675,7 +17675,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agent_runs_api_list_runs: {
+    readonly list_runs: {
         readonly parameters: {
             readonly query?: {
                 readonly limit?: number;
@@ -17699,7 +17699,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agent_runs_api_create_run: {
+    readonly create_run: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17725,7 +17725,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agent_runs_api_get_run: {
+    readonly agent_runs_get_run: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17748,7 +17748,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agent_runs_api_list_steps: {
+    readonly list_steps: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17771,7 +17771,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agent_runs_api_record_gate: {
+    readonly record_gate: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17799,7 +17799,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agent_runs_api_record_verdict: {
+    readonly record_verdict: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17827,7 +17827,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agent_runs_api_fork_run: {
+    readonly fork_run: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17854,7 +17854,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_oauth_api_start_google_mint: {
+    readonly start_google_mint: {
         readonly parameters: {
             readonly query?: {
                 readonly login_hint?: string;
@@ -17878,7 +17878,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_agents_oauth_api_google_callback: {
+    readonly google_callback: {
         readonly parameters: {
             readonly query?: {
                 readonly code?: string;
@@ -17900,7 +17900,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_schedules_schedule_week: {
+    readonly schedule_week: {
         readonly parameters: {
             readonly query: {
                 readonly start: string;
@@ -17923,7 +17923,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_schedules_list_schedules: {
+    readonly list_schedules: {
         readonly parameters: {
             readonly query?: {
                 readonly limit?: number;
@@ -17947,7 +17947,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_schedules_create_schedule: {
+    readonly create_schedule: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17973,7 +17973,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_schedules_preview_schedule: {
+    readonly preview_schedule: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -17999,7 +17999,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_schedules_delete_schedule: {
+    readonly delete_schedule: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18020,7 +18020,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_schedules_update_schedule: {
+    readonly update_schedule: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18047,7 +18047,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_schedules_run_now: {
+    readonly run_now: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18070,7 +18070,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_items_api_list_items: {
+    readonly list_items: {
         readonly parameters: {
             readonly query?: {
                 readonly state?: string;
@@ -18096,7 +18096,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_items_api_create_items: {
+    readonly create_items: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18122,7 +18122,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_items_api_list_fleet_items: {
+    readonly list_fleet_items: {
         readonly parameters: {
             readonly query?: {
                 readonly state?: string;
@@ -18145,7 +18145,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_items_api_get_item: {
+    readonly get_item: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18167,7 +18167,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_items_api_decide_item: {
+    readonly decide_item: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18193,7 +18193,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_items_api_dismiss_item: {
+    readonly dismiss_item: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18219,7 +18219,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_list_workspaces: {
+    readonly list_workspaces: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18239,7 +18239,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_create_workspace: {
+    readonly create_workspace: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18263,7 +18263,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_get_workspace: {
+    readonly get_workspace: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18285,7 +18285,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_delete_workspace: {
+    readonly delete_workspace: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18305,7 +18305,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_set_workspace_parent: {
+    readonly set_workspace_parent: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18331,7 +18331,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_list_joinable_workspaces: {
+    readonly list_joinable_workspaces: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18351,7 +18351,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_join_workspace: {
+    readonly join_workspace: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18373,7 +18373,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_list_members: {
+    readonly list_members: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18395,7 +18395,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_remove_member: {
+    readonly remove_member: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18416,7 +18416,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_set_member_role: {
+    readonly set_member_role: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18443,7 +18443,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_list_invites: {
+    readonly list_invites: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18465,7 +18465,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_create_invite: {
+    readonly create_invite: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18491,7 +18491,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_revoke_invite: {
+    readonly revoke_invite: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18512,7 +18512,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_reissue_invite: {
+    readonly reissue_invite: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18535,7 +18535,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_preview_invite: {
+    readonly preview_invite: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18557,7 +18557,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_accept_invite: {
+    readonly accept_invite: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18579,7 +18579,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_get_shared_vault: {
+    readonly get_shared_vault: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18601,7 +18601,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_workspaces_api_set_shared_vault: {
+    readonly set_shared_vault: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18627,7 +18627,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_connected_apps_api_list_connected_apps: {
+    readonly list_connected_apps: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18649,7 +18649,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_connected_apps_api_connect_app: {
+    readonly connect_app: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18675,7 +18675,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_connected_apps_api_disconnect_app: {
+    readonly disconnect_app: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18696,7 +18696,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_connected_apps_api_update_connected_app: {
+    readonly update_connected_app: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18723,7 +18723,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_tokens_connected_apps_api_test_connected_app: {
+    readonly test_connected_app: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18746,7 +18746,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_timeline_api_list_timeline: {
+    readonly list_timeline: {
         readonly parameters: {
             readonly query?: {
                 readonly subsystem?: string | null;
@@ -18770,7 +18770,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_system_api_overview: {
+    readonly overview: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18790,7 +18790,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_system_api_public_stats: {
+    readonly public_stats: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18810,7 +18810,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_system_api_detail: {
+    readonly detail: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18833,7 +18833,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_session_sharing_api_public_share_view: {
+    readonly public_share_view: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18855,7 +18855,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_list_runners: {
+    readonly list_runners: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18875,7 +18875,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_pair_runner: {
+    readonly pair_runner: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18899,7 +18899,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_get_runner_credential: {
+    readonly get_runner_credential: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18921,7 +18921,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_set_runner_credential: {
+    readonly set_runner_credential: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18947,7 +18947,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_swap_runner_logins: {
+    readonly swap_runner_logins: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18969,7 +18969,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_get_runner_credential_status: {
+    readonly get_runner_credential_status: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18991,7 +18991,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_turn_github_token: {
+    readonly turn_github_token: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19014,7 +19014,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_runner_github_readiness: {
+    readonly runner_github_readiness: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19036,7 +19036,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_get_runner_mint: {
+    readonly get_runner_mint: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19058,7 +19058,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_start_runner_mint: {
+    readonly start_runner_mint: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19084,7 +19084,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_claim_runner_mint: {
+    readonly claim_runner_mint: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19106,7 +19106,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_post_runner_mint_url: {
+    readonly post_runner_mint_url: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19132,7 +19132,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_post_runner_mint_code: {
+    readonly post_runner_mint_code: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19158,7 +19158,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_post_runner_mint_result: {
+    readonly post_runner_mint_result: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19184,7 +19184,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_list_runner_admins: {
+    readonly list_runner_admins: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19206,7 +19206,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_grant_runner_admin: {
+    readonly grant_runner_admin: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19232,7 +19232,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_revoke_runner_admin: {
+    readonly revoke_runner_admin: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19253,7 +19253,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_update_runner_capabilities: {
+    readonly update_runner_capabilities: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19279,7 +19279,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_retire_runner: {
+    readonly retire_runner: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19299,7 +19299,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_unretire_runner: {
+    readonly unretire_runner: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19321,7 +19321,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_pause_runner: {
+    readonly pause_runner: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19347,7 +19347,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_unpause_runner: {
+    readonly unpause_runner: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19369,7 +19369,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_runner_heartbeat: {
+    readonly runner_heartbeat: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19395,7 +19395,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_refresh_runner: {
+    readonly refresh_runner: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19417,7 +19417,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_claim_turn: {
+    readonly claim_turn: {
         readonly parameters: {
             readonly query?: {
                 readonly paused?: string;
@@ -19448,7 +19448,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_resolve_session: {
+    readonly resolve_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19474,7 +19474,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_record_session: {
+    readonly record_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19500,7 +19500,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_report_sessions: {
+    readonly report_sessions: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19526,7 +19526,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_list_streams: {
+    readonly list_streams: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19548,7 +19548,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_post_session_stream: {
+    readonly post_session_stream: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19574,7 +19574,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_list_backfills: {
+    readonly list_backfills: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19596,7 +19596,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_list_closes: {
+    readonly list_closes: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19618,7 +19618,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_list_menu_answers: {
+    readonly list_menu_answers: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19640,7 +19640,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_post_menu_answer_result: {
+    readonly post_menu_answer_result: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19666,7 +19666,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_post_session_backfill: {
+    readonly post_session_backfill: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19692,7 +19692,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_list_unclaimable_turns: {
+    readonly list_unclaimable_turns: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19712,7 +19712,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_list_turns: {
+    readonly harness_list_turns: {
         readonly parameters: {
             readonly query?: {
                 readonly agent?: string | null;
@@ -19736,7 +19736,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_enqueue_turn: {
+    readonly enqueue_turn: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19769,7 +19769,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_list_sessions: {
+    readonly harness_list_sessions: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19789,7 +19789,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_get_turn: {
+    readonly get_turn: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19811,7 +19811,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_get_turn_caller_context: {
+    readonly get_turn_caller_context: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19833,7 +19833,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_read_turn_events: {
+    readonly read_turn_events: {
         readonly parameters: {
             readonly query?: {
                 readonly after?: number;
@@ -19857,7 +19857,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_append_turn_events: {
+    readonly append_turn_events: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19883,7 +19883,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_read_turn_transcript: {
+    readonly read_turn_transcript: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19903,7 +19903,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_append_turn_transcript: {
+    readonly append_turn_transcript: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19929,7 +19929,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_start_turn: {
+    readonly start_turn: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19955,7 +19955,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_finish_turn: {
+    readonly finish_turn: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -19981,7 +19981,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_cancel_turn: {
+    readonly cancel_turn: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20003,7 +20003,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_sync_schedules: {
+    readonly sync_schedules: {
         readonly parameters: {
             readonly query: {
                 readonly runner_id: string;
@@ -20026,7 +20026,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_fire_schedule_route: {
+    readonly fire_schedule_route: {
         readonly parameters: {
             readonly query: {
                 readonly runner_id: string;
@@ -20054,7 +20054,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_start_runner_drill: {
+    readonly start_runner_drill: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20080,7 +20080,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_list_runner_drills: {
+    readonly list_runner_drills: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20102,7 +20102,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_harness_api_report_drill: {
+    readonly report_drill: {
         readonly parameters: {
             readonly query?: {
                 readonly t?: string;
@@ -20130,7 +20130,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_push_api_vapid_public_key: {
+    readonly vapid_public_key: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20150,7 +20150,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_push_api_subscribe: {
+    readonly subscribe: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20172,7 +20172,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_push_api_unsubscribe: {
+    readonly unsubscribe: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20194,7 +20194,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_push_api_get_preferences: {
+    readonly get_preferences: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20214,7 +20214,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_push_api_set_preferences: {
+    readonly set_preferences: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20238,7 +20238,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_list_sessions: {
+    readonly canopy_sessions_list_sessions: {
         readonly parameters: {
             readonly query?: {
                 readonly state?: string;
@@ -20268,7 +20268,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_create_session: {
+    readonly create_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20292,7 +20292,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_reset_sessions: {
+    readonly reset_sessions: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20316,7 +20316,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_get_session: {
+    readonly canopy_sessions_get_session: {
         readonly parameters: {
             readonly query?: {
                 readonly full?: boolean;
@@ -20340,7 +20340,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_list_messages: {
+    readonly list_messages: {
         readonly parameters: {
             readonly query: {
                 readonly before: number;
@@ -20365,7 +20365,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_archive_session: {
+    readonly archive_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20387,7 +20387,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_reset_session: {
+    readonly reset_session: {
         readonly parameters: {
             readonly query?: {
                 readonly dry_run?: boolean;
@@ -20411,7 +20411,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_unarchive_session: {
+    readonly unarchive_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20433,7 +20433,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_set_session_notify: {
+    readonly set_session_notify: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20459,7 +20459,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_list_participants: {
+    readonly list_participants: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20481,7 +20481,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_add_participant: {
+    readonly add_participant: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20507,7 +20507,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_remove_participant: {
+    readonly remove_participant: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20530,7 +20530,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_send: {
+    readonly canopy_sessions_send: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20556,7 +20556,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_place: {
+    readonly place: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20582,7 +20582,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_transfer: {
+    readonly transfer: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20608,7 +20608,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_answer_menu: {
+    readonly answer_menu: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20636,7 +20636,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_close_session: {
+    readonly close_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20660,7 +20660,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_stop_session_turn: {
+    readonly stop_session_turn: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20684,7 +20684,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_attach_session: {
+    readonly attach_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20706,7 +20706,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_detach_session: {
+    readonly detach_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20728,7 +20728,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_request_backfill: {
+    readonly request_backfill: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20750,7 +20750,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_upload_attachment: {
+    readonly upload_attachment: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20782,7 +20782,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_attachment_content: {
+    readonly attachment_content: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20802,7 +20802,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_delete_attachment: {
+    readonly delete_attachment: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20822,7 +20822,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_list_page_actions: {
+    readonly list_page_actions: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20844,7 +20844,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_declare_page_actions: {
+    readonly canopy_sessions_declare_page_actions: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20870,7 +20870,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_read_page_state: {
+    readonly read_page_state: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20892,7 +20892,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_declare_page_state: {
+    readonly canopy_sessions_declare_page_state: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20918,7 +20918,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_declare_run_input: {
+    readonly declare_run_input: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20944,7 +20944,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_invoke_page_action: {
+    readonly invoke_page_action: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20970,7 +20970,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_resolve_page_action: {
+    readonly canopy_sessions_resolve_page_action: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20997,7 +20997,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_list_secrets: {
+    readonly list_secrets: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -21019,7 +21019,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_share_secret: {
+    readonly share_secret: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -21045,7 +21045,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_api_delete_secret: {
+    readonly delete_secret: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -21066,7 +21066,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_secrets_api_list_for_key: {
+    readonly list_for_key: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -21086,7 +21086,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_canopy_sessions_secrets_api_value_for_key: {
+    readonly value_for_key: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -21108,7 +21108,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_contacts_api_list_contacts: {
+    readonly list_contacts: {
         readonly parameters: {
             readonly query?: {
                 readonly q?: string | null;
@@ -21132,7 +21132,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_contacts_api_get_contact: {
+    readonly get_contact: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -21154,7 +21154,7 @@ export interface operations {
             };
         };
     };
-    readonly apps_contacts_api_patch_contact: {
+    readonly patch_contact: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

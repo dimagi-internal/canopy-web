@@ -1,13 +1,22 @@
 # MCP Surface
 
-canopy-web exposes a curated set of tools as a
-[FastMCP](https://github.com/jlowin/fastmcp) 3.x server, mounted at
+canopy-web exposes its whole REST API as a
+[FastMCP](https://github.com/jlowin/fastmcp) 4.x server, mounted at
 `/api/mcp/` over **Streamable HTTP**. External MCP clients (Claude Code,
 other agents) call these tools to inspect and mutate canopy-web state.
 
-Tools are **explicit in-process Python functions** that run **as the
-authenticated user** — there is no OpenAPI auto-derivation and no HTTP
-self-loopback anymore. The implementation lives in `apps/mcp/`.
+**Every REST route is a tool.** `apps/mcp/api_tools.py` generates one tool per
+route of the single `NinjaAPI` from its OpenAPI schema — name = operationId,
+parameters = the route's path/query/body, description = its docstring — and a
+call is a request to that route, dispatched **in-process** (Django's ASGI
+handler is the httpx transport; no socket) **as the caller** (handed to
+`BearerTokenAuthMiddleware` in the ASGI scope, which no network request can
+set). The web app calls the same API, so anything it can do an MCP client can
+do, and a new route is on MCP without a step. See "Generated API tools" below.
+
+A handful of **hand-written** tools remain for what is not a REST route
+(caller-envelope, site gateway, per-agent capability tools, page tools, Slack
+share, session-noise audit). The implementation lives in `apps/mcp/`.
 
 ## Module layout (`apps/mcp/`)
 
@@ -74,7 +83,38 @@ The legacy single shared `CANOPY_MCP_BEARER` and the hand-rolled ASGI
 gate in `config/asgi.py` are GONE — auth is now enforced inside the MCP
 app by MultiAuth.
 
-## Tools
+## Generated API tools (`api_tools.py`)
+
+* **Coverage.** Every route, minus `EXCLUDED` / `EXCLUDED_PREFIXES`: routes whose
+  caller is not a person — the runner protocol (heartbeat, claim, streams, turn
+  lifecycle…), a browser tab's plumbing (page state, attach/detach, push
+  subscription), an embedding host's or a contact's surface, anonymous public
+  reads, raw-bytes responses, multipart uploads — plus the three routes that
+  refuse any token by design (`transfer_owner`, `grant_admin`, `revoke_admin`).
+  Leaving a route out is never a security decision: a tool is exactly as
+  powerful as the caller's token already is against REST.
+* **Names.** The operationId, which `CanopyNinjaAPI` makes the view function's
+  own name, qualified by app only when two modules share it
+  (`canopy_sessions_send`, `session_sharing_list_sessions`).
+* **Tenant.** Every tool takes an optional `workspace`; the call goes to
+  `/api/w/{workspace}/…` (membership checked by `WorkspaceResolveMiddleware`).
+  Omitted, the flat route resolves to the caller's default workspace. A route
+  that already names `{workspace}` in its path keeps its own argument.
+* **Identity.** The caller from the MCP access token (`user_id` +
+  `auth_method`); a token with no canopy user is refused. The request counts as
+  a machine (`is_machine`). Caller tokens and host-grant tokens are still
+  confined by `TurnScopeMiddleware` / `DelegatedScopeMiddleware`, which list
+  only the tools they name.
+* **Audit + rate limit.** Every call writes `MCPAuditLog`; every non-GET counts
+  against the per-user write limit.
+* **Errors.** A non-2xx is a `ToolError` carrying the status and the RFC 7807
+  body the REST route returned.
+* **Collisions.** `SHADOWED_BY_HAND_WRITTEN` names the seven routes whose
+  hand-written namesake (insights, items, schedules) wins; the generated twin is
+  not listed. `tests/test_mcp_api_tools.py` fails on any other collision and on
+  an exclusion naming a route that no longer exists.
+
+## Hand-written tools
 
 | Tool | Kind | Purpose |
 |---|---|---|
@@ -136,9 +176,12 @@ only on `Authorization: DPoP` and passes every other request through untouched.
 Mint a PAT with `manage.py create_token --email <you> --label <name>` or
 the `/canopy:canopy-web-pat-mint` flow.
 
-## Note on `x-mcp-expose` tags
+## History
 
-The old server auto-derived tools from `openapi_extra={"x-mcp-expose":
-True}` OpenAPI tags. Tools are now explicit functions, so those tags are
-**inert** — they remain on a couple of Ninja routes as harmless OpenAPI
-metadata and no longer drive tool registration.
+The first server (fastmcp 0.4) also derived tools from OpenAPI, but executed
+them over an HTTP loopback to localhost with ONE shared `CANOPY_MCP_BEARER`, so
+every tool ran as the same identity; it was replaced in May 2026 by explicit
+per-user tools, and its `x-mcp-expose` markers were deleted on 2026-09-18
+because nothing read them. The generated surface (2026-09-29) keeps the
+per-user model and drops the loopback: the request is dispatched in-process,
+as the caller.
