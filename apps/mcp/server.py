@@ -57,6 +57,12 @@ from .page_tools import PageActionProvider  # noqa: E402
 # name even if the `page_` prefix were dropped.
 mcp.add_provider(PageActionProvider())
 
+# Every REST route, as a tool (`apps/mcp/api_tools.py`). After the static tools
+# for the same reason as the page provider: a hand-written tool keeps its name.
+from .api_tools import build_provider as _build_api_provider  # noqa: E402
+
+mcp.add_provider(_build_api_provider())
+
 # Dynamic tools: each agent's declared interface (`ace__ask`, …), for whoever
 # is asking. See `apps/mcp/agent_tools.py`.
 from .agent_tools import AgentInterfaceProvider  # noqa: E402
