@@ -114,14 +114,16 @@ export function turnNotice(
     ? { name: status.cloud_runner, id: status.cloud_runner_id }
     : null;
   const runners = status.runners.join(", ");
+  const need = status.requires?.length ? status.requires.map((r) => r.toUpperCase()).join(", ") : "";
   switch (status.state) {
     case "waiting_runner":
       return {
         tone: "warn",
         // Names the box, because the fix is physical: go and open it.
-        text: runners
+        text: (runners
           ? `Queued — ${runners} is offline, so nothing is working on this yet. It runs when the runner is back.`
-          : "Queued — its runner is offline, so nothing is working on this yet.",
+          : "Queued — its runner is offline, so nothing is working on this yet.")
+          + (need ? ` It needs a ${need} runner.` : ""),
         offer,
       };
     case "unrouted":
@@ -129,7 +131,9 @@ export function turnNotice(
         tone: "error",
         // The one state waiting cannot fix, and it has to READ differently
         // from the one waiting can.
-        text: status.agent_slug
+        text: need
+          ? `Queued — this conversation needs a ${need} runner, and none of ${status.agent_slug ?? "its agent"}'s runners is declared ${need}.`
+          : status.agent_slug
           ? `Queued, but no runner is set up to run ${status.agent_slug} — nothing will pick this up until its routing is fixed.`
           : "Queued, but no runner is set up to run this — nothing will pick it up until its routing is fixed.",
         offer,

@@ -222,6 +222,7 @@ def test_as_dict_is_flat_json_native_and_carries_the_derived_questions():
         "detail": None,
         "finished_at": None,
         # Derived, not re-derived by four clients that could disagree.
+        "requires": [],
         "settled": False,
         "stuck": True,
     }
@@ -237,3 +238,29 @@ def test_state_sets_partition_every_state():
     assert ts.PENDING | ts.TERMINAL == all_states
     assert not (ts.PENDING & ts.TERMINAL)
     assert ts.STUCK <= ts.PENDING
+
+
+# -- a queued turn says what its conversation requires of the box --------------
+
+def _zdr_turn(status=Turn.QUEUED):
+    t = _turn(status, agent_slug="ace")
+    t.chat_session_id = 1
+    t.chat_session = types.SimpleNamespace(
+        agent_id=1, agent=types.SimpleNamespace(slug="ace"),
+        metadata={"runner_requirements": ["zdr"]})
+    return t
+
+
+def test_a_queued_zdr_turn_carries_its_requirement():
+    st = ts.derive(_zdr_turn(), reach=_reach("unrouted"))
+    assert st.requires == ("zdr",)
+    assert st.as_dict()["requires"] == ["zdr"]
+
+
+def test_a_turn_without_one_carries_none():
+    st = ts.derive(_turn(Turn.QUEUED), reach=_reach("unrouted"))
+    assert st.as_dict()["requires"] == []
+
+
+def test_a_settled_turn_does_not_carry_it():
+    assert ts.derive(_zdr_turn(Turn.DONE)).requires == ()

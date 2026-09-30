@@ -118,6 +118,9 @@ class TurnStatus:
     #: moved past — work typed straight into the session makes no Turn, so the
     #: latest Turn can be a day-old failure under a thread that is plainly fine.
     finished_at: datetime | None = None
+    #: What the conversation's host requires of the box (e.g. `zdr`). Only set
+    #: while QUEUED: it is the reason a turn can sit with runners online.
+    requires: tuple[str, ...] = ()
 
     @property
     def settled(self) -> bool:
@@ -148,6 +151,7 @@ class TurnStatus:
             "menu_pending": self.menu_pending,
             "detail": self.detail,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "requires": list(self.requires),
             "settled": self.settled,
             "stuck": self.stuck,
         }
@@ -183,6 +187,7 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) ->
     dead holder (which outranks anything the turn itself claims, because the
     turn cannot know), then what the turn says.
     """
+    from . import runner_requirements as rr
     from . import services as harness
 
     session = turn.chat_session if turn.chat_session_id else None
@@ -230,6 +235,7 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) ->
         menu_pending=menu_pending,
         detail=((turn.result_note or "").strip()[:DETAIL_MAX] or None) if state == FAILED else None,
         finished_at=turn.finished_at if state in TERMINAL else None,
+        requires=tuple(sorted(rr.requirements_of(turn))) if turn.status == Turn.QUEUED else (),
     )
 
 

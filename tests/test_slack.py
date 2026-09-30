@@ -246,6 +246,20 @@ def test_mention_queues_a_slack_turn_on_a_private_session(slack, linked, hal, al
     assert f"/w/{hal.workspace_id}/chat/{session.id}" in line["text"]
 
 
+def test_unrouted_line_names_a_zdr_requirement(slack, linked, hal):
+    from types import SimpleNamespace
+
+    from apps.harness import services as harness_services
+    from apps.slack import status as slack_status
+
+    mention(f"<@{BOT}> hal summarise this thread")
+    turn = Turn.objects.select_related("chat_session__agent").get()
+    turn.chat_session.metadata = {**turn.chat_session.metadata, "runner_requirements": ["zdr"]}
+    turn.chat_session.save(update_fields=["metadata"])
+    text, _ = slack_status.render(turn, reach=SimpleNamespace(kind=harness_services.UNROUTED, runners=[]))
+    assert "needs a ZDR runner" in text and "none of `hal`'s runners is declared ZDR" in text
+
+
 def test_slack_redelivery_does_not_ask_the_agent_twice(slack, linked, hal):
     mention("hal do it")
     mention("hal do it")
