@@ -71,6 +71,27 @@ application = Starlette(
     lifespan=_mcp_app.lifespan,
 )
 
+
+
+def _mcp_without_slash(app):
+    """`/api/mcp` reaches the MCP app, not Django.
+
+    Claude Code stores an MCP URL without its trailing slash (`claude mcp add
+    … /api/mcp/` becomes `…/api/mcp`), and Starlette's `Mount("/api/mcp")`
+    matches only `/api/mcp/…`, so the bare path fell through to Django: a 401
+    with no OAuth challenge before sign-in, and a 404 HTML page for every MCP
+    call after it (2026-09-30)."""
+
+    async def wrapped(scope, receive, send):
+        if scope["type"] in ("http", "websocket") and scope.get("path") == _MCP_PREFIX:
+            scope = {**scope, "path": _MCP_PREFIX + "/", "raw_path": (_MCP_PREFIX + "/").encode()}
+        await app(scope, receive, send)
+
+    return wrapped
+
+
+application = _mcp_without_slash(application)
+
 # When deployed under a path prefix (labs.connect.dimagi.com/canopy), strip it
 # from incoming scopes so the mounts above (MCP at /api/mcp, Django at /) match.
 # FORCE_SCRIPT_NAME independently re-adds the prefix to URLs Django generates.
