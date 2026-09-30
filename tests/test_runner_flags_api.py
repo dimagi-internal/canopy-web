@@ -149,3 +149,12 @@ def test_list_runners_includes_flags(owner_client, runner):
     row = next(x for x in rows if x["id"] == str(runner.id))
     assert row["flags"] == ["zdr"]
     assert row["known_flags"] == sorted(contract.RUNNER_FLAGS)
+
+
+def test_the_reply_says_what_the_caller_may_do_with_the_runner(owner_client, admin_client, runner):
+    """RunnerOut's defaults are True, so an unstamped reply showed an admin who
+    is not the pairer the drill/pause controls that then 404."""
+    body = _put(admin_client, runner, ["zdr"]).json()
+    assert body["can_manage"] is False and body["can_administer"] is True
+    body = _put(owner_client, runner, ["zdr"]).json()
+    assert body["can_manage"] is True and body["can_administer"] is True

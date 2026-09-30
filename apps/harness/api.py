@@ -744,7 +744,13 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
                                       ("runner.flag_withdrawn", "withdrew", removed))
             for flag in sorted(names)
         ], workspace=runner.workspace)
-    return Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
+    out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
+    # Per (caller, runner), as list_runners stamps them: RunnerOut defaults both
+    # to True, so an unstamped reply would show an admin who is not the pairer
+    # controls that then 404.
+    out.can_manage = out.paired_by_id in (request.user.id, None)
+    out.can_administer = services.can_administer_runner(request.user, out)
+    return out
 
 
 @router.get("/runners/", response=list[RunnerOut], summary="List the fleet I can see")
