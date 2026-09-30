@@ -323,6 +323,12 @@ class Runner(models.Model):
         """
         return self.live_status in (self.ONLINE, self.DEGRADED, self.PAUSED)
 
+    @property
+    def flags(self) -> frozenset[str]:
+        """What this box's owner has declared (`RunnerFlag`). Reads the prefetch
+        cache when the caller used prefetch_related("declared_flags")."""
+        return frozenset(f.flag for f in self.declared_flags.all())
+
 
 class Turn(models.Model):
     """One unit of agent work — the execution envelope around board commands."""
@@ -1000,6 +1006,27 @@ class RunnerAdmin(models.Model):
 
     def __str__(self) -> str:
         return f"admin:{self.runner_id}:{self.user_id}"
+
+
+class RunnerFlag(models.Model):
+    """One property a runner's OWNER vouches for (spec 2026-09-30-zdr-runners).
+
+    canopy cannot verify any of these -- `zdr` means "this box uses only
+    zero-data-retention keys for Claude", which is not observable from here -- so
+    each row is an attestation and records WHO made it. Set only through the
+    human-only flags route; nothing a runner reports can create one, or a box
+    could promote itself.
+    """
+
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="declared_flags")
+    flag = models.CharField(max_length=32)
+    declared_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                    null=True, related_name="+")
+    declared_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["runner", "flag"],
+                                               name="one_flag_row_per_runner")]
 
 
 class RunnerAssignment(models.Model):
