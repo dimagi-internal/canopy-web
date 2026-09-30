@@ -101,6 +101,29 @@ MAX_JTI_LENGTH = 256
 # --- claims ---------------------------------------------------------------------------------
 
 ASSERTION_REQUIRED_CLAIMS: tuple[str, ...] = ("iss", "sub", "aud", "exp", "iat", "jti")
+#: What a host may require of the runner a visitor's conversation runs on. A
+#: LIST, so a later requirement is a new flag rather than a new claim.
+RUNNER_REQUIREMENTS_CLAIM = "canopy_runner_requirements"
+#: Every flag a runner's owner may declare and a host may require. The ONLY list:
+#: canopy-web imports it rather than keeping a copy.
+RUNNER_FLAGS: frozenset[str] = frozenset({"zdr"})
+
+
+def parse_runner_requirements(value) -> tuple[str, ...]:
+    """The claim's value as a sorted, deduped tuple. ``None`` / ``[]`` -> ``()``.
+
+    Raises ``ValueError`` for anything else: a string, a non-string member, an
+    unknown flag. Both halves fail CLOSED on it: a host at boot, canopy at arrival.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
+        raise ValueError(f"{RUNNER_REQUIREMENTS_CLAIM} must be a list of strings")
+    unknown = set(value) - RUNNER_FLAGS
+    if unknown:
+        raise ValueError(f"unknown runner requirement(s): {', '.join(sorted(unknown))}")
+    return tuple(sorted(set(value)))
+
 #: What canopy requires before it spends an ID-JAG. ``scope`` is carried too, but
 #: the SCOPE is the host's to decide, so it is the host that requires it.
 ID_JAG_REQUIRED_CLAIMS: tuple[str, ...] = (

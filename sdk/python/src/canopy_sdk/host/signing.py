@@ -69,6 +69,11 @@ def sign_visitor_assertion(config: HostConfig, subject: str, *, name: str = "", 
         "email": email or "",
         "email_verified": bool(email_verified and email),
     }
+    # After the dict is built so `extra` can neither forge nor drop it.
+    if config.runner_requirements:
+        claims[contract.RUNNER_REQUIREMENTS_CLAIM] = list(config.runner_requirements)
+    else:
+        claims.pop(contract.RUNNER_REQUIREMENTS_CLAIM, None)
     # `kid` so canopy can pick this key out of the JWKS the host publishes;
     # without it a rotation has nothing to select on.
     return sign(claims, config.signing_key, headers={"kid": config.kid})
