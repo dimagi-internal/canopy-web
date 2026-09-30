@@ -1080,6 +1080,12 @@ def _placeable_runner(session: Session, runner_id):
         return None
     if not wsvc.is_member(runner.paired_by, session.workspace_id):
         return None
+    from apps.harness import runner_requirements as rr
+
+    # A box the conversation's host does not allow is no placement at all: a pin
+    # to it would sit unclaimable forever (claim_next_turn refuses it above pins).
+    if not rr.satisfies(runner.flags, rr.requirements_of_session(session)):
+        return None
     return runner
 
 
