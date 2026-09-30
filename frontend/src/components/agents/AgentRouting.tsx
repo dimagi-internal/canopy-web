@@ -9,6 +9,7 @@ import {
 } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
+import { ZdrBadge, hasZdr } from '@/components/agents/ZdrBadge'
 import {
   ACTORLESS_SOURCES,
   ROUTABLE_SOURCES,
@@ -364,13 +365,8 @@ function RuleRowView({
                   ●
                 </span>
                 <span className="min-w-0 truncate font-mono" title={r.runner_name}>{r.runner_name}</span>
-                {fleet.find((f) => f.id === r.runner_id)?.flags?.includes('zdr') && (
-                  <span
-                    data-testid={`zdr-badge-${r.runner_name}`}
-                    className="rounded border border-info/30 bg-info/10 px-1 text-[10px] text-info"
-                  >
-                    ZDR
-                  </span>
+                {hasZdr(fleet.find((f) => f.id === r.runner_id)) && (
+                  <ZdrBadge testId={`zdr-badge-${r.runner_name}`} />
                 )}
                 {g.runners.length > 1 && (
                   <>
