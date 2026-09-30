@@ -94,7 +94,7 @@ def _task_or_404(request: HttpRequest, item_id: uuid.UUID) -> AgentTask:
 
 @agent_items_router.get("/{slug}/items/", response=list[ItemOut],
                         summary="List an agent's items",)
-def list_items(
+def list_agent_items(
     request: HttpRequest, slug: str, state: str = "", kind: str = "", batch: str = "",
 ) -> list[dict]:
     agent = _get_agent_or_404(request, slug)
@@ -128,20 +128,36 @@ _KIND_RANK = {AgentTask.ASK_REVIEW: 0, AgentTask.ASK_QUESTION: 1}
 
 @items_router.get("/", response=list[ItemOut],
                   summary="Fleet inbox — items across every agent you can see")
-def list_fleet_items(request: HttpRequest, state: str = "open", kind: str = "") -> list[dict]:
-    """The supervisor's home screen, as a pure query: open asks across the
-    caller's visible agents, ranked review -> question then oldest-first.
-    Defaults to state=open (the inbox); pass an explicit state to widen. Authz
-    reuses the single agent-visibility predicate, so it can never show an ask
-    whose agent the agents list would hide."""
+def list_items(
+    request: HttpRequest, state: str = "open", kind: str = "", agent: str = "", limit: int = 0,
+) -> list[dict]:
+    """The "waiting on you" queue: asks across every agent you can see, ranked
+    review -> question, then oldest first.
+
+    An item is a task's ASK — something a human must answer, as opposed to a
+    turn, which is work an agent does. Defaults to `state=open` (the inbox);
+    pass another state to widen. Optional filters: `agent` slug, `kind`
+    (review, question). `limit` caps the rows (0 = all).
+
+    When a request is about "these", "the ones on screen" or "my inbox", read
+    `current_page` first: the page gives the ids it is showing, and this
+    resolves them with your own permissions applied.
+    """
+    # The supervisor's home screen, as a pure query. Authz reuses the single
+    # agent-visibility predicate, so it can never show an ask whose agent the
+    # agents list would hide.
     visible = _visible_agent_workspace_ids(request)
     qs = _asks(AgentTask.objects.filter(agent__workspace_id__in=visible)
                .select_related("agent"))
+    if agent:
+        qs = qs.filter(agent__slug=agent)
     if state:
         qs = _by_state(qs, state)
     if kind:
         qs = qs.filter(ask_kind=kind)
     rows = sorted(qs, key=lambda t: (_KIND_RANK.get(t.ask_kind, 9), t.created_at))
+    if limit > 0:
+        rows = rows[:limit]
     return [_payload(t) for t in rows]
 
 

@@ -177,3 +177,12 @@ class InsightsClearOut(StrictModel):
 
 class InsightDismissOut(StrictModel):
     dismissed: int
+
+
+class InsightsDismissIn(StrictModel):
+    """Body of POST /api/insights/dismiss."""
+    ids: list[int]
+
+
+class InsightsDismissOut(StrictModel):
+    dismissed: list[int]

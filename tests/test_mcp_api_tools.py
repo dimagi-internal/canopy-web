@@ -105,22 +105,15 @@ def test_exclusions_name_routes_that_exist():
     would silently stop applying — fail instead."""
     ids = _operation_ids()
     assert set(api_tools.EXCLUDED) <= ids
-    assert set(api_tools.SHADOWED_BY_HAND_WRITTEN) <= ids
     paths = _schema()["paths"]
     for prefix in api_tools.EXCLUDED_PREFIXES:
         assert any(p.startswith(prefix) for p in paths), prefix
 
 
-def test_shadowed_names_are_served_by_their_hand_written_tool(db):
-    tools = _tools()
-    for name in api_tools.SHADOWED_BY_HAND_WRITTEN:
-        assert name in tools
-        assert not isinstance(tools[name], api_tools.CanopyAPITool)
-
-
 def test_no_generated_tool_collides_with_a_hand_written_one(db):
-    """A second tool of the same name would be unreachable. Every overlap must
-    be declared in SHADOWED_BY_HAND_WRITTEN, deliberately."""
+    """FastMCP resolves hand-written tools first, so a route sharing a
+    hand-written tool's name would be silently unreachable. A hand-written tool
+    exists only for what is not a route; if one duplicates a route, delete it."""
     generated = api_tools.tool_spec(_schema())
     names = [op["operationId"] for item in generated["paths"].values() for op in item.values()]
     assert len(names) == len(set(names))
@@ -154,7 +147,7 @@ def test_a_route_that_names_its_workspace_keeps_its_own_argument(db):
     shadow the path parameter."""
     tool = _tools()["get_config"]
     assert tool.parameters["properties"]["workspace"].get("description") != (
-        "Workspace slug to act in. Omit for your default workspace.")
+        "Workspace slug to act in. Omit to act across your workspaces, as the flat route does.")
 
 
 # -- as the caller ---------------------------------------------------------

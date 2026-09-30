@@ -146,7 +146,7 @@ def create_schedule(request: HttpRequest, slug: str, payload: ScheduleIn) -> Sta
 # this block below PATCH/DELETE would silently shadow it.
 @router.post("/{slug}/schedules/preview", response=SchedulePreviewOut,
              summary="Preview the next fire times for a cron expression",)
-def preview_schedule(
+def preview_cron(
     request: HttpRequest, slug: str, payload: SchedulePreviewIn
 ) -> SchedulePreviewOut:
     """Answer 'when would this actually run?' at edit time. Computed with the same
@@ -198,7 +198,7 @@ def delete_schedule(request: HttpRequest, slug: str, schedule_id: int) -> Status
 
 @router.post("/{slug}/schedules/{schedule_id}/run-now", response={202: ScheduleOut},
              summary="Trigger a schedule off-cycle, now",)
-def run_now(request: HttpRequest, slug: str, schedule_id: int) -> Status:
+def run_schedule_now(request: HttpRequest, slug: str, schedule_id: int) -> Status:
     try:
         schedule = ss.run_schedule_now(request.user, slug, schedule_id, workspace_slug=_pin(request))
     except ss.ScheduleNotFound as exc:

@@ -24,9 +24,8 @@ share, session-noise audit). The implementation lives in `apps/mcp/`.
 |---|---|
 | `auth.py` | `CanopyPATVerifier` — a FastMCP `TokenVerifier` that resolves a Personal Access Token to a Django user (mirrors `apps.tokens.middleware`). |
 | `delegation.py` | canopy-web as a host of its own MCP: `gate()` (the SDK's `DPoPGate`, mounted in `config/asgi.py`), `access_token_for()` (a host-grant token → the visitor's `AccessToken`), and `DelegatedScopeMiddleware` (only the grant's scopes' tools). |
+| `api_tools.py` | The generated API tools: `CanopyAPIProvider` (one tool per REST route), the in-process transport, the exclusion list. |
 | `server.py` | The `FastMCP("canopy-web")` instance with `MultiAuth` (PAT + optional OAuth), and `build_http_app()` for the ASGI mount. |
-| `tools/insights.py` | `list_insights` (read) + `clear_insights` (write) tools. |
-| `tools/schedules.py` | `list_schedules` / `preview_cron` (read) + `create_schedule` / `update_schedule` / `delete_schedule` / `run_schedule_now` (write) tools over `AgentSchedule`. |
 | `rate_limit.py` | Per-user write rate limit (mutating tools). |
 | `audit.py` | `current_user_id()` + `write_audit()` (writes `MCPAuditLog`). |
 | `models.py` | `MCPAuditLog` — one row per tool call. |
@@ -98,8 +97,9 @@ app by MultiAuth.
   (`canopy_sessions_send`, `session_sharing_list_sessions`).
 * **Tenant.** Every tool takes an optional `workspace`; the call goes to
   `/api/w/{workspace}/…` (membership checked by `WorkspaceResolveMiddleware`).
-  Omitted, the flat route resolves to the caller's default workspace. A route
-  that already names `{workspace}` in its path keeps its own argument.
+  Omitted, the call goes to the flat route exactly as a PAT caller's would —
+  reads span every workspace you belong to. A route that already names
+  `{workspace}` in its path keeps its own argument.
 * **Identity.** The caller from the MCP access token (`user_id` +
   `auth_method`); a token with no canopy user is refused. The request counts as
   a machine (`is_machine`). Caller tokens and host-grant tokens are still
@@ -109,40 +109,27 @@ app by MultiAuth.
   against the per-user write limit.
 * **Errors.** A non-2xx is a `ToolError` carrying the status and the RFC 7807
   body the REST route returned.
-* **Collisions.** `SHADOWED_BY_HAND_WRITTEN` names the seven routes whose
-  hand-written namesake (insights, items, schedules) wins; the generated twin is
-  not listed. `tests/test_mcp_api_tools.py` fails on any other collision and on
-  an exclusion naming a route that no longer exists.
+* **Collisions.** None allowed. FastMCP resolves hand-written tools ahead of
+  providers, so a route sharing a hand-written tool's name would be silently
+  unreachable; `tests/test_mcp_api_tools.py` fails on one. The insight, item,
+  schedule and skill-history tools that predated this (and that the host-grant
+  scopes and page contract name) are now their routes under the same names —
+  `dismiss_insights` gained a route (`POST /api/insights/dismiss`) and
+  `skill_history` / `skill_revision_diff` gained theirs
+  (`/api/agents/{slug}/skill-history/{revisions,diff}`) rather than stay
+  MCP-only.
 
 ## Hand-written tools
 
 | Tool | Kind | Purpose |
 |---|---|---|
-| `list_insights` | read | Cross-portfolio insights feed (filter by `category`/`source`/`project`/`limit`). |
-| `clear_insights` | write (rate-limited) | Delete insights by `source`/`category`/`project`/`older_than_days`. No filters clears all. |
-| `list_schedules` | read | List an agent's recurring schedules (cron config + next fire times). |
-| `preview_cron` | read | Preview the next 3 fire times for a cron+timezone pair, using the same slot math the runner fires on. |
-| `create_schedule` | write (rate-limited) | Create a recurring turn for an agent (`cron` + IANA `timezone` + seed `prompt`). |
-| `update_schedule` | write (rate-limited) | Update a schedule; only the fields passed are changed. |
-| `delete_schedule` | write (rate-limited) | Delete a schedule, retiring any open occurrence it fired first. |
-| `run_schedule_now` | write (rate-limited) | Trigger a schedule off-cycle immediately. |
-| `skill_history` | read | An agent's skill revisions from its repo's git history (date, subject, body, line change, checking skills), filterable by `skill`/`group`/`commit` (sha prefix)/`since`/`until`. Backs the History page: a selected commit maps to `commit`, the page's `as_of` date to `until`. Returns 25 revisions by default (ceiling 300) with each body summarised to 700 chars + `body_truncated`; asking for one `commit` returns that body whole — a mature skill has hundreds of revisions whose bodies run to thousands of words, and the old 300/4000 default produced ~640 KB, which a tool result cannot carry. |
 | *(caller tokens)* | auth | A CONFINED session authenticates with a `cct_…` caller token (`apps/harness/caller_tokens.py`), minted per confined turn at claim and bound to its conversation — never the runner owner's PAT. The canopy plugin's `headersHelper` sends it from the session's profile. It resolves to the conversation's CURRENT turn: tools run as that turn's asker (their own ACL; **no canopy user** for an outside contact) and `TurnScopeMiddleware` (`apps/mcp/turn_scope.py`) lists and allows only the canopy tools the capability names (`mcp__*canopy-web__<tool>` → `<tool>`) — `agent ∩ caller`. `who_is_asking` answers only about the token's own conversation. Expired, long-finished, or a conversation whose current turn is not confined → the token authenticates nothing. |
 | `who_is_asking` | read | The caller envelope for a turn (`apps/harness/caller_context.py`): who asked, `verified` (about THIS message — a spoof of a once-verified address is not verified), `relationship` to the agent (owner/admin/member/caller/system), and the workspace's contact profile (`notes`, `attributes`, this-message vs best grade, `is_blocked`). The same document the claiming runner writes to `~/.canopy/caller/<turn_id>.json`; this is the mid-turn re-read, so a contact blocked or re-annotated since the claim shows as such. Gated like the REST twin `GET /api/harness/turns/{id}/caller-context`: tenant membership, unknown ⇒ "turn not found". |
 | `site_tools` | read, **caller-token only** | The tools of the Connected site the visitor is on that this turn may use (host grant contract v1): what the host lists AS THE VISITOR for their grant, narrowed by the capability's `ceiling` only when the owner set one (the page's `backing_tool` is a hint to the agent, not a filter). The turn is read from the caller token, never an argument. Refused — never a fallback to the agent's own credential — when the visitor holds no unexpired grant ("I need you back on the page"). |
 | `site_call` | write, **caller-token only** | Call one host tool as the visitor, through canopy (`apps/tokens/host_gateway.py`): canopy attaches the visitor's host-issued token as `Authorization: DPoP` with a fresh proof per request (`htm`/`htu`/`ath`/`iat`/`jti`) and `Canopy-Actor: <agent>`. Re-checks site, capability `sites:`, grant freshness, resource, DPoP key and the effective tool set on every call. Audited per call; the token never appears in a result, error, log or audit row, and never reaches a runner. Added to a confined profile automatically for any capability with `sites:`. |
 | `<agent>__<capability>` | write (rate-limited), **dynamic** | Each agent's DECLARED INTERFACE served as tools, computed per caller by `AgentInterfaceProvider` (`apps/mcp/agent_tools.py`), the sibling of `PageActionProvider`: `ace__ask`, `ace__summarise_opportunity`. Listed for agents in the caller's workspaces that have a declared interface (held on canopy-web) — every capability for the agent's owner and admins and for members matched by a `full:` rule, the ones naming their member class for other members, nothing for anyone else. A call is a TURN asked by the caller (initiator = their token's user, `via=mcp:<capability>`) in a conversation they own: full profile for owner/admins, confined to the capability for a member. Capability `input` fields become typed required parameters. Re-authorized on every call (listing is not permission). Waits up to `wait_seconds` (≤110) and returns `{conversation_id, turn_id, status, reply}`; `status: running` → call `agent_reply`; `waiting_on_you` carries the agent's `question`, answered by calling again with the `conversation_id`. |
 | `agent_reply` | read | The latest turn of a conversation the CALLER started with an agent tool: status, reply so far, pending question. Nobody else's conversations. |
-| `skill_revision_diff` | read | The unified diff one commit made to one skill's `SKILL.md`, fetched live from GitHub and truncated to 20 KB. |
 | `share_session_to_slack` | write (rate-limited) | Post a session-written summary into a Slack channel: `broadcast` (one post) or `bind` (the thread becomes the session's own, exactly as if Slack had started it). Sharing an already-bound session posts an update into its thread instead; `channel` is then optional. Resolves "this session" by `claude_session_id` → `RunnerBinding.transcript_id`, else emdash task + project, else `session_id`, always inside what the caller can see. Backs the canopy plugin's `/canopy:share-to-slack`; rules live in `apps/slack/share.py`. |
-
-The six schedule tools call `apps/harness/schedule_services.py`, the same
-request-free service layer the REST `/api/agents/{slug}/schedules/` routes
-call, so the MCP and REST surfaces can't drift. All five writes are
-rate-limited and audited the same way `clear_insights` is; `run_schedule_now`'s
-audit row additionally carries the schedule's `name`, because it's the one
-schedule tool that spawns a real agent turn (tokens) — a runaway is visible
-in `MCPAuditLog` rather than merely inferred.
 
 ## Mount + lifespan (`config/asgi.py`)
 

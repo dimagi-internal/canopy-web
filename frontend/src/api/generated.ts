@@ -259,7 +259,10 @@ export interface paths {
         };
         /**
          * List insights
-         * @description Bearer-readable xfail (Phase 5.4).
+         * @description Insight cards from the feed, newest first, in the caller's workspaces.
+         *
+         *     Filters are optional and AND-combined: `category` (content tagged
+         *     "[<category>]"), `source`, `project` slug. `limit` is capped at 100.
          */
         readonly get: operations["list_insights"];
         readonly put?: never;
@@ -292,6 +295,35 @@ export interface paths {
          *     A body with no filters ({}) clears ALL insights — this is intended.
          */
         readonly post: operations["clear_insights"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/insights/dismiss": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Dismiss insights by id
+         * @description Dismiss specific insights; returns the ids that went.
+         *
+         *     Use this for "close the ones I am looking at": the page's current selection
+         *     is a set of ids. Prefer it over `clear_insights` whenever the request is
+         *     about a visible set — a filter only approximates what somebody can see, on
+         *     a paginated feed it also matches rows they never looked at, and with no
+         *     filters at all it deletes everything.
+         *
+         *     Ids outside the caller's workspaces are absent from the result rather than
+         *     an error, so compare the returned list against what you asked for.
+         */
+        readonly post: operations["dismiss_insights"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2286,6 +2318,69 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/skill-history/revisions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Skill revisions, newest first, with their commit messages
+         * @description How an agent's skills changed, from its repository's git history.
+         *
+         *     Returns revisions newest first: date, skill, commit subject AND body (the
+         *     body is where the reason for a change is usually spelled out), lines after,
+         *     and the line change. For a single skill it also names the QA/eval skills
+         *     that check it (`checked_by`) or the skill it checks (`checks`).
+         *
+         *     Filters: `skill` name, `group` title (a phase or agent from the History
+         *     page), `commit` (a sha or sha prefix, 7 to 64 hex characters),
+         *     `since` / `until` dates.
+         *
+         *     Returns the 25 most recent matches by default; `limit` raises that, capped
+         *     at 300. In a list each body is summarised to its first 700 characters and
+         *     `body_truncated` says so — ask for that one `commit` to read it whole. A
+         *     mature skill has hundreds of revisions and its bodies run to thousands of
+         *     words each, so narrow with `skill`, `since`/`until` or `commit` rather than
+         *     asking for everything.
+         *
+         *     On the History page, read `current_page` first: it says which skill, group
+         *     or commit is selected and the date being looked at. A selected commit's sha
+         *     is `commit`; the page's `as_of` date is `until`.
+         */
+        readonly get: operations["skill_history"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/skill-history/diff": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The change one commit made to one skill, as a unified diff
+         * @description The exact change one commit made to one skill's SKILL.md, as a unified diff.
+         *
+         *     Fetched live from GitHub (not stored), truncated to 20 KB. Use it when a
+         *     commit message does not say enough about what actually changed.
+         */
+        readonly get: operations["skill_revision_diff"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/projects/": {
         readonly parameters: {
             readonly query?: never;
@@ -2924,7 +3019,7 @@ export interface paths {
          * @description Answer 'when would this actually run?' at edit time. Computed with the same
          *     next_slots() the firing path uses — the client must never re-implement cron.
          */
-        readonly post: operations["preview_schedule"];
+        readonly post: operations["preview_cron"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2959,7 +3054,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /** Trigger a schedule off-cycle, now */
-        readonly post: operations["run_now"];
+        readonly post: operations["run_schedule_now"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2974,7 +3069,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /** List an agent's items */
-        readonly get: operations["list_items"];
+        readonly get: operations["list_agent_items"];
         readonly put?: never;
         /** Raise items for an agent (batch, idempotent) */
         readonly post: operations["create_items"];
@@ -2993,13 +3088,19 @@ export interface paths {
         };
         /**
          * Fleet inbox — items across every agent you can see
-         * @description The supervisor's home screen, as a pure query: open asks across the
-         *     caller's visible agents, ranked review -> question then oldest-first.
-         *     Defaults to state=open (the inbox); pass an explicit state to widen. Authz
-         *     reuses the single agent-visibility predicate, so it can never show an ask
-         *     whose agent the agents list would hide.
+         * @description The "waiting on you" queue: asks across every agent you can see, ranked
+         *     review -> question, then oldest first.
+         *
+         *     An item is a task's ASK — something a human must answer, as opposed to a
+         *     turn, which is work an agent does. Defaults to `state=open` (the inbox);
+         *     pass another state to widen. Optional filters: `agent` slug, `kind`
+         *     (review, question). `limit` caps the rows (0 = all).
+         *
+         *     When a request is about "these", "the ones on screen" or "my inbox", read
+         *     `current_page` first: the page gives the ids it is showing, and this
+         *     resolves them with your own permissions applied.
          */
-        readonly get: operations["list_fleet_items"];
+        readonly get: operations["list_items"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -6100,6 +6201,19 @@ export interface components {
             readonly project?: string | null;
             /** Older Than Days */
             readonly older_than_days?: number | null;
+        };
+        /** InsightsDismissOut */
+        readonly InsightsDismissOut: {
+            /** Dismissed */
+            readonly dismissed: readonly number[];
+        };
+        /**
+         * InsightsDismissIn
+         * @description Body of POST /api/insights/dismiss.
+         */
+        readonly InsightsDismissIn: {
+            /** Ids */
+            readonly ids: readonly number[];
         };
         /** InsightDismissOut */
         readonly InsightDismissOut: {
@@ -13990,6 +14104,30 @@ export interface operations {
             };
         };
     };
+    readonly dismiss_insights: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["InsightsDismissIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["InsightsDismissOut"];
+                };
+            };
+        };
+    };
     readonly dismiss_insight: {
         readonly parameters: {
             readonly query?: never;
@@ -17035,6 +17173,64 @@ export interface operations {
             };
         };
     };
+    readonly skill_history: {
+        readonly parameters: {
+            readonly query?: {
+                readonly skill?: string | null;
+                readonly group?: string | null;
+                readonly since?: string | null;
+                readonly until?: string | null;
+                readonly limit?: number | null;
+                readonly commit?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly skill_revision_diff: {
+        readonly parameters: {
+            readonly query: {
+                readonly sha: string;
+                readonly skill: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     readonly agents_list_projects: {
         readonly parameters: {
             readonly query?: {
@@ -17973,7 +18169,7 @@ export interface operations {
             };
         };
     };
-    readonly preview_schedule: {
+    readonly preview_cron: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18047,7 +18243,7 @@ export interface operations {
             };
         };
     };
-    readonly run_now: {
+    readonly run_schedule_now: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18070,7 +18266,7 @@ export interface operations {
             };
         };
     };
-    readonly list_items: {
+    readonly list_agent_items: {
         readonly parameters: {
             readonly query?: {
                 readonly state?: string;
@@ -18122,11 +18318,13 @@ export interface operations {
             };
         };
     };
-    readonly list_fleet_items: {
+    readonly list_items: {
         readonly parameters: {
             readonly query?: {
                 readonly state?: string;
                 readonly kind?: string;
+                readonly agent?: string;
+                readonly limit?: number;
             };
             readonly header?: never;
             readonly path?: never;

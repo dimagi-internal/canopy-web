@@ -63,7 +63,7 @@ def test_list_insights_runs_and_returns_rows():
     with as_user(user):
         result = async_to_sync(mcp.call_tool)("list_insights", {})
 
-    rows = result.structured_content["result"]
+    rows = result.structured_content["items"]  # the REST route's Page
     assert len(rows) == 1
     assert rows[0]["content"] == "[ship_gap] do the thing"
     assert rows[0]["project_slug"] == "canopy"

@@ -26,8 +26,8 @@ no longer exists, so the list cannot rot.
 
 **Workspace.** Every generated tool takes an optional `workspace`: the call is
 sent to `/api/w/{workspace}/…`, the canonical tenant URL, where
-`WorkspaceResolveMiddleware` checks membership. Omitted, the flat route resolves
-to the caller's default workspace — the same compat shim a PAT caller gets.
+`WorkspaceResolveMiddleware` checks membership. Omitted, the call goes to the
+flat route exactly as a PAT caller's would (reads span all your workspaces).
 """
 from __future__ import annotations
 
@@ -133,24 +133,11 @@ EXCLUDED: dict[str, str] = {
     "set_runner_preference": "deprecated; superseded by replace_agent_runners",
 }
 
-#: Hand-written tools that share a route's name. The hand-written tool wins
-#: (FastMCP resolves static tools ahead of providers), and the generated twin is
-#: not listed, so a client never sees two tools with one name. These predate the
-#: generated surface and are wired into the host-grant scopes and page contract
-#: by name; retiring them onto their routes is its own change.
-SHADOWED_BY_HAND_WRITTEN: frozenset[str] = frozenset({
-    "list_insights", "clear_insights", "list_items",
-    "list_schedules", "create_schedule", "update_schedule", "delete_schedule",
-})
-
-
 def excluded_reason(path: str, method: str, operation: dict) -> str | None:
     """Why this operation is not a tool, or None when it is one."""
     op_id = operation.get("operationId", "")
     if op_id in EXCLUDED:
         return EXCLUDED[op_id]
-    if op_id in SHADOWED_BY_HAND_WRITTEN:
-        return "a hand-written tool of the same name serves it"
     for prefix, reason in EXCLUDED_PREFIXES.items():
         if path.startswith(prefix):
             return reason
@@ -200,7 +187,40 @@ async def _django_app(scope, receive, send):
             path = f"/api/w/{ws}/{scope['path'][len('/api/'):]}"
             scope["path"] = path
             scope["raw_path"] = path.encode()
+        if call.get("json_body"):
+            scope, receive = await _ensure_json_body(scope, receive)
     await _django_handler(scope, receive, send)
+
+
+async def _ensure_json_body(scope, receive):
+    """A route with a JSON body whose fields are all optional (`clear_insights`)
+    still needs a body: called with no arguments, the request carries none, and
+    Ninja answers 422 "payload: Field required". Send `{}` — what the web app
+    sends for the same "no filters" call."""
+    # Drain the request body (an empty one can arrive as several empty chunks).
+    messages, body = [], b""
+    while True:
+        message = await receive()
+        messages.append(message)
+        if message.get("type") != "http.request":
+            break
+        body += message.get("body", b"")
+        if not message.get("more_body"):
+            break
+    if body or messages[-1].get("type") != "http.request":
+        async def replay():
+            return messages.pop(0) if messages else await receive()
+
+        return scope, replay
+    headers = [(k, v) for k, v in scope.get("headers", [])
+               if k.lower() not in (b"content-type", b"content-length")]
+    headers += [(b"content-type", b"application/json"), (b"content-length", b"2")]
+    sent = [{"type": "http.request", "body": b"{}", "more_body": False}]
+
+    async def with_body():
+        return sent.pop() if sent else await receive()
+
+    return {**scope, "headers": headers}, with_body
 
 
 def _internal_host() -> str:
@@ -246,7 +266,12 @@ class CanopyAPITool(OpenAPITool):
         workspace = args.pop(WORKSPACE_ARG, None) if self.adds_workspace else None
         principal = _principal()
         method = self._route.method.upper()
-        summary = f"{method} {self._route.path} {sorted(args)}"
+        # The path with its ids filled in, so the audit row names WHICH agent or
+        # schedule a write touched; body values stay out (they can hold secrets).
+        path = self._route.path
+        for key, value in args.items():
+            path = path.replace("{" + key + "}", str(value))
+        summary = f"{method} {path} {sorted(k for k in args if '{' + k + '}' not in self._route.path)}"
         if workspace:
             summary = f"[{workspace}] {summary}"
         if method != "GET":
@@ -256,7 +281,10 @@ class CanopyAPITool(OpenAPITool):
                 await write_audit(user_id=principal["user_id"], tool=self.name,
                                   args_summary=summary, ok=False, error=str(exc))
                 raise ToolError(str(exc)) from exc
-        token = _current_call.set({"principal": principal, "workspace": workspace})
+        token = _current_call.set({
+            "principal": principal, "workspace": workspace,
+            "json_body": self._route.request_body is not None,
+        })
         try:
             result = await super().run(args)
         except Exception as exc:
@@ -293,7 +321,7 @@ class CanopyAPIProvider(OpenAPIProvider):
             props[WORKSPACE_ARG] = {
                 "type": "string",
                 "description": (
-                    "Workspace slug to act in. Omit for your default workspace."
+                    "Workspace slug to act in. Omit to act across your workspaces, as the flat route does."
                 ),
             }
             params["properties"] = props
