@@ -160,3 +160,17 @@ class EmbedSelfTokenOut(StrictModel):
     #: the page you named (`?page=`) — see `apps/tokens/self_host.py`. False
     #: for an unregistered page, or when canopy-web is not set up as a host.
     host_grant: bool = False
+
+
+class McpClientOut(StrictModel):
+    """An MCP client a person connected by signing in (an `OAuthGrant`)."""
+    id: int
+    client_name: str
+    connected_at: dt.datetime
+    last_used_at: dt.datetime | None = None
+
+
+class McpClientsOut(StrictModel):
+    #: The address to give an MCP client — it finds the sign-in from there.
+    mcp_url: str
+    apps: list[McpClientOut]

@@ -291,7 +291,12 @@ def test_everything_is_off_until_configured(world, mcp_app):
     assert r.status_code == 200 and r.json()["host_grant"] is False
     c = Client()
     assert c.get("/oauth/host/jwks.json").status_code == 503
-    assert c.get("/.well-known/oauth-authorization-server").status_code == 503
+    # The discovery document is still served — a PERSON's MCP login
+    # (apps/tokens/mcp_oauth.py) needs no host keys — but it offers no
+    # jwt-bearer grant until this deployment is a host.
+    meta = c.get("/.well-known/oauth-authorization-server")
+    assert meta.status_code == 200
+    assert contract.JWT_BEARER_GRANT not in meta.json()["grant_types_supported"]
     r = c.post("/oauth/token", {"grant_type": contract.JWT_BEARER_GRANT})
     assert r.status_code == 400 and r.json()["error"] == "unsupported_grant_type"
 
@@ -323,7 +328,9 @@ def test_the_discovery_documents_and_token_endpoint_are_public(world):
     meta = c.get("/.well-known/oauth-authorization-server").json()
     assert meta["issuer"] == BASE and meta["token_endpoint"] == f"{BASE}/oauth/token"
     assert contract.JWT_BEARER_GRANT in meta["grant_types_supported"]
-    assert set(meta["scopes_supported"]) == set(self_host.SCOPE_TOOLS)
+    # The host grant's read-only scopes, plus the person-login scope
+    # (apps/tokens/mcp_oauth.py) that shares this issuer.
+    assert set(meta["scopes_supported"]) == set(self_host.SCOPE_TOOLS) | {"canopy"}
     # The RFC 8414 path-inserted form, as a deployment under a prefix is asked.
     assert c.get("/.well-known/oauth-authorization-server/canopy").json()["issuer"] == BASE
     prm = c.get("/.well-known/oauth-protected-resource/api/mcp").json()

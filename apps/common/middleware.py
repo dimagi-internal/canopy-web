@@ -51,11 +51,19 @@ PUBLIC_PATH_PREFIXES = (
     # anything that can sign (apps/tokens/views_oauth.py). Exact paths.
     "/oauth/client.json",
     "/oauth/jwks.json",
-    # canopy-web as a HOST of its own MCP (apps/tokens/self_host.py): the
-    # jwt-bearer token endpoint (self-enforces: private_key_jwt + DPoP + a
-    # signed grant, one allowed client), the host key's PUBLIC half, and the
-    # discovery documents. Nothing here can sign or read tenant data.
+    # The OAuth token endpoint and discovery documents. The token endpoint
+    # self-enforces every grant it serves: canopy's own jwt-bearer grant
+    # (private_key_jwt + DPoP + a signed grant, one allowed client —
+    # apps/tokens/self_host.py) and a person's MCP login (a one-time code plus
+    # its PKCE verifier, or a refresh token — apps/tokens/mcp_oauth.py). The
+    # host key's PUBLIC half sits here too. Nothing here can sign or read
+    # tenant data without one of those.
     "/oauth/token",
+    # An MCP client registers itself before anyone signs in; registering grants
+    # nothing (apps/tokens/mcp_oauth.py). `/oauth/authorize` is deliberately NOT
+    # here: the consent page needs a signed-in person, so this middleware sends
+    # an anonymous visitor to sign in and back.
+    "/oauth/register",
     # canopy's live probe of its OWN host half: a real ID-JAG for the dedicated
     # probe user, for canopy's own client only (same private_key_jwt + DPoP).
     "/oauth/probe",

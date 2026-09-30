@@ -10,8 +10,10 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_NOT_FOUND, ProblemError
 
 from . import github_app
-from .models import GitHubConnection, PersonalToken
+from .models import GitHubConnection, OAuthGrant, PersonalToken
 from .schemas import (
+    McpClientOut,
+    McpClientsOut,
     GitHubConnectionOut,
     GitHubInstallationOut,
     PersonalTokenCreatedOut,
@@ -35,7 +37,10 @@ def _serialize(token: PersonalToken) -> dict:
 
 @router.get("/", response=list[PersonalTokenOut], summary="List my tokens")
 def list_tokens(request: HttpRequest) -> list[PersonalTokenOut]:
-    qs = PersonalToken.objects.filter(user=request.user).order_by("-created_at")
+    # Tokens an MCP login minted are listed under their connected app instead:
+    # they live an hour and are replaced on every refresh.
+    qs = (PersonalToken.objects.filter(user=request.user, oauth_grant__isnull=True)
+          .order_by("-created_at"))
     return [PersonalTokenOut.model_validate(_serialize(t)) for t in qs]
 
 
@@ -56,6 +61,38 @@ def revoke_token(request: HttpRequest, pk: int) -> Status:
     if token.revoked_at is None:
         token.revoked_at = timezone.now()
         token.save(update_fields=["revoked_at"])
+    return Status(204, None)
+
+
+# ---- MCP clients connected by signing in (apps/tokens/mcp_oauth.py) ----------
+
+
+@router.get("/connected-apps", response=McpClientsOut,
+            summary="MCP clients connected to my account")
+def list_connected_apps(request: HttpRequest) -> McpClientsOut:
+    """The apps (Claude, an editor, …) you signed in to canopy's MCP server
+    from, and the address to give a new one."""
+    from . import mcp_oauth
+    from .views_mcp_oauth import mcp_resource
+
+    apps = [
+        McpClientOut(id=g.pk, client_name=g.client.display_name,
+                        connected_at=g.created_at, last_used_at=g.last_used_at)
+        for g in mcp_oauth.grants_for(request.user)
+    ]
+    return McpClientsOut(mcp_url=mcp_resource(request), apps=apps)
+
+
+@router.delete("/connected-apps/{grant_id}", response={204: None},
+               summary="Disconnect an MCP client")
+def disconnect_app(request: HttpRequest, grant_id: int) -> Status:
+    """Revoke the app's access at once: its current token stops working and it
+    cannot refresh. It must be signed in again to reconnect."""
+    grant = OAuthGrant.objects.filter(pk=grant_id, user=request.user,
+                                      revoked_at__isnull=True).first()
+    if grant is None:
+        raise ProblemError(404, "Connected app not found", type_=TYPE_NOT_FOUND)
+    grant.revoke()
     return Status(204, None)
 
 

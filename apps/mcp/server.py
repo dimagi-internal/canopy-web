@@ -34,7 +34,18 @@ from .auth import CanopyPATVerifier
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("canopy-web", auth=CanopyPATVerifier())
+def _verifier() -> CanopyPATVerifier:
+    """The verifier, told the MCP's public URL so a 401 carries
+    `WWW-Authenticate: Bearer resource_metadata="…"` — how an MCP client finds
+    where to sign in (RFC 9728 §5.1; `apps/tokens/mcp_oauth.py`). Without a
+    public base URL (dev) the challenge is a bare `Bearer`, as before."""
+    from apps.tokens.client_identity import public_base
+
+    base = public_base()
+    return CanopyPATVerifier(resource_base_url=f"{base}/api/mcp" if base else None)
+
+
+mcp = FastMCP("canopy-web", auth=_verifier())
 
 # A confined session's caller token sees only its capability's canopy tools.
 from .turn_scope import TurnScopeMiddleware  # noqa: E402

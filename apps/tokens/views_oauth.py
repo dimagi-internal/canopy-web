@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from . import client_identity
 
@@ -92,44 +92,78 @@ def host_jwks(request: HttpRequest) -> JsonResponse:
     return _host_document(lambda: self_host.config().jwks())
 
 
-@require_GET
+@require_http_methods(["GET", "OPTIONS"])
 def authorization_server_metadata(request: HttpRequest, rest: str = "") -> JsonResponse:
     """RFC 8414 for canopy-web's issuer, at the RFC location (a deployment at
-    the root of its host) and with any path suffix."""
-    from . import self_host
+    the root of its host) and with any path suffix.
 
-    return _host_document(self_host.as_metadata)
+    One issuer, two kinds of login: a PERSON signing an MCP client in
+    (authorization_code + PKCE, `mcp_oauth.py`) — always served — and canopy's
+    own jwt-bearer grant for embedded pages (`self_host.py`), folded in when
+    this deployment is configured as a host."""
+    from . import mcp_oauth, self_host
+    from .views_mcp_oauth import cors, issuer, preflight
+
+    if request.method == "OPTIONS":
+        return preflight()
+    base = self_host.as_metadata() if self_host.configured() else {}
+    resp = JsonResponse(mcp_oauth.merge_metadata(base, mcp_oauth.as_metadata_fields(issuer(request))))
+    resp["Cache-Control"] = _CACHE
+    return cors(resp)
 
 
-@require_GET
+@require_http_methods(["GET", "OPTIONS"])
 def protected_resource_metadata(request: HttpRequest, rest: str = "") -> JsonResponse:
-    """RFC 9728 for `/api/mcp/`."""
-    from . import self_host
+    """RFC 9728 for `/api/mcp/` — where an MCP client learns whom to sign in with."""
+    from . import mcp_oauth, self_host
+    from .views_mcp_oauth import cors, issuer, mcp_resource, preflight
 
-    return _host_document(self_host.pr_metadata)
+    if request.method == "OPTIONS":
+        return preflight()
+    base = self_host.pr_metadata() if self_host.configured() else {}
+    doc = mcp_oauth.merge_metadata(base, {
+        "resource": mcp_resource(request),
+        "authorization_servers": [issuer(request)],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": [mcp_oauth.USER_SCOPE],
+        "resource_name": "canopy-web",
+    })
+    resp = JsonResponse(doc)
+    resp["Cache-Control"] = _CACHE
+    return cors(resp)
 
 
 @csrf_exempt
-@require_POST
+@require_http_methods(["POST", "OPTIONS"])
 def token(request: HttpRequest) -> JsonResponse:
-    """The jwt-bearer grant (RFC 7523 + private_key_jwt + DPoP). Nothing else is
-    served here: canopy-web runs no other OAuth grant. Never logs the form."""
+    """The token endpoint for both logins: a person's MCP client
+    (`authorization_code`, `refresh_token` — `mcp_oauth.py`) and canopy's own
+    jwt-bearer grant (RFC 7523 + private_key_jwt + DPoP). Never logs the form."""
     from canopy_sdk import contract
 
-    from . import self_host
+    from . import mcp_oauth, self_host
+    from .views_mcp_oauth import cors, preflight
 
-    if request.POST.get("grant_type") != contract.JWT_BEARER_GRANT:
-        status = 400
-        body = {"error": "unsupported_grant_type",
-                "error_description": "Only the jwt-bearer grant is served here."}
-        headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
-    else:
+    if request.method == "OPTIONS":
+        return preflight()
+    headers = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+    grant_type = request.POST.get("grant_type")
+    if grant_type in (mcp_oauth.AUTHORIZATION_CODE, mcp_oauth.REFRESH_TOKEN):
+        try:
+            status, body = 200, mcp_oauth.token_request(request.POST)
+        except mcp_oauth.OAuthError as e:
+            status, body = e.status, e.body()
+    elif grant_type == contract.JWT_BEARER_GRANT:
         status, body, headers = self_host.handle_token_request(
             request.POST.dict(), request.headers.get(contract.DPOP_HEADER))
+    else:
+        status = 400
+        body = {"error": "unsupported_grant_type",
+                "error_description": f"grant_type {grant_type!r} is not served here."}
     resp = JsonResponse(body, status=status)
     for key, value in headers.items():
         resp[key] = value
-    return resp
+    return cors(resp)
 
 
 @csrf_exempt

@@ -5,6 +5,7 @@ import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
+import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
 
 export function SettingsPage() {
   // Presence visibility. Defaults to visible (matches the backend default
@@ -48,7 +49,7 @@ export function SettingsPage() {
       <div>
         <h1 className="text-lg font-semibold text-foreground">Settings</h1>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Your account: the runners you administer, presence, GitHub and access tokens.
+          Your account: the runners you administer, presence, GitHub, connected apps and access tokens.
         </p>
       </div>
 
@@ -84,6 +85,8 @@ export function SettingsPage() {
       </div>
 
       <GitHubPanel />
+
+      <ConnectedAppsPanel />
 
       <TokensPanel />
 
