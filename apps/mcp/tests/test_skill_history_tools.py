@@ -7,6 +7,7 @@ from unittest import mock
 
 import pytest
 from asgiref.sync import async_to_sync
+from fastmcp.exceptions import ToolError
 from django.contrib.auth import get_user_model
 from fastmcp.server.auth import AccessToken
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
@@ -35,6 +36,13 @@ def _call(name, **kw):
     return async_to_sync(mcp.call_tool)(name, kw).structured_content
 
 
+def _refused(name, **kw) -> str:
+    """A refusal is the route's own error — its status and problem body."""
+    with pytest.raises(ToolError) as exc:
+        _call(name, **kw)
+    return str(exc.value)
+
+
 @pytest.fixture
 def world():
     owner = User.objects.create_user(username="o", email="o@dimagi.com")
@@ -59,7 +67,7 @@ def test_both_tools_are_registered_on_the_mounted_server():
 def test_skill_history_returns_bodies_and_checking_skills(world):
     owner, _, _ = world
     with as_user(owner):
-        out = _call("skill_history", agent="ace", skill="idea-to-pdd")
+        out = _call("skill_history", slug="ace", skill="idea-to-pdd")
     assert out["revisions"][0]["body"] == "Reviewers were being transcribed by hand."
     assert out["checked_by"] == ["idea-to-pdd-eval"]
 
@@ -67,8 +75,7 @@ def test_skill_history_returns_bodies_and_checking_skills(world):
 def test_an_outsider_learns_nothing(world):
     _, outsider, _ = world
     with as_user(outsider):
-        out = _call("skill_history", agent="ace")
-    assert out == {"error": "agent 'ace' not found"}
+        assert "404" in _refused("skill_history", slug="ace")
 
 
 def test_diff_is_fetched_live_with_the_owners_grant_and_truncated(world):
@@ -81,7 +88,7 @@ def test_diff_is_fetched_live_with_the_owners_grant_and_truncated(world):
     with as_user(owner), \
          mock.patch.object(skill_history.github_app, "access_token_for", return_value="tok") as tok, \
          mock.patch.object(skill_history.requests, "get", return_value=resp) as get:
-        out = _call("skill_revision_diff", agent="ace", sha="c" * 40, skill="idea-to-pdd")
+        out = _call("skill_revision_diff", slug="ace", sha="c" * 40, skill="idea-to-pdd")
     tok.assert_called_once_with(agent.owner)
     assert get.call_args.args[0] == "https://api.github.com/repos/dimagi-internal/ace/commits/" + "c" * 40
     assert out["truncated"] is True
@@ -93,8 +100,7 @@ def test_a_bad_sha_is_refused_before_any_github_call(world):
     with as_user(owner), \
          mock.patch.object(skill_history.github_app, "access_token_for") as tok, \
          mock.patch.object(skill_history.requests, "get") as get:
-        out = _call("skill_revision_diff", agent="ace", sha="../../user", skill="idea-to-pdd")
-    assert "error" in out
+        assert "422" in _refused("skill_revision_diff", slug="ace", sha="../../user", skill="idea-to-pdd")
     tok.assert_not_called()
     get.assert_not_called()
 
@@ -106,8 +112,7 @@ def test_a_non_github_repo_url_is_refused_before_any_github_call(world):
     with as_user(owner), \
          mock.patch.object(skill_history.github_app, "access_token_for") as tok, \
          mock.patch.object(skill_history.requests, "get") as get:
-        out = _call("skill_revision_diff", agent="ace", sha="c" * 40, skill="idea-to-pdd")
-    assert "error" in out
+        assert "422" in _refused("skill_revision_diff", slug="ace", sha="c" * 40, skill="idea-to-pdd")
     tok.assert_not_called()
     get.assert_not_called()
 
@@ -120,7 +125,7 @@ def test_a_selected_commit_resolves_by_sha_prefix(world):
                                               committed_at=dt.datetime(2026, 9, 1, tzinfo=dt.UTC))
     SkillRevision.objects.create(commit=other, skill="idea-to-pdd", lines_after=1340, added=7, deleted=0)
     with as_user(owner):
-        out = _call("skill_history", agent="ace", commit="c" * 7)
+        out = _call("skill_history", slug="ace", commit="c" * 7)
     assert [r["sha"] for r in out["revisions"]] == ["c" * 40]
     assert out["revisions"][0]["subject"] == "fix(idea-to-pdd): read comments"
     assert out["commit"] == "c" * 7
@@ -132,7 +137,7 @@ def test_the_pages_as_of_date_is_until(world):
                                               committed_at=dt.datetime(2026, 9, 1, tzinfo=dt.UTC))
     SkillRevision.objects.create(commit=later, skill="idea-to-pdd", lines_after=1340, added=7, deleted=0)
     with as_user(owner):
-        out = _call("skill_history", agent="ace", until="2026-08-31")
+        out = _call("skill_history", slug="ace", until="2026-08-31")
     assert [r["sha"] for r in out["revisions"]] == ["c" * 40]
 
 
@@ -140,15 +145,13 @@ def test_the_pages_as_of_date_is_until(world):
 def test_a_malformed_commit_is_an_error_not_a_raise(world, bad):
     owner, _, _ = world
     with as_user(owner):
-        out = _call("skill_history", agent="ace", commit=bad)
-    assert "error" in out
+        assert "422" in _refused("skill_history", slug="ace", commit=bad)
 
 
 def test_a_malformed_date_is_an_error_not_a_raise(world):
     owner, _, _ = world
     with as_user(owner):
-        out = _call("skill_history", agent="ace", since="last tuesday")
-    assert "error" in out
+        assert "422" in _refused("skill_history", slug="ace", since="last tuesday")
 
 
 def test_a_malformed_skill_name_is_refused_before_any_github_call(world):
@@ -156,7 +159,6 @@ def test_a_malformed_skill_name_is_refused_before_any_github_call(world):
     with as_user(owner), \
          mock.patch.object(skill_history.github_app, "access_token_for") as tok, \
          mock.patch.object(skill_history.requests, "get") as get:
-        out = _call("skill_revision_diff", agent="ace", sha="c" * 40, skill="../../user")
-    assert "error" in out
+        assert "422" in _refused("skill_revision_diff", slug="ace", sha="c" * 40, skill="../../user")
     tok.assert_not_called()
     get.assert_not_called()

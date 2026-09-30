@@ -198,13 +198,26 @@ def test_rest_create_one_off_and_422_on_past(owner, agent):
 
 
 def test_mcp_create_takes_a_naive_local_time_and_needs_no_cron(owner, agent):
-    """The reminder path: an agent says "9am Monday, Denver" and nothing else."""
-    from apps.mcp.tools.schedules import _create_sync
+    """The reminder path: an agent says "9am Monday, Denver" and nothing else —
+    through the MCP tool, which is the REST route."""
+    from asgiref.sync import async_to_sync
+    from fastmcp.server.auth import AccessToken
+    from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
+
+    from apps.mcp.server import mcp
 
     when = _next_week_9am_denver()
-    row = _create_sync(owner.id, "ace", "Reminder", "/ace:remind", "", "America/Denver",
-                       True, "prefer_local", 120, ["inbox"],
-                       when.replace(tzinfo=None).isoformat())
+    access = AccessToken(token="t", client_id=str(owner.pk), scopes=["canopy:user"],
+                         claims={"sub": str(owner.pk), "user_id": owner.pk, "auth_method": "pat"})
+    tok = auth_context_var.set(AuthenticatedUser(access))
+    try:
+        row = async_to_sync(mcp.call_tool)("create_schedule", {
+            "slug": "ace", "name": "Reminder", "prompt": "/ace:remind",
+            "timezone": "America/Denver", "notify": ["inbox"],
+            "run_once_at": when.replace(tzinfo=None).isoformat(),
+        }).structured_content
+    finally:
+        auth_context_var.reset(tok)
 
-    assert row["run_once_at"] == when
-    assert row["next_runs"] == [when]
+    assert dt.datetime.fromisoformat(row["run_once_at"]) == when
+    assert [dt.datetime.fromisoformat(r) for r in row["next_runs"]] == [when]

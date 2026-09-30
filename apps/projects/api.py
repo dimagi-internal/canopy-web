@@ -22,6 +22,8 @@ from .schemas import (
     BatchActionsIn,
     BatchContextIn,
     InsightDismissOut,
+    InsightsDismissIn,
+    InsightsDismissOut,
     InsightOut,
     InsightsClearIn,
     InsightsClearOut,
@@ -601,7 +603,11 @@ def list_insights(
     project: str | None = None,
     limit: int = 20,
 ) -> Page[InsightOut]:
-    """Bearer-readable xfail (Phase 5.4)."""
+    """Insight cards from the feed, newest first, in the caller's workspaces.
+
+    Filters are optional and AND-combined: `category` (content tagged
+    "[<category>]"), `source`, `project` slug. `limit` is capped at 100.
+    """
     limit = clamp_limit(limit, cap=100)
     rows = services.list_insights(
         workspace_slugs=wsvc.request_workspace_slugs(request),
@@ -638,6 +644,25 @@ def clear_insights(
         older_than_days=payload.older_than_days,
     )
     return InsightsClearOut(cleared=count)
+
+
+@insights_router.post("/dismiss", response=InsightsDismissOut, summary="Dismiss insights by id")
+def dismiss_insights(request: HttpRequest, payload: InsightsDismissIn) -> InsightsDismissOut:
+    """Dismiss specific insights; returns the ids that went.
+
+    Use this for "close the ones I am looking at": the page's current selection
+    is a set of ids. Prefer it over `clear_insights` whenever the request is
+    about a visible set — a filter only approximates what somebody can see, on
+    a paginated feed it also matches rows they never looked at, and with no
+    filters at all it deletes everything.
+
+    Ids outside the caller's workspaces are absent from the result rather than
+    an error, so compare the returned list against what you asked for.
+    """
+    dismissed = services.dismiss_insights(
+        workspace_slugs=wsvc.request_workspace_slugs(request), ids=list(payload.ids),
+    )
+    return InsightsDismissOut(dismissed=dismissed)
 
 
 @insights_router.delete("/{pk}/", response=InsightDismissOut, summary="Dismiss insight")

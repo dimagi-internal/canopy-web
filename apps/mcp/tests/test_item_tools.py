@@ -1,4 +1,4 @@
-"""`list_items` — the read that lets the inbox send ids instead of rows.
+"""`list_items` (`GET /api/items/`) — the read that lets the inbox send ids instead of rows.
 
 Driven through the real FastMCP instance (`mcp.call_tool`), not the function,
 because a tool that is never registered is a tool that does not exist:
@@ -92,7 +92,7 @@ def test_it_returns_open_items_in_the_callers_workspaces():
         rows = _call()
 
     assert [r["title"] for r in rows] == ["review the deploy"]
-    assert rows[0]["agent"] == "echo"
+    assert rows[0]["agent_slug"] == "echo"
 
 
 def test_a_decided_item_is_not_waiting_on_anyone():
@@ -123,11 +123,15 @@ def test_another_tenants_items_are_invisible():
 
 def test_an_unauthenticated_caller_gets_nothing_not_everything():
     """Fail closed. A missing caller resolving to "no filter" is the
-    `workspace_id IS NULL means allow` bug in a different costume."""
+    `workspace_id IS NULL means allow` bug in a different costume — refused
+    outright, before the route runs."""
+    from fastmcp.exceptions import ToolError
+
     user = User.objects.create_user(username="jj", email="jj@dimagi.com")
     _item(_agent(_workspace("connect", user), "echo"), "my item")
 
-    assert _call() == []
+    with pytest.raises(ToolError, match="canopy user"):
+        _call()
 
 
 def test_it_filters_by_agent_and_by_kind():
@@ -143,7 +147,7 @@ def test_it_filters_by_agent_and_by_kind():
         assert [r["title"] for r in _call(kind=AgentTask.ASK_QUESTION)] == ["echo question"]
 
 
-def test_limit_is_clamped_so_a_page_cannot_ask_for_the_whole_table():
+def test_limit_caps_the_rows():
     user = User.objects.create_user(username="jj", email="jj@dimagi.com")
     agent = _agent(_workspace("connect", user), "echo")
     for n in range(5):
@@ -151,4 +155,4 @@ def test_limit_is_clamped_so_a_page_cannot_ask_for_the_whole_table():
 
     with as_user(user):
         assert len(_call(limit=2)) == 2
-        assert len(_call(limit=10_000)) == 5  # clamped to 100, not an error
+        assert len(_call(limit=10_000)) == 5

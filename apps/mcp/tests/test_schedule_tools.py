@@ -58,11 +58,11 @@ def test_tools_are_registered():
 def test_create_then_list(member):
     with as_user(member):
         _call("create_schedule", {
-            "agent_slug": "eva", "name": "Goal review", "prompt": "/eva:goal-review",
+            "slug": "eva", "name": "Goal review", "prompt": "/eva:goal-review",
             "cron": "0 9 1 * *", "timezone": "America/New_York",
         })
-        result = _call("list_schedules", {"agent_slug": "eva"})
-    rows = result.structured_content["result"]
+        result = _call("list_schedules", {"slug": "eva"})
+    rows = result.structured_content["items"]  # the REST route's Page
     assert len(rows) == 1
     assert rows[0]["name"] == "Goal review"
 
@@ -70,19 +70,21 @@ def test_create_then_list(member):
 def test_create_audits_success(member):
     with as_user(member):
         _call("create_schedule", {
-            "agent_slug": "eva", "name": "R", "prompt": "p", "cron": "0 9 * * 5",
+            "slug": "eva", "name": "R", "prompt": "p", "cron": "0 9 * * 5",
         })
     row = MCPAuditLog.objects.filter(tool="create_schedule").latest("id")
     assert row.ok is True
 
 
-def test_run_now_audit_carries_schedule_name(member):
+def test_run_now_audit_names_the_schedule(member):
     with as_user(member):
-        _call("create_schedule", {"agent_slug": "eva", "name": "Weekly", "prompt": "p", "cron": "0 9 * * 5"})
+        _call("create_schedule", {"slug": "eva", "name": "Weekly", "prompt": "p", "cron": "0 9 * * 5"})
         sid = AgentSchedule.objects.get().id
-        _call("run_schedule_now", {"agent_slug": "eva", "schedule_id": sid})
+        _call("run_schedule_now", {"slug": "eva", "schedule_id": sid})
     row = MCPAuditLog.objects.filter(tool="run_schedule_now").latest("id")
-    assert "Weekly" in row.args_summary
+    # The audit row names WHICH schedule by its path — run-now is the one
+    # schedule write that burns tokens, so a runaway must be traceable.
+    assert f"/api/agents/eva/schedules/{sid}/run-now" in row.args_summary
     # Run-now is scheduler work fired off-cycle, not a separate source.
     assert Turn.objects.filter(origin=Turn.ORIGIN_CANOPY_SCHEDULER).count() == 1
 
@@ -90,17 +92,16 @@ def test_run_now_audit_carries_schedule_name(member):
 def test_non_member_gets_error_not_leak(member):
     outsider = User.objects.create_user(username="m", email="m@evil.com")
     with as_user(outsider):
-        # ScheduleNotFound(agent_slug) surfaces through FastMCP as a ToolError
-        # whose message carries the agent slug the service raised it with.
-        with pytest.raises(ToolError, match="eva"):
-            _call("list_schedules", {"agent_slug": "eva"})
+        # The route's 404 — indistinguishable from an agent that does not exist.
+        with pytest.raises(ToolError, match="404"):
+            _call("list_schedules", {"slug": "eva"})
 
 
 def test_delete_supersedes_then_removes(member):
     with as_user(member):
-        _call("create_schedule", {"agent_slug": "eva", "name": "D", "prompt": "p", "cron": "0 9 * * 5"})
+        _call("create_schedule", {"slug": "eva", "name": "D", "prompt": "p", "cron": "0 9 * * 5"})
         sid = AgentSchedule.objects.get().id
-        _call("delete_schedule", {"agent_slug": "eva", "schedule_id": sid})
+        _call("delete_schedule", {"slug": "eva", "schedule_id": sid})
     assert not AgentSchedule.objects.filter(pk=sid).exists()
 
 
@@ -113,7 +114,7 @@ def test_rate_limited_write_is_audited(member):
     cache.clear()
     with as_user(member):
         with pytest.raises(ToolError, match="rate limit"):
-            _call("run_schedule_now", {"agent_slug": "eva", "schedule_id": 1})
+            _call("run_schedule_now", {"slug": "eva", "schedule_id": 1})
     row = MCPAuditLog.objects.filter(tool="run_schedule_now").latest("id")
     assert row.ok is False
     assert "rate limit" in row.error.lower()
