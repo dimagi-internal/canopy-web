@@ -197,8 +197,6 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
               reason="bad_runner_requirements", detail=str(exc)[:200])
         raise HttpError(400, f"bad_runner_requirements: {exc}")
-    if list(runner_reqs) != (app.last_runner_requirements or []):
-        type(app).objects.filter(pk=app.pk).update(last_runner_requirements=list(runner_reqs))
 
     try:
         workspace = _tenant_for(app, payload.agent_slug)
@@ -206,6 +204,10 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
               reason="not_granted", detail=f"agent={payload.agent_slug!r}")
         raise
+    # Only for an arrival that is going to be served: a refused one says
+    # nothing about what the site is asking of the visitors it does serve.
+    if list(runner_reqs) != (app.last_runner_requirements or []):
+        type(app).objects.filter(pk=app.pk).update(last_runner_requirements=list(runner_reqs))
 
     contact = contact_services.record_embed_visitor(
         workspace=workspace,

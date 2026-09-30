@@ -885,6 +885,19 @@ def host_metadata(raw) -> dict:
     return out
 
 
+def _merge_metadata(session: Session, updates: dict) -> None:
+    """Write `updates` into the session's metadata as it is IN THE ROW, not as
+    the caller's copy remembers it. A read-modify-write of a stale in-memory
+    copy would put back whatever it loaded — dropping, say, a
+    `runner_requirements` a concurrent send stamped after it was read."""
+    with transaction.atomic():
+        locked = Session.objects.select_for_update().get(pk=session.pk)
+        locked.metadata = {**(locked.metadata or {}), **updates}
+        locked.save(update_fields=["metadata", "updated_at"])
+    session.metadata = locked.metadata
+    session.updated_at = locked.updated_at
+
+
 def add_runner_requirements(session: Session, reqs) -> None:
     """Union `reqs` into the session's requirements. Never removes one: a
     conversation that held a host's data keeps the host's floor, whatever token
@@ -1023,8 +1036,7 @@ def reset_session(session, *, dry_run: bool = False) -> dict:
     if reason != RESET_OK or dry_run:
         return out
     Message.objects.filter(session=session).delete()
-    session.metadata = {**(session.metadata or {}), TRANSCRIPT_SOURCED: True}
-    session.save(update_fields=["metadata", "updated_at"])
+    _merge_metadata(session, {TRANSCRIPT_SOURCED: True})
     request_backfill(session)
     return out
 
@@ -1265,10 +1277,7 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
 
         # So a LATER send on a still-unbound session re-pins here too, instead of
         # falling back to open routing and landing on whichever box polls first.
-        metadata = dict(session.metadata or {})
-        metadata["requested_runner_id"] = str(target.id)
-        session.metadata = metadata
-        session.save(update_fields=["metadata", "updated_at"])
+        _merge_metadata(session, {"requested_runner_id": str(target.id)})
 
         source_name = source.name if source is not None else "an unknown runner"
         prompt = TRANSFER_PREAMBLE.format(source=source_name, target=target.name)
@@ -1672,10 +1681,7 @@ def move_queued_turns(*, session: Session, placement: str, user=None, initiator=
         Turn.objects.filter(pk=handoff.pk).update(
             created_at=queued[0].created_at - _dt.timedelta(milliseconds=1))
     else:
-        metadata = dict(session.metadata or {})
-        metadata["requested_runner_id"] = str(target.id)
-        session.metadata = metadata
-        session.save(update_fields=["metadata", "updated_at"])
+        _merge_metadata(session, {"requested_runner_id": str(target.id)})
     Turn.objects.filter(pk__in=[t.pk for t in queued], status=Turn.QUEUED).update(pinned_runner=target)
     for t in queued:
         t.refresh_from_db()

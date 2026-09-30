@@ -368,6 +368,11 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         text = committed if text is None else text
         if not text.strip():
             return None
+        # A site's token carries its runner requirements (ZDR). Stamped before
+        # the send so the turn is routed under them, as the REST send does. A
+        # union — a socket without them never lifts a floor already set.
+        chat_services.add_runner_requirements(self.session,
+                                              self.scope.get("runner_requirements", ()))
         msg, turn = chat_services.send_message(
             session=self.session, text=text, user=self.user, client_id=client_id,
             initiator=who.for_scope(self.scope, via="chat"),

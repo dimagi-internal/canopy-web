@@ -221,3 +221,86 @@ def test_the_sdk_config_really_puts_the_claim_on_the_wire(site, key):
                       content_type="application/json")
     assert r.status_code == 200, r.content
     assert ContactToken.objects.get().runner_requirements == ["zdr"]
+
+
+# --- nothing that rewrites metadata may drop the stamp --------------------------------
+
+
+def _runners(site):
+    from apps.harness.models import Runner, RunnerFlag
+
+    caps = {"sessions": True, "projects": ["canopy-web"]}
+    cloud = Runner.objects.create(name="cloud", workspace=site["ws"], kind=Runner.CLOUD,
+                                  status=Runner.ONLINE, paired_by=site["owner"], host="cloud",
+                                  capabilities=caps)
+    zdr = Runner.objects.create(name="zdr-box", workspace=site["ws"], kind=Runner.CLOUD,
+                                status=Runner.ONLINE, paired_by=site["owner"], host="zdr-box",
+                                capabilities=caps)
+    RunnerFlag.objects.create(runner=zdr, flag="zdr", declared_by=site["owner"])
+    return cloud, zdr
+
+
+def _stale_copy_then_stamp(session):
+    """Hand back a copy loaded BEFORE a ZDR send stamped the row."""
+    from apps.canopy_sessions import services
+
+    stale = Session.objects.get(pk=session.pk)
+    services.add_runner_requirements(Session.objects.get(pk=session.pk), ("zdr",))
+    assert "runner_requirements" not in (stale.metadata or {})
+    return stale
+
+
+def test_a_transfer_from_a_stale_copy_keeps_the_stamp(site):
+    from apps.canopy_sessions import services
+    from apps.canopy_sessions.models import RunnerBinding
+
+    cloud, zdr = _runners(site)
+    s = Session.objects.create(workspace=site["ws"], project="canopy-web",
+                               created_by=site["owner"])
+    RunnerBinding.objects.create(session=s, runner=cloud, session_key="t",
+                                 emdash_project="canopy-web", host="cloud", thread_key=str(s.id))
+    stale = _stale_copy_then_stamp(s)
+    services.transfer_session(session=stale, placement=str(zdr.id))
+    meta = Session.objects.get(pk=s.pk).metadata
+    assert meta["runner_requirements"] == ["zdr"]
+    assert meta["requested_runner_id"] == str(zdr.id)
+
+
+def test_moving_queued_turns_from_a_stale_copy_keeps_the_stamp(site):
+    from apps.canopy_sessions import services
+
+    _cloud, zdr = _runners(site)
+    s = services.create_session(workspace=site["ws"], created_by=site["owner"],
+                                agent=site["agent"])
+    services.send_message(session=s, text="hello", user=site["owner"])
+    stale = _stale_copy_then_stamp(s)
+    moved = services.move_queued_turns(session=stale, placement=str(zdr.id))
+    assert moved
+    meta = Session.objects.get(pk=s.pk).metadata
+    assert meta["runner_requirements"] == ["zdr"]
+    assert meta["requested_runner_id"] == str(zdr.id)
+
+
+def test_the_arrival_refused_as_not_granted_does_not_touch_the_site_row(site, key):
+    AppCredentialAgent.objects.all().delete()
+    r = _arrive(key, requirements=["zdr"])
+    assert r.status_code == 404 or r.status_code == 403, r.content
+    assert AppCredential.objects.get(pk=site["app"].pk).last_runner_requirements == []
+
+
+# --- the member widget's socket ------------------------------------------------------
+
+
+def test_the_socket_carries_the_tokens_requirements(site, key):
+    from asgiref.sync import async_to_sync
+
+    from apps.realtime import channels_auth
+
+    _member(site)
+    raw = _arrive(key, requirements=["zdr"], email="mem@dimagi.com", verified=True).json()["token"]
+    assert async_to_sync(channels_auth._delegated_runner_requirements)(
+        {"query_string": f"token={raw}".encode(), "headers": []}) == ("zdr",)
+    assert async_to_sync(channels_auth._delegated_runner_requirements)(
+        {"query_string": b"", "headers": [(b"authorization", f"Bearer {raw}".encode())]}) == ("zdr",)
+    assert async_to_sync(channels_auth._delegated_runner_requirements)(
+        {"query_string": b"", "headers": []}) == ()
