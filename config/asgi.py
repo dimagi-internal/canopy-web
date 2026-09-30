@@ -29,6 +29,7 @@ _django_asgi_app = get_asgi_application()
 from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
 from channels.security.websocket import AllowedHostsOriginValidator  # noqa: E402
 from starlette.applications import Starlette  # noqa: E402
+from starlette.middleware import Middleware  # noqa: E402
 from starlette.routing import Mount  # noqa: E402
 
 from apps.canopy_sessions.routing import websocket_urlpatterns as chat_ws_urlpatterns  # noqa: E402
@@ -57,7 +58,27 @@ _django_with_ws = ProtocolTypeRouter(
 
 from apps.mcp.delegation import gate as _dpop_gate  # noqa: E402
 
+class _McpWithoutSlash:
+    """`/api/mcp` reaches the MCP app, not Django.
+
+    Claude Code stores an MCP URL without its trailing slash (`claude mcp add
+    … /api/mcp/` becomes `…/api/mcp`), and `Mount("/api/mcp")` matches only
+    `/api/mcp/…`, so the bare path fell through to Django: a 401 with no OAuth
+    challenge before sign-in, and a 404 HTML page for every MCP call after it
+    (2026-09-30). Middleware rather than a wrapper, so `application` stays the
+    Starlette app its lifespan and mounts are read from."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket") and scope.get("path") == _MCP_PREFIX:
+            scope = {**scope, "path": _MCP_PREFIX + "/", "raw_path": (_MCP_PREFIX + "/").encode()}
+        await self.app(scope, receive, send)
+
+
 application = Starlette(
+    middleware=[Middleware(_McpWithoutSlash)],
     routes=[
         # The DPoP gate: a host-grant token (canopy-web as a host of its own
         # MCP, apps/tokens/self_host.py) arrives as `Authorization: DPoP`; the
@@ -72,25 +93,6 @@ application = Starlette(
 )
 
 
-
-def _mcp_without_slash(app):
-    """`/api/mcp` reaches the MCP app, not Django.
-
-    Claude Code stores an MCP URL without its trailing slash (`claude mcp add
-    … /api/mcp/` becomes `…/api/mcp`), and Starlette's `Mount("/api/mcp")`
-    matches only `/api/mcp/…`, so the bare path fell through to Django: a 401
-    with no OAuth challenge before sign-in, and a 404 HTML page for every MCP
-    call after it (2026-09-30)."""
-
-    async def wrapped(scope, receive, send):
-        if scope["type"] in ("http", "websocket") and scope.get("path") == _MCP_PREFIX:
-            scope = {**scope, "path": _MCP_PREFIX + "/", "raw_path": (_MCP_PREFIX + "/").encode()}
-        await app(scope, receive, send)
-
-    return wrapped
-
-
-application = _mcp_without_slash(application)
 
 # When deployed under a path prefix (labs.connect.dimagi.com/canopy), strip it
 # from incoming scopes so the mounts above (MCP at /api/mcp, Django at /) match.

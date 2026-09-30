@@ -9,7 +9,7 @@ from asgiref.sync import async_to_sync
 
 
 def _seen(path):
-    from config.asgi import _mcp_without_slash
+    from config.asgi import _McpWithoutSlash
 
     seen = {}
 
@@ -17,7 +17,7 @@ def _seen(path):
         seen.update(scope)
 
     async def call():
-        await _mcp_without_slash(app)({"type": "http", "path": path, "raw_path": path.encode()}, None, None)
+        await _McpWithoutSlash(app)({"type": "http", "path": path, "raw_path": path.encode()}, None, None)
 
     async_to_sync(call)()
     return seen["path"], seen["raw_path"]
