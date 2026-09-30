@@ -154,10 +154,10 @@ def _visitor_turn(w, backing="list_insights"):
                                capability="workbench")
 
 
-def _ctx(raw, backing, ceiling=("*",)):
+def _ctx(raw, ceiling=("*",)):
     return host_gateway.SiteContext(
         turn_id="t", agent_slug="ace", site="canopy-web", resource=self_host.resource(),
-        scope="", expires_at=None, ceiling=list(ceiling), backing=list(backing), _token=raw)
+        scope="", expires_at=None, ceiling=list(ceiling), _token=raw)
 
 
 # --- the whole round trip ---------------------------------------------------------------
@@ -200,7 +200,7 @@ def test_a_member_on_the_insights_page_gets_an_agent_that_reads_as_them(world, g
     assert row.user_id == visitor.pk and row.ok
 
 
-def test_the_site_lists_only_the_tools_the_grant_and_the_page_allow(world, gateway_to_self):
+def test_the_site_lists_only_the_tools_the_grant_allows(world, gateway_to_self):
     inner, _app = gateway_to_self
     _mint(world["visitor"], "insights")
     turn = _visitor_turn(world)
@@ -219,10 +219,10 @@ def test_a_delegated_token_reaches_only_its_scopes_tools(world, gateway_to_self)
     raw = decrypt_secret(HostGrant.objects.get().access_token_enc)
     assert HostGrant.objects.get().scope == "items:read"
 
-    # canopy's gateway would stop this first (the page says list_items); ask the
-    # HOST directly, with a context that would let anything through, to prove
-    # the host enforces the scope on its own.
-    wide = _ctx(raw, backing=["list_items", "list_insights", "clear_insights"])
+    # Ask the HOST with a context whose ceiling lets anything through, to prove
+    # the host enforces the grant's scope on its own -- which is what the gateway
+    # relies on, since it adds no narrowing of its own without a ceiling.
+    wide = _ctx(raw)
     listed = _in_lifespan(inner, lambda: host_gateway.list_tools(wide))
     assert [t["name"] for t in listed] == ["list_items"]
 
@@ -261,7 +261,7 @@ def test_a_deactivated_visitor_s_token_stops_working(world, gateway_to_self):
     raw = decrypt_secret(HostGrant.objects.get().access_token_enc)
     User.objects.filter(pk=world["visitor"].pk).update(is_active=False)
     with pytest.raises(host_gateway.GatewayRefusal):
-        _in_lifespan(inner, lambda: host_gateway.list_tools(_ctx(raw, backing=["list_insights"])))
+        _in_lifespan(inner, lambda: host_gateway.list_tools(_ctx(raw)))
 
 
 # --- refusals at issue time -----------------------------------------------------------------

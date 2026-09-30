@@ -877,10 +877,13 @@ canopy accepts.
 **What canopy adds on its side.** In your site's Connected-site row
 (`/w/<workspace>/settings/connected-apps`), set your **sign-in issuer** and **MCP
 server** URL. The agent's owner gives the capability that serves your site
-`sites: [<your site's name>]` and a `ceiling:` — the most any page may unlock.
-A call then goes through only if THREE parties allow it: your page's scope and
-your ACL for that person, the owner's ceiling, and the page's declared
-`backing_tool`.
+`sites: [<your site's name>]`. **What a call may reach is yours to decide**: your
+page's scopes and your ACL for that person, enforced by your MCP server (it lists
+and runs only the tools the token's scopes map to). canopy holds no list of your
+tools. An owner MAY add a `ceiling:` (tool-name globs) to keep an agent off part
+of your site; it only ever narrows what you granted. Your page's `backing_tool`
+tells the agent where to read the rows on screen — it is a hint, not a filter,
+so a page's other tools need not be re-listed in its state.
 
 **No presence, no access, never a fallback.** canopy re-mints the widget's
 token every five minutes while a grant is live, so you issue a fresh ID-JAG on
@@ -1010,9 +1013,10 @@ with the SDK's own pieces (`apps/tokens/self_host.py`: `HostConfig`,
 | `/w/:ws/agents/:slug/inbox` | `agent.inbox` | `items:read` | `list_items` |
 | `/w/:ws/agents/:slug/skills/history` | `agent.skill_history` | `skills:read` | `skill_history`, `skill_revision_diff` |
 
-All read-only. Each of those pages already declares its selection with
-`usePageState` and that `backing_tool`, which matters: the gateway unlocks only
-the page's backing tool, so a page without one would unlock nothing.
+All read-only. Each of those pages declares its selection with `usePageState`
+and that `backing_tool`, so the agent knows where to read the rows on screen.
+What the grant reaches is its scope's tools, enforced by canopy's own MCP as the
+visitor.
 
 **How one call goes.** The widget mints at `POST /api/embed/token?page=<key>`
 (the key comes from the route, `frontend/src/widget/grantPage.ts`, read on
@@ -1056,9 +1060,9 @@ page picks among read-only views of its own data.
    On labs: `https://labs.connect.dimagi.com/canopy/oauth/host/jwks.json`,
    `https://labs.connect.dimagi.com/canopy`,
    `https://labs.connect.dimagi.com/canopy/api/mcp/`.
-3. On each agent, a capability for members naming the site and a ceiling, e.g.
-   `sites: [canopy-web]`, `ceiling: ["mcp__*canopy-web__list_*"]`,
-   `callers: [member]`. `site_tools`/`site_call` are added to it automatically.
+3. On each agent, a capability for members naming the site, e.g.
+   `sites: [canopy-web]`, `callers: [member]` (a `ceiling:` is optional and only
+   narrows). `site_tools`/`site_call` are added to it automatically.
    (A full-profile turn — the agent's owner, a workspace owner, an admin — has
    no caller token and so no gateway; it already runs with its own canopy login.)
 4. **Test connection** on that site should come back all green.

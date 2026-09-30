@@ -222,12 +222,29 @@ def test_site_call_reaches_the_host_as_the_visitor_with_a_valid_dpop_proof(w, ho
     assert len(jtis) == len(set(jtis))
 
 
-def test_site_tools_lists_only_the_page_backing_tool_inside_the_ceiling(w, host):
+def test_site_tools_lists_what_the_host_lists_inside_the_ceiling(w, host):
+    """The host decides what a grant reaches; the owner's ceiling narrows it. The
+    page's backing tool (here only `marketplace_orgs_get`) is a hint, not a filter."""
     _grant(w)
     with _visitor(w):
         out = _call(host, "site_tools", {}).structured_content
-    assert [t["name"] for t in out["tools"]] == ["marketplace_orgs_get"]
+    assert sorted(t["name"] for t in out["tools"]) == ["marketplace_orgs_get", "marketplace_rounds_list"]
     assert out["site"] == "connect-labs" and out["scope"] == "marketplace:read"
+
+
+def test_with_no_ceiling_canopy_adds_no_narrowing_of_its_own(w, host):
+    """An owner who sets no ceiling defers to the host: every tool the host lists for
+    the visitor's grant (this stand-in host lists all three, a real one lists only its
+    scopes' tools) is offered, and canopy names none of them."""
+    w["agent"].interface = parse({"capabilities": {
+        "connect": {"callers": ["contact"], "sites": ["connect-labs"],
+                    "tools": ["mcp__*canopy-web__who_is_asking"]}}})
+    w["agent"].save()
+    _grant(w)
+    with _visitor(w):
+        out = _call(host, "site_tools", {}).structured_content
+    assert sorted(t["name"] for t in out["tools"]) == [
+        "admin_delete_everything", "marketplace_orgs_get", "marketplace_rounds_list"]
 
 
 def test_nothing_about_the_token_is_returned_or_audited(w, host):
@@ -273,16 +290,24 @@ def test_a_tool_outside_the_ceiling_is_refused(w, host):
     _refused(w, host, "not something you may use", args={"tool": "admin_delete_everything"})
 
 
-def test_a_tool_the_page_did_not_declare_is_refused(w, host):
+def test_a_tool_the_page_did_not_name_is_still_reachable_inside_the_grant(w, host):
+    """Page state is written by the page's own JavaScript, so naming a backing tool
+    never bounded a hostile page; the grant does. A page's other tools need not be
+    re-listed in its state to be usable."""
     _grant(w)
-    _refused(w, host, "not something you may use", args={"tool": "marketplace_rounds_list"})
+    with _visitor(w):
+        out = _call(host, "site_call", {"tool": "marketplace_rounds_list"}).structured_content
+    assert out["is_error"] is False
+    assert host.calls == ["marketplace_rounds_list"]
 
 
-def test_a_page_that_declares_nothing_unlocks_nothing(w, host):
+def test_a_page_that_declares_nothing_still_reaches_its_grant(w, host):
     _grant(w)
     w["session"].page_state = {}
     w["session"].save()
-    _refused(w, host, "not something you may use")
+    with _visitor(w):
+        out = _call(host, "site_call", {"tool": "marketplace_orgs_get"}).structured_content
+    assert out["is_error"] is False
 
 
 def test_a_conversation_on_another_site_is_refused(w, host):
