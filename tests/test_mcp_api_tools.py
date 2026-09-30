@@ -262,3 +262,20 @@ def test_machine_only_refusals_are_not_offered(db):
     tools = _tools()
     for name in ("transfer_owner", "grant_admin", "revoke_admin"):
         assert name not in tools
+
+
+def test_a_script_prefix_is_not_part_of_a_tool_path():
+    """Labs serves canopy under /canopy, and Ninja writes that into every path.
+    The tools must still see `/api/…`, or exclusions and the workspace rewrite
+    (both written against Django's routed path) silently stop applying."""
+    from django.urls import get_script_prefix, set_script_prefix
+
+    before = get_script_prefix()
+    set_script_prefix("/canopy/")
+    try:
+        paths = api_tools.api_schema()["paths"]
+    finally:
+        set_script_prefix(before)
+    assert paths and all(p.startswith("/api/") for p in paths)
+    spec = api_tools.tool_spec({"paths": paths})
+    assert not any(p.startswith(("/api/contact/", "/api/embed/")) for p in spec["paths"])
