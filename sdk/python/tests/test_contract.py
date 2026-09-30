@@ -171,3 +171,20 @@ def test_an_oversized_or_unsigned_token_is_refused_before_any_check():
     unsigned = jwt.encode({"a": 1}, None, algorithm="none")
     with pytest.raises(ContractError):
         unverified_header(unsigned)
+
+
+def test_the_only_flag_today_is_zdr():
+    assert contract.RUNNER_FLAGS == frozenset({"zdr"})
+
+
+@pytest.mark.parametrize("value,expected", [
+    (None, ()), ([], ()), (["zdr"], ("zdr",)), (["zdr", "zdr"], ("zdr",)),
+])
+def test_parse_runner_requirements_normalises(value, expected):
+    assert contract.parse_runner_requirements(value) == expected
+
+
+@pytest.mark.parametrize("value", ["zdr", ["ZDR"], ["nope"], [1], {"zdr": True}])
+def test_parse_runner_requirements_refuses_anything_else(value):
+    with pytest.raises(ValueError):
+        contract.parse_runner_requirements(value)

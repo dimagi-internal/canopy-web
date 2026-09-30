@@ -79,6 +79,9 @@ class BearerTokenAuthMiddleware:
         if ctok is not None:
             request.contact = ctok.contact
             request.delegated_app = ctok.app
+            # The site's runner requirements (ZDR), from the token — never from
+            # anything the request itself carries.
+            request.runner_requirements = tuple(ctok.runner_requirements or ())
             request.auth_method = "contact"
             request._dont_enforce_csrf_checks = True
             return
@@ -119,6 +122,7 @@ class BearerTokenAuthMiddleware:
         # `/api/embed/agents` answered 403 to the one deployment we shipped it
         # for. Cross-origin hosts never saw it, because no cookie rides along.
         request.delegated_app = dtok.app
+        request.runner_requirements = tuple(dtok.runner_requirements or ())
 
         # Identity stays with the session when there is one. The token was
         # minted FOR that user by `/api/embed/token`, so they agree in practice;

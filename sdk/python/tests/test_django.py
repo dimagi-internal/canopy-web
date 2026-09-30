@@ -511,3 +511,11 @@ def test_update_page_state_trims_a_selection_to_the_budget(host, user):
     assert 0 < len(last["visible_ids"]) <= 400
     # Measured as canopy measures it: compact JSON, in bytes.
     assert len(json.dumps(last, separators=(",", ":")).encode()) <= 7 * 1024
+
+
+def test_runner_requirements_are_read_from_the_setting(host):
+    from canopy_sdk.django import conf
+    with override_settings(CANOPY_HOST={
+            "SIGNING_KEY": private_pem(host.host_key), "CANOPY_BASE_URL": CANOPY,
+            "APP_NAME": "connect-labs", "RUNNER_REQUIREMENTS": ["zdr"]}):
+        assert conf.get_host_config().runner_requirements == ("zdr",)

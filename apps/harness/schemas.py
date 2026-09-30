@@ -6,6 +6,7 @@ import uuid
 from typing import Any, Literal
 
 from canopy_cron import validate_cron, validate_timezone
+from canopy_sdk import contract
 from ninja import Schema
 from pydantic import Field, field_validator, model_validator
 
@@ -101,6 +102,10 @@ class DrillRollup(Schema):
     last_finished_at: dt.datetime | None
 
 
+class RunnerFlagsIn(Schema):
+    flags: list[str]
+
+
 class RunnerOut(Schema):
     id: uuid.UUID
     name: str
@@ -173,6 +178,22 @@ class RunnerOut(Schema):
     # list, and this is how a reader tells a current answer from an old one.
     health_received_at: dt.datetime | None = None
     health_bootstrapped_at: float | None = None
+
+    # What this box's owner has declared about it (RunnerFlag) — e.g. `zdr`.
+    flags: list[str] = []
+
+    @staticmethod
+    def resolve_flags(obj) -> list[str]:
+        return sorted(obj.flags)
+
+    # Every flag an owner may declare — the contract's list, served per row (as
+    # `expected_code_sha` is) so the UI draws one checkbox per known flag and
+    # keeps no list of its own.
+    known_flags: list[str] = []
+
+    @staticmethod
+    def resolve_known_flags(obj) -> list[str]:
+        return sorted(contract.RUNNER_FLAGS)
     refresh_requested_at: dt.datetime | None = None
     # Asked to refresh and has not bootstrapped since. The runner reads this off
     # its own heartbeat reply — the durable request, not a frame.

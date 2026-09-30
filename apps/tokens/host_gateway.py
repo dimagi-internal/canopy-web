@@ -137,7 +137,9 @@ def resolve(turn_id: str) -> SiteContext:
     from .models import AppCredential, HostGrant
 
     turn = (Turn.objects.select_related("agent", "chat_session", "chat_session__agent",
-                                        "initiator_contact", "initiator_user")
+                                        "initiator_contact", "initiator_user",
+                                        "claimed_by")
+            .prefetch_related("claimed_by__declared_flags")
             .filter(pk=turn_id).first())
     if turn is None:
         raise GatewayRefusal("no_turn", "turn not found")
@@ -145,6 +147,16 @@ def resolve(turn_id: str) -> SiteContext:
     agent = turn.agent if turn.agent_id else (session.agent if session is not None else None)
     if agent is None or session is None:
         raise GatewayRefusal("no_site", "this conversation was not held on a connected site")
+
+    from apps.harness import runner_requirements as rr
+
+    # Defence in depth: routing should make this unreachable. This is where the
+    # host's data enters a turn, so a routing bug fails as a refusal, not a leak.
+    reqs = rr.requirements_of_session(session)
+    if reqs and (turn.claimed_by is None or not rr.satisfies(turn.claimed_by.flags, reqs)):
+        raise GatewayRefusal(
+            "runner_requirements",
+            f"this conversation must run on a {rr.describe(reqs)} runner, and this one is not")
 
     site = str((session.metadata or {}).get("embed_app") or "").strip()
     if not site:
@@ -173,6 +185,23 @@ def resolve(turn_id: str) -> SiteContext:
     if grant is None:
         raise GatewayRefusal("no_grant",
                              f"{site} has not given me access on your behalf — " + BACK_ON_THE_PAGE)
+
+    # The grant is per (site, visitor), not per conversation: a visitor who
+    # arrived under ZDR can reach it from an OLDER conversation that no ZDR
+    # arrival stamped. So the grant's own requirements count too, and they are
+    # written onto the conversation — refused or not — so its next turn routes
+    # to a runner that satisfies them.
+    grant_reqs = rr.requirements_of_grant(grant)
+    if grant_reqs - reqs:
+        from apps.canopy_sessions.services import add_runner_requirements
+
+        add_runner_requirements(session, grant_reqs)
+    effective = reqs | grant_reqs
+    if effective and (turn.claimed_by is None
+                      or not rr.satisfies(turn.claimed_by.flags, effective)):
+        raise GatewayRefusal(
+            "runner_requirements",
+            f"this conversation must run on a {rr.describe(effective)} runner, and this one is not")
     return context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
                              ceiling=list(cap.get("ceiling") or []))
 

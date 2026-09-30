@@ -153,6 +153,10 @@ class SessionOut(Schema):
     waiting_on_you: bool = False
     # Push on every finished turn, rather than once the chat has gone quiet.
     notify_every_completion: bool = False
+    # What this conversation's host requires of the runner it runs on (e.g.
+    # `zdr`), so placement offers only runners whose `flags` include every one.
+    # A malformed stored value comes back as an entry no runner can declare.
+    runner_requirements: list[str] = []
 
 
 class SessionDetailOut(SessionOut):

@@ -149,8 +149,13 @@ def _token_request(endpoint: str, form: dict):
     )
 
 
-def redeem(app, id_jag: str, *, subject: str, contact=None, user=None):
+def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
+           runner_requirements=()):
     """Redeem the host's ID-JAG for a DPoP-bound access token and store it.
+
+    `runner_requirements` are the arrival's (already parsed from the verified
+    assertion); they are stored on the grant so the gateway can enforce them
+    whichever conversation later reaches the grant.
 
     Returns the `HostGrant`. Raises `HostGrantError` for every refusal — the
     caller decides that a refusal does not fail the arrival.
@@ -191,6 +196,7 @@ def redeem(app, id_jag: str, *, subject: str, contact=None, user=None):
             "scope": scope,
             "resource": app.host_mcp_resource,
             "dpop_jkt": client_identity.dpop_jkt(),
+            "runner_requirements": sorted(set(runner_requirements or ())),
             "expires_at": timezone.now() + timedelta(seconds=lifetime),
         },
     )

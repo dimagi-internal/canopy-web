@@ -10,11 +10,13 @@ from django.http import HttpRequest, StreamingHttpResponse
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from ninja import Router, Status
+from canopy_sdk import contract
 from ninja.errors import HttpError
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
+from apps.common.views_debug import is_machine
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
@@ -47,6 +49,7 @@ from .schemas import (
     RunnerCredentialOut,
     RunnerAdminIn,
     RunnerAdminOut,
+    RunnerFlagsIn,
     RunnerCredentialStatusOut,
     RunnerMintClaimOut,
     RunnerMintCodeIn,
@@ -712,6 +715,44 @@ def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int
     return Status(204, None)
 
 
+@router.put("/runners/{runner_id}/flags", response=RunnerOut,
+            summary="Declare what this runner's owner vouches for")
+def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerFlagsIn):
+    """Replace the runner's declared flags. `zdr`: this box uses only
+    zero-data-retention keys for Claude. canopy cannot check a declaration; it
+    records who made it. A host may require a flag of every conversation its
+    visitors hold, and those conversations then run only on runners declaring it.
+    """
+    # Human-only: a runner authenticates with its pairer's PAT, and a box must
+    # never be able to vouch for itself. Same refusal as the agent-owner gates.
+    if is_machine(request):
+        raise HttpError(403, "a person must declare this, from the canopy web app")
+    runner = _runner_admin_or_404(request, runner_id)
+    try:
+        wanted = set(contract.parse_runner_requirements(payload.flags))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    added, removed = services.set_runner_flags(runner, wanted, by=request.user)
+    if runner.workspace_id and (added or removed):
+        from apps.events import services as events
+
+        events.record([
+            {"source": "harness.runners", "kind": kind, "level": "info",
+             "summary": f"{request.user.email} {verb} {flag} on {runner.name}",
+             "payload": {"runner": str(runner.pk), "flag": flag, "by": request.user.email}}
+            for kind, verb, names in (("runner.flag_declared", "declared", added),
+                                      ("runner.flag_withdrawn", "withdrew", removed))
+            for flag in sorted(names)
+        ], workspace=runner.workspace)
+    out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
+    # Per (caller, runner), as list_runners stamps them: RunnerOut defaults both
+    # to True, so an unstamped reply would show an admin who is not the pairer
+    # controls that then 404.
+    out.can_manage = out.paired_by_id in (request.user.id, None)
+    out.can_administer = services.can_administer_runner(request.user, out)
+    return out
+
+
 @router.get("/runners/", response=list[RunnerOut], summary="List the fleet I can see")
 def list_runners(request: HttpRequest):
     """The supervisor's runner status, and the fleet read every preflight makes.
@@ -725,7 +766,7 @@ def list_runners(request: HttpRequest):
     qs = (
         Runner.objects.exclude(status=Runner.RETIRED)
         .filter(_runner_read_q(request))
-        .prefetch_related("drills")
+        .prefetch_related("drills", "declared_flags")
         .order_by(models.F("last_heartbeat_at").desc(nulls_last=True))
     )
     from apps.tokens import delegation

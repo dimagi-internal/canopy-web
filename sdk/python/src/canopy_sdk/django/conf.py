@@ -29,6 +29,7 @@
         "SUBJECT_ACTIVE": None,     # sub -> bool; default: an active user with that pk
         "USER_CLAIMS": None,        # user -> {"name", "email", "email_verified"}
         "RETIRED_KEYS": [],
+        "RUNNER_REQUIREMENTS": ["zdr"],  # optional: only run my visitors on ZDR runners
         "PAGE_TOKEN_MAX_AGE": 7200,
         # Where the panel mints. Default: reverse("canopy_host:panel_token").
         "PANEL_TOKEN_URL": "",       # a literal URL, or
@@ -122,6 +123,7 @@ def get_host_config() -> HostConfig:
         scope_tools=cfg.get("SCOPE_TOOLS") or {},
         retired_keys=tuple(cfg.get("RETIRED_KEYS") or ()),
         probe=_probe_or_none(cfg),
+        runner_requirements=tuple(cfg.get("RUNNER_REQUIREMENTS") or ()),
     )
 
 

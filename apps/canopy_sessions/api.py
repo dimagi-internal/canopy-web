@@ -18,6 +18,7 @@ from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
 from apps.harness import initiator as who
+from apps.harness import runner_requirements as rr
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
@@ -148,6 +149,7 @@ def _out(session: Session) -> dict:
         # absence.
         "backfill_pending": bool(binding and binding.backfill_requested),
         "notify_every_completion": session.notify_every_completion,
+        "runner_requirements": sorted(rr.requirements_of_session(session)),
     }
 
 
@@ -228,6 +230,11 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     acting_app = getattr(request, "delegated_app", None)
     if acting_app is not None:
         metadata[EMBED_APP_KEY] = acting_app.name
+        # Server-owned like `embed_app`: the site's runner requirements (ZDR)
+        # ride the token, never the body.
+        reqs = getattr(request, "runner_requirements", ())
+        if reqs:
+            metadata["runner_requirements"] = list(reqs)
     if payload.runner_id:
         # Directed new chat: stashed for the session's first send to pin onto
         # (as long as it's still unbound at that point) — see services.send_message.
@@ -530,6 +537,9 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
     session = _session_or_404(request, session_id, write=True)
     if not payload.text.strip():
         raise HttpError(422, "message text is required")
+    # A site's token carries its runner requirements (ZDR); stamp them before
+    # the send so the turn is routed under them. A union — never lifts one.
+    services.add_runner_requirements(session, getattr(request, "runner_requirements", ()))
     try:
         message, turn = services.send_message(
             session=session, text=payload.text, user=request.user,

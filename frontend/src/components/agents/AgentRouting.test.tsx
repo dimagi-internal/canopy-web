@@ -18,8 +18,8 @@ vi.mock('@/components/agents/TurnModeToggle', () => ({ TurnModeToggle: () => <di
 const { AgentRouting } = await import('./AgentRouting')
 
 const fleet = [
-  { id: 'r-cloud', name: 'cloud-1', kind: 'cloud', status: 'online', ready: true },
-  { id: 'r-mbp', name: 'jj-mbp', kind: 'emdash', status: 'online', ready: true },
+  { id: 'r-cloud', name: 'cloud-1', kind: 'cloud', status: 'online', ready: true, flags: ['zdr'] },
+  { id: 'r-mbp', name: 'jj-mbp', kind: 'emdash', status: 'online', ready: true, flags: [] },
 ] as unknown as RunnerOut[]
 
 function rule(over: Partial<AgentRunnerRuleOut>): AgentRunnerRuleOut {
@@ -44,6 +44,15 @@ async function mount(rules: AgentRunnerRuleOut[]) {
 }
 
 describe('AgentRouting', () => {
+  it('badges a runner that declares ZDR, and only that one', async () => {
+    await mount([
+      rule({ actor: '' }),
+      rule({ actor: 'beth@dimagi.com', runner_id: 'r-mbp', runner_name: 'jj-mbp' }),
+    ])
+    expect(screen.getByTestId('zdr-badge-cloud-1')).toBeTruthy()
+    expect(screen.queryByTestId('zdr-badge-jj-mbp')).toBeNull()
+  })
+
   it('lists the rules above the agent\'s own defaults, in evaluation order', async () => {
     await mount([rule({ actor: '' }), rule({ actor: 'beth@dimagi.com' })])
     const rows = screen.getAllByRole('row').map((r) => r.getAttribute('data-testid'))

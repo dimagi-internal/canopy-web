@@ -4012,6 +4012,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/flags": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Declare what this runner's owner vouches for
+         * @description Replace the runner's declared flags. `zdr`: this box uses only
+         *     zero-data-retention keys for Claude. canopy cannot check a declaration; it
+         *     records who made it. A host may require a flag of every conversation its
+         *     visitors hold, and those conversations then run only on runners declaring it.
+         */
+        readonly put: operations["set_runner_flags"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -8799,6 +8822,11 @@ export interface components {
              * @default false
              */
             readonly notify_every_completion: boolean;
+            /**
+             * Runner Requirements
+             * @default []
+             */
+            readonly runner_requirements: readonly string[];
             /** Messages */
             readonly messages: readonly components["schemas"]["MessageOut"][];
             /** Menu */
@@ -11583,6 +11611,8 @@ export interface components {
             readonly host_mcp_resource: string;
             /** Issues Host Grants */
             readonly issues_host_grants: boolean;
+            /** Runner Requirements */
+            readonly runner_requirements: readonly string[];
             /** Shows On Canopy Pages */
             readonly shows_on_canopy_pages: boolean;
             /** Created At */
@@ -12008,6 +12038,16 @@ export interface components {
             readonly health_received_at?: string | null;
             /** Health Bootstrapped At */
             readonly health_bootstrapped_at?: number | null;
+            /**
+             * Flags
+             * @default []
+             */
+            readonly flags: readonly string[];
+            /**
+             * Known Flags
+             * @default []
+             */
+            readonly known_flags: readonly string[];
             /** Refresh Requested At */
             readonly refresh_requested_at?: string | null;
             /** Refresh Pending */
@@ -12279,6 +12319,11 @@ export interface components {
         readonly RunnerAdminIn: {
             /** Email */
             readonly email: string;
+        };
+        /** RunnerFlagsIn */
+        readonly RunnerFlagsIn: {
+            /** Flags */
+            readonly flags: readonly string[];
         };
         /** RunnerCapabilitiesIn */
         readonly RunnerCapabilitiesIn: {
@@ -13124,6 +13169,11 @@ export interface components {
              * @default false
              */
             readonly notify_every_completion: boolean;
+            /**
+             * Runner Requirements
+             * @default []
+             */
+            readonly runner_requirements: readonly string[];
         };
         /** SessionCreateIn */
         readonly SessionCreateIn: {
@@ -19554,6 +19604,32 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly set_runner_flags: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerFlagsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
             };
         };
     };

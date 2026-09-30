@@ -149,9 +149,8 @@ def _query_token_method(scope) -> str:
     return (token.assurance or "delegated") if token is not None else "delegated"
 
 
-@database_sync_to_async
-def _delegated_app(scope):
-    """The connected site behind a DELEGATED token on this socket, or None.
+def _delegated_token_sync(scope):
+    """The DELEGATED token on this socket, or None.
 
     Read from the same two places a delegated token can ride — the bearer
     header and `?token=` — and never from anything else the client controls.
@@ -168,8 +167,25 @@ def _delegated_app(scope):
     for value in candidates:
         token = DelegatedToken.lookup(value) if value else None
         if token is not None:
-            return token.app
+            return token
     return None
+
+
+@database_sync_to_async
+def _delegated_app(scope):
+    """The connected site behind a DELEGATED token on this socket, or None."""
+    token = _delegated_token_sync(scope)
+    return token.app if token is not None else None
+
+
+@database_sync_to_async
+def _delegated_runner_requirements(scope) -> tuple[str, ...]:
+    """The runner requirements (ZDR) the site signed into this socket's
+    delegated token, or (). The same value REST reads as
+    `request.runner_requirements`; the chat consumer stamps it onto the
+    session before every send, exactly as the REST send does."""
+    token = _delegated_token_sync(scope)
+    return tuple(token.runner_requirements or ()) if token is not None else ()
 
 
 class RealtimeAuthMiddleware:
@@ -205,6 +221,12 @@ class RealtimeAuthMiddleware:
         scope["user"] = user or AnonymousUser()
         scope["auth_method"] = method
         scope["delegated_app"] = delegated_app
+        # Only ever from a DelegatedToken on this socket (never the client's
+        # frames), and read even when a session cookie signed the socket in —
+        # the same rule the REST middleware applies to `delegated_app`.
+        scope["runner_requirements"] = (
+            await _delegated_runner_requirements(scope) if user is not None else ()
+        )
         # Only when nothing resolved a user. A contact and a user are never both
         # present, so a consumer cannot accidentally read the wrong one — and
         # `scope["user"]` stays anonymous for a contact, so any consumer that

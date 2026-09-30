@@ -283,3 +283,38 @@ class TestThePageKey:
         with pytest.raises(ValueError, match="not registered"):
             PageRegistry({}, patterns={"ghost": r"/x"})
 
+
+
+def _read_claims(token):
+    return jwt.decode(token, options={"verify_signature": False})
+
+
+def _config(world, **overrides):
+    import dataclasses
+    return dataclasses.replace(world.config, **overrides)
+
+
+class TestRunnerRequirements:
+    def test_a_host_requiring_zdr_says_so_in_every_assertion(self, world):
+        cfg = _config(world, runner_requirements=("zdr",))
+        claims = _read_claims(sign_visitor_assertion(cfg, "u-1"))
+        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+
+    def test_no_requirement_means_no_claim(self, world):
+        claims = _read_claims(sign_visitor_assertion(world.config, "u-1"))
+        assert contract.RUNNER_REQUIREMENTS_CLAIM not in claims
+
+    def test_an_unknown_flag_is_refused_when_the_host_boots(self, world):
+        with pytest.raises(ValueError):
+            _config(world, runner_requirements=("nope",))
+
+    def test_extra_cannot_forge_or_drop_the_requirement(self, world):
+        cfg = _config(world, runner_requirements=("zdr",))
+        claims = _read_claims(sign_visitor_assertion(
+            cfg, "u-1", extra={contract.RUNNER_REQUIREMENTS_CLAIM: []}))
+        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+
+    def test_extra_cannot_forge_a_requirement_the_host_does_not_have(self, world):
+        claims = _read_claims(sign_visitor_assertion(
+            world.config, "u-1", extra={contract.RUNNER_REQUIREMENTS_CLAIM: ["zdr"]}))
+        assert contract.RUNNER_REQUIREMENTS_CLAIM not in claims

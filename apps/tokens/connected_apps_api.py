@@ -101,6 +101,9 @@ class ConnectedAppOut(Schema):
     host_mcp_resource: str
     #: Both are set, so arrivals carrying an `id_jag` are redeemed.
     issues_host_grants: bool
+    # What the host last required of its visitors' runners — display only; the
+    # signed claim is the authority.
+    runner_requirements: list[str]
     shows_on_canopy_pages: bool
     created_at: str
     last_used_at: str | None
@@ -166,6 +169,7 @@ def _out(app: AppCredential) -> ConnectedAppOut:
         host_issuer=app.host_issuer or "",
         host_mcp_resource=app.host_mcp_resource or "",
         issues_host_grants=app.issues_host_grants(),
+        runner_requirements=list(app.last_runner_requirements or []),
         agents=[
             ConnectedAgentOut(slug=link.agent.slug, name=link.agent.name)
             for link in app.allowed_agents.all()

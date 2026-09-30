@@ -861,6 +861,9 @@ SERVER_OWNED_METADATA = frozenset({
     "embed_app", "requested_runner_id", "transcript_sourced",
     "slack_thread", "slack_team", "slack_channel", "slack_thread_ts",
     "email_thread_key", "via", "capability",
+    # A host's runner requirements (ZDR, apps/harness/runner_requirements.py),
+    # copied from the token that started or sent into the session.
+    "runner_requirements",
 })
 MAX_HOST_METADATA_KEYS = 20
 MAX_HOST_METADATA_BYTES = 4096
@@ -880,6 +883,42 @@ def host_metadata(raw) -> dict:
         raise ValueError(f"session metadata is limited to {MAX_HOST_METADATA_KEYS} keys "
                          f"and {MAX_HOST_METADATA_BYTES} bytes")
     return out
+
+
+def _merge_metadata(session: Session, updates: dict) -> None:
+    """Write `updates` into the session's metadata as it is IN THE ROW, not as
+    the caller's copy remembers it. A read-modify-write of a stale in-memory
+    copy would put back whatever it loaded — dropping, say, a
+    `runner_requirements` a concurrent send stamped after it was read."""
+    with transaction.atomic():
+        locked = Session.objects.select_for_update().get(pk=session.pk)
+        locked.metadata = {**(locked.metadata or {}), **updates}
+        locked.save(update_fields=["metadata", "updated_at"])
+    session.metadata = locked.metadata
+    session.updated_at = locked.updated_at
+
+
+def add_runner_requirements(session: Session, reqs) -> None:
+    """Union `reqs` into the session's requirements. Never removes one: a
+    conversation that held a host's data keeps the host's floor, whatever token
+    touches it next (spec 2026-09-30-zdr-runners)."""
+    from apps.harness import runner_requirements as rr
+
+    reqs = set(reqs or ())
+    if not reqs:
+        return
+    with transaction.atomic():
+        s = Session.objects.select_for_update().get(pk=session.pk)
+        meta = dict(s.metadata or {})
+        # A malformed stored value reads as {UNSATISFIABLE}; the union keeps it,
+        # so the session stays unclaimable — the fail-closed answer.
+        current = set(rr.requirements_of_session(s))
+        merged = sorted(current | reqs)
+        if merged == sorted(current):
+            return
+        meta[rr.METADATA_KEY] = merged
+        Session.objects.filter(pk=s.pk).update(metadata=meta)
+    session.metadata = meta
 
 
 def create_session(*, workspace, created_by=None, agent=None, project: str = "", title: str = "",
@@ -997,8 +1036,7 @@ def reset_session(session, *, dry_run: bool = False) -> dict:
     if reason != RESET_OK or dry_run:
         return out
     Message.objects.filter(session=session).delete()
-    session.metadata = {**(session.metadata or {}), TRANSCRIPT_SOURCED: True}
-    session.save(update_fields=["metadata", "updated_at"])
+    _merge_metadata(session, {TRANSCRIPT_SOURCED: True})
     request_backfill(session)
     return out
 
@@ -1051,6 +1089,34 @@ def _index_offset(session) -> int:
 
 
 def _placeable_runner(session: Session, runner_id):
+    """`_eligible_runner`, then the conversation's runner requirements (ZDR)."""
+    from apps.harness import runner_requirements as rr
+
+    runner = _eligible_runner(session, runner_id)
+    if runner is None:
+        return None
+    # A box the conversation's host does not allow is no placement at all: a pin
+    # to it would sit unclaimable forever (claim_next_turn refuses it above pins).
+    if not rr.satisfies(runner.flags, rr.requirements_of_session(session)):
+        return None
+    return runner
+
+
+def _placement_refused(session: Session, runner_id, default: str) -> ValueError:
+    """The error for a placement `_placeable_runner` refused. Names the
+    requirement when the runner is one the caller could otherwise place on —
+    "unknown runner" would be false for a box their own fleet lists — and
+    `default` otherwise (an invisible id stays indistinguishable from a
+    nonexistent one)."""
+    from apps.harness import runner_requirements as rr
+
+    if _eligible_runner(session, runner_id) is not None:
+        reqs = rr.requirements_of_session(session)
+        return ValueError(f"this conversation requires a {rr.describe(reqs)} runner")
+    return ValueError(default)
+
+
+def _eligible_runner(session: Session, runner_id):
     """A runner may be a placement target only if it could actually CLAIM this
     session's turns — its pairer belongs to the session's workspace (mirrors
     claim_next_turn's tenant derivation from paired_by; a foreign or orphaned
@@ -1099,7 +1165,7 @@ def _resolve_placement(session: Session, placement: str | None):
     if placement:
         pinned = _placeable_runner(session, placement)
         if pinned is None:
-            raise ValueError("unknown runner for placement")
+            raise _placement_refused(session, placement, "unknown runner for placement")
         return pinned
     if not getattr(session, "runner_binding", None):
         rid = (session.metadata or {}).get("requested_runner_id")
@@ -1178,7 +1244,7 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
     """
     target = _placeable_runner(session, placement)
     if target is None:
-        raise ValueError("unknown runner for transfer")
+        raise _placement_refused(session, placement, "unknown runner for transfer")
     if session.status != Session.ACTIVE:
         raise ValueError("cannot transfer an archived session")
     if Turn.objects.filter(
@@ -1233,10 +1299,7 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
 
         # So a LATER send on a still-unbound session re-pins here too, instead of
         # falling back to open routing and landing on whichever box polls first.
-        metadata = dict(session.metadata or {})
-        metadata["requested_runner_id"] = str(target.id)
-        session.metadata = metadata
-        session.save(update_fields=["metadata", "updated_at"])
+        _merge_metadata(session, {"requested_runner_id": str(target.id)})
 
         source_name = source.name if source is not None else "an unknown runner"
         prompt = TRANSFER_PREAMBLE.format(source=source_name, target=target.name)
@@ -1577,7 +1640,7 @@ def place_queued_turn(*, session: Session, placement: str) -> Turn:
     else:
         runner = _placeable_runner(session, placement)
         if runner is None:
-            raise ValueError("unknown runner")
+            raise _placement_refused(session, placement, "unknown runner")
         turn.pinned_runner = runner
     turn.save(update_fields=["pinned_runner"])
     return turn
@@ -1626,7 +1689,7 @@ def move_queued_turns(*, session: Session, placement: str, user=None, initiator=
     """
     target = _placeable_runner(session, placement)
     if target is None:
-        raise ValueError("unknown runner")
+        raise _placement_refused(session, placement, "unknown runner")
     queued = list(Turn.objects.filter(chat_session=session, status=Turn.QUEUED).order_by("created_at"))
     if not queued:
         raise LookupError("no queued turn to move")
@@ -1640,10 +1703,7 @@ def move_queued_turns(*, session: Session, placement: str, user=None, initiator=
         Turn.objects.filter(pk=handoff.pk).update(
             created_at=queued[0].created_at - _dt.timedelta(milliseconds=1))
     else:
-        metadata = dict(session.metadata or {})
-        metadata["requested_runner_id"] = str(target.id)
-        session.metadata = metadata
-        session.save(update_fields=["metadata", "updated_at"])
+        _merge_metadata(session, {"requested_runner_id": str(target.id)})
     Turn.objects.filter(pk__in=[t.pk for t in queued], status=Turn.QUEUED).update(pinned_runner=target)
     for t in queued:
         t.refresh_from_db()

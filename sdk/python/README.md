@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.5.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.6.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.5.0/dimagi_canopy-0.5.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.6.0/dimagi_canopy-0.6.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`.
@@ -328,7 +328,11 @@ with the host's key (EdDSA, ES256 or RS256 — asymmetric only; `kid` = the key'
 RFC 7638 thumbprint), `iss` = the host's Connected-site name, `sub` = the host's
 OWN id for its signed-in user (never anything the browser sent), `aud` = canopy's
 base URL, `iat`, `exp` ≤ 120s after `iat`, a single-use `jti`; optional `name`,
-`email`, `email_verified`.
+`email`, `email_verified`, and `canopy_runner_requirements`.
+
+| claim | meaning |
+|---|---|
+| `canopy_runner_requirements` | optional list of flags (today only `zdr`). Set via `CANOPY_HOST["RUNNER_REQUIREMENTS"]`. canopy runs the visitor's conversations only on runners whose owner declared every listed flag; unknown values are refused. |
 
 ### 1. Host issues an ID-JAG at arrival
 In the SAME call, the body gains one optional field: `"id_jag": "<compact JWS>"`.

@@ -59,6 +59,8 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     paired_by_email: 'jjackson@dimagi.com',
     can_manage: true,
     can_administer: true,
+    flags: [],
+    known_flags: ['zdr'],
     drill_rollup: null,
     ...overrides,
   } as RunnerOut
@@ -118,6 +120,18 @@ describe('RunnerDetail', () => {
     // "ask them to declare the repo" is an available next step.
     const note = screen.getByTestId('runner-detail-readonly')
     expect(note.textContent).toContain('jjackson@dimagi.com')
+  })
+
+  it('tells an admin who is not the pairer that they may declare the box ZDR', () => {
+    render(<RunnerDetail runner={runner({ can_manage: false, can_administer: true })} agents={agents} onBack={() => {}} />)
+    const note = screen.getByTestId('runner-detail-readonly')
+    expect(note.textContent).toMatch(/declare what it runs with/)
+  })
+
+  it('tells someone read-only that a runner admin can change what it declares', () => {
+    render(<RunnerDetail runner={runner({ can_manage: false, can_administer: false })} agents={agents} onBack={() => {}} />)
+    const note = screen.getByTestId('runner-detail-readonly')
+    expect(note.textContent).toMatch(/or a runner admin\s+can change what it declares/)
   })
 })
 

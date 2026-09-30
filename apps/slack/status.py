@@ -33,6 +33,7 @@ import logging
 
 from django.db import IntegrityError, transaction
 
+from apps.harness import runner_requirements as rr
 from apps.harness import turn_status as _ts
 from apps.harness.models import Turn
 
@@ -104,6 +105,12 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     elif st.state == ts.WAITING_RUNNER:
         line = (f":double_vertical_bar: Queued — {agent}'s runner {_runner_names(st.runners)} "
                 "is offline, so nothing is working on this yet. It runs when the runner is back.")
+        if st.requires:
+            line += f" (it needs a {rr.describe(st.requires)} runner)"
+    elif st.state == ts.UNROUTED and st.requires:
+        need = rr.describe(st.requires)
+        line = (f":warning: Queued — this conversation needs a {need} runner, "
+                f"and none of {agent}'s runners is declared {need}.")
     elif st.state == ts.UNROUTED:
         line = (f":warning: Queued, but no runner is set up to run {agent} — nothing will pick "
                 "this up until its routing is fixed.")

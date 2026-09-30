@@ -21,6 +21,7 @@ from django.utils import timezone
 
 from apps.canopy_sessions.staleness import stale_cutoff
 from apps.harness import actors
+from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
 
 # HEARTBEAT_ONLINE_WINDOW lives on models.py (Runner.live_status uses it too;
@@ -33,12 +34,25 @@ from .models import (
     Runner,
     RunnerAssignment,
     RunnerDrill,
+    RunnerFlag,
     Turn,
     TurnEvent,
     TurnTranscript,
 )
 
 logger = logging.getLogger(__name__)
+
+def set_runner_flags(runner: Runner, flags: set[str], *, by) -> tuple[set, set]:
+    """Make the runner's declared flags exactly `flags`. Stamps only ADDED ones,
+    so re-saving does not rewrite who first vouched. Returns (added, removed)."""
+    current = set(runner.flags)
+    added, removed = flags - current, current - flags
+    with transaction.atomic():
+        RunnerFlag.objects.filter(runner=runner, flag__in=removed).delete()
+        for f in sorted(added):
+            RunnerFlag.objects.create(runner=runner, flag=f, declared_by=by)
+    return added, removed
+
 
 DEFAULT_LEASE_SECONDS = 900
 # How many times a turn that died BEFORE its session existed goes back on the queue
@@ -527,7 +541,9 @@ def load_assignment_rows(agent_ids) -> tuple[dict, dict]:
         return defaults, priorities
     rows = (
         RunnerAssignment.objects.filter(agent_id__in=agent_ids, enabled=True)
-        .select_related("runner").order_by("rank")
+        # declared_flags: `assignment_rows_for` reads each runner's flags when a
+        # turn carries requirements, and must not query per runner.
+        .select_related("runner").prefetch_related("runner__declared_flags").order_by("rank")
     )
     for row in rows:
         if row.source:
@@ -538,7 +554,8 @@ def load_assignment_rows(agent_ids) -> tuple[dict, dict]:
 
 
 def assignment_rows_for(
-    agent_id, origin: str, actor: str, defaults: dict, priorities: dict
+    agent_id, origin: str, actor: str, defaults: dict, priorities: dict,
+    *, requires: frozenset = frozenset(),
 ) -> list:
     """THE ordered runner list for one (agent, source, actor) triple — what the
     availability cascade then walks. Pure: no queries, no clock.
@@ -549,32 +566,43 @@ def assignment_rows_for(
     Ranks are renumbered from 0 because the cascade compares them to decide who
     blocks whom; stored ranks are per-rule and would otherwise put two runners at
     rank 0, each apparently blocking the other.
+
+    `requires` is the conversation's runner requirements (`runner_requirements`):
+    a runner lacking any of them is dropped BEFORE ranks are renumbered.
     """
     base = defaults.get(agent_id) or []
     exact = priorities.get((agent_id, origin, actor)) if actor else None
     anyone = priorities.get((agent_id, origin, ""))
     ladder = [rule for rule in (exact, anyone) if rule]
     if not ladder:
-        return [(i, r) for i, (_rank, r) in enumerate(base)]
-
-    seen: set = set()
-    out: list = []
-    truncated = False
-    for rule in ladder:
-        for row in rule:  # already rank-ordered by load_assignment_rows
-            if row.runner_id not in seen:
-                seen.add(row.runner_id)
-                out.append(row.runner)
-        # "These runners or nothing": the turn waits rather than degrading.
-        # Everything below this rung is absent from the list, so the wedged-runner
-        # grace has nobody to promote — which is what makes "and nowhere else"
-        # actually hold. Appending the default order regardless would hand the work
-        # straight back to the runners the rule exists to exclude.
-        if rule[0].strict:
-            truncated = True
-            break
-    if not truncated:
-        out += [r for _rank, r in base if r.id not in seen]
+        out = [r for _rank, r in base]
+    else:
+        seen: set = set()
+        out = []
+        truncated = False
+        for rule in ladder:
+            for row in rule:  # already rank-ordered by load_assignment_rows
+                if row.runner_id not in seen:
+                    seen.add(row.runner_id)
+                    out.append(row.runner)
+            # "These runners or nothing": the turn waits rather than degrading.
+            # Everything below this rung is absent from the list, so the
+            # wedged-runner grace has nobody to promote — which is what makes "and
+            # nowhere else" actually hold. Appending the default order regardless
+            # would hand the work straight back to the runners the rule exists to
+            # exclude.
+            if rule[0].strict:
+                truncated = True
+                break
+        if not truncated:
+            out += [r for _rank, r in base if r.id not in seen]
+    if requires:
+        # A requirement is a FLOOR, applied to the composed list so a runner that
+        # lacks it neither claims nor counts as a better-ranked blocker, and the
+        # grace has nobody below the floor to promote (spec 2026-09-30). Applied
+        # AFTER the strict truncation, so a strict rule whose runners all lack the
+        # flag leaves an empty list — the turn waits, it does not fall through.
+        out = [r for r in out if rr.satisfies(r.flags, requires)]
     return list(enumerate(out))
 
 
@@ -603,7 +631,8 @@ def _assignment_allows_for_agent(runner: Runner, agent_id, turn: Turn,
     grace has nobody to promote.
     """
     rows = assignment_rows_for(
-        agent_id, turn.origin, actors.actor_of(turn), defaults, priorities
+        agent_id, turn.origin, actors.actor_of(turn), defaults, priorities,
+        requires=rr.requirements_of(turn),
     )
     mine = next((rank for rank, r in rows if r.id == runner.id), None)
     if mine is None:
@@ -739,10 +768,18 @@ def _assignment_rows_for_turns(turns) -> tuple[dict, dict]:
     return load_assignment_rows(agent_ids)
 
 
-def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict) -> bool:
+def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
+                    *, ignore_requirements: bool = False) -> bool:
     """The per-candidate refinements claim_next_turn applies after the coarse
     target match — same checks, same ORDER, so coverage can't overstate what
-    claiming will do."""
+    claiming will do.
+
+    `ignore_requirements` answers the counterfactual "would this runner take it
+    if the conversation required nothing?" — only ever asked to decide whether
+    a requirement is what BLOCKS a turn, never to route one."""
+    reqs = frozenset() if ignore_requirements else rr.requirements_of(t)
+    if not rr.satisfies(r.flags, reqs):
+        return False  # above the pin and the binding, as in claim_next_turn
     # A pin trumps everything below it (claim_next_turn's `pinned_here`).
     if t.pinned_runner_id == r.id:
         return True
@@ -765,9 +802,9 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict) -> boo
     # actor rule pointing at an offline box must report `offline`
     # (recoverable), never `config` (never runs).
     rows = assignment_rows_for(
-        routed_agent, t.origin, actors.actor_of(t), defaults, priorities
+        routed_agent, t.origin, actors.actor_of(t), defaults, priorities, requires=reqs
     )
-    return any(rr.id == r.id for _rank, rr in rows)
+    return any(row_runner.id == r.id for _rank, row_runner in rows)
 
 
 #: The profile-enforcement version a runner must REPORT to be given a restricted
@@ -796,10 +833,14 @@ def profile_q(runner) -> Q:
     return Q(capability="")
 
 
-def _coverage(ids, runners, defaults: dict, priorities: dict) -> dict:
+def _coverage(ids, runners, defaults: dict, priorities: dict,
+              *, ignore_requirements: bool = False) -> dict:
     """{runner: {turn pk it could claim}} over `ids` — the coverage half of both
     `unclaimable_queued_turns` and `turn_reach`, one implementation so the web
-    warning and the Slack acknowledgement cannot disagree about the same turn."""
+    warning and the Slack acknowledgement cannot disagree about the same turn.
+
+    `ignore_requirements=True` is the counterfactual used only to diagnose: which
+    runners would take the turn if its conversation required nothing."""
     out: dict = {}
     for r in runners:
         # Same coarse target predicate the claim path uses (assignments +
@@ -818,7 +859,8 @@ def _coverage(ids, runners, defaults: dict, priorities: dict) -> dict:
             # Then the per-source refinement. A runner assigned the agent but
             # excluded by a strict rule for THIS turn's source does not cover
             # it, and saying otherwise would mask a genuinely parked queue.
-            if _refined_allows(r, t, defaults, priorities):
+            if _refined_allows(r, t, defaults, priorities,
+                               ignore_requirements=ignore_requirements):
                 covered.add(t.pk)
         out[r] = covered
     return out
@@ -838,6 +880,12 @@ class Reach:
 
     kind: str
     runners: list
+    #: True only when the conversation's runner requirements (ZDR) are what
+    #: keeps it from a live runner: some runner would take it without them. A
+    #: turn stuck for another reason (no routing, a box that cannot confine a
+    #: caller's turn) must not be blamed on ZDR — that sends its owner to the
+    #: wrong fix.
+    blocked_by_requirements: bool = False
 
 
 def turn_reach(turn: Turn) -> Reach:
@@ -860,7 +908,7 @@ def turn_reach(turn: Turn) -> Reach:
         ws = turn.workspace_id
     runners = [
         r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("paired_by")
-        .order_by("name")
+        .prefetch_related("declared_flags").order_by("name")
         if ws in runner_tenant_slugs(r)
     ]
     defaults, priorities = _assignment_rows_for_turns([turn])
@@ -868,9 +916,23 @@ def turn_reach(turn: Turn) -> Reach:
     live = [r for r in covering if r.live_status == Runner.ONLINE]
     if live:
         return Reach(LIVE, live)
+
+    def blocked_by_requirements(*, live_only: bool) -> bool:
+        # Would a runner take it if the conversation required nothing? Only
+        # then is the requirement the reason it waits.
+        if not rr.requirements_of(turn):
+            return False
+        without = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities,
+                                             ignore_requirements=True).items() if pks]
+        if live_only:
+            without = [r for r in without if r.live_status == Runner.ONLINE]
+        return bool(without)
+
     if covering:
-        return Reach(OFFLINE, covering)
-    return Reach(UNROUTED, [])
+        # Its own runners are merely offline; the requirement is the blocker
+        # only if a runner that IS live would otherwise have taken it.
+        return Reach(OFFLINE, covering, blocked_by_requirements(live_only=True))
+    return Reach(UNROUTED, [], blocked_by_requirements(live_only=False))
 
 
 def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[dict]:
@@ -920,6 +982,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     # so this warning can't disagree with what claiming actually does.
     runners = [
         r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("paired_by")
+        .prefetch_related("declared_flags")
         if runner_tenant_slugs(r) & ws_slugs
     ]
     ids = {t.id for t in queued}
@@ -931,6 +994,12 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     # "temporarily unreachable" — the difference between "fix the routing matrix"
     # and "wait, or check the runner".
     claimable_ever = set().union(*_coverage(ids, runners, defaults, priorities).values())
+    # Counterfactual, for turns whose conversation requires something and that no
+    # runner will ever take: would one take it WITHOUT the requirement? Only then
+    # is the requirement the blocker; otherwise the ordinary reason applies.
+    required = {t.pk for t in queued if t.pk not in claimable_ever and rr.requirements_of(t)}
+    blocked_by_reqs = set().union(*_coverage(required, runners, defaults, priorities,
+                                             ignore_requirements=True).values()) if required else set()
 
     out = []
     for t in queued:
@@ -942,7 +1011,12 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
             target, what = f"agent {t.agent.slug}", f"is assigned the agent '{t.agent.slug}'"
         else:
             target, what = f"project {t.project}", f"declares the repo '{t.project}'"
-        if t.capability and t.pk not in claimable_ever:
+        reqs = rr.requirements_of(t)
+        if reqs and t.pk in blocked_by_reqs:
+            kind = "config"
+            reason = (f"this conversation's site requires a {rr.describe(reqs)} runner, and "
+                      f"no runner that serves it is declared {rr.describe(reqs)}")
+        elif t.capability and t.pk not in claimable_ever:
             kind = "config"
             reason = (f"this is a caller's turn, confined to '{t.capability}', and no runner "
                       "that can confine one serves it — update the runner and the canopy "
@@ -1093,7 +1167,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # count as a better-ranked availability blocker for a lower enabled rank.
     defaults, priorities = load_assignment_rows(agent_ids)
     now = timezone.now()
+    my_flags = runner.flags
     for turn in candidates:
+        # Above the pin on purpose, like profile_q: a pin is a placement, never a
+        # way past what the conversation's host requires of the box.
+        if not rr.satisfies(my_flags, rr.requirements_of(turn)):
+            continue
         pinned_here = turn.pinned_runner_id == runner.id
         if not pinned_here:
             if not _kind_allows(runner, turn.routing):

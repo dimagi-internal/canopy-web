@@ -124,6 +124,9 @@ class HostConfig:
     #: canopy's live probe (``ProbeIdentity``). ``None`` — the default — turns
     #: the probe endpoint off (404) and keeps it out of the metadata.
     probe: ProbeIdentity | None = None
+    #: Runner flags every conversation of this host's visitors must run under
+    #: (``canopy_sdk.contract.RUNNER_FLAGS``); sent in every visitor assertion.
+    runner_requirements: Sequence[str] = ()
 
     def __post_init__(self):
         set_ = object.__setattr__
@@ -134,6 +137,8 @@ class HostConfig:
         set_(self, "canopy_base_url", contract.normalize_url(self.canopy_base_url))
         set_(self, "issuer", contract.normalize_url(self.issuer))
         set_(self, "scope_tools", _frozen_scope_tools(self.scope_tools))
+        set_(self, "runner_requirements",
+             contract.parse_runner_requirements(list(self.runner_requirements)))
         if not 0 < self.assertion_ttl <= contract.ASSERTION_MAX_LIFETIME:
             raise ValueError(f"assertion_ttl must be 1..{contract.ASSERTION_MAX_LIFETIME}s")
         if not 0 < self.id_jag_ttl <= contract.ID_JAG_MAX_LIFETIME:

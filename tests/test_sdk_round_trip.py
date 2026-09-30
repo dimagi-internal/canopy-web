@@ -273,3 +273,46 @@ def test_the_sdk_host_refuses_a_canopy_whose_keys_it_cannot_match(site, host, mo
                                            "use": "sig"}]})
     assert _arrive(host).json()["host_grant"] is False
     assert not host.tokens._tokens
+
+
+def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host, settings):
+    """The whole path: the SDK's real signer, canopy's real arrival, a real session
+    start and send over the contact API, then the claim on two real runners."""
+    import dataclasses
+
+    from django.utils import timezone
+
+    from apps.harness.models import Runner, RunnerAssignment, RunnerFlag
+    from apps.harness.services import PROFILES_VERSION, claim_next_turn
+
+    settings.CHAT_STUB_EXECUTOR = False   # leave the turn queued for a real runner
+    host.config = dataclasses.replace(host.config, runner_requirements=("zdr",))
+    r = _arrive(host, scopes=())
+    assert r.status_code == 200, r.content
+    auth = {"HTTP_AUTHORIZATION": f"Bearer {r.json()['token']}"}
+    c = Client()
+    started = c.post("/api/contact/sessions", data={"agent_slug": "ace"},
+                     content_type="application/json", **auth)
+    assert started.status_code == 200, started.content
+    sid = started.json()["id"]
+    assert Session.objects.get(pk=sid).metadata["runner_requirements"] == ["zdr"]
+    sent = c.post(f"/api/contact/sessions/{sid}/send", data={"text": "hello"},
+                  content_type="application/json", **auth)
+    assert sent.status_code == 200, sent.content
+    turn = Turn.objects.get(chat_session_id=sid)
+
+    def runner(name, rank):
+        rn = Runner.objects.create(name=name, workspace=site["ws"], kind=Runner.CLOUD,
+                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+                                   paired_by=site["owner"], host=name,
+                                   capabilities={"sessions": True, "profiles": PROFILES_VERSION})
+        RunnerAssignment.objects.create(agent=site["agent"], runner=rn, rank=rank)
+        return rn
+
+    laptop = runner("laptop", 0)
+    cloud = runner("cloud", 1)
+    RunnerFlag.objects.create(runner=cloud, flag="zdr", declared_by=site["owner"])
+
+    assert claim_next_turn(laptop) is None, "a non-ZDR runner must not get the visitor's turn"
+    claimed = claim_next_turn(cloud)
+    assert claimed is not None and claimed.id == turn.id

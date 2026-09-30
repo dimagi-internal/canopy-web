@@ -67,6 +67,8 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     paired_by_email: null,
     can_manage: true,
     can_administer: true,
+    flags: [],
+    known_flags: ['zdr'],
     ...overrides,
   }
 }
@@ -89,6 +91,16 @@ afterEach(() => {
 })
 
 describe('RunnerAssignments', () => {
+  it('badges a default-list runner that declares ZDR, and only that one', async () => {
+    getAgentRunners.mockResolvedValue([runner('a', { rank: 1 }), runner('b', { rank: 2 })])
+    listRunners.mockResolvedValue([fleetRunner('a', { flags: ['zdr'] }), fleetRunner('b')])
+
+    render(<RunnerAssignments agentSlug="echo" />)
+
+    expect(await screen.findByTestId('zdr-badge-chip-a')).toBeTruthy()
+    expect(screen.queryByTestId('zdr-badge-chip-b')).toBeNull()
+  })
+
   it('renders chips in rank order', async () => {
     getAgentRunners.mockResolvedValue([runner('a', { rank: 1 }), runner('b', { rank: 2 })])
     listRunners.mockResolvedValue([fleetRunner('a'), fleetRunner('b')])

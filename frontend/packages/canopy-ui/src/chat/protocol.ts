@@ -216,6 +216,11 @@ export interface TurnStatus {
   /** When a settled turn finished — lets the kit drop a failure the
    *  conversation has since moved past. Absent on an older server. */
   finished_at?: string | null;
+  /** What the conversation's host requires of the runner (e.g. `zdr`). Only
+   *  set while queued, and only when the requirement is what blocks the turn
+   *  (some runner would take it without one) — so render it as the reason.
+   *  Absent on an older server. */
+  requires?: string[];
   /** Nothing more will happen without someone asking for it. */
   settled: boolean;
   /** Nothing is moving and only a person can change that. The one question a

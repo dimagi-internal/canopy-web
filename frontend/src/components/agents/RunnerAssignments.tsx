@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { getAgentRunners, putAgentRunners, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
+import { ZdrBadge, hasZdr } from '@/components/agents/ZdrBadge'
 
 // The DEFAULT order — the "Everything else" row of the routing table
 // (AgentRouting.tsx), rendered as that row's runners cell: which RUNNERS (not kinds) this agent will route to, in
@@ -228,6 +229,9 @@ export function RunnerAssignments({
           >
             {r.runner_name}
           </span>
+          {hasZdr(fleet.find((f) => f.id === r.runner_id)) && (
+            <ZdrBadge testId={`zdr-badge-chip-${r.runner_id}`} />
+          )}
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
             {KIND_GLYPH[r.kind] ?? r.kind}
           </span>

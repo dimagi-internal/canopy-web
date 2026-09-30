@@ -2,6 +2,15 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.6.0 — 2026-09-30
+
+A host can require runner flags of its visitors' conversations. Minor: new
+public API, nothing removed.
+
+- `contract.RUNNER_REQUIREMENTS_CLAIM`, `RUNNER_FLAGS` (`zdr`), `parse_runner_requirements`.
+- `HostConfig.runner_requirements` / `CANOPY_HOST["RUNNER_REQUIREMENTS"]`; every
+  visitor assertion carries the claim, and `extra` cannot forge or drop it.
+
 ## 0.5.0 — 2026-09-29
 
 A page that changes what it shows without reloading can tell the agent. Minor:

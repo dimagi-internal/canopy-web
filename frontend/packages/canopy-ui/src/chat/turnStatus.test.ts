@@ -186,3 +186,15 @@ describe("turnNotice", () => {
     expect(n?.tone).toBe("warn");
   });
 });
+
+describe("turnNotice, when the conversation requires a runner flag", () => {
+  it("names the missing requirement when unrouted", () => {
+    const n = turnNotice(status({ state: "unrouted", stuck: true, runners: [], claimed_by: null, agent_slug: "ace", requires: ["zdr"] }));
+    expect(n?.text).toContain("ZDR runner");
+  });
+
+  it("names it when its runners are offline", () => {
+    const n = turnNotice(status({ state: "waiting_runner", stuck: true, runners: ["cloud-1"], claimed_by: null, requires: ["zdr"] }));
+    expect(n?.text).toContain("ZDR");
+  });
+});
