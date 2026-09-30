@@ -141,6 +141,18 @@ function HostGrantFields({
   )
 }
 
+/** What the host last said its visitors' runners must guarantee. Display only:
+ *  the signed claim on each arrival is the authority. */
+export function RunnerRequirements({ app }: { app: Pick<ConnectedApp, 'runner_requirements'> }): JSX.Element | null {
+  const reqs = app.runner_requirements ?? []
+  if (reqs.length === 0) return null
+  return (
+    <p className="text-xs text-info" data-testid="runner-requirements">
+      Requires {reqs.map((r) => r.toUpperCase()).join(', ')} runners (declared by the host)
+    </p>
+  )
+}
+
 function HostGrantEditor({
   app,
   busy,
@@ -160,6 +172,7 @@ function HostGrantEditor({
           ? 'The agent can use this site\'s tools as the visitor, when the site grants it.'
           : 'The agent cannot act as a visitor on this site.'}
       </p>
+      <RunnerRequirements app={app} />
       <HostGrantFields issuer={issuer} resource={resource} onIssuer={setIssuer} onResource={setResource} />
       {dirty && (
         <Button size="sm" disabled={busy} onClick={() => onSave(issuer.trim(), resource.trim())}>

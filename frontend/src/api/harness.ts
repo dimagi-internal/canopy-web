@@ -20,7 +20,8 @@ export async function listRunners(): Promise<RunnerOut[]> {
   // ArrayLike-shaped object (numeric index + length, no Symbol.iterator) — see
   // ./agents.ts's toPage comment for the full explanation. Array.from rebuilds
   // a real array rather than casting.
-  return Array.from(unwrap(res, 'listRunners'))
+  // Readable<T> also degrades the nested `flags: readonly string[]`, so rebuild.
+  return Array.from(unwrap(res, 'listRunners')) as unknown as RunnerOut[]
 }
 
 // Retire a runner — permanent (re-pairing mints a fresh row). The supervisor's
@@ -42,14 +43,14 @@ export async function pauseRunner(runnerId: string, note = ''): Promise<RunnerOu
     params: { path: { runner_id: runnerId } },
     body: { note },
   })
-  return unwrap(res, 'pauseRunner')
+  return unwrap(res, 'pauseRunner') as unknown as RunnerOut
 }
 
 export async function unpauseRunner(runnerId: string): Promise<RunnerOut> {
   const res = await apiV2.POST('/api/harness/runners/{runner_id}/unpause', {
     params: { path: { runner_id: runnerId } },
   })
-  return unwrap(res, 'unpauseRunner')
+  return unwrap(res, 'unpauseRunner') as unknown as RunnerOut
 }
 
 // Ask a box to refresh itself (re-run its bootstrap: plugins, the canopy CLI,
@@ -60,7 +61,7 @@ export async function refreshRunner(runnerId: string): Promise<RunnerOut> {
   const res = await apiV2.POST('/api/harness/runners/{runner_id}/refresh', {
     params: { path: { runner_id: runnerId } },
   })
-  return unwrap(res, 'refreshRunner')
+  return unwrap(res, 'refreshRunner') as unknown as RunnerOut
 }
 
 // Dispatch a turn from the phone composer — to an agent OR a repo.
@@ -232,4 +233,14 @@ export async function revokeRunnerAdmin(runnerId: string, userId: number): Promi
     params: { path: { runner_id: runnerId, user_id: userId } },
   })
   if (error) throw new Error(`revokeRunnerAdmin failed: ${JSON.stringify(error)}`)
+}
+
+// Declare what a box guarantees (`zdr`). Human-only and admin-only on the server;
+// an unknown flag is a 422 that names it.
+export async function setRunnerFlags(runnerId: string, flags: string[]): Promise<RunnerOut> {
+  const res = await apiV2.PUT('/api/harness/runners/{runner_id}/flags', {
+    params: { path: { runner_id: runnerId } },
+    body: { flags },
+  })
+  return unwrap(res, 'setRunnerFlags') as unknown as RunnerOut
 }

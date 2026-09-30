@@ -10,7 +10,7 @@ vi.mock('@/api/connectedApps', async (importOriginal) => ({
   testConnectedApp: (...args: unknown[]) => testConnectedApp(...args),
 }))
 
-const { ConnectionTester, ConnectionTestTable, SiteHealthTable, liveProbeSummary } = await import(
+const { ConnectionTester, ConnectionTestTable, SiteHealthTable, RunnerRequirements, liveProbeSummary } = await import(
   './ConnectedAppsPage'
 )
 
@@ -161,5 +161,17 @@ describe('the site health table', () => {
   it('renders nothing when no site acts as a visitor', () => {
     const { container } = render(<SiteHealthTable apps={[site({ issues_host_grants: false })]} />)
     expect(container.innerHTML).toBe('')
+  })
+})
+
+describe('what a site requires of runners', () => {
+  it('says so when the host declared a requirement', () => {
+    render(<RunnerRequirements app={{ runner_requirements: ['zdr'] }} />)
+    expect(screen.getByText('Requires ZDR runners (declared by the host)')).toBeTruthy()
+  })
+
+  it('says nothing when it declared none', () => {
+    const { container } = render(<RunnerRequirements app={{ runner_requirements: [] }} />)
+    expect(container.textContent).toBe('')
   })
 })

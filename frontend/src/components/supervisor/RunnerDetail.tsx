@@ -5,6 +5,7 @@ import { AgentRouting } from '@/components/agents/AgentRouting'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
 import { RunnerCredentials } from '@/components/supervisor/RunnerCredentials'
 import { RunnerAdmins } from '@/components/supervisor/RunnerAdmins'
+import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
 
 // A runner's full state — the click-through from the Runners tab's runner list.
@@ -210,6 +211,7 @@ export function RunnerDetail({
           pairedByEmail={runner.paired_by_email}
         />
       )}
+      {runner.can_administer && onChanged && <RunnerFlags runner={runner} onChange={onChanged} />}
       {runner.can_manage && <RunnerDrills runnerId={runner.id} />}
       {!runner.can_manage && (
         <p className="text-[12px] text-muted-foreground" data-testid="runner-detail-readonly">

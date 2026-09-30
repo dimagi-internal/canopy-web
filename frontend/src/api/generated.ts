@@ -11606,6 +11606,8 @@ export interface components {
             readonly host_mcp_resource: string;
             /** Issues Host Grants */
             readonly issues_host_grants: boolean;
+            /** Runner Requirements */
+            readonly runner_requirements: readonly string[];
             /** Shows On Canopy Pages */
             readonly shows_on_canopy_pages: boolean;
             /** Created At */

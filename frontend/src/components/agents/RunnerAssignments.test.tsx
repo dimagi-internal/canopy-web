@@ -67,6 +67,8 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     paired_by_email: null,
     can_manage: true,
     can_administer: true,
+    flags: [],
+    known_flags: ['zdr'],
     ...overrides,
   }
 }

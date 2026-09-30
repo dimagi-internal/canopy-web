@@ -364,6 +364,14 @@ function RuleRowView({
                   ●
                 </span>
                 <span className="min-w-0 truncate font-mono" title={r.runner_name}>{r.runner_name}</span>
+                {fleet.find((f) => f.id === r.runner_id)?.flags?.includes('zdr') && (
+                  <span
+                    data-testid={`zdr-badge-${r.runner_name}`}
+                    className="rounded border border-info/30 bg-info/10 px-1 text-[10px] text-info"
+                  >
+                    ZDR
+                  </span>
+                )}
                 {g.runners.length > 1 && (
                   <>
                     <button
