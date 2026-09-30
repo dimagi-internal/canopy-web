@@ -49,12 +49,26 @@ MultiAuth(
   carry the user (`sub`/`user_id`/`email`). Tools read the user via
   `get_access_token()`. A miss returns `None` → 401.
 
-* **OAuth (interactive, env-gated seam).** When `MCP_OAUTH_ENABLED=true`
-  and the Google OAuth creds are present, a FastMCP `GoogleProvider` is
-  wired as the MultiAuth `server=`, letting interactive clients
-  browser-login. **Off by default** — completing it requires registering
-  FastMCP's redirect URI (`<MCP_BASE_URL>/auth/callback`) on the existing
-  Google OAuth client. See the docstring in `apps/mcp/server.py`.
+* **OAuth sign-in (what MCP clients do by default, 2026-09-30).** Adding
+  `https://<canopy-web>/api/mcp/` to Claude Code, Claude Desktop or any MCP
+  client signs you in with no token to copy. The 401 carries
+  `WWW-Authenticate: Bearer resource_metadata="…"` (the verifier is built with
+  `resource_base_url`), the RFC 9728 document names canopy's issuer, whose
+  RFC 8414 document offers `authorization_code` + PKCE (S256) and
+  `refresh_token` beside the host grant's jwt-bearer. The client registers
+  itself (`POST /oauth/register`, RFC 7591 — public clients only; registering
+  grants nothing), sends your browser to `/oauth/authorize` (Google sign-in if
+  needed, then a consent page naming the client; a session minted from a token
+  cannot approve), and trades the code at `/oauth/token`. **The access token is
+  an ordinary `PersonalToken` that lives an hour**, tied to an `OAuthGrant`, so
+  every tool and route treats it exactly like a hand-minted PAT. Refresh tokens
+  last 30 days and rotate on every use; a retired one presented again revokes
+  the grant, as does replaying a code. Settings → **Connected apps** lists the
+  grants (`GET /api/tokens/connected-apps`) and disconnects them at once. Code:
+  `apps/tokens/mcp_oauth.py` (the authorization server),
+  `views_mcp_oauth.py` (register + consent), `views_oauth.token` (one token
+  endpoint for both grants). On labs the RFC-located documents sit at the ROOT
+  of the shared host (`/.well-known/…/canopy…`), which the ALB routes to canopy.
 
 * **Host-grant token (canopy-web as a host of its own MCP, 2026-09-27).**
   An ADDITIONAL credential; PATs and caller tokens are unchanged. When the
@@ -151,6 +165,14 @@ only on `Authorization: DPoP` and passes every other request through untouched.
 
 ## How to connect Claude Code
 
+```bash
+claude mcp add --transport http canopy https://<canopy-web>/api/mcp/
+```
+
+Claude opens canopy's sign-in in your browser the first time; approve it and
+you are connected (Settings → Connected apps shows it). A personal access token
+still works for scripts and headless clients:
+
 ```json
 {
   "canopy-web": {
@@ -160,8 +182,8 @@ only on `Authorization: DPoP` and passes every other request through untouched.
 }
 ```
 
-Mint a PAT with `manage.py create_token --email <you> --label <name>` or
-the `/canopy:canopy-web-pat-mint` flow.
+Mint a PAT on `/settings`, with `/canopy:canopy-web-pat-mint`, or
+`manage.py create_token --email <you> --label <name>`.
 
 ## History
 

@@ -495,6 +495,48 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/tokens/connected-apps": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * MCP clients connected to my account
+         * @description The apps (Claude, an editor, …) you signed in to canopy's MCP server
+         *     from, and the address to give a new one.
+         */
+        readonly get: operations["tokens_list_connected_apps"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/tokens/connected-apps/{grant_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Disconnect an MCP client
+         * @description Revoke the app's access at once: its current token stops working and it
+         *     cannot refresh. It must be signed in again to reconnect.
+         */
+        readonly delete: operations["tokens_disconnect_app"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/tokens/github": {
         readonly parameters: {
             readonly query?: never;
@@ -3470,7 +3512,7 @@ export interface paths {
          * Sites connected to this workspace
          * @description Every site this workspace has connected, with what each may do.
          */
-        readonly get: operations["list_connected_apps"];
+        readonly get: operations["tokens_connected_apps_list_connected_apps"];
         readonly put?: never;
         /**
          * Connect a site
@@ -3500,7 +3542,7 @@ export interface paths {
          *     Retired rather than deleted: the row is what this workspace's visitors'
          *     records hang off, and the audit trail of what it once allowed.
          */
-        readonly delete: operations["disconnect_app"];
+        readonly delete: operations["tokens_connected_apps_disconnect_app"];
         readonly options?: never;
         readonly head?: never;
         /** Change what a connected site may do */
@@ -6467,6 +6509,30 @@ export interface components {
              * @description Days until this token expires. Omit for the server default (PAT_DEFAULT_TTL_DAYS, 180). 0 means it never expires. There is no upper bound — with 0 available, a cap would only hand a caller a shorter token than they asked for without telling them.
              */
             readonly ttl_days?: number | null;
+        };
+        /**
+         * McpClientOut
+         * @description An MCP client a person connected by signing in (an `OAuthGrant`).
+         */
+        readonly McpClientOut: {
+            /** Id */
+            readonly id: number;
+            /** Client Name */
+            readonly client_name: string;
+            /**
+             * Connected At
+             * Format: date-time
+             */
+            readonly connected_at: string;
+            /** Last Used At */
+            readonly last_used_at?: string | null;
+        };
+        /** McpClientsOut */
+        readonly McpClientsOut: {
+            /** Mcp Url */
+            readonly mcp_url: string;
+            /** Apps */
+            readonly apps: readonly components["schemas"]["McpClientOut"][];
         };
         /**
          * GitHubConnectionOut
@@ -14495,6 +14561,46 @@ export interface operations {
             };
         };
     };
+    readonly tokens_list_connected_apps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["McpClientsOut"];
+                };
+            };
+        };
+    };
+    readonly tokens_disconnect_app: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     readonly github_connection: {
         readonly parameters: {
             readonly query?: never;
@@ -18825,7 +18931,7 @@ export interface operations {
             };
         };
     };
-    readonly list_connected_apps: {
+    readonly tokens_connected_apps_list_connected_apps: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18873,7 +18979,7 @@ export interface operations {
             };
         };
     };
-    readonly disconnect_app: {
+    readonly tokens_connected_apps_disconnect_app: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

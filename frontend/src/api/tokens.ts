@@ -46,3 +46,21 @@ export async function revokeToken(id: number): Promise<boolean> {
   })
   return res.response.ok
 }
+
+// ---- MCP clients connected by signing in -----------------------------------
+
+export type ConnectedApps = components['schemas']['McpClientsOut']
+export type ConnectedApp = components['schemas']['McpClientOut']
+
+export async function listConnectedApps(): Promise<ConnectedApps | null> {
+  const res = await apiV2.GET('/api/tokens/connected-apps')
+  if (!res.response.ok || !res.data) return null
+  return res.data as unknown as ConnectedApps
+}
+
+export async function disconnectApp(id: number): Promise<boolean> {
+  const res = await apiV2.DELETE('/api/tokens/connected-apps/{grant_id}', {
+    params: { path: { grant_id: id } },
+  })
+  return res.response.ok
+}

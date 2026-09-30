@@ -41,6 +41,14 @@ class PersonalToken(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     last_used_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
+    #: Set when an MCP client's OAuth login minted this token
+    #: (`apps/tokens/mcp_oauth.py`). Such a token is short-lived, refreshed by
+    #: its grant, and listed under the grant ("connected apps") rather than
+    #: among the tokens a person minted by hand.
+    oauth_grant = models.ForeignKey(
+        "tokens.OAuthGrant", null=True, blank=True, on_delete=models.CASCADE,
+        related_name="access_tokens",
+    )
     expires_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -74,7 +82,8 @@ class PersonalToken(models.Model):
 
     @classmethod
     def create_for_user(
-        cls, *, user, label: str, ttl_days: int | None = None
+        cls, *, user, label: str, ttl_days: int | None = None,
+        ttl: timedelta | None = None, oauth_grant=None,
     ) -> tuple[str, PersonalToken]:
         """Mint a token. The raw value is returned ONCE — it's never stored.
 
@@ -87,18 +96,23 @@ class PersonalToken(models.Model):
         The caller is responsible for delivering the raw value to the
         token owner (UI display, env-var dump, etc.).
         """
-        if ttl_days is None:
-            ttl_days = getattr(settings, "PAT_DEFAULT_TTL_DAYS", 180)
-        ttl_days = int(ttl_days)
-        if ttl_days < 0:
-            raise ValueError("ttl_days cannot be negative (0 means never expires)")
-        expires_at = (
-            None if ttl_days == 0 else timezone.now() + timedelta(days=ttl_days)
-        )
+        if ttl is not None:
+            # A sub-day lifetime (an OAuth access token lives an hour).
+            expires_at = timezone.now() + ttl
+        else:
+            if ttl_days is None:
+                ttl_days = getattr(settings, "PAT_DEFAULT_TTL_DAYS", 180)
+            ttl_days = int(ttl_days)
+            if ttl_days < 0:
+                raise ValueError("ttl_days cannot be negative (0 means never expires)")
+            expires_at = (
+                None if ttl_days == 0 else timezone.now() + timedelta(days=ttl_days)
+            )
         raw = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw.encode()).hexdigest()
         token = cls.objects.create(
-            user=user, token_hash=token_hash, label=label, expires_at=expires_at
+            user=user, token_hash=token_hash, label=label, expires_at=expires_at,
+            oauth_grant=oauth_grant,
         )
         return raw, token
 
@@ -120,6 +134,99 @@ class PersonalToken(models.Model):
             .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
             .first()
         )
+
+
+def hash_secret(raw: str) -> str:
+    """sha256 hex of an opaque secret — how every token-shaped value here is stored."""
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+class OAuthClient(models.Model):
+    """An MCP client that registered itself (RFC 7591 dynamic registration).
+
+    Registration grants NOTHING: a client holds no secret (public client, PKCE
+    only) and reaches nothing until a signed-in person approves it on the
+    consent page, which is why registration can be open. What it buys is that
+    the consent page can name the client and pin its redirect URIs.
+    """
+
+    client_id = models.CharField(max_length=64, unique=True)
+    client_name = models.CharField(max_length=200, blank=True)
+    redirect_uris = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "oauth_clients"
+
+    def __str__(self):
+        return f"OAuthClient {self.client_name or self.client_id}"
+
+    @property
+    def display_name(self) -> str:
+        return self.client_name or "An MCP client"
+
+
+class OAuthAuthorizationCode(models.Model):
+    """A one-time code from the consent page, exchanged at `/oauth/token`.
+
+    Only the hash is stored, it lives ten minutes, and it is bound to the
+    client, the exact redirect URI and a PKCE challenge — so a code intercepted
+    on its way back to the client is useless without the verifier.
+    """
+
+    code_hash = models.CharField(max_length=64, unique=True)
+    client = models.ForeignKey(OAuthClient, on_delete=models.CASCADE, related_name="codes")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="+")
+    redirect_uri = models.TextField()
+    code_challenge = models.CharField(max_length=128)
+    scope = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    #: The grant the exchange created — so a replayed code can revoke it (RFC 6749 §4.1.2).
+    grant = models.ForeignKey("tokens.OAuthGrant", null=True, blank=True,
+                              on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        db_table = "oauth_authorization_codes"
+
+
+class OAuthGrant(models.Model):
+    """One person's approval of one MCP client — a "connected app".
+
+    Holds the current refresh token (hashed; rotated on every use) and owns the
+    short-lived access tokens minted from it, which are ordinary
+    `PersonalToken`s, so REST and MCP authenticate them exactly as they do a
+    hand-minted token. Revoking the grant revokes all of them.
+    """
+
+    client = models.ForeignKey(OAuthClient, on_delete=models.CASCADE, related_name="grants")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="oauth_grants")
+    scope = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    refresh_token_hash = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    #: The refresh token this one replaced. Presenting it again means two parties
+    #: hold the grant's refresh token — the grant is revoked (reuse detection).
+    previous_refresh_hash = models.CharField(max_length=64, null=True, blank=True, db_index=True)
+    refresh_expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "oauth_grants"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"OAuthGrant {self.client_id} for {self.user_id}"
+
+    def revoke(self) -> None:
+        now = timezone.now()
+        self.revoked_at = now
+        self.refresh_token_hash = None
+        self.save(update_fields=["revoked_at", "refresh_token_hash"])
+        self.access_tokens.filter(revoked_at__isnull=True).update(revoked_at=now)
 
 
 _FRAME_ORIGIN = re.compile(r"^https?://[A-Za-z0-9.-]+(?::\d{1,5})?$")

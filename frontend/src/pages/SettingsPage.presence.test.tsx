@@ -30,6 +30,8 @@ vi.mock('@/api/tokens', () => ({
   listTokens: vi.fn().mockResolvedValue([]),
   mintToken: vi.fn(),
   revokeToken: vi.fn(),
+  listConnectedApps: vi.fn().mockResolvedValue({ mcp_url: '', apps: [] }),
+  disconnectApp: vi.fn(),
 }))
 
 // RunnersPanel lists the boxes you administer; not what these tests are about.

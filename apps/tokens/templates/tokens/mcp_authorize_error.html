@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Connect to canopy-web{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0a0a0a; color: #f5f5f5; margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .container { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 2.5rem 3rem; max-width: 460px; width: 100%; text-align: center; }
+    h1 { font-size: 1.4rem; margin: 0 0 1rem; color: #f5f5f5; }
+    p { color: #a3a3a3; margin: 0 0 1rem; line-height: 1.5; }
+    dl { text-align: left; background: #0f0f0f; border: 1px solid #2a2a2a; border-radius: 6px; padding: 1rem 1.25rem; margin: 0 0 1.5rem; font-size: .9rem; }
+    dt { font-weight: 600; color: #a3a3a3; margin-top: .5rem; }
+    dt:first-child { margin-top: 0; }
+    dd { margin: .15rem 0 0; color: #f5f5f5; font-family: ui-monospace, "SF Mono", Consolas, monospace; word-break: break-all; }
+    .actions { display: flex; gap: .75rem; }
+    .btn { flex: 1; display: inline-block; padding: .75rem 1.5rem; border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer; border: none; text-decoration: none; box-sizing: border-box; }
+    .btn-primary { background: #ea580c; color: #fff; }
+    .btn-primary:hover { background: #c2410c; }
+    .btn-cancel { background: #1a1a1a; color: #a3a3a3; border: 1px solid #2a2a2a; }
+    .btn-cancel:hover { background: #2a2a2a; }
+    .warning { font-size: .8rem; color: #fbbf24; background: #1c1815; border: 1px solid #422006; border-radius: 4px; padding: .5rem .75rem; margin: 0 0 1rem; text-align: left; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>This connection can't continue</h1>
+    <p>{{ reason }}</p>
+    <p>Start connecting again from the app you were setting up.</p>
+  </div>
+</body>
+</html>
