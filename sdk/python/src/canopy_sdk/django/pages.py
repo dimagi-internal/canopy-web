@@ -125,4 +125,7 @@ def panel_options(ctx: dict) -> dict:
         "mode": ctx.get("mode", "overlay"),
         "launcherLabel": ctx.get("launcher_label", "Ask an agent"),
         "theme": ctx.get("theme") or {},
+        # For the page-side `canopyHost.updatePageState`, which trims to the same budget.
+        "stateByteBudget": STATE_BYTE_BUDGET,
+        "maxVisibleIds": MAX_VISIBLE_IDS,
     }

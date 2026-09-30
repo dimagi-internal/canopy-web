@@ -433,3 +433,81 @@ def test_an_unknown_page_mode_is_a_configuration_error(host):
     with override_settings(CANOPY_HOST={**conf.raw(), "PAGE_MODE": "trust-me"}):
         with pytest.raises(ValueError):
             conf.page_registry()
+
+
+# --- 0.5.0: a page can update what it shows without reloading ---------------------------
+
+
+def test_the_panel_hands_the_page_a_handle_and_the_budget_it_trims_to(host, user):
+    client = Client()
+    client.force_login(user)
+    body = client.get("/marketplace/network/").content.decode()
+    options = _rendered_options(body)
+    assert options["stateByteBudget"] == 7 * 1024 and options["maxVisibleIds"] == 400
+    assert "window.canopyHost = host" in body
+    assert 'new CustomEvent("canopy:ready"' in body
+
+
+def _run_panel_script(body: str, calls: str) -> list:
+    """Execute the rendered panel script under node against a stub widget and
+    return every state it pushed. `calls` runs after the script, with `host` bound."""
+    import re
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    blocks = dict(re.findall(r'<script id="([a-z-]+)" type="application/json">(.*?)</script>', body, re.S))
+    script = re.search(r"<script data-csrf=\"[^\"]*\">(.*?)</script>", body, re.S).group(1)
+    harness = f"""
+      const pushed = [];
+      const els = {json.dumps(blocks)};
+      global.window = {{ canopy: {{ init: () => ({{ setPageState: (s) => pushed.push(s) }}) }},
+                         location: {{ pathname: "/" }} }};
+      global.document = {{
+        currentScript: null,
+        getElementById: (id) => (id in els ? {{ textContent: els[id] }} : null),
+        querySelector: () => null,
+        dispatchEvent: () => true,
+      }};
+      global.CustomEvent = class {{ constructor(type, init) {{ this.type = type; this.detail = init.detail; }} }};
+      {script}
+      const host = window.canopyHost;
+      {calls}
+      process.stdout.write(JSON.stringify(pushed));
+    """
+    out = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_update_page_state_merges_and_keeps_what_the_server_decided(host, user):
+    client = Client()
+    client.force_login(user)
+    body = client.get("/marketplace/network/").content.decode()
+    pushed = _run_panel_script(body, """
+      host.updatePageState({ visible_ids: ["llo-b"], filters: { org: "B" },
+                             resource: "evil://x", backing_tool: "admin_delete" });
+    """)
+    first, second = pushed
+    assert first["visible_ids"] == ["llo-a", "llo-b"]
+    assert second["visible_ids"] == ["llo-b"] and second["filters"] == {"org": "B"}
+    # A script on the page narrows the view; it cannot change what the page is
+    # or the tool that reads its rows.
+    assert second["resource"] == first["resource"] == "labs-marketplace://orgs"
+    assert second["backing_tool"] == "marketplace_orgs_get"
+
+
+def test_update_page_state_trims_a_selection_to_the_budget(host, user):
+    client = Client()
+    client.force_login(user)
+    body = client.get("/marketplace/network/").content.decode()
+    pushed = _run_panel_script(body, """
+      const ids = Array.from({ length: 1000 }, (_, i) => "organisation-slug-" + i);
+      host.updatePageState({ visible_ids: ids });
+    """)
+    last = pushed[-1]
+    assert 0 < len(last["visible_ids"]) <= 400
+    # Measured as canopy measures it: compact JSON, in bytes.
+    assert len(json.dumps(last, separators=(",", ":")).encode()) <= 7 * 1024

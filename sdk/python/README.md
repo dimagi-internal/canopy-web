@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.4.1#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.5.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.4.1/dimagi_canopy-0.4.1-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.5.0/dimagi_canopy-0.5.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`.
@@ -103,6 +103,22 @@ if principal:            # a delegated token: run AS principal.subject,
 {% load canopy_host %}
 {% canopy_panel resource="labs-marketplace://orgs" backing_tool="marketplace_orgs_get" visible_ids=slugs %}
 ```
+
+**A page that changes what it shows without reloading** tells the agent through
+`window.canopyHost` (0.5.0), available once the panel has rendered and announced
+by a `canopy:ready` event on `document`:
+
+```js
+function share(host) {
+  host.updatePageState({ visible_ids: ["10::asha"], filters: { run_id: 70, worker: "10::asha" } });
+}
+if (window.canopyHost) share(window.canopyHost);
+else document.addEventListener("canopy:ready", (e) => share(e.detail), { once: true });
+```
+
+`updatePageState` merges into the declared state (canopy replaces state on every
+push) and keeps `resource` and `backing_tool` as the server rendered them.
+`canopyHost.widget` is the widget, for the rest of its API.
 
 ### `CANOPY_HOST` as a callable
 
