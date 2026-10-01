@@ -15,7 +15,7 @@ const base = {
 vi.mock('@/api/slack', async (orig) => ({
   ...(await orig<typeof import('@/api/slack')>()),
   getSlackConfig: vi.fn(async () => base),
-  setSlackConfigToken: vi.fn(async () => ({ status: 'synced', detail: '', added: ['/hal'], removed: [], unfit: [] })),
+  setSlackConfigToken: vi.fn(async () => ({ status: 'synced', detail: '', added: ['/hal'], removed: [], unfit: [], scopes_added: [] })),
   setSlackHistory: vi.fn(async (_ws: string, enabled: boolean, max_minutes: number) => ({
     ...base, history: { enabled, max_minutes },
   })),
@@ -51,10 +51,13 @@ describe('SlackSettingsPage', () => {
 
 describe('syncSummary', () => {
   it('reads like a sentence', () => {
-    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], removed: [], unfit: [] }))
+    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], removed: [], unfit: [], scopes_added: [] }))
       .toBe('Slash commands already match.')
-    expect(slack.syncSummary({ status: 'not_configured', detail: 'no token', added: [], removed: [], unfit: [] }))
+    expect(slack.syncSummary({ status: 'not_configured', detail: 'no token', added: [], removed: [], unfit: [], scopes_added: [] }))
       .toBe('no token')
+    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], removed: [], unfit: [],
+      scopes_added: ['files:read'] }))
+      .toBe('Added the files:read permission — reconnect Slack to grant it.')
   })
 })
 

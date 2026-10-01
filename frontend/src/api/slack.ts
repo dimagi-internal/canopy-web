@@ -66,6 +66,8 @@ export function syncSummary(r: SlackSyncOut): string {
     r.added.length ? `Added ${r.added.join(', ')}` : '',
     r.removed.length ? `Removed ${r.removed.join(', ')}` : '',
     r.unfit.length ? `Too long for a Slack command: ${r.unfit.join(', ')}` : '',
+    r.scopes_added.length
+      ? `Added the ${r.scopes_added.join(', ')} permission — reconnect Slack to grant it` : '',
   ].filter(Boolean)
   return parts.length ? `${parts.join('. ')}.` : 'Slash commands already match.'
 }

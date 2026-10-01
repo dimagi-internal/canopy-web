@@ -59,6 +59,8 @@ class SlackSyncOut(StrictModel):
     added: list[str] = []
     removed: list[str] = []
     unfit: list[str] = []
+    #: Bot scopes newly put on the app — they take effect only on a re-install.
+    scopes_added: list[str] = []
 
 
 class SlackDeclareAgentOut(StrictModel):

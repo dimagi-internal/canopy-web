@@ -1489,7 +1489,7 @@ def send_message(
             ref["client_id"] = client_id
         attachments = claim_pending_attachments(session, message, user)
         if attachments:
-            ref["attachments"] = attachments
+            ref["attachments"] = [*(ref.get("attachments") or []), *attachments]
         turn, _created = harness_services.enqueue_turn(
             session=session,
             origin=origin,
@@ -1749,7 +1749,7 @@ def _send_transcript_sourced_message(
     # the only thing stopping these attachments riding along on every later send.
     attachments = claim_pending_attachments(session, None, user)
     if attachments:
-        ref["attachments"] = attachments
+        ref["attachments"] = [*(ref.get("attachments") or []), *attachments]
     turn, _created = harness_services.enqueue_turn(
         session=session,
         origin=origin,

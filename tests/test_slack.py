@@ -720,18 +720,79 @@ def test_a_plain_reply_in_the_thread_continues_the_conversation(slack, linked, h
     assert len(slack.said("chat.postMessage")) == 2 and not slack.said("chat.postEphemeral")
 
 
-def test_a_reply_with_an_image_attached_still_reaches_the_agent(slack, linked, hal):
-    """Slack marks a message carrying a file `subtype: file_share`. It used to be
-    dropped with the edits and joins, so a reply with a screenshot vanished."""
-    mention("hal first")
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+SHOT = {"name": "image.png", "mimetype": "image/png", "size": len(PNG),
+        "url_private_download": "https://files.slack.com/files-pri/T1-F1/download/image.png"}
+
+
+def _file_reply(text="here's what I see", files=(SHOT,)):
     event({"type": "message", "subtype": "file_share", "channel_type": "channel", "user": ALICE,
-           "text": "here's what I see", "ts": "1700000050.000100",
-           "thread_ts": "1700000000.000100", "channel": "C1",
-           "files": [{"name": "image.png", "mimetype": "image/png"}]})
+           "text": text, "ts": "1700000050.000100", "thread_ts": "1700000000.000100",
+           "channel": "C1", "files": list(files)})
+
+
+def _download(content_type="image/png", body=PNG):
+    resp = mock.Mock(status_code=200, headers={"Content-Type": content_type}, content=body)
+    resp.raise_for_status = lambda: None
+    return mock.patch("apps.slack.files.requests.get", return_value=resp)
+
+
+@pytest.fixture
+def bucket(settings):
+    settings.CANOPY_ATTACHMENTS_BUCKET = "test-bucket"
+    with mock.patch("apps.canopy_sessions.attachment_storage.put") as put:
+        yield put
+
+
+def test_an_image_in_slack_reaches_the_agent_as_an_attachment(slack, linked, hal, bucket):
+    """Slack marks a message carrying a file `subtype: file_share`. It used to be
+    dropped with the edits and joins, so a reply with a screenshot vanished; now
+    the file becomes a session attachment the runner downloads, like a web one."""
+    from apps.canopy_sessions.models import Attachment
+
+    mention("hal first")
+    with _download() as get:
+        _file_reply()
+    assert get.call_args.kwargs["headers"]["Authorization"].startswith("Bearer ")
     turns = list(Turn.objects.order_by("created_at"))
     assert len(turns) == 2 and turns[0].chat_session_id == turns[1].chat_session_id
-    assert turns[1].prompt.startswith("here's what I see")
-    assert "image.png (image/png)" in turns[1].prompt
+    assert turns[1].prompt == "here's what I see"
+    att = Attachment.objects.get()
+    assert (att.session_id, att.filename, att.content_type) == (turns[1].chat_session_id, "image.png", "image/png")
+    assert att.sent_at is not None                       # never swept into a later send
+    assert turns[1].origin_ref["attachments"] == [
+        {"id": str(att.id), "filename": "image.png", "content_type": "image/png"}]
+    assert bucket.call_args.args[1] == PNG
+
+
+def test_an_image_with_no_text_is_still_sent(slack, linked, hal, bucket):
+    mention("hal first")
+    with _download():
+        _file_reply(text="")
+    turn = Turn.objects.order_by("created_at").last()
+    assert turn.prompt == "(sent an attachment)" and len(turn.origin_ref["attachments"]) == 1
+
+
+def test_without_the_files_scope_slack_answers_a_web_page_and_the_agent_is_told(slack, linked, hal, bucket):
+    """Slack does not refuse a download without `files:read`: it returns 200 and
+    an HTML sign-in page. That must not be stored as image.png."""
+    from apps.canopy_sessions.models import Attachment
+
+    mention("hal first")
+    with _download(content_type="text/html; charset=utf-8", body=b"<html>sign in</html>"):
+        _file_reply()
+    turn = Turn.objects.order_by("created_at").last()
+    assert not Attachment.objects.exists() and "attachments" not in (turn.origin_ref or {})
+    assert turn.prompt.startswith("here's what I see") and "files:read" in turn.prompt
+
+
+def test_a_file_type_canopy_does_not_accept_is_named_not_downloaded(slack, linked, hal, bucket):
+    mention("hal first")
+    with _download() as get:
+        _file_reply(files=({"name": "notes.pdf", "mimetype": "application/pdf", "size": 10,
+                            "url_private_download": "https://files.slack.com/x"},))
+    assert not get.called
+    assert "notes.pdf (application/pdf" in Turn.objects.order_by("created_at").last().prompt
 
 
 def test_messages_in_threads_canopy_is_not_in_are_dropped_unread(slack, linked, hal):
@@ -1590,6 +1651,12 @@ def test_connecting_the_token_rotates_it_and_syncs_enabled_agents(slack, hal, in
     # Everything else in the manifest is written back untouched.
     assert slack.manifest["settings"]["event_subscriptions"]["bot_events"] == ["app_mention", "message.im"]
     assert cmds["/standup"]["url"] == "https://elsewhere.example/standup"
+    # The app's bot scopes are made to cover what the install asks for — files:read
+    # included, or attachments could never download. Takes effect on a re-install.
+    from apps.slack.views_auth import BOT_SCOPES
+    bot = set(slack.manifest["oauth_config"]["scopes"]["bot"])
+    assert set(BOT_SCOPES) - {"assistant:write"} <= bot and "assistant:write" not in bot
+    assert "files:read" in managed["scopes_added"]
 
 
 def test_flipping_the_switch_adds_and_removes_the_command(slack, hal, managed, owner_client):

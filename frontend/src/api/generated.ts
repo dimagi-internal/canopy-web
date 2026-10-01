@@ -7099,6 +7099,11 @@ export interface components {
              * @default []
              */
             readonly unfit: readonly string[];
+            /**
+             * Scopes Added
+             * @default []
+             */
+            readonly scopes_added: readonly string[];
         };
         /** SlackConfigTokenIn */
         readonly SlackConfigTokenIn: {

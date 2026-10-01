@@ -116,6 +116,9 @@ class Inbound:
     #: anchor), which the status line adopts instead of posting a second one.
     adopt_ts: str = ""
     adopt_prefix: str = ""
+    #: Slack's file objects on the message (`subtype: file_share`) — downloaded
+    #: into session attachments when the turn is sent, see `files.store`.
+    files: tuple = ()
 
     @property
     def anchor(self) -> str:
@@ -437,7 +440,7 @@ def handle_message(inbound: Inbound) -> Outcome:
     principal, refusal = resolve_principal(installation, inbound.slack_user_id, agent.workspace_id)
     if refusal is not None:
         return refusal
-    if not prompt:
+    if not prompt and not inbound.files:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
     title = prompt
     minutes, ask = None, prompt
@@ -524,7 +527,7 @@ def _continue_shared(session: Session, principal: Principal, text: str, inbound:
     if principal.user is None:
         return Outcome(MEMBERS_ONLY, "Only members of this canopy workspace can reply into this session.",
                        session=session)
-    if not text:
+    if not text and not inbound.files:
         return Outcome(EMPTY, "What would you like this session to do?", session=session)
     if session.created_by_id != principal.user.pk:
         ensure_participant(session, principal.user, SessionParticipant.EDITOR)
@@ -549,10 +552,19 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
     if session.status == Session.ARCHIVED and (session.metadata or {}).get("slack_shared_by"):
         return Outcome(SESSION_CLOSED, "This session was closed, so replies here no longer reach it. "
                        "Ask its owner to share a new one.", session=session, agent=agent)
-    if not created:
+    if not created and not inbound.files:
         answered = _answer_if_waiting(session, agent, prompt)
         if answered is not None:
             return answered
+    origin_ref = _adoption_ref(inbound)
+    if inbound.files:
+        from . import files
+
+        stored, notes = files.store(installation_for(inbound.team_id), session, principal.user,
+                                    inbound.files)
+        if stored:
+            origin_ref = {**(origin_ref or {}), "attachments": stored}
+        prompt = "\n\n".join(p for p in (prompt, *notes) if p) or "(sent an attachment)"
     _message, turn = session_services.send_message(
         session=session,
         text=prompt,
@@ -567,7 +579,7 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         # What the status line needs from THIS request, written onto the turn so
         # the line can be posted from the enqueue signal like every other
         # channel's — see `status.adoption`.
-        origin_ref=_adoption_ref(inbound),
+        origin_ref=origin_ref,
     )
     # The public status line in the thread IS the acknowledgement: it says at
     # once whether a live runner is taking this or it is stuck, and carries the
