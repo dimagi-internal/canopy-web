@@ -392,6 +392,40 @@ def published(iface: dict) -> bool:
 _TRUSTED_WITHOUT_INTERFACE = frozenset({"owner", "admin", "system", "member"})
 
 
+def session_writer(turn, agent) -> str | None:
+    """The asker's role in the session this turn continues, when someone who
+    holds the agent's whole profile STARTED that session and gave the asker an
+    owner/editor participant row in it — else None.
+
+    A person let into the owner's conversation is part of it: their turn
+    continues the SAME session, in its profile. Confining them to a capability
+    instead keys their turn to a separate `cx-` session on the runner, so a
+    colleague replying in the owner's Slack thread landed in a fresh session the
+    owner never saw (Jonathan, 2026-10-01: "if the user has access to my
+    session, it should come back in the session I already started").
+
+    Both halves are load-bearing. The creator must be the agent's owner or an
+    admin: otherwise any member could start their own chat with the agent and
+    be "the owner of a session", which would undo the interface for everyone.
+    And the grant must be an explicit row: `role_for` also makes every tenant
+    member an editor of a runner-discovered session, a convenience for the web
+    UI rather than anyone being let into this conversation.
+    """
+    if agent is None or turn.initiator_kind != who.USER or not getattr(turn, "chat_session_id", None):
+        return None
+    user, session = turn.initiator_user, turn.chat_session
+    creator = session.created_by
+    if user is None or creator is None:
+        return None
+    if creator.pk != agent.owner_id and not agent.is_admin(creator):
+        return None
+    from apps.canopy_sessions.models import SessionParticipant
+
+    role = (SessionParticipant.objects.filter(session=session, user=user)
+            .values_list("role", flat=True).first())
+    return role if role in (SessionParticipant.OWNER, SessionParticipant.EDITOR) else None
+
+
 def capability_for(turn, agent, requested: str | None = None) -> str | None:
     """Which profile this turn runs in: FULL, a capability name, or None (refused).
 
@@ -412,6 +446,8 @@ def capability_for(turn, agent, requested: str | None = None) -> str | None:
     if not published(iface):
         return FULL if rel in _TRUSTED_WITHOUT_INTERFACE else None
     if rel in (OWNER, ADMIN, SYSTEM):
+        return FULL
+    if session_writer(turn, agent):
         return FULL
     classes = caller_classes(turn, rel)
     if full_rule(classes, iface):
@@ -435,6 +471,9 @@ def granted_by(turn, agent) -> str:
         return "no-interface" if rel in _TRUSTED_WITHOUT_INTERFACE else "refused"
     if rel in (OWNER, ADMIN, SYSTEM):
         return rel
+    role = session_writer(turn, agent)
+    if role:
+        return f"session:{role}"
     rule = full_rule(caller_classes(turn, rel), iface)
     if rule:
         return f"full:{rule}"

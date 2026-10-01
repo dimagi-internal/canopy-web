@@ -460,3 +460,55 @@ def test_pages_survives_a_round_trip_through_parse():
     out = parse(PAGED)
     assert out["capabilities"]["marketplace"]["pages"] == ["labs-marketplace://*"]
     assert out["capabilities"]["ask"]["pages"] == []
+
+
+# --- someone let into the owner's conversation is part of it ------------------------
+
+def _owners_session(w):
+    from apps.canopy_sessions.models import Session
+
+    return Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=w["op"], title="t")
+
+
+def _in_session(session, user, key):
+    t, _ = services.enqueue_turn(
+        origin=Turn.ORIGIN_SLACK, idempotency_key=key, session=session,
+        initiator=who.for_user(user, via="slack:T1", assurance=who.SLACK_LINKED))
+    return t
+
+
+def test_an_editor_of_the_owners_session_continues_it_in_full(w):
+    """The 2026-10-01 case: a colleague replying in the owner's Slack thread ran
+    confined, so the runner keyed it to a separate cx- session."""
+    from apps.canopy_sessions.models import SessionParticipant
+
+    _publish(w["agent"])
+    session = _owners_session(w)
+    SessionParticipant.objects.create(session=session, user=w["ed"], role=SessionParticipant.EDITOR)
+    t = _in_session(session, w["ed"], "s1")
+    assert t.capability == "" and t.status == Turn.QUEUED   # FULL is stored as no capability
+    env = caller_context.build(t)
+    assert env["profile"] == "full" and env["granted_by"] == "session:editor"
+
+
+def test_without_a_grant_in_the_session_the_member_stays_confined(w):
+    from apps.canopy_sessions.models import SessionParticipant
+
+    _publish(w["agent"])
+    session = _owners_session(w)
+    assert _in_session(session, w["ed"], "s2").capability == ASK
+    SessionParticipant.objects.create(session=session, user=w["ed"], role=SessionParticipant.VIEWER)
+    assert _in_session(session, w["ed"], "s3").capability == ASK
+
+
+def test_a_session_a_member_started_themselves_grants_nothing(w):
+    """Otherwise any member could start a chat and be its owner, undoing the interface."""
+    from apps.canopy_sessions.models import Session, SessionParticipant
+
+    _publish(w["agent"])
+    other = User.objects.create_user("o2", "o2@dimagi.com", "pw")
+    M.objects.create(user=other, workspace=w["ws"], role=M.EDITOR)
+    session = Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=other, title="t")
+    SessionParticipant.objects.create(session=session, user=w["ed"], role=SessionParticipant.EDITOR)
+    assert _in_session(session, other, "s4").capability == ASK
+    assert _in_session(session, w["ed"], "s5").capability == ASK
