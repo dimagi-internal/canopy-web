@@ -108,3 +108,35 @@ def test_with_an_interface_the_owner_by_email_stays_full_and_a_stranger_is_confi
     assert _email(w["agent"], "op@dimagi.com", "o", _hdr("pass")).capability == FULL
     partner = _email(w["agent"], "fatima@llo-foo.org", "p", _hdr("pass", domain="llo-foo.org"))
     assert partner.capability == ASK
+
+
+def _agent_login(w, *, member=True):
+    """An agent's own login as `create_token --create-user` makes it: no
+    allauth EmailAddress row, bound through `Agent.user` (#983)."""
+    bot = User.objects.create_user("ace@dimagi-ai.com", "ace@dimagi-ai.com")
+    if member:
+        M.objects.create(user=bot, workspace=w["ws"], role=M.EDITOR)
+    w["agent"].user = bot
+    w["agent"].save(update_fields=["user"])
+    return bot
+
+
+def test_the_agents_own_login_emailing_is_the_agent_itself(w):
+    bot = _agent_login(w)
+    w["agent"].interface = parse({"capabilities": {"ask": {"callers": ["contact:verified"]}}})
+    w["agent"].save(update_fields=["interface"])
+    t = _email(w["agent"], "ACE <ace@dimagi-ai.com>", headers=_hdr("pass", domain="dimagi-ai.com"))
+    assert (t.initiator_kind, t.initiator_user_id) == (who.USER, bot.pk)
+    assert caller_context.build(t)["relationship"] == "system" and t.capability == FULL
+
+
+def test_the_agents_login_still_needs_dmarc_alignment(w):
+    _agent_login(w)
+    t = _email(w["agent"], "ace@dimagi-ai.com", headers=_hdr("fail", domain="dimagi-ai.com"))
+    assert t.initiator_kind == who.CONTACT
+
+
+def test_the_agents_login_outside_the_workspace_stays_a_contact(w):
+    _agent_login(w, member=False)
+    t = _email(w["agent"], "ace@dimagi-ai.com", headers=_hdr("pass", domain="dimagi-ai.com"))
+    assert t.initiator_kind == who.CONTACT

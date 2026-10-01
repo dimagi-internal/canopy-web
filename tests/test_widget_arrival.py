@@ -114,3 +114,109 @@ def test_a_turn_a_resolved_user_starts_says_host_signed(w):
     assert r.status_code in (200, 201), r.content
     t = Turn.objects.filter(chat_session_id=sid).latest("created_at")
     assert (t.initiator_user_id, t.initiator_assurance) == (w["alice"].pk, "host_signed")
+
+
+# --- An agent's OWN login (Agent.user, #983) arriving through a host. -------
+# Observed 2026-10-01, turn 2727e227: ace-web started an ACE run as
+# ace@dimagi-ai.com — ACE's own login, a member of the workspace — and it came in
+# as a contact, confined to `ask`, which refused the run. Agent logins are minted
+# by `create_token --create-user`, so they have no allauth EmailAddress row, and
+# arrival only ever looked there.
+
+
+def _agent_login(w, *, member=True, bind=True):
+    from apps.agents.models import Agent
+
+    bot = User.objects.create_user("ace@dimagi-ai.com", "ace@dimagi-ai.com")   # create_token's shape
+    assert not EmailAddress.objects.filter(user=bot).exists()
+    if member:
+        M.objects.create(user=bot, workspace=w["ws"], role=M.EDITOR)
+    agent = Agent.objects.get(slug="echo")
+    if bind:
+        agent.user = bot
+        agent.save(update_fields=["user"])
+    return bot, agent
+
+
+def _publish_ask_interface(agent):
+    from apps.agents.interface import parse
+
+    agent.interface = parse({"capabilities": {"ask": {"callers": ["contact", "member"]}}})
+    agent.save(update_fields=["interface"])
+
+
+def _turn_as(raw, agent_slug="echo"):
+    from apps.harness.models import Turn
+
+    c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    sid = c.post("/api/canopy-sessions/", {"agent_slug": agent_slug},
+                 content_type="application/json").json()["id"]
+    r = c.post(f"/api/canopy-sessions/{sid}/send", {"text": "/ace:run", "client_id": "c1"},
+               content_type="application/json")
+    assert r.status_code in (200, 201), r.content
+    return Turn.objects.filter(chat_session_id=sid).latest("created_at")
+
+
+def test_an_agents_own_login_arrives_as_itself_and_runs_unconfined(w):
+    from apps.agents.interface import FULL
+    from apps.harness import caller_context
+
+    bot, agent = _agent_login(w)
+    _publish_ask_interface(agent)
+    got = _arrive(w["priv"], sub="ace-owner", email="ace@dimagi-ai.com", email_verified=True)
+    assert got["kind"] == "user"
+    assert DelegatedToken.lookup(got["token"]).user == bot
+    t = _turn_as(got["token"])
+    assert t.initiator_user_id == bot.pk
+    env = caller_context.build(t)
+    assert env["relationship"] == "system"
+    assert t.capability == FULL and env["profile"] == "full" and env["granted_by"] == "system"
+
+
+def test_the_contact_it_already_fell_to_is_promoted_on_the_next_arrival(w):
+    """The incident's contact (#29) was recorded with user=None. Once the login
+    resolves, step 2 links it — the same contact, not a new one."""
+    bot, agent = _agent_login(w, bind=False)
+    first = _arrive(w["priv"], sub="ace-owner", email="ace@dimagi-ai.com", email_verified=True)
+    assert first["kind"] == "contact"                       # not an agent's login yet
+    agent.user = bot
+    agent.save(update_fields=["user"])
+    again = _arrive(w["priv"], sub="ace-owner", email="ace@dimagi-ai.com", email_verified=True)
+    assert again["kind"] == "user" and again["contact_id"] == first["contact_id"]
+    assert Contact.objects.get(pk=first["contact_id"]).user == bot
+
+
+def test_an_agents_login_outside_the_sites_workspace_stays_a_contact(w):
+    _agent_login(w, member=False)
+    got = _arrive(w["priv"], email="ace@dimagi-ai.com", email_verified=True)
+    assert got["kind"] == "contact"
+
+
+def test_an_agents_login_still_needs_the_site_to_say_verified(w):
+    _agent_login(w)
+    assert _arrive(w["priv"], email="ace@dimagi-ai.com")["kind"] == "contact"
+
+
+def test_a_human_with_no_verified_email_row_is_still_a_contact(w):
+    """No loosening for people: `User.email` alone proves nothing unless the
+    account is bound as some agent's own login."""
+    bob = User.objects.create_user("bob", "bob@dimagi.com", "pw")
+    M.objects.create(user=bob, workspace=w["ws"], role=M.EDITOR)
+    assert _arrive(w["priv"], email="bob@dimagi.com", email_verified=True)["kind"] == "contact"
+
+
+def test_a_human_verified_holder_of_the_address_wins_over_an_agent_login(w):
+    bot, _ = _agent_login(w)
+    EmailAddress.objects.create(user=w["alice"], email="ace@dimagi-ai.com", verified=True)
+    got = _arrive(w["priv"], email="ace@dimagi-ai.com", email_verified=True)
+    assert got["kind"] == "user" and DelegatedToken.lookup(got["token"]).user == w["alice"]
+
+
+def test_two_agent_logins_on_one_address_is_ambiguous(w):
+    from apps.agents.models import Agent
+    from apps.contacts.services import user_for_verified_email
+
+    _agent_login(w)
+    twin = User.objects.create_user("ace-twin", "ACE@dimagi-ai.com")
+    Agent.objects.create(slug="ace2", name="Ace2", workspace=w["ws"], user=twin)
+    assert user_for_verified_email("ace@dimagi-ai.com") is None
