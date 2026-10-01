@@ -142,14 +142,26 @@ def reconcile(installation: SlackInstallation) -> dict:
         added = [name for name in want if name not in present]
         kept += [want[name] for name in added]
 
-        if added or removed:
+        # The app's declared bot scopes must cover what the install asks for
+        # (views_auth.BOT_SCOPES), or a new scope never lands. Adding one still
+        # needs a re-install to take effect; this only puts it on the app. Not
+        # the agent scope: that one is `declare_agent`'s deliberate act.
+        from .views_auth import BOT_SCOPES
+
+        scopes = manifest.setdefault("oauth_config", {}).setdefault("scopes", {})
+        bot = list(scopes.get("bot") or [])
+        scopes_added = [s for s in BOT_SCOPES if s not in bot and s != AGENT_SCOPE]
+        if scopes_added:
+            scopes["bot"] = sorted({*bot, *scopes_added})
+        if added or removed or scopes_added:
             features["slash_commands"] = kept
             client.call("apps.manifest.update", token=token,
                         data={"app_id": installation.app_id, "manifest": json.dumps(manifest)})
         installation.commands_synced_at = timezone.now()
         installation.commands_sync_error = ""
         installation.save(update_fields=["commands_synced_at", "commands_sync_error"])
-        return {"added": sorted(added), "removed": sorted(removed), "unfit": unfit}
+        return {"added": sorted(added), "removed": sorted(removed), "unfit": unfit,
+                "scopes_added": scopes_added}
     except NotConfigured:
         raise
     except Exception as e:

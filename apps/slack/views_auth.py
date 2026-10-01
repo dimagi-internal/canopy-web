@@ -41,6 +41,8 @@ BOT_SCOPES = [
     "im:history", "im:read", "im:write",
     "users:read", "users:read.email",
     "channels:history", "groups:history",
+    # Download what people attach, so a screenshot reaches the agent (apps/slack/files.py).
+    "files:read",
 ]
 _STATE_KEY = "slack_install_state"
 

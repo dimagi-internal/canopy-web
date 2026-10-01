@@ -99,19 +99,6 @@ def _record(installation, inbound: services.Inbound, status: str, summary: str,
         logger.exception("could not record a Slack event")
 
 
-def _with_files(text: str, files: list) -> str:
-    """The message text, plus one line per attached file. The app has no
-    `files:read` scope, so the agent cannot open the file — but it must know one
-    was sent, rather than answer a message whose point was the screenshot."""
-    names = [f"{f.get('name') or f.get('title') or 'file'} ({f.get('mimetype') or 'unknown type'})"
-             for f in files if isinstance(f, dict)]
-    if not names:
-        return text
-    note = ("[Attached in Slack, not readable by the agent: " + ", ".join(names)
-            + ". Ask them to paste the content as text if you need it.]")
-    return f"{text}\n\n{note}" if text else note
-
-
 def _inbound_from_event(body: dict) -> services.Inbound | None:
     event = body.get("event") or {}
     kind = event.get("type")
@@ -139,11 +126,12 @@ def _inbound_from_event(body: dict) -> services.Inbound | None:
         team_id=str(body.get("team_id") or event.get("team") or ""),
         channel_id=str(event.get("channel") or ""),
         slack_user_id=str(event.get("user") or ""),
-        text=_with_files(str(event.get("text") or ""), event.get("files") or []),
+        text=str(event.get("text") or ""),
         ts=str(event.get("ts") or ""),
         thread_ts=str(event.get("thread_ts") or ""),
         is_dm=is_dm,
         follow=follow,
+        files=tuple(f for f in (event.get("files") or []) if isinstance(f, dict)),
     )
 
 
