@@ -1,0 +1,35 @@
+import { useEffect, useState } from "react";
+import { listTurnEvents, type TurnEvent } from "@/api/turns";
+
+/** Lazily loads the turn's event ledger on first expand; component unmounts on
+ * collapse, so re-expanding refetches — fine for a rarely-opened drill-down. */
+export function EventLedger({ turnId }: { turnId: string }) {
+  const [events, setEvents] = useState<TurnEvent[] | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    listTurnEvents(turnId)
+      .then((e) => { if (alive) setEvents(e); })
+      .catch((e) => { if (alive) setError(e instanceof Error ? e.message : "Failed to load events"); });
+    return () => { alive = false; };
+  }, [turnId]);
+
+  if (error) return <p className="text-xs text-destructive">{error}</p>;
+  if (events === null) return <p className="text-xs text-muted-foreground">Loading events…</p>;
+  if (events.length === 0) return <p className="text-xs text-muted-foreground">No events recorded.</p>;
+
+  return (
+    <ol className="space-y-1">
+      {events.map((e) => (
+        <li key={e.seq} className="flex gap-2 text-xs">
+          <span className="text-foreground-subtle tabular-nums">#{e.seq}</span>
+          <span className="text-foreground-secondary" title={new Date(e.ts).toLocaleString()}>
+            {new Date(e.ts).toLocaleTimeString()}
+          </span>
+          <span className="font-medium text-foreground">{e.kind}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
