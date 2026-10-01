@@ -1800,3 +1800,25 @@ def test_only_an_owner_may_declare(slack, ws, installation, managed, alice):
 
 def test_declaring_without_a_config_token_says_so(slack, ws, installation, owner_client):
     assert _declare(owner_client, ws).status_code == 409           # nothing to edit the app with
+
+
+# ---- a reply that will NOT reach the conversation above it says so ---------------------
+
+def test_a_confined_reply_says_it_is_a_separate_session(slack, installation, hal):
+    """In Slack a confined turn looks exactly like typing into the thread, but it
+    runs in its own session on the runner. Shayoni's reply did this, 2026-10-01."""
+    from apps.agents.interface import parse
+
+    hal.interface = parse({"capabilities": {"ask": {"description": "Ask Hal",
+                                                     "callers": ["contact"]}}})
+    hal.save(update_fields=["interface"])
+    mention("hal who owns the budget?")
+    assert Turn.objects.get().capability == "ask"
+    text = _line(slack)["text"]
+    assert "Separate session" in text and "Alice A" in text and "`ask`" in text
+
+
+def test_a_member_in_full_gets_no_separate_session_note(slack, linked, hal):
+    mention("hal summarise")
+    assert Turn.objects.get().capability == ""
+    assert "Separate session" not in _line(slack)["text"]

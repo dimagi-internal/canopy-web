@@ -80,6 +80,27 @@ def _header(turn: Turn) -> str:
     return f":speech_balloon: {by}: _{to_mrkdwn(prompt)}_"
 
 
+def _confined_note(turn: Turn, agent: str) -> str:
+    """Why this reply is NOT going into the conversation above it.
+
+    A confined turn runs in its own session on the runner (`<thread>#<capability>`,
+    a `cx-` session), apart from the one the thread's owner is in. In Slack it
+    looks exactly like typing into the thread, so without this line a colleague's
+    reply silently forked into a session the owner never saw (2026-10-01).
+    """
+    if turn.initiator_user_id:
+        u = turn.initiator_user
+        who = (u.get_full_name() or u.email or "").strip()
+    else:
+        c = turn.initiator_contact if turn.initiator_contact_id else None
+        who = (getattr(c, "display_name", "") or getattr(c, "email", "") or "").strip()
+    who = who or "This sender"
+    return (f":lock: *Separate session* — {who} isn't a member of this conversation in canopy, so "
+            f"{agent} answers this on its own in `{turn.capability}` mode (questions only, no "
+            "actions), and it does not reach the session above. To bring them in, add them to "
+            "the agent's canopy workspace and have them reply again.")
+
+
 def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     """(text, blocks) for this turn's status line — Slack's VOICE for the shared
     state in `harness.turn_status`. `reach` is only consulted while the turn is
@@ -149,6 +170,8 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
 
     lines = [] if turn.origin == Turn.ORIGIN_SLACK else [_header(turn)]
     lines.append(line)
+    if turn.capability:
+        lines.append(_confined_note(turn, agent))
     # A contact's session has no owner who could open it; a link would be a dead end.
     if session is not None and session.created_by_id:
         lines.append(f"<{session_url(session)}|Open in canopy>")
