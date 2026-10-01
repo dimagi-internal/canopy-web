@@ -146,6 +146,49 @@ def promote_to_user(contact: Contact, user) -> Contact:
     return contact
 
 
+def user_for_verified_email(email: str):
+    """The ONE active canopy user that `email` provably belongs to, or None.
+
+    Every place canopy maps an already-verified address (a site's signed
+    `email_verified: true`, a DMARC-aligned From:) to an existing account asks
+    this, so the two cannot drift. In order:
+
+      1. Exactly one user holds it as a VERIFIED allauth `EmailAddress` — the
+         record a human's login proves. (Several holders: ambiguous, None.)
+      2. When NOBODY holds it that way: exactly one user that is some agent's
+         own login (`Agent.user`, #983) whose `User.email` is that address.
+
+    Why (2) exists: agent logins are minted by `create_token --create-user`
+    (and bound by an operator through `Agent.user`), never through an allauth
+    sign-in, so they have no `EmailAddress` row and could never be resolved —
+    ace-web started an ACE run as `ace@dimagi-ai.com`, ACE's own login, and
+    turn 2727e227 arrived as a contact confined to `ask`, which then refused
+    the run. `User.email` alone is a free field and proves nothing for a human
+    (that rule stands); it counts here only because an operator explicitly
+    bound that account as an agent's identity, which is the provenance the
+    allauth row would otherwise supply. A verified row anywhere wins outright,
+    so this can never redirect an address a human has proven.
+
+    Finding a user grants nothing: every caller still applies its own gate
+    (workspace membership, this message's DMARC alignment).
+    """
+    from allauth.account.models import EmailAddress
+    from django.contrib.auth import get_user_model
+
+    email = _normalize(email)
+    if not email:
+        return None
+    User = get_user_model()
+    ids = list(EmailAddress.objects.filter(email__iexact=email, verified=True)
+               .values_list("user_id", flat=True).distinct()[:2])
+    if not ids:
+        ids = list(User.objects.filter(email__iexact=email, agent_identity__isnull=False)
+                   .values_list("pk", flat=True).distinct()[:2])
+    if len(ids) != 1:
+        return None
+    return User.objects.filter(pk=ids[0], is_active=True).first()
+
+
 def for_workspace(workspace_slug: str):
     """This tenant's contacts. Scoped by the caller, never global."""
     return Contact.objects.filter(workspace_id=workspace_slug).select_related("user", "app")
@@ -160,7 +203,8 @@ def resolve_arrival(*, app, contact: Contact, claims: dict):
 
       1. The contact is already linked to a user (`promote_to_user`): that user.
       2. The site signed `email_verified: true` for an address that exactly
-         one active canopy user already holds as a VERIFIED allauth email:
+         one active canopy user provably holds (`user_for_verified_email`: a
+         VERIFIED allauth email, or — with none — an agent's own login):
          link the contact and return that user.
       3. Otherwise None — the visitor is a contact, as before.
 
@@ -176,7 +220,6 @@ def resolve_arrival(*, app, contact: Contact, claims: dict):
     Linking grants nothing (see `promote_to_user`); arriving as a user means
     that user's OWN ACL applies.
     """
-    from allauth.account.models import EmailAddress
     from django.contrib.auth import get_user_model
 
     from apps.workspaces import services as wsvc
@@ -185,13 +228,8 @@ def resolve_arrival(*, app, contact: Contact, claims: dict):
     user = None
     if contact.user_id:
         user = User.objects.filter(pk=contact.user_id, is_active=True).first()
-    else:
-        email = _normalize(str(claims.get("email") or ""))
-        if email and claims.get("email_verified") is True:
-            ids = list(EmailAddress.objects.filter(email__iexact=email, verified=True)
-                       .values_list("user_id", flat=True).distinct()[:2])
-            if len(ids) == 1:
-                user = User.objects.filter(pk=ids[0], is_active=True).first()
+    elif claims.get("email_verified") is True:
+        user = user_for_verified_email(str(claims.get("email") or ""))
     # A question about the VISITOR's membership, asked through the one authorizer.
     if user is None or not wsvc.is_member(user, contact.workspace_id):
         return None

@@ -108,7 +108,9 @@ def _member_behind_email(agent, contact):
         own receiver's verdict. SPF or unaligned DKIM
         alone do not tie the signature to the visible From; the best-ever grade
         says nothing about a spoof today.
-      * exactly one canopy user holds that address as a VERIFIED allauth email.
+      * exactly one canopy user provably holds that address
+        (`contacts.services.user_for_verified_email`: a VERIFIED allauth email,
+        or — with none — an agent's own login, `Agent.user`).
       * that user is a member of the agent's workspace. A canopy account with
         no business in this tenant stays a contact.
       * the contact is not already linked to someone else.
@@ -120,17 +122,11 @@ def _member_behind_email(agent, contact):
 
     if contact is None or contact.last_auth_result not in Contact.EMAIL_ALIGNED or not contact.email:
         return None
-    from allauth.account.models import EmailAddress
-
-    users = list(EmailAddress.objects.filter(email__iexact=contact.email, verified=True)
-                 .values_list("user_id", flat=True).distinct()[:2])
-    if len(users) != 1:
+    user = contacts.user_for_verified_email(contact.email)
+    if user is None:
         return None
-    if contact.user_id is not None and contact.user_id != users[0]:
+    if contact.user_id is not None and contact.user_id != user.pk:
         return None
-    from django.contrib.auth import get_user_model
-
-    user = get_user_model().objects.filter(pk=users[0], is_active=True).first()
     # A question about the SENDER's membership, asked through the one authorizer.
     if user is None or not wsvc.is_member(user, agent.workspace_id):
         return None
