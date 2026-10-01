@@ -720,6 +720,20 @@ def test_a_plain_reply_in_the_thread_continues_the_conversation(slack, linked, h
     assert len(slack.said("chat.postMessage")) == 2 and not slack.said("chat.postEphemeral")
 
 
+def test_a_reply_with_an_image_attached_still_reaches_the_agent(slack, linked, hal):
+    """Slack marks a message carrying a file `subtype: file_share`. It used to be
+    dropped with the edits and joins, so a reply with a screenshot vanished."""
+    mention("hal first")
+    event({"type": "message", "subtype": "file_share", "channel_type": "channel", "user": ALICE,
+           "text": "here's what I see", "ts": "1700000050.000100",
+           "thread_ts": "1700000000.000100", "channel": "C1",
+           "files": [{"name": "image.png", "mimetype": "image/png"}]})
+    turns = list(Turn.objects.order_by("created_at"))
+    assert len(turns) == 2 and turns[0].chat_session_id == turns[1].chat_session_id
+    assert turns[1].prompt.startswith("here's what I see")
+    assert "image.png (image/png)" in turns[1].prompt
+
+
 def test_messages_in_threads_canopy_is_not_in_are_dropped_unread(slack, linked, hal):
     thread_reply("colleagues talking among themselves", thread_ts="1699999999.000100")
     event({"type": "message", "channel_type": "channel", "user": ALICE, "text": "hal top level",
