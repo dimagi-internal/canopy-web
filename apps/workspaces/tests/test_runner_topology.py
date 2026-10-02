@@ -87,3 +87,17 @@ def test_rooted_at_a_division_shows_only_that_branch(tree):
 def test_editor_is_refused_and_non_member_sees_nothing(tree):
     assert _get(tree["staff"], "dimagi").status_code == 403
     assert _get(tree["outsider"], "dimagi").status_code == 404
+
+
+def test_admin_sees_only_the_workspaces_they_administer(tree):
+    admin = _user("ops@dimagi.com")
+    WorkspaceMembership.objects.create(
+        workspace=Workspace.objects.get(slug="dimagi"), user=admin, role=WorkspaceMembership.ADMIN,
+    )
+    body = _get(admin, "dimagi").json()
+    # Only ownership flows down the tree: admin of the org is not admin of a division.
+    assert [w["slug"] for w in body["workspaces"]] == ["dimagi"]
+    WorkspaceMembership.objects.create(
+        workspace=Workspace.objects.get(slug="connect"), user=admin, role=WorkspaceMembership.ADMIN,
+    )
+    assert [w["slug"] for w in _get(admin, "dimagi").json()["workspaces"]] == ["dimagi", "connect"]

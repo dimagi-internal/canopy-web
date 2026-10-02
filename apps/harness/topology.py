@@ -10,15 +10,18 @@ what breaks if this laptop closes?" had no answer short of opening every agent.
 Read-only, and computed — nothing here is stored, for the same reason turn status
 is not a column: it is a function of rows that change on their own clock.
 
-Who may read it: an OWNER of the root workspace (the caller checks). Ownership is
-the one thing the tree passes down, so an owner of the root already owns every
-workspace listed — this view grants nothing that an owner could not reach one
-agent at a time. A runner homed outside the subtree still appears when an agent
+Who may read it: someone holding `logs.read` (admin+) on the root, and the
+subtree is filtered to the workspaces where they hold it too (`visible`). An
+owner of the root owns every descendant, so they see the whole tree; an admin
+sees only where they are admin. Nothing here is beyond what that reader could
+open agent by agent. A runner homed outside the subtree still appears when an agent
 inside routes to it; its row carries only what the agent's own Routing table
 already shows (name, kind, liveness) plus where it lives and who paired it, which
 is the fact an owner needs to know who to call when it goes dark.
 """
 from __future__ import annotations
+
+from collections.abc import Callable
 
 from apps.agents.models import Agent
 from apps.workspaces import services as wsvc
@@ -28,14 +31,19 @@ from .models import Runner, RunnerAssignment
 from .services import runner_tenant_slugs
 
 
-def build(root: Workspace) -> dict:
-    """The topology rooted at `root`: its subtree, every agent in it with its
-    routing, and every runner those agents route to or that lives in the tree."""
-    slugs = {root.slug} | wsvc.descendant_slugs({root.slug})
-    workspaces = list(Workspace.objects.filter(slug__in=slugs))
+def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) -> dict:
+    """The topology rooted at `root`: its subtree (the descendants `visible`
+    admits), every agent in it with its routing, and every runner those agents
+    route to or that lives in the tree."""
+    slugs = {root.slug} | {s for s in wsvc.descendant_slugs({root.slug}) if visible(s)}
+    workspaces = {ws.slug: ws for ws in Workspace.objects.filter(slug__in=slugs)}
     by_parent: dict[str | None, list[Workspace]] = {}
-    for ws in workspaces:
-        parent = ws.parent_id if ws.parent_id in slugs and ws.slug != root.slug else None
+    for ws in workspaces.values():
+        if ws.slug == root.slug:
+            continue
+        # Hang a workspace under its nearest VISIBLE ancestor, so an admin of a
+        # grandchild (but not the child) still sees it in the tree.
+        parent = next((a for a in ws.ancestor_slugs() if a in slugs), root.slug)
         by_parent.setdefault(parent, []).append(ws)
 
     agents = list(Agent.objects.filter(workspace_id__in=slugs).order_by("name"))

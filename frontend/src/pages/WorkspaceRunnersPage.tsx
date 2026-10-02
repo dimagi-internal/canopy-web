@@ -62,7 +62,7 @@ function Topology({ slug }: { slug: string }): JSX.Element {
   if (forbidden) {
     return (
       <p className="text-[13px] text-muted-foreground" data-testid="topology-forbidden">
-        Only a workspace owner can see the runner topology — it spans every workspace below this one.
+        Only a workspace admin or owner can see the runner topology.
       </p>
     )
   }

@@ -3605,7 +3605,7 @@ export interface paths {
          * Which runners serve which agents, across this workspace and every one below it
          * @description This workspace and its descendants, each with its agents and their routing
          *     (the default ordered list and every source rule), plus every runner those
-         *     agents route to or that lives in the tree. Owner-only.
+         *     agents route to or that lives in the tree. Admin and above.
          */
         readonly get: operations["runner_topology"];
         readonly put?: never;

@@ -493,12 +493,13 @@ def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) ->
 def runner_topology(request: HttpRequest, slug: str) -> RunnerTopologyOut:
     """This workspace and its descendants, each with its agents and their routing
     (the default ordered list and every source rule), plus every runner those
-    agents route to or that lives in the tree. Owner-only."""
-    # Owner-only because an owner of this workspace owns every descendant
-    # (Workspace.parent), so the view shows nothing an owner could not already
-    # open agent by agent. An editor's reach stops at this workspace, and a
-    # subtree view would hand them its divisions.
+    agents route to or that lives in the tree. Admin and above."""
+    # `logs.read` — the operational read tier (runner drills, health) — on the
+    # root, and again on every descendant: only OWNERSHIP flows down the tree,
+    # so an admin of the root sees a division only where they are its admin too.
     from apps.harness import topology
 
-    m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
-    return RunnerTopologyOut(**topology.build(m.workspace))
+    m = _require(request.user, slug, perms.LOGS_READ)
+    return RunnerTopologyOut(**topology.build(
+        m.workspace, visible=lambda s: perms.can(request.user, s, perms.LOGS_READ),
+    ))
