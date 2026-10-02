@@ -30,7 +30,9 @@ export function turnBody(turn: AgentTurnOut): string {
 export function turnTrigger(turn: AgentTurnOut): string {
   const ref = (turn.origin_ref ?? {}) as Record<string, unknown>
   if (turn.origin === 'canopy_scheduler') {
-    if (typeof ref.slot === 'string') return `schedule · ${ref.slot}`
+    // The schedule's NAME, not its slot: the slot is the fire time as an ISO
+    // timestamp, which the card already shows as its date.
+    if (typeof ref.schedule_name === 'string' && ref.schedule_name) return `schedule · ${ref.schedule_name}`
     if (ref.manual) return 'schedule · run now'
     return 'schedule'
   }

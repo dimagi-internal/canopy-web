@@ -23,3 +23,16 @@ export async function listTurnEvents(turnId: string): Promise<TurnEvent[]> {
   if (error) throw new Error(problemMessage(error, "Failed to load turn events"));
   return data.events as TurnEvent[];
 }
+
+export type TurnMessages = components["schemas"]["TurnMessagesOut"];
+
+/** A turn's retained transcript as readable messages — how you see what a
+ * cloud-runner turn did, since it has no chat. Bounded server-side; `truncated`
+ * says the view stopped early. */
+export async function listTurnMessages(turnId: string): Promise<TurnMessages> {
+  const { data, error } = await apiV2.GET("/api/harness/turns/{turn_id}/messages", {
+    params: { path: { turn_id: turnId } },
+  });
+  if (error) throw new Error(problemMessage(error, "Failed to load the transcript"));
+  return { ...data, messages: Array.from(data.messages) };
+}

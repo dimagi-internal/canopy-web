@@ -1471,6 +1471,47 @@ def iter_transcript(turn: Turn, *, chunk_size: int = 64 * 1024):
             yield chunk
 
 
+#: How much of a turn's transcript the reading view parses. A prefix, not the
+#: whole thing: the view exists to show what a turn did, and a turn long enough
+#: to blow past this is read in full from the raw route instead.
+TRANSCRIPT_VIEW_MAX_MESSAGES = 500
+
+
+def iter_transcript_lines(turn: Turn):
+    """`iter_transcript`, re-cut at newlines and decoded — one JSONL line at a
+    time, still without materializing the whole blob."""
+    pending = b""
+    for chunk in iter_transcript(turn):
+        pending += chunk
+        *lines, pending = pending.split(b"\n")
+        for line in lines:
+            yield line.decode("utf-8", errors="replace")
+    if pending:
+        yield pending.decode("utf-8", errors="replace")
+
+
+def transcript_messages(
+    turn: Turn, *, max_messages: int = TRANSCRIPT_VIEW_MAX_MESSAGES
+) -> tuple[list[dict], bool]:
+    """A turn's retained transcript as readable messages — the same shape, parser
+    and secret scrub as a shared session page — plus whether it was cut short.
+
+    This is how you see what a CLOUD-runner agent turn did: it runs one-shot
+    `claude -p` with no canopy Session to stream into, so the transcript on the
+    turn is the only record of its work. The raw route stays the byte-exact
+    source; this is a bounded reading view over it."""
+    from apps.session_sharing import parser, redact
+
+    parsed = parser.parse_lines(iter_transcript_lines(turn), max_turns=max_messages)
+    messages = []
+    for index, t in enumerate(parsed.turns):
+        plaintext, content, _ = redact.redact_turn(t.plaintext, t.content)
+        messages.append(
+            {"turn_index": index, "role": t.role, "content": content, "plaintext": plaintext}
+        )
+    return messages, len(parsed.turns) >= max_messages
+
+
 def mark_running(turn: Turn, *, session_id: str = "") -> Turn:
     """Transition CLAIMED|RUNNING -> RUNNING. A no-op (no event, no field
     writes) if the turn was swept to a terminal state (e.g. lost) underneath

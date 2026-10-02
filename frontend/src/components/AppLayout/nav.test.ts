@@ -18,12 +18,14 @@ describe('NAV_GROUPS', () => {
     // were three entries for three pages, and those pages are now sections of
     // /w/:workspace/settings. Nothing was dropped — the destinations moved
     // behind one entry, and Connected sites (which was in no menu) came with
-    // them. Everything else still earns its own line.
+    // them. Everything else still earns its own line — except shared
+    // transcripts (/sessions), which are reached by their /share/<token> link
+    // and deliberately have no menu entry.
     const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))
     expect(labels.sort()).toEqual(
       [
         'Activity', 'Agents', 'Chats', 'DDD', 'Guide', 'Insights',
-        'Projects', 'Schedule', 'Sessions', 'Settings', 'Shareouts', 'Storyboards',
+        'Projects', 'Schedule', 'Settings', 'Shareouts', 'Storyboards',
         'Supervisor', 'System', 'Timeline', 'Walkthroughs',
       ].sort(),
     )
@@ -60,7 +62,7 @@ describe('resolveNavGroups', () => {
     const groups = resolveNavGroups({ isAuthed: true, active: null })
     const hrefs = groups.flatMap((g) => g.items.map((i) => i.href))
     expect(hrefs.some((h) => h.includes('/w//'))).toBe(false)
-    expect(hrefs).toEqual(['/insights', '/supervisor', '/activity', '/schedules', '/sessions', '/system', '/guide'])
+    expect(hrefs).toEqual(['/insights', '/supervisor', '/activity', '/schedules', '/system', '/guide'])
   })
 
   it('drops a group whose items are all tenant-scoped while the workspace is unknown', () => {
@@ -124,7 +126,7 @@ describe('isNavGroupActive', () => {
       '/w/connect', '/w/connect/chat', '/insights', '/supervisor',
       '/w/connect/agents', '/activity', '/schedules', '/w/connect/ddd',
       '/w/connect/walkthroughs', '/w/connect/storyboards', '/w/connect/shareouts', '/w/connect/timeline',
-      '/sessions', '/w/connect/settings', '/w/connect/settings/slack', '/system',
+      '/w/connect/settings', '/w/connect/settings/slack', '/system',
     ]) {
       const hits = groups.filter((g) => isNavGroupActive(g, pathname)).map((g) => g.label)
       expect(hits, pathname).toHaveLength(1)

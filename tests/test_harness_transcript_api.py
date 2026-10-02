@@ -280,3 +280,66 @@ def test_a_new_batch_id_still_appends_normally(owner_client, agent):
 
     read = _get(owner_client, turn_id)
     assert _body(read) == b"line one\nline two"
+
+
+# ---- the reading view: GET /turns/{id}/messages -----------------------------
+# A cloud-runner agent turn has no canopy Session; its transcript is the only
+# record of what it did, so this view is how a person reads it.
+
+_CLI_LINES = [
+    '{"type": "system", "subtype": "init", "session_id": "cli-1"}',
+    '{"type": "user", "message": {"content": "do the daily turn"}}',
+    '{"type": "assistant", "message": {"id": "m1", "content": ['
+    '{"type": "text", "text": "Reading the board. "},'
+    '{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}}',
+    '{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "a.txt"}]}}',
+    '{"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "Nothing to do."}]}}',
+    '{"type": "result"}',
+]
+
+
+def test_messages_parses_the_transcript_into_readable_turns(owner_client, agent):
+    turn_id = _enqueue(owner_client)
+    assert _post_lines(owner_client, turn_id, _CLI_LINES).status_code == 200
+
+    resp = owner_client.get(f"/api/harness/turns/{turn_id}/messages")
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert [m["role"] for m in body["messages"]] == [
+        "user", "assistant", "tool_use", "tool_result", "assistant",
+    ]
+    assert body["messages"][-1]["plaintext"] == "Nothing to do."
+    assert body["truncated"] is False
+
+
+def test_messages_is_empty_for_a_turn_with_no_transcript(owner_client, agent):
+    turn_id = _enqueue(owner_client)
+    resp = owner_client.get(f"/api/harness/turns/{turn_id}/messages")
+    assert resp.status_code == 200
+    assert resp.json() == {"messages": [], "truncated": False}
+
+
+def test_messages_is_cut_short_and_says_so(owner_client, agent):
+    turn_id = _enqueue(owner_client)
+    lines = [f'{{"type": "user", "message": {{"content": "q{i}"}}}}' for i in range(7)]
+    _post_lines(owner_client, turn_id, lines)
+    turn = Turn.objects.get(pk=turn_id)
+    messages, truncated = services.transcript_messages(turn, max_messages=3)
+    assert [m["plaintext"] for m in messages] == ["q0", "q1", "q2"]
+    assert truncated is True
+
+
+def test_messages_scrubs_secrets(owner_client, agent):
+    turn_id = _enqueue(owner_client)
+    secret = "ghp_" + "a" * 36
+    _post_lines(owner_client, turn_id, [
+        f'{{"type": "user", "message": {{"content": "token {secret}"}}}}',
+    ])
+    text = owner_client.get(f"/api/harness/turns/{turn_id}/messages").content.decode()
+    assert secret not in text
+
+
+def test_messages_is_tenant_gated_like_the_raw_route(owner_client, stranger_client, agent):
+    turn_id = _enqueue(owner_client)
+    _post_lines(owner_client, turn_id, _CLI_LINES)
+    assert stranger_client.get(f"/api/harness/turns/{turn_id}/messages").status_code == 404

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,17 +34,26 @@ def parse_session_file(path: Path) -> ParsedSession:
     """Parse a .jsonl session file and return structured turn data."""
     raw = path.read_bytes()
     lines = raw.decode("utf-8", errors="replace").splitlines()
+    session = parse_lines(lines)
+    session.raw_bytes = len(raw)
+    session.line_count = len(lines)
+    return session
 
-    session = ParsedSession(
-        cli_session_id="",
-        raw_bytes=len(raw),
-        line_count=len(lines),
-    )
+
+def parse_lines(lines: Iterable[str], *, max_turns: int | None = None) -> ParsedSession:
+    """Parse JSONL lines into structured turn data. Takes any iterable so a
+    caller holding a stream (a turn's retained transcript, read in bounded
+    chunks) never has to materialize the whole file. `max_turns` stops reading
+    once that many turns are parsed — the result is then a prefix, flagged by
+    `len(session.turns) >= max_turns`."""
+    session = ParsedSession(cli_session_id="")
 
     current_assistant_text: list[str] = []
     current_msg_id: str | None = None
 
     for line in lines:
+        if max_turns is not None and len(session.turns) >= max_turns:
+            break
         line = line.strip()
         if not line:
             continue

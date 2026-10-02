@@ -48,9 +48,9 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/sessions',
-    title: 'Shared sessions',
+    title: 'Shared transcripts',
     audience: 'Anyone who wants to hand someone a transcript link',
-    what: 'Claude Code transcripts you (or your agents/teammates) have shared as read-only web pages — one row per session with its visibility and link.',
+    what: 'Claude Code transcripts you (or your agents/teammates) have shared as read-only web pages — one row per transcript with its visibility and link. Not in the menus: a shared transcript is opened by its own /share/<token> link, and this page is where you manage the ones you shared. Live conversations with agents are Chats.',
     needsFirst: 'canopy:share-session run once to upload a transcript.',
     actions: ['Copy or open a share link', 'Rotate a link', 'Toggle private/link visibility', 'Delete a shared session'],
   },

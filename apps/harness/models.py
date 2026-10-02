@@ -698,8 +698,9 @@ class TurnTranscript(models.Model):
     don't belong on the hot row. TurnEvent stays a deliberately reduced live
     stream (assistant text, tool start/end); this is the durable artifact
     cost/structure features re-derive from, so it must hold the CLI's output
-    byte-for-byte. canopy never parses this JSONL — that is the consumer's
-    business (see services.append_transcript / read_transcript).
+    byte-for-byte. canopy stores it unparsed — interpreting it is the consumer's
+    business (see services.append_transcript / read_transcript); canopy's own
+    one reader is the bounded reading view, services.transcript_messages.
 
     `raw_jsonl_gz` may hold MULTIPLE concatenated gzip members (one per
     `append_transcript` batch) rather than a single re-compressed blob —

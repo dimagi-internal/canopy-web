@@ -66,14 +66,15 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     // Things published for, or about, the team — plus the workspace's own
-    // admin. Shareouts and Sessions live here rather than under Demos: both
-    // are work you publish for teammates to read, which is the workspace's
-    // business, not a demo artifact.
+    // admin. Shareouts live here rather than under Demos: it is work you
+    // publish for teammates to read, which is the workspace's business, not a
+    // demo artifact. Shared transcripts (/sessions) are deliberately NOT a
+    // menu item: a shared transcript is reached by its own /share/<token> link,
+    // and listing them beside Chats read as a second, emptier kind of session.
     label: 'Workspace',
     items: [
       { path: 'shareouts', label: 'Shareouts', tenant: true },
       { path: 'timeline', label: 'Timeline', tenant: true },
-      { path: '/sessions', label: 'Sessions', tenant: false },
       // ONE entry for the workspace's configuration. Members, Slack and
       // Inbound were three of the four sections behind it; the fourth
       // (Connected sites) was in no menu at all, which is what a surface with

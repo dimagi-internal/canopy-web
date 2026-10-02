@@ -105,3 +105,83 @@ def test_unreported_dispatch_turn_carries_its_prompt_and_result(authed_client, w
     assert item["result_note"] == "opened PR #12"
     assert item["origin_ref"] == {"slot": "daily"}
     assert (item["status"], item["origin"]) == ("done", "api")
+
+
+# ---- where a turn's work lives: chat_session_id / has_transcript --------------
+
+def _turn(agent, key, **kw):
+    from apps.harness.models import Turn
+
+    return Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key=key, **kw)
+
+
+def _runner_session(agent, session_key, created_at=None):
+    from apps.canopy_sessions.models import RunnerBinding, Session
+
+    session = Session.objects.create(
+        agent=agent, workspace=agent.workspace, origin=Session.ORIGIN_RUNNER, title=session_key,
+    )
+    if created_at is not None:
+        Session.objects.filter(pk=session.pk).update(created_at=created_at)
+    RunnerBinding.objects.create(session=session, session_key=session_key)
+    return session
+
+
+def _items(client):
+    return {i["id"]: i for i in client.get("/api/agents/echo/turns/?limit=50").json()["items"]}
+
+
+def test_a_laptop_turn_links_to_the_emdash_session_it_drove(authed_client, workspace):
+    """emdash_task_id on the turn is the RunnerBinding.session_key the runner's
+    session report records — the join that takes a turn to its chat."""
+    from django.utils import timezone
+
+    agent = _echo(workspace)
+    session = _runner_session(agent, "c-daily-turn-ad53")
+    turn = _turn(agent, "t1", status="done", emdash_task_id="c-daily-turn-ad53",
+                 finished_at=timezone.now())
+    item = _items(authed_client)[str(turn.id)]
+    assert item["chat_session_id"] == str(session.id)
+    assert item["has_transcript"] is False
+
+
+def test_a_reused_session_name_never_links_to_a_later_session(authed_client, workspace):
+    """emdash task names get reused. A session that only came into being after
+    the turn finished is a different conversation that shares the name."""
+    import datetime as dt
+
+    from django.utils import timezone
+
+    agent = _echo(workspace)
+    finished = timezone.now() - dt.timedelta(days=3)
+    old = _runner_session(agent, "run", created_at=finished - dt.timedelta(seconds=5))
+    _runner_session(agent, "run", created_at=timezone.now())
+    turn = _turn(agent, "t1", status="done", emdash_task_id="run", finished_at=finished)
+    assert _items(authed_client)[str(turn.id)]["chat_session_id"] == str(old.id)
+
+
+def test_a_chat_turn_links_to_its_own_session(authed_client, workspace):
+    from apps.canopy_sessions.models import Session
+    from apps.harness.models import Turn
+
+    agent = _echo(workspace)
+    session = Session.objects.create(agent=agent, workspace=workspace, title="chat")
+    turn = Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_API,
+                               idempotency_key="c1", status="done")
+    # A chat turn targets the session, not the agent, so it is not on the agent's
+    # own turn list — the link is exercised directly.
+    from apps.agents import services as agent_services
+
+    agent_services._link_turn_sessions(agent, [turn])
+    assert turn.linked_session_id == session.id
+
+
+def test_a_cloud_turn_has_no_session_but_has_its_transcript(authed_client, workspace):
+    from apps.harness import services as harness_services
+
+    agent = _echo(workspace)
+    turn = _turn(agent, "t1", status="done", session_id="cloud-609d0a02")
+    harness_services.append_transcript(turn, ['{"type": "result"}'])
+    item = _items(authed_client)[str(turn.id)]
+    assert item["chat_session_id"] is None
+    assert item["has_transcript"] is True

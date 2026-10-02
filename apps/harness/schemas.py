@@ -642,6 +642,20 @@ class TranscriptAppendIn(Schema):
     batch_id: str = ""
 
 
+class TurnMessageOut(Schema):
+    turn_index: int
+    role: str
+    content: dict
+    plaintext: str
+
+
+class TurnMessagesOut(Schema):
+    messages: list[TurnMessageOut]
+    #: The view stopped at services.TRANSCRIPT_VIEW_MAX_MESSAGES; the raw
+    #: transcript route has the rest.
+    truncated: bool
+
+
 class TranscriptAppendOut(Schema):
     line_count: int
     bytes_raw: int
