@@ -241,6 +241,22 @@ export async function revokeRunnerAdmin(runnerId: string, userId: number): Promi
   if (error) throw new Error(`revokeRunnerAdmin failed: ${JSON.stringify(error)}`)
 }
 
+// Whether a box takes SESSION work — Slack threads and web chat. Without it a runner
+// never appears in "start a session" and a Slack turn routed only to it reads as
+// unrouted. Pairer-only (PATCH resolves through _runner_or_404). `projects` and
+// `profiles` are REPORTED by the box on every heartbeat, so they are left out of
+// the write rather than echoed back stale.
+export async function setRunnerSessions(runner: RunnerOut, sessions: boolean): Promise<RunnerOut> {
+  const declared = { ...((runner.capabilities ?? {}) as Record<string, unknown>) }
+  delete declared.projects
+  delete declared.profiles
+  const res = await apiV2.PATCH('/api/harness/runners/{runner_id}', {
+    params: { path: { runner_id: runner.id } },
+    body: { capabilities: { ...declared, sessions } },
+  })
+  return toRunner(unwrap(res, 'setRunnerSessions'))
+}
+
 // Declare what a box's owner vouches for (`zdr`). Human-only, and only its pairer or a runner admin;
 // an unknown flag is a 422 that names it.
 export async function setRunnerFlags(runnerId: string, flags: string[]): Promise<RunnerOut> {
