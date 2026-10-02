@@ -348,6 +348,17 @@ Resources:
 
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
+    # Every deploy REPLACES the task definition (a new revision), and by default
+    # CloudFormation then deletes the old one. The deploy role cannot
+    # (no ecs:DeregisterTaskDefinition — see deploy/aws/preflight.py), so the
+    # delete failed, CloudFormation retried it twice three minutes apart, and
+    # gave up: ~6 of every deploy's ~11 minutes went to a cleanup that never
+    # happened (stack events, 2026-10-02: Service UPDATE_COMPLETE 21:11:53, stack
+    # UPDATE_COMPLETE 21:18:01 after three DELETE_FAILEDs). Retain says what was
+    # already true — old revisions stay, as ECS keeps them anyway — and skips
+    # the wait. Deleting them, if ever wanted, is a separate grant + sweep.
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
     Properties:
       Family: labs-jj-canopy-web
       Cpu: "1024"
