@@ -421,11 +421,19 @@ def relay_after_turn(session, replies) -> int:
         return 0
     asks = {_norm(p) for p in turns.order_by("-created_at").values_list("prompt", flat=True)[:20]}
     latest_human = next(
-        (m.plaintext for m in Message.objects.filter(session=session, role=Message.USER)
+        (m for m in Message.objects.filter(session=session, role=Message.USER)
          .order_by("-turn_index")[:10] if not is_system_noise(m.plaintext or "")),
         None,
     )
-    if latest_human is None or _norm(latest_human) not in asks:
+    if latest_human is None:
+        return 0
+    # Typed into emdash WHILE the Slack turn was still running is part of that
+    # turn — its replies were already relayed from the ledger — not the
+    # conversation leaving Slack. Only something typed after the turn closed is.
+    # (2026-10-02: the owner added a screenshot mid-turn, and every word after the
+    # turn yielded — the merge, the deploy, the summary — was held back as private.)
+    during_turn = last.finished_at is not None and latest_human.created_at <= last.finished_at
+    if not during_turn and _norm(latest_human.plaintext) not in asks:
         return 0
     bridged = {_norm(str((p or {}).get("text") or "")) for p in
                TurnEvent.objects.filter(turn=last, kind="assistant").values_list("payload", flat=True)}
