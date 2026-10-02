@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.projects.models import Project
@@ -31,15 +32,18 @@ def _resolve_project(slug: str | None) -> tuple[Project | None, bool]:
         return None, False
 
 
-def upsert_shareouts(items: list, *, workspace=None) -> dict:
+def upsert_shareouts(items: list, *, workspace=None, created_by=None) -> dict:
     """Create shareouts, replacing prior rows in the same group.
 
-    Idempotency group = (workspace, project, period_start, period_end, source).
-    For each distinct group present in the incoming batch we delete pre-existing
-    rows in that group once (counted as `replaced`) before creating the new ones,
-    so re-running a period from the same source overwrites rather than duplicates.
-    Scoping the group to `workspace` keeps a re-post in one tenant from touching
-    another tenant's rows.
+    Idempotency group = (workspace, created_by, project, period_start,
+    period_end, source). For each distinct group present in the incoming batch
+    we delete pre-existing rows in that group once (counted as `replaced`)
+    before creating the new ones, so re-running a period from the same source
+    overwrites rather than duplicates. Scoping the group to `workspace` keeps a
+    re-post in one tenant from touching another tenant's rows; scoping it to
+    `created_by` keeps one person's re-post from deleting a teammate's briefing
+    that happens to share a period and a source tag (`canopy:shareout` is the
+    same source for everybody).
 
     `items` is a list of ShareoutIn-like objects (anything with the attribute
     names). Items whose `project_slug` doesn't resolve are skipped. `workspace`
@@ -60,6 +64,7 @@ def upsert_shareouts(items: list, *, workspace=None) -> dict:
         period_end = _aware(item.period_end)
         group = (
             workspace.pk if workspace else None,
+            created_by.pk if created_by else None,
             project.pk if project else None,
             period_start,
             period_end,
@@ -68,6 +73,7 @@ def upsert_shareouts(items: list, *, workspace=None) -> dict:
         if group not in cleared_groups:
             existing = Shareout.objects.filter(
                 workspace=workspace,
+                created_by=created_by,
                 project=project,
                 period_start=period_start,
                 period_end=period_end,
@@ -90,6 +96,7 @@ def upsert_shareouts(items: list, *, workspace=None) -> dict:
             author=item.author,
             produced_by_agent=getattr(item, "produced_by_agent", "") or "",
             source=item.source,
+            created_by=created_by,
         )
         created += 1
 
@@ -99,6 +106,8 @@ def upsert_shareouts(items: list, *, workspace=None) -> dict:
 def clear_shareouts(
     *,
     workspace_slugs: set[str],
+    own_only_slugs: set[str] = frozenset(),
+    user=None,
     source: str | None = None,
     project: str | None = None,
     date_from: dt.date | None = None,
@@ -106,15 +115,21 @@ def clear_shareouts(
 ) -> int:
     """Delete shareouts matching the filters (AND-combined); return the count.
 
-    - workspace_slugs: REQUIRED tenant boundary — only rows in these workspaces are
-                       ever deleted. A no-filter clear wipes the caller's own
-                       workspaces, never all tenants.
+    - workspace_slugs: REQUIRED tenant boundary — workspaces in which EVERY
+                       matching row may be deleted (the caller owns them).
+    - own_only_slugs:  workspaces in which only rows `user` posted may be
+                       deleted (the caller is an editor there). Rows outside
+                       both sets are never touched, so a no-filter clear wipes
+                       what the caller may wipe and nothing else.
     - source:          exact source match (e.g. a prior run's source tag)
     - project:         project slug exact match
     - date_from:       period_end date >= date_from
     - date_to:         period_start date <= date_to
     """
-    qs = Shareout.objects.filter(workspace_id__in=workspace_slugs)
+    scope = Q(workspace_id__in=workspace_slugs)
+    if own_only_slugs and user is not None:
+        scope |= Q(workspace_id__in=own_only_slugs, created_by=user)
+    qs = Shareout.objects.filter(scope)
     if source:
         qs = qs.filter(source=source)
     if project:

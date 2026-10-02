@@ -177,13 +177,28 @@ prompt of their choosing and fire it at the fleet. Now:
   conditional: `turn_targets_agent_xor_project_xor_session` means a session turn carries no
   agent FK at all.
 
-**Elsewhere, a write requires only membership.** Projects, walkthroughs, shareouts and reviews
-check that you are in the tenant, not what role you hold — creating one is not a way to *join*
-a tenant any more (above), but a `viewer` who is already in one can still create there. So the
-`user`/`author` distinction is enforced on the agents and harness surfaces and aspirational on
-the product surfaces. That is a known gap, not a claim — do not read the table as uniformly
-enforced, and if you are granting someone `viewer` on the strength of it, that is the sentence
-to read.
+**The product surfaces** — projects + insights, walkthroughs, shareouts, reviews, DDD runs and
+narratives, storyboards, origin issues, the event log, feedback dispositions — gate every
+MUTATION on `editor` in the row's workspace and every READ on membership (2026-10-02; until
+then a `viewer` could do all of it, including approving a DDD gate and wiping the insights
+feed with `{}`). Three shapes recur, all pinned by `tests/test_product_acl.py`:
+
+- **By-id writes resolve through the read gate first**: a non-member gets 404, a viewer who
+  can already see the row gets 403, an editor writes.
+- **Bulk writes are scoped by the WRITE set**, `services.request_workspace_slugs_at_least(request,
+  EDITOR)`, never by the read set — `clear_insights({})`, a narrative delete or visibility flip
+  that spans workspaces touches only the rows in workspaces where the caller is an editor.
+- **Some rows belong to a person within the tenant.** A walkthrough is changed by its uploader
+  *while they are still an editor there*, or by a workspace owner; a shareout is replaced or
+  cleared by the person who posted it (`Shareout.created_by`), or by a workspace owner.
+
+The anonymous token reads (`?t=` on walkthroughs and storyboards, `link` reviews, storyboard
+feedback) are a property of the link, not of a role, and are unchanged.
+
+**A row with no workspace is visible to nobody.** Projects, reviews, walkthroughs and origin
+issues each had a `workspace IS NULL ⇒ any signed-in user` leg — the NULL-means-allow shape.
+They fail closed now; `projects/0009` and `issues/0003` homed the stragglers first (a
+walkthrough with no workspace is still readable by its share token).
 
 ## What is about to change
 

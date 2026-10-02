@@ -22,6 +22,10 @@ from mcp.server.auth.middleware.auth_context import (
 from apps.mcp.server import mcp
 from apps.projects.models import Project, ProjectContext
 
+from apps.workspaces.models import WorkspaceMembership
+from apps.workspaces.services import ensure_member
+from apps.workspaces.testing import a_workspace
+
 User = get_user_model()
 
 
@@ -41,6 +45,18 @@ def as_user(user):
         auth_context_var.reset(tok)
 
 
+def _editor():
+    """An editor of the default workspace — clearing insights is the author tier."""
+    user = User.objects.create_user(username="alice", email="alice@dimagi.com")
+    ensure_member(a_workspace(), user, WorkspaceMembership.EDITOR)
+    return user
+
+
+def _project(name, slug):
+    # Homed: a project with no workspace is visible to nobody.
+    return Project.objects.create(name=name, slug=slug, workspace=a_workspace())
+
+
 def _insight(project, content, source="canopy"):
     return ProjectContext.objects.create(
         project=project, context_type="insight", content=content, source=source
@@ -56,8 +72,8 @@ def test_tools_list_returns_insight_tools():
 
 @pytest.mark.django_db
 def test_list_insights_runs_and_returns_rows():
-    user = User.objects.create_user(username="alice", email="alice@dimagi.com")
-    proj = Project.objects.create(name="Canopy", slug="canopy")
+    user = _editor()
+    proj = _project("Canopy", "canopy")
     _insight(proj, "[ship_gap] do the thing")
 
     with as_user(user):
@@ -71,9 +87,9 @@ def test_list_insights_runs_and_returns_rows():
 
 @pytest.mark.django_db
 def test_clear_insights_respects_project_filter():
-    user = User.objects.create_user(username="alice", email="alice@dimagi.com")
-    keep = Project.objects.create(name="Keep", slug="keep")
-    drop = Project.objects.create(name="Drop", slug="drop")
+    user = _editor()
+    keep = _project("Keep", "keep")
+    drop = _project("Drop", "drop")
     _insight(keep, "[a] keep me")
     _insight(drop, "[b] drop me 1")
     _insight(drop, "[b] drop me 2")
@@ -89,8 +105,8 @@ def test_clear_insights_respects_project_filter():
 
 @pytest.mark.django_db
 def test_clear_insights_respects_category_filter():
-    user = User.objects.create_user(username="alice", email="alice@dimagi.com")
-    proj = Project.objects.create(name="P", slug="p")
+    user = _editor()
+    proj = _project("P", "p")
     _insight(proj, "[hygiene] x")
     _insight(proj, "[ship_gap] y")
 
@@ -105,8 +121,8 @@ def test_clear_insights_respects_category_filter():
 def test_clear_insights_writes_audit_as_user():
     from apps.mcp.models import MCPAuditLog
 
-    user = User.objects.create_user(username="alice", email="alice@dimagi.com")
-    proj = Project.objects.create(name="P", slug="p")
+    user = _editor()
+    proj = _project("P", "p")
     _insight(proj, "[a] x")
 
     with as_user(user):

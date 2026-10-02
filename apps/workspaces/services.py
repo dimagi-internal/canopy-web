@@ -276,6 +276,25 @@ def request_workspace_slugs(request) -> set[str]:
     return user_workspace_slugs(user)
 
 
+def request_workspace_slugs_at_least(request, minimum: str) -> set[str]:
+    """The subset of `request_workspace_slugs` where the caller holds `minimum`
+    or better — the WRITE scope a bulk mutation filters by.
+
+    `request_workspace_slugs` answers "what may I read?". A bulk write (clear
+    every insight, delete a narrative across its rows) must not be scoped by
+    that answer, or a viewer's empty-filter clear wipes the tenant. This is the
+    same scope narrowed by role, read through `has_role_at_least` so the ladder
+    lives in one place. A pinned `/api/w/{ws}/` request is narrowed too: the
+    middleware checked membership, not role."""
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return set()
+    return {
+        slug for slug in request_workspace_slugs(request)
+        if has_role_at_least(user, slug, minimum)
+    }
+
+
 def workspace_slugs_for_user_id(user_id) -> set[str]:
     """The workspace slugs a user (by pk) may act within — the MCP-side counterpart
     of `request_workspace_slugs`, for tools that carry a token subject rather than a

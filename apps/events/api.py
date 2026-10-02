@@ -55,6 +55,13 @@ def record_events(request: HttpRequest, payload: EventBatchIn) -> dict:
         # Only reachable for an authenticated user who belongs to nothing.
         # Fail with a real message rather than an IntegrityError on the FK.
         raise HttpError(422, "no workspace available to record this event in")
+    # The fleet log is read by owners deciding what is broken, so writing to it
+    # is the author tier. A viewer could otherwise forge "runner.credential"
+    # alarms, or bump a real event's count and summary through coalescing. The
+    # producers that matter are runners, which post with their PAIRER's token,
+    # and pairing an agent's box already needs more than viewer.
+    if not wsvc.has_role_at_least(request.user, home, wsvc.WorkspaceMembership.EDITOR):
+        raise HttpError(403, "recording events requires the editor role in this workspace")
     return services.record([item.model_dump() for item in payload.items], workspace=home)
 
 
@@ -73,8 +80,10 @@ def list_events(
     since = None
     if since_minutes:
         since = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=max(1, since_minutes))
+    # `request_workspace_slugs`, not every membership: a pinned `/api/w/{ws}/`
+    # read is about that one workspace, like every other tenant list.
     qs = services.list_events(
-        workspace_slugs=wsvc.user_workspace_slugs(request.user),
+        workspace_slugs=wsvc.request_workspace_slugs(request),
         source=source,
         kind=kind,
         level=level,

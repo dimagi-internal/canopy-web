@@ -93,14 +93,25 @@ def resolve_feedback(request: HttpRequest, feedback_id: int, payload: FeedbackRe
     """How a decision turn records what it did. The only mutation — feedback is
     what somebody said, and editing that after the fact would make the pool
     untrustworthy as a record."""
+    # Leaving a note is anyone's (the viewer tier, and token holders on a
+    # storyboard); DISPOSING of one — accepting or rejecting what a reviewer
+    # asked for — is the author's call, so it is scoped to the workspaces where
+    # the caller is an editor. A viewer who can see the note gets 403.
     try:
         fb = services.resolve(
             feedback_id,
-            workspace_slugs=wsvc.request_workspace_slugs(request),
+            workspace_slugs=wsvc.request_workspace_slugs_at_least(
+                request, wsvc.WorkspaceMembership.EDITOR
+            ),
             state=payload.state,
             note=payload.note,
             resolved_in_version=payload.resolved_in_version,
         )
     except Feedback.DoesNotExist:
+        visible = Feedback.objects.filter(
+            pk=feedback_id, workspace_id__in=wsvc.request_workspace_slugs(request)
+        ).exists()
+        if visible:
+            raise HttpError(403, "recording a disposition requires the editor role in its workspace")
         raise HttpError(404, "feedback not found")
     return _out(fb)

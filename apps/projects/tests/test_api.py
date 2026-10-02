@@ -23,6 +23,10 @@ from apps.projects.schemas import (
     ProjectSlugOut,
 )
 
+from apps.workspaces.models import WorkspaceMembership
+from apps.workspaces.services import ensure_member
+from apps.workspaces.testing import a_workspace
+
 User = get_user_model()
 
 
@@ -32,7 +36,12 @@ User = get_user_model()
 
 
 def _make_user(username="alice", email="alice@dimagi.com"):
-    return User.objects.create_user(username=username, email=email, password="pw")
+    # An EDITOR of the default workspace: the surface's own writes are the
+    # author tier, and a project with no workspace is visible to nobody, so a
+    # user outside the tenant could neither read nor write these fixtures.
+    user = User.objects.create_user(username=username, email=email, password="pw")
+    ensure_member(a_workspace(), user, WorkspaceMembership.EDITOR)
+    return user
 
 
 def _make_project(slug="canopy-web", name="canopy-web", status="active"):
@@ -44,6 +53,7 @@ def _make_project(slug="canopy-web", name="canopy-web", status="active"):
         visibility="public",
         status=status,
         skills=[],
+        workspace=a_workspace(),
     )
 
 

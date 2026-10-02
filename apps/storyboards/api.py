@@ -86,6 +86,18 @@ def _owned_or_404(request: HttpRequest, slug: str) -> Storyboard:
     return board
 
 
+def _editable_or_404(request: HttpRequest, slug: str) -> Storyboard:
+    """A board the caller may CHANGE: editing its arc, minting or re-minting its
+    share link. Membership first (404 to a non-member, so the role check never
+    confirms a hidden board exists), then the author tier — a viewer reads the
+    board and its notes but does not reshape what was sent, or kill the link
+    everyone else was sent."""
+    board = _owned_or_404(request, slug)
+    if not wsvc.has_role_at_least(request.user, board.workspace_id, wsvc.WorkspaceMembership.EDITOR):
+        raise HttpError(403, "changing a storyboard requires the editor role in its workspace")
+    return board
+
+
 def _share_url(request: HttpRequest, board: Storyboard) -> str | None:
     """The absolute, token-bearing link — the thing you actually send someone.
 
@@ -163,6 +175,8 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
         if ws is None:
             raise HttpError(400, "no workspace to create this storyboard in")
         workspace_slug = ws.slug
+    if not wsvc.has_role_at_least(request.user, workspace_slug, wsvc.WorkspaceMembership.EDITOR):
+        raise HttpError(403, "creating a storyboard requires the editor role in this workspace")
     with transaction.atomic():
         board = Storyboard.objects.create(
             slug=payload.slug,
@@ -190,7 +204,7 @@ def get_storyboard(request: HttpRequest, slug: str) -> dict:
 
 @router.patch("/{slug}", response=StoryboardOut, auth=session_auth, summary="Edit a storyboard")
 def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn) -> dict:
-    board = _owned_or_404(request, slug)
+    board = _editable_or_404(request, slug)
     with transaction.atomic():
         fields = []
         for name in ("title", "lede", "capability", "layout"):
@@ -212,7 +226,7 @@ def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn
     summary="Re-mint the share link, killing every link already sent",
 )
 def rotate_token(request: HttpRequest, slug: str) -> dict:
-    board = _owned_or_404(request, slug)
+    board = _editable_or_404(request, slug)
     board.rotate_share_token()
     return {"share_url": _share_url(request, board)}
 
@@ -224,7 +238,7 @@ def rotate_token(request: HttpRequest, slug: str) -> dict:
     summary="Mint the share link if it does not exist yet",
 )
 def ensure_token(request: HttpRequest, slug: str) -> dict:
-    board = _owned_or_404(request, slug)
+    board = _editable_or_404(request, slug)
     board.ensure_share_token()
     return {"share_url": _share_url(request, board)}
 

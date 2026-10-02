@@ -4,13 +4,20 @@ from django.contrib.auth import get_user_model
 from django.test import Client, override_settings
 
 from apps.reviews.models import ReviewRequest
+from apps.workspaces.models import WorkspaceMembership
+from apps.workspaces.services import ensure_member
+from apps.workspaces.testing import a_workspace
 
 
 @pytest.fixture
 def owner(db):
-    return get_user_model().objects.create_user(
+    # An editor of the review's workspace: submitting a decision is the author
+    # tier, and a review with no workspace is visible to no member.
+    user = get_user_model().objects.create_user(
         username="owner@dimagi.com", email="owner@dimagi.com",
     )
+    ensure_member(a_workspace(), user, WorkspaceMembership.EDITOR)
+    return user
 
 
 def _review(owner, **kw):
@@ -20,6 +27,7 @@ def _review(owner, **kw):
         gate="narrative-agreement",
         request_json={"narrative": "A story"},
         owner=owner,
+        workspace=a_workspace(),
     )
     defaults.update(kw)
     return ReviewRequest.objects.create(**defaults)

@@ -292,7 +292,8 @@ export interface paths {
          *       - project: project slug exact match
          *       - older_than_days: created_at older than N days ago
          *
-         *     A body with no filters ({}) clears ALL insights — this is intended.
+         *     A body with no filters ({}) clears every insight in the workspaces where
+         *     you hold the editor role — not those you can only read.
          */
         readonly post: operations["clear_insights"];
         readonly delete?: never;
@@ -428,11 +429,11 @@ export interface paths {
         readonly get: operations["get_walkthrough"];
         readonly put?: never;
         readonly post?: never;
-        /** Delete walkthrough (owner only) */
+        /** Delete walkthrough (uploader or workspace owner) */
         readonly delete: operations["delete_walkthrough"];
         readonly options?: never;
         readonly head?: never;
-        /** Update walkthrough (owner only) */
+        /** Update walkthrough (uploader or workspace owner) */
         readonly patch: operations["patch_walkthrough"];
         readonly trace?: never;
     };
@@ -446,12 +447,12 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Rotate the share token (owner only)
+         * Rotate the share token (uploader or workspace owner)
          * @description Mint a fresh share token, killing every previously shared public link.
          *
-         *     Uses the router's default session auth (same as patch/delete below) — an
-         *     anonymous caller is rejected before reaching this body. An *authenticated*
-         *     non-owner still gets a manual 404 (not 403) to avoid leaking existence.
+         *     The uploader (while an editor of the walkthrough's workspace) or a workspace
+         *     owner. 404 to anyone who is not a member of that workspace; 403 to a member
+         *     who may read it but not re-key it.
          */
         readonly post: operations["rotate_walkthrough_token"];
         readonly delete?: never;
@@ -1482,8 +1483,8 @@ export interface paths {
          * List review requests (DDD-plans dashboard)
          * @description List every review request for the DDD-plans dashboard.
          *
-         *     Team-internal: any authenticated user (session or PAT) sees all reviews —
-         *     same read rule as GET /<id>/. Supports a free-text `q` (matches narrative_slug,
+         *     Members see the reviews of their workspaces (session or PAT) — the same
+         *     read rule as GET /<id>/. Supports a free-text `q` (matches narrative_slug,
          *     run_id, gate, or title), an optional `status` filter (pending|resolved),
          *     and `order` ∈ {-last_activity, last_activity, -created, created, narrative_slug}.
          *     Default sort is most-recently-edited first.
@@ -1516,8 +1517,8 @@ export interface paths {
          * @description Returns the full review request + current status.
          *
          *     Access rules:
-         *     - Any authenticated user can read any review (they're team-internal).
-         *     - Unauthenticated callers may read if visibility=="link" (no token required).
+         *     - A member of the review's workspace can read it.
+         *     - Anyone may read if visibility=="link" (no token required).
          *     - Otherwise → 404 (don't leak existence).
          */
         readonly get: operations["get_review"];
@@ -1527,12 +1528,11 @@ export interface paths {
          * Delete a review request (dashboard cleanup)
          * @description Delete a review request.
          *
-         *     Workspace-internal cleanup: any MEMBER of the review's workspace (session or
+         *     Workspace-internal cleanup: any EDITOR of the review's workspace (session or
          *     PAT) may delete — reviews are owned by whichever identity posted them (often the
-         *     orchestrator's PAT, not the human browsing), so restricting to owner would make
-         *     the human unable to tidy up. Membership (not ownership) is the right gate, and
-         *     it's the tenant boundary: a non-member gets a 404, not the ability to delete
-         *     another workspace's review.
+         *     orchestrator's PAT, not the human browsing), so restricting to the poster would
+         *     make the human unable to tidy up. A viewer gets 403; a non-member gets 404, not
+         *     the ability to delete another workspace's review.
          */
         readonly delete: operations["delete_review"];
         readonly options?: never;
@@ -1719,8 +1719,9 @@ export interface paths {
          *     heals that, and equally serves the honest case: the narrative turned out to
          *     belong to another team.
          *
-         *     Requires membership of BOTH sides — you may not move something out of a
-         *     workspace you cannot see, nor into one you do not belong to.
+         *     Requires the editor role on BOTH sides — you may not move something out of
+         *     a workspace you cannot change, nor into one where you could not have
+         *     created it.
          */
         readonly post: operations["move_narrative"];
         readonly delete?: never;
@@ -1749,7 +1750,9 @@ export interface paths {
         /**
          * Create shareouts (batch, idempotent per period+source)
          * @description Create a batch of briefings. Re-posting the same period from the same
-         *     source replaces the prior rows (see services.upsert_shareouts).
+         *     source replaces YOUR prior rows for it (see services.upsert_shareouts);
+         *     a teammate's briefing for the same period is left alone. Requires the
+         *     editor role.
          *
          *     Rows are assigned to a workspace you already belong to: the `/w/{ws}` prefix
          *     pins it, otherwise it resolves to your default. 422 if you belong to none.
@@ -1772,9 +1775,11 @@ export interface paths {
         readonly put?: never;
         /**
          * Clear shareouts by source / project / date (AND-combined)
-         * @description Delete shareouts matching the filters, scoped to the caller's workspaces.
-         *     An empty body clears all of THE CALLER'S shareouts (the pinned /w/{ws} one, or
-         *     the union of their memberships) — never another tenant's.
+         * @description Delete shareouts matching the filters. You clear the shareouts you
+         *     posted in workspaces where you are an editor, and every shareout in a
+         *     workspace you own — never a teammate's otherwise, and never another
+         *     tenant's. An empty body clears all of those (the pinned /w/{ws} one, or the
+         *     union of your memberships).
          */
         readonly post: operations["clear_shareouts"];
         readonly delete?: never;
@@ -6313,7 +6318,8 @@ export interface components {
          * @description Body of POST /api/insights/clear/.
          *
          *     All fields optional. Provided filters are AND-combined to narrow which
-         *     insights are deleted. A body with no filters clears ALL insights.
+         *     insights are deleted. A body with no filters clears every insight in the
+         *     workspaces where the caller holds the editor role.
          */
         readonly InsightsClearIn: {
             /** Source */
@@ -8559,7 +8565,8 @@ export interface components {
         /**
          * ShareoutsClearIn
          * @description Body of POST /api/shareouts/clear/. All optional, AND-combined. An empty
-         *     body clears ALL shareouts.
+         *     body clears every shareout the caller may clear: their own, plus every
+         *     shareout in a workspace they own.
          */
         readonly ShareoutsClearIn: {
             /** Source */

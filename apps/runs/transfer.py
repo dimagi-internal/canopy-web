@@ -76,8 +76,14 @@ def plan_move(slugs: set[str], target: str) -> dict:
     return {
         "target": target,
         "narratives": per_narrative,
+        # Every row that will MOVE, not just the reviews: the API refuses unless
+        # the caller is an editor of each of these, and counting only reviews
+        # let a walkthrough or a storyboard in a workspace the caller cannot
+        # even see ride along into theirs because it shared a slug.
         "source_workspaces": sorted(
             {str(r.workspace_id) for r in reviews if str(r.workspace_id) != target}
+            | {str(w.workspace_id) for w in walkthroughs if str(w.workspace_id) != target}
+            | {str(b.workspace_id) for b in boards if str(b.workspace_id) != target}
         ),
         "reviews_to_move": sum(1 for r in reviews if str(r.workspace_id) != target),
         "walkthroughs_to_move": sum(1 for w in walkthroughs if str(w.workspace_id) != target),
