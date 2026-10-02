@@ -5078,6 +5078,116 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/teleport": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Ask to move a session onto another runner
+         * @description Ask to move this session onto `runner` (id or name), carrying its history.
+         *
+         *     If you administer that runner it moves now (`status: approved`, `transfer`
+         *     set). Otherwise the request waits (`status: pending`) for one of `approvers` —
+         *     whoever paired that box or was granted admin on it — because the move runs on
+         *     their machine and their Claude subscription. They are notified, and so is the
+         *     session's Slack thread if it has one. Requests expire after 24h unanswered.
+         *     409 while a turn is executing (stop the session first) or while another
+         *     request for this session is waiting.
+         */
+        readonly post: operations["request_session_teleport"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/teleport-requests": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Teleport requests waiting on you, or that you made
+         * @description Requests to move a session onto a runner you administer (yours to approve
+         *     or decline), plus the ones you asked for. `status` filters (default
+         *     `pending`; `all` for every state).
+         */
+        readonly get: operations["list_teleport_requests"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/teleport-requests/{request_id}/approve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve a teleport onto your runner (and carry it out)
+         * @description Approve moving the session onto your runner; the move happens now and
+         *     `transfer` reports it LAUNCHED. Only an administrator of the target runner may
+         *     approve, checked at this moment. 409 while a turn is still executing on the
+         *     session — the request stays pending; stop the session and approve again.
+         */
+        readonly post: operations["approve_teleport_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/teleport-requests/{request_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline a teleport onto your runner
+         * @description Decline; the session stays where it is. `note` is shown to the requester.
+         */
+        readonly post: operations["decline_teleport_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/teleport-requests/{request_id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Withdraw a teleport request you made */
+        readonly post: operations["cancel_teleport_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -13448,6 +13558,91 @@ export interface components {
              */
             readonly dry_run: boolean;
         };
+        /** TeleportRequestOut */
+        readonly TeleportRequestOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Session Title */
+            readonly session_title: string;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** To Runner */
+            readonly to_runner: string;
+            /**
+             * To Runner Id
+             * Format: uuid
+             */
+            readonly to_runner_id: string;
+            /** From Runner */
+            readonly from_runner: string;
+            /** Requested By */
+            readonly requested_by: string;
+            /** Brief */
+            readonly brief: string;
+            /** Status */
+            readonly status: string;
+            /** Decided By */
+            readonly decided_by: string;
+            /** Decided At */
+            readonly decided_at: string | null;
+            /** Note */
+            readonly note: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            readonly transfer?: components["schemas"]["TransferOut"] | null;
+            /**
+             * Approvers
+             * @default []
+             */
+            readonly approvers: readonly string[];
+        };
+        /** TransferOut */
+        readonly TransferOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Runner */
+            readonly runner: string;
+            /** Transferred From */
+            readonly transferred_from: string;
+            /** Index Offset */
+            readonly index_offset: number;
+            /** Turn Id */
+            readonly turn_id: string;
+        };
+        /**
+         * TeleportRequestIn
+         * @description Body for POST /{session_id}/teleport — ask to move a session onto `runner`
+         *     (its id, or its name as `list_runners` shows it). `brief` is the handoff the
+         *     receiving session reads, exactly as for a transfer.
+         */
+        readonly TeleportRequestIn: {
+            /** Runner */
+            readonly runner: string;
+            /**
+             * Brief
+             * @default
+             */
+            readonly brief: string;
+        };
+        /** TeleportDecisionIn */
+        readonly TeleportDecisionIn: {
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
         /** SessionNotifyIn */
         readonly SessionNotifyIn: {
             /** Every Completion */
@@ -13527,19 +13722,6 @@ export interface components {
         readonly PlaceIn: {
             /** Placement */
             readonly placement: string;
-        };
-        /** TransferOut */
-        readonly TransferOut: {
-            /** Session Id */
-            readonly session_id: string;
-            /** Runner */
-            readonly runner: string;
-            /** Transferred From */
-            readonly transferred_from: string;
-            /** Index Offset */
-            readonly index_offset: number;
-            /** Turn Id */
-            readonly turn_id: string;
         };
         /**
          * TransferIn
@@ -20982,6 +21164,124 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ResetSummaryOut"];
+                };
+            };
+        };
+    };
+    readonly request_session_teleport: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TeleportRequestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TeleportRequestOut"];
+                };
+            };
+        };
+    };
+    readonly list_teleport_requests: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["TeleportRequestOut"][];
+                };
+            };
+        };
+    };
+    readonly approve_teleport_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TeleportRequestOut"];
+                };
+            };
+        };
+    };
+    readonly decline_teleport_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TeleportDecisionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TeleportRequestOut"];
+                };
+            };
+        };
+    };
+    readonly cancel_teleport_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TeleportRequestOut"];
                 };
             };
         };

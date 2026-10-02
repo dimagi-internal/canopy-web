@@ -99,3 +99,21 @@ def _closed(sender, session_ids, **kwargs):
         notify_closed(session_ids)
     except Exception:  # noqa: BLE001 — never break a report over Slack
         logger.exception("slack closed notice failed")
+
+
+def _connect_teleport():
+    from apps.canopy_sessions.teleport import teleport_changed
+
+    @receiver(teleport_changed, dispatch_uid="slack_teleport_notice")
+    def _teleport_notice(sender, request, **kwargs):
+        if request.status in ("expired",):
+            return
+        from .relay import notify_teleport
+
+        try:
+            notify_teleport(request)
+        except Exception:  # noqa: BLE001 — never break a teleport over Slack
+            logger.exception("slack teleport notice failed")
+
+
+_connect_teleport()

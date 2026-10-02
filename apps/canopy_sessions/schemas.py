@@ -79,6 +79,42 @@ class TransferOut(Schema):
     turn_id: str
 
 
+class TeleportRequestIn(Schema):
+    """Body for POST /{session_id}/teleport — ask to move a session onto `runner`
+    (its id, or its name as `list_runners` shows it). `brief` is the handoff the
+    receiving session reads, exactly as for a transfer."""
+    runner: str
+    brief: str = ""
+
+
+class TeleportDecisionIn(Schema):
+    note: str = ""
+
+
+class TeleportRequestOut(Schema):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    session_title: str
+    agent_slug: str
+    to_runner: str
+    to_runner_id: uuid.UUID
+    from_runner: str
+    requested_by: str
+    brief: str
+    # pending | approved | declined | cancelled | expired
+    status: str
+    decided_by: str
+    decided_at: dt.datetime | None
+    note: str
+    created_at: dt.datetime
+    # Set when this call carried the move out: an approval, or a request from
+    # someone who already administers the target. LAUNCHED, not done — a pinned
+    # turn lands within seconds, and the agent picking the thread up is separate.
+    transfer: TransferOut | None = None
+    # The people who may approve — so a requester knows whom to nudge.
+    approvers: list[str] = []
+
+
 class TurnOutMinimal(Schema):
     """Just enough of a Turn for the /place response — the caller only needs to
     confirm the pin took, not the full harness TurnOut shape."""
