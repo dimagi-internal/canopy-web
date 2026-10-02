@@ -513,9 +513,14 @@ def test_slash_command_when_bot_is_not_in_the_channel(slack, linked, hal):
 
 
 def test_slash_command_from_a_contact_is_answered(slack, installation, hal):
+    """hal publishes no interface, so a contact is refused at the door — and told
+    so. It used to say "Sent … the reply will come back here" over a turn that
+    was already cancelled: a promise of a reply that could never come."""
     resp = command("hal draft the update")
-    assert resp.json()["text"] == "Sent to `hal` — the reply will come back here."
-    _is_contact_turn(Turn.objects.get())
+    assert resp.json()["text"].startswith("`hal` didn't run this")
+    turn = Turn.objects.get()
+    _is_contact_turn(turn)
+    assert turn.status == Turn.CANCELLED
 
 
 # ---- linking an account --------------------------------------------------------

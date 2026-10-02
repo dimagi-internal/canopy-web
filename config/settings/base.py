@@ -512,6 +512,13 @@ SLACK_SIGNING_SECRET = env("SLACK_SIGNING_SECRET", default="")
 # pull however long the window — an operational guard. Whether history may be
 # read at all, and how far back, is each workspace's own setting (Slack page).
 SLACK_HISTORY_MESSAGE_CEILING = env.int("SLACK_HISTORY_MESSAGE_CEILING", default=500)
+# A reply posted in the window to a thread whose PARENT is older is found by
+# scanning parents this far back for a `latest_reply` inside the window —
+# Slack's history lists threads by parent time only. Bounded by a scan ceiling
+# so a busy channel costs a fixed number of calls; scanned parents outside the
+# window are not handed to the agent unless their thread was active.
+SLACK_HISTORY_THREAD_LOOKBACK_HOURS = env.int("SLACK_HISTORY_THREAD_LOOKBACK_HOURS", default=168)
+SLACK_HISTORY_SCAN_CEILING = env.int("SLACK_HISTORY_SCAN_CEILING", default=1000)
 
 # This deployment's own externally-reachable base URL — no request context to derive
 # it from when services.py builds a callback URL for a drilled agent to POST back to

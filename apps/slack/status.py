@@ -149,6 +149,10 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         line = f":raised_hand: {agent} is waiting on a person, on {runner}."
     elif st.state == ts.DONE:
         line = f":white_check_mark: {agent} finished this on {runner}."
+    elif st.state == ts.CANCELLED and (turn.result_note or "").startswith("not run:"):
+        # Refused at the door (its interface offers this caller nothing), never
+        # started — not someone pressing stop. The sender gets the why privately.
+        line = f":no_entry_sign: Not run — {agent} doesn't take requests from this person here."
     elif st.state == ts.CANCELLED:
         line = ":heavy_minus_sign: Cancelled."
     elif st.state == ts.MISSED:
