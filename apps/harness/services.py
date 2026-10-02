@@ -38,6 +38,7 @@ from .models import (
     Turn,
     TurnEvent,
     TurnTranscript,
+    WorkspaceRunnerOrder,
 )
 
 logger = logging.getLogger(__name__)
@@ -642,6 +643,62 @@ def _assignment_allows(runner: Runner, turn: Turn, defaults: dict, priorities: d
     return _assignment_allows_for_agent(runner, turn.agent_id, turn, defaults, priorities, now)
 
 
+def _is_repo_turn(turn: Turn) -> bool:
+    """A project dispatch: no agent, no chat session. The one turn kind the
+    workspace runner order routes."""
+    return not turn.agent_id and not turn.chat_session_id and bool(turn.project)
+
+
+def load_workspace_orders(ws_ids) -> dict:
+    """{workspace_id: [runner, …] in rank order} — ENABLED rows only, one query.
+
+    A workspace absent from the result has no order, and its repo turns route as
+    they always have (any runner that declares the repo). Filtering disabled rows
+    here, once, keeps a disabled runner from claiming or blocking — the same rule
+    `load_assignment_rows` applies to an agent's list."""
+    out: dict = {}
+    ws_ids = {w for w in ws_ids if w}
+    if not ws_ids:
+        return out
+    rows = (
+        WorkspaceRunnerOrder.objects.filter(workspace_id__in=ws_ids, enabled=True)
+        .select_related("runner").prefetch_related("runner__declared_flags")
+        .exclude(runner__status=Runner.RETIRED).order_by("rank")
+    )
+    for row in rows:
+        out.setdefault(row.workspace_id, []).append(row.runner)
+    return out
+
+
+def repo_order_for(turn: Turn, orders: dict, *, requires: frozenset | None = None) -> list | None:
+    """THE ordered runner list for one repo turn, or None when its workspace has
+    no order (route as before). Pure: no queries, no clock.
+
+    Only runners that DECLARE the turn's repo and meet its requirements are kept,
+    and ranks are renumbered over what is left — a better-ranked runner that could
+    never take this turn must not count as a blocker for one that can."""
+    listed = orders.get(turn.workspace_id)
+    if not listed:
+        return None
+    reqs = rr.requirements_of(turn) if requires is None else requires
+    return [r for r in listed
+            if turn.project in r.project_names() and rr.satisfies(r.flags, reqs)]
+
+
+def _repo_order_allows(runner: Runner, turn: Turn, orders: dict, now) -> bool:
+    """The availability cascade for a repo turn — `_assignment_allows_for_agent`
+    over the workspace order instead of an agent's list, with the same grace."""
+    rows = repo_order_for(turn, orders)
+    if rows is None:
+        return True
+    mine = next((i for i, r in enumerate(rows) if r.id == runner.id), None)
+    if mine is None:
+        return False
+    if (now - turn.created_at) >= dt.timedelta(seconds=CASCADE_GRACE_SECONDS):
+        return True
+    return not any(r.is_available for r in rows[:mine])
+
+
 EXECUTING = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
 
 
@@ -774,7 +831,7 @@ def _assignment_rows_for_turns(turns) -> tuple[dict, dict]:
 
 
 def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
-                    *, ignore_requirements: bool = False) -> bool:
+                    *, ignore_requirements: bool = False, orders: dict | None = None) -> bool:
     """The per-candidate refinements claim_next_turn applies after the coarse
     target match — same checks, same ORDER, so coverage can't overstate what
     claiming will do.
@@ -801,7 +858,14 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     else:
         routed_agent = t.agent_id
     if not routed_agent:
-        return True  # project turn / agentless session: runner_target_q had the last word
+        if _is_repo_turn(t):
+            # A repo turn follows its workspace's runner order when it has one:
+            # membership only, as for an agent's list (the cascade is about WHEN,
+            # not WHETHER — a lower rank still covers the turn).
+            rows = repo_order_for(t, orders if orders is not None
+                                  else load_workspace_orders({t.workspace_id}), requires=reqs)
+            return rows is None or any(row.id == r.id for row in rows)
+        return True  # agentless session: runner_target_q had the last word
     # The SAME actor resolution the claim path uses. These two disagreeing is
     # the drift class tests/test_claim_schedule_parity.py exists for: a strict
     # actor rule pointing at an offline box must report `offline`
@@ -847,6 +911,10 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
     `ignore_requirements=True` is the counterfactual used only to diagnose: which
     runners would take the turn if its conversation required nothing."""
     out: dict = {}
+    orders = load_workspace_orders(
+        Turn.objects.filter(pk__in=ids, agent__isnull=True, chat_session__isnull=True)
+        .values_list("workspace_id", flat=True)
+    )
     for r in runners:
         # Same coarse target predicate the claim path uses (assignments +
         # projects + binding-sticky sessions), plus the pin arm — a turn
@@ -865,7 +933,7 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
             # excluded by a strict rule for THIS turn's source does not cover
             # it, and saying otherwise would mask a genuinely parked queue.
             if _refined_allows(r, t, defaults, priorities,
-                               ignore_requirements=ignore_requirements):
+                               ignore_requirements=ignore_requirements, orders=orders):
                 covered.add(t.pk)
         out[r] = covered
     return out
@@ -1194,6 +1262,9 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # claim (it is absent from the composed list, so `mine` comes back None) nor
     # count as a better-ranked availability blocker for a lower enabled rank.
     defaults, priorities = load_assignment_rows(agent_ids)
+    # The workspace runner order, for the repo turns among the candidates — the
+    # ranking a project dispatch never had (WorkspaceRunnerOrder).
+    orders = load_workspace_orders({t.workspace_id for t in candidates if _is_repo_turn(t)})
     now = timezone.now()
     my_flags = runner.flags
     from apps.agents.services import runner_may_hold_agent
@@ -1220,6 +1291,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             if turn.agent_id:
                 if not _assignment_allows(runner, turn, defaults, priorities, now):
                     continue
+            if _is_repo_turn(turn) and not _repo_order_allows(runner, turn, orders, now):
+                continue
             if turn.chat_session_id:
                 sess = turn.chat_session
                 binding = getattr(sess, "runner_binding", None)

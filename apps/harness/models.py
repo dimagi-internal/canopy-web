@@ -1105,6 +1105,41 @@ class RunnerAssignment(models.Model):
         ]
 
 
+class WorkspaceRunnerOrder(models.Model):
+    """One row of a workspace's ordered runner list — the routing order for REPO
+    turns (a project dispatch: agent NULL, chat_session NULL) in that workspace.
+
+    A repo turn has no agent, so `RunnerAssignment` never ranked it: every online
+    runner that declared the repo raced for it, and the first poll won (observed
+    2026-10-02: a canopy-web dispatch landed on a second macOS account 126 ms after
+    enqueue while the owner's own runner, first in every agent's order, sat online).
+
+    Same semantics as an agent's default list: index = rank, the availability
+    cascade with the same grace, and a disabled row is kept but never routes. A
+    workspace with NO enabled rows routes repo turns exactly as before (any runner
+    that declares the repo), so this is opt-in per workspace. Ranks are taken only
+    among the listed runners that DECLARE the turn's repo — a better-ranked runner
+    that does not serve the repo can never take it, so it must not block one that
+    can. A per-project order can layer above this later.
+    """
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="runner_order"
+    )
+    runner = models.ForeignKey(
+        Runner, on_delete=models.CASCADE, related_name="workspace_order_rows"
+    )
+    rank = models.PositiveSmallIntegerField()  # 0 = first choice
+    enabled = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["workspace_id", "rank"]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "runner"],
+                                    name="one_order_row_per_workspace_runner"),
+        ]
+
+
 class RunnerDrill(models.Model):
     """Latest readiness-drill outcome for one (runner, agent) pair. Reset to
     pending on each fan-out; resolved by the agent's report callback or by the

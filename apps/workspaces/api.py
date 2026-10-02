@@ -23,6 +23,8 @@ from .schemas import (
     JoinableWorkspaceOut,
     MemberOut,
     MemberRoleUpdateIn,
+    RunnerOrderIn,
+    RunnerOrderRowOut,
     RunnerTopologyOut,
     AgentTopologyOut,
     SharedVaultIn,
@@ -496,6 +498,65 @@ def runner_topology(request: HttpRequest, slug: str) -> RunnerTopologyOut:
     return RunnerTopologyOut(**topology.build(
         m.workspace, visible=lambda s: perms.can(request.user, s, perms.LOGS_READ),
     ))
+
+
+@router.get("/{slug}/runner-order", response=list[RunnerOrderRowOut],
+            summary="The ordered runner list this workspace's repo turns route by")
+def get_runner_order(request: HttpRequest, slug: str) -> list[RunnerOrderRowOut]:
+    """Repo turns (a project dispatch — no agent) route by this list: rank 0 takes
+    the turn while it is available, the next rank only once every better one is
+    not (or the turn has waited past the cascade grace), and a runner not listed
+    never takes one. Empty: any runner that declares the repo. Member-readable,
+    like an agent's own order."""
+    from apps.harness.models import WorkspaceRunnerOrder
+
+    m = _require(request.user, slug, perms.READ)
+    rows = (WorkspaceRunnerOrder.objects.filter(workspace=m.workspace)
+            .select_related("runner").order_by("rank"))
+    return [
+        RunnerOrderRowOut(
+            runner_id=row.runner_id, runner_name=row.runner.name, kind=row.runner.kind,
+            rank=row.rank, online=row.runner.live_status == row.runner.ONLINE,
+            ready=row.runner.ready, enabled=row.enabled,
+            projects=row.runner.project_names(),
+        )
+        for row in rows
+    ]
+
+
+@router.put("/{slug}/runner-order", response=list[RunnerOrderRowOut],
+            summary="Replace the ordered runner list this workspace's repo turns route by")
+def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) -> list[RunnerOrderRowOut]:
+    """Wholesale replace (index = rank), at the tier that routes an agent's work
+    (`agent.work`). Every runner must be able to SERVE this workspace — its pairer
+    a member (`runner_tenant_slugs`) — or the order would name a box the claim path
+    refuses anyway; such a runner is a 422, as is an unknown or retired one."""
+    from django.db import transaction
+
+    from apps.harness.models import Runner, WorkspaceRunnerOrder
+    from apps.harness.services import runner_tenant_slugs
+
+    m = _require(request.user, slug, perms.AGENT_WORK)
+    ids = [row.runner_id for row in payload.runners]
+    if len(ids) != len(set(ids)):
+        raise HttpError(422, "duplicate runner id in list")
+    runners = {r.id: r for r in Runner.objects.filter(id__in=ids)
+               .exclude(status=Runner.RETIRED).select_related("paired_by")}
+    missing = [str(rid) for rid in ids if rid not in runners]
+    if missing:
+        raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
+    outside = sorted(r.name for r in runners.values() if slug not in runner_tenant_slugs(r))
+    if outside:
+        raise HttpError(422, f"runner(s) {', '.join(outside)} cannot serve '{slug}': "
+                             "whoever paired a runner must be a member of the workspace")
+    with transaction.atomic():
+        WorkspaceRunnerOrder.objects.filter(workspace=m.workspace).delete()
+        WorkspaceRunnerOrder.objects.bulk_create([
+            WorkspaceRunnerOrder(workspace=m.workspace, runner=runners[row.runner_id],
+                                 rank=i, enabled=row.enabled)
+            for i, row in enumerate(payload.runners)
+        ])
+    return get_runner_order(request, slug)
 
 
 @router.get("/{slug}/agent-topology", response=AgentTopologyOut,

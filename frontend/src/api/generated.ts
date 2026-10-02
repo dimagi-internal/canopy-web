@@ -3616,6 +3616,37 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/runner-order": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The ordered runner list this workspace's repo turns route by
+         * @description Repo turns (a project dispatch — no agent) route by this list: rank 0 takes
+         *     the turn while it is available, the next rank only once every better one is
+         *     not (or the turn has waited past the cascade grace), and a runner not listed
+         *     never takes one. Empty: any runner that declares the repo. Member-readable,
+         *     like an agent's own order.
+         */
+        readonly get: operations["get_runner_order"];
+        /**
+         * Replace the ordered runner list this workspace's repo turns route by
+         * @description Wholesale replace (index = rank), at the tier that routes an agent's work
+         *     (`agent.work`). Every runner must be able to SERVE this workspace — its pairer
+         *     a member (`runner_tenant_slugs`) — or the order would name a box the claim path
+         *     refuses anyway; such a runner is a 422, as is an unknown or retired one.
+         */
+        readonly put: operations["set_runner_order"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/agent-topology": {
         readonly parameters: {
             readonly query?: never;
@@ -12071,6 +12102,55 @@ export interface components {
             readonly agents: readonly components["schemas"]["TopologyAgentOut"][];
         };
         /**
+         * RunnerOrderRowOut
+         * @description One row of a workspace's ordered runner list — the order REPO turns (project
+         *     dispatches) in this workspace route by. `projects` is what the runner declares:
+         *     a runner only ever takes a repo turn for a repo it lists there.
+         */
+        readonly RunnerOrderRowOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Rank */
+            readonly rank: number;
+            /** Online */
+            readonly online: boolean;
+            /** Ready */
+            readonly ready: boolean;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Projects */
+            readonly projects: readonly string[];
+        };
+        /**
+         * RunnerOrderIn
+         * @description Wholesale replace — index = rank. An empty list removes the order, and the
+         *     workspace's repo turns go back to any runner that declares the repo.
+         */
+        readonly RunnerOrderIn: {
+            /** Runners */
+            readonly runners: readonly components["schemas"]["RunnerOrderRowIn"][];
+        };
+        /** RunnerOrderRowIn */
+        readonly RunnerOrderRowIn: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+        };
+        /**
          * AgentEdgeOut
          * @description What `source` gets when it sends `target` work with its own login.
          *     `access`: full | confined (to `capabilities`) | none. `basis`: owner |
@@ -19793,6 +19873,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerTopologyOut"];
+                };
+            };
+        };
+    };
+    readonly get_runner_order: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerOrderRowOut"][];
+                };
+            };
+        };
+    };
+    readonly set_runner_order: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerOrderIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerOrderRowOut"][];
                 };
             };
         };
