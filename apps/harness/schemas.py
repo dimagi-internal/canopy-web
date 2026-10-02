@@ -330,9 +330,33 @@ class ResolveSessionIn(Schema):
     thread_key: str
 
 
+#: The retired spelling of `session_key`, still accepted on input.
+#:
+#: The field was renamed when the cloud runner started putting Claude session ids
+#: in it (harness migration 0057). Runners update on deploy, but an agent's
+#: `canopy agent turn` client and a runner mid-update still send the old name —
+#: so each input takes either, and the new name wins when both arrive. Remove the
+#: field and `adopt_legacy_session_key` once nothing in the fleet sends it.
+LEGACY_SESSION_KEY = Field(
+    default="", max_length=200, json_schema_extra={"deprecated": True},
+    description="Deprecated: send `session_key`.",
+)
+
+
+def adopt_legacy_session_key(model):
+    """An after-validator body: fold `emdash_task_id` into an empty `session_key`.
+    After, not before, so it works the same on ninja `Schema` (which wraps the raw
+    input before a before-validator sees it) and on plain pydantic models."""
+    if model.emdash_task_id and not model.session_key:
+        model.session_key = model.emdash_task_id
+    return model
+
+
 class ResolveSessionOut(Schema):
     reuse: bool
     new_thread: bool
+    session_key: str
+    # Deprecated duplicate of `session_key`, for runners that predate the rename.
     emdash_task_id: str
     agent_task_ext_id: str
     summary: str
@@ -344,7 +368,7 @@ class RecordSessionIn(Schema):
     project: str = ""  # set instead of agent_slug for a repo session
     workspace: str = ""  # required with project: the turn's tenant (gates the pairer)
     thread_key: str
-    emdash_task_id: str = ""
+    session_key: str = ""
     session_id: str = ""
     agent_task_ext_id: str | None = None
     summary: str | None = None
@@ -356,6 +380,9 @@ class RecordSessionIn(Schema):
     # Stamps that turn's session key NOW rather than at finish, so the agent's
     # close-out — which it posts before the turn ends — can find its turn.
     turn_id: uuid.UUID | None = None
+    emdash_task_id: str = LEGACY_SESSION_KEY
+
+    _legacy_key = model_validator(mode="after")(adopt_legacy_session_key)
 
 
 class ReportedSessionIn(Schema):
@@ -635,10 +662,14 @@ class TurnFinishIn(Schema):
     # finishes the turn cancelled (see the CDP-interrupt cancel flow); done and
     # failed remain the normal completion outcomes.
     result_note: str = ""
-    # The emdash session this turn drove, when it drove one. Written to the turn so
-    # the agent's later close-out can be matched to it; a failed turn that never got
-    # a session simply omits it.
-    emdash_task_id: str = ""
+    # The session this turn drove, when it drove one (an emdash task on a laptop, a
+    # Claude session id on a cloud runner). Written to the turn so the agent's
+    # close-out can be matched to it; a failed turn that never got a session simply
+    # omits it — which is also what marks it safe to re-run.
+    session_key: str = ""
+    emdash_task_id: str = LEGACY_SESSION_KEY
+
+    _legacy_key = model_validator(mode="after")(adopt_legacy_session_key)
 
 
 class TranscriptAppendIn(Schema):

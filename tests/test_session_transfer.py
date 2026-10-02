@@ -284,7 +284,7 @@ def test_the_targets_first_report_does_not_reset_the_epoch():
 
     harness_services.record_session(
         None, str(s.id), runner=laptop, project="canopy-web", workspace=ws,
-        emdash_task_id="c-fresh-local-task",
+        session_key="c-fresh-local-task",
     )
 
     assert RunnerBinding.objects.filter(session=s).count() == 1, "no second binding"

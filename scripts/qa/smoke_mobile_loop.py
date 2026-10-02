@@ -86,7 +86,7 @@ def main() -> int:
         # 5. The server resolves it to reuse of the exact task.
         st, plan = _req("POST", f"/api/harness/runners/{rid}/resolve-session",
                         {"project": PROJECT, "workspace": ws, "thread_key": THREAD})
-        reuse = isinstance(plan, dict) and plan.get("reuse") and plan.get("emdash_task_id") == TASK
+        reuse = isinstance(plan, dict) and plan.get("reuse") and plan.get("session_key") == TASK
         check("resolves to reuse", bool(reuse), f"plan={plan}")
     finally:
         # 6. Cleanup — leave the server as found.

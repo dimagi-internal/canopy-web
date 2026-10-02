@@ -1137,7 +1137,7 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
         ws = _project_workspace_or_404(request, payload.workspace)
         services.record_session(
             None, payload.thread_key, runner=runner, project=payload.project, workspace=ws,
-            emdash_task_id=payload.emdash_task_id, session_id=payload.session_id,
+            session_key=payload.session_key, session_id=payload.session_id,
             agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
             title=payload.title,
         )
@@ -1147,12 +1147,12 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
     agent = _agent_or_404(request, payload.agent_slug)
     services.record_session(
         agent, payload.thread_key, runner=runner,
-        emdash_task_id=payload.emdash_task_id, session_id=payload.session_id,
+        session_key=payload.session_key, session_id=payload.session_id,
         agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
         title=payload.title,
     )
-    if payload.turn_id and payload.emdash_task_id:
-        services.stamp_turn_session(payload.turn_id, runner, payload.emdash_task_id)
+    if payload.turn_id and payload.session_key:
+        services.stamp_turn_session(payload.turn_id, runner, payload.session_key)
     return services.resolve_session(agent, payload.thread_key, runner)
 
 
@@ -1848,9 +1848,9 @@ def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn)
     # Record the session BEFORE the terminal check: a re-reported finish is otherwise
     # a no-op, and this is the only moment the runner tells us which emdash session
     # the turn drove. Never blank an existing value — the first report wins.
-    if payload.emdash_task_id and not turn.emdash_task_id:
-        turn.emdash_task_id = payload.emdash_task_id[:200]
-        turn.save(update_fields=["emdash_task_id"])
+    if payload.session_key and not turn.session_key:
+        turn.session_key = payload.session_key[:200]
+        turn.save(update_fields=["session_key"])
     if turn.status in Turn.TERMINAL:
         return turn  # idempotent finish
     # Read the state BEFORE finishing: a non-terminal result is now ambiguous. It

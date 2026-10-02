@@ -50,7 +50,7 @@ def test_member_records_and_resolves_a_project_session(owner_client, runner, can
     rec = owner_client.post(
         f"/api/harness/runners/{runner.id}/record-session",
         {"project": "canopy-web", "workspace": "canopy",
-         "thread_key": "phone:jj:canopy-web", "emdash_task_id": "task-1", "summary": "ctx"},
+         "thread_key": "phone:jj:canopy-web", "session_key": "task-1", "summary": "ctx"},
         content_type="application/json",
     )
     assert rec.status_code == 200, rec.content
@@ -63,7 +63,7 @@ def test_member_records_and_resolves_a_project_session(owner_client, runner, can
         {"project": "canopy-web", "workspace": "canopy", "thread_key": "phone:jj:canopy-web"},
         content_type="application/json",
     )
-    assert res.json()["emdash_task_id"] == "task-1"
+    assert res.json()["session_key"] == "task-1"
 
 
 def test_a_caller_with_no_workspace_cannot_record_a_project_session(owner):
@@ -80,7 +80,7 @@ def test_a_caller_with_no_workspace_cannot_record_a_project_session(owner):
 
     resp = c.post(
         f"/api/harness/runners/{runner.id}/record-session",
-        {"project": "canopy-web", "thread_key": "phone:jj:canopy-web", "emdash_task_id": "t"},
+        {"project": "canopy-web", "thread_key": "phone:jj:canopy-web", "session_key": "t"},
         content_type="application/json",
     )
     assert resp.status_code == 404
@@ -93,7 +93,7 @@ def test_another_tenant_cannot_resolve_a_project_thread_it_guesses(owner_client,
     owner_client.post(
         f"/api/harness/runners/{runner.id}/record-session",
         {"project": "canopy-web", "workspace": "canopy",
-         "thread_key": "phone:jj:canopy-web", "emdash_task_id": "secret", "summary": "secret context"},
+         "thread_key": "phone:jj:canopy-web", "session_key": "secret", "summary": "secret context"},
         content_type="application/json",
     )
 

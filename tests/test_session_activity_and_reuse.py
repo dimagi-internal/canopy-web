@@ -172,7 +172,7 @@ def test_record_session_retitles_a_hash_named_session():
     RunnerBinding.objects.create(session=s, runner=runner, session_key="",
                                 thread_key="19f91250349ec91b", host=runner.host)
     record_session(None, "19f91250349ec91b", runner=runner, project="echo",
-                   workspace=ws, emdash_task_id="echo-manager-sync-0723-1649")
+                   workspace=ws, session_key="echo-manager-sync-0723-1649")
     s.refresh_from_db()
     assert s.title == "echo-manager-sync-0723-1649"
 
@@ -185,6 +185,6 @@ def test_record_session_never_clobbers_a_human_chat_title():
     RunnerBinding.objects.create(session=s, runner=runner, session_key="",
                                  thread_key="19f91250349ec91b", host=runner.host)
     record_session(None, "19f91250349ec91b", runner=runner, project="echo", workspace=ws,
-                   emdash_task_id="some-emdash-task")
+                   session_key="some-emdash-task")
     s.refresh_from_db()
     assert s.title == "labs chat smoke"

@@ -61,7 +61,7 @@ def _finish(session, user, status=Turn.DONE):
     _, turn = chat.send_message(session=session, text="go", user=user)
     # A session id makes this a real attempt: a FAILED turn without one is a
     # non-attempt, which finish_turn requeues instead of failing.
-    Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED, emdash_task_id="task-1")
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.CLAIMED, session_key="task-1")
     turn.refresh_from_db()
     return hsvc.finish_turn(turn, status=status)
 

@@ -524,14 +524,22 @@ class Turn(models.Model):
     # closed out (the agent died, the session was killed) is the NORMAL case, not a
     # defect — it stays a valid row carrying only its dispatch half.
     #
-    # `emdash_task_id` is the join. The runner has it the moment cdp_control creates
-    # the session and writes it here at finish; the closing agent recovers the same
-    # name from its cwd (emdash worktrees are `…/<task>-<suffix>`). Before this, the
-    # only trace was prose inside result_note ("created session 'hal-api-df02…'"),
-    # which is not a key. Not unique: a reused session serves many turns.
-    emdash_task_id = models.CharField(
+    # `session_key` is the join: the session this turn drove, in the runner's own
+    # terms — the same value `RunnerBinding.session_key` holds for that session.
+    # A LAPTOP runner's key is the emdash task name (the closing agent recovers it
+    # from its cwd, `…/<task>-<suffix>`); a CLOUD runner's is the Claude session id
+    # (the closing agent reports it as `cli_session_id`). The runner stamps it the
+    # moment the session exists (record-session `turn_id`) and again at finish,
+    # first write wins. Before this, the only trace was prose inside result_note
+    # ("created session 'hal-api-df02…'"), which is not a key. Not unique: a reused
+    # session serves many turns.
+    #
+    # Named `emdash_task_id` until the cloud runner started writing Claude session
+    # ids into it; the wire still accepts that spelling (schemas), the column no
+    # longer carries it.
+    session_key = models.CharField(
         max_length=200, blank=True, default="",
-        help_text="The emdash task/session this turn drove — the close-out join key.",
+        help_text="The session this turn drove (emdash task or Claude session id) — the close-out join key.",
     )
     # The Claude Code session id the agent reports at close-out. Distinct from
     # `session_id` above, which is the runner's live-session hint and is in practice
@@ -562,8 +570,8 @@ class Turn(models.Model):
         indexes = [
             models.Index(fields=["status", "created_at"]),
             models.Index(fields=["agent", "status"]),
-            # The close-out join: newest unreported turn for (agent, emdash task).
-            models.Index(fields=["agent", "emdash_task_id"]),
+            # The close-out join: newest unreported turn for (agent, session key).
+            models.Index(fields=["agent", "session_key"]),
         ]
         constraints = [
             # One report per Claude session, carried over from AgentTurn's

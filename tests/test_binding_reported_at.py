@@ -54,7 +54,7 @@ def test_record_session_stamps_live_seen_at_but_not_reported_at():
     )
     services.record_session(
         agent=None, thread_key=str(session.id), runner=runner, project="canopy-web",
-        workspace=ws, emdash_task_id="0d6f2c1e-1111-2222-3333-444455556666",
+        workspace=ws, session_key="0d6f2c1e-1111-2222-3333-444455556666",
     )
     binding.refresh_from_db()
     assert binding.live_seen_at is not None

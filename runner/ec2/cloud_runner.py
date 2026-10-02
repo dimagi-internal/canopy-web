@@ -3172,6 +3172,41 @@ def _encode_project_dir(cwd: pathlib.Path) -> str:
     return str(cwd).replace("/", "-").replace(".", "-").replace("_", "-")
 
 
+def _adopt_resume_transcript(cwd: pathlib.Path, session_id: str, agent_slug: str) -> bool:
+    """Make a session started by an AGENT turn resumable from a CHAT turn.
+
+    An agent turn runs in the agent's clone (AGENT_ROOT/<agent>); a reply sent
+    into that turn's chat is a session turn, which runs in the chat's own
+    WORK_DIR/sessions/<id>. Claude Code finds a `--resume` / `session/load`
+    target by the cwd-derived project directory, so the session the agent turn
+    wrote was invisible from there: `_resume_target_exists` said no, and the
+    reply started fresh with none of the turn's context.
+
+    Copies the transcript into this cwd's project directory when it is missing
+    here and present under the agent's clone. A copy, not a move: the agent
+    clone's copy is the record the original turn's stream was read from. After
+    this, the resume, the stream tail (`_session_transcript_path` checks this
+    cwd first) and every later reply all use this cwd's copy. True if copied."""
+    if not session_id or _resume_target_exists(cwd, session_id):
+        return False
+    if not agent_slug or _safe_session_dirname(agent_slug) != agent_slug:
+        return False
+    src = (CLAUDE_PROJECTS_HOME
+           / _encode_project_dir(pathlib.Path(AGENT_ROOT) / agent_slug)
+           / f"{session_id}.jsonl")
+    dst = CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{session_id}.jsonl"
+    try:
+        if not src.is_file():
+            return False
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    except OSError as exc:
+        _log(f"warn: could not adopt session {session_id[:8]} into {cwd}: {exc}")
+        return False
+    _log(f"adopted session {session_id[:8]} from the {agent_slug} clone into {cwd}")
+    return True
+
+
 def _resume_target_exists(cwd: pathlib.Path, session_id: str) -> bool:
     """Whether claude actually has a transcript to `--resume` for (cwd, session_id)
     — the cheap, local equivalent of runner/canopy_runner/execute.py's
@@ -3223,8 +3258,9 @@ def _session_resume_plan(runner_id: str, turn: dict) -> str:
     status, plan = _api("POST", f"/runners/{runner_id}/resolve-session", body)
     if status != 200 or not plan:
         return ""
-    if plan.get("reuse") and plan.get("emdash_task_id"):
-        return plan["emdash_task_id"]
+    key = plan.get("session_key") or plan.get("emdash_task_id") or ""
+    if plan.get("reuse") and key:
+        return key
     return ""
 
 
@@ -3240,7 +3276,7 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
     session id (`_announce_session`), not after the turn, so the binding exists
     while the turn runs and `_sync_session_streams` tails it live.
 
-    Sends BOTH `emdash_task_id` (what's actually read back today, via
+    Sends BOTH `session_key` (what's actually read back today, via
     RunnerBinding.session_key) and `session_id` (the wire-compat field already
     threaded through RecordSessionIn -> services.record_session, currently
     accepted and silently discarded there) — if a `Session`-level column for
@@ -3258,7 +3294,7 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
         return
     body: dict = {
         "thread_key": thread_key,
-        "emdash_task_id": cli_session_id,
+        "session_key": cli_session_id,
         "session_id": cli_session_id,
     }
     if agent_thread and thread_key == agent_thread:
@@ -3770,6 +3806,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _log(f"turn {turn_id[:8]} NOT run — cannot confine: {exc}")
                 return
 
+        if resume_id and cwd is not None:
+            _adopt_resume_transcript(cwd, resume_id, _turn_agent_slug(turn))
+
         def emit(events, _tid=turn_id):
             _api("POST", f"/turns/{_tid}/events", {"events": events})
 
@@ -3825,11 +3864,11 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         finish_body = {"status": finish, "result_note": text[:2000]}
         if cli_session_id:
             # The session this turn drove — the key its close-out report and the
-            # Turns page's link join on (Turn.emdash_task_id, which holds an
+            # Turns page's link join on (Turn.session_key, which holds an
             # emdash task name on a laptop and the CLI session id here). Also
             # what tells the server a FAILED turn did reach an agent, so it is
             # never re-run blind as "sessionless" (services.finish_turn).
-            finish_body["emdash_task_id"] = cli_session_id
+            finish_body["session_key"] = cli_session_id
         _api("POST", f"/turns/{turn_id}/finish", finish_body)
         _log(f"finished turn {turn_id[:8]}: {finish}")
     except Exception as exc:  # noqa: BLE001 — a worker must never take the loop down

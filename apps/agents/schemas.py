@@ -7,14 +7,18 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from apps.common.schemas import StrictModel
 
 # framework→framework: agents and harness are both framework tier, and the
 # source vocabulary has ONE definition (harness owns Turn.origin).
-from apps.harness.schemas import RoutableSource
+from apps.harness.schemas import (
+    LEGACY_SESSION_KEY,
+    RoutableSource,
+    adopt_legacy_session_key,
+)
 
 
 # ---- Agent ----
@@ -448,11 +452,15 @@ class AgentTurnIn(StrictModel):
     started_at: dt.datetime | None = None
     ended_at: dt.datetime | None = None
     source: str = Field(default="", max_length=100)
-    # The emdash session the turn ran in — how the server finds the dispatch row to
-    # attach this report to (the runner stamps the same name at finish). Optional:
-    # an agent that cannot determine it still gets a report-only row, just an
-    # unjoined one. Agents recover it from cwd; see canopy's agent_client.
-    emdash_task_id: str = Field(default="", max_length=200)
+    # The session the turn ran in — how the server finds the dispatch row to attach
+    # this report to (the runner stamps the same key). Optional: an agent that
+    # cannot determine it still gets a report-only row, just an unjoined one. A
+    # laptop agent recovers its emdash task from cwd (canopy's agent_client); a
+    # cloud agent has none, and is joined on `cli_session_id` instead.
+    session_key: str = Field(default="", max_length=200)
+    emdash_task_id: str = LEGACY_SESSION_KEY
+
+    _legacy_key = model_validator(mode="after")(adopt_legacy_session_key)
 
 
 class AgentTurnOut(StrictModel):
@@ -476,7 +484,9 @@ class AgentTurnOut(StrictModel):
     # a turn the agent closed out from one that only ever got dispatched.
     status: str = ""
     origin: str = ""
-    emdash_task_id: str = ""
+    session_key: str = ""
+    # Deprecated duplicate of `session_key`, for readers that predate the rename.
+    emdash_task_id: str = Field(default="", validation_alias="session_key")
     reported_at: dt.datetime | None = None
     # The dispatch-side prose. Most turns are dispatched and run but never get a
     # close-out report (`reported_at` null, report_title/summary empty) — without

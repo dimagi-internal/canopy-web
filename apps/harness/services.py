@@ -1667,7 +1667,7 @@ def finish_turn(
 
     # ---- a turn that never got a session is a NON-attempt, not a failed attempt ----
     #
-    # `emdash_task_id` is written the moment cdp_control creates the session and the
+    # `session_key` is written the moment cdp_control creates the session and the
     # runner reports it at finish; every runner failure path (client.fail_turn) sends
     # no task id at all. So an empty value on a FAILED turn is proof that no agent
     # ever received the prompt: nothing was read, nothing was sent, no partial work
@@ -1707,13 +1707,13 @@ def finish_turn(
     # is an ordinary `api` turn that names its runner.
     if (
         status == Turn.FAILED
-        and not turn.emdash_task_id
+        and not turn.session_key
         and turn.attempts < MAX_SESSIONLESS_RETRIES
         and not RunnerDrill.objects.filter(turn=turn).exists()
     ):
         now = timezone.now()
         requeued = Turn.objects.filter(
-            pk=turn.pk, status__in=[Turn.CLAIMED, Turn.RUNNING], emdash_task_id=""
+            pk=turn.pk, status__in=[Turn.CLAIMED, Turn.RUNNING], session_key=""
         ).update(
             status=Turn.QUEUED,
             attempts=F("attempts") + 1,
@@ -2263,7 +2263,8 @@ def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = ""
     Returns a plan dict:
       - reuse (bool): the live session hint is owned by THIS runner/host — the runner
         should verify the emdash task still exists and drive it (send prompt into it).
-      - emdash_task_id: the task to reuse (only meaningful when reuse=True).
+      - session_key: the session to reuse (only meaningful when reuse=True);
+        `emdash_task_id` carries the same value for runners predating the rename.
       - agent_task_ext_id / summary: durable context for rehydration when reuse=False
         (fresh session under this account) or for a brand-new thread.
       - link_id: the RunnerBinding's session id (None if no binding exists yet — brand-new
@@ -2273,10 +2274,11 @@ def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = ""
     runner + macOS host match the caller (the two-account failover invariant)."""
     binding = _binding_for_thread(agent, project, workspace, thread_key)
     if binding is None:
-        return {"reuse": False, "emdash_task_id": "", "agent_task_ext_id": "",
+        return {"reuse": False, "session_key": "", "emdash_task_id": "", "agent_task_ext_id": "",
                 "summary": "", "link_id": None, "new_thread": True}
     return {
         "reuse": binding.reusable_by(runner),
+        "session_key": binding.session_key,
         "emdash_task_id": binding.session_key,
         "agent_task_ext_id": binding.agent_task_ext_id,
         "summary": binding.summary,
@@ -2304,7 +2306,7 @@ def record_session(
     runner: Runner,
     project: str = "",
     workspace=None,
-    emdash_task_id: str = "",
+    session_key: str = "",
     session_id: str = "",  # accepted for wire-compat; the binding keys on session_key
     agent_task_ext_id: str | None = None,
     summary: str | None = None,
@@ -2330,7 +2332,7 @@ def record_session(
         binding.thread_key = thread_key
         binding.runner = runner
         binding.host = runner.host
-        binding.session_key = emdash_task_id
+        binding.session_key = session_key
         # The other half of the runner-side key (see RunnerBinding.emdash_project).
         # Mirrors what `Session.emdash_project` derives, from the arguments this
         # path already has: a project thread carries its repo, an agent thread its
@@ -2355,7 +2357,7 @@ def record_session(
         #
         # A runner-supplied `title` beats the key: a cloud runner's key is a
         # Claude session UUID, which names nothing a person would recognise.
-        name = (title or "").strip() or emdash_task_id
+        name = (title or "").strip() or session_key
         if name and _title_is_derived(binding.session, thread_key):
             binding.session.title = name[:200]
             binding.session.save(update_fields=["title"])
@@ -2375,7 +2377,7 @@ def record_session(
 def stamp_turn_session(turn_id, runner: Runner, session_key: str) -> bool:
     """Give a running turn its session key the moment its session exists.
 
-    `finish` writes `emdash_task_id` too, but finish comes LAST — after the
+    `finish` writes `session_key` too, but finish comes LAST — after the
     agent has already posted its close-out report, which joins on that key
     (apps/agents/services._claim_dispatch_row). A laptop finishes seconds in
     (emdash runs the work after), so it never noticed; a cloud runner finishes
@@ -2387,9 +2389,9 @@ def stamp_turn_session(turn_id, runner: Runner, session_key: str) -> bool:
     two can never disagree. True if a row was stamped."""
     return bool(
         Turn.objects.filter(
-            pk=turn_id, claimed_by=runner, emdash_task_id="",
+            pk=turn_id, claimed_by=runner, session_key="",
             status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
-        ).update(emdash_task_id=session_key[:200])
+        ).update(session_key=session_key[:200])
     )
 
 

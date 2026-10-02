@@ -26,7 +26,7 @@ const base: AgentTurnOut = {
   task_ext_ids: [], work_product_urls: [], session_slug: '', share_token: '',
   started_at: '2026-10-01T18:06:15Z', ended_at: '2026-10-01T18:06:21Z', source: '',
   created_at: '2026-10-01T18:06:12Z', status: 'done', origin: 'api',
-  emdash_task_id: 'c-fix-brief-61bb', reported_at: null,
+  session_key: 'c-fix-brief-61bb', emdash_task_id: 'c-fix-brief-61bb', reported_at: null,
   prompt: 'Fix the brief from Ada\nwith the details below', result_note: 'Opened PR #12',
   origin_ref: {}, chat_session_id: null, has_transcript: false, content_hidden: false,
 }
@@ -66,7 +66,7 @@ describe('TurnCard', () => {
   })
 
   it('shows a cloud turn its own transcript, since it has no chat', async () => {
-    renderCard({ ...base, emdash_task_id: '', has_transcript: true })
+    renderCard({ ...base, session_key: '', emdash_task_id: '', has_transcript: true })
     expect(screen.queryByRole('link', { name: /open chat/i })).toBeNull()
     fireEvent.click(screen.getByRole('button', { expanded: false }))
     expect(await screen.findByText('Nothing to do today.')).toBeTruthy()

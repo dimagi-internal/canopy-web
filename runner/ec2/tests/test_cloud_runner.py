@@ -385,6 +385,14 @@ def test_session_resume_plan_returns_engine_handle_on_reuse(cloud_runner, monkey
     assert cloud_runner._session_resume_plan("runner-1", turn) == "cli-sess-9"
 
 
+def test_session_resume_plan_reads_the_renamed_session_key(cloud_runner, monkeypatch):
+    """The server now names the handle `session_key` (and still sends the old
+    `emdash_task_id` for one release); the test above pins the old spelling."""
+    monkeypatch.setattr(cloud_runner, "_api", lambda m, p, b=None: (
+        200, {"reuse": True, "session_key": "cli-sess-10", "new_thread": False}))
+    assert cloud_runner._session_resume_plan("runner-1", _session_turn()) == "cli-sess-10"
+
+
 def test_session_resume_plan_no_reuse_returns_empty(cloud_runner, monkeypatch):
     monkeypatch.setattr(
         cloud_runner, "_api",
@@ -423,7 +431,7 @@ def test_record_session_resume_sends_both_fields(cloud_runner, monkeypatch):
     method, path, body = calls[0]
     assert method == "POST"
     assert path == "/runners/runner-1/record-session"
-    assert body["emdash_task_id"] == "cli-sess-9"
+    assert body["session_key"] == "cli-sess-9"
     assert body["session_id"] == "cli-sess-9"
     assert body["thread_key"] == "thread-abc"
 
