@@ -98,11 +98,9 @@ def test_mint_session_is_marked_for_audit(auth_client):
 
 
 @override_settings(REQUIRE_AUTH=True)
-def test_a_session_minted_from_a_token_cannot_make_browser_only_decisions(db):
-    """Transferring an agent and changing its admins refuse any token, so a
-    leaked one cannot take over an agent. Minting a cookie FROM a token must
-    not be the way around that: the minted session is refused the same, while
-    the same person signed in through the browser is not."""
+def test_a_session_minted_from_a_token_acts_as_its_user(db):
+    """There are no browser-only decisions: a session minted from a token acts
+    as the token's user, under that user's role, like the token itself."""
     from apps.agents.models import Agent
     from apps.tokens.models import PersonalToken
     from apps.workspaces import services as wsvc
@@ -115,19 +113,13 @@ def test_a_session_minted_from_a_token_cannot_make_browser_only_decisions(db):
     wsvc.ensure_member(ws, owner, WorkspaceMembership.OWNER)
     wsvc.ensure_member(ws, heir, WorkspaceMembership.EDITOR)
     Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=owner)
-    raw, _ = PersonalToken.create_for_user(user=owner, label="leaked")
+    raw, _ = PersonalToken.create_for_user(user=owner, label="menubar")
 
     minted = Client().post("/api/debug/mint-session/", HTTP_AUTHORIZATION=f"Bearer {raw}").json()
     as_minted = Client()
     as_minted.cookies["sessionid"] = minted["cookie_value"]
-    body = json.dumps({"user_id": heir.pk})
-    r = as_minted.put("/api/agents/echo/owner", body, content_type="application/json")
-    assert r.status_code == 403, r.content
     r = as_minted.put(f"/api/agents/echo/admins/{heir.pk}")
-    assert r.status_code == 403, r.content
-    assert Agent.objects.get(slug="echo").owner == owner
-
-    person = Client()
-    person.force_login(owner)
-    r = person.put("/api/agents/echo/owner", body, content_type="application/json")
     assert r.status_code == 200, r.content
+
+
+

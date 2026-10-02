@@ -7,8 +7,8 @@ type CanopyUser = AgentDetailOut['canopy_user']
 // Which canopy user this agent IS — the account its own token signs in as
 // (`ace@dimagi-ai.com` for ACE). Picked from the workspace's members, because
 // the link is to a real account, not to an address. One user is one agent
-// instance; the server says which instance already holds one. Browser-only on
-// the server, like owner and admin changes.
+// instance; the server says which instance already holds one. The agent's
+// owner or an admin may change it (from here or over MCP).
 export function AgentCanopyUserControl({
   agentSlug,
   workspace,

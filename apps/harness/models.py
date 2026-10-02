@@ -1016,8 +1016,8 @@ class RunnerFlag(models.Model):
     canopy cannot verify any of these -- `zdr` means "this box uses only
     zero-data-retention keys for Claude", which is not observable from here -- so
     each row is an attestation and records WHO made it. Set only through the
-    human-only flags route; nothing a runner reports can create one, or a box
-    could promote itself.
+    flags route by a runner admin; nothing a runner REPORTS (heartbeat,
+    capabilities) can create one.
     """
 
     runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="declared_flags")

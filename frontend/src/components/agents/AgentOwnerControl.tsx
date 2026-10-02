@@ -4,9 +4,9 @@ import { listMembers, type MemberOut } from '@/api/workspaces'
 
 type Owner = AgentDetailOut['owner']
 
-// Who operates this agent, and the one place ownership changes. Browser-only on
-// the server side too: no agent or assistant can call it. Offered to a
-// workspace owner or the agent's current owner (`canTransfer`).
+// Who operates this agent, and the one place in the UI ownership changes (MCP
+// can too, as the same person). Offered to a workspace owner or the agent's
+// current owner (`canTransfer`).
 export function AgentOwnerControl({
   agentSlug,
   workspace,

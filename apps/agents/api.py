@@ -11,7 +11,6 @@ from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.common.human_only import human_only
 from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.workspaces import permissions as perms
@@ -309,8 +308,7 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
 # count as the agent itself (never confined against itself — agents/access.py),
 # so it is a decision a PERSON makes in the canopy UI. The owner or an admin.
 @router.put("/{slug}/canopy-user", response=AgentDetailOut,
-            summary="Link this agent to the canopy user it is (canopy UI only)")
-@human_only("An agent's canopy user")
+            summary="Link this agent to the canopy user it is")
 def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn) -> AgentDetailOut:
     """The canopy user account this agent's own token signs in as. `user_id`
     null unlinks it."""
@@ -324,16 +322,13 @@ def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn
     return _detail(request, agent)
 
 
-# Browser-only by design. The owner is whose GitHub grant the agent's
-# GitHub-backed features read through, so moving it is a credential decision a
-# PERSON makes in the canopy UI. Any Authorization header — a PAT, the embedded
-# widget's delegated token (which rides alongside the session cookie, same
-# origin), a contact token — means a machine is in the loop, and is refused; so
-# is a session minted FROM a token (`is_machine`), or the rule is one call deep.
+# The owner is whose GitHub grant the agent's GitHub-backed features read
+# through, so moving it is held to the agent's owner or a workspace owner. A
+# token (PAT, MCP client) acts as its user and may do it too: anything the web
+# app can do, MCP can (2026-10-02 — browser-only gates were tried and removed).
 # Resolve first so a non-member still gets 404, never 403.
 @router.put("/{slug}/owner", response=AgentDetailOut,
-            summary="Transfer the agent's ownership to a member of its workspace (canopy UI only)")
-@human_only("An agent's ownership")
+            summary="Transfer the agent's ownership to a member of its workspace")
 def transfer_owner(request: HttpRequest, slug: str, payload: AgentOwnerIn) -> AgentDetailOut:
     agent = _get_agent_or_404(request, slug)
     if not _may_transfer_owner(request, agent):
@@ -396,7 +391,6 @@ def get_interface(request: HttpRequest, slug: str):
 # it do — so loosening it is the same kind of act as handing over its keys.
 @router.put("/{slug}/interface", response=AgentInterfaceOut,
             summary="Save the agent's declared interface (YAML source, or a parsed mapping)")
-@human_only("An agent's declared interface")
 def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
     import yaml
     from django.utils import timezone
@@ -428,7 +422,6 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
 
 @router.delete("/{slug}/interface", response=AgentInterfaceOut,
                summary="Unpublish the declared interface: every turn runs in the full profile again")
-@human_only("An agent's declared interface")
 def unpublish_interface(request: HttpRequest, slug: str):
     agent = _agent_for_admin(request, slug)
     agent.interface = {}
@@ -466,9 +459,9 @@ def agent_access(request: HttpRequest, slug: str):
     }
 
 
-# Browser-only (`@human_only` on both routes), like ownership transfer: granting
-# admin hands over the agent's credentials, so it is a decision a PERSON makes
-# in the canopy UI, never a token. Resolve first so a non-member gets 404.
+# Granting admin hands over the agent's credentials, so it is held to the same
+# bar as transferring the agent: its owner or a workspace owner (by browser or
+# MCP alike). Resolve first so a non-member gets 404.
 def _admin_change_gate(request: HttpRequest, slug: str):
     agent = _get_agent_or_404(request, slug)
     if not _may_manage_admins(request, agent):
@@ -477,8 +470,7 @@ def _admin_change_gate(request: HttpRequest, slug: str):
 
 
 @router.put("/{slug}/admins/{user_id}", response=list[AgentAdminOut],
-            summary="Make a workspace member an admin of this agent (canopy UI only)")
-@human_only("An agent's admins")
+            summary="Make a workspace member an admin of this agent")
 def grant_admin(request: HttpRequest, slug: str, user_id: int):
     from django.contrib.auth import get_user_model
 
@@ -495,8 +487,7 @@ def grant_admin(request: HttpRequest, slug: str, user_id: int):
 
 
 @router.delete("/{slug}/admins/{user_id}", response=list[AgentAdminOut],
-               summary="Revoke an admin of this agent (canopy UI only)")
-@human_only("An agent's admins")
+               summary="Revoke an admin of this agent")
 def revoke_admin(request: HttpRequest, slug: str, user_id: int):
     from .models import AgentAdmin
 
@@ -1303,7 +1294,6 @@ def apply_command(request: HttpRequest, slug: str, cmd_id: int, payload: AgentCo
 
 @router.put("/{slug}/credentials", response=list[AgentCredentialStatusOut],
             summary="Set named secrets for an agent (write-only)")
-@human_only("An agent's credentials")
 def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredentialsIn):
     """Upsert. Non-clobbering: a ref absent from the body is untouched.
 
@@ -1390,7 +1380,6 @@ def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
 
 @router.put("/{slug}/vault", response=AgentVaultOut,
             summary="Set the vault + its service-account token (write-only)")
-@human_only("An agent's vault")
 def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> AgentVaultOut:
     """The key is scoped to ONE agent's vault by design.
 
@@ -1456,7 +1445,6 @@ def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 # answers 405 Method Not Allowed — the route exists, it is simply unreachable.
 @router.delete("/{slug}/credentials/{name}", response=list[AgentCredentialStatusOut],
                summary="Remove one named secret")
-@human_only("An agent's credentials")
 def delete_agent_credential(request: HttpRequest, slug: str, name: str):
     agent = _agent_for_admin(request, slug)
     services.delete_agent_credential(agent, name)

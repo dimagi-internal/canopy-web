@@ -18,7 +18,7 @@ writing it, and the answer is visible in the diff.
 
 What `tests/test_every_route_declares_its_gate.py` checks: every operationId in
 the schema is here and nothing stale is; every label is in `VOCABULARY`;
-`human-only` here agrees with `@human_only` on the view, both ways; and every
+and every
 member-level POST/PUT/PATCH/DELETE is in `VIEWER_MAY_MUTATE`. What it cannot
 check is that a label is TRUE — record what the view ENFORCES TODAY, not what it
 should, having read the view and the helper it calls. A gate that looks wrong
@@ -58,10 +58,6 @@ Vocabulary (closed — add to it deliberately, never in passing):
   invite token, OAuth state).
 * ``host`` — a connected-site / machine protocol endpoint (assertion,
   jwt-bearer, Pub/Sub push).
-* ``human-only`` — ADDED beside the tier when the view is wrapped by
-  ``@human_only`` (``apps/common/human_only.py``). Only the decorator counts: an
-  inline ``is_machine`` refusal is real but invisible to that registry and to
-  the MCP exclusion it drives, so it is not labelled here.
 """
 from __future__ import annotations
 
@@ -71,7 +67,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "members.manage", "integrations", "own",
     "agent-admin", "agent-owner", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
-    "contact", "signed-link", "host", "human-only",
+    "contact", "signed-link", "host",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -79,15 +75,15 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_agents": ("member",),
     "upsert_agent": ("agent.work", "agent-admin"),  # editor in target ws; a MOVE also needs agent admin
     "get_agent": ("member",),
-    "link_canopy_user": ("agent-admin", "human-only"),
-    "transfer_owner": ("agent-owner", "human-only"),  # leaving it ownerless needs OWN
+    "link_canopy_user": ("agent-admin",),
+    "transfer_owner": ("agent-owner",),  # leaving it ownerless needs OWN
     "get_interface": ("member",),
-    "publish_interface": ("agent-admin", "human-only"),
-    "unpublish_interface": ("agent-admin", "human-only"),
+    "publish_interface": ("agent-admin",),
+    "unpublish_interface": ("agent-admin",),
     "list_admins": ("member",),
     "agent_access": ("member",),
-    "grant_admin": ("agent-owner", "human-only"),
-    "revoke_admin": ("agent-owner", "human-only"),
+    "grant_admin": ("agent-owner",),
+    "revoke_admin": ("agent-owner",),
     "delete_agent": ("agent.work",),
     "set_runner_preference": ("agent.work",),
     "set_turn_mode": ("agent.work",),
@@ -125,16 +121,16 @@ GATES: dict[str, tuple[str, ...]] = {
     "post_command": ("member", "agent.work"),  # comment/accept/decline = member; edit/reassign/done/dispatch = editor
     "list_commands": ("member",),
     "apply_command": ("agent.work",),
-    "set_agent_credentials": ("agent-admin", "human-only"),
+    "set_agent_credentials": ("agent-admin",),
     "agent_credential_status": ("member",),
     "resolve_agent_credentials": ("runner-holds-agent",),  # bearer only
     "get_agent_vault": ("member",),
-    "set_agent_vault": ("agent-admin", "human-only"),
+    "set_agent_vault": ("agent-admin",),
     "get_agent_github": ("member",),
     "set_agent_github": ("agent-owner",),  # strictly the agent's own owner (delegations.set_github)
     "check_agent_github": ("member",),
     "delete_agent_github": ("member", "self"),  # removes only the caller's own delegation
-    "delete_agent_credential": ("agent-admin", "human-only"),
+    "delete_agent_credential": ("agent-admin",),
     "agent_readiness": ("member",),
     "post_bootstrap_report": ("runner-holds-agent",),
     # --- apps/agents/oauth_api.py
@@ -166,9 +162,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "post_runner_mint_code": ("runner-admin",),
     "post_runner_mint_result": ("runner",),
     "list_runner_admins": ("runner-admin",),
-    "grant_runner_admin": ("runner", "human-only"),  # pairer only (not RunnerAdmins)
-    "revoke_runner_admin": ("runner", "human-only"),
-    "set_runner_flags": ("runner-admin", "human-only"),
+    "grant_runner_admin": ("runner",),  # pairer only (not RunnerAdmins)
+    "revoke_runner_admin": ("runner",),
+    "set_runner_flags": ("runner-admin",),
     "list_runners": ("member",),  # _runner_read_q: the tenant's fleet
     "update_runner_capabilities": ("runner",),
     "retire_runner": ("runner",),
@@ -285,7 +281,7 @@ GATES: dict[str, tuple[str, ...]] = {
 
     # --- apps/tokens/api.py  (the caller's own tokens, grants, GitHub connection)
     "list_tokens": ("self",),
-    "create_token": ("self", "human-only"),
+    "create_token": ("self",),
     "revoke_token": ("self",),
     "tokens_list_connected_apps": ("self",),
     "tokens_disconnect_app": ("self",),
@@ -423,11 +419,11 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_preferences": ("self",),
     # --- apps/slack/api.py
     "get_config": ("member",),
-    "set_config_token": ("own", "human-only"),
-    "clear_config_token": ("own", "human-only"),
+    "set_config_token": ("own",),
+    "clear_config_token": ("own",),
     "set_history": ("integrations",),
     "sync": ("integrations",),
-    "declare_agent": ("own", "human-only"),
+    "declare_agent": ("own",),
     # --- apps/system/api.py
     "overview": ("authenticated",),  # canopy plugin catalog, not tenant data
     "public_stats": ("anonymous",),
@@ -438,21 +434,21 @@ GATES: dict[str, tuple[str, ...]] = {
     "create_workspace": ("authenticated", "own"),  # can_create_workspace; OWN on `parent` when nesting
     "list_workspaces": ("authenticated",),  # the caller's own memberships
     "get_workspace": ("member",),
-    "set_workspace_parent": ("own", "human-only"),  # own both ends
+    "set_workspace_parent": ("own",),  # own both ends
     "list_joinable_workspaces": ("authenticated",),
     "join_workspace": ("authenticated",),  # self_join_domains match, same 404 otherwise
-    "delete_workspace": ("own", "human-only"),
+    "delete_workspace": ("own",),
     "list_members": ("member",),
-    "remove_member": ("members.manage", "human-only"),  # + may_manage_member
-    "set_member_role": ("members.manage", "human-only"),  # + may_manage_member
-    "create_invite": ("members.manage", "human-only"),
+    "remove_member": ("members.manage",),  # + may_manage_member
+    "set_member_role": ("members.manage",),  # + may_manage_member
+    "create_invite": ("members.manage",),
     "list_invites": ("member",),  # tokens only to members.manage
     "revoke_invite": ("members.manage",),
-    "reissue_invite": ("members.manage", "human-only"),
+    "reissue_invite": ("members.manage",),
     "preview_invite": ("signed-link",),  # auth=None; the invite token is the capability
     "accept_invite": ("authenticated", "signed-link"),
     "get_shared_vault": ("own",),
-    "set_shared_vault": ("own", "human-only"),
+    "set_shared_vault": ("own",),
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
 }
 

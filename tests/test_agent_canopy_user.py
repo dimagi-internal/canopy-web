@@ -91,7 +91,7 @@ def test_a_login_from_another_workspace_is_refused(ws, owner):
     assert r.status_code == 422 and "not a member" in r.content.decode()
 
 
-def test_only_the_owner_or_an_admin_and_only_from_the_browser(ws, owner, ace_user):
+def test_only_the_owner_or_an_admin(ws, owner, ace_user):
     _agent(ws, owner, "ace")
     member = _user("mo")
     wsvc.ensure_member(ws, member, WorkspaceMembership.EDITOR)
@@ -99,10 +99,10 @@ def test_only_the_owner_or_an_admin_and_only_from_the_browser(ws, owner, ace_use
     c.force_login(member)
     assert _put(c, "ace", ace_user).status_code == 403
 
-    # The owner's own TOKEN is refused: the linked user counts as the agent
-    # itself, so linking one is a person's decision in the UI.
+    # The owner's own TOKEN may do it too: a token acts as its user (MCP can do
+    # whatever the web app can).
     raw, _ = PersonalToken.create_for_user(user=owner, label="t")
     r = Client().put("/api/agents/ace/canopy-user", {"user_id": ace_user.pk},
                      content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert r.status_code == 403
-    assert Agent.objects.get(slug="ace").user is None
+    assert r.status_code == 200, r.content
+    assert Agent.objects.get(slug="ace").user == ace_user

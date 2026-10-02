@@ -61,7 +61,6 @@ _RUNNER = "runner protocol: a runner calls this on its own tick, not a person"
 _BROWSER = "a browser tab's own plumbing (page state, live viewer, push subscription)"
 _HOST = "an embedding host's or a contact's surface — a different principal"
 _ANON = "anonymous public read; nothing to do as a signed-in person"
-_UI_ONLY = "refused to any token by design (`is_machine`): canopy's web app only"
 _BYTES = "returns raw bytes, which a tool result cannot carry"
 
 #: Path prefixes whose every route belongs to another principal.
@@ -125,33 +124,6 @@ EXCLUDED: dict[str, str] = {
     "subscribe": _BROWSER,
     "unsubscribe": _BROWSER,
     "attachment_content": _BYTES,
-    # Web app only, by design. A tool that always refuses is noise in every
-    # client's tool list; `tests/test_human_only_routes.py` fails if a route
-    # that refuses machines is missing here.
-    "transfer_owner": _UI_ONLY,
-    "grant_admin": _UI_ONLY,
-    "revoke_admin": _UI_ONLY,
-    "link_canopy_user": _UI_ONLY,
-    "set_runner_flags": _UI_ONLY,
-    # `@human_only` (apps/common/human_only.py): owner actions a token acting
-    # with its user's whole role must not take for them.
-    "set_workspace_parent": _UI_ONLY,
-    "delete_workspace": _UI_ONLY,
-    "remove_member": _UI_ONLY,
-    "set_member_role": _UI_ONLY,
-    "create_invite": _UI_ONLY,
-    "reissue_invite": _UI_ONLY,
-    "set_shared_vault": _UI_ONLY,
-    "publish_interface": _UI_ONLY,
-    "unpublish_interface": _UI_ONLY,
-    "set_agent_credentials": _UI_ONLY,
-    "set_agent_vault": _UI_ONLY,
-    "delete_agent_credential": _UI_ONLY,
-    "grant_runner_admin": _UI_ONLY,
-    "revoke_runner_admin": _UI_ONLY,
-    "set_config_token": _UI_ONLY,
-    "clear_config_token": _UI_ONLY,
-    "declare_agent": _UI_ONLY,
     # Deprecated.
     "set_runner_preference": "deprecated; superseded by replace_agent_runners",
 }
