@@ -217,3 +217,19 @@ export async function setSharedVault(
   }
   return res.data as unknown as SharedVaultOut
 }
+
+export type RunnerTopologyOut = components['schemas']['RunnerTopologyOut']
+export type TopologyRunnerOut = components['schemas']['TopologyRunnerOut']
+export type TopologyAgentOut = components['schemas']['TopologyAgentOut']
+export type TopologyRouteOut = components['schemas']['TopologyRouteOut']
+
+export async function getRunnerTopology(slug: string): Promise<RunnerTopologyOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/runner-topology', {
+    params: { path: { slug } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(
+      res.response.status, problemMessage(res.error, 'Failed to load the runner topology'))
+  }
+  return res.data as unknown as RunnerTopologyOut
+}

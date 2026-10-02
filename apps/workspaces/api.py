@@ -24,6 +24,7 @@ from .schemas import (
     JoinableWorkspaceOut,
     MemberOut,
     MemberRoleUpdateIn,
+    RunnerTopologyOut,
     SharedVaultIn,
     SharedVaultOut,
     WorkspaceCreateIn,
@@ -485,3 +486,19 @@ def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) ->
     return services.set_shared_vault(
         m.workspace, vault=payload.vault, service_key=payload.service_key,
     )
+
+
+@router.get("/{slug}/runner-topology", response=RunnerTopologyOut,
+            summary="Which runners serve which agents, across this workspace and every one below it")
+def runner_topology(request: HttpRequest, slug: str) -> RunnerTopologyOut:
+    """This workspace and its descendants, each with its agents and their routing
+    (the default ordered list and every source rule), plus every runner those
+    agents route to or that lives in the tree. Owner-only."""
+    # Owner-only because an owner of this workspace owns every descendant
+    # (Workspace.parent), so the view shows nothing an owner could not already
+    # open agent by agent. An editor's reach stops at this workspace, and a
+    # subtree view would hand them its divisions.
+    from apps.harness import topology
+
+    m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
+    return RunnerTopologyOut(**topology.build(m.workspace))

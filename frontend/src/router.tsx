@@ -22,6 +22,7 @@ import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
+import { WorkspaceRunnersPage } from './pages/WorkspaceRunnersPage'
 import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
@@ -235,6 +236,7 @@ export const routeTable: RouteObject[] = [
           { path: 'inbound', element: <InboundPushPage /> },
           { path: 'connected-apps', element: <ConnectedAppsPage /> },
           { path: 'secrets', element: <WorkspaceSecretsPage /> },
+          { path: 'runners', element: <WorkspaceRunnersPage /> },
         ],
       },
       // The four pages these sections used to be. Live links were handed to

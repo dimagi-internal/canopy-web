@@ -3594,6 +3594,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/runner-topology": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which runners serve which agents, across this workspace and every one below it
+         * @description This workspace and its descendants, each with its agents and their routing
+         *     (the default ordered list and every source rule), plus every runner those
+         *     agents route to or that lives in the tree. Owner-only.
+         */
+        readonly get: operations["runner_topology"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/connected-apps": {
         readonly parameters: {
             readonly query?: never;
@@ -11920,6 +11942,110 @@ export interface components {
             /** Service Key */
             readonly service_key?: string | null;
         };
+        /**
+         * RunnerTopologyOut
+         * @description Workspaces in tree order (depth-first, `depth` 0 = the root).
+         */
+        readonly RunnerTopologyOut: {
+            /** Root */
+            readonly root: string;
+            /** Workspaces */
+            readonly workspaces: readonly components["schemas"]["TopologyWorkspaceOut"][];
+            /** Runners */
+            readonly runners: readonly components["schemas"]["TopologyRunnerOut"][];
+        };
+        /** TopologyAgentOut */
+        readonly TopologyAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Turn Mode */
+            readonly turn_mode: string;
+            /** Routes */
+            readonly routes: readonly components["schemas"]["TopologyRouteOut"][];
+        };
+        /**
+         * TopologyRouteOut
+         * @description One `RunnerAssignment` row. `source` "" = the agent's default ordered list
+         *     (`rank` orders it); non-empty = a source rule (optionally narrowed to one
+         *     `actor`). `can_claim` is False when the runner's PAIRER is not in the agent's
+         *     workspace — the row routes on paper and the turn is never claimed.
+         */
+        readonly TopologyRouteOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Rank */
+            readonly rank: number;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Source */
+            readonly source: string;
+            /** Actor */
+            readonly actor: string;
+            /** Strict */
+            readonly strict: boolean;
+            /** Turn Mode */
+            readonly turn_mode: string;
+            /** Can Claim */
+            readonly can_claim: boolean;
+        };
+        /**
+         * TopologyRunnerOut
+         * @description A runner that lives in the tree or that an agent in it routes to.
+         *     `in_tree` False = homed elsewhere (another workspace, or none).
+         */
+        readonly TopologyRunnerOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Location */
+            readonly location: string;
+            /** Status */
+            readonly status: string;
+            /** Ready */
+            readonly ready: boolean;
+            /** Ready Note */
+            readonly ready_note: string;
+            /** Paused */
+            readonly paused: boolean;
+            /** Host */
+            readonly host: string;
+            /** Last Heartbeat At */
+            readonly last_heartbeat_at: string | null;
+            /** Workspace */
+            readonly workspace: string | null;
+            /** In Tree */
+            readonly in_tree: boolean;
+            /** Paired By Email */
+            readonly paired_by_email: string | null;
+            /** Flags */
+            readonly flags: readonly string[];
+            /** Agent Count */
+            readonly agent_count: number;
+        };
+        /** TopologyWorkspaceOut */
+        readonly TopologyWorkspaceOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Parent */
+            readonly parent: string | null;
+            /** Depth */
+            readonly depth: number;
+            /** Agents */
+            readonly agents: readonly components["schemas"]["TopologyAgentOut"][];
+        };
         /** ConnectedAgentOut */
         readonly ConnectedAgentOut: {
             /** Slug */
@@ -19542,6 +19668,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SharedVaultOut"];
+                };
+            };
+        };
+    };
+    readonly runner_topology: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerTopologyOut"];
                 };
             };
         };
