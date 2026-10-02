@@ -2233,6 +2233,64 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/actor-routes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List which people's work routes to which runners
+         * @description Per-person routing for this agent: for each person with a rule, the runners
+         *     their work goes to (in preference order), whether that is strict, and on which
+         *     sources. People with no entry follow the agent's source rules and default
+         *     runner order.
+         */
+        readonly get: operations["list_agent_actor_routes"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/actor-routes/{actor}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Route one person's work to specific runners
+         * @description Send everything this person asks this agent to do (by email, Slack, chat,
+         *     ace-web or API) to the given runners, in preference order. Replaces only THIS
+         *     person's routing; everyone else's rules are untouched.
+         *
+         *     `actor` is the person's email. With `strict` (the default) only the named
+         *     runners may take their work — if those are offline it waits; with
+         *     `strict=false` it falls back to the agent's usual runners after a minute.
+         *     You may name only runners you administer (you paired it, or its pairer
+         *     granted you admin) — this decides where work runs, so it is gated on the box,
+         *     not just the agent. Remove a route with DELETE on the same path.
+         */
+        readonly put: operations["set_agent_actor_route"];
+        readonly post?: never;
+        /**
+         * Remove one person's routing
+         * @description Stop routing this person's work specially: their turns go back to the
+         *     agent's source rules and default runner order. Touches no one else's rules.
+         *     Idempotent — removing a person with no route is a 204.
+         */
+        readonly delete: operations["delete_agent_actor_route"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/syncs/": {
         readonly parameters: {
             readonly query?: never;
@@ -9463,6 +9521,78 @@ export interface components {
         readonly AgentRunnerRulesIn: {
             /** Rules */
             readonly rules?: readonly components["schemas"]["AgentRunnerRuleIn"][];
+        };
+        /**
+         * AgentActorRouteOut
+         * @description One person's routing for an agent: whose work, which boxes, on which sources.
+         *
+         *     A VIEW over the per-source actor rules, grouped by actor — the same rows
+         *     `GET /runner-rules` lists one per (source, actor, runner). An actor whose
+         *     sources route differently comes back as one entry per distinct routing.
+         */
+        readonly AgentActorRouteOut: {
+            /** Actor */
+            readonly actor: string;
+            /** Runners */
+            readonly runners: readonly components["schemas"]["AgentActorRouteRunnerOut"][];
+            /** Strict */
+            readonly strict: boolean;
+            /** Sources */
+            readonly sources: readonly string[];
+            /**
+             * Turn Mode
+             * @default
+             */
+            readonly turn_mode: string;
+            /**
+             * Queued Count
+             * @default 0
+             */
+            readonly queued_count: number;
+        };
+        /** AgentActorRouteRunnerOut */
+        readonly AgentActorRouteRunnerOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /** Online */
+            readonly online: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+        };
+        /**
+         * AgentActorRouteIn
+         * @description Route ONE person's work for this agent onto the given runners.
+         *
+         *     `runners` is ordered — first is preferred. `strict` (default on) means only
+         *     these runners may take the work: if they are all offline the turn waits rather
+         *     than falling back to the agent's default order. `sources` defaults to every
+         *     source that carries an actor; `canopy_scheduler` is refused because a
+         *     schedule has no person behind it, so a rule on it could never match.
+         */
+        readonly AgentActorRouteIn: {
+            /** Runners */
+            readonly runners?: readonly components["schemas"]["AgentRunnerRowIn"][];
+            /**
+             * Strict
+             * @default true
+             */
+            readonly strict: boolean;
+            /** Sources */
+            readonly sources?: readonly ("ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api")[] | null;
+            /**
+             * Turn Mode
+             * @default
+             * @enum {string}
+             */
+            readonly turn_mode: "" | "manual" | "auto";
         };
         /** AgentSyncOut */
         readonly AgentSyncOut: {
@@ -17082,6 +17212,76 @@ export interface operations {
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentRunnerRuleOut"][];
                 };
+            };
+        };
+    };
+    readonly list_agent_actor_routes: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentActorRouteOut"][];
+                };
+            };
+        };
+    };
+    readonly set_agent_actor_route: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly actor: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentActorRouteIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentActorRouteOut"][];
+                };
+            };
+        };
+    };
+    readonly delete_agent_actor_route: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly actor: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

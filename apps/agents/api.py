@@ -35,6 +35,9 @@ from .schemas import (
     AgentIn,
     AgentOut,
     AgentOwnerIn,
+    AgentActorRouteIn,
+    AgentActorRouteOut,
+    AgentActorRouteRunnerOut,
     AgentRunnerOut,
     AgentRunnerRowIn,
     AgentRunnerRuleOut,
@@ -693,8 +696,8 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
     queued: Counter = Counter()
     for t in (
         Turn.objects.filter(agent=agent, status=Turn.QUEUED)
-        .select_related("enqueued_by")
-        .only("origin", "origin_ref", "enqueued_by")
+        .select_related("enqueued_by", "initiator_contact")
+        .only("origin", "origin_ref", "enqueued_by", "initiator_contact")
     ):
         queued[(t.origin, actor_of(t))] += 1
 
@@ -800,6 +803,150 @@ def replace_agent_runner_rules(
             for rank, row in enumerate(r.runners)
         ])
     return list_agent_runner_rules(request, slug)
+
+
+# ---- per-person routing (the additive face of the actor rules above) ----
+#
+# The same RunnerAssignment rows as /runner-rules, addressed by PERSON instead of
+# wholesale. Two things made "route Alice to my laptop" impractical there:
+#   1. a person spans five sources, so it took five hand-built rules; and
+#   2. the PUT replaces every rule and requires the caller to have paired every
+#      runner it names — so anyone but the operator who paired ALL the boxes got a
+#      422 just for re-sending the rules already there.
+# These routes touch one actor's rows only, and gate on the runners being NAMED.
+
+def _actor_or_422(actor: str) -> str:
+    from apps.harness.actors import normalize_actor
+
+    normalized = normalize_actor(actor)
+    if not normalized:
+        raise HttpError(422, f"not an email address: {actor!r}")
+    return normalized
+
+
+def _actor_sources() -> list[str]:
+    """Every routable source whose turns carry a person. The scheduler is the
+    one that doesn't (`apps/harness/actors.py`), so an actor rule on it is dead."""
+    from typing import get_args
+
+    from apps.harness.models import Turn
+    from apps.harness.schemas import RoutableSource
+
+    return [s for s in get_args(RoutableSource) if s != Turn.ORIGIN_CANOPY_SCHEDULER]
+
+
+@router.get("/{slug}/actor-routes", response=list[AgentActorRouteOut],
+            summary="List which people's work routes to which runners")
+def list_agent_actor_routes(request: HttpRequest, slug: str) -> list[AgentActorRouteOut]:
+    """Per-person routing for this agent: for each person with a rule, the runners
+    their work goes to (in preference order), whether that is strict, and on which
+    sources. People with no entry follow the agent's source rules and default
+    runner order."""
+    rules = list_agent_runner_rules(request, slug)
+    # (actor, source) -> rows of that rule, rank order (the list is pre-sorted).
+    by_rule: dict[tuple[str, str], list[AgentRunnerRuleOut]] = {}
+    for row in rules:
+        if row.actor:
+            by_rule.setdefault((row.actor, row.source), []).append(row)
+
+    grouped: dict[tuple, AgentActorRouteOut] = {}
+    for (actor, source), rows in by_rule.items():
+        key = (actor, tuple((r.runner_id, r.enabled) for r in rows), rows[0].strict, rows[0].turn_mode)
+        route = grouped.get(key)
+        if route is None:
+            route = grouped[key] = AgentActorRouteOut(
+                actor=actor,
+                runners=[
+                    AgentActorRouteRunnerOut(
+                        runner_id=r.runner_id, runner_name=r.runner_name,
+                        online=r.online, enabled=r.enabled,
+                    )
+                    for r in rows
+                ],
+                strict=rows[0].strict, sources=[], turn_mode=rows[0].turn_mode,
+            )
+        route.sources.append(source)
+        route.queued_count += rows[0].queued_count
+    return sorted(grouped.values(), key=lambda r: (r.actor, r.sources))
+
+
+@router.put("/{slug}/actor-routes/{actor}", response=list[AgentActorRouteOut],
+            summary="Route one person's work to specific runners")
+def set_agent_actor_route(
+    request: HttpRequest, slug: str, actor: str, payload: AgentActorRouteIn
+) -> list[AgentActorRouteOut]:
+    """Send everything this person asks this agent to do (by email, Slack, chat,
+    ace-web or API) to the given runners, in preference order. Replaces only THIS
+    person's routing; everyone else's rules are untouched.
+
+    `actor` is the person's email. With `strict` (the default) only the named
+    runners may take their work — if those are offline it waits; with
+    `strict=false` it falls back to the agent's usual runners after a minute.
+    You may name only runners you administer (you paired it, or its pairer
+    granted you admin) — this decides where work runs, so it is gated on the box,
+    not just the agent. Remove a route with DELETE on the same path.
+    """
+    from apps.harness import services as hsvc
+    from apps.harness.api import _runner_read_q
+    from apps.harness.models import Runner, RunnerAssignment
+
+    agent = _agent_for_write(request, slug)
+    actor = _actor_or_422(actor)
+
+    sources = list(dict.fromkeys(payload.sources or _actor_sources()))
+    dead = [s for s in sources if s not in _actor_sources()]
+    if dead:
+        raise HttpError(422, f"no person is behind {', '.join(dead)} turns, so a person's route can't apply there")
+    if not payload.runners:
+        raise HttpError(422, "a route needs at least one runner — DELETE removes a route")
+    ids = [row.runner_id for row in payload.runners]
+    if len(ids) != len(set(ids)):
+        raise HttpError(422, "a runner may appear once per route")
+
+    runners = {
+        r.id: r for r in Runner.objects.filter(id__in=ids)
+        .exclude(status=Runner.RETIRED).filter(_runner_read_q(request))
+    }
+    missing = [str(rid) for rid in ids if rid not in runners]
+    if missing:
+        raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
+    # The tier that decides what a box does, not the one that speaks AS it: the
+    # operator of a box paired under an agent's identity holds an admin grant, not
+    # the pairing, and must still be able to point work at their own box.
+    refused = [r.name for r in runners.values() if not hsvc.can_administer_runner(request.user, r)]
+    if refused:
+        raise HttpError(
+            403,
+            f"you don't administer runner(s) {', '.join(refused)} — ask whoever paired it to "
+            "grant you admin (POST /api/harness/runners/{id}/admins)",
+        )
+
+    with transaction.atomic():
+        RunnerAssignment.objects.filter(agent=agent, actor=actor).exclude(source="").delete()
+        RunnerAssignment.objects.bulk_create([
+            RunnerAssignment(
+                agent=agent, runner=runners[row.runner_id], rank=rank, source=source,
+                actor=actor, strict=payload.strict, enabled=row.enabled,
+                turn_mode=payload.turn_mode,
+            )
+            for source in sources
+            for rank, row in enumerate(payload.runners)
+        ])
+    return [r for r in list_agent_actor_routes(request, slug) if r.actor == actor]
+
+
+@router.delete("/{slug}/actor-routes/{actor}", response={204: None},
+               summary="Remove one person's routing")
+def delete_agent_actor_route(request: HttpRequest, slug: str, actor: str):
+    """Stop routing this person's work specially: their turns go back to the
+    agent's source rules and default runner order. Touches no one else's rules.
+    Idempotent — removing a person with no route is a 204."""
+    from apps.harness.models import RunnerAssignment
+
+    agent = _agent_for_write(request, slug)
+    actor = _actor_or_422(actor)
+    RunnerAssignment.objects.filter(agent=agent, actor=actor).exclude(source="").delete()
+    return Status(204, None)
 
 
 # ---- syncs (Google-Doc backed) ----

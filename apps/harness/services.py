@@ -1208,9 +1208,33 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             continue  # another runner claimed for this agent between our check and update
         if updated:
             turn.refresh_from_db()
-            append_events(turn, [{"kind": "status", "payload": {"status": Turn.CLAIMED, "runner": runner.name}}])
+            append_events(turn, [{"kind": "status", "payload": {
+                "status": Turn.CLAIMED, "runner": runner.name,
+                **_routing_basis(turn, runner, priorities),
+            }}])
             return turn
     return None
+
+
+def _routing_basis(turn: Turn, runner: Runner, priorities: dict) -> dict:
+    """WHY this runner got this turn, recorded on the claim event: the derived
+    actor and the rung that matched. Without it a routing audit has to re-derive
+    the ladder from rules that may have changed since — and with several boxes
+    serving one agent, "why did my turn land there?" is the question people ask."""
+    from .actors import actor_of
+
+    if turn.pinned_runner_id == runner.id:
+        return {"actor": "", "rule": "pin"}
+    actor = actor_of(turn)
+    if turn.agent_id and actor and priorities.get((turn.agent_id, turn.origin, actor)):
+        rule = "actor"
+    elif turn.agent_id and priorities.get((turn.agent_id, turn.origin, "")):
+        rule = "source"
+    elif turn.chat_session_id and not turn.agent_id:
+        rule = "session"
+    else:
+        rule = "default"
+    return {"actor": actor, "rule": rule}
 
 
 def append_events(turn: Turn, events: list[dict]) -> int:
