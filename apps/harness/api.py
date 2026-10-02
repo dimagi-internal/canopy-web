@@ -13,6 +13,7 @@ from ninja import Router, Status
 from canopy_sdk import contract
 from ninja.errors import HttpError
 
+from apps.common.human_only import human_only
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
@@ -733,6 +734,7 @@ def list_runner_admins(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.post("/runners/{runner_id}/admins", response=RunnerAdminOut,
              summary="Grant someone administration of this runner (pairer only)")
+@human_only("Who administers a runner")
 def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerAdminIn):
     """Granting stays with the PAIRER, not with grantees.
 
@@ -759,6 +761,7 @@ def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
 
 @router.delete("/runners/{runner_id}/admins/{user_id}", response={204: None},
                summary="Revoke administration (pairer only)")
+@human_only("Who administers a runner")
 def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int):
     runner = _runner_or_404(request, runner_id)
     user = User.objects.filter(pk=user_id).first()

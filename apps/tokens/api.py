@@ -6,6 +6,7 @@ from django.http import HttpRequest
 from django.utils import timezone
 from ninja import Router, Status
 
+from apps.common.human_only import human_only
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_NOT_FOUND, ProblemError
 
@@ -45,6 +46,7 @@ def list_tokens(request: HttpRequest) -> list[PersonalTokenOut]:
 
 
 @router.post("/", response={201: PersonalTokenCreatedOut}, summary="Mint a token")
+@human_only("A personal access token")
 def create_token(request: HttpRequest, payload: PersonalTokenCreateIn) -> Status:
     raw, token = PersonalToken.create_for_user(
         user=request.user, label=payload.label, ttl_days=payload.ttl_days

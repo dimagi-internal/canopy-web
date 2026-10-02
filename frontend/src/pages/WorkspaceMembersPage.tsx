@@ -84,7 +84,14 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   }, [slug, navigate])
 
   const outstandingInvites = useMemo(() => (invites ?? []).filter(isInviteOutstanding), [invites])
-  const ownerCount = useMemo(() => (members ?? []).filter((m) => m.role === 'owner').length, [members])
+  // Owners of a parent workspace own this one too (`inherited`). They count
+  // toward "is anyone else an owner" — the server lets the last DIRECT owner
+  // step down beside them — but they have no row here to change or remove.
+  const directOwnerCount = useMemo(
+    () => (members ?? []).filter((m) => m.role === 'owner' && !m.inherited).length,
+    [members],
+  )
+  const hasInheritedOwner = useMemo(() => (members ?? []).some((m) => m.inherited), [members])
 
   async function handleRoleChange(userId: number, role: MemberRole) {
     if (!slug) return
@@ -210,12 +217,20 @@ export function WorkspaceMembersPage(): JSX.Element | null {
             </TableHeader>
             <TableBody>
               {members.map((m) => {
-                const isSoleOwner = m.role === 'owner' && ownerCount === 1
+                const isSoleOwner =
+                  m.role === 'owner' && !m.inherited && directOwnerCount === 1 && !hasInheritedOwner
                 return (
                 <TableRow key={m.user_id}>
                   <TableCell className="whitespace-normal text-foreground">{m.email}</TableCell>
                   <TableCell className="capitalize">
-                    {isOwner ? (
+                    {m.inherited ? (
+                      <span>
+                        {m.role}{' '}
+                        <span className="text-[11px] normal-case text-muted-foreground">
+                          · via parent workspace
+                        </span>
+                      </span>
+                    ) : isOwner ? (
                       <div className="flex flex-col gap-0.5">
                         <select
                           aria-label={`Change role for ${m.email}`}
@@ -250,15 +265,17 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                   </TableCell>
                   {isOwner && (
                     <TableCell className="text-right">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void handleRemoveMember(m.user_id)}
-                        aria-label={`Remove ${m.email}`}
-                      >
-                        Remove
-                      </Button>
+                      {!m.inherited && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void handleRemoveMember(m.user_id)}
+                          aria-label={`Remove ${m.email}`}
+                        >
+                          Remove
+                        </Button>
+                      )}
                     </TableCell>
                   )}
                 </TableRow>

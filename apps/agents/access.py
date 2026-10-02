@@ -54,15 +54,18 @@ def roster(agent) -> list[dict]:
         for g in AgentAdmin.objects.filter(agent=agent).select_related("granted_by")
     }
     rows = []
-    # A listing of the workspace (filtered by workspace alone), not an access
-    # decision about any one user — the authorizer rule does not apply.
-    for m in WorkspaceMembership.objects.filter(workspace_id=agent.workspace_id).select_related("user"):
+    # Everyone in the workspace as the authorizer sees them — owners of an
+    # ancestor workspace included, since they are owners (and so admins) here.
+    from apps.workspaces import services as wsvc
+
+    for m in wsvc.effective_memberships(agent.workspace_id):
         user = m.user
         grant = grants.get(user.pk)
         if agent.owner_id == user.pk:
             role, basis = OWNER, "Owns this agent"
         elif m.role == WorkspaceMembership.OWNER:
-            role, basis = ADMIN, "Owns the workspace"
+            role, basis = ADMIN, ("Owns a parent workspace" if getattr(m, "inherited", False)
+                                  else "Owns the workspace")
         elif grant is not None:
             by = grant.granted_by.email if grant.granted_by else None
             role, basis = ADMIN, f"Made admin by {by}" if by else "Made admin"

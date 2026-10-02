@@ -8,7 +8,7 @@ from apps.agents.models import Agent
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.executor import execute_turn_stub
 from apps.harness.models import Turn
-from apps.workspaces.models import Workspace
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -16,6 +16,9 @@ pytestmark = pytest.mark.django_db(transaction=True)
 def _ctx():
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="canopy", display_name="Canopy", created_by=user)
+    # The owner is a member: an agent owner outside the workspace is an outsider
+    # to it (`relationship_for_user`), and their sends are refused.
+    WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=user)
     session = chat.create_session(workspace=ws, created_by=user, agent=agent)
     return user, session

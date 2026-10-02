@@ -3398,7 +3398,11 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List members (member-only) */
+        /**
+         * List members (member-only)
+         * @description Everyone in the workspace. Owners of a parent workspace own this one
+         *     too, and are listed with `inherited: true`; they are changed on the parent.
+         */
         readonly get: operations["list_members"];
         readonly put?: never;
         readonly post?: never;
@@ -3433,7 +3437,11 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List invites (member-only) */
+        /**
+         * List invites (member-only)
+         * @description Every member sees who has been invited; only an owner gets each invite's
+         *     `token` (it is empty for everyone else).
+         */
         readonly get: operations["list_invites"];
         readonly put?: never;
         /**
@@ -11617,6 +11625,11 @@ export interface components {
              * Format: date-time
              */
             readonly joined_at: string;
+            /**
+             * Inherited
+             * @default false
+             */
+            readonly inherited: boolean;
         };
         /** MemberRoleUpdateIn */
         readonly MemberRoleUpdateIn: {

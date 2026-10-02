@@ -15,7 +15,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from apps.harness import initiator as who
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
-from apps.realtime.groups import session_group
+from apps.realtime.groups import chat_user_group, session_group
 
 from . import access, agui, attach, drafts, presence, serializers, stream_map
 from . import services as chat_services
@@ -170,6 +170,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         self.role = role
         self.group = session_group(session.id)
         await self.channel_layer.group_add(self.group, self.channel_name)
+        self.user_group = chat_user_group(user.id)
+        await self.channel_layer.group_add(self.user_group, self.channel_name)
         await self.accept()
         await database_sync_to_async(presence.touch)(session.id, user.id)
         await database_sync_to_async(chat_services.attach_session)(session)
@@ -206,6 +208,9 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             await database_sync_to_async(chat_services.detach_session)(self.session)
             await self.channel_layer.group_discard(group, self.channel_name)
             return
+        user_group = getattr(self, "user_group", None)
+        if user_group:
+            await self.channel_layer.group_discard(user_group, self.channel_name)
         await database_sync_to_async(presence.leave)(self.session.id, self.user.id)
         await database_sync_to_async(chat_services.detach_session)(self.session)
         await self._broadcast({"type": "presence.left", "user_id": self.user.id})
@@ -439,6 +444,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         return f"seq:{seq}"
 
     # -- group frame handlers (dots -> underscores) --
+    async def access_recheck(self, message):
+        """This person's access changed somewhere (they left a workspace). Ask
+        the session ACL again and close if the answer is now no — an open tab
+        would otherwise keep receiving a conversation they can no longer read."""
+        workspaces = message.get("workspaces")
+        if workspaces and self.session.workspace_id not in workspaces:
+            return
+        self.role = await database_sync_to_async(access.role_for)(self.user, self.session)
+        if self.role is None:
+            await self._error("forbidden", "You no longer have access to this session.")
+            await self.close(code=4003)
+
     async def chat_turn_event(self, message):
         evt = message["event"]
         turn_id = message.get("turn_id")

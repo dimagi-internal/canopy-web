@@ -124,7 +124,12 @@ def relationship_for_user(user, agent) -> str:
     the MCP tools they may call)."""
     if agent is None or not getattr(user, "is_authenticated", False):
         return CALLER
-    if agent.owner_id == user.pk:
+    from apps.workspaces import services as wsvc
+
+    # Owner only while still in the tenant: an owner removed from the workspace
+    # who messages the agent (Slack, email) is an outsider now, and must reach
+    # it through its interface like one — not with an unconfined profile.
+    if agent.owner_id == user.pk and wsvc.is_member(user, agent.workspace_id):
         return OWNER
     # The agent's OWN canopy login (`Agent.user`, #983) is the agent itself —
     # confining it against itself is nonsense. Only its own: another agent's
@@ -136,8 +141,6 @@ def relationship_for_user(user, agent) -> str:
     is_admin = getattr(agent, "is_admin", None)
     if callable(is_admin) and is_admin(user):
         return ADMIN
-    from apps.workspaces import services as wsvc
-
     return MEMBER if wsvc.is_member(user, agent.workspace_id) else CALLER
 
 

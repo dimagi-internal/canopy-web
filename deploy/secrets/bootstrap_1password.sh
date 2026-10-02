@@ -126,12 +126,12 @@ $(for slug in "$@"; do
     printf '    --vault "%s:read_items,write_items" --expires-in 90d\n' "$v"
   done)
 
-Each prints its key ONCE. Paste it into that agent's Settings on canopy-web (or
-PUT /api/agents/<slug>/vault {"vault": "Agent-<Slug>", "service_key": "..."}).
+Each prints its key ONCE. Paste it into that agent's Settings on canopy-web, in the
+browser (the API refuses a token for this: apps/common/human_only.py).
 
 The agent's WORKSPACE also needs a shared-vault key (read on $SHARED_VAULT) so a
 runner can load the shared gog OAuth client — a per-agent key cannot read it, by
-design. If the workspace has none: PUT /api/workspaces/<ws>/shared-vault.
+design. If the workspace has none: /w/<ws>/settings/secrets, in the browser.
 
 Do NOT mint a box-wide "canopy-cloud-runner" key. That token is GONE
 (runner/ec2/README.md): one key reading every agent's vault, inherited by every

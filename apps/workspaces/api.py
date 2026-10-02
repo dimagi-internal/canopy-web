@@ -11,6 +11,7 @@ from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
 
+from apps.common.human_only import human_only
 from apps.api.auth import session_auth
 
 from . import services
@@ -102,12 +103,14 @@ def _require_role(user, slug: str, *allowed: str) -> WorkspaceMembership:
 
 
 def _member_out(m: WorkspaceMembership) -> MemberOut:
-    return MemberOut(user_id=m.user_id, email=m.user.email, role=m.role, joined_at=m.joined_at)
+    return MemberOut(user_id=m.user_id, email=m.user.email, role=m.role, joined_at=m.joined_at,
+                     inherited=getattr(m, "inherited", False))
 
 
-def _invite_out(inv: WorkspaceInvite, email_status: str | None = None) -> InviteOut:
+def _invite_out(inv: WorkspaceInvite, email_status: str | None = None, *,
+                with_token: bool = True) -> InviteOut:
     return InviteOut(
-        id=inv.id, email=inv.email, role=inv.role, token=inv.token,
+        id=inv.id, email=inv.email, role=inv.role, token=inv.token if with_token else "",
         expires_at=inv.expires_at, accepted_at=inv.accepted_at, revoked_at=inv.revoked_at,
         created_at=inv.created_at, invited_by_email=inv.invited_by.email or None,
         last_emailed_at=inv.last_emailed_at, email_status=email_status,
@@ -171,6 +174,7 @@ def get_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
 
 
 @router.put("/{slug}/parent", response=WorkspaceOut, summary="Move a workspace in the tree (owner-only)",)
+@human_only("Where a workspace sits in the tree")
 def set_workspace_parent(request: HttpRequest, slug: str, payload: WorkspaceParentIn) -> WorkspaceOut:
     """Nest `slug` under `parent`, or make it a root with `parent: null`.
 
@@ -181,14 +185,31 @@ def set_workspace_parent(request: HttpRequest, slug: str, payload: WorkspacePare
     if payload.parent:
         _require_role(request.user, payload.parent, WorkspaceMembership.OWNER)
     ws = m.workspace
-    ws.parent_id = payload.parent or None
+    if ws.parent_id and not payload.parent:
+        # Detaching to a root ends every inherited ownership of it. Done by
+        # someone who only owned it by inheritance, it used to save and then
+        # 500 (they were no longer a member to describe it to) — and it left
+        # a workspace nobody owned. So: only a DIRECT owner may detach, and
+        # never into a workspace with no direct owner left to run it.
+        if getattr(m, "inherited", False):
+            raise HttpError(409, "only a direct owner of this workspace can make it a root; "
+                                 "you own it through its parent, and would lose it")
     from django.core.exceptions import ValidationError
+    from django.db import transaction
 
     try:
-        ws.save()
+        with transaction.atomic():
+            ws.parent_id = payload.parent or None
+            ws.save()
+            mine = services.membership(request.user, ws)
+            if mine is None:
+                # Cannot happen given the checks above (a direct owner stays one,
+                # and the new parent is one the caller owns) — but if it ever
+                # did, the move must not land with nobody to describe it to.
+                raise HttpError(409, "this move would leave you outside the workspace")
     except ValidationError as exc:
         raise HttpError(422, "; ".join(exc.messages))
-    return _m_out(services.membership(request.user, ws))
+    return _m_out(mine)
 
 
 @router.get("/joinable", response=list[JoinableWorkspaceOut], summary="Workspaces I may join",)
@@ -223,6 +244,7 @@ def join_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
 
 
 @router.delete("/{slug}/", response={204: None}, summary="Delete a workspace (owner-only)",)
+@human_only("Deleting a workspace")
 def delete_workspace(request: HttpRequest, slug: str):
     """Delete an empty workspace. Owner-only, and never one that still owns agents.
 
@@ -268,20 +290,19 @@ def delete_workspace(request: HttpRequest, slug: str):
 # ---- members ----
 @router.get("/{slug}/members/", response=list[MemberOut], summary="List members (member-only)",)
 def list_members(request: HttpRequest, slug: str) -> list[MemberOut]:
-    _membership_or_404(request.user, slug)
-    members = (
-        WorkspaceMembership.objects.filter(workspace_id=slug)
-        .select_related("user").order_by("joined_at")
-    )
-    return [_member_out(m) for m in members]
+    """Everyone in the workspace. Owners of a parent workspace own this one
+    too, and are listed with `inherited: true`; they are changed on the parent."""
+    m = _membership_or_404(request.user, slug)
+    return [_member_out(row) for row in services.effective_memberships(m.workspace)]
 
 
 @router.delete("/{slug}/members/{user_id}/", response={204: None},
                summary="Remove a member (owner-only)")
+@human_only("A workspace's members")
 def remove_member(request: HttpRequest, slug: str, user_id: int):
     m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
     try:
-        services.remove_member(workspace=m.workspace, user_id=user_id)
+        services.remove_member(workspace=m.workspace, user_id=user_id, by=request.user)
     except services.MemberError as exc:
         raise HttpError(_MEMBER_ERROR_STATUS[exc.code], _REMOVE_MEMBER_ERROR_MESSAGES[exc.code])
     return Status(204, None)
@@ -289,10 +310,12 @@ def remove_member(request: HttpRequest, slug: str, user_id: int):
 
 @router.patch("/{slug}/members/{user_id}/", response=MemberOut,
               summary="Change a member's role (owner-only)")
+@human_only("A member's role")
 def set_member_role(request: HttpRequest, slug: str, user_id: int, payload: MemberRoleUpdateIn) -> MemberOut:
     m = _require_role(request.user, slug, WorkspaceMembership.OWNER)
     try:
-        updated = services.set_member_role(workspace=m.workspace, user_id=user_id, role=payload.role)
+        updated = services.set_member_role(workspace=m.workspace, user_id=user_id, role=payload.role,
+                                           by=request.user)
     except services.MemberError as exc:
         raise HttpError(_MEMBER_ERROR_STATUS[exc.code], _SET_MEMBER_ROLE_ERROR_MESSAGES[exc.code])
     return _member_out(updated)
@@ -300,6 +323,7 @@ def set_member_role(request: HttpRequest, slug: str, user_id: int, payload: Memb
 
 # ---- invites ----
 @router.post("/{slug}/invites/", response={201: InviteOut}, summary="Invite by email (owner-only)",)
+@human_only("Inviting someone to a workspace")
 def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> Status:
     """Creates the invite and emails its link to the address. `email_status`
     says whether the email went out; the link in `token` works either way.
@@ -314,9 +338,17 @@ def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> S
 
 @router.get("/{slug}/invites/", response=list[InviteOut], summary="List invites (member-only)",)
 def list_invites(request: HttpRequest, slug: str) -> list[InviteOut]:
-    _membership_or_404(request.user, slug)
+    """Every member sees who has been invited; only an owner gets each invite's
+    `token` (it is empty for everyone else)."""
+    m = _membership_or_404(request.user, slug)
+    # A pending invite's token IS the invite — the link that admits someone at
+    # its role, owner included — and handing it out is an owner's act, like
+    # creating it. Every member used to receive every token, so a viewer could
+    # forward an owner-level link the owners never meant to send. A viewer
+    # still sees the list (the page shows it to everyone), just not the links.
+    with_token = m.role == WorkspaceMembership.OWNER
     return [
-        _invite_out(i)
+        _invite_out(i, with_token=with_token)
         for i in WorkspaceInvite.objects.filter(workspace_id=slug)
         .select_related("invited_by")
         .order_by("-created_at")
@@ -337,6 +369,7 @@ def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
 
 @router.post("/{slug}/invites/{invite_id}/reissue", response=InviteOut,
              summary="Send a fresh link for an invite (owner-only)")
+@human_only("Inviting someone to a workspace")
 def reissue_invite(request: HttpRequest, slug: str, invite_id: int) -> InviteOut:
     """New token and a fresh expiry for an invite nobody has accepted or
     revoked — including one that has expired — emailed to the invited address.
@@ -411,6 +444,7 @@ def get_shared_vault(request: HttpRequest, slug: str) -> SharedVaultOut:
 
 @router.put("/{slug}/shared-vault", response=SharedVaultOut,
             summary="Set the shared vault + its service-account token (write-only)")
+@human_only("A workspace's shared vault")
 def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) -> SharedVaultOut:
     """The key here must be scoped to the SHARED vault and nothing else.
 

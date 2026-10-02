@@ -160,6 +160,39 @@ and both are load-bearing: `GET /joinable` and `POST /{slug}/join` are how a non
 in at all (owner-gating them would make self-join unreachable), and inbound configuration is
 owner-gated through its own `_owner_workspace_or_404` rather than `_require_role`.
 
+### Owner actions are a person's, not a token's
+
+A personal access token — or an MCP client signed in through OAuth, and every REST route
+is an MCP tool — acts with its user's **whole** role. An agent session on its owner's
+laptop holds the owner's PAT. So the owner actions that hand out power are refused to
+any token and done in the canopy web app (`@human_only`, `apps/common/human_only.py`;
+403 before any lookup, so it leaks nothing): workspace parent / delete / remove member /
+change role / invite + reissue / shared vault; an agent's interface (publish + unpublish),
+credentials (set + delete) and vault; runner admin grant + revoke; the Slack config token
+and declaring the Slack app an agent; and minting a PAT (`POST /api/tokens/` — an hour-long
+OAuth token could otherwise mint one that never expires and outlives revoking the grant).
+They join the older inline refusals (agent owner transfer, agent admins, linking an agent's
+canopy user, runner flags). None of them is an MCP tool, and
+`tests/test_human_only_routes.py` fails if a route that refuses machines is offered as one.
+
+### Leaving a workspace takes what it carried
+
+Every grant that hangs off membership is checked against **current** membership —
+including an agent's owner, who used to stay its admin (credentials, interface, transfer),
+keep an unconfined profile when messaging it, keep lending it a GitHub token and keep
+being pushed about it after being removed. And removal sweeps the rest
+(`apps/workspaces/departure.py`): AgentAdmin, RunnerAdmin and chat participant rows in that
+workspace, lent GitHub tokens, their box on its agents' runner lists, and agent ownership
+(cleared, with a `warn` Event saying so); their open chat sockets there are closed. That is
+because `dimagi` is self-join: without the sweep, a removed person clicks Join and every
+dormant grant wakes up. Removing or demoting an org owner sweeps the divisions they reached
+only by inheritance.
+
+Listings read the tree too: members, an agent's roster, push recipients and the last-owner
+guard all include owners of a parent workspace (`services.effective_memberships`), and a
+direct owner may step down while a parent's owner still owns the workspace. Only a direct
+owner may detach a workspace from its parent.
+
 **The harness** — schedules and turns — is gated too, and it had to be, because it is where
 the table's promises actually cash out. A schedule is prompt text a runner later executes *as
 the agent*, holding the agent's resolved credentials, and `run-now` means immediately; a turn

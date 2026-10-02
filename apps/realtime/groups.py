@@ -58,6 +58,13 @@ def session_group(session_id) -> str:
     return f"chat.{hexid}"
 
 
+def chat_user_group(user_id: int) -> str:
+    """Every chat socket one person holds, across sessions. Lets a change to
+    their ACCESS reach sockets already open — a removal from a workspace closes
+    them now, rather than when the person next acts (`access.recheck`)."""
+    return f"chat.user.{user_id}"
+
+
 def turn_workspace_slug(turn: Turn) -> str | None:
     """The turn's tenant slug: from the agent (agent turns), the session (chat
     turns), or the turn's own workspace FK (project turns). None when unset."""

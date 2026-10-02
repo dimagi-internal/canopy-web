@@ -28,7 +28,7 @@ from django.core.management.base import BaseCommand
 
 from apps.agents.models import AgentTask
 from apps.agents.services import LIVE_STATUSES
-from apps.workspaces.models import WorkspaceMembership
+from apps.workspaces import services as wsvc
 
 
 class Command(BaseCommand):
@@ -56,12 +56,7 @@ class Command(BaseCommand):
         for task in tasks:
             ws = task.agent.workspace_id
             if ws not in members:
-                members[ws] = list(
-                    User.objects.filter(
-                        pk__in=WorkspaceMembership.objects.filter(workspace_id=ws)
-                        .values_list("user_id", flat=True)
-                    )
-                )
+                members[ws] = list(User.objects.filter(pk__in=wsvc.member_user_ids(ws)))
             who = (task.assigned or "").strip()
             user, why = self._resolve(who, members[ws], names=opts["names"])
             if user is None:

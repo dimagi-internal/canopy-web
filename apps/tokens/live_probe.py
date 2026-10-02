@@ -292,14 +292,15 @@ def _notify(app, *, title: str, body: str) -> int:
     site. The same channel canopy uses for "the fleet needs you" (`apps/push`);
     a site is not an agent, so there is no agent Inbox to put an ask in."""
     try:
-        from apps.push import services as push
-        from apps.workspaces.models import WorkspaceMembership
+        from django.contrib.auth import get_user_model
 
-        owners = (WorkspaceMembership.objects.filter(workspace_id=app.workspace_id,
-                                                     role=WorkspaceMembership.OWNER)
-                  .select_related("user"))
+        from apps.push import services as push
+        from apps.workspaces import services as wsvc
+
+        # Owners of an ancestor workspace own this one too, and can fix its sites.
+        owners = get_user_model().objects.filter(pk__in=wsvc.owner_user_ids(app.workspace_id))
         url = f"/w/{app.workspace_id}/settings/connected-apps"
-        return sum(push.send_to_user(m.user, title, body, url) for m in owners)
+        return sum(push.send_to_user(u, title, body, url) for u in owners)
     except Exception:  # noqa: BLE001
         log.exception("could not notify owners about a live-probe transition")
         return 0

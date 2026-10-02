@@ -77,6 +77,9 @@ class MemberOut(StrictModel):
     email: str
     role: str
     joined_at: dt.datetime
+    # An owner of a PARENT workspace, listed because they own this one too.
+    # There is no row here to change or remove — the grant lives on the parent.
+    inherited: bool = False
 
 
 class MemberRoleUpdateIn(StrictModel):

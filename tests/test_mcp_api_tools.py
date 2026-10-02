@@ -125,10 +125,9 @@ def test_no_generated_tool_collides_with_a_hand_written_one(db):
 def test_configuration_routes_are_on_mcp(db):
     """The point of the surface: configuring agents and workspaces."""
     tools = _tools()
-    for name in ("upsert_agent", "publish_interface", "replace_agent_runners",
+    for name in ("upsert_agent", "replace_agent_runners",
                  "replace_agent_runner_rules", "set_turn_mode", "set_slack_enabled",
-                 "set_agent_credentials", "set_agent_vault", "set_shared_vault",
-                 "create_invite", "set_member_role", "connect_app", "set_push_config",
+                 "connect_app", "set_push_config",
                  "set_history", "pause_runner", "set_runner_credential"):
         assert name in tools, name
 
@@ -260,7 +259,10 @@ def test_a_request_without_the_scope_key_is_untouched(tenancy):
 
 def test_machine_only_refusals_are_not_offered(db):
     tools = _tools()
-    for name in ("transfer_owner", "grant_admin", "revoke_admin"):
+    for name in ("transfer_owner", "grant_admin", "revoke_admin", "link_canopy_user",
+                 "set_runner_flags", "publish_interface", "set_agent_credentials",
+                 "set_agent_vault", "set_shared_vault", "create_invite", "set_member_role",
+                 "remove_member", "create_token"):
         assert name not in tools
 
 

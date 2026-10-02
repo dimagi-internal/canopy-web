@@ -11,6 +11,7 @@ from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
 
+from apps.common.human_only import human_only
 from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.common.views_debug import is_machine
@@ -404,6 +405,7 @@ def get_interface(request: HttpRequest, slug: str):
 # it do — so loosening it is the same kind of act as handing over its keys.
 @router.put("/{slug}/interface", response=AgentInterfaceOut,
             summary="Save the agent's declared interface (YAML source, or a parsed mapping)")
+@human_only("An agent's declared interface")
 def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
     import yaml
     from django.utils import timezone
@@ -435,6 +437,7 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
 
 @router.delete("/{slug}/interface", response=AgentInterfaceOut,
                summary="Unpublish the declared interface: every turn runs in the full profile again")
+@human_only("An agent's declared interface")
 def unpublish_interface(request: HttpRequest, slug: str):
     agent = _agent_for_admin(request, slug)
     agent.interface = {}
@@ -1300,6 +1303,7 @@ def apply_command(request: HttpRequest, slug: str, cmd_id: int, payload: AgentCo
 
 @router.put("/{slug}/credentials", response=list[AgentCredentialStatusOut],
             summary="Set named secrets for an agent (write-only)")
+@human_only("An agent's credentials")
 def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredentialsIn):
     """Upsert. Non-clobbering: a ref absent from the body is untouched.
 
@@ -1386,6 +1390,7 @@ def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
 
 @router.put("/{slug}/vault", response=AgentVaultOut,
             summary="Set the vault + its service-account token (write-only)")
+@human_only("An agent's vault")
 def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> AgentVaultOut:
     """The key is scoped to ONE agent's vault by design.
 
@@ -1451,6 +1456,7 @@ def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 # answers 405 Method Not Allowed — the route exists, it is simply unreachable.
 @router.delete("/{slug}/credentials/{name}", response=list[AgentCredentialStatusOut],
                summary="Remove one named secret")
+@human_only("An agent's credentials")
 def delete_agent_credential(request: HttpRequest, slug: str, name: str):
     agent = _agent_for_admin(request, slug)
     services.delete_agent_credential(agent, name)

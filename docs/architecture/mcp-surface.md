@@ -102,10 +102,16 @@ app by MultiAuth.
   caller is not a person — the runner protocol (heartbeat, claim, streams, turn
   lifecycle…), a browser tab's plumbing (page state, attach/detach, push
   subscription), an embedding host's or a contact's surface, anonymous public
-  reads, raw-bytes responses, multipart uploads — plus the three routes that
-  refuse any token by design (`transfer_owner`, `grant_admin`, `revoke_admin`).
-  Leaving a route out is never a security decision: a tool is exactly as
-  powerful as the caller's token already is against REST.
+  reads, raw-bytes responses, multipart uploads — plus the routes that refuse
+  any token by design: the owner actions a person must take in the web app
+  (`@human_only`, `apps/common/human_only.py` — workspace members, invites,
+  vaults, an agent's interface and credentials, runner admins, Slack app
+  configuration, minting a PAT) and the older inline refusals (`transfer_owner`,
+  `grant_admin`, `revoke_admin`, `link_canopy_user`, `set_runner_flags`).
+  `tests/test_human_only_routes.py` fails if a route that refuses machines is
+  offered as a tool. Leaving a route out is never a security decision: a tool
+  is exactly as powerful as the caller's token already is against REST — the
+  refusal is in the route.
 * **Names.** The operationId, which `CanopyNinjaAPI` makes the view function's
   own name, qualified by app only when two modules share it
   (`canopy_sessions_send`, `session_sharing_list_sessions`).
