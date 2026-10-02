@@ -1,5 +1,7 @@
 import type { JSX } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useOutletContext } from 'react-router-dom'
+
+import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 
 // Skills and their history are one subject with two views, not two rail
 // entries. History IS skill history — it reads every SKILL.md's git log — so it
@@ -11,6 +13,9 @@ const TABS = [
 ]
 
 export function AgentSkillsPage(): JSX.Element {
+  // A nested <Outlet /> does not inherit its parent's context — it must be
+  // handed on, or both tabs crash destructuring `agent` from undefined.
+  const ctx = useOutletContext<AgentOutletContext>()
   return (
     <div>
       <nav aria-label="Skills views" className="flex gap-1 border-b border-border px-6 pt-6">
@@ -31,7 +36,7 @@ export function AgentSkillsPage(): JSX.Element {
           </NavLink>
         ))}
       </nav>
-      <Outlet />
+      <Outlet context={ctx} />
     </div>
   )
 }
