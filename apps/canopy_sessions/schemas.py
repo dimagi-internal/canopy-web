@@ -85,11 +85,11 @@ class TransferOut(Schema):
     approvers: list[str] = []
 
 
-class TeleportDecisionIn(Schema):
+class TransferDecisionIn(Schema):
     note: str = ""
 
 
-class TeleportRequestOut(Schema):
+class TransferRequestOut(Schema):
     id: uuid.UUID
     session_id: uuid.UUID
     session_title: str

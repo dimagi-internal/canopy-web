@@ -684,7 +684,7 @@ class ChatKey(models.Model):
         return f"chatkey:{str(self.session_id)[:8]}"
 
 
-class TeleportRequest(models.Model):
+class TransferRequest(models.Model):
     """A request to move a session onto another runner, waiting on that runner's
     administrator.
 
@@ -703,9 +703,9 @@ class TeleportRequest(models.Model):
     STATUS_CHOICES = [(s, s) for s in (PENDING, APPROVED, DECLINED, CANCELLED, EXPIRED)]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="teleport_requests")
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="transfer_requests")
     to_runner = models.ForeignKey(
-        "harness.Runner", on_delete=models.CASCADE, related_name="teleport_requests",
+        "harness.Runner", on_delete=models.CASCADE, related_name="transfer_requests",
     )
     # Where it was when asked — what the approver is taking it FROM. Not re-read at
     # approval: the source can change in between, and the record should say what
@@ -734,9 +734,9 @@ class TeleportRequest(models.Model):
             # would let whichever approver answers second silently undo the first.
             models.UniqueConstraint(
                 fields=["session"], condition=models.Q(status="pending"),
-                name="one_pending_teleport_per_session",
+                name="one_pending_transfer_request_per_session",
             ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover
-        return f"teleport:{str(self.session_id)[:8]}->{self.to_runner_id}:{self.status}"
+        return f"transfer-request:{str(self.session_id)[:8]}->{self.to_runner_id}:{self.status}"

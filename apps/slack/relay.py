@@ -478,7 +478,7 @@ def _close_question_posts(installation, session, outcome: str) -> None:
             logger.exception("could not close a Slack question post")
 
 
-def teleport_text(req) -> str:
+def transfer_request_text(req) -> str:
     """One line for the thread: who asked to move it where, or how it was decided."""
     who = getattr(req.requested_by, "email", "") or "someone"
     by = getattr(req.decided_by, "email", "") or "someone"
@@ -496,8 +496,8 @@ def teleport_text(req) -> str:
     return f"The request to move this conversation to *{to}* was {req.status}."
 
 
-def notify_teleport(req) -> bool:
-    """Tell a Slack-born session's thread about a teleport request or its outcome.
+def notify_transfer_request(req) -> bool:
+    """Tell a Slack-born session's thread about a transfer request or its outcome.
     Best-effort: a Slack failure is logged, never raised into the request."""
     dest = session_destination(req.session)
     if dest is None:
@@ -505,9 +505,9 @@ def notify_teleport(req) -> bool:
     installation, channel, thread_ts = dest
     try:
         client.post_message(installation.bot_token, channel=channel,
-                            text=teleport_text(req), thread_ts=thread_ts)
+                            text=transfer_request_text(req), thread_ts=thread_ts)
     except Exception as e:  # noqa: BLE001
-        logger.exception("could not post a Slack teleport notice")
+        logger.exception("could not post a Slack transfer-request notice")
         _log_failure(installation, req.session, channel, str(e))
         return False
     return True
