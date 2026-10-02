@@ -77,21 +77,19 @@ class TransferOut(Schema):
     # the observable proof the history was carried rather than dropped.
     index_offset: int
     turn_id: str
+    # "moved" — it happened now (the fields above describe it). "pending" — the
+    # target belongs to someone else, so a request now waits for one of
+    # `approvers`; runner/turn_id are empty until they approve.
+    status: str = "moved"
+    request_id: uuid.UUID | None = None
+    approvers: list[str] = []
 
 
-class TeleportRequestIn(Schema):
-    """Body for POST /{session_id}/teleport — ask to move a session onto `runner`
-    (its id, or its name as `list_runners` shows it). `brief` is the handoff the
-    receiving session reads, exactly as for a transfer."""
-    runner: str
-    brief: str = ""
-
-
-class TeleportDecisionIn(Schema):
+class TransferDecisionIn(Schema):
     note: str = ""
 
 
-class TeleportRequestOut(Schema):
+class TransferRequestOut(Schema):
     id: uuid.UUID
     session_id: uuid.UUID
     session_title: str
