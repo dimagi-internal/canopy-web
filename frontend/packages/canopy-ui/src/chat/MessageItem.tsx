@@ -3,6 +3,7 @@ import { AlertTriangle, ChevronRight, OctagonX } from "lucide-react";
 
 import type { Message, MessageAuthor } from "./protocol";
 import { isMine } from "./identity";
+import { authorColor } from "./personColor";
 import { ToolCallPair } from "./ToolCallPair";
 
 /** How to render assistant/system markdown. Injected by the app so the kit
@@ -154,7 +155,12 @@ export function MessageItem({
       aria-live={isStreaming || isPending ? "polite" : undefined}
     >
       {otherAuthor && (
-        <div data-testid="message-author" className="mb-0.5 text-[11px] font-medium text-muted-foreground">
+        // In their colour — the same one as their presence chip and their live
+        // draft box — so a teammate's lines are attributable at a glance.
+        <div
+          data-testid="message-author"
+          className={`mb-0.5 text-[11px] font-semibold ${authorColor(otherAuthor).text}`}
+        >
           {otherAuthor.name}
         </div>
       )}

@@ -82,6 +82,8 @@ export { ToolCallPair } from "./ToolCallPair";
 export { SendBox, type PendingAttachment } from "./SendBox";
 export { PresenceChips } from "./PresenceChips";
 export { TypingRows } from "./TypingRows";
+export { PeerComposers } from "./PeerComposers";
+export { personColor, authorColor, initials, type PersonColor } from "./personColor";
 export { QueuedRows } from "./QueuedRows";
 export { isMine } from "./identity";
 export { ConnectionStatus } from "./ConnectionStatus";

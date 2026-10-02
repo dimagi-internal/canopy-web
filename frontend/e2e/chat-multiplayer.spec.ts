@@ -19,9 +19,9 @@ import { expect, test, type Browser, type Page } from '@playwright/test'
  *
  * As of 0.13, every editor has their OWN draft — there is no shared lock, no
  * co-edit banner and no take-over button to test (canopy-ui#… "own composer
- * per person"). A teammate's live text arrives as a `typing-row` above the
- * composer instead, and the composer itself is never disabled by anyone
- * else's typing.
+ * per person"). A teammate's live text arrives as a read-only `peer-composer`
+ * box drawn inside the composer, above your own textarea, and the composer
+ * itself is never disabled by anyone else's typing.
  *
  * Deliberately NOT asserted here: an agent reply. A send enqueues a Turn that a
  * session-capable runner drives, and there is no runner in e2e — asserting a
@@ -85,16 +85,26 @@ test.describe('multiplayer chat', () => {
     await expect(page.getByTestId('presence-empty')).toBeVisible({ timeout: 15_000 })
   })
 
-  test("one person's typing appears as a typing row for the other, and never touches their own composer",
+  test("one person's typing appears as a peer composer box for the other, and never touches their own composer",
     async ({ page, browser }) => {
       const second = await bothInTheRoom(page, browser)
 
       await page.getByTestId('composer').fill('half a thought from Alex')
-      // Everyone has their OWN draft now (canopy-ui 0.13) — a teammate's live
-      // text shows as a row above the composer, never inside your own box.
-      await expect(second.getByTestId('typing-row')).toContainText('half a thought from Alex', {
-        timeout: 15_000,
-      })
+      // Everyone has their OWN draft (canopy-ui 0.13) — a teammate's live text
+      // is drawn as their own read-only box above yours, never inside it.
+      const box = second.getByTestId('peer-composer')
+      await expect(box).toBeVisible({ timeout: 15_000 })
+      // Named in words (colour is never the only cue), with the live text.
+      await expect(box).toContainText('Alex Kim is typing')
+      await expect(second.getByTestId('peer-composer-text')).toHaveText('half a thought from Alex')
+      // It sits directly above the viewer's own textarea, at the same width.
+      const [boxRect, composerRect] = await Promise.all([
+        box.boundingBox(), second.getByTestId('composer').boundingBox(),
+      ])
+      expect(boxRect!.y + boxRect!.height).toBeLessThanOrEqual(composerRect!.y)
+      expect(Math.abs(boxRect!.width - composerRect!.width)).toBeLessThan(2)
+      // And the typist's chip in the header says so too.
+      await expect(second.getByTestId('presence-chip')).toHaveAttribute('data-typing', 'true')
       await expect(second.getByTestId('composer')).toHaveValue('')
       await expect(second.getByTestId('composer')).toBeEnabled()
 
@@ -107,7 +117,7 @@ test.describe('multiplayer chat', () => {
     await page.getByTestId('composer').fill('I am typing this')
 
     const theirBox = second.getByTestId('composer')
-    await expect(second.getByTestId('typing-row')).toContainText('I am typing this', {
+    await expect(second.getByTestId('peer-composer')).toContainText('I am typing this', {
       timeout: 15_000,
     })
     // Never locked: there is no shared draft to co-edit any more, so the
@@ -127,18 +137,20 @@ test.describe('multiplayer chat', () => {
     await second.context().close()
   })
 
-  test('a typing row disappears once the person stops (clears their draft)', async ({ page, browser }) => {
+  test('a peer composer disappears once the person stops (clears their draft)', async ({ page, browser }) => {
     const second = await bothInTheRoom(page, browser)
 
     await page.getByTestId('composer').fill('typing then stopping')
-    await expect(second.getByTestId('typing-row')).toContainText('typing then stopping', {
+    await expect(second.getByTestId('peer-composer')).toContainText('typing then stopping', {
       timeout: 15_000,
     })
 
     // An empty `draft.typing` body is the peer's "I stopped" signal
-    // (sessionReducer drops the row rather than showing a blank one).
+    // (sessionReducer drops the box rather than showing a blank one), and the
+    // chip stops saying "typing" with it.
     await page.getByTestId('composer').fill('')
-    await expect(second.getByTestId('typing-row')).toHaveCount(0, { timeout: 15_000 })
+    await expect(second.getByTestId('peer-composer')).toHaveCount(0, { timeout: 15_000 })
+    await expect(second.getByTestId('presence-chip')).not.toHaveAttribute('data-typing', 'true')
 
     await second.context().close()
   })
@@ -153,8 +165,9 @@ test.describe('multiplayer chat', () => {
     await page.getByTestId('composer').fill('a secret sentence nobody else should read')
 
     // B sees that Alex is typing, but never the words.
-    await expect(second.getByTestId('typing-row')).toContainText('is typing…', { timeout: 15_000 })
-    await expect(second.getByTestId('typing-row')).not.toContainText('secret sentence')
+    await expect(second.getByTestId('peer-composer')).toContainText('Alex Kim is typing', { timeout: 15_000 })
+    await expect(second.getByTestId('peer-typing-indicator')).toBeVisible()
+    await expect(second.getByTestId('peer-composer')).not.toContainText('secret sentence')
 
     await second.context().close()
   })

@@ -47,6 +47,10 @@ interface Props {
   /** Optional app-supplied banner rendered above the composer (e.g. an
    *  imported-session note). The kit itself has no CLI-auth banners. */
   banner?: ReactNode;
+  /** Everyone else's live drafts (`PeerComposers`), drawn inside this box
+   *  directly above your own textarea so the two read as the same kind of
+   *  thing — people writing — at the same width. */
+  peers?: ReactNode;
   /** When set, sending is disabled and this reason is shown as a hint. */
   disabledReason?: string;
   /** Files staged for the next send. Omit to hide attaching entirely — the kit
@@ -83,6 +87,7 @@ export function SendBox({
   onStop,
   stopState,
   banner,
+  peers,
   disabledReason,
   attachments,
   onAttach,
@@ -247,6 +252,7 @@ export function SendBox({
     >
       {banner}
       <div className={`p-2 ${dragging ? "bg-primary/5 ring-1 ring-inset ring-primary/40" : ""}`}>
+        {peers}
         {staged.length > 0 && (
           <ul className="mb-1.5 flex flex-wrap gap-1.5" data-testid="attachment-chips">
             {staged.map((a) => (
