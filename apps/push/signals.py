@@ -25,3 +25,30 @@ logger = logging.getLogger(__name__)
 @receiver([post_save, post_delete], sender=AgentTask)
 def _item_changed(sender, instance: AgentTask, **kwargs) -> None:
     mark_dirty(instance.agent_id)  # the FK shadow attribute — no query
+
+
+def _connect_teleport():
+    from apps.canopy_sessions.teleport import teleport_changed
+
+    @receiver(teleport_changed, dispatch_uid="push_teleport_approvers")
+    def _ping_approvers(sender, request, **kwargs):
+        """A request waiting on someone: push to every administrator of the target
+        box, so the yes doesn't depend on them happening to look."""
+        if request.status != "pending":
+            return
+        from apps.canopy_sessions.teleport import approvers
+
+        from .services import send_to_user, session_label
+
+        who = getattr(request.requested_by, "email", "") or "Someone"
+        body = (f"{who} wants to move “{session_label(request.session, 'a conversation')}” "
+                f"onto {request.to_runner.name}.")
+        url = f"/w/{request.session.workspace_id}/chat/{request.session_id}"
+        for user in approvers(request.to_runner):
+            try:
+                send_to_user(user, "Teleport request", body, url)
+            except Exception:  # noqa: BLE001 — never break a request over push
+                logger.exception("teleport push failed")
+
+
+_connect_teleport()

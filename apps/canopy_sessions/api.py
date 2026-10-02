@@ -65,6 +65,9 @@ from .schemas import (
     SessionSecretIn,
     SessionSecretOut,
     StreamStateOut,
+    TeleportDecisionIn,
+    TeleportRequestIn,
+    TeleportRequestOut,
     TransferIn,
     TransferOut,
     TurnOutMinimal,
@@ -382,6 +385,149 @@ def reset_sessions(request: HttpRequest, payload: ResetIn):
     return services.reset_sessions(
         rows, prune_ghosts=payload.prune_ghosts, dry_run=payload.dry_run
     )
+
+
+# ---- teleport: ask to move a session onto someone else's runner ----
+# Declared above the `/{session_id}` routes so `/teleport-requests` is never read
+# as a session id.
+
+def _teleport_out(req, transfer=None) -> dict:
+    from . import teleport
+
+    def email(u):
+        return getattr(u, "email", "") or ""
+
+    out = {
+        "id": req.id, "session_id": req.session_id,
+        "session_title": req.session.title or "",
+        "agent_slug": req.session.agent.slug if req.session.agent_id else "",
+        "to_runner": req.to_runner.name, "to_runner_id": req.to_runner_id,
+        "from_runner": req.from_runner.name if req.from_runner_id else "",
+        "requested_by": email(req.requested_by), "brief": req.brief, "status": req.status,
+        "decided_by": email(req.decided_by), "decided_at": req.decided_at, "note": req.note,
+        "created_at": req.created_at,
+        "approvers": sorted(email(u) for u in teleport.approvers(req.to_runner)),
+        "transfer": None,
+    }
+    if transfer is not None:
+        binding, turn = transfer
+        out["transfer"] = {
+            "session_id": str(req.session_id),
+            "runner": binding.runner.name if binding.runner_id else "",
+            "transferred_from": binding.transferred_from.name if binding.transferred_from_id else "",
+            "index_offset": binding.index_offset, "turn_id": str(turn.id),
+        }
+    return out
+
+
+def _teleport_request_or_404(request: HttpRequest, request_id: uuid.UUID):
+    from . import teleport
+
+    req = teleport.visible_to(request.user).filter(pk=request_id).first()
+    if req is None:
+        raise HttpError(404, "teleport request not found")
+    return req
+
+
+@router.post("/{session_id}/teleport", response=TeleportRequestOut,
+             summary="Ask to move a session onto another runner")
+def request_session_teleport(request: HttpRequest, session_id: uuid.UUID, payload: TeleportRequestIn):
+    """Ask to move this session onto `runner` (id or name), carrying its history.
+
+    If you administer that runner it moves now (`status: approved`, `transfer`
+    set). Otherwise the request waits (`status: pending`) for one of `approvers` —
+    whoever paired that box or was granted admin on it — because the move runs on
+    their machine and their Claude subscription. They are notified, and so is the
+    session's Slack thread if it has one. Requests expire after 24h unanswered.
+    409 while a turn is executing (stop the session first) or while another
+    request for this session is waiting.
+    """
+    from . import teleport
+
+    session = _session_or_404(request, session_id, write=True)
+    try:
+        req, transfer = teleport.request(
+            session=session, runner_value=payload.runner, brief=payload.brief, user=request.user,
+            initiator=who.for_request(request, via="teleport"))
+    except LookupError as exc:
+        raise HttpError(404, str(exc))
+    except (RuntimeError, FileExistsError) as exc:
+        raise HttpError(409, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _teleport_out(req, transfer)
+
+
+@router.get("/teleport-requests", response=list[TeleportRequestOut],
+            summary="Teleport requests waiting on you, or that you made")
+def list_teleport_requests(request: HttpRequest, status: str = "pending"):
+    """Requests to move a session onto a runner you administer (yours to approve
+    or decline), plus the ones you asked for. `status` filters (default
+    `pending`; `all` for every state)."""
+    from . import teleport
+
+    qs = teleport.visible_to(request.user)
+    rows = list(qs[:200])
+    for req in rows:
+        teleport._expire_if_stale(req)
+    if status != "all":
+        rows = [r for r in rows if r.status == status]
+    return [_teleport_out(r) for r in rows]
+
+
+@router.post("/teleport-requests/{request_id}/approve", response=TeleportRequestOut,
+             summary="Approve a teleport onto your runner (and carry it out)")
+def approve_teleport_request(request: HttpRequest, request_id: uuid.UUID):
+    """Approve moving the session onto your runner; the move happens now and
+    `transfer` reports it LAUNCHED. Only an administrator of the target runner may
+    approve, checked at this moment. 409 while a turn is still executing on the
+    session — the request stays pending; stop the session and approve again."""
+    from . import teleport
+
+    req = _teleport_request_or_404(request, request_id)
+    try:
+        transfer = teleport.approve(req=req, user=request.user,
+                                    initiator=who.for_request(request, via="teleport"))
+    except PermissionError as exc:
+        raise HttpError(403, str(exc))
+    except LookupError as exc:
+        raise HttpError(404, str(exc))
+    except RuntimeError as exc:
+        raise HttpError(409, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _teleport_out(req, transfer)
+
+
+@router.post("/teleport-requests/{request_id}/decline", response=TeleportRequestOut,
+             summary="Decline a teleport onto your runner")
+def decline_teleport_request(request: HttpRequest, request_id: uuid.UUID, payload: TeleportDecisionIn):
+    """Decline; the session stays where it is. `note` is shown to the requester."""
+    from . import teleport
+
+    req = _teleport_request_or_404(request, request_id)
+    try:
+        teleport.decline(req=req, user=request.user, note=payload.note)
+    except PermissionError as exc:
+        raise HttpError(403, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _teleport_out(req)
+
+
+@router.post("/teleport-requests/{request_id}/cancel", response=TeleportRequestOut,
+             summary="Withdraw a teleport request you made")
+def cancel_teleport_request(request: HttpRequest, request_id: uuid.UUID):
+    from . import teleport
+
+    req = _teleport_request_or_404(request, request_id)
+    try:
+        teleport.cancel(req=req, user=request.user)
+    except PermissionError as exc:
+        raise HttpError(403, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    return _teleport_out(req)
 
 
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")

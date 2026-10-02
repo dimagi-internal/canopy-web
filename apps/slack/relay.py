@@ -476,3 +476,38 @@ def _close_question_posts(installation, session, outcome: str) -> None:
                                   text=outcome, blocks=menus.resolved_blocks(post.question, outcome))
         except Exception:  # noqa: BLE001 — a stale button is a cosmetic failure, not a broken report
             logger.exception("could not close a Slack question post")
+
+
+def teleport_text(req) -> str:
+    """One line for the thread: who asked to move it where, or how it was decided."""
+    who = getattr(req.requested_by, "email", "") or "someone"
+    by = getattr(req.decided_by, "email", "") or "someone"
+    to = req.to_runner.name
+    if req.status == "pending":
+        return (f":arrows_counterclockwise: {who} asked to move this conversation to *{to}*. "
+                "Waiting on that runner's administrator to approve.")
+    if req.status == "approved":
+        if req.decided_by_id and req.decided_by_id == req.requested_by_id:
+            return f":arrows_counterclockwise: {who} moved this conversation to *{to}*."
+        return f":white_check_mark: {by} approved — this conversation is moving to *{to}*."
+    if req.status == "declined":
+        note = f" ({req.note})" if req.note else ""
+        return f":no_entry_sign: {by} declined moving this conversation to *{to}*{note}."
+    return f"The request to move this conversation to *{to}* was {req.status}."
+
+
+def notify_teleport(req) -> bool:
+    """Tell a Slack-born session's thread about a teleport request or its outcome.
+    Best-effort: a Slack failure is logged, never raised into the request."""
+    dest = session_destination(req.session)
+    if dest is None:
+        return False
+    installation, channel, thread_ts = dest
+    try:
+        client.post_message(installation.bot_token, channel=channel,
+                            text=teleport_text(req), thread_ts=thread_ts)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("could not post a Slack teleport notice")
+        _log_failure(installation, req.session, channel, str(e))
+        return False
+    return True
