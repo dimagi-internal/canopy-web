@@ -37,8 +37,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { segment: 'inbound', label: 'Inbound email' },
   { segment: 'connected-apps', label: 'Connected sites' },
   { segment: 'secrets', label: 'Secrets' },
-  { segment: 'runners', label: 'Runners' },
-  { segment: 'agent-access', label: 'Agent access' },
+  { segment: 'topology', label: 'Topology' },
 ]
 
 export function WorkspaceSettingsPage(): JSX.Element {

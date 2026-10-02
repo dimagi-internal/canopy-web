@@ -11,6 +11,7 @@ import {
   type AgentTopologyOut,
 } from '@/api/workspaces'
 import { edgeKey, explainEdge, grantable, indexEdges } from './agentTopology'
+import { TopologyViews } from './topology/TopologyViews'
 
 // THE AGENT TOPOLOGY: which agent can make which other agent do what.
 //
@@ -33,7 +34,12 @@ const CELL = {
 
 export function WorkspaceAgentAccessPage(): JSX.Element {
   const { workspace: slug = '' } = useParams()
-  return <AgentAccess key={slug} slug={slug} />
+  return (
+    <>
+      <TopologyViews />
+      <AgentAccess key={slug} slug={slug} />
+    </>
+  )
 }
 
 function AgentAccess({ slug }: { slug: string }): JSX.Element {

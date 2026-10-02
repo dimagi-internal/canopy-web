@@ -10,6 +10,7 @@ import {
   type TopologyRunnerOut,
 } from '@/api/workspaces'
 import { relativeTime } from '@/components/activity/turnLog'
+import { TopologyViews } from './topology/TopologyViews'
 import { agentHealth, defaultRoutes, dependsSolelyOn, ruleRoutes, statusTone } from './runnerTopology'
 
 // THE RUNNER TOPOLOGY of this workspace and every workspace below it: which box
@@ -33,7 +34,12 @@ export function WorkspaceRunnersPage(): JSX.Element {
   const { workspace: slug = '' } = useParams()
   // Keyed so switching workspace starts from a clean slate (no stale topology,
   // selection or refusal carried across) without resetting state in an effect.
-  return <Topology key={slug} slug={slug} />
+  return (
+    <>
+      <TopologyViews />
+      <Topology key={slug} slug={slug} />
+    </>
+  )
 }
 
 function Topology({ slug }: { slug: string }): JSX.Element {

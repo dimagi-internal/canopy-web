@@ -24,6 +24,7 @@ import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
 import { WorkspaceRunnersPage } from './pages/WorkspaceRunnersPage'
 import { WorkspaceAgentAccessPage } from './pages/WorkspaceAgentAccessPage'
+import { TopologyMapPage } from './pages/topology/TopologyMapPage'
 import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
@@ -237,8 +238,12 @@ export const routeTable: RouteObject[] = [
           { path: 'inbound', element: <InboundPushPage /> },
           { path: 'connected-apps', element: <ConnectedAppsPage /> },
           { path: 'secrets', element: <WorkspaceSecretsPage /> },
-          { path: 'runners', element: <WorkspaceRunnersPage /> },
-          { path: 'agent-access', element: <WorkspaceAgentAccessPage /> },
+          { path: 'topology', element: <TopologyMapPage /> },
+          { path: 'topology/runners', element: <WorkspaceRunnersPage /> },
+          { path: 'topology/agents', element: <WorkspaceAgentAccessPage /> },
+          // Where the two tables lived before the map joined them under Topology.
+          { path: 'runners', element: <Navigate to="../topology/runners" replace /> },
+          { path: 'agent-access', element: <Navigate to="../topology/agents" replace /> },
         ],
       },
       // The four pages these sections used to be. Live links were handed to
