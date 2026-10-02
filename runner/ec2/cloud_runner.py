@@ -3265,6 +3265,10 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
         # The key is a Claude session UUID; give the new Session a name a person
         # can find in Chats. (A chat turn's session already has its own title.)
         body["title"] = _agent_session_title(turn)
+    if turn.get("id"):
+        # Stamp the TURN's key now, not at finish: the agent posts its close-out
+        # before the turn ends, and the close-out finds its turn by this key.
+        body["turn_id"] = str(turn["id"])
     if project:
         body["project"] = project
         body["workspace"] = turn.get("workspace_slug") or ""

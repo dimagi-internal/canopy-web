@@ -1075,6 +1075,8 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
         agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
         title=payload.title,
     )
+    if payload.turn_id and payload.emdash_task_id:
+        services.stamp_turn_session(payload.turn_id, runner, payload.emdash_task_id)
     return services.resolve_session(agent, payload.thread_key, runner)
 
 

@@ -52,7 +52,7 @@ def test_recording_an_agent_turn_creates_its_session_server_side(cloud_runner, m
     cloud_runner._record_session_resume("r-1", _agent_turn(), "cli-1")
     assert posts == [("/runners/r-1/record-session", {
         "thread_key": f"echo:{TID}", "emdash_task_id": "cli-1", "session_id": "cli-1",
-        "title": "Daily turn", "agent_slug": "echo",
+        "title": "Daily turn", "turn_id": TID, "agent_slug": "echo",
     })]
 
 
