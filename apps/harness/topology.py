@@ -35,16 +35,8 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
     """The topology rooted at `root`: its subtree (the descendants `visible`
     admits), every agent in it with its routing, and every runner those agents
     route to or that lives in the tree."""
-    slugs = {root.slug} | {s for s in wsvc.descendant_slugs({root.slug}) if visible(s)}
-    workspaces = {ws.slug: ws for ws in Workspace.objects.filter(slug__in=slugs)}
-    by_parent: dict[str | None, list[Workspace]] = {}
-    for ws in workspaces.values():
-        if ws.slug == root.slug:
-            continue
-        # Hang a workspace under its nearest VISIBLE ancestor, so an admin of a
-        # grandchild (but not the child) still sees it in the tree.
-        parent = next((a for a in ws.ancestor_slugs() if a in slugs), root.slug)
-        by_parent.setdefault(parent, []).append(ws)
+    tree = wsvc.subtree(root, visible)
+    slugs = {ws.slug for ws, _ in tree}
 
     agents = list(Agent.objects.filter(workspace_id__in=slugs).order_by("name"))
     assignments = list(
@@ -96,20 +88,13 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
             "routes": routes,
         })
 
-    ordered: list[dict] = []
-
-    def walk(ws: Workspace, depth: int) -> None:
-        ordered.append({
-            "slug": ws.slug,
-            "display_name": ws.display_name,
-            "parent": ws.parent_id if ws.slug != root.slug else None,
-            "depth": depth,
-            "agents": agents_by_ws.get(ws.slug, []),
-        })
-        for child in sorted(by_parent.get(ws.slug, []), key=lambda w: w.display_name.lower()):
-            walk(child, depth + 1)
-
-    walk(root, 0)
+    ordered = [{
+        "slug": ws.slug,
+        "display_name": ws.display_name,
+        "parent": ws.parent_id if depth else None,
+        "depth": depth,
+        "agents": agents_by_ws.get(ws.slug, []),
+    } for ws, depth in tree]
 
     runner_rows = []
     for r in runners.values():

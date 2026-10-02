@@ -25,6 +25,7 @@ from .schemas import (
     MemberOut,
     MemberRoleUpdateIn,
     RunnerTopologyOut,
+    AgentTopologyOut,
     SharedVaultIn,
     SharedVaultOut,
     WorkspaceCreateIn,
@@ -502,4 +503,22 @@ def runner_topology(request: HttpRequest, slug: str) -> RunnerTopologyOut:
     m = _require(request.user, slug, perms.LOGS_READ)
     return RunnerTopologyOut(**topology.build(
         m.workspace, visible=lambda s: perms.can(request.user, s, perms.LOGS_READ),
+    ))
+
+
+@router.get("/{slug}/agent-topology", response=AgentTopologyOut,
+            summary="Which agents can send which other agents work, across this workspace and every one below it")
+def agent_topology(request: HttpRequest, slug: str) -> AgentTopologyOut:
+    """Every agent in this workspace and its descendants, and for each ordered
+    pair what the first gets when it sends the second work with its own canopy
+    login: the whole agent, some of its capabilities, or nothing — and why.
+    Admin and above. Granting access is `PUT /api/agents/{slug}/admins/{user_id}`
+    with the source agent's `login_user_id`."""
+    # Same gate and per-descendant filter as runner_topology.
+    from apps.agents import topology
+
+    m = _require(request.user, slug, perms.LOGS_READ)
+    return AgentTopologyOut(**topology.build(
+        m.workspace, request.user,
+        visible=lambda s: perms.can(request.user, s, perms.LOGS_READ),
     ))

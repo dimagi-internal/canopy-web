@@ -211,3 +211,52 @@ class RunnerTopologyOut(StrictModel):
     root: str
     workspaces: list[TopologyWorkspaceOut]
     runners: list[TopologyRunnerOut]
+
+
+class AgentTopologyAgentOut(StrictModel):
+    """`login_email` is the canopy user the agent signs in as (`Agent.user`) —
+    the identity it sends other agents work with; None means it has none and can
+    send nothing directly. `full_people` reach this agent's whole profile, and so
+    reach anything this agent is an admin of."""
+
+    slug: str
+    name: str
+    workspace: str
+    owner_email: str | None
+    login_email: str | None
+    login_user_id: int | None
+    interface_published: bool
+    full_people: list[str]
+
+
+class AgentEdgeOut(StrictModel):
+    """What `source` gets when it sends `target` work with its own login.
+    `access`: full | confined (to `capabilities`) | none. `basis`: owner |
+    workspace-owner | admin | full-rule | no-interface | capabilities |
+    nothing-offered | not-member | no-login. `can_grant` / `can_revoke`: whether
+    THIS caller may make (or unmake) the source's login an admin of the target."""
+
+    source: str
+    target: str
+    access: Literal["full", "confined", "none"]
+    basis: str
+    capabilities: list[str]
+    full_rule: str | None
+    explicit_admin: bool
+    can_grant: bool
+    can_revoke: bool
+
+
+class TopologyWorkspaceRefOut(StrictModel):
+    slug: str
+    display_name: str
+    depth: int
+
+
+class AgentTopologyOut(StrictModel):
+    """Agents in tree order; one edge per ordered pair of distinct agents."""
+
+    root: str
+    workspaces: list[TopologyWorkspaceRefOut]
+    agents: list[AgentTopologyAgentOut]
+    edges: list[AgentEdgeOut]

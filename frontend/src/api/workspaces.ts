@@ -233,3 +233,18 @@ export async function getRunnerTopology(slug: string): Promise<RunnerTopologyOut
   }
   return res.data as unknown as RunnerTopologyOut
 }
+
+export type AgentTopologyOut = components['schemas']['AgentTopologyOut']
+export type AgentTopologyAgentOut = components['schemas']['AgentTopologyAgentOut']
+export type AgentEdgeOut = components['schemas']['AgentEdgeOut']
+
+export async function getAgentTopology(slug: string): Promise<AgentTopologyOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/agent-topology', {
+    params: { path: { slug } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(
+      res.response.status, problemMessage(res.error, 'Failed to load the agent topology'))
+  }
+  return res.data as unknown as AgentTopologyOut
+}
