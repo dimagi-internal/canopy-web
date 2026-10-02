@@ -467,6 +467,13 @@ function WorkspaceBox({
   )
 }
 
+/** Grow by agent count, and ask for room for up to four cards side by side
+ *  (each 200px + gap) before wrapping onto a row of its own. */
+function laneFlex(lane: Lane): string {
+  const cards = Math.max(1, Math.min(lane.agents.length, 4))
+  return `${cards} 1 ${cards * 208 + 22}px`
+}
+
 function OwnerLane({
   lane,
   map,
@@ -485,9 +492,12 @@ function OwnerLane({
   return (
     <div
       className={clsx(
-        'flex min-w-0 flex-[1_1_260px] flex-col gap-2 rounded-lg border p-2.5',
+        'flex min-w-0 flex-col gap-2 rounded-lg border p-2.5',
         lane.owner ? 'border-border bg-muted/30' : 'border-dashed border-border',
       )}
+      // Width in proportion to what the lane holds: equal shares put a
+      // five-agent lane beside two near-empty ones and stacked its cards.
+      style={{ flex: laneFlex(lane) }}
       data-testid={`lane-${lane.owner ?? 'none'}`}
     >
       <div className="flex items-center gap-2 text-[12px]">
