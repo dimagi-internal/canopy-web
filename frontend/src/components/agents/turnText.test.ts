@@ -20,6 +20,7 @@ function unreported(over: Partial<AgentTurnOut> = {}): AgentTurnOut {
     created_at: '2026-10-01T18:06:12Z',
     status: 'done',
     origin: 'api',
+    session_key: 'c-fix-brief-61bb',
     emdash_task_id: 'c-fix-brief-61bb',
     reported_at: null,
     prompt: '',

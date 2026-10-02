@@ -51,11 +51,11 @@ def test_record_then_resolve_reuses_for_same_runner_host():
     a = _agent(ws)
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
     services.record_session(a, "phone:jj:echo", runner=r,
-                            emdash_task_id="echo-1234", summary="rolling ctx",
+                            session_key="echo-1234", summary="rolling ctx",
                             agent_task_ext_id="T-9")
     plan = services.resolve_session(a, "phone:jj:echo", r)
     assert plan["reuse"] is True
-    assert plan["emdash_task_id"] == "echo-1234"
+    assert plan["session_key"] == "echo-1234"
     assert plan["summary"] == "rolling ctx"
     assert plan["agent_task_ext_id"] == "T-9"
     # exactly one durable Session was created for the thread
@@ -66,8 +66,8 @@ def test_record_is_idempotent_per_thread():
     ws = _ws("w1")
     a = _agent(ws)
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
-    services.record_session(a, "phone:jj:echo", runner=r, emdash_task_id="echo-1")
-    services.record_session(a, "phone:jj:echo", runner=r, emdash_task_id="echo-2")
+    services.record_session(a, "phone:jj:echo", runner=r, session_key="echo-1")
+    services.record_session(a, "phone:jj:echo", runner=r, session_key="echo-2")
     assert Session.objects.filter(agent=a).count() == 1
     b = RunnerBinding.objects.get(thread_key="phone:jj:echo")
     assert b.session_key == "echo-2"  # re-pointed at the newest live task
@@ -78,7 +78,7 @@ def test_record_binds_existing_chat_session_by_uuid_thread_key():
     a = _agent(ws)
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
     chat = Session.objects.create(workspace=ws, agent=a, origin=Session.ORIGIN_WEB, title="web chat")
-    services.record_session(a, str(chat.id), runner=r, emdash_task_id="echo-9")
+    services.record_session(a, str(chat.id), runner=r, session_key="echo-9")
     # binds the EXISTING web session, does not fork a new runner session
     assert Session.objects.filter(agent=a).count() == 1
     b = RunnerBinding.objects.get(session=chat)
@@ -90,11 +90,11 @@ def test_reuse_denied_for_different_host():
     ws = _ws("w1")
     a = _agent(ws)
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
-    services.record_session(a, "phone:jj:echo", runner=r, emdash_task_id="echo-1")
+    services.record_session(a, "phone:jj:echo", runner=r, session_key="echo-1")
     r.host = "jj@studio"  # other macOS account claims the same runner id
     plan = services.resolve_session(a, "phone:jj:echo", r)
     assert plan["reuse"] is False
-    assert plan["emdash_task_id"] == "echo-1"  # hint still returned for rehydration context
+    assert plan["session_key"] == "echo-1"  # hint still returned for rehydration context
 
 
 def test_project_reuse_is_workspace_scoped():
@@ -102,7 +102,7 @@ def test_project_reuse_is_workspace_scoped():
     ws2 = _ws("w2")
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
     services.record_session(None, "phone:jj:canopy-web", runner=r, project="canopy-web",
-                            workspace=ws, emdash_task_id="cw-1")
+                            workspace=ws, session_key="cw-1")
     # a guessed thread_key from another workspace must NOT hijack the link
     other = services.resolve_session(None, "phone:jj:canopy-web", r, project="canopy-web", workspace=ws2)
     assert other["new_thread"] is True
@@ -129,7 +129,7 @@ def test_report_does_not_clobber_agent_thread_reuse():
     r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
 
     # The agent chat/phone thread's binding is created first by record_session.
-    services.record_session(a, "phone:jj:echo", runner=r, emdash_task_id="echo-1234")
+    services.record_session(a, "phone:jj:echo", runner=r, session_key="echo-1234")
 
     # The runner's ambient sweep then reports the SAME emdash task (no agent/
     # project filter) as part of its ordinary open-session report.
@@ -142,4 +142,4 @@ def test_report_does_not_clobber_agent_thread_reuse():
     plan = services.resolve_session(a, "phone:jj:echo", r)
     assert plan["reuse"] is True
     assert plan["new_thread"] is False
-    assert plan["emdash_task_id"] == "echo-1234"
+    assert plan["session_key"] == "echo-1234"

@@ -263,11 +263,11 @@ def test_pair_with_host_and_resolve_record_cycle(client, agent):
 
     # record a live session for the thread on this runner
     rec = client.post(f"/api/harness/runners/{rid}/record-session",
-                      {"agent_slug": "echo", "thread_key": "thr-1", "emdash_task_id": "etask-1",
+                      {"agent_slug": "echo", "thread_key": "thr-1", "session_key": "etask-1",
                        "session_id": "sess-1", "agent_task_ext_id": "T-9", "summary": "ctx"},
                       content_type="application/json")
     assert rec.status_code == 200 and rec.json()["reuse"] is True
-    assert rec.json()["emdash_task_id"] == "etask-1"
+    assert rec.json()["session_key"] == "etask-1"
 
     # same runner resolves -> reuse
     again = client.post(f"/api/harness/runners/{rid}/resolve-session",
@@ -283,7 +283,7 @@ def test_other_account_runner_cannot_reuse_but_gets_context(client, agent):
                     {"name": "rB", "kind": "emdash", "capabilities": {"agents": ["echo"]}, "host": "jjB@mbp"},
                     content_type="application/json").json()["id"]
     client.post(f"/api/harness/runners/{a}/record-session",
-                {"agent_slug": "echo", "thread_key": "thr-1", "emdash_task_id": "etask-A",
+                {"agent_slug": "echo", "thread_key": "thr-1", "session_key": "etask-A",
                  "summary": "prior"}, content_type="application/json")
     r = client.post(f"/api/harness/runners/{b}/resolve-session",
                     {"agent_slug": "echo", "thread_key": "thr-1"}, content_type="application/json").json()
@@ -465,9 +465,43 @@ def test_record_session_with_turn_id_keys_the_running_turn(client, agent):
                                status=Turn.RUNNING, claimed_by=Runner.objects.get(pk=rid))
     rec = client.post(f"/api/harness/runners/{rid}/record-session",
                       {"agent_slug": "echo", "thread_key": f"echo:{turn.id}",
-                       "emdash_task_id": "cli-uuid-1", "title": "Daily turn",
+                       "session_key": "cli-uuid-1", "title": "Daily turn",
                        "turn_id": str(turn.id)},
                       content_type="application/json")
     assert rec.status_code == 200, rec.content
     turn.refresh_from_db()
-    assert turn.emdash_task_id == "cli-uuid-1"
+    assert turn.session_key == "cli-uuid-1"
+
+
+# ---- the emdash_task_id -> session_key rename keeps the old spelling working --
+# Runners update on deploy; an agent's `canopy agent turn` client and a runner
+# mid-update do not. Each input takes either name; outputs carry both.
+
+def test_record_session_and_finish_still_accept_emdash_task_id(client, agent):
+    from apps.harness.models import Runner, Turn
+
+    rid = _pair(client)
+    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k-legacy",
+                               status=Turn.RUNNING, claimed_by=Runner.objects.get(pk=rid))
+    rec = client.post(f"/api/harness/runners/{rid}/record-session",
+                      {"agent_slug": "echo", "thread_key": "thr-legacy",
+                       "emdash_task_id": "c-old-name-1234"},
+                      content_type="application/json")
+    assert rec.status_code == 200, rec.content
+    assert rec.json()["session_key"] == rec.json()["emdash_task_id"] == "c-old-name-1234"
+
+    fin = client.post(f"/api/harness/turns/{turn.id}/finish",
+                      {"status": "done", "emdash_task_id": "c-old-name-1234"},
+                      content_type="application/json")
+    assert fin.status_code == 200, fin.content
+    turn.refresh_from_db()
+    assert turn.session_key == "c-old-name-1234"
+
+
+def test_the_new_name_wins_when_both_arrive(client, agent):
+    rid = _pair(client)
+    rec = client.post(f"/api/harness/runners/{rid}/record-session",
+                      {"agent_slug": "echo", "thread_key": "thr-both",
+                       "session_key": "new", "emdash_task_id": "old"},
+                      content_type="application/json")
+    assert rec.json()["session_key"] == "new"

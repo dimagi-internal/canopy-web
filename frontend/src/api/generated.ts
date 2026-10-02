@@ -9967,6 +9967,11 @@ export interface components {
              */
             readonly origin: string;
             /**
+             * Session Key
+             * @default
+             */
+            readonly session_key: string;
+            /**
              * Emdash Task Id
              * @default
              */
@@ -10046,7 +10051,14 @@ export interface components {
              */
             readonly source: string;
             /**
+             * Session Key
+             * @default
+             */
+            readonly session_key: string;
+            /**
              * Emdash Task Id
+             * @deprecated
+             * @description Deprecated: send `session_key`.
              * @default
              */
             readonly emdash_task_id: string;
@@ -13179,6 +13191,8 @@ export interface components {
             readonly reuse: boolean;
             /** New Thread */
             readonly new_thread: boolean;
+            /** Session Key */
+            readonly session_key: string;
             /** Emdash Task Id */
             readonly emdash_task_id: string;
             /** Agent Task Ext Id */
@@ -13228,10 +13242,10 @@ export interface components {
             /** Thread Key */
             readonly thread_key: string;
             /**
-             * Emdash Task Id
+             * Session Key
              * @default
              */
-            readonly emdash_task_id: string;
+            readonly session_key: string;
             /**
              * Session Id
              * @default
@@ -13248,6 +13262,13 @@ export interface components {
             readonly title: string;
             /** Turn Id */
             readonly turn_id?: string | null;
+            /**
+             * Emdash Task Id
+             * @deprecated
+             * @description Deprecated: send `session_key`.
+             * @default
+             */
+            readonly emdash_task_id: string;
         };
         /**
          * SessionReportOut
@@ -13719,7 +13740,14 @@ export interface components {
              */
             readonly result_note: string;
             /**
+             * Session Key
+             * @default
+             */
+            readonly session_key: string;
+            /**
              * Emdash Task Id
+             * @deprecated
+             * @description Deprecated: send `session_key`.
              * @default
              */
             readonly emdash_task_id: string;

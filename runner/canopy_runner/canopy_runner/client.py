@@ -23,6 +23,17 @@ RETRY_BACKOFF = 0.5
 logger = logging.getLogger("canopy_runner.client")
 
 
+
+def _emdash_plan(payload: dict | None) -> dict:
+    """A session plan in this runner's terms. The server calls the session's key
+    `session_key` (it is engine-agnostic — a cloud runner's is a Claude session
+    id); on a laptop it is always an emdash task, which is what the rest of this
+    package calls it, so the wire name is translated here, at the boundary.
+    Falls back to the pre-rename `emdash_task_id` a server mid-deploy may send."""
+    plan = dict(payload or {})
+    plan["emdash_task_id"] = plan.get("session_key") or plan.get("emdash_task_id") or ""
+    return plan
+
 class ClientError(Exception):
     """A control-plane call failed.
 
@@ -204,7 +215,7 @@ class Client:
             {"agent_slug": agent_slug, "project": project, "workspace": workspace,
              "thread_key": thread_key},
         )
-        return payload or {}
+        return _emdash_plan(payload)
 
     def record_session(self, runner_id: str, agent_slug: str, thread_key: str, *,
                        project: str = "", workspace: str = "",
@@ -215,10 +226,10 @@ class Client:
             "POST", f"/runners/{runner_id}/record-session",
             {"agent_slug": agent_slug, "project": project, "workspace": workspace,
              "thread_key": thread_key,
-             "emdash_task_id": emdash_task_id, "session_id": session_id,
+             "session_key": emdash_task_id, "session_id": session_id,
              "agent_task_ext_id": agent_task_ext_id, "summary": summary},
         )
-        return payload or {}
+        return _emdash_plan(payload)
 
     def report_sessions(
         self, runner_id: str, sessions: list[dict], archived: list[str] | None = None,
@@ -392,7 +403,7 @@ class Client:
         the note has carried it as prose for months, which is not a key."""
         body = {"status": status, "result_note": note}
         if emdash_task_id:
-            body["emdash_task_id"] = emdash_task_id
+            body["session_key"] = emdash_task_id
         self._call("POST", f"/turns/{turn_id}/finish", body)
 
     def fail_turn(self, turn_id: str, note: str) -> None:

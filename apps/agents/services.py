@@ -250,7 +250,7 @@ def _claim_dispatch_row(agent: Agent, data) -> Turn | None:
     Match order, most specific first:
       1. cli_session_id — a turn already reported from this Claude session (re-run
          of the close-out). Also what the unique constraint keys on.
-      2. emdash_task_id — the runner stamped the emdash session it created; the
+      2. session_key — the runner stamped the emdash session it created; the
          closing agent recovers the same name from its cwd. Newest UNREPORTED turn
          for that task wins, because a reused session serves many turns and the one
          being closed is the latest.
@@ -271,10 +271,10 @@ def _claim_dispatch_row(agent: Agent, data) -> Turn | None:
         existing = agent.turns.filter(cli_session_id=data.cli_session_id).first()
         if existing is not None:
             return existing
-    task = getattr(data, "emdash_task_id", "") or data.cli_session_id or ""
+    task = getattr(data, "session_key", "") or data.cli_session_id or ""
     if task:
         return (
-            agent.turns.filter(emdash_task_id=task, reported_at__isnull=True)
+            agent.turns.filter(session_key=task, reported_at__isnull=True)
             .order_by("-created_at")
             .first()
         )
@@ -286,7 +286,7 @@ def upsert_turn(agent: Agent, data) -> Turn:
 
     Idempotent per (agent, cli_session_id). When no dispatch row can be matched —
     a turn a human started by hand in a terminal, or a fleet still posting without
-    `emdash_task_id` — a report-only Turn is created instead, so the record is never
+    `session_key` — a report-only Turn is created instead, so the record is never
     dropped on the floor. That row carries origin=api and status=done because it is,
     from the harness's point of view, a turn that has already finished; it has no
     idempotency of its own to enforce, so the key is synthesized from the session.
@@ -321,7 +321,7 @@ def upsert_turn(agent: Agent, data) -> Turn:
         origin=Turn.ORIGIN_API,
         status=Turn.DONE,
         idempotency_key=f"closeout:{agent.slug}:{data.cli_session_id}",
-        emdash_task_id=getattr(data, "emdash_task_id", "") or "",
+        session_key=getattr(data, "session_key", "") or "",
         started_at=_aware(data.started_at),
         finished_at=_aware(data.ended_at),
         **fields,
@@ -359,7 +359,7 @@ def _link_turn_sessions(agent: Agent, turns: list[Turn]) -> None:
 
     Three cases, by how the turn ran:
     - a CHAT turn targets its session directly (`chat_session`);
-    - an agent turn on a runner stamps `emdash_task_id` with the session it drove
+    - an agent turn on a runner stamps `session_key` with the session it drove
       — an emdash task name on a LAPTOP, the Claude session id on a CLOUD runner
       — the same string the runner's record-session stores as
       `RunnerBinding.session_key`, so that is the join;
@@ -372,7 +372,7 @@ def _link_turn_sessions(agent: Agent, turns: list[Turn]) -> None:
     the newest wins. One query for the whole page, not one per turn."""
     from apps.canopy_sessions.models import RunnerBinding
 
-    keys = {t.emdash_task_id for t in turns if t.emdash_task_id and not t.chat_session_id}
+    keys = {t.session_key for t in turns if t.session_key and not t.chat_session_id}
     by_key: dict[str, list[tuple[dt.datetime, object]]] = {}
     if keys:
         rows = RunnerBinding.objects.filter(
@@ -383,10 +383,10 @@ def _link_turn_sessions(agent: Agent, turns: list[Turn]) -> None:
     now = timezone.now()
     for t in turns:
         t.linked_session_id = t.chat_session_id
-        if t.linked_session_id or not t.emdash_task_id:
+        if t.linked_session_id or not t.session_key:
             continue
         cutoff = (t.finished_at or now) + _SESSION_LINK_SLACK
-        fits = [c for c in by_key.get(t.emdash_task_id, []) if c[0] <= cutoff]
+        fits = [c for c in by_key.get(t.session_key, []) if c[0] <= cutoff]
         if fits:
             t.linked_session_id = max(fits, key=lambda c: c[0])[1]
 

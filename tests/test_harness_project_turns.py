@@ -159,14 +159,14 @@ def test_record_then_resolve_a_project_session_reuses_it():
     )
     services.record_session(
         None, "phone:jj:canopy-web", runner=runner, project="canopy-web", workspace=ws,
-        emdash_task_id="task-1", session_id="sess-1",
+        session_key="task-1", session_id="sess-1",
     )
     plan = services.resolve_session(
         None, "phone:jj:canopy-web", runner, project="canopy-web", workspace=ws
     )
 
     assert plan["reuse"] is True
-    assert plan["emdash_task_id"] == "task-1"
+    assert plan["session_key"] == "task-1"
     assert plan["new_thread"] is False
 
 
@@ -180,14 +180,14 @@ def test_resolving_a_project_thread_in_the_wrong_workspace_finds_nothing():
     r = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac")
     services.record_session(
         None, "phone:jj:canopy-web", runner=r, project="canopy-web", workspace=owner_ws,
-        emdash_task_id="secret-task", summary="secret context",
+        session_key="secret-task", summary="secret context",
     )
     plan = services.resolve_session(
         None, "phone:jj:canopy-web", r, project="canopy-web", workspace=other_ws
     )
 
     assert plan["new_thread"] is True
-    assert plan["emdash_task_id"] == ""
+    assert plan["session_key"] == ""
     assert plan["summary"] == ""
 
 
@@ -201,9 +201,9 @@ def test_recording_the_same_project_thread_twice_updates_one_link():
     ws = _ws()
     r = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac")
     services.record_session(None, "phone:jj:canopy-web", runner=r, project="canopy-web",
-                            workspace=ws, emdash_task_id="task-1")
+                            workspace=ws, session_key="task-1")
     services.record_session(None, "phone:jj:canopy-web", runner=r, project="canopy-web",
-                            workspace=ws, emdash_task_id="task-2")
+                            workspace=ws, session_key="task-2")
 
     assert RunnerBinding.objects.filter(session__project="canopy-web").count() == 1
     assert RunnerBinding.objects.get(session__project="canopy-web").session_key == "task-2"

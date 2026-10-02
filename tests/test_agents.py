@@ -81,7 +81,7 @@ def test_delete_sync_removes_only_the_targeted_row():
 def _turn(**kw):
     base = dict(cli_session_id="sess-1", title="Turn 1", summary="did stuff",
                 task_ext_ids=["t1"], work_product_urls=[], session_slug="", share_token="",
-                started_at=None, ended_at=None, source="turn", emdash_task_id="")
+                started_at=None, ended_at=None, source="turn", session_key="")
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -125,7 +125,7 @@ def _dispatch(agent, *, key, task="", started_at=None, status=Turn.DONE):
     """A turn as the HARNESS creates it — dispatched, no close-out report."""
     return Turn.objects.create(
         agent=agent, origin=Turn.ORIGIN_API, status=status, idempotency_key=key,
-        emdash_task_id=task, started_at=started_at,
+        session_key=task, started_at=started_at,
     )
 
 
@@ -159,7 +159,7 @@ def test_close_out_attaches_to_its_dispatch_row_instead_of_adding_one():
     agent = _agent()
     dispatched = _dispatch(agent, key="k1", task="echo-api-1234-0810-1805")
     services.upsert_turn(agent, _turn(cli_session_id="s1", title="Did the thing",
-                                      emdash_task_id="echo-api-1234-0810-1805"))
+                                      session_key="echo-api-1234-0810-1805"))
     assert Turn.objects.filter(agent=agent).count() == 1  # not two halves, one turn
     dispatched.refresh_from_db()
     assert dispatched.report_title == "Did the thing"
@@ -182,9 +182,9 @@ def test_close_out_does_not_reclaim_an_already_reported_turn():
     agent = _agent()
     task = "echo-api-1234-0810-1805"
     first = _dispatch(agent, key="k1", task=task)
-    services.upsert_turn(agent, _turn(cli_session_id="s1", title="First", emdash_task_id=task))
+    services.upsert_turn(agent, _turn(cli_session_id="s1", title="First", session_key=task))
     second = _dispatch(agent, key="k2", task=task)
-    services.upsert_turn(agent, _turn(cli_session_id="s2", title="Second", emdash_task_id=task))
+    services.upsert_turn(agent, _turn(cli_session_id="s2", title="Second", session_key=task))
     first.refresh_from_db()
     second.refresh_from_db()
     assert first.report_title == "First"

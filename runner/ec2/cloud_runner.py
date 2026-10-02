@@ -3223,8 +3223,9 @@ def _session_resume_plan(runner_id: str, turn: dict) -> str:
     status, plan = _api("POST", f"/runners/{runner_id}/resolve-session", body)
     if status != 200 or not plan:
         return ""
-    if plan.get("reuse") and plan.get("emdash_task_id"):
-        return plan["emdash_task_id"]
+    key = plan.get("session_key") or plan.get("emdash_task_id") or ""
+    if plan.get("reuse") and key:
+        return key
     return ""
 
 
@@ -3240,7 +3241,7 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
     session id (`_announce_session`), not after the turn, so the binding exists
     while the turn runs and `_sync_session_streams` tails it live.
 
-    Sends BOTH `emdash_task_id` (what's actually read back today, via
+    Sends BOTH `session_key` (what's actually read back today, via
     RunnerBinding.session_key) and `session_id` (the wire-compat field already
     threaded through RecordSessionIn -> services.record_session, currently
     accepted and silently discarded there) — if a `Session`-level column for
@@ -3258,7 +3259,7 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
         return
     body: dict = {
         "thread_key": thread_key,
-        "emdash_task_id": cli_session_id,
+        "session_key": cli_session_id,
         "session_id": cli_session_id,
     }
     if agent_thread and thread_key == agent_thread:
@@ -3825,11 +3826,11 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         finish_body = {"status": finish, "result_note": text[:2000]}
         if cli_session_id:
             # The session this turn drove — the key its close-out report and the
-            # Turns page's link join on (Turn.emdash_task_id, which holds an
+            # Turns page's link join on (Turn.session_key, which holds an
             # emdash task name on a laptop and the CLI session id here). Also
             # what tells the server a FAILED turn did reach an agent, so it is
             # never re-run blind as "sessionless" (services.finish_turn).
-            finish_body["emdash_task_id"] = cli_session_id
+            finish_body["session_key"] = cli_session_id
         _api("POST", f"/turns/{turn_id}/finish", finish_body)
         _log(f"finished turn {turn_id[:8]}: {finish}")
     except Exception as exc:  # noqa: BLE001 — a worker must never take the loop down

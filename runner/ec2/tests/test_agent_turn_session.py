@@ -51,7 +51,7 @@ def test_recording_an_agent_turn_creates_its_session_server_side(cloud_runner, m
                         lambda m, path, body=None, **k: posts.append((path, body)) or (200, {}))
     cloud_runner._record_session_resume("r-1", _agent_turn(), "cli-1")
     assert posts == [("/runners/r-1/record-session", {
-        "thread_key": f"echo:{TID}", "emdash_task_id": "cli-1", "session_id": "cli-1",
+        "thread_key": f"echo:{TID}", "session_key": "cli-1", "session_id": "cli-1",
         "title": "Daily turn", "turn_id": TID, "agent_slug": "echo",
     })]
 
@@ -146,7 +146,7 @@ def test_finish_carries_the_session_key(run, monkeypatch):
     monkeypatch.setattr(mod, "execute_prompt", _execute_that_starts_a_session(mod, timeline))
     mod._run_turn("r-1", _agent_turn())
     finish = [b for p, b in timeline if p == f"/turns/{TID}/finish"]
-    assert finish == [{"status": "done", "result_note": "Nothing to do.", "emdash_task_id": "cli-1"}]
+    assert finish == [{"status": "done", "result_note": "Nothing to do.", "session_key": "cli-1"}]
 
 
 def test_a_failed_turn_that_reached_an_agent_says_so(run, monkeypatch):
@@ -157,7 +157,7 @@ def test_a_failed_turn_that_reached_an_agent_says_so(run, monkeypatch):
                         _execute_that_starts_a_session(mod, timeline, ok=False))
     mod._run_turn("r-1", _agent_turn())
     finish = [b for p, b in timeline if p == f"/turns/{TID}/finish"][0]
-    assert finish["status"] == "failed" and finish["emdash_task_id"] == "cli-1"
+    assert finish["status"] == "failed" and finish["session_key"] == "cli-1"
 
 
 def test_a_turn_that_never_started_a_session_finishes_without_a_key(run, monkeypatch):
@@ -166,7 +166,7 @@ def test_a_turn_that_never_started_a_session_finishes_without_a_key(run, monkeyp
                         lambda *a, **k: (False, "emdash create failed", ""))
     mod._run_turn("r-1", _agent_turn())
     finish = [b for p, b in timeline if p == f"/turns/{TID}/finish"][0]
-    assert "emdash_task_id" not in finish
+    assert "session_key" not in finish
     assert not any(p.endswith("/record-session") for p, _ in timeline)
 
 

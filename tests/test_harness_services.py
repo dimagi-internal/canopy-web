@@ -295,7 +295,7 @@ def test_failed_turn_that_HAD_a_session_stays_terminal():
     """The guard that makes the retry safe: a session existed, so the agent may have
     already sent mail or edited files. Never re-run that."""
     claimed, _ = _claimed_turn()
-    Turn.objects.filter(pk=claimed.pk).update(emdash_task_id="eva-api-8195-0904-0711")
+    Turn.objects.filter(pk=claimed.pk).update(session_key="eva-api-8195-0904-0711")
     claimed.refresh_from_db()
 
     result = services.finish_turn(claimed, status="failed", result_note="agent errored mid-turn")

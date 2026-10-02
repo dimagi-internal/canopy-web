@@ -228,9 +228,9 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
                 </pre>
               </div>
             )}
-            {turn.emdash_task_id && (
+            {turn.session_key && (
               <p className="text-[11px] text-muted-foreground">
-                emdash session <code className="text-foreground-secondary">{turn.emdash_task_id}</code>
+                Session <code className="text-foreground-secondary">{turn.session_key}</code>
               </p>
             )}
             {showTranscript && (

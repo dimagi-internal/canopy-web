@@ -132,13 +132,13 @@ def _items(client):
 
 
 def test_a_laptop_turn_links_to_the_emdash_session_it_drove(authed_client, workspace):
-    """emdash_task_id on the turn is the RunnerBinding.session_key the runner's
+    """session_key on the turn is the RunnerBinding.session_key the runner's
     session report records — the join that takes a turn to its chat."""
     from django.utils import timezone
 
     agent = _echo(workspace)
     session = _runner_session(agent, "c-daily-turn-ad53")
-    turn = _turn(agent, "t1", status="done", emdash_task_id="c-daily-turn-ad53",
+    turn = _turn(agent, "t1", status="done", session_key="c-daily-turn-ad53",
                  finished_at=timezone.now())
     item = _items(authed_client)[str(turn.id)]
     assert item["chat_session_id"] == str(session.id)
@@ -156,7 +156,7 @@ def test_a_reused_session_name_never_links_to_a_later_session(authed_client, wor
     finished = timezone.now() - dt.timedelta(days=3)
     old = _runner_session(agent, "run", created_at=finished - dt.timedelta(seconds=5))
     _runner_session(agent, "run", created_at=timezone.now())
-    turn = _turn(agent, "t1", status="done", emdash_task_id="run", finished_at=finished)
+    turn = _turn(agent, "t1", status="done", session_key="run", finished_at=finished)
     assert _items(authed_client)[str(turn.id)]["chat_session_id"] == str(old.id)
 
 
@@ -209,8 +209,8 @@ def test_a_cloud_agent_turn_links_to_the_session_the_runner_recorded(
     agent = _echo(workspace)
     turn = _turn(agent, "cloud-1", status="running")
     harness_services.record_session(
-        agent, f"echo:{turn.id}", runner=_cloud_runner(authed_user), emdash_task_id="cli-1")
-    turn.status, turn.emdash_task_id, turn.finished_at = "done", "cli-1", timezone.now()
+        agent, f"echo:{turn.id}", runner=_cloud_runner(authed_user), session_key="cli-1")
+    turn.status, turn.session_key, turn.finished_at = "done", "cli-1", timezone.now()
     turn.save()
 
     item = _items(authed_client)[str(turn.id)]
@@ -222,7 +222,7 @@ def test_a_cloud_close_out_attaches_to_its_turn_instead_of_adding_a_row(
     """The duplicate seen on labs: echo's 17:00 scheduled turn and, beside it, a
     'Scheduled turn 2026-10-01 — nothing in queue' report-only row."""
     agent = _echo(workspace)
-    turn = _turn(agent, "sched-1", status="done", emdash_task_id="772b76a6-cli")
+    turn = _turn(agent, "sched-1", status="done", session_key="772b76a6-cli")
     resp = authed_client.post(
         "/api/agents/echo/turns/",
         data={"cli_session_id": "772b76a6-cli", "title": "Scheduled turn — nothing in queue",
@@ -239,11 +239,11 @@ def test_a_cloud_close_out_attaches_to_its_turn_instead_of_adding_a_row(
 
 def test_a_laptop_close_out_still_joins_on_its_emdash_task(authed_client, workspace):
     agent = _echo(workspace)
-    turn = _turn(agent, "lap-1", status="done", emdash_task_id="c-daily-turn-ad53")
+    turn = _turn(agent, "lap-1", status="done", session_key="c-daily-turn-ad53")
     authed_client.post(
         "/api/agents/echo/turns/",
         data={"cli_session_id": "some-claude-id", "title": "Daily turn",
-              "emdash_task_id": "c-daily-turn-ad53", "source": "turn"},
+              "session_key": "c-daily-turn-ad53", "source": "turn"},
         content_type="application/json",
     )
     items = authed_client.get("/api/agents/echo/turns/?limit=10").json()["items"]
@@ -256,7 +256,7 @@ def test_a_cloud_session_is_named_by_the_runners_title_not_its_uuid(authed_user,
     agent = _echo(workspace)
     binding = harness_services.record_session(
         agent, "echo:t-1", runner=_cloud_runner(authed_user),
-        emdash_task_id="6b1f9c2e-cli-uuid", title="Daily turn")
+        session_key="6b1f9c2e-cli-uuid", title="Daily turn")
     binding.session.refresh_from_db()
     assert binding.session.title == "Daily turn"
 
@@ -266,7 +266,7 @@ def test_a_laptop_session_is_still_named_after_its_emdash_task(authed_user, work
 
     agent = _echo(workspace)
     binding = harness_services.record_session(
-        agent, "echo:t-2", runner=_cloud_runner(authed_user), emdash_task_id="c-daily-turn-ad53")
+        agent, "echo:t-2", runner=_cloud_runner(authed_user), session_key="c-daily-turn-ad53")
     binding.session.refresh_from_db()
     assert binding.session.title == "c-daily-turn-ad53"
 
@@ -284,7 +284,7 @@ def test_record_session_keys_the_running_turn_so_an_early_close_out_joins(
     runner = _cloud_runner(authed_user)
     turn = _turn(agent, "early-1", status="running", claimed_by=runner)
     harness_services.record_session(agent, f"echo:{turn.id}", runner=runner,
-                                    emdash_task_id="27629448-cli")
+                                    session_key="27629448-cli")
     assert harness_services.stamp_turn_session(turn.id, runner, "27629448-cli") is True
 
     authed_client.post(
@@ -309,7 +309,7 @@ def test_only_the_claiming_runner_keys_a_turn_and_only_once(authed_user, workspa
     assert harness_services.stamp_turn_session(turn.id, runner, "first") is True
     assert harness_services.stamp_turn_session(turn.id, runner, "second") is False
     turn.refresh_from_db()
-    assert turn.emdash_task_id == "first"
+    assert turn.session_key == "first"
 
 
 def test_a_finished_turn_is_not_rekeyed(authed_user, workspace):
@@ -328,7 +328,7 @@ def test_a_cloud_sessions_own_title_shows_instead_of_its_uuid_key(authed_client,
     agent = _echo(workspace)
     binding = harness_services.record_session(
         agent, "echo:t-9", runner=_cloud_runner(authed_user),
-        emdash_task_id="27629448-069c-4d71-9d34-f331ad4cd2c2", title="Daily turn")
+        session_key="27629448-069c-4d71-9d34-f331ad4cd2c2", title="Daily turn")
     body = authed_client.get(f"/api/canopy-sessions/{binding.session_id}").json()
     assert body["title"] == "Daily turn"
 
@@ -339,8 +339,23 @@ def test_a_runner_session_still_hides_its_thread_key_fallback(authed_client, aut
 
     agent = _echo(workspace)
     binding = harness_services.record_session(
-        agent, "19f91250349ec91b", runner=_cloud_runner(authed_user), emdash_task_id="")
+        agent, "19f91250349ec91b", runner=_cloud_runner(authed_user), session_key="")
     binding.session_key = "c-real-task-name"
     binding.save(update_fields=["session_key"])
     body = authed_client.get(f"/api/canopy-sessions/{binding.session_id}").json()
     assert body["title"] == "c-real-task-name"
+
+
+def test_a_close_out_with_the_old_field_name_still_joins(authed_client, workspace):
+    """canopy's agent client sends `emdash_task_id` until it is updated."""
+    agent = _echo(workspace)
+    turn = _turn(agent, "legacy-1", status="done", session_key="c-daily-turn-ad53")
+    authed_client.post(
+        "/api/agents/echo/turns/",
+        data={"cli_session_id": "claude-1", "title": "Daily turn",
+              "emdash_task_id": "c-daily-turn-ad53", "source": "turn"},
+        content_type="application/json",
+    )
+    items = authed_client.get("/api/agents/echo/turns/?limit=10").json()["items"]
+    assert [i["id"] for i in items] == [str(turn.id)]
+    assert items[0]["session_key"] == items[0]["emdash_task_id"] == "c-daily-turn-ad53"
