@@ -35,12 +35,30 @@ against emdash's own launcher):
   same session", which matters: a NEW session's worktree does not exist until the
   click that also submits its first prompt, so for the first seconds of a new cx-
   session `profile_guard` is the only layer.
+* **File writes are `Edit(path)` rules, never `Write(path)`.** Claude Code matches a
+  path against `Edit(…)` rules for EVERY file-changing tool (Write, Edit,
+  NotebookEdit) and ignores a `Write(path)` rule outright — it prints "is not matched
+  by file permission checks — only Edit(path) rules are" at startup and enforces
+  nothing (#1058; measured on 2.1.287: a `Write(path)` deny let the Write tool write
+  there, an `Edit(path)` deny stopped it). A BARE tool name is different: `Edit` in
+  `deny` removes only the tool called Edit, so a capability granting Write but not
+  Edit keeps Write, scoped by the `Edit(path)` allows. Writes are scoped by
+  `write_paths`, as `profile_guard` scopes them: none → no file writes at all.
 * **MCP rules name REAL servers.** An allow rule whose server segment holds a glob
   (`mcp__*canopy-web__who_is_asking`, the form interfaces are written in) is skipped
   by Claude Code, so patterns are normalised against the servers configured on this
   box (`plugin_canopy_canopy-web`, …). A claude.ai connector cannot be enumerated
   offline and is left to the hook unless the capability grants no MCP at all, in
   which case `mcp__*` (a glob deny is legal) removes every server.
+* **A server the capability never reaches is not STARTED.** An `mcp__<server>` deny
+  removes its tools but Claude Code still spawns and connects it (measured on
+  2.1.287: every denied plugin server started, ~3s of stdio launches before the first
+  request on a laptop, plus a connect timeout for any that hang). `deniedMcpServers`
+  — named by CONFIG name (`plugin:ace:ace-ocs`), read from `.claude/settings.json`
+  and from `--settings` alike — keeps it from starting at all. Documented as a
+  managed-settings key; honouring it from project settings was measured, not read,
+  so the `mcp__<server>` deny stays beside it: if a release ever ignores the key, the
+  server starts again and its tools are still refused.
 
 Pure and stdlib-only: the cloud runner imports it too.
 """
@@ -78,8 +96,13 @@ HIGH_RISK_PROGRAMS = (
     "osascript", "open", "launchctl", "crontab",
 )
 
-#: Credential stores a caller's session never needs, whatever its read_paths say —
-#: denied for the path tools that remain, when every read_path is inside the worktree.
+#: Tools that CHANGE the file at their path — `profile_guard`'s `_WRITE_TOOLS`.
+#: Claude Code scopes all of them with one rule form, `Edit(path)`.
+WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
+
+#: Credential stores a caller's session never needs, whatever its paths say — denied
+#: to Read when every read_path is inside the worktree, and to every file-writing tool
+#: (as `Edit(…)`) when every write_path is.
 SENSITIVE_PATHS = (
     "~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "~/.config/gh/**", "~/.config/op/**",
     "~/.docker/**", "~/.netrc", "~/.claude.json", "~/.claude/canopy/**",
@@ -116,33 +139,42 @@ def _plugin_servers(install_path: pathlib.Path) -> list[str]:
     return names
 
 
-def mcp_servers(*, home: pathlib.Path | None = None, worktree: str | None = None) -> set[str]:
-    """The MCP server NAMES a session on this box can see, as tool names spell them.
+def mcp_server_names(*, home: pathlib.Path | None = None,
+                     worktree: str | None = None) -> dict[str, str]:
+    """{name as tool names spell it: name as config spells it} for every MCP server a
+    session on this box can see — `plugin_ace_ace-ocs` is configured as
+    `plugin:ace:ace-ocs`; a user or project server is spelled the same both ways.
 
     User and project servers from ~/.claude.json, the worktree's `.mcp.json`, and every
-    installed plugin's servers as `plugin_<plugin>_<server>`. Missing a server costs
-    only its native deny (the hook still refuses it); inventing one costs nothing.
+    installed plugin's servers. Missing a server costs only its native deny (the hook
+    still refuses it); inventing one costs nothing.
     """
     home = home or _home()
-    out: set[str] = set()
+    out: dict[str, str] = {}
     cfg = _load_json(home / ".claude.json")
     if isinstance(cfg, dict):
-        out |= set((cfg.get("mcpServers") or {}).keys())
+        out |= {k: k for k in (cfg.get("mcpServers") or {})}
         for proj, pcfg in (cfg.get("projects") or {}).items():
             if isinstance(pcfg, dict) and (worktree is None or str(worktree).startswith(str(proj))):
-                out |= set((pcfg.get("mcpServers") or {}).keys())
+                out |= {k: k for k in (pcfg.get("mcpServers") or {})}
     if worktree:
         doc = _load_json(pathlib.Path(worktree) / ".mcp.json")
         if isinstance(doc, dict):
-            out |= set((doc.get("mcpServers") or {}).keys())
+            out |= {k: k for k in (doc.get("mcpServers") or {})}
     installed = _load_json(home / ".claude" / "plugins" / "installed_plugins.json")
     for key, entries in ((installed or {}).get("plugins") or {}).items():
         plugin = key.split("@", 1)[0]
         for entry in entries if isinstance(entries, list) else []:
             path = (entry or {}).get("installPath")
             if path:
-                out |= {f"plugin_{plugin}_{s}" for s in _plugin_servers(pathlib.Path(path))}
-    return {s for s in out if s and "(" not in s}
+                out |= {f"plugin_{plugin}_{s}": f"plugin:{plugin}:{s}"
+                        for s in _plugin_servers(pathlib.Path(path))}
+    return {k: v for k, v in out.items() if k and "(" not in k}
+
+
+def mcp_servers(*, home: pathlib.Path | None = None, worktree: str | None = None) -> set[str]:
+    """The MCP server names a session on this box can see, as tool names spell them."""
+    return set(mcp_server_names(home=home, worktree=worktree))
 
 
 def _mcp_split(pattern: str):
@@ -201,6 +233,7 @@ def settings_for(cap: dict, *, worktree: str, caller_path: str | None = None,
     tools = [str(t) for t in cap.get("tools") or []]
     bash = [str(b) for b in cap.get("bash") or []]
     read_paths = [str(p) for p in cap.get("read_paths") or []]
+    write_paths = [str(p) for p in cap.get("write_paths") or []]
     servers = set(servers or ())
     cwd = os.path.realpath(worktree) if worktree else ""
 
@@ -212,8 +245,9 @@ def settings_for(cap: dict, *, worktree: str, caller_path: str | None = None,
     deny: list[str] = [t for t in GATED_TOOLS if not granted(t)]
     allow: list[str] = []
 
-    # A path tool is scoped by read_paths (below); anything else is granted whole.
-    scoped = {"Read", "Edit", "Write", "Glob", "Grep"} if read_paths else set()
+    # Read/Glob/Grep are scoped by read_paths, the file-writing tools by write_paths
+    # (below); anything else is granted whole.
+    scoped = set(WRITE_TOOLS) | ({"Read", "Glob", "Grep"} if read_paths else set())
     allow += [t for t in ("Read",) + GATED_TOOLS
               if t != "Bash" and granted(t) and t not in scoped]
     if bash:
@@ -221,20 +255,26 @@ def settings_for(cap: dict, *, worktree: str, caller_path: str | None = None,
         mine = {_program(b) for b in bash}
         deny += [f"Bash({p} *)" for p in HIGH_RISK_PROGRAMS if p not in mine]
 
-    # Paths: grant exactly the read_paths (when path tools are granted at all), and
-    # take the credential stores away from whatever path tool remains.
-    path_tools = [t for t in ("Read", "Edit", "Write") if t == "Read" or granted(t)]
-    for rp in read_paths:
-        target = _subst(rp, cwd=cwd, thread_id=thread_id)
-        for t in path_tools:
-            if t == "Read" and not granted("Read"):
-                continue
-            allow.append(_path_rule(t, target))
+    # Reads: grant exactly the read_paths, and the caller's own envelope.
+    if granted("Read"):
+        allow += [_path_rule("Read", _subst(rp, cwd=cwd, thread_id=thread_id)) for rp in read_paths]
     if caller_path:
         allow.append(_path_rule("Read", os.path.realpath(caller_path)))
+
+    # Writes: `Edit(path)` is the one form Claude Code matches for every file-writing
+    # tool. A granted write tool lands only inside write_paths; with none, there is
+    # nowhere for it to land, so it goes the way of an ungranted tool.
+    writers = [t for t in WRITE_TOOLS if granted(t)]
+    if writers and write_paths:
+        allow += [_path_rule("Edit", _subst(wp, cwd=cwd, thread_id=thread_id)) for wp in write_paths]
+    elif writers:
+        deny += [t for t in writers if t not in deny]
+
+    # Credential stores, taken away from whatever path tool remains.
     if all(rp.startswith("{cwd}") for rp in read_paths):
-        for t in path_tools:
-            deny += [_path_rule(t, p) for p in SENSITIVE_PATHS]
+        deny += [_path_rule("Read", p) for p in SENSITIVE_PATHS]
+    if all(wp.startswith("{cwd}") for wp in write_paths):
+        deny += [_path_rule("Edit", p) for p in SENSITIVE_PATHS]
 
     mcp_pats = [t for t in tools if t.startswith("mcp") or t == "*"]
     if not mcp_pats:
@@ -248,16 +288,32 @@ def settings_for(cap: dict, *, worktree: str, caller_path: str | None = None,
             "deny": list(dict.fromkeys(deny))}
 
 
+def servers_to_stop(cap: dict, names: dict[str, str]) -> list[str]:
+    """CONFIG names of the servers this capability never reaches — the ones
+    `settings_for` denies as `mcp__<server>` — for `deniedMcpServers`. Pure."""
+    tools = [str(t) for t in (cap or {}).get("tools") or []]
+    mcp_pats = [t for t in tools if t.startswith("mcp") or t == "*"]
+    reached = _servers_granted(mcp_pats, set(names))[0] if mcp_pats else set()
+    return sorted(names[s] for s in set(names) - reached)
+
+
+def _denied_servers_doc(stop: list[str]) -> list[dict]:
+    return [{"serverName": n} for n in stop]
+
+
 #: Written beside our block so a later write replaces OUR rules, not a repo's own.
 MARKER_KEY = "canopyConfined"
 
 
-def write_worktree_settings(worktree: str, permissions: dict, *, capability: str = "") -> pathlib.Path:
-    """Merge `permissions` into `<worktree>/.claude/settings.json`. Raises OSError.
+def write_worktree_settings(worktree: str, permissions: dict, *, capability: str = "",
+                            stop_servers: list[str] = ()) -> pathlib.Path:
+    """Merge `permissions` (and `stop_servers`, as `deniedMcpServers`) into
+    `<worktree>/.claude/settings.json`. Raises OSError.
 
     A repo may track its own `.claude/settings.json`; its keys are kept, and its
-    `deny` rules survive (ours are added). Its `allow` rules and `defaultMode` do not:
-    a caller's session must not inherit what the agent's own sessions are allowed.
+    `deny` rules and `deniedMcpServers` survive (ours are added). Its `allow` rules
+    and `defaultMode` do not: a caller's session must not inherit what the agent's own
+    sessions are allowed.
     """
     wt = pathlib.Path(worktree)
     if not wt.is_dir():
@@ -272,8 +328,17 @@ def write_worktree_settings(worktree: str, permissions: dict, *, capability: str
     merged = {**prior, "defaultMode": permissions["defaultMode"],
               "allow": list(permissions["allow"]),
               "deny": list(dict.fromkeys(repo_deny + list(permissions["deny"])))}
+    ours_stopped = set((existing.get(MARKER_KEY) or {}).get("stopped") or [])
+    repo_stopped = [d for d in existing.get("deniedMcpServers") or []
+                    if not (isinstance(d, dict) and d.get("serverName") in ours_stopped)]
     doc = {**existing, "permissions": merged,
-           MARKER_KEY: {"capability": capability, "deny": list(permissions["deny"])}}
+           MARKER_KEY: {"capability": capability, "deny": list(permissions["deny"]),
+                        "stopped": list(stop_servers)}}
+    stopped = repo_stopped + _denied_servers_doc(list(stop_servers))
+    if stopped:
+        doc["deniedMcpServers"] = stopped
+    else:
+        doc.pop("deniedMcpServers", None)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(".settings.json.canopy-tmp")
     tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
@@ -284,14 +349,21 @@ def write_worktree_settings(worktree: str, permissions: dict, *, capability: str
 def confine_worktree(cap: dict, worktree: str, *, caller_path: str | None = None,
                      thread_id: str = "", home: pathlib.Path | None = None) -> pathlib.Path:
     """Compute and write the native layer for one confined worktree. Raises OSError."""
+    names = mcp_server_names(home=home, worktree=worktree)
     perms = settings_for(cap, worktree=worktree, caller_path=caller_path, thread_id=thread_id,
-                         servers=mcp_servers(home=home, worktree=worktree))
-    return write_worktree_settings(worktree, perms, capability=str((cap or {}).get("name") or ""))
+                         servers=set(names))
+    return write_worktree_settings(worktree, perms, capability=str((cap or {}).get("name") or ""),
+                                   stop_servers=servers_to_stop(cap, names))
 
 
 def cli_settings(cap: dict, *, cwd: str, caller_path: str | None = None, thread_id: str = "",
                  home: pathlib.Path | None = None) -> dict:
     """The same rules as a `--settings` document, for a runner that spawns claude itself."""
+    names = mcp_server_names(home=home, worktree=cwd)
     perms = settings_for(cap, worktree=cwd, caller_path=caller_path, thread_id=thread_id,
-                         servers=mcp_servers(home=home, worktree=cwd))
-    return {"permissions": perms}
+                         servers=set(names))
+    doc = {"permissions": perms}
+    stop = servers_to_stop(cap, names)
+    if stop:
+        doc["deniedMcpServers"] = _denied_servers_doc(stop)
+    return doc
