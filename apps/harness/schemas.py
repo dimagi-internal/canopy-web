@@ -348,6 +348,14 @@ class RecordSessionIn(Schema):
     session_id: str = ""
     agent_task_ext_id: str | None = None
     summary: str | None = None
+    # A readable name for the session, used where the session would otherwise be
+    # named after its key. A laptop's key is an emdash task name a person can
+    # read; a cloud runner's is a Claude session UUID, so it sends one of these.
+    title: str = Field(default="", max_length=200)
+    # The turn this session is running, when the runner is recording it mid-turn.
+    # Stamps that turn's session key NOW rather than at finish, so the agent's
+    # close-out — which it posts before the turn ends — can find its turn.
+    turn_id: uuid.UUID | None = None
 
 
 class ReportedSessionIn(Schema):
@@ -643,6 +651,20 @@ class TranscriptAppendIn(Schema):
     # a no-op (a retry after a lost response), not a double-append. Omit to
     # skip dedup entirely — older/simpler callers are unaffected.
     batch_id: str = ""
+
+
+class TurnMessageOut(Schema):
+    turn_index: int
+    role: str
+    content: dict
+    plaintext: str
+
+
+class TurnMessagesOut(Schema):
+    messages: list[TurnMessageOut]
+    #: The view stopped at services.TRANSCRIPT_VIEW_MAX_MESSAGES; the raw
+    #: transcript route has the rest.
+    truncated: bool
 
 
 class TranscriptAppendOut(Schema):

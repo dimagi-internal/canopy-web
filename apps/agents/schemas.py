@@ -488,6 +488,13 @@ class AgentTurnOut(StrictModel):
     # True when the content above (and `share_token`, the transcript's public
     # link) was blanked: a turn's content is a log (apps/harness/turn_access.py).
     content_hidden: bool = False
+    # Where to see what the turn DID (services.list_turns). `chat_session_id` is
+    # the chat holding its work — a chat turn's own session, or the session a
+    # runner drove (an emdash session on a laptop, a recorded Claude session on a
+    # cloud runner). A turn with no session falls back to its retained transcript
+    # (`has_transcript`, read via /api/harness/turns/{id}/messages).
+    chat_session_id: uuid.UUID | None = Field(default=None, validation_alias="linked_session_id")
+    has_transcript: bool = False
 
 
 # ---- Work products ----

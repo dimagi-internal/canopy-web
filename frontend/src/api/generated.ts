@@ -4782,6 +4782,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/turns/{turn_id}/messages": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A turn's transcript as readable messages
+         * @description The turn's retained transcript parsed into messages (user, assistant,
+         *     tool use, tool result), with secrets scrubbed. Bounded: `truncated` is true
+         *     when the view stopped early. Empty for a turn that kept no transcript.
+         */
+        readonly get: operations["read_turn_messages"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/turns/{turn_id}/start": {
         readonly parameters: {
             readonly query?: never;
@@ -5069,6 +5091,88 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/transfer-requests": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Transfer requests waiting on you, or that you made
+         * @description Requests to move a session onto a runner you administer (yours to approve
+         *     or decline), plus the ones you asked for. `status` filters (default
+         *     `pending`; `all` for every state).
+         */
+        readonly get: operations["list_transfer_requests"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/transfer-requests/{request_id}/approve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve a transfer onto your runner (and carry it out)
+         * @description Approve moving the session onto your runner; the move happens now and
+         *     `transfer` reports it LAUNCHED. Only an administrator of the target runner may
+         *     approve, checked at this moment. 409 while a turn is still executing on the
+         *     session — the request stays pending; stop the session and approve again.
+         */
+        readonly post: operations["approve_transfer_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/transfer-requests/{request_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline a transfer onto your runner
+         * @description Decline; the session stays where it is. `note` is shown to the requester.
+         */
+        readonly post: operations["decline_transfer_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/transfer-requests/{request_id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Withdraw a transfer request you made */
+        readonly post: operations["cancel_transfer_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -5300,9 +5404,17 @@ export interface paths {
          *     execution DID move, and the session's entire pre-transfer history was deleted
          *     on the new box's first ship (session 169212e2, 2026-09-12).
          *
+         *     WHOSE box it lands on decides whether it moves now (`status: moved`) or asks
+         *     (`status: pending`): onto a runner you administer, or between two runners with
+         *     the SAME owner, it moves now. Onto someone else's box it becomes a transfer
+         *     request that one of `approvers` must approve (`approve_transfer_request`),
+         *     because the move spends their machine and Claude subscription. `runner` is the
+         *     target's id or name.
+         *
          *     409, not 422, while a turn executes: the request is well-formed and will
          *     succeed once the source box is idle, which is a state conflict rather than a
-         *     bad body. Stop the session (`POST /{id}/stop`) and retry.
+         *     bad body. Stop the session (`POST /{id}/stop`) and retry. Also 409 while
+         *     another request for this session is waiting.
          */
         readonly post: operations["transfer"];
         readonly delete?: never;
@@ -9757,6 +9869,13 @@ export interface components {
              * @default false
              */
             readonly content_hidden: boolean;
+            /** Chat Session Id */
+            readonly chat_session_id?: string | null;
+            /**
+             * Has Transcript
+             * @default false
+             */
+            readonly has_transcript: boolean;
         };
         /** Page[AgentTurnOut] */
         readonly Page_AgentTurnOut_: {
@@ -12742,6 +12861,13 @@ export interface components {
             readonly agent_task_ext_id?: string | null;
             /** Summary */
             readonly summary?: string | null;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /** Turn Id */
+            readonly turn_id?: string | null;
         };
         /**
          * SessionReportOut
@@ -13175,6 +13301,26 @@ export interface components {
              */
             readonly batch_id: string;
         };
+        /** TurnMessageOut */
+        readonly TurnMessageOut: {
+            /** Turn Index */
+            readonly turn_index: number;
+            /** Role */
+            readonly role: string;
+            /** Content */
+            readonly content: {
+                readonly [key: string]: unknown;
+            };
+            /** Plaintext */
+            readonly plaintext: string;
+        };
+        /** TurnMessagesOut */
+        readonly TurnMessagesOut: {
+            /** Messages */
+            readonly messages: readonly components["schemas"]["TurnMessageOut"][];
+            /** Truncated */
+            readonly truncated: boolean;
+        };
         /** TurnStartIn */
         readonly TurnStartIn: {
             /**
@@ -13434,6 +13580,88 @@ export interface components {
              */
             readonly dry_run: boolean;
         };
+        /** TransferOut */
+        readonly TransferOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Runner */
+            readonly runner: string;
+            /** Transferred From */
+            readonly transferred_from: string;
+            /** Index Offset */
+            readonly index_offset: number;
+            /** Turn Id */
+            readonly turn_id: string;
+            /**
+             * Status
+             * @default moved
+             */
+            readonly status: string;
+            /** Request Id */
+            readonly request_id?: string | null;
+            /**
+             * Approvers
+             * @default []
+             */
+            readonly approvers: readonly string[];
+        };
+        /** TransferRequestOut */
+        readonly TransferRequestOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Session Title */
+            readonly session_title: string;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** To Runner */
+            readonly to_runner: string;
+            /**
+             * To Runner Id
+             * Format: uuid
+             */
+            readonly to_runner_id: string;
+            /** From Runner */
+            readonly from_runner: string;
+            /** Requested By */
+            readonly requested_by: string;
+            /** Brief */
+            readonly brief: string;
+            /** Status */
+            readonly status: string;
+            /** Decided By */
+            readonly decided_by: string;
+            /** Decided At */
+            readonly decided_at: string | null;
+            /** Note */
+            readonly note: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            readonly transfer?: components["schemas"]["TransferOut"] | null;
+            /**
+             * Approvers
+             * @default []
+             */
+            readonly approvers: readonly string[];
+        };
+        /** TransferDecisionIn */
+        readonly TransferDecisionIn: {
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
         /** SessionNotifyIn */
         readonly SessionNotifyIn: {
             /** Every Completion */
@@ -13513,19 +13741,6 @@ export interface components {
         readonly PlaceIn: {
             /** Placement */
             readonly placement: string;
-        };
-        /** TransferOut */
-        readonly TransferOut: {
-            /** Session Id */
-            readonly session_id: string;
-            /** Runner */
-            readonly runner: string;
-            /** Transferred From */
-            readonly transferred_from: string;
-            /** Index Offset */
-            readonly index_offset: number;
-            /** Turn Id */
-            readonly turn_id: string;
         };
         /**
          * TransferIn
@@ -20563,6 +20778,28 @@ export interface operations {
             };
         };
     };
+    readonly read_turn_messages: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnMessagesOut"];
+                };
+            };
+        };
+    };
     readonly start_turn: {
         readonly parameters: {
             readonly query?: never;
@@ -20946,6 +21183,98 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ResetSummaryOut"];
+                };
+            };
+        };
+    };
+    readonly list_transfer_requests: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["TransferRequestOut"][];
+                };
+            };
+        };
+    };
+    readonly approve_transfer_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TransferRequestOut"];
+                };
+            };
+        };
+    };
+    readonly decline_transfer_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TransferDecisionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TransferRequestOut"];
+                };
+            };
+        };
+    };
+    readonly cancel_transfer_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TransferRequestOut"];
                 };
             };
         };

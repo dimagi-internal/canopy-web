@@ -10,8 +10,10 @@ import type {
   AgentWorkProductOut,
 } from '@/api/agents'
 import { useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import { Markdown } from '@/components/Markdown'
 import { EventLedger } from '@/components/activity/EventLedger'
+import { TurnTranscript } from '@/components/activity/TurnTranscript'
 import { statusToken } from '@/components/activity/turnLog'
 import { promptHasMore, turnBody, turnDuration, turnHeadline, turnTrigger } from './turnText'
 
@@ -130,6 +132,13 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
   const shareHref = turn.share_token
     ? `${import.meta.env.BASE_URL.replace(/\/$/, '')}/share/${turn.share_token}`
     : ''
+  // Where the turn's actual work lives: the chat it ran in (a laptop runner's
+  // emdash session, or a chat turn's own session) — or, for a cloud-runner turn
+  // that has no chat, its retained transcript, shown inline when opened.
+  const { workspace } = useParams<{ workspace: string }>()
+  const chatHref =
+    turn.chat_session_id && workspace ? `/w/${workspace}/chat/${turn.chat_session_id}` : ''
+  const showTranscript = !turn.chat_session_id && !!turn.has_transcript
   const body = turnBody(turn)
   const duration = turnDuration(turn)
   return (
@@ -159,7 +168,18 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
             {turnHeadline(turn)}
           </h3>
         </button>
-        {shareHref && <OpenDocChip url={shareHref} label="View transcript" />}
+        <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+          {chatHref && (
+            <Link
+              to={chatHref}
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-primary bg-muted border border-border hover:border-primary/50 px-2.5 py-1 rounded-md transition-colors"
+            >
+              <span className="text-primary/70">→</span>
+              Open chat
+            </Link>
+          )}
+          {shareHref && <OpenDocChip url={shareHref} label="View transcript" />}
+        </div>
       </div>
       <div className="px-5 pb-5">
         {body && (
@@ -210,8 +230,14 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
             )}
             {turn.emdash_task_id && (
               <p className="text-[11px] text-muted-foreground">
-                Session <code className="text-foreground-secondary">{turn.emdash_task_id}</code>
+                emdash session <code className="text-foreground-secondary">{turn.emdash_task_id}</code>
               </p>
+            )}
+            {showTranscript && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Transcript</p>
+                <TurnTranscript turnId={turn.id} />
+              </div>
             )}
             <div>
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Events</p>

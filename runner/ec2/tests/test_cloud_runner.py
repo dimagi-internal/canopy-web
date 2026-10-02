@@ -2097,3 +2097,19 @@ def test_the_drain_probes_only_mailboxes_that_are_due(cloud_runner, monkeypatch)
     assert probed == [("ace@dimagi-ai.com", "canopy")], "a mailbox that is not due costs no gog call"
     assert checked == [("ace", "canopy")]
     cloud_runner._INBOX_STAMPS.clear()
+
+
+def test_run_claude_announces_the_session_once_from_its_init_line(cloud_runner, monkeypatch, tmp_path):
+    """The live stream tail can only follow a turn whose session is recorded, so
+    `claude -p` announces it from the init line — not at the end of the turn —
+    and once, though every later line repeats the same id."""
+    lines = _stream_json_lines("real-cli-session-2", "hello")
+    monkeypatch.setattr(cloud_runner.subprocess, "Popen", lambda *a, **k: _FakeProc(lines))
+    monkeypatch.setattr(cloud_runner, "_api", lambda m, p, b=None: (200, {}))
+    announced = []
+    cloud_runner._SESSION_HOOKS["turn-ann"] = announced.append
+    try:
+        cloud_runner.run_claude("hi", "turn-ann", lambda batch: None, cwd=tmp_path)
+    finally:
+        cloud_runner._SESSION_HOOKS.pop("turn-ann", None)
+    assert announced == ["real-cli-session-2"]

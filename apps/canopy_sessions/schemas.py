@@ -77,6 +77,40 @@ class TransferOut(Schema):
     # the observable proof the history was carried rather than dropped.
     index_offset: int
     turn_id: str
+    # "moved" — it happened now (the fields above describe it). "pending" — the
+    # target belongs to someone else, so a request now waits for one of
+    # `approvers`; runner/turn_id are empty until they approve.
+    status: str = "moved"
+    request_id: uuid.UUID | None = None
+    approvers: list[str] = []
+
+
+class TransferDecisionIn(Schema):
+    note: str = ""
+
+
+class TransferRequestOut(Schema):
+    id: uuid.UUID
+    session_id: uuid.UUID
+    session_title: str
+    agent_slug: str
+    to_runner: str
+    to_runner_id: uuid.UUID
+    from_runner: str
+    requested_by: str
+    brief: str
+    # pending | approved | declined | cancelled | expired
+    status: str
+    decided_by: str
+    decided_at: dt.datetime | None
+    note: str
+    created_at: dt.datetime
+    # Set when this call carried the move out: an approval, or a request from
+    # someone who already administers the target. LAUNCHED, not done — a pinned
+    # turn lands within seconds, and the agent picking the thread up is separate.
+    transfer: TransferOut | None = None
+    # The people who may approve — so a requester knows whom to nudge.
+    approvers: list[str] = []
 
 
 class TurnOutMinimal(Schema):

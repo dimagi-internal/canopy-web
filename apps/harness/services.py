@@ -1515,6 +1515,47 @@ def iter_transcript(turn: Turn, *, chunk_size: int = 64 * 1024):
             yield chunk
 
 
+#: How much of a turn's transcript the reading view parses. A prefix, not the
+#: whole thing: the view exists to show what a turn did, and a turn long enough
+#: to blow past this is read in full from the raw route instead.
+TRANSCRIPT_VIEW_MAX_MESSAGES = 500
+
+
+def iter_transcript_lines(turn: Turn):
+    """`iter_transcript`, re-cut at newlines and decoded — one JSONL line at a
+    time, still without materializing the whole blob."""
+    pending = b""
+    for chunk in iter_transcript(turn):
+        pending += chunk
+        *lines, pending = pending.split(b"\n")
+        for line in lines:
+            yield line.decode("utf-8", errors="replace")
+    if pending:
+        yield pending.decode("utf-8", errors="replace")
+
+
+def transcript_messages(
+    turn: Turn, *, max_messages: int = TRANSCRIPT_VIEW_MAX_MESSAGES
+) -> tuple[list[dict], bool]:
+    """A turn's retained transcript as readable messages — the same shape, parser
+    and secret scrub as a shared session page — plus whether it was cut short.
+
+    This is how you see what a CLOUD-runner agent turn did: it runs one-shot
+    `claude -p` with no canopy Session to stream into, so the transcript on the
+    turn is the only record of its work. The raw route stays the byte-exact
+    source; this is a bounded reading view over it."""
+    from apps.session_sharing import parser, redact
+
+    parsed = parser.parse_lines(iter_transcript_lines(turn), max_turns=max_messages)
+    messages = []
+    for index, t in enumerate(parsed.turns):
+        plaintext, content, _ = redact.redact_turn(t.plaintext, t.content)
+        messages.append(
+            {"turn_index": index, "role": t.role, "content": content, "plaintext": plaintext}
+        )
+    return messages, len(parsed.turns) >= max_messages
+
+
 def mark_running(turn: Turn, *, session_id: str = "") -> Turn:
     """Transition CLAIMED|RUNNING -> RUNNING. A no-op (no event, no field
     writes) if the turn was swept to a terminal state (e.g. lost) underneath
@@ -2194,6 +2235,7 @@ def record_session(
     session_id: str = "",  # accepted for wire-compat; the binding keys on session_key
     agent_task_ext_id: str | None = None,
     summary: str | None = None,
+    title: str = "",
 ):
     """Upsert the thread's durable Session + RunnerBinding and re-point the live-session
     hint at THIS runner/host. Only overwrites agent_task_ext_id/summary when passed,
@@ -2237,8 +2279,12 @@ def record_session(
         # sentence for a name while the sidebar showed the task
         # (observed 2026-07-27). A human-set title is still never clobbered — it
         # won't match the fallback and won't match the first message either.
-        if emdash_task_id and _title_is_derived(binding.session, thread_key):
-            binding.session.title = emdash_task_id[:200]
+        #
+        # A runner-supplied `title` beats the key: a cloud runner's key is a
+        # Claude session UUID, which names nothing a person would recognise.
+        name = (title or "").strip() or emdash_task_id
+        if name and _title_is_derived(binding.session, thread_key):
+            binding.session.title = name[:200]
             binding.session.save(update_fields=["title"])
         binding.live_seen_at = timezone.now()
         if agent_task_ext_id is not None:
@@ -2251,6 +2297,27 @@ def record_session(
 
         seed_stream_desired(binding)
     return binding
+
+
+def stamp_turn_session(turn_id, runner: Runner, session_key: str) -> bool:
+    """Give a running turn its session key the moment its session exists.
+
+    `finish` writes `emdash_task_id` too, but finish comes LAST — after the
+    agent has already posted its close-out report, which joins on that key
+    (apps/agents/services._claim_dispatch_row). A laptop finishes seconds in
+    (emdash runs the work after), so it never noticed; a cloud runner finishes
+    when the work does, so every cloud close-out found no turn and became a
+    second, report-only row (labs, echo, 2026-10-02 17:00).
+
+    Only the runner that claimed the turn may stamp it, only while it runs, and
+    only an empty key — the same first-write-wins rule `finish` keeps, so the
+    two can never disagree. True if a row was stamped."""
+    return bool(
+        Turn.objects.filter(
+            pk=turn_id, claimed_by=runner, emdash_task_id="",
+            status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
+        ).update(emdash_task_id=session_key[:200])
+    )
 
 
 @transaction.atomic

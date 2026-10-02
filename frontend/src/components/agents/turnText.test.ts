@@ -26,6 +26,8 @@ function unreported(over: Partial<AgentTurnOut> = {}): AgentTurnOut {
     result_note: '',
     origin_ref: {},
     content_hidden: false,
+    chat_session_id: null,
+    has_transcript: false,
     ...over,
   }
 }
@@ -43,8 +45,8 @@ describe('turnHeadline', () => {
     expect(h.endsWith('…')).toBe(true)
   })
   it('names the trigger when there is no prompt either', () => {
-    expect(turnHeadline(unreported({ origin: 'canopy_scheduler', origin_ref: { slot: 'daily' } })))
-      .toBe('schedule · daily turn')
+    expect(turnHeadline(unreported({ origin: 'canopy_scheduler', origin_ref: { schedule_name: 'Daily turn' } })))
+      .toBe('schedule · Daily turn turn')
   })
 })
 
@@ -57,6 +59,12 @@ describe('turnBody', () => {
 })
 
 describe('turnTrigger', () => {
+  it('names a scheduled turn by its schedule, not its slot timestamp', () => {
+    expect(turnTrigger(unreported({
+      origin: 'canopy_scheduler',
+      origin_ref: { slot: '2026-10-01T16:00:00+00:00', schedule_id: 7, schedule_name: 'Daily turn' },
+    }))).toBe('schedule · Daily turn')
+  })
   it('labels a manual scheduler fire', () => {
     expect(turnTrigger(unreported({ origin: 'canopy_scheduler', origin_ref: { manual: true } })))
       .toBe('schedule · run now')

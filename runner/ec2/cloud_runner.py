@@ -939,6 +939,31 @@ def _acp_core():
     return _ACP_CORE
 
 
+# Turn id -> what to do the moment the executor learns the turn's CLI session id.
+# Both executors learn it partway in (claude -p from its `system`/`init` line,
+# ACP from session/new or session/load), and the turn's session must be
+# recorded THEN — not at finish — for the live stream tail to follow it while it
+# runs. A registry rather than a parameter so neither executor's signature
+# changes (they are deliberately interchangeable; see run_acp).
+_SESSION_HOOKS: dict[str, "object"] = {}
+_SESSION_HOOKS_LOCK = threading.Lock()
+
+
+def _announce_session(turn_id: str, cli_session_id: str) -> None:
+    """Executors call this whenever they learn (or change) the turn's CLI session
+    id. Never raises: bookkeeping must not cost the turn."""
+    if not cli_session_id:
+        return
+    with _SESSION_HOOKS_LOCK:
+        hook = _SESSION_HOOKS.get(turn_id)
+    if hook is None:
+        return
+    try:
+        hook(cli_session_id)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: session hook for {turn_id[:8]} failed: {exc}")
+
+
 def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             agent_slug: str | None = None, resume_session_id: str | None = None
             ) -> tuple[bool, str, str]:
@@ -1060,6 +1085,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                 reducer.reset_stream_state()
         if not session_id:
             session_id = agent.new_session()
+        _announce_session(turn_id, session_id)
         _log(f"exec: acp (turn {turn_id[:8]}) in {workdir} session={session_id[:8]}")
 
         pending = agent.prompt(prompt)
@@ -1381,6 +1407,8 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             except json.JSONDecodeError:
                 continue
             if evt.get("session_id"):
+                if evt["session_id"] != cli_session_id:
+                    _announce_session(turn_id, evt["session_id"])
                 cli_session_id = evt["session_id"]
             etype = evt.get("type")
             if etype == "assistant":
@@ -3091,6 +3119,37 @@ def _session_thread_key(turn: dict) -> str:
     return ref.get("thread_key") or session_id
 
 
+def _agent_session_title(turn: dict) -> str:
+    """A readable name for an agent turn's session: its schedule's name, else the
+    first line of its prompt."""
+    ref = turn.get("origin_ref") or {}
+    name = ref.get("schedule_name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()[:200]
+    for line in str(turn.get("prompt") or "").splitlines():
+        if line.strip():
+            return line.strip()[:200]
+    return ""
+
+
+def _agent_thread_key(turn: dict) -> str:
+    """The thread an AGENT turn records its session under: `<agent>:<turn id>`,
+    the laptop runner's own fallback (execute.py `_thread_key`), so a cloud
+    agent turn gets a canopy Session exactly as a laptop one does. "" for a
+    chat or project turn.
+
+    Always one session PER TURN, even when origin_ref names a thread: a cloud
+    agent turn never resumes (it runs in the shared agent clone, not a stable
+    per-session cwd), so a second turn on a named thread would only re-point the
+    first one's binding at a different transcript and interleave two
+    conversations' ordinals in one Session."""
+    if _chat_session_id(turn):
+        return ""
+    slug = turn.get("agent_slug") or ""
+    turn_id = str(turn.get("id") or "")
+    return f"{slug}:{turn_id}" if slug and turn_id else ""
+
+
 # Claude Code resolves a `--resume <id>` target by cwd, not by id alone: the
 # transcript lives at ~/.claude/projects/<cwd with '/','.' -> '-'>/<id>.jsonl.
 # Mirrors runner/canopy_runner/canopy_runner/transcript.py's
@@ -3175,6 +3234,12 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
     `_session_resume_plan`). Best-effort: a failure here only degrades the NEXT
     turn to a fresh spawn, never this one — logged, never raised.
 
+    For an AGENT turn (`_agent_thread_key`) this is what gives the turn a canopy
+    Session at all: record-session creates an origin=runner Session + binding
+    for a thread it has not seen. Called the moment the executor learns the CLI
+    session id (`_announce_session`), not after the turn, so the binding exists
+    while the turn runs and `_sync_session_streams` tails it live.
+
     Sends BOTH `emdash_task_id` (what's actually read back today, via
     RunnerBinding.session_key) and `session_id` (the wire-compat field already
     threaded through RecordSessionIn -> services.record_session, currently
@@ -3183,7 +3248,8 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
     with zero runner-side changes; see `_session_resume_plan`'s docstring for
     why no such column exists today despite the originating plan naming one.
     """
-    thread_key = _session_thread_key(turn)
+    agent_thread = _agent_thread_key(turn)
+    thread_key = _session_thread_key(turn) or agent_thread
     if not thread_key or not cli_session_id:
         return
     agent_slug = turn.get("agent_slug") or ""
@@ -3195,6 +3261,14 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
         "emdash_task_id": cli_session_id,
         "session_id": cli_session_id,
     }
+    if agent_thread and thread_key == agent_thread:
+        # The key is a Claude session UUID; give the new Session a name a person
+        # can find in Chats. (A chat turn's session already has its own title.)
+        body["title"] = _agent_session_title(turn)
+    if turn.get("id"):
+        # Stamp the TURN's key now, not at finish: the agent posts its close-out
+        # before the turn ends, and the close-out finds its turn by this key.
+        body["turn_id"] = str(turn["id"])
     if project:
         body["project"] = project
         body["workspace"] = turn.get("workspace_slug") or ""
@@ -3320,13 +3394,26 @@ def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) 
 _STREAM_READERS: dict[str, dict] = {}
 
 
-def _session_transcript_path(session_id: str, session_key: str):
-    """The CLI transcript backing a canopy session, or None if not resolvable yet."""
+def _session_transcript_path(session_id: str, session_key: str, project: str = ""):
+    """The CLI transcript backing a canopy session, or None if not resolvable yet.
+
+    Two places a session can have run: a CHAT session in its own stable
+    WORK_DIR/sessions/<id> (see _turn_cwd), an AGENT turn's session in the
+    agent's clone, AGENT_ROOT/<agent> — the descriptor's `project`, which is the
+    session's emdash_project (the agent's slug). `session_key` is the CLI session
+    uuid, so whichever directory holds that file is the one; there is nothing to
+    guess between them."""
     ct = _transcript_core()
     if ct is None or not (session_id and session_key):
         return None
-    cwd = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
-    return ct.resolve_cli_transcript(cwd, session_key, claude_home=CLAUDE_PROJECTS_HOME)
+    cwds = [pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)]
+    if project and _safe_session_dirname(project) == project:
+        cwds.append(pathlib.Path(AGENT_ROOT) / project)
+    for cwd in cwds:
+        path = ct.resolve_cli_transcript(cwd, session_key, claude_home=CLAUDE_PROJECTS_HOME)
+        if path is not None:
+            return path
+    return None
 
 
 def _post_stream_rows(runner_id: str, session_id: str, rows: list,
@@ -3389,7 +3476,8 @@ def _sync_session_streams(runner_id: str) -> None:
         st["first_index"] = descriptor.get("first_index")
         st["server_transcript_id"] = descriptor.get("transcript_id") or ""
         try:
-            path = _session_transcript_path(sid, st["session_key"])
+            path = _session_transcript_path(sid, st["session_key"],
+                                            descriptor.get("project") or "")
             if path is None:
                 continue  # not spawned yet, or a different box owns it
             transcript_id = path.stem  # the CLI session uuid — the conversation's identity
@@ -3443,7 +3531,8 @@ def _drain_backfills(runner_id: str) -> None:
         return
     for b in payload.get("backfills") or []:
         sid = b.get("session_id") or ""
-        path = _session_transcript_path(sid, b.get("session_key") or "")
+        path = _session_transcript_path(sid, b.get("session_key") or "",
+                                        b.get("project") or "")
         if not (sid and path):
             continue  # unresolvable -> leave the request standing, server keeps the tail
         try:
@@ -3684,6 +3773,19 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         def emit(events, _tid=turn_id):
             _api("POST", f"/turns/{_tid}/events", {"events": events})
 
+        # Record the turn's session the moment it exists, so the binding is live
+        # while the turn runs and the stream tail follows it (_announce_session).
+        # A confined turn is never recorded: see the confined branch above.
+        recorded = {"sid": ""}
+
+        def _on_session(sid, _turn=turn):
+            if sid != recorded["sid"]:
+                _record_session_resume(runner_id, _turn, sid)
+                recorded["sid"] = sid
+
+        if not confined:
+            with _SESSION_HOOKS_LOCK:
+                _SESSION_HOOKS[turn_id] = _on_session
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
             try:
@@ -3695,6 +3797,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 ok, text, cli_session_id = False, f"runner error: {exc}", ""
         finally:
             lease_stop.set()
+            with _SESSION_HOOKS_LOCK:
+                _SESSION_HOOKS.pop(turn_id, None)
         _TURN_ENV.extra = {}
         _TURN_ENV.settings = None
         if cli_session_id:
@@ -3704,6 +3808,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                              ("ship transcript rows", None)):
                 if confined and fn is _record_session_resume:
                     continue  # never a resume target: see the confined branch above
+                if fn is _record_session_resume and recorded["sid"] == cli_session_id:
+                    continue  # already recorded when the session started
                 try:
                     if fn is None:
                         _ship_transcript_rows(runner_id, turn, cwd, cli_session_id)
@@ -3716,8 +3822,15 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # socket at all, so that failure class is now structurally impossible
         # here rather than merely handled.
         finish = "done" if ok else "failed"
-        _api("POST", f"/turns/{turn_id}/finish",
-             {"status": finish, "result_note": text[:2000]})
+        finish_body = {"status": finish, "result_note": text[:2000]}
+        if cli_session_id:
+            # The session this turn drove — the key its close-out report and the
+            # Turns page's link join on (Turn.emdash_task_id, which holds an
+            # emdash task name on a laptop and the CLI session id here). Also
+            # what tells the server a FAILED turn did reach an agent, so it is
+            # never re-run blind as "sessionless" (services.finish_turn).
+            finish_body["emdash_task_id"] = cli_session_id
+        _api("POST", f"/turns/{turn_id}/finish", finish_body)
         _log(f"finished turn {turn_id[:8]}: {finish}")
     except Exception as exc:  # noqa: BLE001 — a worker must never take the loop down
         _log(f"turn {turn_id[:8]} worker crashed: {exc}")

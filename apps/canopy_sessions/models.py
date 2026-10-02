@@ -682,3 +682,61 @@ class ChatKey(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"chatkey:{str(self.session_id)[:8]}"
+
+
+class TransferRequest(models.Model):
+    """A request to move a session onto another runner, waiting on that runner's
+    administrator.
+
+    A transfer runs the session on someone else's box and Claude subscription, so
+    the person who administers the TARGET decides — not whoever happens to be able
+    to write to the session. Built for the first box run by someone other than the
+    operator (2026-10-02): a colleague can be handed a thread the operator started,
+    and the operator can pull one back, without either reaching onto the other's
+    machine unasked. A requester who already administers the target needs nobody's
+    yes, and their request is recorded already approved — an audit row, not a gate.
+    """
+
+    PENDING, APPROVED, DECLINED, CANCELLED, EXPIRED = (
+        "pending", "approved", "declined", "cancelled", "expired",
+    )
+    STATUS_CHOICES = [(s, s) for s in (PENDING, APPROVED, DECLINED, CANCELLED, EXPIRED)]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="transfer_requests")
+    to_runner = models.ForeignKey(
+        "harness.Runner", on_delete=models.CASCADE, related_name="transfer_requests",
+    )
+    # Where it was when asked — what the approver is taking it FROM. Not re-read at
+    # approval: the source can change in between, and the record should say what
+    # was asked.
+    from_runner = models.ForeignKey(
+        "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+",
+    )
+    brief = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=PENDING)
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    # The transfer turn an approval launched — the proof it actually moved.
+    turn_id = models.UUIDField(null=True, blank=True)
+    note = models.CharField(max_length=300, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # One open request per session: two pending moves to different boxes
+            # would let whichever approver answers second silently undo the first.
+            models.UniqueConstraint(
+                fields=["session"], condition=models.Q(status="pending"),
+                name="one_pending_transfer_request_per_session",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"transfer-request:{str(self.session_id)[:8]}->{self.to_runner_id}:{self.status}"

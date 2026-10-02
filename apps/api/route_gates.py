@@ -196,6 +196,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_turn": ("member", "session-acl", "turn-content"),  # redacted unless turn-content
     "get_turn_caller_context": ("turn-content",),
     "append_turn_events": ("runner", "agent.work", "session-acl"),  # claimed: pairer; unclaimed: agent.work / chat write
+    "read_turn_messages": ("turn-content",),
     "read_turn_events": ("turn-content",),
     "append_turn_transcript": ("runner", "agent.work", "session-acl"),
     "read_turn_transcript": ("turn-content",),
@@ -233,6 +234,10 @@ GATES: dict[str, tuple[str, ...]] = {
     "reset_session": ("session-acl",),  # write
     "unarchive_session": ("session-acl",),  # write
     "set_session_notify": ("session-acl",),  # write
+    "list_transfer_requests": ("self", "runner-admin"),  # ones you asked for, or for boxes you administer
+    "approve_transfer_request": ("runner-admin",),  # the target box's admins, re-checked at decision
+    "decline_transfer_request": ("runner-admin",),
+    "cancel_transfer_request": ("self",),  # only whoever asked
     "list_participants": ("session-acl",),
     "add_participant": ("session-acl",),  # can_share (chat owner)
     "remove_participant": ("session-acl",),  # can_share, or self-removal

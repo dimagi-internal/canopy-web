@@ -453,3 +453,21 @@ def test_pair_resolves_the_sole_membership_as_the_workspace(client):
     resp = _pair_resp(client)
     assert resp.status_code == 201
     assert resp.json()["workspace"] == "dimagi"
+
+
+def test_record_session_with_turn_id_keys_the_running_turn(client, agent):
+    """The cloud runner records an agent turn's session mid-turn with its turn id,
+    so the agent's close-out (posted before finish) can join on the key."""
+    from apps.harness.models import Runner, Turn
+
+    rid = _pair(client)
+    turn = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="k-mid",
+                               status=Turn.RUNNING, claimed_by=Runner.objects.get(pk=rid))
+    rec = client.post(f"/api/harness/runners/{rid}/record-session",
+                      {"agent_slug": "echo", "thread_key": f"echo:{turn.id}",
+                       "emdash_task_id": "cli-uuid-1", "title": "Daily turn",
+                       "turn_id": str(turn.id)},
+                      content_type="application/json")
+    assert rec.status_code == 200, rec.content
+    turn.refresh_from_db()
+    assert turn.emdash_task_id == "cli-uuid-1"

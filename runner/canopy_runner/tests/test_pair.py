@@ -313,3 +313,50 @@ def test_launcher_rebuilt_when_on_another_port(tmp_path, monkeypatch):
 
 def test_launcher_skipped_off_macos(tmp_path):
     assert pair.ensure_launcher(9224, tmp_path, system="Linux").startswith("skipped")
+
+
+# --- re-pairing with emdash already running (2026-10-02) ----------------------
+
+
+def _devtools(env, port):
+    f = env["home"] / "Library" / "Application Support" / "Emdash" / "DevToolsActivePort"
+    f.write_text(f"{port}\n/devtools/browser/abc\n")
+
+
+def test_running_emdash_port_is_used_rather_than_the_next_free_one(env, monkeypatch):
+    """emdash already listens on 9225 on this account: pair must drive THAT port.
+    The picker alone would choose a port nothing listens on (cdp_down forever)."""
+    monkeypatch.setattr(pair, "macos_user", lambda: "newbie")
+    _devtools(env, 9225)
+    lines = []
+    pair.run_pair(
+        env["config"], workspace="dimagi", token_ref=env["token_ref"], home=env["home"],
+        users_root=env["users_root"], client_factory=FakeClient().factory,
+        is_free=lambda p: p != 9225,  # it is in use — by emdash itself
+        live_cdp_port=lambda h: pair.emdash_live_cdp_port(h, is_up=lambda p: True),
+        ensure_launcher_fn=env["launcher"], out=lines.append)
+    assert json.loads(env["config"].read_text())["cdp_port"] == 9225
+    assert any("DevToolsActivePort" in line for line in lines)
+
+
+def test_stale_devtools_file_is_ignored(env):
+    """emdash quit, the file stayed: nothing answers, so fall back to the picker."""
+    _devtools(env, 9225)
+    assert pair.emdash_live_cdp_port(env["home"], is_up=lambda p: False) is None
+
+
+def test_live_port_claimed_by_a_sibling_falls_back_to_the_picker(env, monkeypatch):
+    monkeypatch.setattr(pair, "macos_user", lambda: "newbie")
+    _devtools(env, 9223)  # the `ace` sibling's runner.json claims 9223
+    _run(env, FakeClient(),
+         live_cdp_port=lambda h: pair.emdash_live_cdp_port(h, is_up=lambda p: True))
+    assert json.loads(env["config"].read_text())["cdp_port"] == 9224
+
+
+def test_name_clash_with_someone_elses_runner_says_new_name_or_retire(env):
+    fake = FakeClient()
+    with pytest.raises(PairError, match="retire") as exc:
+        _run(env, fake, name="someone-else")
+    assert "--runner-id never transfers ownership" in str(exc.value)
+    assert "--runner-id theirs" not in str(exc.value)  # no adopt hint that can't work
+    assert not fake.posts()

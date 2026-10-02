@@ -77,6 +77,7 @@ from .schemas import (
     TurnEventsOut,
     TurnFinishIn,
     TurnIn,
+    TurnMessagesOut,
     TurnOut,
     TurnStartIn,
 )
@@ -446,6 +447,21 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 def pair_runner(request: HttpRequest, payload: RunnerIn):
     if payload.kind not in dict(Runner.KIND_CHOICES):
         raise HttpError(422, f"unknown runner kind '{payload.kind}'")
+    # A runner is OWNED by a person. `paired_by` is the box's identity for life —
+    # its claims run with the pairer's memberships and only the pairer may grant
+    # administration — so pairing with an agent's token makes a box nobody owns:
+    # the human at the keyboard can't manage it, and their own work on it is
+    # attributed to the agent. Measured 2026-10-02 (sarveshtewari-mbp-cdp, paired
+    # as ace@dimagi-ai.com). An agent may still ADMINISTER a box through a grant.
+    agent = getattr(request.user, "agent_identity", None)
+    if agent is not None:
+        raise HttpError(
+            403,
+            f"{request.user.email} is the login of agent '{agent.slug}', and a runner must "
+            "be owned by a person — pair with YOUR canopy-web token (the "
+            "canopy:canopy-web-pat-mint skill writes ~/.claude/canopy/workbench-token); "
+            "the agent can then be granted admin via POST /api/harness/runners/{id}/admins",
+        )
     explicit = (payload.workspace or "").strip()
     if explicit:
         # Membership-gated: a missing workspace and a non-member get the same
@@ -1113,6 +1129,7 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
             None, payload.thread_key, runner=runner, project=payload.project, workspace=ws,
             emdash_task_id=payload.emdash_task_id, session_id=payload.session_id,
             agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
+            title=payload.title,
         )
         return services.resolve_session(
             None, payload.thread_key, runner, project=payload.project, workspace=ws
@@ -1122,7 +1139,10 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
         agent, payload.thread_key, runner=runner,
         emdash_task_id=payload.emdash_task_id, session_id=payload.session_id,
         agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
+        title=payload.title,
     )
+    if payload.turn_id and payload.emdash_task_id:
+        services.stamp_turn_session(payload.turn_id, runner, payload.emdash_task_id)
     return services.resolve_session(agent, payload.thread_key, runner)
 
 
@@ -1752,6 +1772,22 @@ def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: Tr
         "bytes_raw": transcript.bytes_raw,
         "truncated": transcript.truncated,
     }
+
+
+@router.get(
+    "/turns/{turn_id}/messages", response=TurnMessagesOut,
+    summary="A turn's transcript as readable messages",
+)
+def read_turn_messages(request: HttpRequest, turn_id: uuid.UUID):
+    """The turn's retained transcript parsed into messages (user, assistant,
+    tool use, tool result), with secrets scrubbed. Bounded: `truncated` is true
+    when the view stopped early. Empty for a turn that kept no transcript."""
+    # Same gate as the raw route below — a transcript is a LOG
+    # (turn_access.can_read_turn_content). Parsing is bounded
+    # (services.TRANSCRIPT_VIEW_MAX_MESSAGES) and reads the blob incrementally.
+    turn = _turn_content_or_404(request, turn_id)
+    messages, truncated = services.transcript_messages(turn)
+    return {"messages": messages, "truncated": truncated}
 
 
 @router.get("/turns/{turn_id}/transcript", summary="Raw retained JSONL for a turn")

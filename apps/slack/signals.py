@@ -99,3 +99,21 @@ def _closed(sender, session_ids, **kwargs):
         notify_closed(session_ids)
     except Exception:  # noqa: BLE001 — never break a report over Slack
         logger.exception("slack closed notice failed")
+
+
+def _connect_transfer_requests():
+    from apps.canopy_sessions.transfer_requests import transfer_request_changed
+
+    @receiver(transfer_request_changed, dispatch_uid="slack_transfer_request_notice")
+    def _transfer_request_notice(sender, request, **kwargs):
+        if request.status in ("expired",):
+            return
+        from .relay import notify_transfer_request
+
+        try:
+            notify_transfer_request(request)
+        except Exception:  # noqa: BLE001 — never break a transfer over Slack
+            logger.exception("slack transfer-request notice failed")
+
+
+_connect_transfer_requests()

@@ -1099,6 +1099,17 @@ def _placeable_runner(session: Session, runner_id):
     # to it would sit unclaimable forever (claim_next_turn refuses it above pins).
     if not rr.satisfies(runner.flags, rr.requirements_of_session(session)):
         return None
+    # A chat WITH an agent runs as that agent on the box it lands on, so the box
+    # must be one that may hold the agent (agents.services.runner_may_hold_agent:
+    # its pairer is the agent's admin, or the agent's own login) — the rule
+    # claiming, credential resolve and every routing write already apply. A
+    # transfer approved by a box's admin could otherwise move an agent's
+    # conversation onto a box nobody trusted with the agent.
+    if session.agent_id:
+        from apps.agents.services import runner_may_hold_agent
+
+        if not runner_may_hold_agent(runner, session.agent):
+            return None
     return runner
 
 
