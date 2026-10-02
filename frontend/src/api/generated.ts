@@ -677,6 +677,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/events/mcp-calls": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * MCP tool calls made in your workspaces (admins), and your own
+         * @description Newest first. A workspace admin or owner sees every call made in that
+         *     workspace; anyone sees their own calls. ``tool`` is a prefix match;
+         *     ``failed`` keeps only calls that errored.
+         */
+        readonly get: operations["list_mcp_calls"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/inbound/gmail/{workspace}/": {
         readonly parameters: {
             readonly query?: never;
@@ -7029,6 +7051,30 @@ export interface components {
             readonly first_seen_at: string;
             /** Last Seen At */
             readonly last_seen_at: string;
+        };
+        /** McpCallListOut */
+        readonly McpCallListOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["McpCallOut"][];
+        };
+        /** McpCallOut */
+        readonly McpCallOut: {
+            /** Id */
+            readonly id: number;
+            /** Created At */
+            readonly created_at: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** User Email */
+            readonly user_email: string;
+            /** Tool */
+            readonly tool: string;
+            /** Args Summary */
+            readonly args_summary: string;
+            /** Ok */
+            readonly ok: boolean;
+            /** Error */
+            readonly error: string;
         };
         /** PushResultOut */
         readonly PushResultOut: {
@@ -15254,6 +15300,31 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["EventRecordOut"];
+                };
+            };
+        };
+    };
+    readonly list_mcp_calls: {
+        readonly parameters: {
+            readonly query?: {
+                readonly tool?: string | null;
+                readonly failed?: boolean;
+                readonly since_minutes?: number | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["McpCallListOut"];
                 };
             };
         };

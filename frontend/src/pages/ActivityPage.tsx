@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { listTurns } from "@/api/turns";
 import { EventLedger } from "@/components/activity/EventLedger";
+import { EventLogTable, McpCallsTable } from "@/components/activity/WorkspaceLogs";
 import {
   type Turn,
   type TurnFilters,
@@ -17,7 +19,16 @@ const LIMIT = 20;
  * (that workspace). Same component; the api client picks the scope from the
  * URL. Read-only log of the last 20 fired turns. Sibling of the Schedule page:
  * schedules are what WILL fire, this is what DID. */
+const TABS = [
+  { id: "turns", label: "Turns" },
+  { id: "events", label: "Event log" },
+  { id: "mcp", label: "MCP calls" },
+] as const;
+
 export default function ActivityPage() {
+  // ?log= picks the log, so a link can open the one you mean.
+  const [params, setParams] = useSearchParams();
+  const log = TABS.some((t) => t.id === params.get("log")) ? params.get("log")! : "turns";
   const [turns, setTurns] = useState<Turn[] | null>(null);
   const [error, setError] = useState("");
   const [filters, setFilters] = useState<TurnFilters>({ agent: null, origin: null, status: null });
@@ -62,7 +73,7 @@ export default function ActivityPage() {
         <div>
           <h1 className="text-lg font-semibold text-foreground">Activity</h1>
           <p className="text-xs text-muted-foreground">
-            Last {LIMIT} triggered turns · times in {tz}
+            {log === "turns" ? `Last ${LIMIT} triggered turns · ` : ""}times in {tz}
           </p>
         </div>
         <button type="button" onClick={() => void load()}
@@ -71,6 +82,20 @@ export default function ActivityPage() {
         </button>
       </header>
 
+      <nav className="mb-3 flex gap-1 border-b border-border text-sm" aria-label="Logs">
+        {TABS.map((t) => (
+          <button key={t.id} type="button"
+            onClick={() => setParams((p) => { const n = new URLSearchParams(p); if (t.id === "turns") n.delete("log"); else n.set("log", t.id); return n; })}
+            aria-current={log === t.id ? "page" : undefined}
+            className={`-mb-px border-b-2 px-3 py-1.5 ${log === t.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      {log === "events" && <EventLogTable />}
+      {log === "mcp" && <McpCallsTable />}
+      {log === "turns" && (<>
       <div className="mb-3 flex flex-wrap gap-2 text-xs">
         <FilterRow label="Agent" value={filters.agent} options={agents}
           onChange={(v) => setFilters((f) => ({ ...f, agent: v }))} />
@@ -108,6 +133,7 @@ export default function ActivityPage() {
           </table>
         </div>
       ))}
+      </>)}
     </div>
   );
 }
@@ -134,7 +160,13 @@ function TurnRow({ turn, now, open, onToggle }: {
       {open && (
         <tr className="border-b border-border bg-card">
           <td colSpan={5} className="px-3 py-2">
-            <EventLedger turnId={turn.id} />
+            {turn.content_hidden ? (
+              <p className="text-xs text-muted-foreground">
+                This turn's details are visible to whoever started it, the agent's admins, and workspace admins.
+              </p>
+            ) : (
+              <EventLedger turnId={turn.id} />
+            )}
           </td>
         </tr>
       )}
