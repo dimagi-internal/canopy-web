@@ -107,7 +107,18 @@ def _out(session: Session) -> dict:
     # also prefer their own title once set (e.g. the server-side auto-titler)
     # over a bound session_key, since a web chat's binding is an execution
     # detail, not the identity the human gave the conversation.
-    prefer_own = session.origin != Session.ORIGIN_RUNNER and bool(session.title)
+    #
+    # A runner session keeps its own title too, unless that title is still the
+    # thread_key fallback the rule above exists to hide. The key is only a better
+    # name when it IS a name: a laptop's emdash task is, but a cloud runner's key
+    # is a Claude session UUID, so a cloud agent turn's session ("Daily turn",
+    # set by record-session) showed as a UUID while its real title sat unread.
+    is_fallback = (
+        session.origin == Session.ORIGIN_RUNNER
+        and binding is not None
+        and session.title == binding.thread_key
+    )
+    prefer_own = bool(session.title) and not is_fallback
     return {
         "id": session.id,
         "agent_slug": session.agent.slug if session.agent_id else None,

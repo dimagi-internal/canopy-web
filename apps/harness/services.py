@@ -2255,6 +2255,27 @@ def record_session(
     return binding
 
 
+def stamp_turn_session(turn_id, runner: Runner, session_key: str) -> bool:
+    """Give a running turn its session key the moment its session exists.
+
+    `finish` writes `emdash_task_id` too, but finish comes LAST — after the
+    agent has already posted its close-out report, which joins on that key
+    (apps/agents/services._claim_dispatch_row). A laptop finishes seconds in
+    (emdash runs the work after), so it never noticed; a cloud runner finishes
+    when the work does, so every cloud close-out found no turn and became a
+    second, report-only row (labs, echo, 2026-10-02 17:00).
+
+    Only the runner that claimed the turn may stamp it, only while it runs, and
+    only an empty key — the same first-write-wins rule `finish` keeps, so the
+    two can never disagree. True if a row was stamped."""
+    return bool(
+        Turn.objects.filter(
+            pk=turn_id, claimed_by=runner, emdash_task_id="",
+            status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
+        ).update(emdash_task_id=session_key[:200])
+    )
+
+
 @transaction.atomic
 
 def _title_is_derived(session, thread_key: str) -> bool:

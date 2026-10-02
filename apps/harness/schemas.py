@@ -352,6 +352,10 @@ class RecordSessionIn(Schema):
     # named after its key. A laptop's key is an emdash task name a person can
     # read; a cloud runner's is a Claude session UUID, so it sends one of these.
     title: str = Field(default="", max_length=200)
+    # The turn this session is running, when the runner is recording it mid-turn.
+    # Stamps that turn's session key NOW rather than at finish, so the agent's
+    # close-out — which it posts before the turn ends — can find its turn.
+    turn_id: uuid.UUID | None = None
 
 
 class ReportedSessionIn(Schema):
