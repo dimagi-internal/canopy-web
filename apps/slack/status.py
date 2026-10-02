@@ -53,6 +53,28 @@ def _runner_names(names) -> str:
     return ", ".join(shown) + (" …" if len(names) > 3 else "")
 
 
+def _routed_but_not_session_capable(turn: Turn) -> list[str]:
+    """Names of runners this chat turn's agent is routed to that cannot take chat.
+
+    Only for a SESSION turn (a chat send is what needs `sessions`), and only runners
+    that are actually routed (any rule or the default order, enabled, not retired).
+    Empty means the plain "nothing is set up" is the true message.
+    """
+    from apps.harness.models import Runner, RunnerAssignment
+
+    session = turn.chat_session if turn.chat_session_id else None
+    agent_id = turn.agent_id or (session.agent_id if session is not None else None)
+    if session is None or not agent_id:
+        return []
+    rows = (RunnerAssignment.objects.filter(agent_id=agent_id, enabled=True)
+            .exclude(runner__status=Runner.RETIRED).select_related("runner"))
+    seen: dict[str, None] = {}
+    for row in rows:
+        if not row.runner.session_capable():
+            seen.setdefault(row.runner.name, None)
+    return list(seen)
+
+
 def _header(turn: Turn) -> str:
     """For a turn that did not come from Slack: who asked, and what."""
     from apps.slack.relay import to_mrkdwn
@@ -132,6 +154,15 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         need = rr.describe(st.requires)
         line = (f":warning: Queued — this conversation needs a {need} runner, "
                 f"and none of {agent}'s runners is declared {need}.")
+    elif st.state == ts.UNROUTED and (no_chat := _routed_but_not_session_capable(turn)):
+        # The commonest UNROUTED on a fresh laptop is not routing at all: the box IS
+        # routed, it just never declared `sessions`, so no chat turn can reach it.
+        # Saying "no runner is set up" sent the first person to hit it (2026-10-02)
+        # chasing token identity and routes instead.
+        line = (f":warning: Queued — {agent} is routed to {_runner_names(no_chat)}, but "
+                f"{'that runner is' if len(no_chat) == 1 else 'those runners are'} not set up "
+                "for chat (`capabilities.sessions` is off), so nothing will pick this up. "
+                "Turn sessions on for it (`update_runner_capabilities`) or re-pair it.")
     elif st.state == ts.UNROUTED:
         line = (f":warning: Queued, but no runner is set up to run {agent} — nothing will pick "
                 "this up until its routing is fixed.")

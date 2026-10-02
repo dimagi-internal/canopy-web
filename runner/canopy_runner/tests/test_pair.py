@@ -104,8 +104,10 @@ def test_fresh_account_pairs_once_and_writes_config(env, monkeypatch):
     [post] = fake.posts()
     assert post == ("POST", "/runners/", {
         "name": "newbie-mbp-cdp", "kind": "emdash", "workspace": "dimagi",
-        "capabilities": {"agents": ["ace", "ada", "echo", "hal"]},
+        "capabilities": {"agents": ["ace", "ada", "echo", "hal"], "sessions": True},
     }, False)  # never retried: a re-sent POST would pair a duplicate
+    # sessions: a laptop runner takes Slack/chat turns; without it every chat turn
+    # for its agents sits UNROUTED (2026-10-02, a second ACE laptop).
     assert fake.init_args == (pair.DEFAULT_BASE_URL, "pat-123")
 
     cfg = json.loads(env["config"].read_text())
@@ -132,7 +134,7 @@ def test_overrides_are_honoured(env):
     fake = FakeClient()
     _run(env, fake, name="custom", agents=["eva"], cdp_port=9300, hook_port=8800)
     [post] = fake.posts()
-    assert post[2]["name"] == "custom" and post[2]["capabilities"] == {"agents": ["eva"]}
+    assert post[2]["name"] == "custom" and post[2]["capabilities"] == {"agents": ["eva"], "sessions": True}
     cfg = json.loads(env["config"].read_text())
     assert (cfg["cdp_port"], cfg["hook_port"]) == (9300, 8800)
 

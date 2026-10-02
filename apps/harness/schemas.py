@@ -1011,6 +1011,23 @@ class RunnerCredentialOut(Schema):
     updated_at: dt.datetime | None = None
 
 
+class DroppedRouteOut(Schema):
+    agent: str
+    # "" = the agent's default runner order; otherwise the source a rule is for.
+    source: str
+    # "" = the rule applied to anyone; otherwise the person it routed.
+    actor: str
+
+
+class RetireOut(Schema):
+    """What retiring took with it. A retired runner cannot stay routed, so its
+    routing rows are deleted — and said so here, because silently dropping a
+    person's route sent their work to someone else's box with nothing surfacing it
+    (2026-10-02)."""
+    runner: str
+    dropped_routes: list[DroppedRouteOut] = []
+
+
 class RunnerAdminOut(Schema):
     """One explicit grant. No secret here — who, by whom, when."""
 

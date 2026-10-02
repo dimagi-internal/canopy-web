@@ -260,9 +260,10 @@ class Runner(models.Model):
 
     def session_capable(self) -> bool:
         """Whether this runner executes chat-session turns (the interactive
-        front-door — SP2b). Opt-in via `capabilities.sessions: true` so a chat send
-        only reaches a runner built for it (a cloud runner with claude), never a
-        laptop emdash daemon. Like the other capabilities, a hint gated by tenant."""
+        front-door — SP2b). Opt-in via `capabilities.sessions: true`. Cloud runners
+        and laptop emdash runners both set it (`canopy-runner pair` declares it since
+        2026-10-02); a box without it never receives a chat/Slack turn. Like the
+        other capabilities, a hint gated by tenant."""
         return bool(self.capabilities.get("sessions", False))
 
     @property

@@ -431,7 +431,11 @@ def run_pair(config_path: Path, *, name: str = "", workspace: str = "",
         # lost in transit would pair a duplicate.
         _, created = client._call("POST", "/runners/", {
             "name": name, "kind": "emdash", "workspace": ws,
-            "capabilities": {"agents": agents},
+            # `sessions: true` — a laptop emdash runner takes Slack/chat (session)
+            # turns; without it the box pairs looking healthy and every chat turn
+            # for its agents sits UNROUTED (2026-10-02, stewari-mbp-cdp: "no runner
+            # is set up to run ace", which reads like a routing/identity fault).
+            "capabilities": {"agents": agents, "sessions": True},
         }, retry=False)
         runner_id = str((created or {}).get("id") or "")
         if not runner_id:

@@ -12600,6 +12600,31 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
+        /** DroppedRouteOut */
+        readonly DroppedRouteOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Source */
+            readonly source: string;
+            /** Actor */
+            readonly actor: string;
+        };
+        /**
+         * RetireOut
+         * @description What retiring took with it. A retired runner cannot stay routed, so its
+         *     routing rows are deleted — and said so here, because silently dropping a
+         *     person's route sent their work to someone else's box with nothing surfacing it
+         *     (2026-10-02).
+         */
+        readonly RetireOut: {
+            /** Runner */
+            readonly runner: string;
+            /**
+             * Dropped Routes
+             * @default []
+             */
+            readonly dropped_routes: readonly components["schemas"]["DroppedRouteOut"][];
+        };
         /** PauseIn */
         readonly PauseIn: {
             /**
@@ -20102,12 +20127,14 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description No Content */
-            readonly 204: {
+            /** @description OK */
+            readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    readonly "application/json": components["schemas"]["RetireOut"];
+                };
             };
         };
     };
