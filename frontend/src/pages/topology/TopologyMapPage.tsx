@@ -191,6 +191,11 @@ function FleetMapView({ slug }: { slug: string }): JSX.Element {
   )
 }
 
+/** Enough agents in its own lanes that it reads better at full width. */
+function isBusy(ws: MapWorkspace): boolean {
+  return ws.lanes.reduce((n, l) => n + l.agents.length, 0) >= 4
+}
+
 function collectSlugs(ws: MapWorkspace): string[] {
   return [ws.slug, ...ws.children.flatMap(collectSlugs)]
 }
@@ -393,6 +398,10 @@ function WorkspaceBox({
         'rounded-xl border border-border',
         ws.depth % 2 === 0 ? 'bg-card' : 'bg-background',
       )}
+      // A busy workspace takes the whole row beside its siblings: squeezed into
+      // one grid column its agents stack, and the arrows between neighbours
+      // shrink to stubs running over the card text.
+      style={ws.depth > 0 && !isCollapsed && isBusy(ws) ? { gridColumn: '1 / -1' } : undefined}
       data-testid={`map-ws-${ws.slug}`}
     >
       <h3 className="m-0">
