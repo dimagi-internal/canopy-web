@@ -31,18 +31,58 @@ const props = {
 describe("multiplayer composer", () => {
   it("shows a teammate's live text and never locks my box", () => {
     render(<ChatPanel {...props} state={state({ peer_drafts: [{ author: { id: 2, name: "Bo B" }, body: "thinking out loud", at: null }] })} />);
-    const row = screen.getByTestId("typing-row");
-    expect(row.textContent).toContain("Bo B");
-    expect(row.textContent).toContain("thinking out loud");
+    const box = screen.getByTestId("peer-composer");
+    expect(box.textContent).toContain("Bo B is typing");
+    expect(box.textContent).toContain("thinking out loud");
     expect((screen.getByTestId("composer") as HTMLTextAreaElement).disabled).toBe(false);
     expect(screen.queryByTestId("coedit-banner")).toBeNull();
   });
 
   it("shows 'is typing…' with no words when a teammate withholds them", () => {
     render(<ChatPanel {...props} state={state({ peer_drafts: [{ author: { id: 2, name: "Bo B" }, body: "", at: null, typing: true }] })} />);
-    const row = screen.getByTestId("typing-row");
-    expect(row.textContent).toContain("Bo B");
-    expect(row.textContent).toContain("is typing…");
+    const box = screen.getByTestId("peer-composer");
+    expect(box.textContent).toContain("Bo B is typing");
+    expect(screen.getByTestId("peer-typing-indicator")).toBeTruthy();
+  });
+
+  it("draws the teammate's box inside my composer, directly above my textarea", () => {
+    render(<ChatPanel {...props} state={state({ peer_drafts: [{ author: { id: 2, name: "Bo B" }, body: "hi", at: null }] })} />);
+    const box = screen.getByTestId("peer-composer");
+    const composer = screen.getByTestId("composer");
+    expect(box.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Same container as the textarea, so it gets the composer's width.
+    expect(box.closest("ul")?.parentElement).toBe(composer.parentElement);
+  });
+
+  it("marks the typing person's presence chip, and only theirs", () => {
+    render(<ChatPanel {...props} state={state({ peer_drafts: [{ author: { id: 2, name: "Bo B" }, body: "hi", at: null }] })} />);
+    const chip = screen.getByTestId("presence-chip");
+    expect(chip.getAttribute("data-typing")).toBe("true");
+    expect(chip.getAttribute("title")).toBe("Bo B is typing");
+    expect(screen.getByTestId("presence-list").getAttribute("aria-label")).toContain("Bo B (typing)");
+  });
+
+  it("the chip goes quiet once the teammate stops", () => {
+    render(<ChatPanel {...props} state={state({ peer_drafts: [] })} />);
+    expect(screen.getByTestId("presence-chip").getAttribute("data-typing")).toBeNull();
+    expect(screen.queryByTestId("presence-typing-badge")).toBeNull();
+  });
+
+  it("gives a teammate one colour: chip, box edge and message label agree", () => {
+    const theirs = {
+      id: "m2", turn_index: 2, role: "user" as const, content: {}, plaintext: "them",
+      status: "complete" as const, error_detail: null, started_at: null, completed_at: null,
+      created_at: "", author: { name: "Bo B", user_id: 2 },
+    };
+    render(<ChatPanel {...props} state={state({
+      messages: [theirs],
+      peer_drafts: [{ author: { id: 2, name: "Bo B" }, body: "hi", at: null }],
+    })} />);
+    const hue = (cls: string) => cls.match(/(sky|emerald|violet|amber|rose|teal)-/)?.[1];
+    const chipHue = hue(screen.getByTestId("presence-chip").className);
+    expect(chipHue).toBeTruthy();
+    expect(hue(screen.getByTestId("peer-composer").className)).toBe(chipHue);
+    expect(hue(screen.getByTestId("message-author").className)).toBe(chipHue);
   });
 
   it("send stays available while the agent is replying", () => {

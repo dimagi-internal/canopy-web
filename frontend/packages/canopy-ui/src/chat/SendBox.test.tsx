@@ -99,7 +99,7 @@ describe("SendBox — local-first composer", () => {
   it("never adopts another editor's body — this box is only ever your own draft now", () => {
     // Everyone gets their own draft (`SessionState.active_draft` is the
     // CALLER's own); a teammate's live text arrives via `peer_drafts` /
-    // <TypingRows> instead, never through this component's `draft` prop. So a
+    // <PeerComposers> instead, never through this component's `draft` prop. So a
     // `last_editor` that isn't you must NOT overwrite what you're typing.
     const { textarea, rerender } = setup();
     fireEvent.change(textarea(), { target: { value: "my own words" } });

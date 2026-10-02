@@ -1,4 +1,7 @@
+import { PenLine } from "lucide-react";
+
 import type { Participant } from "./protocol";
+import { initials, personColor } from "./personColor";
 
 interface Props {
   participants: Participant[];
@@ -12,24 +15,12 @@ interface Props {
    *  stranger. ChatPanel had `currentUserId` the whole time and never passed
    *  it. Caught by the first two-browser e2e this surface ever had. */
   currentUserId: number | null;
+  /** Who is typing right now (their live draft is up). Their chip gets a
+   *  solid ring in their colour, a pulse, and a pen badge, so it reads from
+   *  the header even while you are looking at the transcript. Optional — an
+   *  older caller simply gets no typing signal on the chips. */
+  typingUserIds?: number[];
 }
-
-/** A stable colour per person, so two people are told apart at a glance.
- *
- *  Every chip used to be `bg-muted`, which meant identity rested entirely on
- *  two initials — and initials collide constantly on a small team (two J.K.s
- *  render identically). Hue is derived from the user id so a given person is
- *  the same colour in every session, for everyone, with no state to keep. */
-const PALETTE = [
-  "bg-sky-500/20 text-sky-700 dark:text-sky-200 ring-sky-500/40",
-  "bg-emerald-500/20 text-emerald-700 dark:text-emerald-200 ring-emerald-500/40",
-  "bg-violet-500/20 text-violet-700 dark:text-violet-200 ring-violet-500/40",
-  "bg-amber-500/20 text-amber-700 dark:text-amber-200 ring-amber-500/40",
-  "bg-rose-500/20 text-rose-700 dark:text-rose-200 ring-rose-500/40",
-  "bg-teal-500/20 text-teal-700 dark:text-teal-200 ring-teal-500/40",
-];
-
-const colorFor = (userId: number) => PALETTE[Math.abs(userId) % PALETTE.length];
 
 /** How many faces before collapsing into "+N". Beyond a handful the row stops
  *  being a glance and starts being a list, and it shares a thin header bar. */
@@ -39,6 +30,7 @@ export function PresenceChips({
   participants,
   presenceUserIds,
   currentUserId,
+  typingUserIds = [],
 }: Props) {
   const present = participants.filter(
     (p) => presenceUserIds.includes(p.user_id) && p.user_id !== currentUserId,
@@ -62,24 +54,47 @@ export function PresenceChips({
     <div className="flex items-center gap-2" data-testid="presence-chips">
       <ul
         className="flex items-center -space-x-1.5"
-        aria-label={describe(present)}
+        aria-label={describe(present, typingUserIds)}
         data-testid="presence-list"
       >
         {faces.map((p) => {
+          const color = personColor(p.user_id);
+          const typing = typingUserIds.includes(p.user_id);
           return (
             <li
               key={p.user_id}
               data-testid="presence-chip"
               data-user-id={p.user_id}
-              title={p.display_name}
+              data-typing={typing ? "true" : undefined}
+              title={typing ? `${p.display_name} is typing` : p.display_name}
               className={[
-                "flex h-7 w-7 items-center justify-center rounded-full",
-                "text-[11px] font-semibold ring-2 ring-background",
+                "relative flex h-7 w-7 items-center justify-center rounded-full",
+                "text-[11px] font-semibold ring-2",
                 "transition-transform hover:z-10 hover:scale-110",
-                colorFor(p.user_id),
+                color.avatar,
+                // Typing: a solid ring in their colour, lifted above its
+                // neighbours so the overlap never hides it.
+                typing ? `z-10 ${color.ring}` : "ring-background",
               ].join(" ")}
             >
               {initials(p.display_name)}
+              {typing && (
+                <>
+                  {/* The pulse is decoration; reduced motion drops it and
+                      the solid ring + badge still say "typing". */}
+                  <span
+                    aria-hidden="true"
+                    className={`pointer-events-none absolute inset-0 rounded-full ring-2 ${color.ring} opacity-60 motion-safe:animate-ping`}
+                  />
+                  <span
+                    aria-hidden="true"
+                    data-testid="presence-typing-badge"
+                    className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-background text-foreground ring-1 ring-border"
+                  >
+                    <PenLine className="h-2.5 w-2.5" />
+                  </span>
+                </>
+              )}
             </li>
           );
         })}
@@ -99,18 +114,10 @@ export function PresenceChips({
 
 /** The accessible name for the row — the same fact the faces carry, in words.
  *  A row of coloured circles is meaningless without this. */
-function describe(present: Participant[]): string {
-  const names = present.map((p) => p.display_name).join(", ");
+function describe(present: Participant[], typingUserIds: number[]): string {
+  const names = present
+    .map((p) => (typingUserIds.includes(p.user_id) ? `${p.display_name} (typing)` : p.display_name))
+    .join(", ");
   const who = present.length === 1 ? "1 other person here" : `${present.length} other people here`;
   return `${who}: ${names}`;
-}
-
-function initials(name: string): string {
-  return name
-    .split(" ")
-    .map((w) => w[0])
-    .filter(Boolean)
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
 }

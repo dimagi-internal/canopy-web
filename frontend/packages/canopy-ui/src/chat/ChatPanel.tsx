@@ -1,13 +1,13 @@
 import { useMemo, type ReactNode } from "react";
 
-import type { SessionState, TypingVisibility } from "./protocol";
+import type { PeerDraft, SessionState, TypingVisibility } from "./protocol";
 import type { RenderMarkdown } from "./MessageItem";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
 import { isMine } from "./identity";
 import { QueuedRows } from "./QueuedRows";
-import { TypingRows } from "./TypingRows";
+import { PeerComposers } from "./PeerComposers";
 import { SendBox, type PendingAttachment } from "./SendBox";
 import { type DraftStorage } from "./drafts";
 import { agentHasFloor as computeAgentHasFloor, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
@@ -62,6 +62,8 @@ export interface ChatPanelProps {
  * NO data fetching, NO WebSocket, NO CLI-auth. The container (e.g. canopy's
  * ChatPage) wires `useSessionSocket` returns into these props.
  */
+const EMPTY_PEERS: PeerDraft[] = [];
+
 export function ChatPanel({
   state,
   connected,
@@ -189,6 +191,11 @@ export function ChatPanel({
     [state.messages, currentUserId, currentContactId],
   );
 
+  // Everyone else's live drafts. The same list draws their boxes above the
+  // composer and marks their chips in the header, so the two never disagree.
+  const peerDrafts = state.peer_drafts ?? EMPTY_PEERS;
+  const typingUserIds = useMemo(() => peerDrafts.map((p) => p.author.id), [peerDrafts]);
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-border bg-background px-3 py-1.5 text-xs">
@@ -198,6 +205,7 @@ export function ChatPanel({
             participants={state.participants}
             presenceUserIds={state.presence_user_ids}
             currentUserId={currentUserId}
+            typingUserIds={typingUserIds}
           />
         </div>
       </div>
@@ -230,7 +238,6 @@ export function ChatPanel({
           ownPendingTexts={ownPendingTexts}
         />
       </div>
-      <TypingRows peers={state.peer_drafts ?? []} />
       <SendBox
         draft={state.active_draft}
         connected={connected}
@@ -240,6 +247,7 @@ export function ChatPanel({
         onSend={onSend}
         onStop={onStop}
         stopState={state.stopState}
+        peers={<PeerComposers peers={peerDrafts} />}
         banner={
           notice ? (
             <p
