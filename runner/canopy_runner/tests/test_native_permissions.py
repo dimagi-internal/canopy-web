@@ -12,6 +12,8 @@ ASK = {"name": "ask", "entry": "/ace:ask --thread {thread_id}",
                 "bin/ace-email --reply-all --thread-id {thread_id} --subject * --body-file {cwd}/*"],
        "read_paths": ["{cwd}/**"]}
 SERVERS = {"plugin_canopy_canopy-web", "plugin_ace_ace-connect", "gbrain"}
+NAMES = {"plugin_canopy_canopy-web": "plugin:canopy:canopy-web",
+         "plugin_ace_ace-connect": "plugin:ace:ace-connect", "gbrain": "gbrain"}
 
 
 def _perms(cap=ASK, wt="/w/cx-a-1234-xyz12", **kw):
@@ -75,6 +77,60 @@ def test_credential_stores_are_denied_to_the_path_tools():
     assert "Read(~/.ssh/**)" in deny and "Read(~/.canopy/profiles/**)" in deny
 
 
+# ACE's live `ask` capability (2026-10-02): Write granted, Edit not, writes confined
+# to `.ace-ask/` while reads cover the worktree.
+ACE_ASK = {"name": "ask", "entry": "/ace:ask --thread {thread_id}",
+           "tools": ["Read", "Grep", "Glob", "Write", "mcp__*canopy-web__who_is_asking"],
+           "bash": ["canopy email read --repo . {thread_id}"],
+           "read_paths": ["{cwd}/**"], "write_paths": ["{cwd}/.ace-ask/*"]}
+
+
+def _all_rules(p):
+    return p["allow"] + p["deny"]
+
+
+@pytest.mark.parametrize("cap", [ASK, ACE_ASK, {**ACE_ASK, "write_paths": []},
+                                 {**ACE_ASK, "tools": ["*"]}, {"name": "none"}])
+def test_no_write_path_rule_is_ever_emitted(cap):
+    """Claude Code ignores `Write(path)` (allow AND deny) and warns at startup; only
+    `Edit(path)` scopes file writes (#1058)."""
+    assert not [r for r in _all_rules(_perms(cap)) if r.startswith("Write(")]
+    assert not [r for r in _all_rules(_perms(cap)) if r.startswith("NotebookEdit(")]
+
+
+def test_credential_stores_are_denied_to_every_file_writing_tool_as_edit_rules():
+    deny = _perms(ACE_ASK)["deny"]
+    for p in np.SENSITIVE_PATHS:
+        assert f"Edit({p})" in deny and f"Read({p})" in deny
+
+
+def test_writes_land_only_in_write_paths_not_everywhere_reads_reach(tmp_path):
+    wt = tmp_path / "cx-a-1234-xyz12"
+    wt.mkdir()
+    p = _perms(ACE_ASK, wt=str(wt))
+    real = str(wt.resolve())
+    assert f"Edit(/{real}/.ace-ask/*)" in p["allow"]
+    assert f"Read(/{real}/**)" in p["allow"]
+    assert f"Edit(/{real}/**)" not in p["allow"]       # bin/ace-email stays unwritable
+    assert "Write" not in p["allow"] and "Write" not in p["deny"]   # scoped, never bare
+    assert "Edit" in p["deny"]                         # the Edit TOOL is not granted
+
+
+def test_a_write_tool_with_no_write_paths_is_denied_like_profile_guard_refuses_it():
+    p = _perms({**ACE_ASK, "write_paths": []})
+    assert "Write" in p["deny"]
+    assert not [a for a in p["allow"] if a.startswith(("Edit(", "Write"))]
+
+
+def test_a_write_path_outside_the_worktree_drops_the_conflicting_edit_denies():
+    """An allow cannot carve out a deny, so a capability that writes outside the
+    worktree loses the credential Edit denies — exactly as read_paths do for Read."""
+    p = _perms({**ACE_ASK, "write_paths": ["~/notes/*"]})
+    assert "Edit(~/notes/*)" in p["allow"]
+    assert not [d for d in p["deny"] if d.startswith("Edit(")]
+    assert "Read(~/.ssh/**)" in p["deny"]
+
+
 def test_mcp_servers_are_read_from_config_and_installed_plugins(tmp_path):
     (tmp_path / ".claude.json").write_text(json.dumps({
         "mcpServers": {"gbrain": {}},
@@ -87,6 +143,37 @@ def test_mcp_servers_are_read_from_config_and_installed_plugins(tmp_path):
         {"plugins": {"canopy@canopy": [{"installPath": str(plug)}]}}))
     got = np.mcp_servers(home=tmp_path, worktree="/w/cx-a")
     assert got == {"gbrain", "proj", "plugin_canopy_canopy-web"}
+    assert np.mcp_server_names(home=tmp_path, worktree="/w/cx-a")["plugin_canopy_canopy-web"] \
+        == "plugin:canopy:canopy-web"
+
+
+def test_servers_the_capability_never_reaches_are_not_started():
+    """An `mcp__<server>` deny still spawns the server; `deniedMcpServers` does not,
+    and it is spelled with the CONFIG name."""
+    assert np.servers_to_stop(ASK, NAMES) == ["gbrain", "plugin:ace:ace-connect"]
+    assert np.servers_to_stop({"name": "none"}, NAMES) == sorted(NAMES.values())
+    assert np.servers_to_stop({"tools": ["*"]}, NAMES) == []
+    # every server it stops is one settings_for already denies — never more access
+    deny = _perms()["deny"]
+    tool_form = {v: k for k, v in NAMES.items()}
+    assert all(f"mcp__{tool_form[n]}" in deny for n in np.servers_to_stop(ASK, NAMES))
+
+
+def test_cli_settings_carry_the_stopped_servers(monkeypatch):
+    monkeypatch.setattr(np, "mcp_server_names", lambda **k: NAMES)
+    doc = np.cli_settings(ASK, cwd="/w/cx-a")
+    assert {"serverName": "plugin:ace:ace-connect"} in doc["deniedMcpServers"]
+    assert {"serverName": "plugin:canopy:canopy-web"} not in doc["deniedMcpServers"]
+
+
+def test_stopped_servers_merge_with_a_repos_own_and_replace_ours(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps(
+        {"deniedMcpServers": [{"serverName": "repo-own"}]}))
+    np.write_worktree_settings(str(tmp_path), _perms(), stop_servers=["a", "b"])
+    np.write_worktree_settings(str(tmp_path), _perms(), stop_servers=["b"])
+    doc = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert doc["deniedMcpServers"] == [{"serverName": "repo-own"}, {"serverName": "b"}]
 
 
 def test_writing_keeps_a_repos_own_settings_and_deny_rules(tmp_path):
@@ -111,7 +198,7 @@ def _box(monkeypatch, tmp_path):
     monkeypatch.setattr(caller, "PROFILE_ROOT", tmp_path / "profiles")
     monkeypatch.setattr(caller, "CALLER_ROOT", tmp_path / "caller")
     monkeypatch.setattr(emdash, "task_state", lambda db, name: "live")
-    monkeypatch.setattr(np, "mcp_servers", lambda **k: SERVERS)
+    monkeypatch.setattr(np, "mcp_server_names", lambda **k: NAMES)
     monkeypatch.setattr(execute, "NATIVE_WAIT_SECONDS", 0)
     return tmp_path
 
