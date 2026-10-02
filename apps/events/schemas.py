@@ -45,3 +45,18 @@ class EventListOut(StrictModel):
 class EventRecordOut(StrictModel):
     created: int
     coalesced: int
+
+
+class McpCallOut(StrictModel):
+    id: int
+    created_at: str
+    workspace: str
+    user_email: str
+    tool: str
+    args_summary: str
+    ok: bool
+    error: str
+
+
+class McpCallListOut(StrictModel):
+    items: list[McpCallOut]

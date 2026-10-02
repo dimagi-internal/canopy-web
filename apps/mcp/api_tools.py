@@ -301,7 +301,7 @@ class CanopyAPITool(OpenAPITool):
             try:
                 await sync_to_async(check_write_limit, thread_sensitive=True)(principal["user_id"])
             except RateLimitError as exc:
-                await write_audit(user_id=principal["user_id"], tool=self.name,
+                await write_audit(user_id=principal["user_id"], tool=self.name, workspace=workspace,
                                   args_summary=summary, ok=False, error=str(exc))
                 raise ToolError(str(exc)) from exc
         token = _current_call.set({
@@ -311,12 +311,12 @@ class CanopyAPITool(OpenAPITool):
         try:
             result = await super().run(args)
         except Exception as exc:
-            await write_audit(user_id=principal["user_id"], tool=self.name,
+            await write_audit(user_id=principal["user_id"], tool=self.name, workspace=workspace,
                               args_summary=summary, ok=False, error=str(exc))
             raise ToolError(str(exc)) from exc
         finally:
             _current_call.reset(token)
-        await write_audit(user_id=principal["user_id"], tool=self.name,
+        await write_audit(user_id=principal["user_id"], tool=self.name, workspace=workspace,
                           args_summary=summary, ok=True)
         return result
 

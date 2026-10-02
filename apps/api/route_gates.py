@@ -403,6 +403,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_presence_preference": ("self",),
     # --- apps/events/api.py
     "record_events": ("events.write",),  # in the pinned or default workspace
+    "list_mcp_calls": ("logs.read", "self"),  # the workspace's calls for admins; your own always
     "list_events": ("logs.read",),  # non-admin gets no rows, not 403
     # --- apps/inbound/api.py
     "gmail_push": ("host",),  # auth=None; Pub/Sub push verified by verify_push (OIDC/audience), 404 otherwise
