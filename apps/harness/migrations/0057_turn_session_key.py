@@ -14,7 +14,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("harness", "0055_runnerflag"),
+        ("harness", "0056_workspace_runner_order"),
     ]
 
     operations = [

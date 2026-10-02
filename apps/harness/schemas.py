@@ -333,7 +333,7 @@ class ResolveSessionIn(Schema):
 #: The retired spelling of `session_key`, still accepted on input.
 #:
 #: The field was renamed when the cloud runner started putting Claude session ids
-#: in it (harness migration 0056). Runners update on deploy, but an agent's
+#: in it (harness migration 0057). Runners update on deploy, but an agent's
 #: `canopy agent turn` client and a runner mid-update still send the old name —
 #: so each input takes either, and the new name wins when both arrive. Remove the
 #: field and `adopt_legacy_session_key` once nothing in the fleet sends it.
