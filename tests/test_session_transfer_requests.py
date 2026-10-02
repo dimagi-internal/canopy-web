@@ -34,10 +34,10 @@ def world():
     for u in (st, ace, bystander):
         WorkspaceMembership.objects.create(user=u, workspace=ws, role=WorkspaceMembership.EDITOR)
     jj_box = Runner.objects.create(name="jj-mbp-cdp", workspace=ws, status=Runner.ONLINE,
-                                   paired_by=jj, host="jj@mbp", capabilities=SESSION_CAPABLE)
+                                   owner=jj, host="jj@mbp", capabilities=SESSION_CAPABLE)
     # Paired under the agent's identity; Sarvesh administers it through a grant.
     st_box = Runner.objects.create(name="sarveshtewari-mbp-cdp", workspace=ws,
-                                   status=Runner.ONLINE, paired_by=ace, host="st@mbp",
+                                   status=Runner.ONLINE, owner=ace, host="st@mbp",
                                    capabilities=SESSION_CAPABLE)
     RunnerAdmin.objects.create(runner=st_box, user=st, granted_by=ace)
     s = Session.objects.create(workspace=ws, project="ace", title="partner thread", created_by=jj)
@@ -164,7 +164,7 @@ def test_a_move_between_two_boxes_of_the_same_owner_never_asks(world):
     """Jonathan's two macOS accounts (ada's user-switch): same owner, same
     subscription holder — even a collaborator moving it needs no one's yes."""
     jj2 = Runner.objects.create(name="jj-other-account", workspace=world["jj_box"].workspace,
-                                status=Runner.ONLINE, paired_by=world["jj"], host="jj2@mbp",
+                                status=Runner.ONLINE, owner=world["jj"], host="jj2@mbp",
                                 capabilities=SESSION_CAPABLE)
     SessionParticipant.objects.create(session=world["session"], user=world["st"],
                                       role=SessionParticipant.EDITOR)

@@ -67,7 +67,7 @@ def resolve_workspace(explicit: str, workspaces: list[dict]) -> str:
     """The workspace to pair into. Never guesses between several.
 
     A runner's workspace only gates who can SEE it (what it may work for follows
-    `paired_by`), but the server refuses to default it for a multi-workspace pairer,
+    `owner`), but the server refuses to default it for a multi-workspace owner,
     and so do we — with the list, so the fix is one flag away.
     """
     slugs = [str(w.get("slug")) for w in workspaces if w.get("slug")]
@@ -88,7 +88,7 @@ def resolve_workspace(explicit: str, workspaces: list[dict]) -> str:
 
 def default_agents(runners: list[dict], exclude_id: str = "") -> list[str]:
     """The agents your OTHER runners serve — a new account is normally another seat
-    for the same fleet. Only runners you manage (paired by you) count: someone else's
+    for the same fleet. Only runners you manage (owned by you) count: someone else's
     box serving an agent says nothing about what yours should."""
     agents: set[str] = set()
     for r in runners:
@@ -349,11 +349,11 @@ def run_pair(config_path: Path, *, name: str = "", workspace: str = "",
                                 _token_from_ref(str(raw.get("token") or token_ref)))
         row = _find(_list_runners(client), rid)
         if row is None:
-            # Not listed = retired, or paired by someone this PAT can't see. Pairing
+            # Not listed = retired, or owned by someone this PAT can't see. Pairing
             # a fresh one here would silently orphan whatever that runner was for.
             raise PairError(
                 f"{config_path} names runner {rid}, which canopy-web does not list for "
-                "you (retired, or paired by another user). Not pairing a second one "
+                "you (retired, or owned by another user). Not pairing a second one "
                 f"automatically: unretire it (POST /api/harness/runners/{rid}/unretire), "
                 "or move the file aside and re-run.")
         out(f"==> already paired: {row.get('name')} ({rid}) — not pairing again")
@@ -382,9 +382,9 @@ def run_pair(config_path: Path, *, name: str = "", workspace: str = "",
             # what does (2026-10-02).
             raise PairError(
                 f"a runner named '{name}' already exists ({clash.get('id')}) and it is "
-                f"not yours (paired by {clash.get('paired_by_email') or 'someone else'}), "
+                f"not yours (owned by {clash.get('owner_email') or 'someone else'}), "
                 "so it can't be adopted — --runner-id never transfers ownership. Pick "
-                "another --name, or have its pairer retire it first "
+                "another --name, or have its owner retire it first "
                 f"(POST /api/harness/runners/{clash.get('id')}/retire); retired runners "
                 "don't count.")
         if clash is not None:

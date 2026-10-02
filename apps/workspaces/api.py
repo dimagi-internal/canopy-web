@@ -528,7 +528,7 @@ def get_runner_order(request: HttpRequest, slug: str) -> list[RunnerOrderRowOut]
             summary="Replace the ordered runner list this workspace's repo turns route by")
 def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) -> list[RunnerOrderRowOut]:
     """Wholesale replace (index = rank), at the tier that routes an agent's work
-    (`agent.work`). Every runner must be able to SERVE this workspace — its pairer
+    (`agent.work`). Every runner must be able to SERVE this workspace — its owner
     a member (`runner_tenant_slugs`) — or the order would name a box the claim path
     refuses anyway; such a runner is a 422, as is an unknown or retired one."""
     from django.db import transaction
@@ -541,14 +541,14 @@ def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) ->
     if len(ids) != len(set(ids)):
         raise HttpError(422, "duplicate runner id in list")
     runners = {r.id: r for r in Runner.objects.filter(id__in=ids)
-               .exclude(status=Runner.RETIRED).select_related("paired_by")}
+               .exclude(status=Runner.RETIRED).select_related("owner")}
     missing = [str(rid) for rid in ids if rid not in runners]
     if missing:
         raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
     outside = sorted(r.name for r in runners.values() if slug not in runner_tenant_slugs(r))
     if outside:
         raise HttpError(422, f"runner(s) {', '.join(outside)} cannot serve '{slug}': "
-                             "whoever paired a runner must be a member of the workspace")
+                             "a runner's owner must be a member of the workspace")
     with transaction.atomic():
         WorkspaceRunnerOrder.objects.filter(workspace=m.workspace).delete()
         WorkspaceRunnerOrder.objects.bulk_create([

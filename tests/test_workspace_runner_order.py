@@ -33,9 +33,9 @@ def _ws(slug, owner):
     return ws
 
 
-def _runner(pairer, name, projects=("canopy-web",), **kw):
+def _runner(runner_owner, name, projects=("canopy-web",), **kw):
     return Runner.objects.create(
-        name=name, kind=Runner.EMDASH, host=name, paired_by=pairer,
+        name=name, kind=Runner.EMDASH, host=name, owner=runner_owner,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         capabilities={"projects": list(projects)}, **kw,
     )

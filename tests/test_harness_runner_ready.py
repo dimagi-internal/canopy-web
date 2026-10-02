@@ -14,7 +14,7 @@ pytestmark = pytest.mark.django_db
 
 def _runner(user, ws):
     return Runner.objects.create(
-        name="mbp", kind=Runner.EMDASH, host="h", paired_by=user, workspace=ws,
+        name="mbp", kind=Runner.EMDASH, host="h", owner=user, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
 

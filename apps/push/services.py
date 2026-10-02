@@ -244,7 +244,7 @@ def _question_audience(session):
     The first of those who can actually OPEN the session (`can_open`) — a
     notification is a link, and one to a chat you cannot read is a dead end.
 
-    Fails closed on None, the same way `runner.paired_by` gates tenancy: with
+    Fails closed on None, the same way `runner.owner` gates tenancy: with
     nobody identifiable, we stay silent rather than broadcast a workspace.
     """
     agent = getattr(session, "agent", None)
@@ -253,7 +253,7 @@ def _question_audience(session):
     candidates = (
         getattr(session, "created_by", None),
         *(agent_audience(agent) if agent is not None else ()),
-        getattr(runner, "paired_by", None) if runner is not None else None,
+        getattr(runner, "owner", None) if runner is not None else None,
     )
     for user in candidates:
         if user is not None and can_open(user, session):

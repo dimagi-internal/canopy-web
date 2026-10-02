@@ -150,7 +150,7 @@ def _agent_for_write(request: HttpRequest, slug: str):
 
 
 def _refuse_runners_that_cannot_hold(agent, runners) -> None:
-    """403 naming every runner whose pairer is not one of the agent's admins.
+    """403 naming every runner whose owner is not one of the agent's admins.
 
     Pointing an agent's work at a box hands that box the agent's whole identity
     (`services.runner_may_hold_agent`), and these writes are open to the editor
@@ -160,7 +160,7 @@ def _refuse_runners_that_cannot_hold(agent, runners) -> None:
     if refused:
         raise HttpError(
             403,
-            f"runner(s) {', '.join(refused)} cannot run {agent.slug}: whoever paired a runner "
+            f"runner(s) {', '.join(refused)} cannot run {agent.slug}: a runner's owner "
             "must be the agent's owner, a workspace owner, or one of its admins",
         )
 
@@ -658,7 +658,7 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
         raise HttpError(422, "duplicate runner id in list")
     # Scoped by the same _runner_visibility_q predicate apps/harness/api.py's
     # _runner_or_404/list_runners gate on — a runner_id the caller can't see
-    # (paired by someone else, wrong tenant) must 422 as "unknown", never be
+    # (owned by someone else, wrong tenant) must 422 as "unknown", never be
     # attachable/readable just because its UUID was guessed. See that
     # docstring for the full predicate story.
     runners = list(
@@ -822,7 +822,7 @@ def replace_agent_runner_rules(
 # wholesale. Two things made "route Alice to my laptop" impractical there:
 #   1. a person spans five sources, so it took five hand-built rules; and
 #   2. the PUT replaces every rule and requires the caller to have paired every
-#      runner it names — so anyone but the operator who paired ALL the boxes got a
+#      runner it names — so anyone but the operator who owns ALL the boxes got a
 #      422 just for re-sending the rules already there.
 # These routes touch one actor's rows only, and gate on the runners being NAMED.
 
@@ -893,7 +893,7 @@ def set_agent_actor_route(
     `actor` is the person's email. With `strict` (the default) only the named
     runners may take their work — if those are offline it waits; with
     `strict=false` it falls back to the agent's usual runners after a minute.
-    You may name only runners you administer (you paired it, or its pairer
+    You may name only runners you administer (you own it, or its owner
     granted you admin) — this decides where work runs, so it is gated on the box,
     not just the agent. Remove a route with DELETE on the same path.
     """
@@ -928,7 +928,7 @@ def set_agent_actor_route(
     if refused:
         raise HttpError(
             403,
-            f"you don't administer runner(s) {', '.join(refused)} — ask whoever paired it to "
+            f"you don't administer runner(s) {', '.join(refused)} — ask its owner to "
             "grant you admin (POST /api/harness/runners/{id}/admins)",
         )
     _refuse_runners_that_cannot_hold(agent, runners.values())

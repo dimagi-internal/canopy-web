@@ -104,8 +104,8 @@ def _on_turn_enqueued(sender, instance: Turn, created, **kwargs):
 
 @receiver(post_save, sender=Runner, dispatch_uid="realtime_runner")
 def _on_runner_saved(sender, instance: Runner, **kwargs):
-    # A runner with no pairer has no user to notify (and no derivable tenant).
-    if not instance.paired_by_id:
+    # A runner with no owner has no user to notify (and no derivable tenant).
+    if not instance.owner_id:
         return
     frame = {
         "type": "supervisor.runner",
@@ -119,7 +119,7 @@ def _on_runner_saved(sender, instance: Runner, **kwargs):
             ),
         },
     }
-    group = groups.supervisor_user_group(instance.paired_by_id)
+    group = groups.supervisor_user_group(instance.owner_id)
     transaction.on_commit(lambda: groups.publish(group, frame))
 
 
@@ -148,16 +148,16 @@ def _on_sessions_reported(sender, runner, **kwargs):
     their supervisor group. One broadcast reaches every device the user has open
     (phone + desktop + menubar) instead of each polling. Already post-commit (the
     sender fires inside its own on_commit), so publish directly."""
-    if not runner.paired_by_id:
+    if not runner.owner_id:
         return
     # Local imports keep this module import-cycle-free and the serialization co-located
     # with where the GET /sessions endpoint reads the same rows.
     from apps.harness.schemas import EmdashSessionOut
     from apps.harness.services import list_visible_sessions
 
-    sessions = list_visible_sessions(runner.paired_by)
+    sessions = list_visible_sessions(runner.owner)
     frame = {
         "type": "supervisor.sessions",
         "sessions": [EmdashSessionOut.from_orm(s).model_dump(mode="json") for s in sessions],
     }
-    groups.publish(groups.supervisor_user_group(runner.paired_by_id), frame)
+    groups.publish(groups.supervisor_user_group(runner.owner_id), frame)

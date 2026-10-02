@@ -22,7 +22,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     last_heartbeat_at: '2026-09-22T12:00:00Z', capabilities: {}, host: '',
     code_branch: '', code_version: '', code_sha: '', expected_code_sha: '',
     code_committed_at: 0, expected_code_committed_at: 0, workspace: 'dimagi',
-    paired_by_email: 'jj@dimagi.com', can_manage: true, can_administer: true,
+    owner_email: 'jj@dimagi.com', can_manage: true, can_administer: true,
     flags: [],
     known_flags: ['zdr'],
     drill_rollup: null,

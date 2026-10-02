@@ -58,7 +58,7 @@ def runner(user, workspace):
     return Runner.objects.create(
         name="acedimagi-mbp-cdp",
         kind=Runner.EMDASH,
-        paired_by=user,
+        owner=user,
         workspace=workspace,
         ready=True,
         status=Runner.ONLINE,
@@ -161,7 +161,7 @@ def test_push_logs_an_info_event(mailbox, agent, runner):
 def test_every_online_assigned_runner_is_rung(mailbox, agent, runner, user, workspace):
     """Cheap redundancy: the enqueue is idempotent, so a second read collapses."""
     second = Runner.objects.create(
-        name="cloud-ec2-1", kind=Runner.REMOTE, paired_by=user, workspace=workspace,
+        name="cloud-ec2-1", kind=Runner.REMOTE, owner=user, workspace=workspace,
         ready=True, status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     _assign(agent, runner, rank=0)
@@ -185,7 +185,7 @@ def test_a_strict_source_rule_is_honoured(mailbox, agent, runner, user, workspac
     """Routing composition is shared with claiming, so the doorbell cannot ring a
     runner that will never claim this turn."""
     other = Runner.objects.create(
-        name="cloud-ec2-1", kind=Runner.REMOTE, paired_by=user, workspace=workspace,
+        name="cloud-ec2-1", kind=Runner.REMOTE, owner=user, workspace=workspace,
         ready=True, status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     _assign(agent, runner, rank=0)
@@ -228,7 +228,7 @@ def test_another_workspaces_address_is_not_reachable(push_config, workspace, use
 
 def test_no_online_runner_is_logged_loudly(mailbox, agent, user, workspace):
     offline = Runner.objects.create(
-        name="asleep", kind=Runner.EMDASH, paired_by=user, workspace=workspace,
+        name="asleep", kind=Runner.EMDASH, owner=user, workspace=workspace,
         ready=True, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now() - dt.timedelta(hours=2),
     )

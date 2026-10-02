@@ -58,7 +58,7 @@ def _orphan(ws, host, key):
 
 def test_an_orphan_is_re_pointed_at_the_runner_on_its_host():
     user, ws = _ctx()
-    runner = Runner.objects.create(name="mbp", workspace=ws, paired_by=user, host="jj@mbp")
+    runner = Runner.objects.create(name="mbp", workspace=ws, owner=user, host="jj@mbp")
     binding = _orphan(ws, "jj@mbp", "ddd")
 
     _run()
@@ -72,7 +72,7 @@ def test_a_retired_runner_still_claims_its_orphans():
     report, and it is now recoverable via /unretire."""
     user, ws = _ctx()
     runner = Runner.objects.create(
-        name="gone", workspace=ws, paired_by=user, host="jj@old", status=Runner.RETIRED
+        name="gone", workspace=ws, owner=user, host="jj@old", status=Runner.RETIRED
     )
     binding = _orphan(ws, "jj@old", "ddd")
 
@@ -85,8 +85,8 @@ def test_a_retired_runner_still_claims_its_orphans():
 def test_an_ambiguous_host_is_left_alone():
     """Two runners re-paired on one host: a wrong runner is worse than none."""
     user, ws = _ctx()
-    Runner.objects.create(name="old", workspace=ws, paired_by=user, host="jj@mbp")
-    Runner.objects.create(name="new", workspace=ws, paired_by=user, host="jj@mbp")
+    Runner.objects.create(name="old", workspace=ws, owner=user, host="jj@mbp")
+    Runner.objects.create(name="new", workspace=ws, owner=user, host="jj@mbp")
     binding = _orphan(ws, "jj@mbp", "ddd")
 
     _run()
@@ -98,7 +98,7 @@ def test_an_ambiguous_host_is_left_alone():
 def test_a_blank_host_is_left_alone():
     """Legacy rows predating the host stamp carry no identity to recover."""
     user, ws = _ctx()
-    Runner.objects.create(name="mbp", workspace=ws, paired_by=user, host="")
+    Runner.objects.create(name="mbp", workspace=ws, owner=user, host="")
     binding = _orphan(ws, "", "ddd")
 
     _run()
@@ -112,7 +112,7 @@ def test_it_never_violates_the_one_binding_per_runner_key_index():
     while NULL, so two of them on one host can share a key. Filling both would
     IntegrityError mid-migration on prod."""
     user, ws = _ctx()
-    Runner.objects.create(name="mbp", workspace=ws, paired_by=user, host="jj@mbp")
+    Runner.objects.create(name="mbp", workspace=ws, owner=user, host="jj@mbp")
     first = _orphan(ws, "jj@mbp", "ddd")
     second = _orphan(ws, "jj@mbp", "ddd")
 
@@ -124,8 +124,8 @@ def test_it_never_violates_the_one_binding_per_runner_key_index():
 
 def test_a_binding_that_already_has_a_runner_is_untouched():
     user, ws = _ctx()
-    mine = Runner.objects.create(name="mbp", workspace=ws, paired_by=user, host="jj@mbp")
-    other = Runner.objects.create(name="air", workspace=ws, paired_by=user, host="jj@air")
+    mine = Runner.objects.create(name="mbp", workspace=ws, owner=user, host="jj@mbp")
+    other = Runner.objects.create(name="air", workspace=ws, owner=user, host="jj@air")
     session = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="ddd")
     binding = RunnerBinding.objects.create(
         session=session, runner=other, session_key="ddd", host="jj@mbp",

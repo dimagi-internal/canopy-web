@@ -106,7 +106,7 @@ export function buildFleetMap(runnerTopo: RunnerTopologyOut, agentTopo: AgentTop
       if (!l) lanes.set(owner, (l = { owner, runners: [], agents: [] }))
       return l
     }
-    for (const r of runnerTopo.runners) if (r.in_tree && r.workspace === slug) lane(r.paired_by_email).runners.push(r)
+    for (const r of runnerTopo.runners) if (r.in_tree && r.workspace === slug) lane(r.owner_email).runners.push(r)
     for (const a of agents.values()) if (a.workspace === slug) lane(a.ownerEmail).agents.push(a)
     return [...lanes.values()].sort(laneSort)
   }

@@ -31,7 +31,7 @@ def _ctx(*, agents=(), projects=(), sessions=False, online=True):
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     Runner.objects.create(
-        name="jj-mbp", workspace=ws, location=Runner.LOCAL, paired_by=user, host="jj@mbp",
+        name="jj-mbp", workspace=ws, location=Runner.LOCAL, owner=user, host="jj@mbp",
         status=Runner.ONLINE if online else Runner.DISCONNECTED,
         last_heartbeat_at=timezone.now() if online else None,
         capabilities={"agents": list(agents), "projects": list(projects), "sessions": sessions},
@@ -182,11 +182,11 @@ def test_assignment_with_offline_runner_reports_OFFLINE():
 
 
 # ── Tenant scope for "could ANY runner take this?" ─────────────────────────
-# Regression: scoping candidate runners to `paired_by=user` made every stuck
+# Regression: scoping candidate runners to `owner=user` made every stuck
 # turn read CONFIG for anyone who didn't personally pair a runner — a
 # delegated identity, or a teammate in a workspace someone ELSE's runner
 # serves. The candidate set must match the tenancy rule the rest of this file
-# already uses elsewhere (`runner_tenant_slugs`, paired_by-derived).
+# already uses elsewhere (`runner_tenant_slugs`, owner-derived).
 
 
 def test_teammates_runner_counts_even_if_caller_paired_none():
@@ -203,7 +203,7 @@ def test_teammates_runner_counts_even_if_caller_paired_none():
     WorkspaceMembership.objects.create(user=user1, workspace=ws, role=WorkspaceMembership.OWNER)
     WorkspaceMembership.objects.create(user=user2, workspace=ws, role=WorkspaceMembership.EDITOR)
     runner = Runner.objects.create(
-        name="jj-mbp", workspace=ws, location=Runner.LOCAL, paired_by=user1, host="jj@mbp",
+        name="jj-mbp", workspace=ws, location=Runner.LOCAL, owner=user1, host="jj@mbp",
         status=Runner.DISCONNECTED, last_heartbeat_at=None,
         capabilities={"agents": [], "projects": [], "sessions": False},
     )

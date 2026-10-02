@@ -43,7 +43,7 @@ def fleet(client):
         runtime_secrets=["canopy-pat", "gog-token", "nova-api-key"],
     )
     runner = Runner.objects.create(
-        name="cloud-ec2-1", kind=Runner.CLOUD, paired_by=jj, status=Runner.ONLINE,
+        name="cloud-ec2-1", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={},
     )
     # The assignment is what makes this runner one the agent's work can reach —

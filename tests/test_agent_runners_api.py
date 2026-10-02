@@ -40,17 +40,17 @@ def agent(workspace):
     return Agent.objects.create(slug="echo", name="Echo", workspace=workspace)
 
 
-# Paired by the agent's admin (the workspace owner): a box on an agent's list
+# Owned by the agent's admin (the workspace owner): a box on an agent's list
 # holds the agent, so an unpaired one is refused (`runner_may_hold_agent`).
 @pytest.fixture()
 def runner_a(owner, workspace):
-    return Runner.objects.create(name="runner-a", kind=Runner.EMDASH, paired_by=owner,
+    return Runner.objects.create(name="runner-a", kind=Runner.EMDASH, owner=owner,
                                  workspace=workspace)
 
 
 @pytest.fixture()
 def runner_b(owner, workspace):
-    return Runner.objects.create(name="runner-b", kind=Runner.CLOUD, paired_by=owner,
+    return Runner.objects.create(name="runner-b", kind=Runner.CLOUD, owner=owner,
                                  workspace=workspace)
 
 
@@ -106,7 +106,7 @@ def test_put_agent_runners_reorders_removes_and_adds_atomically(client, agent, r
                                                                   owner, workspace):
     RunnerAssignment.objects.create(agent=agent, runner=runner_a, rank=0)
     RunnerAssignment.objects.create(agent=agent, runner=runner_b, rank=1)
-    runner_c = Runner.objects.create(name="runner-c", kind=Runner.REMOTE, paired_by=owner,
+    runner_c = Runner.objects.create(name="runner-c", kind=Runner.REMOTE, owner=owner,
                                      workspace=workspace)
 
     r = _put(client, agent.slug, [runner_b.id, runner_c.id])
@@ -178,15 +178,15 @@ def test_put_agent_runners_rejects_unknown_runner_id(client, agent):
     assert RunnerAssignment.objects.filter(agent=agent).count() == 0
 
 
-def test_put_agent_runners_rejects_runner_paired_by_other_user(client, agent, runner_a):
-    """A runner paired by a different human, in a workspace the caller isn't a
+def test_put_agent_runners_rejects_runner_owner_other_user(client, agent, runner_a):
+    """A runner owned by a different human, in a workspace the caller isn't a
     member of, is invisible to _runner_visibility_q — it must 422 the same as
     a nonexistent id (no existence leak), and must not get attached."""
     other_owner = User.objects.create_user("other-runner-owner", "other-runner-owner@dimagi.com", "pw")
     other_ws = Workspace.objects.create(slug="other-runner-ws", display_name="Other RW", created_by=other_owner)
     WorkspaceMembership.objects.create(user=other_owner, workspace=other_ws, role=WorkspaceMembership.OWNER)
     foreign = Runner.objects.create(
-        name="foreign-runner", kind=Runner.EMDASH, paired_by=other_owner, workspace=other_ws,
+        name="foreign-runner", kind=Runner.EMDASH, owner=other_owner, workspace=other_ws,
     )
 
     r = _put(client, agent.slug, [runner_a.id, foreign.id])

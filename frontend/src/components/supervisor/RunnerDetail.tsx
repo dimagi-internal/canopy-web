@@ -11,7 +11,7 @@ import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
 // A runner's full state — the click-through from the Runners tab's runner list.
 // Leads with the signals that actually matter: is it AVAILABLE to fire a turn
 // (online ∧ ready — a stale runner reporting last-known ready=true is NOT), what
-// agents/repos it can drive, and who paired it (the owner that governs what it may
+// agents/repos it can drive, and who owns it (the owner that governs what it may
 // work for). Below that, the fleet-wide routing matrix — editable in place, so
 // "which agents route to me, and at what rank" is answerable without leaving the
 // runner detail view. (Assignments are now per-RUNNER, not per-kind, so there is
@@ -141,7 +141,7 @@ export function RunnerDetail({
         {row('agents', (caps.agents ?? []).join(', ') || '—')}
         {row('projects', (caps.projects ?? []).join(', ') || '—')}
         {row('kind', runner.kind ?? '')}
-        {row('paired by', runner.paired_by_email ?? '—')}
+        {row('owner', runner.owner_email ?? '—')}
         {/* host only matters for emdash (per-macOS-account session reuse); cloud
             runners report no host, so skip the empty row entirely. */}
         {runner.host && row('host', runner.host)}
@@ -161,7 +161,7 @@ export function RunnerDetail({
       {/* Pause — the one control this view offers on the runner itself, and the
           only way to park a box from a phone (the alternative is the local
           ~/.canopy/PAUSED sentinel, which needs a shell on that macOS account).
-          Pairer-only: POST /pause resolves through _runner_visibility_q, the same
+          Owner-only: POST /pause resolves through _runner_visibility_q, the same
           predicate can_manage reports, so rendering it for anyone else would
           hand out a button that 404s. */}
       {runner.can_manage && (
@@ -203,7 +203,7 @@ export function RunnerDetail({
         </div>
       )}
 
-      {/* Takes Slack & chat sessions — same pairer-only gate as Pause. Shown
+      {/* Takes Slack & chat sessions — same owner-only gate as Pause. Shown
           read-only to everyone else, because "why isn't this box in the session
           picker?" is a question any member asks. */}
       <div className="flex flex-col gap-1 rounded-lg border border-border bg-card p-3" data-testid="runner-sessions">
@@ -244,20 +244,20 @@ export function RunnerDetail({
       {/* TWO tiers, and they gate different routes — which is the whole reason
           they are separate flags. Administering a box (its credentials, its
           browser sign-in) resolves through _runner_admin_or_404; speaking AS it
-          (drilling, which POSTs as the runner) stays with the pairer. Gating
+          (drilling, which POSTs as the runner) stays with the owner. Gating
           both on can_manage meant the identity a box RUNS AS could not sign it
           back in, because someone else had run the pairing command. */}
       {runner.can_administer && runner.kind === 'cloud' && (
         <RunnerCredentials runnerId={runner.id} />
       )}
       {/* Who else may fix this box. Rendered for an administrator (who may read
-          the list) as well as the pairer (who may edit it) — the panel itself
+          the list) as well as the owner (who may edit it) — the panel itself
           hides the form when there is nothing the viewer may change. */}
       {(runner.can_administer || runner.can_manage) && (
         <RunnerAdmins
           runnerId={runner.id}
           canManage={runner.can_manage}
-          pairedByEmail={runner.paired_by_email}
+          ownerEmail={runner.owner_email}
         />
       )}
       {runner.can_administer && onChanged && <RunnerFlags runner={runner} onChange={onChanged} />}
@@ -266,9 +266,8 @@ export function RunnerDetail({
         <p className="text-[12px] text-muted-foreground" data-testid="runner-detail-readonly">
           {runner.can_administer
             ? `You can sign this box in, set its credentials and declare what it runs with (ZDR).
-               Checking its readiness belongs to ${runner.paired_by_email ?? 'whoever paired it'},
-               who paired it.`
-            : `Read-only — this runner was paired by ${runner.paired_by_email ?? 'someone else'},
+               Checking its readiness belongs to its owner, ${runner.owner_email ?? 'someone else'}.`
+            : `Read-only — this runner is owned by ${runner.owner_email ?? 'someone else'},
                who can check its readiness or grant you administration; they or a runner admin
                can change what it declares.`}
         </p>

@@ -193,7 +193,7 @@ def operator(agent):
     user = User.objects.create_user("op", "op@dimagi.com", "pw")
     wsvc.ensure_member(agent.workspace, user, WorkspaceMembership.EDITOR)
     # Trusted with the agent: a box receives the owner's GitHub identity only
-    # when its pairer is one of the agent's admins (`runner_may_hold_agent`).
+    # when its owner is one of the agent's admins (`runner_may_hold_agent`).
     from apps.agents.models import AgentAdmin
 
     AgentAdmin.objects.create(agent=agent, user=user)
@@ -202,7 +202,7 @@ def operator(agent):
 
 @pytest.fixture
 def runner(operator, agent):
-    r = Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, paired_by=operator,
+    r = Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, owner=operator,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     RunnerAssignment.objects.create(agent=agent, runner=r, rank=0)
     return r
@@ -219,8 +219,8 @@ def _token_url(runner, turn):
 
 
 def _as_runner(runner):
-    # The runner speaks as its pairer, exactly like claim/heartbeat.
-    return _client(runner.paired_by)
+    # The runner speaks as its owner, exactly like claim/heartbeat.
+    return _client(runner.owner)
 
 
 def test_a_claimed_turn_gets_its_agent_owners_identity(agent, owner, github, runner):
@@ -243,7 +243,7 @@ def test_a_claimed_turn_gets_its_agent_owners_identity(agent, owner, github, run
 @pytest.mark.parametrize("case", ["queued", "other_runner", "finished"])
 def test_a_runner_cannot_ask_for_a_turn_it_is_not_executing(agent, owner, github, runner, operator, case):
     _lend(agent, owner, github)
-    other = Runner.objects.create(name="laptop", kind=Runner.EMDASH, paired_by=operator)
+    other = Runner.objects.create(name="laptop", kind=Runner.EMDASH, owner=operator)
     turn = {
         "queued": lambda: _turn(agent, runner=None, status=Turn.QUEUED),
         "other_runner": lambda: _turn(agent, runner=other),
@@ -310,7 +310,7 @@ def test_bootstrap_resolve_carries_the_owners_token_for_private_clones(agent, ow
 
     _lend(agent, owner, github)
     # Bearer only, like the box: a browser session is never given values.
-    raw, _ = PersonalToken.create_for_user(user=runner.paired_by, label="runner")
+    raw, _ = PersonalToken.create_for_user(user=runner.owner, label="runner")
     r = Client().get("/api/agents/echo/credentials/resolve", HTTP_AUTHORIZATION=f"Bearer {raw}")
     assert r.status_code == 200, r.content
     assert r.json()["github_token"] == "github_pat_olive"
@@ -332,6 +332,6 @@ def test_bootstrap_resolve_carries_this_instances_mailbox(agent, runner):
 
     agent.email = "echo@dimagi-ai.com"
     agent.save(update_fields=["email"])
-    raw, _ = PersonalToken.create_for_user(user=runner.paired_by, label="runner")
+    raw, _ = PersonalToken.create_for_user(user=runner.owner, label="runner")
     r = Client().get("/api/agents/echo/credentials/resolve", HTTP_AUTHORIZATION=f"Bearer {raw}")
     assert r.json()["mailbox"] == "echo@dimagi-ai.com"

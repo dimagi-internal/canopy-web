@@ -25,8 +25,8 @@ def world(django_user_model):
     user = django_user_model.objects.create_user("jj", "jj@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=user)
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
-    cloud = Runner.objects.create(name="cloud-ec2-1", kind="cloud", capabilities={}, paired_by=user)
-    laptop = Runner.objects.create(name="jj-mbp", kind="emdash", capabilities={}, paired_by=user)
+    cloud = Runner.objects.create(name="cloud-ec2-1", kind="cloud", capabilities={}, owner=user)
+    laptop = Runner.objects.create(name="jj-mbp", kind="emdash", capabilities={}, owner=user)
     return echo, cloud, laptop
 
 

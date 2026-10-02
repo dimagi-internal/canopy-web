@@ -70,7 +70,7 @@ With no `~/.canopy/runner.json`, the installer first runs **`canopy-runner pair`
   `$LOGNAME`); the agents default to the union of what your *other* runners serve
   (it reports its `projects` itself, later). `--workspace` is needed only if you belong
   to several workspaces — it refuses to guess and lists them. A runner's workspace
-  gates who can SEE it; what it may work for follows `paired_by`.
+  gates who can SEE it; what it may work for follows `owner`.
 - **picks free ports**: the first `cdp_port` from 9222 and `hook_port` from 8787 that no
   sibling account's `/Users/*/.canopy/runner.json` claims and nothing is listening on.
 - **writes `~/.canopy/runner.json`** (below), mode **0644** on purpose: the next

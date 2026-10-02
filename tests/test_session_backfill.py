@@ -20,7 +20,7 @@ def _ctx(runner_online=True, has_runner=True):
     r = None
     if has_runner:
         r = Runner.objects.create(
-            name="laptop", workspace=ws, location=Runner.LOCAL, paired_by=user,
+            name="laptop", workspace=ws, location=Runner.LOCAL, owner=user,
             status=Runner.ONLINE if runner_online else Runner.DISCONNECTED,
             last_heartbeat_at=timezone.now() if runner_online else None,
         )
@@ -44,7 +44,7 @@ def test_backfill_requested_when_runner_is_degraded(monkeypatch):
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     s = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_RUNNER, title="t")
     r = Runner.objects.create(
-        name="laptop", workspace=ws, location=Runner.LOCAL, paired_by=user,
+        name="laptop", workspace=ws, location=Runner.LOCAL, owner=user,
         status=Runner.DEGRADED, last_heartbeat_at=timezone.now(),  # fresh => live_status == degraded
     )
     RunnerBinding.objects.create(session=s, runner=r, session_key="echo-1")
@@ -62,7 +62,7 @@ def test_backfill_unavailable_when_runner_heartbeat_is_stale():
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     s = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_RUNNER, title="t")
     r = Runner.objects.create(
-        name="laptop", workspace=ws, location=Runner.LOCAL, paired_by=user,
+        name="laptop", workspace=ws, location=Runner.LOCAL, owner=user,
         status=Runner.DEGRADED, last_heartbeat_at=timezone.now() - dt.timedelta(hours=1),
     )
     RunnerBinding.objects.create(session=s, runner=r, session_key="echo-1")
@@ -173,7 +173,7 @@ def test_runner_backfill_endpoints(monkeypatch):
 def test_session_backfill_rejects_unbound_runner():
     _u, ws, s, _r, c = _ctx()
     # a DIFFERENT runner (not the one bound to the session) tries to ship history
-    other = Runner.objects.create(name="other", workspace=ws, location=Runner.LOCAL, paired_by=_u)
+    other = Runner.objects.create(name="other", workspace=ws, location=Runner.LOCAL, owner=_u)
     resp = c.post(
         f"/api/harness/runners/{other.id}/session-backfill",
         data={"session_id": str(s.id),
@@ -195,7 +195,7 @@ def test_backfill_requested_when_runner_is_paused(monkeypatch):
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     s = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_RUNNER, title="t")
     r = Runner.objects.create(
-        name="laptop", workspace=ws, location=Runner.LOCAL, paired_by=user,
+        name="laptop", workspace=ws, location=Runner.LOCAL, owner=user,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paused=True,
     )
     RunnerBinding.objects.create(session=s, runner=r, session_key="echo-1")

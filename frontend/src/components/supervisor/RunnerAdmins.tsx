@@ -8,14 +8,14 @@ import {
   type RunnerAdmin,
 } from '@/api/harness'
 
-// A box has one grantable role; the pairer is shown, never granted.
+// A box has one grantable role; the owner is shown, never granted.
 const ADMIN_OPTIONS: RoleOption[] = [{ value: 'admin', label: 'Admin' }]
-const PAIRER_OPTIONS: RoleOption[] = [{ value: 'pairer', label: 'Pairer' }]
+const OWNER_OPTIONS: RoleOption[] = [{ value: 'owner', label: 'Owner' }]
 
 // Who may administer this box, and the form to say so.
 //
 // `GET/POST/DELETE /runners/{id}/admins` shipped with the grant itself and had no
-// page, so the only way to add someone was a curl with the pairer's token — which
+// page, so the only way to add someone was a curl with the owner's token — which
 // is exactly the shape of thing that does not happen, and then a box has one
 // human who can fix it. The grant exists because that single point of failure
 // already bit once (2026-09-08, a signed-out cloud runner).
@@ -25,19 +25,19 @@ const PAIRER_OPTIONS: RoleOption[] = [{ value: 'pairer', label: 'Pairer' }]
 //     a 404 from the server, which this renders as "you can't see this", never as
 //     "nobody administers it" — an empty list and a refused read must not look
 //     the same.
-//   * GRANTING and REVOKING stay with the PAIRER (`can_manage`), so a grantee
+//   * GRANTING and REVOKING stay with the OWNER (`can_manage`), so a grantee
 //     cannot mint more grantees. The add row and Remove are simply absent
 //     otherwise. Roles render through the shared PeopleTable, like every other
 //     people surface.
 export function RunnerAdmins({
   runnerId,
   canManage,
-  pairedByEmail,
+  ownerEmail,
 }: {
   runnerId: string
-  /** Is the viewer the pairer — the only tier that may grant. */
+  /** Is the viewer the owner — the only tier that may grant. */
   canManage: boolean
-  pairedByEmail?: string | null
+  ownerEmail?: string | null
 }): JSX.Element {
   const [admins, setAdmins] = useState<RunnerAdmin[] | null>(null)
   const [refused, setRefused] = useState(false)
@@ -66,19 +66,19 @@ export function RunnerAdmins({
     if (alive.current) load()
   }
 
-  // The pairer heads the table as a fixed row: they are why the others exist,
+  // The owner heads the table as a fixed row: they are why the others exist,
   // and the only one who may change the list.
   const rows: PersonRow[] = [
-    ...(pairedByEmail
+    ...(ownerEmail
       ? [{
-          key: 'pairer',
-          testId: 'runner-admin-pairer',
-          name: pairedByEmail,
-          role: 'pairer',
-          roleLabel: 'Pairer',
-          options: PAIRER_OPTIONS,
+          key: 'owner',
+          testId: 'runner-admin-owner',
+          name: ownerEmail,
+          role: 'owner',
+          roleLabel: 'Owner',
+          options: OWNER_OPTIONS,
           editable: false,
-          why: 'paired this runner',
+          why: 'owns this runner',
         } satisfies PersonRow]
       : []),
     ...(admins ?? []).map((a): PersonRow => ({
@@ -108,7 +108,7 @@ export function RunnerAdmins({
           {rows.length > 0 && <PeopleTable rows={rows} actions={canManage} />}
           {admins.length === 0 && (
             <p className="text-[12px] text-muted-foreground" data-testid="runner-admins-empty">
-              Nobody but the pairer. If they lose access to this box, nobody can re-authenticate it.
+              Nobody but the owner. If they lose access to this box, nobody can re-authenticate it.
             </p>
           )}
         </>
@@ -128,7 +128,7 @@ export function RunnerAdmins({
       <p className="text-[11px] text-foreground-subtle">
         An administrator can set this box's credentials, sign it back in, and send work to it — on a
         cloud runner, that is what lets someone move their own queued work here when their laptop is
-        offline. They cannot add or remove administrators; only the pairer can.
+        offline. They cannot add or remove administrators; only the owner can.
       </p>
     </div>
   )

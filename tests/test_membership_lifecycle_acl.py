@@ -41,7 +41,7 @@ def _client(user) -> Client:
 
 def _runner(user, name, ws=WS) -> Runner:
     return Runner.objects.create(
-        name=name, kind=Runner.EMDASH, paired_by=user, status=Runner.ONLINE,
+        name=name, kind=Runner.EMDASH, owner=user, status=Runner.ONLINE,
         workspace_id=ws, last_heartbeat_at=timezone.now(), capabilities={},
     )
 

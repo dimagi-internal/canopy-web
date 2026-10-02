@@ -153,7 +153,7 @@ def test_a_cancelled_turn_never_pushes(session, user):
 
 def test_the_runner_heartbeat_drains_due_pushes(session, user, workspace):
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=user, workspace=workspace,
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=user, workspace=workspace,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     _finish(session, user)

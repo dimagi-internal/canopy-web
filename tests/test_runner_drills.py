@@ -22,7 +22,7 @@ def test_start_drill_endpoint_empty_agents_list_is_422(django_user_model):
     u = django_user_model.objects.create_user(username="o3", password="x")
     client = Client()
     client.force_login(u)
-    r = Runner.objects.create(name="s3", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+    r = Runner.objects.create(name="s3", kind=Runner.EMDASH, capabilities={}, owner=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="echo3", name="echo3", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
@@ -37,7 +37,7 @@ def test_start_drill_endpoint_omitted_agents_drills_all_assigned(django_user_mod
     u = django_user_model.objects.create_user(username="o4", password="x")
     client = Client()
     client.force_login(u)
-    r = Runner.objects.create(name="s4", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+    r = Runner.objects.create(name="s4", kind=Runner.EMDASH, capabilities={}, owner=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a1, a2 = (Agent.objects.create(slug=s, name=s, workspace=a_workspace()) for s in ("echo4", "ada4"))
     for i, a in enumerate((a1, a2)):
@@ -52,7 +52,7 @@ def test_start_drill_endpoint_omitted_agents_drills_all_assigned(django_user_mod
 
 def test_start_drill_fans_out_pinned_pending_turns(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
-    r = Runner.objects.create(name="standby", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+    r = Runner.objects.create(name="standby", kind=Runner.EMDASH, capabilities={}, owner=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a1, a2 = (Agent.objects.create(slug=s, name=s, workspace=a_workspace()) for s in ("echo", "ada"))
     for i, a in enumerate((a1, a2)):
@@ -67,7 +67,7 @@ def test_start_drill_fans_out_pinned_pending_turns(django_user_model):
 
 def test_report_drill_resolves_outcome(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
-    r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, paired_by=u)
+    r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, owner=u)
     a = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     d = RunnerDrill.objects.create(runner=r, agent=a)
     services.report_drill(d, outcome="pass", summary="all checks green")
@@ -77,7 +77,7 @@ def test_report_drill_resolves_outcome(django_user_model):
 
 def test_failed_drill_turn_marks_drill_fail(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
-    r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+    r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, owner=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
@@ -97,7 +97,7 @@ def test_lost_drill_turn_marks_drill_fail(django_user_model):
     # fires on its own. Assert sweep_expired_leases mirrors that hook so a
     # drill whose runner disappears mid-turn doesn't strand as pending forever.
     u = django_user_model.objects.create_user(username="o5", password="x")
-    r = Runner.objects.create(name="s5", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+    r = Runner.objects.create(name="s5", kind=Runner.EMDASH, capabilities={}, owner=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="echo5", name="Echo5", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
@@ -119,7 +119,7 @@ def test_lost_drill_turn_marks_drill_fail(django_user_model):
 
 def test_redrill_resets_to_pending(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
-    r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+    r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, owner=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
@@ -137,7 +137,7 @@ def test_list_runners_includes_drill_rollup(django_user_model):
     u = django_user_model.objects.create_user(username="o", password="x")
     client = Client()
     client.force_login(u)
-    r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+    r = Runner.objects.create(name="s", kind=Runner.EMDASH, capabilities={}, owner=u,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a1, a2 = (Agent.objects.create(slug=s, name=s, workspace=a_workspace()) for s in ("echo", "ada"))
     for i, a in enumerate((a1, a2)):
@@ -162,7 +162,7 @@ def test_list_runners_drill_rollup_none_when_never_drilled(django_user_model):
     u = django_user_model.objects.create_user(username="o2", password="x")
     client = Client()
     client.force_login(u)
-    Runner.objects.create(name="fresh", kind=Runner.EMDASH, capabilities={}, paired_by=u,
+    Runner.objects.create(name="fresh", kind=Runner.EMDASH, capabilities={}, owner=u,
                           last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     resp = client.get("/api/harness/runners/")
     assert resp.status_code == 200
@@ -179,7 +179,7 @@ def test_list_runners_drill_rollup_none_when_never_drilled(django_user_model):
 
 def _drilled(django_user_model, *, agent_user=None):
     owner = django_user_model.objects.create_user(username="owner", password="x")
-    r = Runner.objects.create(name="box", kind=Runner.CLOUD, capabilities={}, paired_by=owner,
+    r = Runner.objects.create(name="box", kind=Runner.CLOUD, capabilities={}, owner=owner,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="hal", name="Hal", workspace=a_workspace(), user=agent_user)
     RunnerAssignment.objects.create(agent=a, runner=r, rank=0)
@@ -269,7 +269,7 @@ def test_the_signed_report_link_lets_any_login_report_that_run_and_only_that_run
 
     owner = django_user_model.objects.create_user(username="own", email="own@dimagi.com", password="x")
     stranger = django_user_model.objects.create_user(username="echo-login", email="echo@x.org", password="x")
-    r = Runner.objects.create(name="box", kind=Runner.CLOUD, capabilities={}, paired_by=owner,
+    r = Runner.objects.create(name="box", kind=Runner.CLOUD, capabilities={}, owner=owner,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     a = Agent.objects.create(slug="echo7", name="Echo", workspace=a_workspace())
     [drill] = services.start_drill(r, [a])
@@ -279,7 +279,7 @@ def test_the_signed_report_link_lets_any_login_report_that_run_and_only_that_run
     c = Client()
     c.force_login(stranger)
     body = {"outcome": "pass", "summary": "ok"}
-    # Without the link, a login that is neither the agent's nor the pairer's: 404.
+    # Without the link, a login that is neither the agent's nor the owner's: 404.
     assert c.post(f"/api/harness/{path}", body, content_type="application/json").status_code == 404
     # A tampered link: still 404.
     assert c.post(f"/api/harness/{path}?t=x{query[2:]}", body,

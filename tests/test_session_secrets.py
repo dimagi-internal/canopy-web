@@ -44,7 +44,7 @@ def world():
     bot = User.objects.create_user("hal", "hal@dimagi-ai.com", "pw")
     agent = Agent.objects.create(slug="hal", name="Hal", workspace=ws, user=bot)
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=owner, workspace=ws,
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=owner, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
 

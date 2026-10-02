@@ -37,7 +37,7 @@ def _binding(user, ws, *, agent_status, stale=False, interacted=None, key="echo-
     session = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="disc")
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
-                                   paired_by=user)
+                                   owner=user)
     return session, RunnerBinding.objects.create(
         session=session, runner=runner, session_key=key,
         agent_status=agent_status, agent_status_stale=stale,

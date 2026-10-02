@@ -44,7 +44,7 @@ def workspace(owner):
 @pytest.fixture()
 def runner(owner, workspace):
     return Runner.objects.create(
-        name="jj-mbp-cdp", kind=Runner.EMDASH, paired_by=owner, workspace=workspace,
+        name="jj-mbp-cdp", kind=Runner.EMDASH, owner=owner, workspace=workspace,
         capabilities={"projects": ["canopy-web"], "agents": ["echo"], "sessions": True},
     )
 

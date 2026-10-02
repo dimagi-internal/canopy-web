@@ -124,7 +124,7 @@ export function parkedSummary(parked: readonly SessionRunnerLiveness[]): string 
  * runner (resume) needs the id — so the name is matched against the fleet list,
  * the same join `isBoundRunnerOffline` falls back to. Null when the fleet hasn't
  * loaded, when the name is absent, or when the runner isn't in the caller's
- * fleet at all (retired, or paired by someone else) — every one of which means
+ * fleet at all (retired, or owned by someone else) — every one of which means
  * "you cannot act on it from here", which is what the caller does with this.
  */
 export function findBoundRunner<T extends { name: string }>(

@@ -48,7 +48,7 @@ def _ctx(host="jj@air"):
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     runner = Runner.objects.create(
         name="jj-air", workspace=ws, location=Runner.LOCAL, status=Runner.ONLINE,
-        last_heartbeat_at=timezone.now(), paired_by=user, host=host,
+        last_heartbeat_at=timezone.now(), owner=user, host=host,
         capabilities={"sessions": True},
     )
     return user, ws, runner
@@ -215,7 +215,7 @@ def test_stickiness_survives_the_liveness_change():
 
     other = Runner.objects.create(
         name="cloud", workspace=ws, location=Runner.CLOUD, status=Runner.ONLINE,
-        last_heartbeat_at=timezone.now(), paired_by=user, ready=True,
+        last_heartbeat_at=timezone.now(), owner=user, ready=True,
         capabilities={"sessions": True},
     )
     assert services.claim_next_turn(other) is None, "no silent failover, even when stale"

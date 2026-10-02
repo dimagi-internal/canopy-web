@@ -31,7 +31,7 @@ def _setup():
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=user)
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=user,
+        name="jj-mbp", kind=Runner.EMDASH, owner=user,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         capabilities={"agents": ["echo"]},
     )
@@ -270,7 +270,7 @@ async def test_send_during_running_turn_only_queues():
         u = User.objects.create_user("jj2", "jj2@dimagi.com", "pw")
         w = Workspace.objects.create(slug="c2", display_name="C2", created_by=u)
         WorkspaceMembership.objects.create(user=u, workspace=w, role=WorkspaceMembership.OWNER)
-        r = Runner.objects.create(name="cloud-s", kind=Runner.CLOUD, paired_by=u,
+        r = Runner.objects.create(name="cloud-s", kind=Runner.CLOUD, owner=u,
                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                   capabilities={"sessions": True})
         s = Session.objects.create(workspace=w, created_by=u)

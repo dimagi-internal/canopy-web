@@ -5,7 +5,7 @@ import { buildFleetMap, curve, hiddenBy, initials, initiallyCollapsed, shortRunn
 
 const runner = (id: string, workspace: string, paired: string, status = 'online', in_tree = true) => ({
   id, name: `${id}-mbp-cdp`, kind: 'emdash', location: 'local', status, ready: true, ready_note: '',
-  paused: false, host: '', last_heartbeat_at: null, workspace, in_tree, paired_by_email: paired,
+  paused: false, host: '', last_heartbeat_at: null, workspace, in_tree, owner_email: paired,
   flags: [], agent_count: 1,
 })
 const route = (runner_id: string, rank = 0) => ({

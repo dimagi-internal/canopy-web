@@ -25,7 +25,7 @@ def test_list_unions_web_and_runner_sessions():
     # a runner-discovered session: no created_by, but it has a binding
     disc = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="disc")
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
-                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=user)
+                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), owner=user)
     RunnerBinding.objects.create(session=disc, runner=runner, session_key="echo-1",
                                  last_interacted_at=timezone.now(), live_seen_at=timezone.now())
     body = c.get("/api/canopy-sessions/").json()
@@ -37,7 +37,7 @@ def test_list_row_carries_liveness():
     user, ws, c = _ctx()
     disc = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="disc")
     runner = Runner.objects.create(name="jj-air", workspace=ws, location=Runner.LOCAL,
-                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=user)
+                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), owner=user)
     RunnerBinding.objects.create(session=disc, runner=runner, session_key="echo-1",
                                  last_interacted_at=timezone.now(), live_seen_at=timezone.now())
     row = next(r for r in c.get("/api/canopy-sessions/").json() if r["id"] == str(disc.id))
@@ -53,7 +53,7 @@ def test_idle_when_runner_offline_or_stale():
     disc = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="disc")
     # runner never heartbeated -> live_status != ONLINE
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
-                                   status=Runner.DISCONNECTED, paired_by=user)
+                                   status=Runner.DISCONNECTED, owner=user)
     RunnerBinding.objects.create(session=disc, runner=runner, session_key="echo-1",
                                  last_interacted_at=timezone.now(), live_seen_at=timezone.now())
     row = next(r for r in c.get("/api/canopy-sessions/").json() if r["id"] == str(disc.id))
@@ -76,7 +76,7 @@ def test_running_sorts_first():
     idle = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="idle")
     live = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="live")
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
-                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=user)
+                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), owner=user)
     RunnerBinding.objects.create(session=live, runner=runner, session_key="echo-1",
                                  last_interacted_at=timezone.now(), live_seen_at=timezone.now())
     body = c.get("/api/canopy-sessions/").json()
@@ -96,7 +96,7 @@ def test_dedup_web_session_with_live_binding_appears_once():
         workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="mine-and-live",
     )
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
-                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=user)
+                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), owner=user)
     RunnerBinding.objects.create(session=mine_and_live, runner=runner, session_key="echo-1",
                                  last_interacted_at=timezone.now(), live_seen_at=timezone.now())
     body = c.get("/api/canopy-sessions/").json()
@@ -129,7 +129,7 @@ def test_list_does_not_leak_other_users_or_workspaces():
     )
     other_runner = Runner.objects.create(name="other-laptop", workspace=other_ws, location=Runner.LOCAL,
                                          status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
-                                         paired_by=stranger)
+                                         owner=stranger)
     RunnerBinding.objects.create(session=stranger_other_ws, runner=other_runner, session_key="echo-2",
                                  last_interacted_at=timezone.now(), live_seen_at=timezone.now())
 
@@ -147,7 +147,7 @@ def test_running_false_when_runner_online_but_interaction_stale():
     user, ws, c = _ctx()
     disc = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="disc")
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
-                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=user)
+                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now(), owner=user)
     stale_ts = timezone.now() - dt.timedelta(seconds=150)  # RUNNING_WINDOW (120s) + 30
     RunnerBinding.objects.create(session=disc, runner=runner, session_key="echo-1",
                                  last_interacted_at=stale_ts, live_seen_at=timezone.now())

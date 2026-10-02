@@ -29,7 +29,7 @@ def _ctx():
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     runner = Runner.objects.create(
         name="jj-air", workspace=ws, location=Runner.LOCAL, status=Runner.ONLINE,
-        last_heartbeat_at=timezone.now(), paired_by=user, host="jj@air",
+        last_heartbeat_at=timezone.now(), owner=user, host="jj@air",
     )
     return user, ws, runner
 
@@ -62,7 +62,7 @@ def test_a_runner_cannot_archive_another_runners_session():
     user, ws, runner_a = _ctx()
     runner_b = Runner.objects.create(
         name="jj-mini", workspace=ws, location=Runner.LOCAL, status=Runner.ONLINE,
-        last_heartbeat_at=timezone.now(), paired_by=user,
+        last_heartbeat_at=timezone.now(), owner=user,
     )
     services.replace_reported_sessions(runner_a, ws, [_Reported("ddd")])
     binding_a = RunnerBinding.objects.get(runner=runner_a, session_key="ddd")

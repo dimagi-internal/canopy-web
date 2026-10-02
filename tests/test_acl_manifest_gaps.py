@@ -62,12 +62,12 @@ def test_a_viewer_cannot_mark_a_command_applied(gap):
 
 
 def test_a_viewers_box_serves_no_workspace(gap):
-    box = Runner.objects.create(name="viewer-box", kind=Runner.EMDASH, paired_by=gap["viewer"],
+    box = Runner.objects.create(name="viewer-box", kind=Runner.EMDASH, owner=gap["viewer"],
                                 workspace=gap["ws"], status=Runner.ONLINE,
                                 last_heartbeat_at=timezone.now(), capabilities={"sessions": True})
     assert hsvc.runner_tenant_slugs(box) == set()
     editor_box = Runner.objects.create(name="editor-box", kind=Runner.EMDASH,
-                                       paired_by=gap["editor"], workspace=gap["ws"])
+                                       owner=gap["editor"], workspace=gap["ws"])
     assert hsvc.runner_tenant_slugs(editor_box) == {WS}
 
 

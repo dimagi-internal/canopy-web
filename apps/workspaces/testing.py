@@ -57,11 +57,11 @@ def a_member(workspace: Workspace | None = None, *, email: str = "fixture-owner@
              role: str = WorkspaceMembership.OWNER):
     """A user who is a MEMBER of `workspace` (default: the default workspace).
 
-    This is what a runner's `paired_by` needs to be: claim routing and schedule
+    This is what a runner's `owner` needs to be: claim routing and schedule
     sync both derive a runner's tenant from the workspaces of the human who
-    paired it (`services.runner_tenant_slugs`), so a runner paired by a
+    paired it (`services.runner_tenant_slugs`), so a runner owned by a
     non-member — or by nobody — can claim nothing. Tests used to sidestep that
-    by leaving `paired_by` NULL and the agent unhomed, which only worked because
+    by leaving `owner` NULL and the agent unhomed, which only worked because
     the tenancy predicate had a NULL-means-allow leg on both sides.
     """
     ws = workspace if workspace is not None else a_workspace()

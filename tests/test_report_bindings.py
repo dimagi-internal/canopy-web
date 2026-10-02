@@ -149,7 +149,7 @@ def test_list_visible_sessions_maps_to_wire_shape():
     ensure_member(ws, jj, WorkspaceMembership.OWNER)
     runner = Runner.objects.create(
         name="laptop", workspace=ws, location=Runner.LOCAL,
-        status=Runner.ONLINE, paired_by=jj, last_heartbeat_at=timezone.now(),
+        status=Runner.ONLINE, owner=jj, last_heartbeat_at=timezone.now(),
     )
     replace_reported_sessions(runner, ws, [_reported("feat-x", [{"role": "assistant", "text": "hi"}])])
     rows = list_visible_sessions(jj)

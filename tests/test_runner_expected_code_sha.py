@@ -33,7 +33,7 @@ def shas(settings):
 def _runner(kind: str) -> Runner:
     user = User.objects.create_user(f"u-{kind}", f"{kind}@dimagi.com", "pw")
     return Runner.objects.create(
-        name=f"box-{kind}", kind=kind, paired_by=user,
+        name=f"box-{kind}", kind=kind, owner=user,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
 

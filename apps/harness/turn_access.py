@@ -54,7 +54,7 @@ def can_read_turn_content(user, turn, _memo: dict | None = None) -> bool:
     if turn.claimed_by_id is not None:
         key = ("box", turn.claimed_by_id)
         if key not in memo:
-            memo[key] = turn.claimed_by.paired_by_id == user.pk
+            memo[key] = turn.claimed_by.owner_id == user.pk
         if memo[key]:
             return True
     ws = _workspace_of(turn)

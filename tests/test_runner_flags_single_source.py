@@ -52,7 +52,7 @@ def test_canopy_keeps_no_copy_of_the_list():
 
 
 def test_the_flags_api_and_known_flags_follow_the_contract(extra_flag, owner, ws):
-    runner = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, paired_by=owner,
+    runner = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=owner,
                                    workspace=ws)
     c = Client()
     c.force_login(owner)

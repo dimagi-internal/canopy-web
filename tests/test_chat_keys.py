@@ -69,7 +69,7 @@ def _share(world, session, name="GH_TOKEN", value=TOKEN):
 
 def test_claiming_a_chats_turn_hands_the_runner_that_chats_key(world):
     session = world["chat"]()
-    runner = Runner.objects.create(name="cloud", kind=Runner.CLOUD, paired_by=world["owner"],
+    runner = Runner.objects.create(name="cloud", kind=Runner.CLOUD, owner=world["owner"],
                                    workspace=world["ws"], status=Runner.ONLINE,
                                    last_heartbeat_at=timezone.now(),
                                    capabilities={"sessions": True})

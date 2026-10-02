@@ -54,7 +54,7 @@ async def test_live_runner_delta():
     await comm.receive_json_from(timeout=2)  # drain the snapshot
 
     def _make_runner():
-        runner = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, paired_by=user)
+        runner = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=user)
         runner.status = Runner.ONLINE
         runner.save(update_fields=["status"])
         return runner

@@ -1,6 +1,6 @@
 """The b4f5ead regression: capabilities is a routing hint, NOT a security boundary.
 
-A runner paired by an outsider, declaring a victim agent's slug, must see zero
+A runner owned by an outsider, declaring a victim agent's slug, must see zero
 of that agent's schedules and must not be able to fire them.
 """
 from __future__ import annotations
@@ -80,7 +80,7 @@ def _pair_and_online(client) -> str:
     identically without it. It is kept for realism (a real daemon heartbeats
     before it syncs) and to stay honest if an ONLINE gate is ever added.
 
-    No workspace is set on the Runner — tenancy derives from paired_by, which the
+    No workspace is set on the Runner — tenancy derives from owner, which the
     server assigns from request.user at pairing.
     """
     resp = client.post(
@@ -124,7 +124,7 @@ def test_cross_tenant_fire_404s(attacker_client, attacker_ws, victim_schedule):
 
 @pytest.fixture()
 def victim_runner(victim_ws):
-    """A runner legitimately paired by a member of the victim's tenant."""
+    """A runner legitimately owned by a member of the victim's tenant."""
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
     wsvc.ensure_member(victim_ws, user, WorkspaceMembership.OWNER)
     client = Client()
@@ -133,8 +133,8 @@ def victim_runner(victim_ws):
 
 
 def test_foreign_runner_id_sync_404s(attacker_client, attacker_ws, victim_schedule, victim_runner):
-    """The exploit: the attacker need not spoof paired_by — she CHOOSES whose
-    paired_by is read, by passing the victim's runner_id. A runner may only be
+    """The exploit: the attacker need not spoof owner — she CHOOSES whose
+    owner is read, by passing the victim's runner_id. A runner may only be
     operated by the user who paired it.
     """
     resp = attacker_client.get(f"/api/harness/schedules/?runner_id={victim_runner}")
@@ -155,10 +155,10 @@ def test_foreign_runner_id_fire_404s(attacker_client, attacker_ws, victim_schedu
 
 
 def test_orphaned_runner_fails_closed(attacker_client, attacker_ws, victim_schedule, victim_runner):
-    """Runner.paired_by is on_delete=SET_NULL, so it can be NULL on an orphaned
+    """Runner.owner is on_delete=SET_NULL, so it can be NULL on an orphaned
     runner. NULL must FAIL CLOSED — never silently match the caller.
     """
-    Runner.objects.filter(pk=victim_runner).update(paired_by=None)
+    Runner.objects.filter(pk=victim_runner).update(owner=None)
 
     resp = attacker_client.get(f"/api/harness/schedules/?runner_id={victim_runner}")
 

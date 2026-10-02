@@ -33,7 +33,7 @@ def canopy(owner):
 @pytest.fixture
 def runner(owner, canopy):
     return Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=owner,
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=owner,
         workspace=canopy, status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         capabilities={"projects": ["canopy-web"]},
     )
@@ -68,7 +68,7 @@ def test_member_records_and_resolves_a_project_session(owner_client, runner, can
 
 def test_a_caller_with_no_workspace_cannot_record_a_project_session(owner):
     """The gate: no resolvable tenant → 404, and no link is written. A runner
-    with a null workspace + null pairer is the legacy-ungated path _runner_or_404
+    with a null workspace + null owner is the legacy-ungated path _runner_or_404
     still allows, so the block must come from _project_workspace_or_404."""
     loner = User.objects.create_user("loner", "loner@example.org", "pw")
     runner = Runner.objects.create(
@@ -101,7 +101,7 @@ def test_another_tenant_cannot_resolve_a_project_thread_it_guesses(owner_client,
     m_ws = Workspace.objects.create(slug="mallory", display_name="M", created_by=mallory)
     WorkspaceMembership.objects.create(user=mallory, workspace=m_ws, role=WorkspaceMembership.OWNER)
     m_runner = Runner.objects.create(
-        name="m-box", kind=Runner.EMDASH, host="mh", paired_by=mallory, workspace=m_ws,
+        name="m-box", kind=Runner.EMDASH, host="mh", owner=mallory, workspace=m_ws,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     mc = Client()

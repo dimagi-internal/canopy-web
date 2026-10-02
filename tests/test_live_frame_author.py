@@ -29,7 +29,7 @@ def _ctx():
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
-                                   status=Runner.ONLINE, paired_by=user)
+                                   status=Runner.ONLINE, owner=user)
     c = Client()
     c.force_login(user)
     return user, ws, runner, c

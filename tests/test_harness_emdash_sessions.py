@@ -22,9 +22,9 @@ def _ws(slug, owner):
     return ws
 
 
-def _runner(pairer, ws):
+def _runner(runner_owner, ws):
     return Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=pairer, workspace=ws,
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=runner_owner, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
 
@@ -143,7 +143,7 @@ def test_list_is_tenant_scoped_and_hides_offline_runners():
 
     # An offline runner's session is hidden (not deleted).
     stale = Runner.objects.create(
-        name="old-mbp", kind=Runner.EMDASH, host="old", paired_by=jj, workspace=ws,
+        name="old-mbp", kind=Runner.EMDASH, host="old", owner=jj, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now() - timedelta(hours=2),
     )
     replace_reported_sessions(stale, ws, [_reported("ghost")])

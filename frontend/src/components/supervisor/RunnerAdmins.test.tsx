@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RunnerAdmins } from './RunnerAdmins'
 
 // The grant existed with no page, so adding an administrator meant a curl with
-// the pairer's token. What this panel has to get right is the two tiers: an
-// administrator may READ the list, only the pairer may change it — and a refused
+// the owner's token. What this panel has to get right is the two tiers: an
+// administrator may READ the list, only the owner may change it — and a refused
 // read must not render as "nobody administers this box".
 
 const list = vi.fn()
@@ -26,10 +26,10 @@ afterEach(() => {
 })
 
 describe('RunnerAdmins', () => {
-  it('lets the pairer grant, and shows who holds a grant', async () => {
+  it('lets the owner grant, and shows who holds a grant', async () => {
     list.mockResolvedValue([ROW])
     grant.mockResolvedValue(ROW)
-    render(<RunnerAdmins runnerId="r1" canManage pairedByEmail="jjackson@dimagi.com" />)
+    render(<RunnerAdmins runnerId="r1" canManage ownerEmail="jjackson@dimagi.com" />)
     expect(await screen.findByText('smazumdar@dimagi.com')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('Email'),
@@ -40,13 +40,13 @@ describe('RunnerAdmins', () => {
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
   })
 
-  it('shows the pairer as a fixed role row and lets the pairer remove an admin', async () => {
+  it('shows the owner as a fixed role row and lets the owner remove an admin', async () => {
     list.mockResolvedValue([ROW])
     revoke.mockResolvedValue(undefined)
-    render(<RunnerAdmins runnerId="r1" canManage pairedByEmail="jjackson@dimagi.com" />)
-    const pairer = await screen.findByTestId('runner-admin-pairer')
-    expect(pairer.textContent).toContain('Pairer')
-    expect(pairer.textContent).toContain('paired this runner')
+    render(<RunnerAdmins runnerId="r1" canManage ownerEmail="jjackson@dimagi.com" />)
+    const owner = await screen.findByTestId('runner-admin-owner')
+    expect(owner.textContent).toContain('Owner')
+    expect(owner.textContent).toContain('owns this runner')
     expect(screen.getByTestId('runner-admin-4').textContent).toContain('Admin')
     expect(screen.getByTestId('runner-admin-4').textContent).toContain('granted by jjackson@dimagi.com')
     // a single grantable role reads as text, never a one-option dropdown

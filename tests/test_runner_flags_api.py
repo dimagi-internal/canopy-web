@@ -2,7 +2,7 @@
 
 canopy cannot check a declaration, so the whole value is in WHO may make one:
 a person, from the web app — never the box itself, which authenticates with its
-pairer's PAT.
+owner's PAT.
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def workspace(owner, admin, stranger):
 
 @pytest.fixture()
 def runner(owner, admin, workspace):
-    r = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, paired_by=owner, workspace=workspace)
+    r = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=owner, workspace=workspace)
     RunnerAdmin.objects.create(runner=r, user=admin, granted_by=owner)
     return r
 
@@ -85,7 +85,7 @@ def _put(c, runner, flags):
                  content_type="application/json")
 
 
-def test_the_pairer_declares_zdr(owner_client, runner):
+def test_the_runner_owner_declares_zdr(owner_client, runner):
     r = _put(owner_client, runner, ["zdr"])
     assert r.status_code == 200 and r.json()["flags"] == ["zdr"]
     assert RunnerFlag.objects.get(runner=runner).declared_by.email == "jj@dimagi.com"
@@ -153,7 +153,7 @@ def test_list_runners_includes_flags(owner_client, runner):
 
 def test_the_reply_says_what_the_caller_may_do_with_the_runner(owner_client, admin_client, runner):
     """RunnerOut's defaults are True, so an unstamped reply showed an admin who
-    is not the pairer the drill/pause controls that then 404."""
+    is not the owner the drill/pause controls that then 404."""
     body = _put(admin_client, runner, ["zdr"]).json()
     assert body["can_manage"] is False and body["can_administer"] is True
     body = _put(owner_client, runner, ["zdr"]).json()

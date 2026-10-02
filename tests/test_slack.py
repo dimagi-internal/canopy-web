@@ -252,7 +252,7 @@ def test_a_routed_runner_without_sessions_is_named_not_reported_as_no_runner(sla
     identity and routes (2026-10-02); the line must name the box and the cause."""
     from apps.harness.models import Runner, RunnerAssignment
 
-    box = Runner.objects.create(name="new-laptop", kind=Runner.EMDASH, paired_by=alice,
+    box = Runner.objects.create(name="new-laptop", kind=Runner.EMDASH, owner=alice,
                                 workspace=hal.workspace, status=Runner.ONLINE,
                                 capabilities={"agents": ["hal"]})
     RunnerAssignment.objects.create(agent=hal, runner=box, rank=0)
@@ -513,7 +513,7 @@ def test_a_slash_command_line_keeps_the_ask_on_every_later_edit(slack, linked, h
     command("hal draft the update")
     turn = Turn.objects.get()
     turn.claimed_by = _Runner.objects.create(name="jj-mbp", kind=_Runner.EMDASH, host="jj-mac",
-                                             paired_by=alice, workspace=hal.workspace,
+                                             owner=alice, workspace=hal.workspace,
                                              status=_Runner.ONLINE, last_heartbeat_at=_tz.now())
     turn.status = Turn.RUNNING
     turn.save(update_fields=["status", "claimed_by"])
@@ -857,7 +857,7 @@ def bound(slack, linked, hal, alice):
     """A Slack thread whose session a runner is driving (task `c-hal-slack`)."""
     mention("hal run it")
     session = Session.objects.get()
-    runner = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=alice,
+    runner = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=alice,
                                    workspace=hal.workspace, status=Runner.ONLINE,
                                    last_heartbeat_at=timezone.now())
     RunnerBinding.objects.create(session=session, runner=runner, session_key="c-hal-slack",
@@ -866,9 +866,9 @@ def bound(slack, linked, hal, alice):
     return session, runner, alice
 
 
-def _report(runner, pairer, question, capture, observed_at=1.0):
+def _report(runner, runner_owner, question, capture, observed_at=1.0):
     c = Client()
-    c.force_login(pairer)
+    c.force_login(runner_owner)
     task = {"emdash_task": "c-hal-slack", "project": "hal"}
     if question:
         task["question"] = {**question, "observed_at": observed_at}
@@ -878,10 +878,10 @@ def _report(runner, pairer, question, capture, observed_at=1.0):
 
 
 def test_the_question_is_posted_into_the_thread_once(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
     # Re-reported every ~10s, re-stamped by some producers: still ONE post.
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks, observed_at=2.0)
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks, observed_at=2.0)
     (post,) = slack.said("chat.postMessage")
     assert post["thread_ts"] == "1700000000.000100"
     assert "waiting on you" in post["text"] and "How should the run proceed?" in post["text"]
@@ -889,16 +889,16 @@ def test_the_question_is_posted_into_the_thread_once(bound, slack, django_captur
 
 
 def test_the_same_question_asked_again_later_is_posted_again(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
-    _report(runner, pairer, None, django_capture_on_commit_callbacks)          # answered at the laptop
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks, observed_at=9.0)
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, None, django_capture_on_commit_callbacks)          # answered at the laptop
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks, observed_at=9.0)
     assert len(slack.said("chat.postMessage")) == 2
 
 
 def test_a_number_in_the_thread_answers_it(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
     thread_reply("2", ts="1700000200.000100")
     binding = RunnerBinding.objects.get(session=session)
     assert binding.pending_answer["option"] == 2 and binding.pending_answer["selections"] == [[2]]
@@ -907,15 +907,15 @@ def test_a_number_in_the_thread_answers_it(bound, slack, django_capture_on_commi
 
 
 def test_cancel_dismisses_it(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
     thread_reply("cancel", ts="1700000200.000100")
     assert RunnerBinding.objects.get(session=session).pending_answer["option"] is None
 
 
 def test_anything_else_while_it_waits_is_not_sent(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
     for reply in ("what do you recommend?", "3", "1,2"):
         thread_reply(reply, ts=f"17000002{len(reply):02d}.000100")
     assert Turn.objects.count() == 1 and RunnerBinding.objects.get(session=session).pending_answer is None
@@ -923,14 +923,14 @@ def test_anything_else_while_it_waits_is_not_sent(bound, slack, django_capture_o
 
 
 def test_multi_select_and_several_questions(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     two = {**MENU, "questions": [
         {"index": 0, "question": "Colours?", "header": "", "multi_select": True,
          "options": [{"number": 1, "label": "Red"}, {"number": 2, "label": "Blue"}, {"number": 3, "label": "Green"}]},
         {"index": 1, "question": "Ship?", "header": "", "multi_select": False,
          "options": [{"number": 1, "label": "Yes"}, {"number": 2, "label": "No"}]},
     ]}
-    _report(runner, pairer, two, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, two, django_capture_on_commit_callbacks)
     assert "one answer per question" in slack.said("chat.postMessage")[0]["text"]
     thread_reply("1, 3; 2", ts="1700000200.000100")
     assert RunnerBinding.objects.get(session=session).pending_answer["selections"] == [[1, 3], [2]]
@@ -938,19 +938,19 @@ def test_multi_select_and_several_questions(bound, slack, django_capture_on_comm
 
 def test_a_question_canopy_cannot_read_is_shown_but_does_not_capture_replies(
         bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     marker = {"question": "Claude needs your permission to use Bash", "title": "Waiting on you",
               "body": "", "selected": None, "options": [], "source": "notification"}
-    _report(runner, pairer, marker, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, marker, django_capture_on_commit_callbacks)
     assert "can't read the options" in slack.said("chat.postMessage")[0]["text"]
     thread_reply("go ahead", ts="1700000200.000100")
     assert Turn.objects.count() == 2                 # an ordinary message, as on canopy-web
 
 
 def test_a_refused_answer_comes_back_to_the_thread(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
-    _report(runner, pairer, {**MENU, "answer_error": "wrong_pane",
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, {**MENU, "answer_error": "wrong_pane",
                              "answer_note": "The terminal shown was not the Claude pane."},
             django_capture_on_commit_callbacks)
     assert "didn't land: The terminal shown" in slack.said("chat.postMessage")[-1]["text"]
@@ -986,8 +986,8 @@ def _buttons(post):
 
 
 def test_the_question_comes_with_a_button_per_option(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
     (post,) = slack.said("chat.postMessage")
     buttons = _buttons(post)
     assert set(buttons) == {"menu_pick_1", "menu_pick_2", "menu_dismiss"}
@@ -996,8 +996,8 @@ def test_the_question_comes_with_a_button_per_option(bound, slack, django_captur
 
 
 def test_a_click_answers_it_and_the_buttons_go_away(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
     value = _buttons(slack.said("chat.postMessage")[0])["menu_pick_2"]["value"]
     assert click("menu_pick_2", value).status_code == 200
     assert RunnerBinding.objects.get(session=session).pending_answer["selections"] == [[2]]
@@ -1006,45 +1006,45 @@ def test_a_click_answers_it_and_the_buttons_go_away(bound, slack, django_capture
     assert f"Answered by <@{ALICE}>: Stop the run here" in update["text"]
     assert not [b for b in update["blocks"] if b["type"] == "actions"]
     # When the dialog then clears, that "Answered by" is not overwritten.
-    _report(runner, pairer, None, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, None, django_capture_on_commit_callbacks)
     assert len(slack.said("chat.update")) == 1
 
 
 def test_a_question_answered_elsewhere_loses_its_buttons(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
-    _report(runner, pairer, None, django_capture_on_commit_callbacks)      # answered at the laptop
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, None, django_capture_on_commit_callbacks)      # answered at the laptop
     (update,) = slack.said("chat.update")
     assert "Answered." in update["text"] and not [b for b in update["blocks"] if b["type"] == "actions"]
 
 
 def test_a_click_on_a_question_that_moved_on_answers_nothing(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
     old = _buttons(slack.said("chat.postMessage")[0])["menu_pick_1"]["value"]
-    _report(runner, pairer, {**MENU, "question": "A different question now?"}, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, {**MENU, "question": "A different question now?"}, django_capture_on_commit_callbacks)
     click("menu_pick_1", old)
     assert RunnerBinding.objects.get(session=session).pending_answer is None
     assert "no longer open" in slack.said("chat.postEphemeral")[-1]["text"]
 
 
 def test_a_click_naming_another_channels_session_answers_nothing(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
     value = _buttons(slack.said("chat.postMessage")[0])["menu_pick_1"]["value"]
     click("menu_pick_1", value, channel="C_OTHER")
     assert RunnerBinding.objects.get(session=session).pending_answer is None
 
 
 def test_pick_any_and_several_questions_submit_their_state(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     two = {**MENU, "questions": [
         {"index": 0, "question": "Colours?", "header": "", "multi_select": True,
          "options": [{"number": 1, "label": "Red"}, {"number": 2, "label": "Blue"}, {"number": 3, "label": "Green"}]},
         {"index": 1, "question": "Ship?", "header": "", "multi_select": False,
          "options": [{"number": 1, "label": "Yes"}, {"number": 2, "label": "No"}]},
     ]}
-    _report(runner, pairer, two, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, two, django_capture_on_commit_callbacks)
     post = slack.said("chat.postMessage")[0]
     kinds = {e["action_id"]: e["type"] for b in post["blocks"] if b["type"] == "actions" for e in b["elements"]}
     assert kinds == {"q0": "checkboxes", "q1": "radio_buttons", "menu_submit": "button", "menu_dismiss": "button"}
@@ -1063,14 +1063,14 @@ def test_pick_any_and_several_questions_submit_their_state(bound, slack, django_
 
 
 def test_submit_with_a_question_unanswered_is_refused(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     two = {**MENU, "questions": [
         {"index": 0, "question": "Ship?", "header": "", "multi_select": False,
          "options": [{"number": 1, "label": "Yes"}, {"number": 2, "label": "No"}]},
         {"index": 1, "question": "When?", "header": "", "multi_select": False,
          "options": [{"number": 1, "label": "Now"}, {"number": 2, "label": "Later"}]},
     ]}
-    _report(runner, pairer, two, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, two, django_capture_on_commit_callbacks)
     value = _buttons(slack.said("chat.postMessage")[0])["menu_submit"]["value"]
     click("menu_submit", value, state={"values": {"menu_q0": {"q0": {"selected_option": {"value": "1"}}}}})
     assert RunnerBinding.objects.get(session=session).pending_answer is None
@@ -1078,8 +1078,8 @@ def test_submit_with_a_question_unanswered_is_refused(bound, slack, django_captu
 
 
 def test_dismiss_button(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = bound
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
     click("menu_dismiss", _buttons(slack.said("chat.postMessage")[0])["menu_dismiss"]["value"])
     assert RunnerBinding.objects.get(session=session).pending_answer["option"] is None
 
@@ -1162,9 +1162,9 @@ from apps.harness.models import RunnerAdmin, RunnerAssignment  # noqa: E402
 from apps.slack.models import SlackTurnPost  # noqa: E402
 
 
-def _runner(name, *, kind=Runner.EMDASH, online=True, pairer, agent=None):
+def _runner(name, *, kind=Runner.EMDASH, online=True, runner_owner, agent=None):
     beat = timezone.now() - (_dt.timedelta(0) if online else _dt.timedelta(hours=2))
-    r = Runner.objects.create(name=name, kind=kind, host=name, paired_by=pairer, workspace_id=pairer_ws(pairer),
+    r = Runner.objects.create(name=name, kind=kind, host=name, owner=runner_owner, workspace_id=runner_owner_ws(runner_owner),
                               status=Runner.ONLINE, last_heartbeat_at=beat,
                               capabilities={"sessions": True})
     if agent is not None:
@@ -1172,7 +1172,7 @@ def _runner(name, *, kind=Runner.EMDASH, online=True, pairer, agent=None):
     return r
 
 
-def pairer_ws(user):
+def runner_owner_ws(user):
     return WorkspaceMembership.objects.filter(user=user).values_list("workspace_id", flat=True).first()
 
 
@@ -1181,7 +1181,7 @@ def _line(slack):
 
 
 def test_a_live_runner_says_it_is_picking_it_up(slack, linked, hal, alice):
-    _runner("jj-mbp", pairer=alice, agent=hal)
+    _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention("hal summarise")
     line = _line(slack)
     assert "`hal` is picking this up on *jj-mbp*" in line["text"]
@@ -1189,7 +1189,7 @@ def test_a_live_runner_says_it_is_picking_it_up(slack, linked, hal, alice):
 
 
 def test_an_offline_runner_says_it_is_blocked(slack, linked, hal, alice):
-    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    _runner("jj-mbp", runner_owner=alice, agent=hal, online=False)
     mention("hal summarise")
     assert "*jj-mbp* is offline" in _line(slack)["text"]
     assert not _line(slack).get("blocks")          # no cloud runner, so no button
@@ -1205,7 +1205,7 @@ def test_continuing_from_the_web_while_the_runner_is_offline_still_tells_the_thr
     same event."""
     from apps.canopy_sessions import services as session_services
 
-    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    _runner("jj-mbp", runner_owner=alice, agent=hal, online=False)
     mention("hal summarise")
     session = Turn.objects.get(origin=Turn.ORIGIN_SLACK).chat_session
     before = len(slack.said("chat.postMessage"))
@@ -1241,7 +1241,7 @@ def test_the_slash_command_anchor_travels_on_the_turn(slack, linked, hal):
 def test_a_redelivered_event_does_not_post_a_second_line(slack, linked, hal, alice):
     """Slack redelivers events it thinks we missed. The turn collapses onto the
     first one, so no enqueue happens and no second line may appear."""
-    _runner("jj-mbp", pairer=alice, agent=hal)
+    _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention("hal summarise")
     mention("hal summarise")
     assert SlackTurnPost.objects.count() == 1
@@ -1249,7 +1249,7 @@ def test_a_redelivered_event_does_not_post_a_second_line(slack, linked, hal, ali
 
 
 def test_the_line_is_edited_as_the_turn_moves(slack, linked, hal, alice, django_capture_on_commit_callbacks):
-    runner = _runner("jj-mbp", pairer=alice, agent=hal)
+    runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention("hal summarise")
     with django_capture_on_commit_callbacks(execute=True):
         turn = harness_services.claim_next_turn(runner)
@@ -1267,12 +1267,12 @@ def cloud(ws, hal):
     """An online cloud runner owned by someone else, and an offline laptop for hal."""
     owner = a_user("ops@dimagi.com")
     wsvc.ensure_member(ws, owner, WorkspaceMembership.EDITOR)
-    # Trusted with hal: a box runs an agent's work only when its pairer is one
+    # Trusted with hal: a box runs an agent's work only when its owner is one
     # of the agent's admins (agents.services.runner_may_hold_agent).
     from apps.agents.models import AgentAdmin
 
     AgentAdmin.objects.create(agent=hal, user=owner)
-    return _runner("cloud-ec2-1", kind=Runner.CLOUD, pairer=owner)
+    return _runner("cloud-ec2-1", kind=Runner.CLOUD, runner_owner=owner)
 
 
 def _route_button(post):
@@ -1281,7 +1281,7 @@ def _route_button(post):
 
 
 def test_blocked_with_a_cloud_runner_offers_the_button(slack, linked, hal, alice, cloud):
-    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    _runner("jj-mbp", runner_owner=alice, agent=hal, online=False)
     mention("hal summarise")
     line = _line(slack)
     assert "send it to *cloud-ec2-1*" in line["text"]
@@ -1289,7 +1289,7 @@ def test_blocked_with_a_cloud_runner_offers_the_button(slack, linked, hal, alice
 
 
 def test_only_a_cloud_runner_admin_may_press_it(slack, linked, hal, alice, cloud):
-    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    _runner("jj-mbp", runner_owner=alice, agent=hal, online=False)
     mention("hal summarise")
     value = _route_button(_line(slack))["value"]
     click("route_cloud", value)
@@ -1300,7 +1300,7 @@ def test_only_a_cloud_runner_admin_may_press_it(slack, linked, hal, alice, cloud
 
 
 def test_an_admin_sends_an_unbound_conversation_to_the_cloud(slack, linked, hal, alice, cloud):
-    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    _runner("jj-mbp", runner_owner=alice, agent=hal, online=False)
     RunnerAdmin.objects.create(runner=cloud, user=alice)
     mention("hal summarise")
     click("route_cloud", _route_button(_line(slack))["value"])
@@ -1315,7 +1315,7 @@ def test_an_admin_sends_an_unbound_conversation_to_the_cloud(slack, linked, hal,
 
 def test_a_bound_conversation_is_transferred_and_the_handoff_runs_first(
         slack, linked, hal, alice, cloud, django_capture_on_commit_callbacks):
-    laptop = _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    laptop = _runner("jj-mbp", runner_owner=alice, agent=hal, online=False)
     RunnerAdmin.objects.create(runner=cloud, user=alice)
     mention("hal first")
     session = Session.objects.get()
@@ -1330,7 +1330,7 @@ def test_a_bound_conversation_is_transferred_and_the_handoff_runs_first(
 
 
 def test_slash_cloud_moves_everything_of_mine_that_is_stuck(slack, linked, hal, alice, cloud):
-    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    _runner("jj-mbp", runner_owner=alice, agent=hal, online=False)
     RunnerAdmin.objects.create(runner=cloud, user=alice)
     mention("hal one", ts="1700000000.000100")
     mention("hal two", ts="1700000100.000100")
@@ -1340,7 +1340,7 @@ def test_slash_cloud_moves_everything_of_mine_that_is_stuck(slack, linked, hal, 
 
 
 def test_mention_cloud_is_the_same_and_leaves_live_work_alone(slack, linked, hal, alice, cloud):
-    _runner("jj-mbp", pairer=alice, agent=hal)                  # online: nothing is stuck
+    _runner("jj-mbp", runner_owner=alice, agent=hal)                  # online: nothing is stuck
     RunnerAdmin.objects.create(runner=cloud, user=alice)
     mention("hal one")
     mention("cloud", ts="1700000200.000100")
@@ -1354,7 +1354,7 @@ def test_a_turn_sent_from_canopy_web_is_announced_in_the_thread(
         slack, linked, hal, alice, django_capture_on_commit_callbacks):
     from apps.canopy_sessions import services as session_services
 
-    runner = _runner("jj-mbp", pairer=alice, agent=hal)
+    runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention("hal first")
     session = Session.objects.get()
     with django_capture_on_commit_callbacks(execute=True):
@@ -1369,9 +1369,9 @@ def test_a_turn_sent_from_canopy_web_is_announced_in_the_thread(
     assert "working on this on *jj-mbp*" in line["text"]
 
 
-def _stream(runner, pairer, session, events, capture):
+def _stream(runner, runner_owner, session, events, capture):
     c = Client()
-    c.force_login(pairer)
+    c.force_login(runner_owner)
     with capture(execute=True):
         resp = c.post(f"/api/harness/runners/{runner.id}/session-stream",
                       {"session_id": str(session.id), "transcript_id": "t1", "events": events},
@@ -1380,25 +1380,25 @@ def _stream(runner, pairer, session, events, capture):
 
 
 def test_typing_straight_into_emdash_is_announced_once(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     session.metadata = {**session.metadata, "transcript_sourced": True}
     session.save()
     Turn.objects.filter(chat_session=session).update(status=Turn.DONE)
     ev = lambda i, kind, text: {"seq": i, "index": i * 1000, "kind": kind, "payload": {"text": text}}  # noqa: E731
-    _stream(runner, pairer, session, [ev(1, "user", "actually, check the logs first")],
+    _stream(runner, runner_owner, session, [ev(1, "user", "actually, check the logs first")],
             django_capture_on_commit_callbacks)
-    _stream(runner, pairer, session, [ev(2, "user", "and the metrics")], django_capture_on_commit_callbacks)
+    _stream(runner, runner_owner, session, [ev(2, "user", "and the metrics")], django_capture_on_commit_callbacks)
     (note,) = slack.said("chat.postMessage")
     assert "carrying on directly in the agent's session on *jj-mbp*" in note["text"]
     assert note["thread_ts"] == "1700000000.000100"
 
 
 def test_a_prompt_delivered_by_a_slack_turn_is_not_announced(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     session.metadata = {**session.metadata, "transcript_sourced": True}
     session.save()
     Turn.objects.filter(chat_session=session).update(status=Turn.DONE)
-    _stream(runner, pairer, session, [{"seq": 1, "index": 1000, "kind": "user",
+    _stream(runner, runner_owner, session, [{"seq": 1, "index": 1000, "kind": "user",
                                        "payload": {"text": "run it"}}], django_capture_on_commit_callbacks)
     assert not slack.said("chat.postMessage")
 
@@ -1410,13 +1410,13 @@ def test_a_marked_prompt_delivered_by_a_slack_turn_is_not_announced(
     # line would read as someone typing straight into emdash.
     from apps.canopy_sessions.testing import legacy_marker
 
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     session.metadata = {**session.metadata, "transcript_sourced": True}
     session.save()
     Turn.objects.filter(chat_session=session).update(status=Turn.DONE)
     turn = Turn.objects.filter(chat_session=session).first()
-    marked = legacy_marker(turn.prompt, name="Alice", user_id=pairer.id, turn_id=turn.pk)
-    _stream(runner, pairer, session, [{"seq": 1, "index": 1000, "kind": "user",
+    marked = legacy_marker(turn.prompt, name="Alice", user_id=runner_owner.id, turn_id=turn.pk)
+    _stream(runner, runner_owner, session, [{"seq": 1, "index": 1000, "kind": "user",
                                        "payload": {"text": marked}}], django_capture_on_commit_callbacks)
     assert not [p for p in slack.said("chat.postMessage") if "carrying on directly" in p["text"]]
 
@@ -1427,13 +1427,13 @@ def test_the_agent_reading_an_image_is_not_someone_typing(bound, slack, django_c
     # Code write "[Image: original WxH, ...]" as a `type: "user"` record — which
     # posted "carrying on directly in the agent's session" AND, by becoming the
     # latest human message, stopped the answer itself reaching the thread.
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     session.metadata = {**session.metadata, "transcript_sourced": True}
     session.save()
     Turn.objects.filter(chat_session=session).update(status=Turn.DONE)
     ev = lambda i, kind, text: {"seq": i, "index": i * 1000, "kind": kind, "payload": {"text": text}}  # noqa: E731
-    _stream(runner, pairer, session, [ev(1, "user", "run it")], django_capture_on_commit_callbacks)
-    _stream(runner, pairer, session, [
+    _stream(runner, runner_owner, session, [ev(1, "user", "run it")], django_capture_on_commit_callbacks)
+    _stream(runner, runner_owner, session, [
         ev(2, "user", "Stop hook feedback:\nYou ended by OFFERING to do something rather than doing it"),
         ev(3, "user", "[Image: original 1440x3214, displayed at 896x2000. "
                       "Multiply coordinates by 1.61 to map to original image.]"),
@@ -1463,7 +1463,7 @@ def _revive(runner):
 
 
 def _claimed(slack, hal, alice, capture, text="hal summarise"):
-    runner = _runner("jj-mbp", pairer=alice, agent=hal)
+    runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention(text)
     with capture(execute=True):
         turn = harness_services.claim_next_turn(runner)
@@ -1590,26 +1590,26 @@ def test_a_lost_turn_can_be_run_again_on_the_cloud(slack, linked, hal, alice, cl
 
 def _yielded(bound, capture, bridged="Waiting on CI — back when it lands."):
     """The Slack turn delivered, bridged its reply so far, then closed on a yield."""
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     session.metadata = {**session.metadata, "transcript_sourced": True}
     session.save()
     turn = Turn.objects.get(chat_session=session)
     _reply(turn, {"kind": "assistant", "payload": {"text": bridged}}, capture=capture)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE)
-    _stream(runner, pairer, session, [
+    _stream(runner, runner_owner, session, [
         {"seq": 1, "index": 1000, "kind": "user", "payload": {"text": "run it"}},
         {"seq": 2, "index": 2000, "kind": "assistant", "payload": {"text": bridged}},
     ], capture)
-    return session, runner, pairer
+    return session, runner, runner_owner
 
 
 def test_the_answer_written_after_the_turn_closed_reaches_the_thread(
         bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = _yielded(bound, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = _yielded(bound, django_capture_on_commit_callbacks)
     slack.calls.clear()
     done = {"seq": 3, "index": 3000, "kind": "assistant", "payload": {"text": "**Merged** and deployed."}}
-    _stream(runner, pairer, session, [done], django_capture_on_commit_callbacks)
-    _stream(runner, pairer, session, [done], django_capture_on_commit_callbacks)      # re-shipped batch
+    _stream(runner, runner_owner, session, [done], django_capture_on_commit_callbacks)
+    _stream(runner, runner_owner, session, [done], django_capture_on_commit_callbacks)      # re-shipped batch
     (post,) = slack.said("chat.postMessage")
     assert post["text"] == "*Merged* and deployed." and post["thread_ts"] == "1700000000.000100"
     assert post["username"] == "Hal"                                                  # as the agent
@@ -1622,9 +1622,9 @@ def test_text_already_bridged_by_the_turn_is_not_posted_again(bound, slack, djan
 
 
 def test_a_reply_to_something_typed_in_emdash_is_not_mirrored(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = _yielded(bound, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = _yielded(bound, django_capture_on_commit_callbacks)
     slack.calls.clear()
-    _stream(runner, pairer, session, [
+    _stream(runner, runner_owner, session, [
         {"seq": 3, "index": 3000, "kind": "user", "payload": {"text": "private aside, just for me"}},
         {"seq": 4, "index": 4000, "kind": "assistant", "payload": {"text": "sure — here's the aside"}},
     ], django_capture_on_commit_callbacks)
@@ -1640,11 +1640,11 @@ def test_something_typed_in_emdash_during_the_slack_turn_does_not_hold_back_the_
     message, so the guard read the conversation as having moved into emdash."""
     from django.utils import timezone
 
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     session.metadata = {**session.metadata, "transcript_sourced": True}
     session.save()
     turn = Turn.objects.get(chat_session=session)
-    _stream(runner, pairer, session, [
+    _stream(runner, runner_owner, session, [
         {"seq": 1, "index": 1000, "kind": "user", "payload": {"text": "run it"}},
         {"seq": 2, "index": 2000, "kind": "user", "payload": {"text": "here's the screenshot, also fix X"}},
     ], django_capture_on_commit_callbacks)
@@ -1652,17 +1652,17 @@ def test_something_typed_in_emdash_during_the_slack_turn_does_not_hold_back_the_
            capture=django_capture_on_commit_callbacks)
     Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE, finished_at=timezone.now())
     slack.calls.clear()
-    _stream(runner, pairer, session, [{"seq": 3, "index": 3000, "kind": "assistant",
+    _stream(runner, runner_owner, session, [{"seq": 3, "index": 3000, "kind": "assistant",
                                        "payload": {"text": "Merged and deployed."}}],
             django_capture_on_commit_callbacks)
     assert [p["text"] for p in slack.said("chat.postMessage")] == ["Merged and deployed."]
 
 
 def test_nothing_is_relayed_this_way_while_a_turn_is_running(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = _yielded(bound, django_capture_on_commit_callbacks)
+    session, runner, runner_owner = _yielded(bound, django_capture_on_commit_callbacks)
     Turn.objects.filter(chat_session=session).update(status=Turn.RUNNING)
     slack.calls.clear()
-    _stream(runner, pairer, session, [{"seq": 3, "index": 3000, "kind": "assistant",
+    _stream(runner, runner_owner, session, [{"seq": 3, "index": 3000, "kind": "assistant",
                                        "payload": {"text": "mid-turn text"}}], django_capture_on_commit_callbacks)
     assert not slack.said("chat.postMessage")                    # the ledger relay owns a live turn
 
@@ -1800,7 +1800,7 @@ def _statuses(slack):
 
 
 def test_the_indicator_follows_the_turn(slack, linked, hal, alice, django_capture_on_commit_callbacks):
-    runner = _runner("jj-mbp", pairer=alice, agent=hal)
+    runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention("hal summarise")
     assert _statuses(slack) == ["processing"]          # queued, a live runner has it
     call = slack.said("agents.sessions.setStatus")[-1]
@@ -1815,7 +1815,7 @@ def test_the_indicator_follows_the_turn(slack, linked, hal, alice, django_captur
 
 
 def test_an_offline_runner_suspends_rather_than_spins(slack, linked, hal, alice):
-    _runner("jj-mbp", pairer=alice, agent=hal, online=False)
+    _runner("jj-mbp", runner_owner=alice, agent=hal, online=False)
     mention("hal summarise")
     assert _statuses(slack)[-1] == "suspended"
 
@@ -1833,12 +1833,12 @@ def test_a_runner_dying_mid_turn_stops_the_spinner(slack, linked, hal, alice,
 
 
 def test_a_question_suspends_the_session(bound, slack, django_capture_on_commit_callbacks):
-    session, runner, pairer = bound
+    session, runner, runner_owner = bound
     # Mid-turn, so "suspended" can only be the QUESTION talking.
     Turn.objects.filter(chat_session=session).update(status=Turn.RUNNING, claimed_by=runner)
-    _report(runner, pairer, MENU, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, MENU, django_capture_on_commit_callbacks)
     assert _statuses(slack)[-1] == "suspended"
-    _report(runner, pairer, None, django_capture_on_commit_callbacks)
+    _report(runner, runner_owner, None, django_capture_on_commit_callbacks)
     assert _statuses(slack)[-1] == "processing"        # answered at the keyboard; back to work
 
 
@@ -1846,7 +1846,7 @@ def test_an_app_that_is_not_an_agent_yet_still_works(slack, linked, hal, alice):
     """Until the app is declared an agent every call is refused. The thread must
     be exactly as good as it was before — the text line is the load-bearing half."""
     slack.fail["agents.sessions.setStatus"] = "feature_disabled"
-    _runner("jj-mbp", pairer=alice, agent=hal)
+    _runner("jj-mbp", runner_owner=alice, agent=hal)
     mention("hal summarise")
     assert Turn.objects.count() == 1
     assert "is picking this up on *jj-mbp*" in _line(slack)["text"]

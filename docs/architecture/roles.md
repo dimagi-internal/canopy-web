@@ -141,7 +141,7 @@ recur and the routes that deliberately sit off the ladder.
   `AgentAdmin`, each a CURRENT member. Credentials, the vault pointer, the interface, the
   Google mailbox mint, moving the agent to another workspace.
 
-**A box holds an agent only if its pairer is one of the agent's admins** (or the agent's own
+**A box holds an agent only if its owner is one of the agent's admins** (or the agent's own
 login) — `agents.services.runner_may_hold_agent`. Claiming an agent turn, resolving its
 credentials, the per-turn GitHub token, pinning a turn to a box, and every routing write
 (runner list, source rules, actor routes) all ask it. Before 2026-10-02 an editor paired a

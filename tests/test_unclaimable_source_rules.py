@@ -39,11 +39,11 @@ def fleet():
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
     now = timezone.now()
     laptop = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=now, capabilities={},
     )
     cloud = Runner.objects.create(
-        name="cloud-1", kind=Runner.CLOUD, paired_by=jj, status=Runner.ONLINE,
+        name="cloud-1", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=now, capabilities={},
     )
     return {"user": jj, "ws": ws, "agent": echo, "laptop": laptop, "cloud": cloud}

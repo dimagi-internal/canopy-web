@@ -317,7 +317,7 @@ def report_watch(request: HttpRequest, payload: WatchReportIn) -> dict:
         raise HttpError(404, "no such mailbox")
     # Writing a watch's expiry decides whether its expiry alarms fire, so it
     # is the fleet's events tier (editor and above, which is what the runner's
-    # pairer holds) — a viewer could otherwise silence or fake them.
+    # owner holds) — a viewer could otherwise silence or fake them.
     if not perms.can(request.user, mailbox.agent.workspace_id, perms.EVENTS_WRITE):
         raise HttpError(403, "reporting a watch requires the editor role or above")
 

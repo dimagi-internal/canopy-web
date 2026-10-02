@@ -414,7 +414,7 @@ def test_enqueue_records_the_human_who_launched_the_turn(client, agent):
 
 # --- pairing requires a workspace tenant (2026-07-25 incident) --------------
 # A workspace-less runner is half-broken with no signal: heartbeat and claim
-# work (tenancy derives from paired_by), but POST /runners/{id}/sessions 404s
+# work (tenancy derives from owner), but POST /runners/{id}/sessions 404s
 # forever, so its sessions silently never appear anywhere.
 
 def _pair_resp(c, **extra):
@@ -425,7 +425,7 @@ def _pair_resp(c, **extra):
     )
 
 
-def test_pair_422s_when_the_pairer_belongs_to_no_workspace():
+def test_pair_422s_when_the_runner_owner_belongs_to_no_workspace():
     u = User.objects.create_user("lonely", "lonely@example.org", "pw")
     c = Client(); c.force_login(u)
     resp = _pair_resp(c)

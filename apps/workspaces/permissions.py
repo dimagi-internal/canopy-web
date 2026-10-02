@@ -44,7 +44,7 @@ AGENT_WORK = "agent.work"
 #: Type into a runner-discovered emdash session (someone's live box).
 SESSION_DRIVE = "session.drive"
 
-#: Write to the workspace's event log (runners report alarms as their pairer).
+#: Write to the workspace's event log (runners report alarms as their owner).
 EVENTS_WRITE = "events.write"
 
 # --- admin: running the workspace -----------------------------------------------

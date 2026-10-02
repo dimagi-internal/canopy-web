@@ -42,7 +42,7 @@ def _ctx():
     c = Client()
     c.force_login(user)
     runner = Runner.objects.create(
-        name="jj-mbp-cdp", kind=Runner.EMDASH, workspace=ws, paired_by=user,
+        name="jj-mbp-cdp", kind=Runner.EMDASH, workspace=ws, owner=user,
         host="jjackson@mbp", status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         capabilities={"projects": ["connect-labs"]},
     )
@@ -218,7 +218,7 @@ def test_another_runner_still_claims_while_this_one_is_paused():
     _u, ws, _c, runner = _ctx()
     other = Runner.objects.create(
         name="acedimagi-mbp-cdp", kind=Runner.EMDASH, workspace=ws,
-        paired_by=runner.paired_by, host="acedimagi@mbp", status=Runner.ONLINE,
+        owner=runner.owner, host="acedimagi@mbp", status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={"projects": ["connect-labs"]},
     )
     _queued_project_turn(ws)

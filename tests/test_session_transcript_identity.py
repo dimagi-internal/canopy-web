@@ -31,7 +31,7 @@ def _ctx(transcript_id=""):
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     runner = Runner.objects.create(
-        name="mbp", kind=Runner.EMDASH, paired_by=user, host="mbp.local", capabilities={},
+        name="mbp", kind=Runner.EMDASH, owner=user, host="mbp.local", capabilities={},
     )
     session = Session.objects.create(
         workspace=ws, origin=Session.ORIGIN_RUNNER, title="bednet", project="ace",

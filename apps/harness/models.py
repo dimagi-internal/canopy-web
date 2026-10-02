@@ -181,15 +181,15 @@ class Runner(models.Model):
     # the box reporting a bootstrap newer than it (`health.bootstrapped_at`), so
     # nothing has to clear it and a refresh that never happened stays visible.
     refresh_requested_at = models.DateTimeField(null=True, blank=True)
-    # The human who paired this runner. Load-bearing for authz AND for tenancy:
-    # `_runner_visibility_q` requires paired_by to be the caller (or NULL, the
+    # This runner's owner. Load-bearing for authz AND for tenancy:
+    # `_runner_visibility_q` requires owner to be the caller (or NULL, the
     # legacy-ungated path it keeps open on purpose), and BOTH `_runner_schedule_qs`
     # and `claim_next_turn` derive the tenant from it — a runner may sync/fire/claim
-    # for agents in any workspace its pairer belongs to.
+    # for agents in any workspace its owner belongs to.
     #
     # OPERATIONAL CONSEQUENCE — deleting a pairing user permanently bricks their
-    # runners. SET_NULL orphans the row rather than removing it; `paired_by_id`
-    # becomes NULL, `_runner_schedule_qs` returns none() for a NULL pairer, and
+    # runners. SET_NULL orphans the row rather than removing it; `owner_id`
+    # becomes NULL, `_runner_schedule_qs` returns none() for a NULL owner, and
     # `claim_next_turn` resolves an empty workspace set — so the orphan can never
     # sync, fire, or claim anything tenanted again. It must be re-paired (a fresh
     # row) and the orphan retired.
@@ -204,7 +204,7 @@ class Runner(models.Model):
     # exactly the outage this fleet hit: one laptop runner serves an agent fleet
     # that deliberately spans workspaces, so FK-scoping left 4 of 5 agents unable
     # to execute any turn. The FK gates runner VISIBILITY (`_runner_visibility_q`,
-    # `list_runners`); `paired_by` gates what a runner may WORK FOR.
+    # `list_runners`); `owner` gates what a runner may WORK FOR.
     workspace = models.ForeignKey(
         "workspaces.Workspace",
         on_delete=models.PROTECT,
@@ -212,10 +212,10 @@ class Runner(models.Model):
         blank=True,
         related_name="runners",
         help_text="The tenant that owns this runner. Nullable for migration "
-        "safety; the API assigns one at pairing (the pairer's default workspace "
+        "safety; the API assigns one at pairing (the owner's default workspace "
         "when unspecified). Mirrors Agent.workspace.",
     )
-    paired_by = models.ForeignKey(
+    owner = models.ForeignKey(
         "auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )
     paired_at = models.DateTimeField(auto_now_add=True)
@@ -657,7 +657,7 @@ class CallerToken(models.Model):
     the runner owner's personal token.
 
     Who-is-asking §7: a caller's session must reach canopy's tools as
-    `agent ∩ caller`, never as the human who paired the runner. The runner gets
+    `agent ∩ caller`, never as the runner's owner. The runner gets
     one of these with each confined turn it claims, writes it into the session's
     profile (which the session itself cannot read), and the canopy plugin's MCP
     headers helper sends it in place of the PAT. canopy resolves it to the
@@ -854,7 +854,7 @@ class RunnerCredential(models.Model):
 
     Laptop/emdash runners use their ambient auth (emdash already holds the Claude
     login) and never read this. A cloud runner boots knowing only its canopy-pat,
-    then fetches this bundle over HTTPS authed by that PAT (owner == paired_by, the
+    then fetches this bundle over HTTPS authed by that PAT (owner == owner, the
     same gate as heartbeat/claim) and stages it into its environment: the runner's
     Claude login, and nothing else.
 
@@ -976,7 +976,7 @@ class RunnerMint(models.Model):
 class RunnerAdmin(models.Model):
     """Someone who may ADMINISTER this runner without speaking FOR it.
 
-    `paired_by` was doing two jobs. It is the credential the box authenticates
+    `owner` was doing two jobs. It is the credential the box authenticates
     with — `claim_next_turn` derives a tenant from it, so heartbeating, claiming
     and drilling must stay bound to it — and it was also the only answer to "who
     may fix this box". For a shared cloud runner those are different questions,
@@ -984,8 +984,8 @@ class RunnerAdmin(models.Model):
     2026-09-08 a signed-out cloud box could not be re-authenticated by the very
     identity it runs as, because someone else had run the pairing command.
 
-    Ownership could not simply be moved. The box authenticates with the pairer's
-    PAT, so re-pointing `paired_by` 404s its own heartbeat until that PAT is
+    Ownership could not simply be moved. The box authenticates with the owner's
+    PAT, so re-pointing `owner` 404s its own heartbeat until that PAT is
     rotated — a change in AWS, not here.
 
     Neither existing tier fits either, and it is worth writing down why. Workspace

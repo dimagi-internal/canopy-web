@@ -44,9 +44,9 @@ def _ws(slug, owner):
     return ws
 
 
-def _runner(pairer, ws):
+def _runner(runner_owner, ws):
     return Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=pairer, workspace=ws,
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=runner_owner, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
 
@@ -217,7 +217,7 @@ def test_a_new_question_pushes_to_the_runner_s_owner(
 
     assert len(sent) == 1, "nobody was told the agent is waiting"
     user, kw = sent[0]
-    assert user.username == "jj"                        # the runner's pairer
+    assert user.username == "jj"                        # the runner's owner
     assert kw["body"] == "How should the run proceed?"  # the question itself
     session = Session.objects.get(runner_binding__session_key="spark")
     # The CHAT, not /supervisor: the tap has to land on the buttons.

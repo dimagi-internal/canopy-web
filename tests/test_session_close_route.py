@@ -38,7 +38,7 @@ def test_closing_a_reported_session_reports_closing_and_leaves_it_listed():
     answer; the client renders a pending state."""
     user, ws, c = _ctx()
     runner = Runner.objects.create(
-        name="jj-mbp", kind="laptop", host="jj-mbp", paired_by=user, workspace=ws,
+        name="jj-mbp", kind="laptop", host="jj-mbp", owner=user, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     s = Session.objects.create(

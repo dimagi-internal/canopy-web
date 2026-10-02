@@ -1,7 +1,7 @@
 """claim_next_turn, widened to repos.
 
 The tenant rule is the delicate part and it has already caused one production
-outage (#227, dc58b1b): tenancy derives from `runner.paired_by` — the human who
+outage (#227, dc58b1b): tenancy derives from `runner.owner` — the human who
 paired the runner — NOT from Runner.workspace, because the fleet deliberately
 spans workspaces behind one laptop runner.
 """
@@ -29,9 +29,9 @@ def _ws(slug, owner):
     return ws
 
 
-def _runner(pairer, **kw):
+def _runner(runner_owner, **kw):
     defaults = dict(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=pairer,
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=runner_owner,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         capabilities={"projects": ["canopy-web"]},
     )
@@ -56,7 +56,7 @@ def test_a_projects_only_runner_claims_a_project_turn():
     assert claimed.status == Turn.CLAIMED
 
 
-def test_a_runner_paired_by_a_non_member_cannot_claim_another_tenants_project_turn():
+def test_a_runner_owner_a_non_member_cannot_claim_another_tenants_project_turn():
     """The hole the naive widening opens.
 
     tenant_q ungates pre-tenancy AGENTS via agent__workspace_id__isnull=True. A

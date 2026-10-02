@@ -1,8 +1,8 @@
 """Reading the fleet is workspace-scoped; acting on a runner stays owner-scoped.
 
 `_runner_visibility_q` answered both questions with one predicate whose last leg
-was `paired_by == caller`. That is right for acting on a runner and wrong for
-seeing one: a workspace's fleet is usually paired by ONE human, so every other
+was `owner == caller`. That is right for acting on a runner and wrong for
+seeing one: a workspace's fleet is usually owned by ONE human, so every other
 member — an agent identity, a teammate — listed zero runners and could not tell
 "nobody serves this repo" from "I cannot see anything at all".
 
@@ -12,7 +12,7 @@ fleet, concluded BLOCKED from an empty list, and was routed around with
 sat QUEUED until the stuck-turn banner caught it (labs, 2026-07-28, turn
 cec64f60). The banner could catch it precisely because `unclaimable_queued_turns`
 had ALREADY made this fix at its own call site — it scopes candidate runners by
-`runner_tenant_slugs`, with a comment explaining that `paired_by=user` made every
+`runner_tenant_slugs`, with a comment explaining that `owner=user` made every
 stuck turn read as `config` for anyone who had not paired a runner. This file
 pins the same rule for the read the CLI actually performs.
 
@@ -62,10 +62,10 @@ def workspace(owner, teammate):
 
 @pytest.fixture()
 def runner(owner, workspace):
-    """Paired by `owner`, homed to the shared workspace — the laptop."""
+    """Owned by `owner`, homed to the shared workspace — the laptop."""
     return Runner.objects.create(
         name="jj-mbp-cdp", kind=Runner.EMDASH, capabilities={"projects": ["canopy-web"]},
-        paired_by=owner, workspace=workspace,
+        owner=owner, workspace=workspace,
     )
 
 
@@ -141,7 +141,7 @@ def test_a_non_member_still_sees_nothing(stranger, runner):
 def test_a_runner_in_another_workspace_is_not_listed(teammate, owner, runner):
     other = Workspace.objects.create(slug="other", display_name="Other", created_by=owner)
     Runner.objects.create(name="someone-elses", kind=Runner.EMDASH, capabilities={},
-                          paired_by=owner, workspace=other)
+                          owner=owner, workspace=other)
     assert [r["name"] for r in _listed(teammate)] == ["jj-mbp-cdp"]
 
 
@@ -153,7 +153,7 @@ def test_a_null_workspace_runner_is_visible_only_to_whoever_paired_it(owner, tea
     workspace has no tenant to share, so sharing a tenant cannot reveal it.
     """
     legacy = Runner.objects.create(name="legacy-box", kind=Runner.EMDASH, capabilities={},
-                                   paired_by=owner, workspace=None)
+                                   owner=owner, workspace=None)
     assert "legacy-box" in [r["name"] for r in _listed(owner)]
     assert "legacy-box" not in [r["name"] for r in _listed(teammate)]
     assert legacy.workspace_id is None  # the row really is untenanted

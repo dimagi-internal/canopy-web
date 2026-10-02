@@ -179,19 +179,19 @@ def _agent_for_write_or_404(request: HttpRequest, slug: str) -> Agent:
 
 
 def _runner_owned_q(request: HttpRequest) -> Q:
-    """Ownership: the caller paired it. A runner NOBODY paired is acted on by
+    """Ownership: the caller owns it. A runner NOBODY owns is acted on by
     nobody — it used to be acted on by everyone (heartbeat, claim, retire, and
     its plaintext credential bundle), the NULL-means-allow shape this repo has
-    removed everywhere else. Every live runner on labs has a pairer (2026-10-02)."""
-    return Q(paired_by=request.user)
+    removed everywhere else. Every live runner on labs has a owner (2026-10-02)."""
+    return Q(owner=request.user)
 
 
 def _runner_read_q(request: HttpRequest) -> Q:
     """'Runners this caller can SEE' — derived from the TENANT, like claim time.
 
     Seeing a runner and acting on one are different questions that one predicate
-    answered, and its `paired_by == caller` leg is right for the second and wrong
-    for the first. A workspace's fleet is typically paired by ONE human, so every
+    answered, and its `owner == caller` leg is right for the second and wrong
+    for the first. A workspace's fleet is typically owned by ONE human, so every
     other member listed ZERO runners and could not distinguish "no runner serves
     this repo" from "I can see nothing at all".
 
@@ -204,7 +204,7 @@ def _runner_read_q(request: HttpRequest) -> Q:
 
     `services.unclaimable_queued_turns` had ALREADY made this exact fix at its own
     call site, with a comment explaining that scoping candidates to
-    `paired_by=user` made every stuck turn read as `config` for anyone who had not
+    `owner=user` made every stuck turn read as `config` for anyone who had not
     personally paired a runner. Same rule, second call site.
 
     What is deliberately NOT inherited from the act-on predicate: its
@@ -213,10 +213,10 @@ def _runner_read_q(request: HttpRequest) -> Q:
     mean "everyone's", which is the NULL-means-allow shape this codebase has
     already paid to remove from six tenancy predicates (PRs #378, #421, #423). A
     runner with no workspace has no tenant to share, so it stays visible only to
-    the human who paired it — hence the `& _runner_owned_q` on that leg alone.
+    its owner — hence the `& _runner_owned_q` on that leg alone.
 
     Nothing listed is secret to a member: RunnerOut carries status, capabilities,
-    host and `paired_by_email` — never credentials, which have their own
+    host and `owner_email` — never credentials, which have their own
     owner-gated route.
     """
     ws = getattr(request, "workspace_slug", None)
@@ -237,7 +237,7 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
 
     Heartbeating, claiming as, mutating, retiring and crediting a runner gate on
     this. Ownership is the boundary because these operations speak FOR the runner:
-    `paired_by` is what `claim_next_turn` derives a tenant from, so acting as
+    `owner` is what `claim_next_turn` derives a tenant from, so acting as
     someone else's runner is acting with their memberships.
 
     `_runner_read_q` is deliberately WIDER, which gives up the invariant these two
@@ -263,7 +263,7 @@ def _runner_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
     Reached from the operator-facing routes only: setting credentials, and the
     browser sign-in. Everything that speaks FOR the runner — heartbeat, claim,
     drills, the runner's own credential fetch and its half of a mint — keeps
-    `_runner_or_404`, because those act with the pairer's memberships.
+    `_runner_or_404`, because those act with the owner's memberships.
 
     Starts from what the caller can SEE (the tenant), then requires the explicit
     grant on top. Both legs matter: the tenant leg stops a grant in one workspace
@@ -288,7 +288,7 @@ def _runner_or_404(
 ) -> Runner:
     """Resolve a live runner via _runner_visibility_q — the same predicate
     list_runners filters on, so a runner that is listed is always one you can
-    act on. Binding to runner.paired_by (not to a specific token) is
+    act on. Binding to runner.owner (not to a specific token) is
     deliberate: BearerTokenAuthMiddleware stamps request.user = token.user and
     discards which token was used, and PATs are rotated by design
     (canopy:canopy-web-pat-mint is documented "re-run to rotate"), so
@@ -344,7 +344,7 @@ def _turn_content_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 def _reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     """A turn the caller may REPORT on — start, finish, append ledger events or
     transcript lines. That is the runner protocol, so it belongs to the box that
-    claimed the turn: the caller must be the human who paired it.
+    claimed the turn: the caller must be its owner.
 
     `_turn_or_404` alone (membership) let any viewer fail someone else's live
     turn, inject `question`/`approval` events, or append fake transcript lines.
@@ -354,7 +354,7 @@ def _reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     """
     turn = _turn_or_404(request, turn_id)
     if turn.claimed_by_id is not None:
-        if turn.claimed_by.paired_by_id != request.user.pk:
+        if turn.claimed_by.owner_id != request.user.pk:
             raise HttpError(404, "turn not found")
         return turn
     if turn.agent_id:
@@ -447,8 +447,8 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 def pair_runner(request: HttpRequest, payload: RunnerIn):
     if payload.kind not in dict(Runner.KIND_CHOICES):
         raise HttpError(422, f"unknown runner kind '{payload.kind}'")
-    # A runner is OWNED by a person. `paired_by` is the box's identity for life —
-    # its claims run with the pairer's memberships and only the pairer may grant
+    # A runner is OWNED by a person. `owner` is the box's identity for life —
+    # its claims run with the owner's memberships and only the owner may grant
     # administration — so pairing with an agent's token makes a box nobody owns:
     # the human at the keyboard can't manage it, and their own work on it is
     # attributed to the agent. Measured 2026-10-02 (sarveshtewari-mbp-cdp, paired
@@ -472,9 +472,9 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
     else:
         # A runner MUST belong to a workspace: a workspace-less one is
         # half-broken with no signal — heartbeat and claim work (tenancy
-        # derives from paired_by), but every session report 404s, so its
+        # derives from owner), but every session report 404s, so its
         # sessions silently never surface (prod incident 2026-07-25: a
-        # multi-workspace pairer made user_default_workspace() None and the
+        # multi-workspace owner made user_default_workspace() None and the
         # runner paired NULL). Fail loud instead of pairing broken.
         default = wsvc.user_default_workspace(request.user)
         if default is None:
@@ -498,7 +498,7 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
         # that copies a whole capabilities dict still pairs.
         capabilities={k: v for k, v in payload.capabilities.items() if k != "profiles"},
         host=payload.host,
-        paired_by=request.user,
+        owner=request.user,
         workspace_id=ws_slug,
     )
     return Status(201, runner)
@@ -510,7 +510,7 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
     """Store the per-runner secrets a cloud runner fetches at startup — its Claude
     login (plus the secondary subscription and API key it fails over to).
     Owner-gated exactly
-    like heartbeat/claim (paired_by == caller). Non-clobbering per field. Encrypted
+    like heartbeat/claim (owner == caller). Non-clobbering per field. Encrypted
     at rest; the response is masked (booleans, never values)."""
     runner = _runner_admin_or_404(request, runner_id)
     services.set_runner_credential(
@@ -554,7 +554,7 @@ def get_runner_credential_status(request: HttpRequest, runner_id: uuid.UUID):
             summary="Fetch this runner's credential bundle (the runner, via its PAT)")
 def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerCredentialOut:
     """A cloud runner fetches its own secrets to stage into its environment. Returns
-    the actual token values over HTTPS, gated to the runner's owner (paired_by ==
+    the actual token values over HTTPS, gated to the runner's owner (owner ==
     caller) — the same trust boundary that lets that caller claim turns as the
     runner. Laptop/emdash runners never call this (they use ambient auth)."""
     runner = _runner_or_404(request, runner_id)
@@ -584,7 +584,7 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
         raise HttpError(404, "turn not found")
     from apps.agents.services import runner_may_hold_agent
 
-    # A claim already requires this; re-asked here because a pairer can be
+    # A claim already requires this; re-asked here because a owner can be
     # demoted mid-turn, and this is the owner's GitHub identity.
     agent = delegations.turn_agent(turn)
     if agent is not None and not runner_may_hold_agent(runner, agent):
@@ -761,9 +761,9 @@ def list_runner_admins(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.post("/runners/{runner_id}/admins", response=RunnerAdminOut,
-             summary="Grant someone administration of this runner (pairer only)")
+             summary="Grant someone administration of this runner (owner only)")
 def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerAdminIn):
-    """Granting stays with the PAIRER, not with grantees.
+    """Granting stays with the OWNER, not with grantees.
 
     Deliberate: an administrator can change what the box runs on, but letting
     them mint more administrators makes the grant self-propagating, and then the
@@ -787,7 +787,7 @@ def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
 
 
 @router.delete("/runners/{runner_id}/admins/{user_id}", response={204: None},
-               summary="Revoke administration (pairer only)")
+               summary="Revoke administration (owner only)")
 def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int):
     runner = _runner_or_404(request, runner_id)
     user = User.objects.filter(pk=user_id).first()
@@ -823,9 +823,9 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
         ], workspace=runner.workspace)
     out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
     # Per (caller, runner), as list_runners stamps them: RunnerOut defaults both
-    # to True, so an unstamped reply would show an admin who is not the pairer
+    # to True, so an unstamped reply would show an admin who is not the owner
     # controls that then 404.
-    out.can_manage = out.paired_by_id in (request.user.id, None)
+    out.can_manage = out.owner_id in (request.user.id, None)
     out.can_administer = services.can_administer_runner(request.user, out)
     return out
 
@@ -834,7 +834,7 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
 def list_runners(request: HttpRequest):
     """The supervisor's runner status, and the fleet read every preflight makes.
 
-    Scoped by TENANT (`_runner_read_q`), not by who paired what: a member who
+    Scoped by TENANT (`_runner_read_q`), not by who owns what: a member who
     paired nothing used to list nothing, which reads identically to "this
     workspace has no runners" and is the wrong answer to draw a conclusion from.
     Each row carries `can_manage` for the ownership half. Retired runners are
@@ -857,7 +857,7 @@ def list_runners(request: HttpRequest):
     for r in rows:
         # Resolved here rather than in the schema because it is a property of the
         # (caller, runner) PAIR, and a Ninja resolver only sees the row.
-        r.can_manage = r.paired_by_id in (request.user.id, None)
+        r.can_manage = r.owner_id in (request.user.id, None)
         # Administration is a WIDER tier than acting as the runner, so it gets
         # its own flag rather than overloading can_manage — the credentials block
         # and the drill panel are gated by different routes.
@@ -1100,9 +1100,9 @@ def _project_workspace_or_404(request: HttpRequest, ws_slug: str):
     thread_key.
 
     The workspace is passed EXPLICITLY (from the turn the runner is executing, via
-    TurnOut.workspace_slug), not derived from a default: the pairer may belong to
+    TurnOut.workspace_slug), not derived from a default: the owner may belong to
     several workspaces, and a project turn already carries the one it belongs to.
-    The pairer must be a member of it. Same 404-not-403 rule: a non-member gets
+    The owner must be a member of it. Same 404-not-403 rule: a non-member gets
     404, never a disclosure that the workspace exists.
     """
     if not ws_slug or not wsvc.is_member(request.user, ws_slug):
@@ -1160,7 +1160,7 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
 def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportSessionsIn):
     """The runner reports the open emdash sessions it can see. Wholesale per runner.
     Owner-gated via _runner_or_404 (404, not 403). Sessions are tenant-owned; they
-    default to the runner's workspace (dimagi in practice), which the pairer is a
+    default to the runner's workspace (dimagi in practice), which the owner is a
     member of by construction."""
     runner = _runner_or_404(request, runner_id)
     ws = runner.workspace
@@ -1605,7 +1605,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
             if not runner_may_hold_agent(pinned, agent):
                 raise HttpError(
                     403,
-                    f"runner {pinned.name} cannot run {agent.slug}: whoever paired it must "
+                    f"runner {pinned.name} cannot run {agent.slug}: its owner must "
                     "be the agent's owner, a workspace owner, or one of its admins",
                 )
 
@@ -1927,16 +1927,16 @@ def _runner_schedule_qs(runner: Runner):
     runner declaring a victim's agent slug and read that agent's schedules,
     leaking `prompt`. The workspace is the boundary.
 
-    The tenant is derived from `paired_by` — the human who paired the runner —
-    rather than the Runner.workspace FK, because paired_by is server-assigned at
+    The tenant is derived from `owner` — the runner's owner —
+    rather than the Runner.workspace FK, because owner is server-assigned at
     pairing (request.user), so the FIELD is not attacker-controlled.
 
     That last point is necessary but NOT sufficient, and reading it alone is how
     this route was first shipped vulnerable. Deriving the tenant from an
     unspoofable field on a row the ATTACKER SELECTED buys nothing: runner_id is
-    a caller-supplied query param, so choosing whose paired_by gets read is as
+    a caller-supplied query param, so choosing whose owner gets read is as
     good as spoofing it. The real invariant needs both halves — the tenant
-    derives from paired_by AND _runner_or_404 pins the runner to request.user,
+    derives from owner AND _runner_or_404 pins the runner to request.user,
     so the row and the field are alike server-controlled.
 
     claim_next_turn DERIVES FROM THE SAME TWO FUNCTIONS this does —
@@ -1947,17 +1947,17 @@ def _runner_schedule_qs(runner: Runner):
 
     That matters because they briefly diverged, and the divergence was an
     outage, not a nicety. claim_next_turn shipped scoped to the Runner.workspace
-    FK while this predicate derived from paired_by — so a runner homed to
-    `alpha` whose pairer also belongs to `beta` could SEE and FIRE beta's
+    FK while this predicate derived from owner — so a runner homed to
+    `alpha` whose owner also belongs to `beta` could SEE and FIRE beta's
     schedules here but could not CLAIM the resulting turns, leaving them QUEUED
     forever. Because one laptop runner serves a fleet that deliberately spans
     workspaces, that stopped 4 of 5 production agents from executing at all. The
-    resolution was to converge the CLAIM onto paired_by (this predicate's rule),
+    resolution was to converge the CLAIM onto owner (this predicate's rule),
     NOT to narrow this one onto the FK: the FK records where a runner lives, not
     who it may work for. tests/test_claim_schedule_parity.py fails if the two
     ever disagree again.
 
-    NULL paired_by fails closed inside runner_tenant_slugs (empty slug set →
+    NULL owner fails closed inside runner_tenant_slugs (empty slug set →
     `__in=set()` matches nothing), which is stricter than _runner_visibility_q's
     legacy-ungated allowance — an orphaned runner can be operated, but can never
     sync or fire a schedule. That used to be a separate `.none()` branch here; it
@@ -2035,9 +2035,9 @@ def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: Dril
 
 @router.get("/runners/{runner_id}/drills", response=list[RunnerDrillOut])
 def list_runner_drills(request: HttpRequest, runner_id: uuid.UUID):
-    # Readiness results are a log about the box: its pairer and the admins it
+    # Readiness results are a log about the box: its owner and the admins it
     # granted read them, and so does a workspace admin of the runner's tenant
-    # (`permissions.LOGS_READ`). It used to be the pairer alone, so nobody
+    # (`permissions.LOGS_READ`). It used to be the owner alone, so nobody
     # operating the fleet could see why a box was failing its drills.
     runner = (Runner.objects.exclude(status=Runner.RETIRED)
               .filter(_runner_read_q(request)).filter(pk=runner_id).first())
@@ -2057,7 +2057,7 @@ def report_drill(request: HttpRequest, drill_id: int, payload: DrillReportIn, t:
     # (`Agent.user`, per-agent PATs) reports AS ITSELF and correctly refuses to
     # borrow the operator's token — gating on the runner owner alone 404'd that
     # report and stranded the drill (cloud-ec2-1, 2026-09-22). The owner leg stays
-    # for agents with no login, which run on the pairer's token. Anyone else gets
+    # for agents with no login, which run on the owner's token. Anyone else gets
     # the same 404 as before, so a drill's existence never leaks.
     drill = get_object_or_404(
         RunnerDrill.objects.select_related("runner", "agent"), pk=drill_id

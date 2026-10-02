@@ -841,7 +841,7 @@ export function ChatPage() {
                 onPlace={continueOn}
                 paused={boundPaused}
                 pausedNote={boundRunner?.paused_note || undefined}
-                // Pause/resume is pairer-only server-side; `can_manage` is the
+                // Pause/resume is owner-only server-side; `can_manage` is the
                 // row saying so. Without it, Resume would 404 and read as the
                 // runner refusing to come back.
                 onResume={boundPaused && boundRunner?.can_manage ? resumeBoundRunner : undefined}
