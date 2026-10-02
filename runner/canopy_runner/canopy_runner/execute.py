@@ -24,8 +24,8 @@ import pathlib
 import time
 from pathlib import Path
 
-from . import (caller, cdp_control, chat_bridge, chat_key, dialog, emdash, hooks, native_permissions,
-               readiness, session_naming, transcript)
+from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
+               native_permissions, readiness, session_naming, transcript)
 from .client import ClientError
 from .tail import TailReader
 
@@ -182,6 +182,7 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
 
     # Who is asking, for the plugin's UserPromptSubmit hook — BEFORE the text lands.
     caller.write_pending(task, turn, envelope)
+    verifier = _open_verifier(agent, task, cfg)
     try:
         res = cdp_control.open_and_send(task, work_prompt, port=cfg.cdp_port)
     except cdp_control.CDPError as exc:
@@ -243,6 +244,13 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
             return f"failed:{turn_id}"
         # fall through to the shared success tail below
 
+    # `sent` means the keystrokes went out, not that the session took them. Never
+    # retype here: a message that lands late would then arrive twice.
+    if _undelivered(client, turn_id, task, verifier, work_prompt):
+        caller.clear_pending(task)
+        client.fail_turn(turn_id, _not_received_note(task))
+        return f"failed:{turn_id}"
+
     # Delivered — either the empty-line fast path, or a cleared-then-sent collision.
     logger.info("REUSE  turn=%s agent=%s thread=%s -> existing session '%s' (no new claude session)",
                 turn_id, agent, thread_key, task)
@@ -255,6 +263,55 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
     client.finish(turn_id, note=f"delivered to existing session '{task}'",
                   emdash_task_id=task)
     return f"reused:{turn_id}"
+
+
+def _open_verifier(target: str, task: str, cfg):
+    """A reader on the live session's transcript, positioned at its CURRENT end —
+    taken BEFORE typing, so whatever the send produces is what it reads next. None
+    when the transcript can't be resolved: delivery is then unverifiable, and the
+    send proceeds as it always has rather than failing turns on a lookup miss."""
+    path = _resolve_transcript_path(target, task, emdash_db=getattr(cfg, "emdash_db", None))
+    if path is None:
+        return None
+    reader = TailReader(str(path))
+    reader.seek_end()
+    return reader
+
+
+def _not_received_note(task: str) -> str:
+    """What the HUMAN reads (relayed into Slack / the chat UI as the failure) when
+    the keystrokes went out but the session never took them."""
+    return (
+        f"Your message was not delivered: it was typed into the emdash session \"{task}\" "
+        f"but the session never received it. Nothing was sent to the agent — please send "
+        f"your message again."
+    )
+
+
+def _undelivered(client, turn_id: str, task: str, verifier, prompt: str) -> bool:
+    """True when the send verifiably did NOT reach Claude Code (see delivery.py).
+
+    Posts the evidence either way it is not a clean confirmation, so a lost message
+    is visible on the turn instead of looking exactly like a delivered one."""
+    if verifier is None:
+        _post_events_best_effort(client, turn_id, [{"kind": "status",
+            "payload": {"status": "delivery_unverified", "task": task}}])
+        return False
+    verdict = delivery.confirm(verifier, prompt)
+    if verdict == delivery.CONFIRMED:
+        return False
+    if verdict == delivery.UNMATCHED:
+        logger.warning("delivery on '%s' (turn=%s): a prompt landed but did not match the "
+                       "message text — treating as delivered", task, turn_id)
+        _post_events_best_effort(client, turn_id, [{"kind": "status",
+            "payload": {"status": "delivery_unmatched", "task": task}}])
+        return False
+    logger.warning("UNDELIVERED turn=%s task=%s: sent, but nothing reached the transcript "
+                   "within %.0fs", turn_id, task, delivery.CONFIRM_TIMEOUT)
+    _post_events_best_effort(client, turn_id, [{"kind": "status",
+        "payload": {"status": "undelivered", "task": task,
+                    "waited_seconds": delivery.CONFIRM_TIMEOUT}}])
+    return True
 
 
 def _repoint(asked: str, got: str, turn: dict, envelope) -> None:
@@ -484,6 +541,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     client.start(turn_id)
 
     task = plan.get("emdash_task_id") if plan.get("reuse") else None
+    pre_send = None  # (transcript path, byte offset) taken just before a reuse send
     if task and emdash.task_state(cfg.emdash_db, task) in ("absent", "archived"):
         task = None  # the linked emdash session is gone — create a fresh one
 
@@ -505,6 +563,9 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         caller.write_pending(task, turn, envelope)
         # Before delivery, so the agent's first `canopy secret` cannot race it.
         chat_key.write(turn, task=task)
+        verifier = _open_verifier(target, task, cfg)
+        if verifier is not None:
+            pre_send = (verifier.path, verifier.offset)
         try:
             res = cdp_control.open_and_send(task, prompt, port=cfg.cdp_port)
         except Exception as exc:  # noqa: BLE001 — any send failure ends the turn
@@ -540,6 +601,13 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
                 caller.clear_pending(task)
                 client.fail_turn(turn_id, _undelivered_note(task))
                 return f"deferred:{turn_id}"
+        # `sent` is "the keystrokes went out". Confirm the session took them, or the
+        # turn sits RUNNING with no reply and nobody is told (turn ffaa56ce,
+        # 2026-10-02). Never retype: a late landing would arrive twice.
+        if _undelivered(client, turn_id, task, verifier, prompt):
+            caller.clear_pending(task)
+            client.fail_turn(turn_id, _not_received_note(task))
+            return f"failed:{turn_id}"
         logger.info("chat turn=%s reused emdash task=%s (agent=%s)", turn_id, task, target)
     else:
         name = _task_name(target, turn)
@@ -586,7 +654,14 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     # hands the floor back. Waiting here would block the whole runner loop (heartbeat,
     # claims, session reports) for the length of an agent turn, which is minutes.
     reader = TailReader(str(path))
-    reader.seek_end()  # byte-equivalent of the old start_index snapshot, without re-reading
+    if pre_send is not None and pre_send[0] == str(path):
+        # Delivery was verified by reading past the send, so the reply may ALREADY
+        # have started. Start the bridge where the verifier started — before the
+        # send — so none of it is skipped (the prompt record it re-reads is not an
+        # assistant message, so nothing is emitted for it).
+        reader.offset = pre_send[1]
+    else:
+        reader.seek_end()  # byte-equivalent of the old start_index snapshot, without re-reading
     chat_bridge.IN_FLIGHT[turn_id] = chat_bridge.LiveBridge(
         turn_id=turn_id, task=task, reader=reader,
     )
