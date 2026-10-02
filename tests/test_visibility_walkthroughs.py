@@ -8,14 +8,27 @@ from django.test import Client, override_settings
 
 from apps.walkthroughs import storage
 from apps.walkthroughs.models import Walkthrough
+from apps.workspaces.models import WorkspaceMembership
+from apps.workspaces.services import ensure_member
+from apps.workspaces.testing import a_workspace
 from tests.fixtures.fake_drive import FakeDriveClient
 
 
 @pytest.fixture
 def owner(db):
-    return get_user_model().objects.create_user(
+    # An editor of the walkthroughs' workspace: a walkthrough with no workspace
+    # has no members (only its token reads it), and editing one is the author tier.
+    user = get_user_model().objects.create_user(
         username="owner@dimagi.com", email="owner@dimagi.com",
     )
+    ensure_member(a_workspace(), user, WorkspaceMembership.EDITOR)
+    return user
+
+
+def _member(email, role=WorkspaceMembership.VIEWER):
+    user = get_user_model().objects.create_user(username=email, email=email)
+    ensure_member(a_workspace(), user, role)
+    return user
 
 
 @pytest.fixture
@@ -31,7 +44,7 @@ def _make(owner, **kw):
     defaults = dict(
         title="Demo", kind="video", owner=owner,
         drive_file_id="file-1", drive_folder_id="folder-1",
-        content_type="video/mp4", size_bytes=10,
+        content_type="video/mp4", size_bytes=10, workspace=a_workspace(),
     )
     defaults.update(kw)
     return Walkthrough.objects.create(**defaults)
@@ -110,12 +123,10 @@ def test_owner_sees_private_content(owner):
 
 @override_settings(REQUIRE_AUTH=True)
 def test_authed_non_owner_sees_private_content(owner):
-    # The tokenless gate grants any authenticated Dimagi user access,
-    # not just the owner.
+    # Any MEMBER of the walkthrough's workspace reads it, a viewer included —
+    # not just the uploader.
     w = _make(owner, visibility="private")
-    other = get_user_model().objects.create_user(
-        username="other@dimagi.com", email="other@dimagi.com",
-    )
+    other = _member("other@dimagi.com")
     client = Client()
     client.force_login(other)
     with _stub_download():
@@ -263,10 +274,8 @@ def test_share_url_hidden_from_non_owner_and_anonymous(owner):
     assert resp.json()["share_url"] is None
     assert "share_token" not in resp.json()
 
-    # Authed non-owner: same.
-    other = get_user_model().objects.create_user(
-        username="other2@dimagi.com", email="other2@dimagi.com",
-    )
+    # Authed member who did not upload it (and does not own the workspace): same.
+    other = _member("other2@dimagi.com", WorkspaceMembership.EDITOR)
     client = Client()
     client.force_login(other)
     resp = client.get(f"/api/walkthroughs/{w.id}/")
@@ -344,7 +353,9 @@ def test_rotate_is_owner_only(owner):
     # Anonymous → 401 (middleware/session-auth rejection; rotate is no longer
     # a public-with-manual-owner-check route).
     assert Client().post(f"/api/walkthroughs/{w.id}/rotate-token").status_code == 401
-    # Authed non-owner → 404 (hidden, matching the tokens-app pattern).
+    # Authed NON-MEMBER → 404 (hidden, matching the tokens-app pattern). A
+    # member who may read it but not re-key it gets 403 — see
+    # tests/test_product_acl.py.
     other = get_user_model().objects.create_user(
         username="other3@dimagi.com", email="other3@dimagi.com",
     )

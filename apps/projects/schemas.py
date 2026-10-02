@@ -163,7 +163,8 @@ class InsightsClearIn(StrictModel):
     """Body of POST /api/insights/clear/.
 
     All fields optional. Provided filters are AND-combined to narrow which
-    insights are deleted. A body with no filters clears ALL insights.
+    insights are deleted. A body with no filters clears every insight in the
+    workspaces where the caller holds the editor role.
     """
     source: str | None = None
     category: str | None = None

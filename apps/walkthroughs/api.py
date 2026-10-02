@@ -6,7 +6,6 @@ import logging
 from uuid import UUID
 
 from django.conf import settings
-from django.db import models
 from django.http import Http404, HttpRequest
 from django.urls import get_script_prefix
 from pydantic import ValidationError
@@ -143,6 +142,41 @@ def _get_or_404(wid: UUID) -> Walkthrough:
     return w
 
 
+def _may_write(request: HttpRequest, w: Walkthrough) -> bool:
+    """Editing, re-keying or deleting a walkthrough: its uploader while they are
+    STILL an editor of its workspace, or an owner of that workspace.
+
+    This was "the uploader", full stop, with no membership check — so someone
+    removed from the workspace (or demoted to viewer) kept the power to flip
+    their old uploads public, re-mint their links and delete them. An owner is
+    added because the uploader is often an orchestrator's PAT, and somebody has
+    to be able to take down a walkthrough whose uploader is gone."""
+    user = request.user
+    if not user.is_authenticated or w.workspace_id is None:
+        return False
+    if wsvc.has_role_at_least(user, w.workspace_id, wsvc.WorkspaceMembership.OWNER):
+        return True
+    return w.owner_id == user.id and wsvc.has_role_at_least(
+        user, w.workspace_id, wsvc.WorkspaceMembership.EDITOR
+    )
+
+
+def _get_for_write(request: HttpRequest, wid: UUID) -> Walkthrough:
+    """404 to anyone who cannot see the walkthrough as a member (existence must
+    not leak — a share-token holder is a reader, not a member), 403 to a member
+    who may see it but not change it."""
+    w = _get_or_404(wid)
+    if w.workspace_id is None or w.workspace_id not in wsvc.request_workspace_slugs(request):
+        raise ProblemError(404, "Walkthrough not found", type_=TYPE_NOT_FOUND)
+    if not _may_write(request, w):
+        raise ProblemError(
+            403,
+            "Forbidden — the uploader (an editor) or a workspace owner only",
+            type_=TYPE_FORBIDDEN,
+        )
+    return w
+
+
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
@@ -237,6 +271,13 @@ def upload_walkthrough(
             type_=TYPE_VALIDATION,
             detail="you do not belong to a workspace that can own this; ask an owner for an invite",
         )
+    if not wsvc.has_role_at_least(request.user, ws, wsvc.WorkspaceMembership.EDITOR):
+        raise ProblemError(
+            403,
+            "Editor role required",
+            type_=TYPE_FORBIDDEN,
+            detail=f"uploading a walkthrough requires the editor role in {ws.slug!r}",
+        )
 
     # Create ORM row first — if Drive fails, delete to avoid orphan row.
     w = Walkthrough.objects.create(
@@ -296,9 +337,13 @@ def upload_walkthrough(
     # when both run_id and role are set — roleless / orphan uploads aren't
     # first-class run objects and are left alone. Runs only after the new row is
     # safely stored, so a failed upload never destroys the prior good artifact.
+    #
+    # Within THIS workspace only: run_id is a client-supplied string, so an
+    # unscoped match let an upload in one tenant delete another tenant's
+    # artifact (and its Drive file) by naming the same run and role.
     if resolved_run_id and resolved_role:
         superseded = Walkthrough.objects.filter(
-            run_id=resolved_run_id, role=resolved_role
+            run_id=resolved_run_id, role=resolved_role, workspace=ws
         ).exclude(pk=w.pk)
         for old in superseded:
             if old.drive_file_id:
@@ -344,18 +389,12 @@ def list_walkthroughs(
     _require_enabled()
 
     # Scope to the caller's workspace(s): the /w/{ws} prefix pins one workspace;
-    # a flat call spans every workspace the caller belongs to. Legacy rows with
-    # no workspace (pre-backfill / fresh DB) stay visible on flat calls only.
-    ws = getattr(request, "workspace_slug", None)
-    slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
-
-    qs = Walkthrough.objects.select_related("owner").all()
-    if ws:
-        qs = qs.filter(workspace_id=ws)
-    else:
-        qs = qs.filter(
-            models.Q(workspace_id__in=slugs) | models.Q(workspace_id__isnull=True)
-        )
+    # a flat call spans every workspace the caller belongs to. A row with no
+    # workspace is in nobody's scope (it used to be in everybody's on the flat
+    # mount — the NULL-means-allow leg).
+    qs = Walkthrough.objects.select_related("owner").filter(
+        workspace_id__in=wsvc.request_workspace_slugs(request)
+    )
     if project:
         qs = qs.filter(project_slug=project)
     if kind in (Walkthrough.KIND_HTML, Walkthrough.KIND_VIDEO):
@@ -384,7 +423,9 @@ def get_walkthrough(request: HttpRequest, wid: UUID, t: str = "") -> Walkthrough
     w = _get_or_404(wid)
     if not w.readable_by(request):  # member of its workspace, or a matching ?t token
         raise Http404("walkthrough not found")  # don't leak private existence
-    is_owner = request.user.is_authenticated and w.owner_id == request.user.id
+    # `is_owner` drives the edit controls and the share URL, so it answers "may
+    # this caller change it", which is the write gate — not bare authorship.
+    is_owner = _may_write(request, w)
     return WalkthroughDetailOut.model_validate(
         _detail_payload(w, is_owner=is_owner, request=request)
     )
@@ -398,7 +439,7 @@ def get_walkthrough(request: HttpRequest, wid: UUID, t: str = "") -> Walkthrough
 @router.patch(
     "/{wid}/",
     response=WalkthroughDetailOut,
-    summary="Update walkthrough (owner only)",
+    summary="Update walkthrough (uploader or workspace owner)",
 )
 def patch_walkthrough(
     request: HttpRequest,
@@ -406,10 +447,7 @@ def patch_walkthrough(
     payload: WalkthroughPatchIn,
 ) -> WalkthroughDetailOut:
     _require_enabled()
-    w = _get_or_404(wid)
-
-    if not (request.user.is_authenticated and w.owner_id == request.user.id):
-        raise ProblemError(403, "Forbidden — owner only", type_=TYPE_FORBIDDEN)
+    w = _get_for_write(request, wid)
 
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
@@ -434,19 +472,17 @@ def patch_walkthrough(
 @router.post(
     "/{wid}/rotate-token",
     response=WalkthroughDetailOut,
-    summary="Rotate the share token (owner only)",
+    summary="Rotate the share token (uploader or workspace owner)",
 )
 def rotate_walkthrough_token(request: HttpRequest, wid: UUID) -> WalkthroughDetailOut:
     """Mint a fresh share token, killing every previously shared public link.
 
-    Uses the router's default session auth (same as patch/delete below) — an
-    anonymous caller is rejected before reaching this body. An *authenticated*
-    non-owner still gets a manual 404 (not 403) to avoid leaking existence.
+    The uploader (while an editor of the walkthrough's workspace) or a workspace
+    owner. 404 to anyone who is not a member of that workspace; 403 to a member
+    who may read it but not re-key it.
     """
     _require_enabled()
-    w = _get_or_404(wid)
-    if w.owner_id != request.user.id:
-        raise Http404("walkthrough not found")  # hide existence from non-owners
+    w = _get_for_write(request, wid)
     w.rotate_share_token()
     return WalkthroughDetailOut.model_validate(
         _detail_payload(w, is_owner=True, request=request)
@@ -461,14 +497,11 @@ def rotate_walkthrough_token(request: HttpRequest, wid: UUID) -> WalkthroughDeta
 @router.delete(
     "/{wid}/",
     response={204: None},
-    summary="Delete walkthrough (owner only)",
+    summary="Delete walkthrough (uploader or workspace owner)",
 )
 def delete_walkthrough(request: HttpRequest, wid: UUID) -> Status:
     _require_enabled()
-    w = _get_or_404(wid)
-
-    if not (request.user.is_authenticated and w.owner_id == request.user.id):
-        raise ProblemError(403, "Forbidden — owner only", type_=TYPE_FORBIDDEN)
+    w = _get_for_write(request, wid)
 
     if w.drive_file_id:
         try:

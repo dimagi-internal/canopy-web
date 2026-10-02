@@ -2,8 +2,8 @@
 
 Mounted at ``/api/ddd``. A *narrative* is the run_id slug; runs roll up under
 it. Everything here joins ``Walkthrough`` + ``ReviewRequest`` on ``run_id`` at
-read time — see ``apps/runs/aggregate.py``. Team-internal: any authenticated
-user (session or PAT) reads everything, same rule as the reviews dashboard.
+read time — see ``apps/runs/aggregate.py``. Members of a workspace read its
+narratives; changing or deleting them is the editor tier.
 """
 from __future__ import annotations
 
@@ -37,6 +37,24 @@ def _workspace_slugs(request: HttpRequest) -> set[str]:
     the user belongs to."""
     ws = getattr(request, "workspace_slug", None)
     return {ws} if ws else wsvc.user_workspace_slugs(request.user)
+
+
+def _editor_slugs(request: HttpRequest) -> set[str]:
+    """The WRITE scope: the in-scope workspaces where the caller is an editor.
+
+    Every mutation here is scoped by this rather than by `_workspace_slugs`. A
+    narrative is a grouping over rows that may sit in several workspaces, so
+    scoping by role (rather than refusing the whole call) means an editor of A
+    who can also read B changes A's rows and leaves B's alone."""
+    return wsvc.request_workspace_slugs_at_least(request, wsvc.WorkspaceMembership.EDITOR)
+
+
+def _forbidden(what: str) -> ProblemError:
+    """A caller who can READ the target but holds no editor role over any of its
+    rows. 403, not 404: they can already see it, so the refusal leaks nothing."""
+    return ProblemError(
+        403, f"{what} requires the editor role in its workspace", type_=TYPE_FORBIDDEN
+    )
 
 
 @router.get(
@@ -107,8 +125,14 @@ def set_narrative_visibility(
     request: HttpRequest, slug: str, payload: NarrativeVisibilityIn
 ) -> NarrativeVisibilityOut:
     slugs = _workspace_slugs(request)
+    editable = _editor_slugs(request)
+    if (
+        aggregate.build_narrative(slug, workspace_slugs=editable) is None
+        and aggregate.build_narrative(slug, workspace_slugs=slugs) is not None
+    ):
+        raise _forbidden("Changing a narrative's visibility")
     wt_n, rev_n = aggregate.set_narrative_visibility(
-        slug, payload.visibility, workspace_slugs=slugs
+        slug, payload.visibility, workspace_slugs=editable
     )
     detail = aggregate.build_narrative(slug, workspace_slugs=slugs)
     status = detail["visibility"] if detail else (
@@ -125,11 +149,11 @@ def set_narrative_visibility(
 # ---------------------------------------------------------------------------
 # Cascade deletes
 #
-# Team-internal cleanup, same auth rule as the reviews dashboard: any
-# authenticated user (session or PAT) may delete. Each delete cascades the
-# rows that roll up under the target and best-effort removes rendered files
-# from Drive — see ``apps/runs/delete.py``. 204 on success, 404 when nothing
-# matched.
+# Workspace cleanup, the author tier: an EDITOR of the rows' workspace (session
+# or PAT) may delete; a viewer who can see the target gets 403, anyone else 404.
+# Each delete cascades the rows that roll up under the target and best-effort
+# removes rendered files from Drive — see ``apps/runs/delete.py`` — which is
+# why it is not the viewer tier. 204 on success, 404 when nothing matched.
 # ---------------------------------------------------------------------------
 
 
@@ -139,7 +163,9 @@ def set_narrative_visibility(
     summary="Delete a run (its walkthroughs + reviews)",
 )
 def delete_run(request: HttpRequest, run_id: str):
-    if delete.delete_run(run_id, workspace_slugs=_workspace_slugs(request)) is None:
+    if delete.delete_run(run_id, workspace_slugs=_editor_slugs(request)) is None:
+        if aggregate.build_run(run_id, workspace_slugs=_workspace_slugs(request)) is not None:
+            raise _forbidden("Deleting a run")
         raise ProblemError(404, "Run not found", type_=TYPE_NOT_FOUND)
     return Status(204, None)
 
@@ -151,8 +177,11 @@ def delete_run(request: HttpRequest, run_id: str):
 )
 def delete_version(request: HttpRequest, slug: str, version: int):
     if delete.delete_version(
-        slug, version, workspace_slugs=_workspace_slugs(request)
+        slug, version, workspace_slugs=_editor_slugs(request)
     ) is None:
+        readable = aggregate.build_narrative(slug, workspace_slugs=_workspace_slugs(request))
+        if readable and any(v.get("version") == version for v in readable["versions"]):
+            raise _forbidden("Deleting a narrative version")
         raise ProblemError(404, "Narrative version not found", type_=TYPE_NOT_FOUND)
     return Status(204, None)
 
@@ -163,7 +192,9 @@ def delete_version(request: HttpRequest, slug: str, version: int):
     summary="Delete an entire narrative (all versions + runs)",
 )
 def delete_narrative(request: HttpRequest, slug: str):
-    if delete.delete_narrative(slug, workspace_slugs=_workspace_slugs(request)) is None:
+    if delete.delete_narrative(slug, workspace_slugs=_editor_slugs(request)) is None:
+        if aggregate.build_narrative(slug, workspace_slugs=_workspace_slugs(request)) is not None:
+            raise _forbidden("Deleting a narrative")
         raise ProblemError(404, "Narrative not found", type_=TYPE_NOT_FOUND)
     return Status(204, None)
 
@@ -183,31 +214,47 @@ def move_narrative(request: HttpRequest, slug: str, payload: NarrativeMoveIn) ->
     heals that, and equally serves the honest case: the narrative turned out to
     belong to another team.
 
-    Requires membership of BOTH sides — you may not move something out of a
-    workspace you cannot see, nor into one you do not belong to.
+    Requires the editor role on BOTH sides — you may not move something out of
+    a workspace you cannot change, nor into one where you could not have
+    created it.
     """
     slugs = {slug, *payload.also}
+    # Editor, not membership: a move takes the narrative out of its source as
+    # surely as delete_narrative does, and lands rows in the destination as
+    # surely as an upload does — both are author-tier acts.
     mine = wsvc.user_workspace_slugs(request.user)
+    editable = {ws for ws in mine if wsvc.has_role_at_least(
+        request.user, ws, wsvc.WorkspaceMembership.EDITOR)}
 
-    if payload.to_workspace not in mine:
+    if payload.to_workspace not in editable:
         raise ProblemError(
             403,
-            f"You are not a member of {payload.to_workspace!r}",
+            f"You need the editor role in {payload.to_workspace!r} to move a narrative into it",
             type_=TYPE_FORBIDDEN,
         )
 
     plan = plan_move(slugs, payload.to_workspace)
-    unreachable = [ws for ws in plan["source_workspaces"] if ws not in mine]
+    held_in = {
+        str(row.workspace_id)
+        for row in (*plan["_reviews"], *plan["_walkthroughs"], *plan["_boards"])
+    }
+    if not plan["narratives"] or not held_in & mine:
+        # Nothing of it is in a workspace the caller is in: as far as they can
+        # tell, it does not exist.
+        raise ProblemError(404, "Narrative not found", type_=TYPE_NOT_FOUND)
+
+    unreachable = [ws for ws in plan["source_workspaces"] if ws not in editable]
     if unreachable:
+        # Name only the workspaces the caller is in. Naming one they are not in
+        # would tell them a tenant they cannot see holds a narrative by this name.
+        seen = [ws for ws in unreachable if ws in mine]
+        where = ", ".join(seen) if seen else "a workspace you are not a member of"
         raise ProblemError(
             403,
-            f"You are not a member of {', '.join(unreachable)} — "
-            f"a narrative cannot be moved out of a workspace you cannot see",
+            f"You need the editor role in {where} — "
+            f"a narrative cannot be moved out of a workspace you cannot change",
             type_=TYPE_FORBIDDEN,
         )
-
-    if not plan["narratives"]:
-        raise ProblemError(404, "Narrative not found", type_=TYPE_NOT_FOUND)
 
     if payload.dry_run:
         return {**public_plan(plan), "dry_run": True}

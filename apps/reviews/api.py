@@ -85,12 +85,15 @@ def _is_owner(request: HttpRequest, review: ReviewRequest) -> bool:
 
 
 def _in_caller_workspaces(request: HttpRequest, review: ReviewRequest) -> bool:
-    """The hard tenant boundary: a workspace-assigned review is reachable only by a
-    member of that workspace. Legacy null-workspace rows (pre-FK migration) fall
-    back to any authenticated user — there is no workspace to check, and the API
-    has assigned one on every create since the migration, so this shrinks to zero."""
+    """The hard tenant boundary: a review is reachable only by a member of its
+    workspace. A null-workspace review is reachable by no member at all."""
+    # This used to fall back to "any authenticated user" for a NULL workspace —
+    # the NULL-means-allow leg. `reviews/0007` homed every row that existed, and
+    # every create since assigns one, so the leg guarded nothing but the next
+    # unhomed row. A `link` review is still readable by anyone (`_can_read`);
+    # that is a property of the review, not of its tenant.
     if review.workspace_id is None:
-        return request.user.is_authenticated
+        return False
     return review.workspace_id in wsvc.request_workspace_slugs(request)
 
 
@@ -104,10 +107,15 @@ def _can_read(request: HttpRequest, review: ReviewRequest) -> bool:
 
 
 def _can_write(request: HttpRequest, review: ReviewRequest) -> bool:
-    """Submitting a decision resolves the gate — a member-of-the-workspace action.
-    Public-readable does NOT grant write, and neither does membership of some OTHER
-    workspace."""
-    return request.user.is_authenticated and _in_caller_workspaces(request, review)
+    """Submitting a decision resolves the gate — it approves a story for
+    building, so it is the author tier (`editor`), not mere membership. A viewer
+    reads the review; public-readable grants no write, and neither does a role in
+    some OTHER workspace."""
+    return (
+        request.user.is_authenticated
+        and _in_caller_workspaces(request, review)
+        and wsvc.has_role_at_least(request.user, review.workspace_id, wsvc.WorkspaceMembership.EDITOR)
+    )
 
 
 def _token_ok(request: HttpRequest, review: ReviewRequest) -> bool:
@@ -210,22 +218,17 @@ def list_reviews(
     """
     List every review request for the DDD-plans dashboard.
 
-    Team-internal: any authenticated user (session or PAT) sees all reviews —
-    same read rule as GET /<id>/. Supports a free-text `q` (matches narrative_slug,
+    Members see the reviews of their workspaces (session or PAT) — the same
+    read rule as GET /<id>/. Supports a free-text `q` (matches narrative_slug,
     run_id, gate, or title), an optional `status` filter (pending|resolved),
     and `order` ∈ {-last_activity, last_activity, -created, created, narrative_slug}.
     Default sort is most-recently-edited first.
     """
     # Workspace scoping: honor the /w/{ws} prefix when present (already
     # membership-checked by WorkspaceResolveMiddleware); on the flat mount,
-    # scope to every workspace the caller belongs to. Legacy rows with
-    # workspace=None stay visible on the flat mount (backfill safety).
-    ws = getattr(request, "workspace_slug", None)
-    slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
-
-    qs = ReviewRequest.objects.filter(workspace_id__in=slugs)
-    if ws is None:
-        qs = qs | ReviewRequest.objects.filter(workspace__isnull=True)
+    # scope to every workspace the caller belongs to. A null-workspace review
+    # is in nobody's scope (see `_in_caller_workspaces`).
+    qs = ReviewRequest.objects.filter(workspace_id__in=wsvc.request_workspace_slugs(request))
     if status in (ReviewRequest.STATUS_PENDING, ReviewRequest.STATUS_RESOLVED):
         qs = qs.filter(status=status)
 
@@ -322,6 +325,13 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
             type_=TYPE_VALIDATION,
             detail="you do not belong to a workspace that can own this; ask an owner for an invite",
         )
+    if not wsvc.has_role_at_least(request.user, ws, wsvc.WorkspaceMembership.EDITOR):
+        raise ProblemError(
+            403,
+            "Editor role required",
+            type_=TYPE_FORBIDDEN,
+            detail=f"opening a review requires the editor role in {ws.slug!r}",
+        )
 
     review = ReviewRequest.objects.create(
         run_id=run_id,
@@ -369,8 +379,8 @@ def get_review(request: HttpRequest, rid: UUID) -> ReviewRequestOut:
     Returns the full review request + current status.
 
     Access rules:
-    - Any authenticated user can read any review (they're team-internal).
-    - Unauthenticated callers may read if visibility=="link" (no token required).
+    - A member of the review's workspace can read it.
+    - Anyone may read if visibility=="link" (no token required).
     - Otherwise → 404 (don't leak existence).
     """
     review = _get_or_404(rid)
@@ -380,8 +390,13 @@ def get_review(request: HttpRequest, rid: UUID) -> ReviewRequestOut:
 
     is_own = _is_owner(request, review)
 
+    # Suggestions are internal reading — any member of the review's workspace
+    # sees them, a viewer included; only an anonymous link reader does not.
     return ReviewRequestOut.model_validate(
-        _detail_payload(review, is_owner=is_own, can_write=_can_write(request, review))
+        _detail_payload(
+            review, is_owner=is_own,
+            can_write=request.user.is_authenticated and _in_caller_workspaces(request, review),
+        )
     )
 
 
@@ -411,7 +426,10 @@ def submit_review(request: HttpRequest, rid: UUID, payload: ReviewSubmitIn) -> R
     if not _can_read(request, review):
         raise ProblemError(404, "Review request not found", type_=TYPE_NOT_FOUND)
     if not _can_write(request, review):
-        raise ProblemError(403, "Authentication required to submit a review", type_=TYPE_FORBIDDEN)
+        raise ProblemError(
+            403, "Submitting a review requires the editor role in its workspace",
+            type_=TYPE_FORBIDDEN,
+        )
 
     # auth=None means Ninja never runs a CSRF check for session-cookie writers;
     # re-run Django's. PAT callers skip it (BearerTokenAuthMiddleware sets
@@ -494,15 +512,19 @@ def delete_review(request: HttpRequest, rid: UUID):
     """
     Delete a review request.
 
-    Workspace-internal cleanup: any MEMBER of the review's workspace (session or
+    Workspace-internal cleanup: any EDITOR of the review's workspace (session or
     PAT) may delete — reviews are owned by whichever identity posted them (often the
-    orchestrator's PAT, not the human browsing), so restricting to owner would make
-    the human unable to tidy up. Membership (not ownership) is the right gate, and
-    it's the tenant boundary: a non-member gets a 404, not the ability to delete
-    another workspace's review.
+    orchestrator's PAT, not the human browsing), so restricting to the poster would
+    make the human unable to tidy up. A viewer gets 403; a non-member gets 404, not
+    the ability to delete another workspace's review.
     """
     review = _get_or_404(rid)
     if not _in_caller_workspaces(request, review):
         raise ProblemError(404, "Review request not found", type_=TYPE_NOT_FOUND)
+    if not wsvc.has_role_at_least(request.user, review.workspace_id, wsvc.WorkspaceMembership.EDITOR):
+        raise ProblemError(
+            403, "Deleting a review requires the editor role in its workspace",
+            type_=TYPE_FORBIDDEN,
+        )
     review.delete()
     return Status(204, None)

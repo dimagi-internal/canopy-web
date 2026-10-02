@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from apps.projects.models import Project
@@ -53,6 +54,18 @@ class Shareout(models.Model):
     # NOT part of the idempotency group (see services.upsert_shareouts): it
     # rides along, so a re-post from the same source still replaces cleanly.
     produced_by_agent = models.CharField(max_length=80, blank=True, default="")
+    # The canopy login that POSTED the row — distinct from `author`, which is a
+    # free string the poster supplies. This is what "your own shareouts" means
+    # when a re-post replaces a period or a clear runs, so one editor cannot
+    # wipe or overwrite a teammate's briefing. NULL on rows that predate it;
+    # only a workspace owner may clear those.
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
     source = models.CharField(max_length=100)
     created_at = models.DateTimeField(auto_now_add=True)
 
