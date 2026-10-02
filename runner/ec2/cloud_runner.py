@@ -939,6 +939,59 @@ def _acp_core():
     return _ACP_CORE
 
 
+def _session_file(cwd: pathlib.Path, session_id: str) -> pathlib.Path:
+    """Where Claude Code writes a session's JSONL: the same cwd-derived path
+    `_resume_target_exists` checks."""
+    return CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{session_id}.jsonl"
+
+
+def _session_file_line_count(cwd: pathlib.Path, session_id: str) -> int:
+    """How many lines a session file already holds — 0 when there is none yet.
+    Read before a resumed turn runs, so only THIS turn's lines get posted."""
+    if not session_id:
+        return 0
+    try:
+        with _session_file(cwd, session_id).open("rb") as f:
+            return sum(1 for _ in f)
+    except OSError:
+        return 0
+
+
+def _post_session_transcript(turn_id: str, cwd: pathlib.Path, session_id: str,
+                             skip_lines: int = 0) -> int:
+    """Post the lines a turn added to its session file as the turn's retained
+    transcript. Returns how many lines were posted.
+
+    The ACP executor's counterpart to `run_claude`'s live stdout capture. ACP
+    talks JSON-RPC, so there is no stream-json stdout to tee — but the agent
+    still writes the ordinary session JSONL, and that file IS the CLI's record
+    of the turn. Without this, every ACP turn kept NO transcript: from
+    2026-09-09 (#728 made `acp` the template default) a cloud agent turn's work
+    was visible only as the event ledger's token fragments.
+
+    Posted once, after the turn, rather than streamed: the file is complete only
+    when the session closes, and re-reading it mid-turn would race the writer.
+    `skip_lines` drops what a resumed session's file held before this turn, so a
+    resume never re-posts the conversation's history onto a new turn. Best-effort
+    like every transcript path: a failure is logged, never raised."""
+    if not session_id:
+        return 0
+    try:
+        with _session_file(cwd, session_id).open("rb") as f:
+            raw = f.read().decode("utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        _log(f"turn {turn_id[:8]}: no session file to post ({exc})")
+        return 0
+    lines = [line for line in raw[skip_lines:] if line.strip()]
+    attempt_id = uuid.uuid4().hex[:8]
+    posted = 0
+    for seq, chunk in enumerate(_chunk_transcript_lines(lines), start=1):
+        if not _post_transcript_batch(turn_id, attempt_id, seq, chunk):
+            break
+        posted += len(chunk)
+    return posted
+
+
 def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             agent_slug: str | None = None, resume_session_id: str | None = None
             ) -> tuple[bool, str, str]:
@@ -956,7 +1009,8 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
 
     The durable transcript is untouched: an ACP session writes a normal
     `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`, so `_ship_transcript_rows`
-    works unchanged against the returned session id.
+    works unchanged against the returned session id — and the same file is what
+    `_post_session_transcript` posts as the turn's retained transcript.
     """
     core = _acp_core()
     if core is None:
@@ -1039,6 +1093,10 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             _log(f"warn: could not emit ACP events for {turn_id[:8]}: {exc}")
 
     agent = None
+    # The session whose file becomes this turn's transcript, and how much of that
+    # file predates the turn (a resumed session's history). Posted in `finally`,
+    # after close, when the file is complete.
+    transcript = {"session_id": "", "skip_lines": 0}
     try:
         agent = core.AcpAgent(cwd=workdir, env=_agent_env(agent_slug), on_update=on_update)
         agent.start()
@@ -1060,6 +1118,8 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                 reducer.reset_stream_state()
         if not session_id:
             session_id = agent.new_session()
+        transcript["session_id"] = session_id
+        transcript["skip_lines"] = _session_file_line_count(workdir, session_id)
         _log(f"exec: acp (turn {turn_id[:8]}) in {workdir} session={session_id[:8]}")
 
         pending = agent.prompt(prompt)
@@ -1097,6 +1157,11 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                 agent.close()
             except Exception:  # noqa: BLE001
                 pass
+        try:
+            _post_session_transcript(turn_id, workdir, transcript["session_id"],
+                                     skip_lines=transcript["skip_lines"])
+        except Exception as exc:  # noqa: BLE001 — a transcript must never cost the turn
+            _log(f"warn: could not post ACP transcript for {turn_id[:8]}: {exc}")
 
 
 def _content_text_of(update: dict) -> str:

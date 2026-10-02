@@ -2097,3 +2097,132 @@ def test_the_drain_probes_only_mailboxes_that_are_due(cloud_runner, monkeypatch)
     assert probed == [("ace@dimagi-ai.com", "canopy")], "a mailbox that is not due costs no gog call"
     assert checked == [("ace", "canopy")]
     cloud_runner._INBOX_STAMPS.clear()
+
+
+# ── an ACP turn keeps its transcript ─────────────────────────────────────────
+#
+# `run_claude` tees stream-json stdout into /turns/{id}/transcript as it runs.
+# ACP talks JSON-RPC — there is no stdout to tee — so from 2026-09-09 (#728 made
+# `acp` the template default) every cloud agent turn kept NO transcript, and
+# the Turns page had nothing to show for a turn that has no chat. The session
+# file the agent writes is the CLI's record of the turn; it is posted at the end.
+
+def _session_lines(*texts):
+    return [json.dumps({"type": "assistant", "message": {"id": f"m{i}", "content": [
+        {"type": "text", "text": t}]}}) for i, t in enumerate(texts)]
+
+
+def _write_session(cloud_runner, cwd, session_id, lines):
+    path = cloud_runner._session_file(cwd, session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def _capture_posts(cloud_runner, monkeypatch):
+    posts = []
+
+    def fake_api(method, path, body=None, **kw):
+        posts.append((path, body))
+        return 200, {"truncated": False}
+    monkeypatch.setattr(cloud_runner, "_api", fake_api)
+    return posts
+
+
+def test_the_session_file_is_posted_as_the_turns_transcript(cloud_runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "CLAUDE_PROJECTS_HOME", tmp_path / "projects")
+    cwd = tmp_path / "work"
+    lines = _session_lines("Reading the board.", "Nothing to do.")
+    _write_session(cloud_runner, cwd, "sess-1", lines)
+    posts = _capture_posts(cloud_runner, monkeypatch)
+
+    assert cloud_runner._post_session_transcript("turn-1", cwd, "sess-1") == 2
+    assert [p for p, _ in posts] == ["/turns/turn-1/transcript"]
+    assert posts[0][1]["lines"] == lines
+
+
+def test_a_resumed_session_posts_only_this_turns_lines(cloud_runner, tmp_path, monkeypatch):
+    """A resumed session's file starts with the whole prior conversation;
+    re-posting it would stack every earlier turn's history onto this one."""
+    monkeypatch.setattr(cloud_runner, "CLAUDE_PROJECTS_HOME", tmp_path / "projects")
+    cwd = tmp_path / "work"
+    before = _session_lines("earlier turn")
+    path = _write_session(cloud_runner, cwd, "sess-1", before)
+    skip = cloud_runner._session_file_line_count(cwd, "sess-1")
+    path.write_text(path.read_text() + "\n".join(_session_lines("this turn")) + "\n")
+    posts = _capture_posts(cloud_runner, monkeypatch)
+
+    cloud_runner._post_session_transcript("turn-2", cwd, "sess-1", skip_lines=skip)
+    assert [json.loads(line)["message"]["content"][0]["text"] for line in posts[0][1]["lines"]] \
+        == ["this turn"]
+
+
+def test_no_session_file_posts_nothing_and_does_not_raise(cloud_runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "CLAUDE_PROJECTS_HOME", tmp_path / "projects")
+    posts = _capture_posts(cloud_runner, monkeypatch)
+    assert cloud_runner._post_session_transcript("turn-3", tmp_path, "missing") == 0
+    assert cloud_runner._post_session_transcript("turn-3", tmp_path, "") == 0
+    assert posts == []
+
+
+class _FakeReducer:
+    assistant_text = "Nothing to do."
+    rate_limit = None
+
+    def apply(self, update):
+        return None
+
+    def reset_stream_state(self):
+        pass
+
+
+class _Done:
+    def result(self, timeout=None):
+        return {"stopReason": "end_turn"}
+
+
+def _fake_acp_core(cloud_runner, writes):
+    """An ACP core whose agent writes `writes` to its session file as it runs,
+    the way the real adapter's Claude Code session does."""
+    class Agent:
+        session_id = "sess-acp"
+
+        def __init__(self, cwd, env, on_update):
+            self.cwd = cwd
+
+        def start(self):
+            pass
+
+        def new_session(self):
+            return self.session_id
+
+        def prompt(self, _prompt):
+            _write_session(cloud_runner, self.cwd, self.session_id, writes)
+            return _Done()
+
+        def cancel(self):
+            pass
+
+        def close(self):
+            pass
+
+    class Core:
+        AcpAgent = Agent
+        UpdateReducer = _FakeReducer
+
+    return Core
+
+
+def test_run_acp_posts_the_turns_transcript(cloud_runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "CLAUDE_PROJECTS_HOME", tmp_path / "projects")
+    lines = _session_lines("Reading the board.", "Nothing to do.")
+    monkeypatch.setattr(cloud_runner, "_acp_core", lambda: _fake_acp_core(cloud_runner, lines))
+    monkeypatch.setattr(cloud_runner, "_agent_env", lambda slug: {})
+    posts = _capture_posts(cloud_runner, monkeypatch)
+
+    ok, text, session_id = cloud_runner.run_acp(
+        "/echo:turn", "turn-acp", lambda events: None, cwd=tmp_path / "work")
+
+    assert (ok, text, session_id) == (True, "Nothing to do.", "sess-acp")
+    transcript_posts = [b for p, b in posts if p == "/turns/turn-acp/transcript"]
+    assert transcript_posts and transcript_posts[0]["lines"] == lines
