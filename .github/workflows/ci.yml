@@ -125,7 +125,10 @@ jobs:
           echo "generated.ts is up to date."
 
       - name: Run pytest
-        run: uv run pytest
+        # -n auto: one worker per core (pytest-xdist). Each worker builds its own
+        # in-memory test DB, so the suite is isolated per worker; serially it was
+        # ~160s here, nearly all of it single-threaded.
+        run: uv run pytest -n auto
 
       # The root suite sets --ignore=packages, so each standalone in-repo package
       # needs its own invocation from its own dir — otherwise its tests never run

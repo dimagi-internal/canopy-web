@@ -109,6 +109,7 @@ dev = [
     # dev-only: in-memory async Redis for apps/realtime/presence_store.py tests —
     # exercises the same redis.asyncio API surface without a real Redis instance.
     "fakeredis>=2.23,<3.0",
+    "pytest-xdist>=3.6,<4.0",
 ]
 
 [build-system]
