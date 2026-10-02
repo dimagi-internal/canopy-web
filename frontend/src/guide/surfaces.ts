@@ -160,6 +160,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Add or remove a watched mailbox', 'Enable/disable a mailbox', 'Copy the GCP setup commands'],
   },
   {
+    path: '/w/:workspace/settings/runners',
+    title: 'Runner topology',
+    audience: 'Workspace admin or owner',
+    what: "Which runner each agent's turns land on, across this workspace and every one below it: each agent's runners in order and its source rules, every runner they use with its status and who paired it, and which agents are unrouted or have no live runner. Flags a route whose runner can never claim (its pairer is not in the agent's workspace). Read-only — routes are changed on each agent.",
+    actions: ['See what each workspace runs on', 'Select a runner to see which agents stop if it goes dark', "Open a runner's supervisor page"],
+  },
+  {
     path: '/w/:workspace/settings/slack',
     title: 'Slack',
     audience: 'Workspace owner connecting Slack',

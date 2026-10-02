@@ -453,6 +453,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "accept_invite": ("authenticated", "signed-link"),
     "get_shared_vault": ("own",),
     "set_shared_vault": ("own", "human-only"),
+    "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
 }
 
 #: Writes a VIEWER can make, each a decision rather than a default. A write

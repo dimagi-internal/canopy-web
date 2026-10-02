@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from typing import Literal
 
 from pydantic import EmailStr, Field
@@ -150,3 +151,63 @@ class SharedVaultOut(StrictModel):
     # (Workspace.shared_vault_source). `vault`/`key_set` then describe THAT one,
     # so a division doesn't read as unconfigured when its agents are fine.
     inherited_from: str = ""
+
+
+class TopologyRouteOut(StrictModel):
+    """One `RunnerAssignment` row. `source` "" = the agent's default ordered list
+    (`rank` orders it); non-empty = a source rule (optionally narrowed to one
+    `actor`). `can_claim` is False when the runner's PAIRER is not in the agent's
+    workspace — the row routes on paper and the turn is never claimed."""
+
+    runner_id: uuid.UUID
+    rank: int
+    enabled: bool
+    source: str
+    actor: str
+    strict: bool
+    turn_mode: str
+    can_claim: bool
+
+
+class TopologyAgentOut(StrictModel):
+    slug: str
+    name: str
+    turn_mode: str
+    routes: list[TopologyRouteOut]
+
+
+class TopologyWorkspaceOut(StrictModel):
+    slug: str
+    display_name: str
+    parent: str | None
+    depth: int
+    agents: list[TopologyAgentOut]
+
+
+class TopologyRunnerOut(StrictModel):
+    """A runner that lives in the tree or that an agent in it routes to.
+    `in_tree` False = homed elsewhere (another workspace, or none)."""
+
+    id: uuid.UUID
+    name: str
+    kind: str
+    location: str
+    status: str
+    ready: bool
+    ready_note: str
+    paused: bool
+    host: str
+    last_heartbeat_at: dt.datetime | None
+    workspace: str | None
+    in_tree: bool
+    paired_by_email: str | None
+    flags: list[str]
+    agent_count: int
+
+
+class RunnerTopologyOut(StrictModel):
+    """Workspaces in tree order (depth-first, `depth` 0 = the root)."""
+
+    root: str
+    workspaces: list[TopologyWorkspaceOut]
+    runners: list[TopologyRunnerOut]

@@ -24,6 +24,7 @@ from .schemas import (
     JoinableWorkspaceOut,
     MemberOut,
     MemberRoleUpdateIn,
+    RunnerTopologyOut,
     SharedVaultIn,
     SharedVaultOut,
     WorkspaceCreateIn,
@@ -485,3 +486,20 @@ def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) ->
     return services.set_shared_vault(
         m.workspace, vault=payload.vault, service_key=payload.service_key,
     )
+
+
+@router.get("/{slug}/runner-topology", response=RunnerTopologyOut,
+            summary="Which runners serve which agents, across this workspace and every one below it")
+def runner_topology(request: HttpRequest, slug: str) -> RunnerTopologyOut:
+    """This workspace and its descendants, each with its agents and their routing
+    (the default ordered list and every source rule), plus every runner those
+    agents route to or that lives in the tree. Admin and above."""
+    # `logs.read` — the operational read tier (runner drills, health) — on the
+    # root, and again on every descendant: only OWNERSHIP flows down the tree,
+    # so an admin of the root sees a division only where they are its admin too.
+    from apps.harness import topology
+
+    m = _require(request.user, slug, perms.LOGS_READ)
+    return RunnerTopologyOut(**topology.build(
+        m.workspace, visible=lambda s: perms.can(request.user, s, perms.LOGS_READ),
+    ))
