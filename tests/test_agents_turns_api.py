@@ -83,3 +83,25 @@ def test_turns_are_invisible_for_another_tenants_agent(authed_client):
     )
     resp = authed_client.get("/api/agents/secret/turns/?limit=10")
     assert resp.status_code == 404
+
+
+def test_unreported_dispatch_turn_carries_its_prompt_and_result(authed_client, workspace):
+    """Most turns are dispatched (schedule, api, email) and run, but the agent
+    never files a close-out report — report_title/summary stay empty. The list
+    must still hand back what the turn WAS (its prompt, outcome, trigger) or the
+    Turns page renders a column of bare dates."""
+    from apps.harness.models import Turn
+
+    agent = _echo(workspace)
+    Turn.objects.create(
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key="d1", status="done",
+        prompt="Fix the brief from Ada's fleet conduct", result_note="opened PR #12",
+        origin_ref={"slot": "daily"},
+    )
+    item = authed_client.get("/api/agents/echo/turns/?limit=10").json()["items"][0]
+    assert item["title"] == ""
+    assert item["reported_at"] is None
+    assert item["prompt"] == "Fix the brief from Ada's fleet conduct"
+    assert item["result_note"] == "opened PR #12"
+    assert item["origin_ref"] == {"slot": "daily"}
+    assert (item["status"], item["origin"]) == ("done", "api")

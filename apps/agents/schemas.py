@@ -441,6 +441,13 @@ class AgentTurnOut(StrictModel):
     origin: str = ""
     emdash_task_id: str = ""
     reported_at: dt.datetime | None = None
+    # The dispatch-side prose. Most turns are dispatched and run but never get a
+    # close-out report (`reported_at` null, report_title/summary empty) — without
+    # these the Turns page renders a list of bare dates with nothing to read.
+    # `origin_ref` carries the scheduler slot / manual flag the origin label uses.
+    prompt: str = ""
+    result_note: str = ""
+    origin_ref: dict = Field(default_factory=dict)
 
 
 # ---- Work products ----

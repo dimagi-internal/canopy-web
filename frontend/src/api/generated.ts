@@ -9588,6 +9588,20 @@ export interface components {
             readonly emdash_task_id: string;
             /** Reported At */
             readonly reported_at?: string | null;
+            /**
+             * Prompt
+             * @default
+             */
+            readonly prompt: string;
+            /**
+             * Result Note
+             * @default
+             */
+            readonly result_note: string;
+            /** Origin Ref */
+            readonly origin_ref?: {
+                readonly [key: string]: unknown;
+            };
         };
         /** Page[AgentTurnOut] */
         readonly Page_AgentTurnOut_: {
