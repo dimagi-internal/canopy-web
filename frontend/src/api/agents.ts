@@ -313,9 +313,8 @@ export async function setAgentTurnMode(slug: string, mode: TurnMode): Promise<Tu
 
 // Turn Slack access to the agent on or off (owner only). Same return shape as
 // setAgentTurnMode, for the same reason: the toggle only needs the flag back.
-// Browser-only: the server refuses this with any Authorization header, so no
-// agent, plugin or assistant can move ownership. `null` clears the owner
-// (workspace owners only). Returns the refreshed detail.
+// The agent's owner or a workspace owner. `null` clears the owner (workspace
+// owners only). Returns the refreshed detail.
 export async function transferAgentOwner(slug: string, userId: number | null): Promise<AgentDetailOut> {
   const res = await apiV2.PUT('/api/agents/{slug}/owner', {
     params: { path: { slug } },
@@ -324,8 +323,8 @@ export async function transferAgentOwner(slug: string, userId: number | null): P
   return unwrap(res, 'transferAgentOwner') as unknown as AgentDetailOut
 }
 
-/** Link this agent to the canopy user it IS (null unlinks). Browser-only on the
- *  server. A refusal carries its reason (already another instance's user, not a
+/** Link this agent to the canopy user it IS (null unlinks). The agent's owner or
+ *  an admin. A refusal carries its reason (already another instance's user, not a
  *  workspace member), which is what the control shows. */
 export async function linkAgentCanopyUser(slug: string, userId: number | null): Promise<AgentDetailOut> {
   const res = await apiV2.PUT('/api/agents/{slug}/canopy-user', {
@@ -527,8 +526,8 @@ export async function putAgentRunnerRules(
 
 export type AgentAdminOut = Schemas['AgentAdminOut']
 
-// Browser-only on the server, like ownership transfer: granting admin hands over
-// the agent's credentials, so no token can do it. Both return the refreshed admin list (the roster reloads
+// Held to the same bar as ownership transfer (the agent's owner or a workspace
+// owner): granting admin hands over the agent's credentials. Both return the refreshed admin list (the roster reloads
 // getAgentAccess instead, since admin changes access as well as role).
 // `workspace` pins the AGENT's tenant: a page showing agents from several
 // workspaces (the agent topology) is under one /w/:ws/ URL, and the flat route

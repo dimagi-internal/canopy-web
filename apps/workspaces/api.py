@@ -11,7 +11,6 @@ from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.common.human_only import human_only
 from apps.workspaces import permissions as perms
 from apps.api.auth import session_auth
 
@@ -198,7 +197,6 @@ def get_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
 
 
 @router.put("/{slug}/parent", response=WorkspaceOut, summary="Move a workspace in the tree (owner-only)",)
-@human_only("Where a workspace sits in the tree")
 def set_workspace_parent(request: HttpRequest, slug: str, payload: WorkspaceParentIn) -> WorkspaceOut:
     """Nest `slug` under `parent`, or make it a root with `parent: null`.
 
@@ -268,7 +266,6 @@ def join_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
 
 
 @router.delete("/{slug}/", response={204: None}, summary="Delete a workspace (owner-only)",)
-@human_only("Deleting a workspace")
 def delete_workspace(request: HttpRequest, slug: str):
     """Delete an empty workspace. Owner-only, and never one that still owns agents.
 
@@ -322,7 +319,6 @@ def list_members(request: HttpRequest, slug: str) -> list[MemberOut]:
 
 @router.delete("/{slug}/members/{user_id}/", response={204: None},
                summary="Remove a member (admin or owner)")
-@human_only("A workspace's members")
 def remove_member(request: HttpRequest, slug: str, user_id: int):
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
     _require_may_manage(m, _target_role(slug, user_id))
@@ -335,7 +331,6 @@ def remove_member(request: HttpRequest, slug: str, user_id: int):
 
 @router.patch("/{slug}/members/{user_id}/", response=MemberOut,
               summary="Change a member's role (admin or owner)")
-@human_only("A member's role")
 def set_member_role(request: HttpRequest, slug: str, user_id: int, payload: MemberRoleUpdateIn) -> MemberOut:
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
     _require_may_manage(m, _target_role(slug, user_id), payload.role)
@@ -349,7 +344,6 @@ def set_member_role(request: HttpRequest, slug: str, user_id: int, payload: Memb
 
 # ---- invites ----
 @router.post("/{slug}/invites/", response={201: InviteOut}, summary="Invite by email (admin or owner)",)
-@human_only("Inviting someone to a workspace")
 def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> Status:
     """Creates the invite and emails its link to the address. `email_status`
     says whether the email went out; the link in `token` works either way.
@@ -397,7 +391,6 @@ def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
 
 @router.post("/{slug}/invites/{invite_id}/reissue", response=InviteOut,
              summary="Send a fresh link for an invite (admin or owner)")
-@human_only("Inviting someone to a workspace")
 def reissue_invite(request: HttpRequest, slug: str, invite_id: int) -> InviteOut:
     """New token and a fresh expiry for an invite nobody has accepted or
     revoked — including one that has expired — emailed to the invited address.
@@ -473,7 +466,6 @@ def get_shared_vault(request: HttpRequest, slug: str) -> SharedVaultOut:
 
 @router.put("/{slug}/shared-vault", response=SharedVaultOut,
             summary="Set the shared vault + its service-account token (write-only)")
-@human_only("A workspace's shared vault")
 def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) -> SharedVaultOut:
     """The key here must be scoped to the SHARED vault and nothing else.
 

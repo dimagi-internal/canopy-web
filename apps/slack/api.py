@@ -11,7 +11,6 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
-from apps.common.human_only import human_only
 from apps.api.auth import session_auth
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
@@ -95,7 +94,6 @@ def get_config(request: HttpRequest, workspace: str) -> dict:
 
 @router.put("/{workspace}/config-token", response=SlackSyncOut,
             summary="Let canopy manage the Slack app's slash commands (owner)")
-@human_only("Slack's app configuration token")
 def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigTokenIn) -> dict:
     """Takes the REFRESH token of a Slack app configuration token, then syncs
     the app's slash commands to the agents that are on for Slack."""
@@ -110,7 +108,6 @@ def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigT
 
 @router.delete("/{workspace}/config-token", response=SlackConfigOut,
                summary="Stop managing the Slack app's slash commands (owner)")
-@human_only("Slack's app configuration token")
 def clear_config_token(request: HttpRequest, workspace: str) -> dict:
     ws = _workspace_with(request.user, workspace, perms.OWN)
     commands.clear_config_token(_installation_or_409(ws))
@@ -137,7 +134,6 @@ def sync(request: HttpRequest, workspace: str) -> dict:
 
 @router.post("/{workspace}/declare-agent", response=SlackDeclareAgentOut,
              summary="Declare the Slack app an agent (owner)")
-@human_only("Declaring the Slack app an agent")
 def declare_agent(request: HttpRequest, workspace: str) -> dict:
     """Turn on Slack's own working indicator for this workspace's Slack app.
 

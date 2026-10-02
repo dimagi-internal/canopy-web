@@ -27,7 +27,7 @@ changed meaning when a role was inserted. The frontend mirrors the table in
 OpenAPI schema, the gate it enforces, and `tests/test_every_route_declares_its_gate.py` fails
 on a route that has none — so a new route is a decision about who may call it, made when it is
 written, not discovered by an audit. A write a VIEWER may make must also be listed with its
-reason (`VIEWER_MAY_MUTATE`), and a route marked human-only must actually be `@human_only`.
+reason (`VIEWER_MAY_MUTATE`).
 
 An admin manages members only **strictly below themselves** (`permissions.may_manage_member`):
 they invite, re-role and remove viewers and editors, see invite links only for those roles,
@@ -174,20 +174,18 @@ Deliberately off the ladder:
 - **`GET /{slug}/credentials/resolve`** returns plaintext, bearer-only, to a box that may hold
   the agent (above). A browser session only ever sees the masked status.
 
-### Owner actions are a person's, not a token's
+### A token can do whatever its person can
 
-A personal access token — or an MCP client signed in through OAuth, and every REST route
-is an MCP tool — acts with its user's **whole** role. An agent session on its owner's
-laptop holds the owner's PAT. So the owner actions that hand out power are refused to
-any token and done in the canopy web app (`@human_only`, `apps/common/human_only.py`;
-403 before any lookup, so it leaks nothing): workspace parent / delete / remove member /
-change role / invite + reissue / shared vault; an agent's interface (publish + unpublish),
-credentials (set + delete) and vault; runner admin grant + revoke; the Slack config token
-and declaring the Slack app an agent; and minting a PAT (`POST /api/tokens/` — an hour-long
-OAuth token could otherwise mint one that never expires and outlives revoking the grant).
-They join the older inline refusals (agent owner transfer, agent admins, linking an agent's
-canopy user, runner flags). None of them is an MCP tool, and
-`tests/test_human_only_routes.py` fails if a route that refuses machines is offered as one.
+A personal access token, or an MCP client signed in through OAuth (every REST route is an
+MCP tool), acts as its user with exactly that user's role — no more, and no less. There
+are no web-app-only actions: inviting, changing roles, an agent's interface, credentials
+and admins, the shared vault, Slack configuration all work over MCP for someone whose role
+allows them. Browser-only gates were tried on 2026-10-02 and removed the same day: they
+protected against a leaked token by taking from the MCP exactly the administration it is
+most useful for. The one deliberate omission is `create_token`, which is not an MCP tool
+(it would put a fresh raw PAT into a chat transcript); mint tokens in the web app or with
+`/canopy:canopy-web-pat-mint`. The MCP sign-in consent page itself still requires a person,
+or a token could sign itself in.
 
 ### Leaving a workspace takes what it carried
 

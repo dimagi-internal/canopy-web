@@ -257,14 +257,17 @@ def test_a_request_without_the_scope_key_is_untouched(tenancy):
     assert not is_machine(request)
 
 
-def test_machine_only_refusals_are_not_offered(db):
+def test_owner_actions_are_tools_too(db):
+    """There are no web-app-only actions: inviting, roles, an agent's
+    interface/credentials/admins, vaults are all MCP tools (2026-10-02).
+    `create_token` is the one omission — a tool would put a raw PAT in a chat."""
     tools = _tools()
     for name in ("transfer_owner", "grant_admin", "revoke_admin", "link_canopy_user",
                  "set_runner_flags", "publish_interface", "set_agent_credentials",
                  "set_agent_vault", "set_shared_vault", "create_invite", "set_member_role",
-                 "remove_member", "create_token"):
-        assert name not in tools
-
+                 "remove_member"):
+        assert name in tools, name
+    assert "create_token" not in tools
 
 def test_a_script_prefix_is_not_part_of_a_tool_path():
     """Labs serves canopy under /canopy, and Ninja writes that into every path.

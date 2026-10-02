@@ -90,23 +90,16 @@ def test_only_a_workspace_owner_can_clear_ownership(client, world):
     assert world["agent"].owner_id is None
 
 
-def test_a_bearer_token_is_refused_even_for_a_workspace_owner(world):
-    """The whole point: no machine caller can move ownership."""
+def test_a_workspace_owners_token_can_transfer(world):
+    """A token acts as its user: MCP can do whatever the web app can."""
     from django.test import Client
 
     raw, _ = PersonalToken.create_for_user(user=world["ws_owner"], label="test")
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
     r = c.put("/api/agents/ace/owner", data={"user_id": world["editor"].pk}, content_type="application/json")
-    assert r.status_code == 403
+    assert r.status_code == 200, r.content
     world["agent"].refresh_from_db()
-    assert world["agent"].owner_id is None
+    assert world["agent"].owner_id == world["editor"].pk
 
 
-def test_a_bearer_header_alongside_a_session_is_still_refused(client, world):
-    """The embedded widget is same-origin, so its requests carry the session
-    cookie AND a delegated bearer token. A header of any kind means a machine is
-    in the loop."""
-    client.force_login(world["ws_owner"])
-    r = client.put("/api/agents/ace/owner", data={"user_id": world["editor"].pk},
-                   content_type="application/json", HTTP_AUTHORIZATION="Bearer anything")
-    assert r.status_code == 403
+

@@ -2002,7 +2002,7 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Link this agent to the canopy user it is (canopy UI only)
+         * Link this agent to the canopy user it is
          * @description The canopy user account this agent's own token signs in as. `user_id`
          *     null unlinks it.
          */
@@ -2022,7 +2022,7 @@ export interface paths {
             readonly cookie?: never;
         };
         readonly get?: never;
-        /** Transfer the agent's ownership to a member of its workspace (canopy UI only) */
+        /** Transfer the agent's ownership to a member of its workspace */
         readonly put: operations["transfer_owner"];
         readonly post?: never;
         readonly delete?: never;
@@ -2099,10 +2099,10 @@ export interface paths {
             readonly cookie?: never;
         };
         readonly get?: never;
-        /** Make a workspace member an admin of this agent (canopy UI only) */
+        /** Make a workspace member an admin of this agent */
         readonly put: operations["grant_admin"];
         readonly post?: never;
-        /** Revoke an admin of this agent (canopy UI only) */
+        /** Revoke an admin of this agent */
         readonly delete: operations["revoke_admin"];
         readonly options?: never;
         readonly head?: never;

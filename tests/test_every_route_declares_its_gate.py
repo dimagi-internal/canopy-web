@@ -9,12 +9,10 @@ the vocabulary. This file only holds the manifest to the code:
    one nobody reads);
 3. every label is in the closed vocabulary (a typo, or a new tier invented in
    passing, is a review question, not a string);
-4. "human-only" in the manifest and `@human_only` on the view agree, in both
-   directions — the one label the code can confirm for us;
-5. every write a plain member (a VIEWER) can make is listed in
+4. every write a plain member (a VIEWER) can make is listed in
    `VIEWER_MAY_MUTATE` with its reason, and nothing else is.
 
-What it cannot check is that the other labels are TRUE — that needs reading
+What it cannot check is that the labels are TRUE — that needs reading
 the view, which is the reviewer's job when the entry is added. It makes sure
 the entry is added.
 """
@@ -26,7 +24,6 @@ import pytest
 
 from apps.api import route_gates
 from apps.api.api import api
-from apps.common.human_only import HUMAN_ONLY
 
 MUTATING = {"post", "put", "patch", "delete"}
 
@@ -81,26 +78,6 @@ def test_gate_labels_are_in_the_vocabulary():
         if not gates or not isinstance(gates, tuple) or any(g not in route_gates.VOCABULARY for g in gates)
     }
     assert not bad, f"Empty, non-tuple, or unknown gate labels: {bad}"
-
-
-def test_human_only_label_matches_the_decorator():
-    views = _views_by_operation_id()
-    decorated = {op for op, key in views.items() if key in HUMAN_ONLY}
-    labelled = {op for op, gates in route_gates.GATES.items() if "human-only" in gates}
-    assert not (labelled - decorated), (
-        "Marked human-only in route_gates.py but the view is not wrapped by "
-        f"@human_only: {sorted(labelled - decorated)}"
-    )
-    assert not (decorated - labelled), (
-        "Wrapped by @human_only but not marked 'human-only' in route_gates.py: "
-        f"{sorted(decorated - labelled)}"
-    )
-
-
-def test_human_only_is_never_the_whole_gate():
-    """It refuses tokens; it says nothing about WHO. A tier must sit beside it."""
-    bare = sorted(op for op, gates in route_gates.GATES.items() if gates == ("human-only",))
-    assert not bare, f"'human-only' needs a tier beside it: {bare}"
 
 
 def test_viewer_level_writes_are_deliberate(operations):

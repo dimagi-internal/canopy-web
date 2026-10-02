@@ -13,7 +13,6 @@ from ninja import Router, Status
 from canopy_sdk import contract
 from ninja.errors import HttpError
 
-from apps.common.human_only import human_only
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
@@ -763,7 +762,6 @@ def list_runner_admins(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.post("/runners/{runner_id}/admins", response=RunnerAdminOut,
              summary="Grant someone administration of this runner (pairer only)")
-@human_only("Who administers a runner")
 def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerAdminIn):
     """Granting stays with the PAIRER, not with grantees.
 
@@ -790,7 +788,6 @@ def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
 
 @router.delete("/runners/{runner_id}/admins/{user_id}", response={204: None},
                summary="Revoke administration (pairer only)")
-@human_only("Who administers a runner")
 def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int):
     runner = _runner_or_404(request, runner_id)
     user = User.objects.filter(pk=user_id).first()
@@ -801,15 +798,12 @@ def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int
 
 @router.put("/runners/{runner_id}/flags", response=RunnerOut,
             summary="Declare what this runner's owner vouches for")
-@human_only("A runner's declared flags")
 def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerFlagsIn):
     """Replace the runner's declared flags. `zdr`: this box uses only
     zero-data-retention keys for Claude. canopy cannot check a declaration; it
     records who made it. A host may require a flag of every conversation its
     visitors hold, and those conversations then run only on runners declaring it.
     """
-    # Human-only (`@human_only`): a runner authenticates with its pairer's PAT,
-    # and a box must never be able to vouch for itself.
     runner = _runner_admin_or_404(request, runner_id)
     try:
         wanted = set(contract.parse_runner_requirements(payload.flags))

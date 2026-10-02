@@ -121,12 +121,13 @@ def test_the_owner_cannot_be_revoked(world):
     assert r.status_code == 422
 
 
-def test_a_token_cannot_change_admins(world):
-    """A PAT, a widget's delegated token, a contact token: any Authorization
-    header means a machine is in the loop, and admin is a person's decision."""
+def test_a_token_can_change_admins_for_someone_allowed_to(world):
+    """Anything the web app can do, MCP and a PAT can (2026-10-02): a token acts
+    as its user, under the same rule — the owner or a workspace owner."""
     raw, _ = PersonalToken.create_for_user(user=world["op"], label="t")
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert c.put(f"/api/agents/ace/admins/{world['ed'].pk}").status_code == 403
+    assert c.put(f"/api/agents/ace/admins/{world['ed'].pk}").status_code == 200
+
 
 
 def test_the_detail_says_what_the_caller_may_do(world):

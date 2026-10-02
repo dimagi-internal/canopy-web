@@ -100,10 +100,10 @@ def test_someone_who_cannot_administer_gets_404(stranger_client, runner):
     assert not RunnerFlag.objects.exists()
 
 
-def test_a_token_cannot_declare_it(pat_client, runner):
-    # The runner authenticates with its pairer's PAT; a box must not vouch for itself.
-    assert _put(pat_client, runner, ["zdr"]).status_code == 403
-    assert not RunnerFlag.objects.exists()
+def test_a_token_can_declare_it(pat_client, runner):
+    # A token acts as its user (a runner admin here): MCP can do what the web app can.
+    assert _put(pat_client, runner, ["zdr"]).status_code == 200
+    assert RunnerFlag.objects.exists()
 
 
 def test_an_unknown_flag_is_422(owner_client, runner):
