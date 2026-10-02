@@ -162,6 +162,27 @@ def descendant_slugs(slugs: set[str]) -> set[str]:
     return out
 
 
+def subtree(root: Workspace, visible=lambda _slug: True) -> list[tuple[Workspace, int]]:
+    """`root` and the descendants `visible` admits, depth-first in tree order,
+    each with its depth below `root` (0 = root). A workspace whose parent is
+    hidden hangs under its nearest visible ancestor, so a reader who holds a
+    grandchild but not the child still sees it in place."""
+    slugs = {root.slug} | {s for s in descendant_slugs({root.slug}) if visible(s)}
+    by_parent: dict[str, list[Workspace]] = {}
+    for ws in Workspace.objects.filter(slug__in=slugs - {root.slug}):
+        parent = next((a for a in ws.ancestor_slugs() if a in slugs), root.slug)
+        by_parent.setdefault(parent, []).append(ws)
+    out: list[tuple[Workspace, int]] = []
+
+    def walk(ws: Workspace, depth: int) -> None:
+        out.append((ws, depth))
+        for child in sorted(by_parent.get(ws.slug, []), key=lambda w: w.display_name.lower()):
+            walk(child, depth + 1)
+
+    walk(root, 0)
+    return out
+
+
 def inherited_owner_slugs(user) -> set[str]:
     """Workspaces `user` OWNS by inheritance: descendants of a workspace they
     directly own. The ONLY thing the tree grants — see `Workspace.parent`."""

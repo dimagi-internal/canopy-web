@@ -167,6 +167,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['See what each workspace runs on', 'Select a runner to see which agents stop if it goes dark', "Open a runner's supervisor page"],
   },
   {
+    path: '/w/:workspace/settings/agent-access',
+    title: 'Agent topology',
+    audience: 'Workspace admin or owner',
+    what: "Which agent can send which other agent work, across this workspace and every one below it. An agent sends work with its own canopy login, and to the receiving agent that login is just a person — so each cell says what the sender gets (the whole agent, the capabilities its interface allows members, or nothing) and why. The receiving agent's owner or a workspace owner can make the sender's login an admin from the cell, one at a time or all at once; the grant says who could then steer the receiver through the sender.",
+    actions: ['See which agents can reach which', 'Find out why a dispatch is confined or refused', "Make one agent an admin of another", 'Make every agent an admin of the others it can reach'],
+  },
+  {
     path: '/w/:workspace/settings/slack',
     title: 'Slack',
     audience: 'Workspace owner connecting Slack',

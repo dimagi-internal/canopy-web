@@ -2,7 +2,7 @@
 // OpenAPI client. Response entity types alias the generated schemas, so this
 // file cannot drift from the server. Workspace scoping is handled by apiV2's
 // middleware (see WS_SCOPED_API_PREFIXES in ./client.v2), not here.
-import { apiV2 } from './client.v2'
+import { apiV2, WORKSPACE_HEADER } from './client.v2'
 import type { components } from './generated'
 
 type Schemas = components['schemas']
@@ -530,16 +530,21 @@ export type AgentAdminOut = Schemas['AgentAdminOut']
 // Browser-only on the server, like ownership transfer: granting admin hands over
 // the agent's credentials, so no token can do it. Both return the refreshed admin list (the roster reloads
 // getAgentAccess instead, since admin changes access as well as role).
-export async function grantAgentAdmin(slug: string, userId: number): Promise<AgentAdminOut[]> {
+// `workspace` pins the AGENT's tenant: a page showing agents from several
+// workspaces (the agent topology) is under one /w/:ws/ URL, and the flat route
+// would resolve the agent in that one and 404 on the rest.
+export async function grantAgentAdmin(slug: string, userId: number, workspace?: string): Promise<AgentAdminOut[]> {
   const res = await apiV2.PUT('/api/agents/{slug}/admins/{user_id}', {
     params: { path: { slug, user_id: userId } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
   })
   return unwrap(res, 'grantAgentAdmin') as unknown as AgentAdminOut[]
 }
 
-export async function revokeAgentAdmin(slug: string, userId: number): Promise<AgentAdminOut[]> {
+export async function revokeAgentAdmin(slug: string, userId: number, workspace?: string): Promise<AgentAdminOut[]> {
   const res = await apiV2.DELETE('/api/agents/{slug}/admins/{user_id}', {
     params: { path: { slug, user_id: userId } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
   })
   return unwrap(res, 'revokeAgentAdmin') as unknown as AgentAdminOut[]
 }

@@ -38,6 +38,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { segment: 'connected-apps', label: 'Connected sites' },
   { segment: 'secrets', label: 'Secrets' },
   { segment: 'runners', label: 'Runners' },
+  { segment: 'agent-access', label: 'Agent access' },
 ]
 
 export function WorkspaceSettingsPage(): JSX.Element {

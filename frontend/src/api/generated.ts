@@ -3616,6 +3616,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/agent-topology": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which agents can send which other agents work, across this workspace and every one below it
+         * @description Every agent in this workspace and its descendants, and for each ordered
+         *     pair what the first gets when it sends the second work with its own canopy
+         *     login: the whole agent, some of its capabilities, or nothing — and why.
+         *     Admin and above. Granting access is `PUT /api/agents/{slug}/admins/{user_id}`
+         *     with the source agent's `login_user_id`.
+         */
+        readonly get: operations["agent_topology"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/connected-apps": {
         readonly parameters: {
             readonly query?: never;
@@ -12046,6 +12070,85 @@ export interface components {
             /** Agents */
             readonly agents: readonly components["schemas"]["TopologyAgentOut"][];
         };
+        /**
+         * AgentEdgeOut
+         * @description What `source` gets when it sends `target` work with its own login.
+         *     `access`: full | confined (to `capabilities`) | none. `basis`: owner |
+         *     workspace-owner | admin | full-rule | no-interface | capabilities |
+         *     nothing-offered | not-member | no-login. `can_grant` / `can_revoke`: whether
+         *     THIS caller may make (or unmake) the source's login an admin of the target.
+         */
+        readonly AgentEdgeOut: {
+            /** Source */
+            readonly source: string;
+            /** Target */
+            readonly target: string;
+            /**
+             * Access
+             * @enum {string}
+             */
+            readonly access: "full" | "confined" | "none";
+            /** Basis */
+            readonly basis: string;
+            /** Capabilities */
+            readonly capabilities: readonly string[];
+            /** Full Rule */
+            readonly full_rule: string | null;
+            /** Explicit Admin */
+            readonly explicit_admin: boolean;
+            /** Can Grant */
+            readonly can_grant: boolean;
+            /** Can Revoke */
+            readonly can_revoke: boolean;
+        };
+        /**
+         * AgentTopologyAgentOut
+         * @description `login_email` is the canopy user the agent signs in as (`Agent.user`) —
+         *     the identity it sends other agents work with; None means it has none and can
+         *     send nothing directly. `full_people` reach this agent's whole profile, and so
+         *     reach anything this agent is an admin of.
+         */
+        readonly AgentTopologyAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Owner Email */
+            readonly owner_email: string | null;
+            /** Login Email */
+            readonly login_email: string | null;
+            /** Login User Id */
+            readonly login_user_id: number | null;
+            /** Interface Published */
+            readonly interface_published: boolean;
+            /** Full People */
+            readonly full_people: readonly string[];
+        };
+        /**
+         * AgentTopologyOut
+         * @description Agents in tree order; one edge per ordered pair of distinct agents.
+         */
+        readonly AgentTopologyOut: {
+            /** Root */
+            readonly root: string;
+            /** Workspaces */
+            readonly workspaces: readonly components["schemas"]["TopologyWorkspaceRefOut"][];
+            /** Agents */
+            readonly agents: readonly components["schemas"]["AgentTopologyAgentOut"][];
+            /** Edges */
+            readonly edges: readonly components["schemas"]["AgentEdgeOut"][];
+        };
+        /** TopologyWorkspaceRefOut */
+        readonly TopologyWorkspaceRefOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Depth */
+            readonly depth: number;
+        };
         /** ConnectedAgentOut */
         readonly ConnectedAgentOut: {
             /** Slug */
@@ -19690,6 +19793,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerTopologyOut"];
+                };
+            };
+        };
+    };
+    readonly agent_topology: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTopologyOut"];
                 };
             };
         };
