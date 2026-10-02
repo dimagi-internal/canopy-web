@@ -4769,6 +4769,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/turns/{turn_id}/messages": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A turn's transcript as readable messages
+         * @description The turn's retained transcript parsed into messages (user, assistant,
+         *     tool use, tool result), with secrets scrubbed. Bounded: `truncated` is true
+         *     when the view stopped early. Empty for a turn that kept no transcript.
+         */
+        readonly get: operations["read_turn_messages"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/turns/{turn_id}/start": {
         readonly parameters: {
             readonly query?: never;
@@ -9732,6 +9754,13 @@ export interface components {
             readonly origin_ref?: {
                 readonly [key: string]: unknown;
             };
+            /** Chat Session Id */
+            readonly chat_session_id?: string | null;
+            /**
+             * Has Transcript
+             * @default false
+             */
+            readonly has_transcript: boolean;
         };
         /** Page[AgentTurnOut] */
         readonly Page_AgentTurnOut_: {
@@ -13139,6 +13168,26 @@ export interface components {
              * @default
              */
             readonly batch_id: string;
+        };
+        /** TurnMessageOut */
+        readonly TurnMessageOut: {
+            /** Turn Index */
+            readonly turn_index: number;
+            /** Role */
+            readonly role: string;
+            /** Content */
+            readonly content: {
+                readonly [key: string]: unknown;
+            };
+            /** Plaintext */
+            readonly plaintext: string;
+        };
+        /** TurnMessagesOut */
+        readonly TurnMessagesOut: {
+            /** Messages */
+            readonly messages: readonly components["schemas"]["TurnMessageOut"][];
+            /** Truncated */
+            readonly truncated: boolean;
         };
         /** TurnStartIn */
         readonly TurnStartIn: {
@@ -20524,6 +20573,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TranscriptAppendOut"];
+                };
+            };
+        };
+    };
+    readonly read_turn_messages: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnMessagesOut"];
                 };
             };
         };

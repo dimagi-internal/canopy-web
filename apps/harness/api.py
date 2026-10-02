@@ -76,6 +76,7 @@ from .schemas import (
     TurnEventsOut,
     TurnFinishIn,
     TurnIn,
+    TurnMessagesOut,
     TurnOut,
     TurnStartIn,
 )
@@ -1679,6 +1680,22 @@ def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: Tr
         "bytes_raw": transcript.bytes_raw,
         "truncated": transcript.truncated,
     }
+
+
+@router.get(
+    "/turns/{turn_id}/messages", response=TurnMessagesOut,
+    summary="A turn's transcript as readable messages",
+)
+def read_turn_messages(request: HttpRequest, turn_id: uuid.UUID):
+    """The turn's retained transcript parsed into messages (user, assistant,
+    tool use, tool result), with secrets scrubbed. Bounded: `truncated` is true
+    when the view stopped early. Empty for a turn that kept no transcript."""
+    # Same gate as the raw route below — a transcript is more sensitive than a
+    # turn's status. Parsing is bounded (services.TRANSCRIPT_VIEW_MAX_MESSAGES)
+    # and reads the blob incrementally, like the raw route.
+    turn = _turn_or_404(request, turn_id)
+    messages, truncated = services.transcript_messages(turn)
+    return {"messages": messages, "truncated": truncated}
 
 
 @router.get("/turns/{turn_id}/transcript", summary="Raw retained JSONL for a turn")
