@@ -29,7 +29,7 @@ from django.db.models import QuerySet
 from django.utils import timezone
 
 from apps.workspaces import services as wsvc
-from apps.workspaces.models import WorkspaceMembership
+from apps.workspaces import permissions as perms
 
 from .models import AppCredential, AppCredentialAgent, is_valid_frame_origin
 
@@ -48,30 +48,26 @@ class EmbedAppError(Exception):
         self.message = message
 
 
-def owned_workspace_slugs(user) -> set[str]:
-    """Workspaces this user OWNS — directly, or by owning an ancestor in the
-    workspace tree. Editors and viewers are not administrators."""
-    from apps.workspaces import services as wsvc
+def require(user, slug: str, capability: str) -> None:
+    """404 for a non-member, 403 for a member whose role lacks `capability`.
 
-    direct = set(
-        WorkspaceMembership.objects.filter(
-            user=user, role=WorkspaceMembership.OWNER
-        ).values_list("workspace_id", flat=True)
-    )
-    return direct | wsvc.inherited_owner_slugs(user)
+    Two tiers (`apps/workspaces/permissions.py`): READING the connected sites,
+    their health and running Test connection is the workspace's INTEGRATIONS
+    tier (admin); registering a site, changing its origins, agents or signing
+    key, or disconnecting it is the OWNER's — a registered key lets that site
+    vouch for visitors as members of this workspace, which is holding a key.
 
-
-def require_owner(user, slug: str) -> None:
-    """404 for a non-member, 403 for a member who is not an owner.
-
-    The order matters and is the same one `apps/workspaces/api.py::_require_role`
-    uses: answering 403 to someone with no membership would confirm the
-    workspace exists, so a stranger could enumerate tenants by probing slugs.
+    The order matters: answering 403 to someone with no membership would
+    confirm the workspace exists, so a stranger could enumerate tenants by
+    probing slugs.
     """
     if not wsvc.is_member(user, slug):
         raise EmbedAppError("not_found", f"workspace {slug!r} not found")
-    if slug not in owned_workspace_slugs(user):
-        raise EmbedAppError("not_owner", "only a workspace owner can manage connected apps")
+    if not perms.can(user, slug, capability):
+        raise EmbedAppError(
+            "not_owner",
+            f"connected sites: this requires the {perms.MINIMUM_ROLE[capability]} role or above",
+        )
 
 
 def apps_for(user, slug: str) -> QuerySet[AppCredential]:
@@ -82,7 +78,7 @@ def apps_for(user, slug: str) -> QuerySet[AppCredential]:
     what an owner here may change, all of it. Retired rows are left out; a
     disconnected site is gone from the tenant's point of view.
     """
-    require_owner(user, slug)
+    require(user, slug, perms.INTEGRATIONS)
     return (
         AppCredential.objects
         .filter(workspace_id=slug, revoked_at__isnull=True)
@@ -285,7 +281,7 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
              ) -> AppCredential:
     """Register a site in this workspace. It holds no secret: the site proves
     itself by signing, against the keys at `jwks_url` (or pasted)."""
-    require_owner(user, workspace_slug)
+    require(user, workspace_slug, perms.OWN)
 
     name = (name or "").strip()
     if not name:
@@ -330,7 +326,7 @@ def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agent
            host_mcp_resource=None) -> AppCredential:
     """Change what this workspace's site may do. Every field is this tenant's
     own, so there is one gate — owning the workspace the row belongs to."""
-    require_owner(user, workspace_slug)
+    require(user, workspace_slug, perms.OWN)
     if app.workspace_id != workspace_slug:
         raise EmbedAppError("not_found", "no such connected site in this workspace")
 
@@ -378,7 +374,7 @@ def disconnect(*, user, app: AppCredential, workspace_slug: str) -> AppCredentia
     retiring it would have ended every other tenant's integration; another
     tenant using the same external system has its own row and does not notice.
     """
-    require_owner(user, workspace_slug)
+    require(user, workspace_slug, perms.OWN)
     if app.workspace_id != workspace_slug:
         raise EmbedAppError("not_found", "no such connected site in this workspace")
     return revoke(app)

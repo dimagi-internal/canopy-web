@@ -1,5 +1,5 @@
 /**
- * The four roles in canopy, as a ladder — each contains the one below.
+ * The five roles in canopy, as a ladder — each contains the one below.
  *
  * Rendered by BOTH the public explainer (`/about`) and the in-app guide
  * (`/guide`), so the public promise cannot drift from the internal docs —
@@ -8,7 +8,8 @@
  *
  * This replaced a "five ways in" list of parallel entry points. Roles are the
  * better frame: they ladder, they map onto something the code already enforces
- * (`WorkspaceMembership.ROLE_RANK` is `{viewer: 0, editor: 1, owner: 2}`), and
+ * (`WorkspaceMembership.ROLE_RANK` is `{viewer: 0, editor: 1, admin: 2, owner: 3}`,
+ * and `apps/workspaces/permissions.py` says what each may do), and
  * a reader asking "what can I do here?" is asking about their role, not about
  * which door they came through.
  *
@@ -20,12 +21,10 @@
  * `administrator`: minting your OWN access token is something every user
  * does, and filing it under the owner tier told people the opposite.
  *
- * IMPORTANT, and the reason `enforcement` exists as a field: these tiers are
- * fully enforced on the AGENTS and HARNESS surfaces (agents, schedules, turns)
- * and only partly enforced elsewhere. Projects, walkthroughs, shareouts and
- * reviews check that you are in the tenant, not what role you hold. Saying so
- * in the data keeps the rendered page honest rather than aspirational — see
- * docs/architecture/roles.md.
+ * `enforcement` says what the system actually checks for each tier. Since
+ * 2026-10-02 every tier is enforced on every surface (a CI test refuses a
+ * route that has not declared its gate) — the field stays so the page keeps
+ * saying WHAT enforces it, not just that something does.
  */
 export interface UserRole {
   id: string
@@ -79,25 +78,42 @@ export const USER_ROLES: UserRole[] = [
     title: 'Author — you build and run',
     who: 'Someone shaping what an agent is, not just what it is doing today.',
     enforcement:
-      'Editor on agents, schedules and turns. Membership-only on projects, ' +
-      'walkthroughs, shareouts and reviews — a known gap.',
+      'Editor. Enforced on agents, schedules, turns and on every product surface — ' +
+      'projects, walkthroughs, shareouts, reviews, storyboards.',
     startHere: 'Run /canopy:create-agent, then register the agent in your workspace.',
     surfaces: ['/w/:workspace/agents', '/w/:workspace/schedules', '/system'],
     note:
       'Create and edit agents, run turns, publish work products, edit schedules, assign ' +
-      'runners. The scaffold is a skeleton — persona and domain skills are yours to write.',
+      'runners. The scaffold is a skeleton — persona and domain skills are yours to write. ' +
+      'You read the turns you started; the full turn log is an administrator\'s.',
   },
   {
     id: 'administrator',
-    title: 'Administrator — you own the workspace',
-    who: 'Whoever decides who else gets in, and holds the keys.',
+    title: 'Administrator — you run the workspace',
+    who: 'Whoever keeps the workspace working day to day: who is in it, and what went wrong.',
+    enforcement:
+      'Admin. Reads every log; manages members and invites below admin; runs the ' +
+      'integrations. Holds no keys.',
+    startHere: 'Open Activity to read the turn log, or Settings → Members to invite someone.',
+    surfaces: ['/w/:workspace/activity', '/w/:workspace/settings',
+      '/w/:workspace/settings/members'],
+    note:
+      'The event log, every turn\'s prompt and transcript, runner drills, connected-site ' +
+      'health; inviting, re-roling and removing viewers and editors; inbound mailboxes, ' +
+      'Slack sync. Not the shared vault, an agent\'s credentials, the Slack app itself, or ' +
+      'deleting the workspace — those are the owner\'s.',
+  },
+  {
+    id: 'owner',
+    title: 'Owner — you hold the keys',
+    who: 'Whoever decides who else gets in at any level, and holds the keys.',
     enforcement: 'Owner. Enforced throughout workspace admin and on agent credentials.',
-    startHere: 'Open Settings to invite someone, or an agent\'s Credentials tab to hold its keys.',
+    startHere: 'Open Settings → Secrets for the shared vault, or an agent\'s Credentials.',
     surfaces: ['/w/:workspace/settings', '/w/:workspace/settings/members',
       '/w/:workspace/settings/secrets'],
     note:
-      'Members and invites, Slack, inbound email, connected sites, secrets — one settings '
-      + 'page for the workspace. Secrets has the SHARED vault every agent here reads (the '
+      'Everything an administrator does, plus making admins and owners, Slack, connected '
+      + 'sites, secrets. Secrets has the SHARED vault every agent here reads (the '
       + 'Google OAuth clients, the GitHub token); an agent\'s OWN vault sits on the agent, '
       + 'under Settings → Credentials. Both are owner-only: they are the keys a runner '
       + 'resolves everything else from. 1Password holds the secrets; canopy-web holds the '

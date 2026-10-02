@@ -54,8 +54,9 @@ from apps.inbound.schemas import (
     WatchReportOut,
 )
 from apps.inbound.verify import VerificationError, verify_push
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
-from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.models import Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +74,12 @@ def _workspace_or_404(user, slug: str) -> Workspace:
     return ws
 
 
-def _owner_workspace_or_404(user, slug: str) -> Workspace:
-    """Push config is security config: reads are member, writes are owner."""
+def _admin_workspace_or_404(user, slug: str) -> Workspace:
+    """Push config is security config: reads are member, writes are the
+    workspace's INTEGRATIONS tier (admin or owner — `permissions`)."""
     ws = _workspace_or_404(user, slug)
-    if wsvc.member_role(user, ws) != WorkspaceMembership.OWNER:
-        raise HttpError(403, "requires the owner role")
+    if not perms.can(user, ws, perms.INTEGRATIONS):
+        raise HttpError(403, "requires the admin role or above")
     return ws
 
 
@@ -176,9 +178,9 @@ def get_push_config(request: HttpRequest, workspace: str) -> dict:
     return _config_out(request, services.get_config(ws))
 
 
-@router.put("/config/{workspace}", response=PushConfigOut, summary="Set push config (owner)")
+@router.put("/config/{workspace}", response=PushConfigOut, summary="Set push config (admin or owner)")
 def set_push_config(request: HttpRequest, workspace: str, payload: PushConfigIn) -> dict:
-    ws = _owner_workspace_or_404(request.user, workspace)
+    ws = _admin_workspace_or_404(request.user, workspace)
     cfg = services.set_config(
         ws,
         audience=payload.audience,
@@ -199,9 +201,9 @@ def list_mailboxes(request: HttpRequest, workspace: str) -> dict:
     return {"items": [_mailbox_out(mb) for mb in qs]}
 
 
-@router.post("/mailboxes/{workspace}", response=MailboxOut, summary="Register a mailbox (owner)")
+@router.post("/mailboxes/{workspace}", response=MailboxOut, summary="Register a mailbox (admin or owner)")
 def create_mailbox(request: HttpRequest, workspace: str, payload: MailboxIn) -> dict:
-    _owner_workspace_or_404(request.user, workspace)
+    _admin_workspace_or_404(request.user, workspace)
     agent = Agent.objects.filter(slug=payload.agent_slug, workspace_id=workspace).first()
     if agent is None:
         raise HttpError(422, f"no agent {payload.agent_slug!r} in this workspace")
@@ -221,10 +223,10 @@ def create_mailbox(request: HttpRequest, workspace: str, payload: MailboxIn) -> 
 
 
 @router.patch("/mailboxes/{workspace}/{mailbox_id}", response=MailboxOut,
-              summary="Update a mailbox (owner)")
+              summary="Update a mailbox (admin or owner)")
 def update_mailbox(request: HttpRequest, workspace: str, mailbox_id: int,
                    payload: MailboxPatchIn) -> dict:
-    _owner_workspace_or_404(request.user, workspace)
+    _admin_workspace_or_404(request.user, workspace)
     mb = (
         InboundMailbox.objects.select_related("agent")
         .filter(pk=mailbox_id, agent__workspace_id=workspace)
@@ -248,9 +250,9 @@ def update_mailbox(request: HttpRequest, workspace: str, mailbox_id: int,
 
 
 @router.delete("/mailboxes/{workspace}/{mailbox_id}", response={204: None},
-               summary="Remove a mailbox (owner)")
+               summary="Remove a mailbox (admin or owner)")
 def delete_mailbox(request: HttpRequest, workspace: str, mailbox_id: int):
-    _owner_workspace_or_404(request.user, workspace)
+    _admin_workspace_or_404(request.user, workspace)
     deleted, _ = InboundMailbox.objects.filter(
         pk=mailbox_id, agent__workspace_id=workspace
     ).delete()
@@ -313,6 +315,11 @@ def report_watch(request: HttpRequest, payload: WatchReportIn) -> dict:
         # Same 404, not 403: whether an address is registered is not something a
         # non-member gets to learn.
         raise HttpError(404, "no such mailbox")
+    # Writing a watch's expiry decides whether its expiry alarms fire, so it
+    # is the fleet's events tier (editor and above, which is what the runner's
+    # pairer holds) — a viewer could otherwise silence or fake them.
+    if not perms.can(request.user, mailbox.agent.workspace_id, perms.EVENTS_WRITE):
+        raise HttpError(403, "reporting a watch requires the editor role or above")
 
     services.note_watch_state(mailbox, payload.expires_at, payload.error)
     return {

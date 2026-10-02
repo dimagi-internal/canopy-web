@@ -80,6 +80,21 @@ class Feedback(models.Model):
     author_email = models.CharField(max_length=320, blank=True, default="")
     """Free text: external reviewers have no accounts here and never will."""
 
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="feedback",
+    )
+    """The tenant this feedback belongs to — the workspace of the thing it is
+    about. Every read and the one mutation filter on it. Nullable only for rows
+    that predate it and could not be attributed; such a row is visible to NO
+    ONE (never "to everyone": a NULL tenant meaning allow is the bug
+    `Agent.workspace` was made NOT NULL to kill). Before this column the pool
+    had no boundary at all — any signed-in user read and resolved every
+    tenant's reviewer notes and their authors' email addresses."""
+
     submitted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

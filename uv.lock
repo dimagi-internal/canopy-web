@@ -339,7 +339,7 @@ wheels = [
 
 [[package]]
 name = "canopy-agent-runs"
-version = "0.1.3"
+version = "0.1.4"
 source = { editable = "packages/canopy_agent_runs" }
 dependencies = [
     { name = "pydantic" },

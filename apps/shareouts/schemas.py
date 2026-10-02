@@ -50,7 +50,8 @@ class ShareoutBatchOut(StrictModel):
 
 class ShareoutsClearIn(StrictModel):
     """Body of POST /api/shareouts/clear/. All optional, AND-combined. An empty
-    body clears ALL shareouts."""
+    body clears every shareout the caller may clear: their own, plus every
+    shareout in a workspace they own."""
 
     source: str | None = None
     project: str | None = None  # project slug

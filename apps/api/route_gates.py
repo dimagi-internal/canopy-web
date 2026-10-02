@@ -1,0 +1,473 @@
+"""Every REST route, and the gate it enforces — declared, so a new one cannot arrive without one.
+
+WHY THIS EXISTS. The ACL audit of 2026-10-02 did not find one bad gate; it found
+the same mistake made route by route. Product surfaces let a `viewer` approve a
+DDD gate and wipe the insights feed with `{}`; schedules and turns let a viewer
+write a prompt and fire it at the fleet; six tenancy predicates had each grown a
+NULL-means-allow leg. Each was a route whose author never wrote down who may
+call it — the default was simply whatever the helper they reached for happened
+to check, and "any member" is the cheapest helper there is. And since
+2026-09-29 every route is also an MCP tool, so a route's gate is the gate on
+every client holding a token.
+
+So the rule is the one a reviewer cannot skip: **a new route fails CI until it
+declares its gate here, and a write a VIEWER can make must also be listed in
+`VIEWER_MAY_MUTATE` with its reason.** The point is not the manifest — it is
+that the question gets asked at the moment the route is written, by the person
+writing it, and the answer is visible in the diff.
+
+What `tests/test_every_route_declares_its_gate.py` checks: every operationId in
+the schema is here and nothing stale is; every label is in `VOCABULARY`;
+`human-only` here agrees with `@human_only` on the view, both ways; and every
+member-level POST/PUT/PATCH/DELETE is in `VIEWER_MAY_MUTATE`. What it cannot
+check is that a label is TRUE — record what the view ENFORCES TODAY, not what it
+should, having read the view and the helper it calls. A gate that looks wrong
+is recorded as it is and fixed in the code; the entry changes with the fix.
+
+A gate is a tuple. Several labels mean alternatives or conditions on one route
+(an agent turn needs `agent.work`, a project turn only membership; a walkthrough
+is changed by its uploader while an editor, or by a workspace owner). The
+route's own code is the authority on how they combine; a short comment says so
+where it is not obvious.
+
+Vocabulary (closed — add to it deliberately, never in passing):
+
+* ``anonymous`` — no auth at all (``auth=None``) and no token.
+* ``token-link`` — anonymous allowed with a share/capability token (``?t=``),
+  else member.
+* ``authenticated`` — any signed-in user, not tenant-scoped (``/me``, joinable).
+* ``self`` — signed in, and touches only the caller's OWN rows (PATs, push
+  subscriptions, presence preference, shared transcripts).
+* ``member`` — workspace membership (``permissions.READ``): a viewer passes.
+* the capabilities of ``apps/workspaces/permissions.py``: ``content.write``,
+  ``agent.work``, ``session.drive``, ``events.write``, ``logs.read``,
+  ``members.manage``, ``integrations``, ``own``.
+* ``agent-admin`` — ``Agent.is_admin`` (its owner, a workspace owner, an
+  ``AgentAdmin``).
+* ``agent-owner`` — the agent's owner or a workspace owner (transfer, admin
+  grants).
+* ``session-acl`` — ``apps/canopy_sessions/access.py`` (read/write/share per chat).
+* ``turn-content`` — ``apps/harness/turn_access.can_read_turn_content``.
+* ``runner`` — the runner protocol: the human who paired the runner, or the box
+  that claimed the turn.
+* ``runner-admin`` — ``can_administer_runner``.
+* ``runner-holds-agent`` — ``services.caller_runs_agent`` /
+  ``runner_may_hold_agent``.
+* ``contact`` — the ``/api/contact/`` surface, for contact principals.
+* ``signed-link`` — a signed token in the URL is the authority (drill report,
+  invite token, OAuth state).
+* ``host`` — a connected-site / machine protocol endpoint (assertion,
+  jwt-bearer, Pub/Sub push).
+* ``human-only`` — ADDED beside the tier when the view is wrapped by
+  ``@human_only`` (``apps/common/human_only.py``). Only the decorator counts: an
+  inline ``is_machine`` refusal is real but invisible to that registry and to
+  the MCP exclusion it drives, so it is not labelled here.
+"""
+from __future__ import annotations
+
+VOCABULARY: frozenset[str] = frozenset({
+    "anonymous", "token-link", "authenticated", "self", "member",
+    "content.write", "agent.work", "session.drive", "events.write", "logs.read",
+    "members.manage", "integrations", "own",
+    "agent-admin", "agent-owner", "session-acl", "turn-content",
+    "runner", "runner-admin", "runner-holds-agent",
+    "contact", "signed-link", "host", "human-only",
+})
+
+GATES: dict[str, tuple[str, ...]] = {
+    # --- apps/agents/api.py
+    "list_agents": ("member",),
+    "upsert_agent": ("agent.work", "agent-admin"),  # editor in target ws; a MOVE also needs agent admin
+    "get_agent": ("member",),
+    "link_canopy_user": ("agent-admin", "human-only"),
+    "transfer_owner": ("agent-owner", "human-only"),  # leaving it ownerless needs OWN
+    "get_interface": ("member",),
+    "publish_interface": ("agent-admin", "human-only"),
+    "unpublish_interface": ("agent-admin", "human-only"),
+    "list_admins": ("member",),
+    "agent_access": ("member",),
+    "grant_admin": ("agent-owner", "human-only"),
+    "revoke_admin": ("agent-owner", "human-only"),
+    "delete_agent": ("agent.work",),
+    "set_runner_preference": ("agent.work",),
+    "set_turn_mode": ("agent.work",),
+    "set_slack_enabled": ("agent-admin",),
+    "get_agent_runtime": ("member",),
+    "list_agent_runners": ("member",),
+    "replace_agent_runners": ("agent.work", "runner"),  # runners must be visible + holdable
+    "list_agent_runner_rules": ("member",),
+    "replace_agent_runner_rules": ("agent.work", "runner"),
+    "list_agent_actor_routes": ("member",),
+    "set_agent_actor_route": ("agent.work", "runner-admin"),  # every named runner administered by caller
+    "delete_agent_actor_route": ("agent.work",),
+    "list_syncs": ("member",),
+    "create_sync": ("agent.work",),
+    "delete_sync": ("agent.work",),
+    "agents_list_turns": ("member", "turn-content"),  # content redacted per turn_access
+    "create_turn": ("agent.work",),
+    "list_work_products": ("member",),
+    "add_work_products": ("agent.work",),
+    "list_skills": ("member",),
+    "replace_skills": ("agent.work",),
+    "get_skill_history": ("member",),  # may auto-sync (clone) on read
+    "sync_skill_history": ("agent.work",),
+    "skill_history": ("member",),
+    "skill_revision_diff": ("member",),
+    "agents_list_projects": ("member",),
+    "agents_create_project": ("agent.work",),
+    "agents_get_project": ("member",),
+    "agents_patch_project": ("agent.work",),
+    "list_tasks": ("member",),
+    "list_waiting_tasks": ("member",),
+    "sync_tasks": ("agent.work",),
+    "create_task": ("agent.work",),
+    "patch_task": ("agent.work",),
+    "post_command": ("member", "agent.work"),  # comment/accept/decline = member; edit/reassign/done/dispatch = editor
+    "list_commands": ("member",),
+    "apply_command": ("agent.work",),
+    "set_agent_credentials": ("agent-admin", "human-only"),
+    "agent_credential_status": ("member",),
+    "resolve_agent_credentials": ("runner-holds-agent",),  # bearer only
+    "get_agent_vault": ("member",),
+    "set_agent_vault": ("agent-admin", "human-only"),
+    "get_agent_github": ("member",),
+    "set_agent_github": ("agent-owner",),  # strictly the agent's own owner (delegations.set_github)
+    "check_agent_github": ("member",),
+    "delete_agent_github": ("member", "self"),  # removes only the caller's own delegation
+    "delete_agent_credential": ("agent-admin", "human-only"),
+    "agent_readiness": ("member",),
+    "post_bootstrap_report": ("runner-holds-agent",),
+    # --- apps/agents/oauth_api.py
+    "start_google_mint": ("agent-admin",),
+    "google_callback": ("signed-link", "agent-admin"),  # signed state must name the caller
+    # --- apps/agents/a2a_api.py
+    "public_agent_card": ("anonymous",),  # only for agents with an outsider capability
+    "extended_agent_card": ("authenticated",),  # per-caller card, any agent slug
+    # --- apps/agent_runs/api.py
+    "list_runs": ("member",),
+    "create_run": ("agent.work",),
+    "agent_runs_get_run": ("member",),
+    "list_steps": ("member",),
+    "record_gate": ("agent.work",),
+    "record_verdict": ("agent.work",),
+    "fork_run": ("agent.work",),
+    # --- apps/harness/api.py: runner registry (the runner protocol speaks AS the pairer)
+    "pair_runner": ("member",),  # member of the explicit/default workspace; any role
+    "set_runner_credential": ("runner-admin",),
+    "swap_runner_logins": ("runner-admin",),
+    "get_runner_credential_status": ("runner-admin",),
+    "get_runner_credential": ("runner",),  # plaintext to the pairer's token
+    "turn_github_token": ("runner", "runner-holds-agent"),  # turn must be claimed by this box
+    "runner_github_readiness": ("runner",),
+    "start_runner_mint": ("runner-admin",),
+    "get_runner_mint": ("runner-admin",),
+    "claim_runner_mint": ("runner",),
+    "post_runner_mint_url": ("runner",),
+    "post_runner_mint_code": ("runner-admin",),
+    "post_runner_mint_result": ("runner",),
+    "list_runner_admins": ("runner-admin",),
+    "grant_runner_admin": ("runner", "human-only"),  # pairer only (not RunnerAdmins)
+    "revoke_runner_admin": ("runner", "human-only"),
+    "set_runner_flags": ("runner-admin", "human-only"),
+    "list_runners": ("member",),  # _runner_read_q: the tenant's fleet
+    "update_runner_capabilities": ("runner",),
+    "retire_runner": ("runner",),
+    "unretire_runner": ("runner",),
+    "pause_runner": ("runner",),
+    "unpause_runner": ("runner",),
+    "runner_heartbeat": ("runner",),
+    "refresh_runner": ("runner-admin",),
+    "claim_turn": ("runner",),
+    "resolve_session": ("runner", "member"),  # + membership of the agent / project workspace
+    "record_session": ("runner", "member"),
+    "report_sessions": ("runner",),
+    "list_streams": ("runner",),
+    "post_session_stream": ("runner",),  # session must be bound to this runner
+    "list_backfills": ("runner",),
+    "list_closes": ("runner",),
+    "list_menu_answers": ("runner",),
+    "post_menu_answer_result": ("runner",),
+    "post_session_backfill": ("runner",),  # session must be bound to this runner
+    # --- apps/harness/api.py: turns
+    "list_unclaimable_turns": ("member", "session-acl", "turn-content"),  # prompt blanked unless turn-content
+    "enqueue_turn": ("agent.work",),  # agent and project turns alike
+    "harness_list_turns": ("member", "session-acl", "turn-content"),  # session turns by chat ACL; redacted
+    "harness_list_sessions": ("member", "session-acl"),
+    "get_turn": ("member", "session-acl", "turn-content"),  # redacted unless turn-content
+    "get_turn_caller_context": ("turn-content",),
+    "append_turn_events": ("runner", "agent.work", "session-acl"),  # claimed: pairer; unclaimed: agent.work / chat write
+    "read_turn_messages": ("turn-content",),
+    "read_turn_events": ("turn-content",),
+    "append_turn_transcript": ("runner", "agent.work", "session-acl"),
+    "read_turn_transcript": ("turn-content",),
+    "start_turn": ("runner", "agent.work", "session-acl"),
+    "finish_turn": ("runner", "agent.work", "session-acl"),
+    "cancel_turn": ("agent.work", "session-acl", "self"),  # agent/project: agent.work; chat: write access, or your own send
+    # --- apps/harness/api.py: runner-fired schedules + drills
+    "sync_schedules": ("runner",),
+    "fire_schedule_route": ("runner",),
+    "start_runner_drill": ("runner",),
+    "list_runner_drills": ("runner-admin", "logs.read"),
+    "report_drill": ("signed-link", "runner"),  # ?t= link, the drilled agent's own login, or the pairer
+    # --- apps/harness/api_schedules.py
+    "schedule_week": ("member",),
+    "list_schedules": ("member",),
+    "create_schedule": ("agent.work",),  # enforced in schedule_services._resolve_agent
+    "preview_cron": ("member",),
+    "update_schedule": ("agent.work",),
+    "delete_schedule": ("agent.work",),
+    "run_schedule_now": ("agent.work",),
+    # --- apps/harness/items_api.py (asks; an item is a property of an AgentTask)
+    "list_agent_items": ("member",),
+    "create_items": ("member", "agent.work"),  # any member; a `dispatch` ask needs agent.work or the agent's own login
+    "list_items": ("member",),
+    "get_item": ("member",),
+    "decide_item": ("member",),
+    "dismiss_item": ("member",),
+    # --- apps/canopy_sessions/api.py  (access.py: tenant, then four legs; write = owner/editor role)
+    "create_session": ("member",),  # wsvc.current_workspace; any member may start a chat
+    "canopy_sessions_list_sessions": ("session-acl",),  # readable_sessions
+    "reset_sessions": ("session-acl",),  # readable rows filtered to can_write
+    "canopy_sessions_get_session": ("session-acl",),
+    "list_messages": ("session-acl",),
+    "archive_session": ("session-acl",),  # write
+    "reset_session": ("session-acl",),  # write
+    "unarchive_session": ("session-acl",),  # write
+    "set_session_notify": ("session-acl",),  # write
+    "list_transfer_requests": ("self", "runner-admin"),  # ones you asked for, or for boxes you administer
+    "approve_transfer_request": ("runner-admin",),  # the target box's admins, re-checked at decision
+    "decline_transfer_request": ("runner-admin",),
+    "cancel_transfer_request": ("self",),  # only whoever asked
+    "list_participants": ("session-acl",),
+    "add_participant": ("session-acl",),  # can_share (chat owner)
+    "remove_participant": ("session-acl",),  # can_share, or self-removal
+    "canopy_sessions_send": ("session-acl",),  # write
+    "place": ("session-acl",),  # write
+    "transfer": ("session-acl",),  # write
+    "answer_menu": ("session-acl",),  # write
+    "close_session": ("session-acl",),  # write
+    "stop_session_turn": ("session-acl",),  # write
+    "attach_session": ("session-acl",),  # READ gate on a POST (viewer signal)
+    "detach_session": ("session-acl",),  # READ gate on a POST
+    "request_backfill": ("session-acl",),  # READ gate on a POST
+    "upload_attachment": ("session-acl",),  # write
+    "attachment_content": ("session-acl",),  # can_read
+    "delete_attachment": ("session-acl",),  # can_write
+    "canopy_sessions_declare_page_actions": ("session-acl",),  # write
+    "list_page_actions": ("session-acl",),
+    "canopy_sessions_declare_page_state": ("session-acl",),  # write
+    "declare_run_input": ("session-acl",),  # write
+    "read_page_state": ("session-acl",),
+    "invoke_page_action": ("session-acl",),  # write
+    "canopy_sessions_resolve_page_action": ("session-acl",),  # write
+    "share_secret": ("session-acl",),  # write
+    "list_secrets": ("session-acl",),
+    "delete_secret": ("session-acl",),  # write
+
+    # --- apps/canopy_sessions/secrets_api.py  (bearer + chat key issued to the claiming runner)
+    "list_for_key": ("runner",),  # X-Canopy-Chat-Key
+    "value_for_key": ("runner",),  # X-Canopy-Chat-Key; plaintext
+
+    # --- apps/session_sharing/api.py  (Claude Code transcripts; per-person, not tenant-scoped)
+    "upload_session": ("self",),
+    "session_sharing_list_sessions": ("authenticated",),  # own + every link-visibility row, all tenants
+    "create_arc": ("self",),  # only own sessions
+    "list_arcs": ("authenticated",),  # own + every link-visibility arc
+    "get_arc": ("self",),
+    "patch_arc": ("self",),
+    "delete_arc": ("self",),
+    "rotate_arc_token": ("self",),
+    "session_sharing_get_session": ("self",),
+    "patch_session": ("self",),
+    "delete_session": ("self",),
+    "session_sharing_rotate_token": ("self",),
+    "public_share_view": ("token-link",),  # auth=None; share token in path is the only key
+
+    # --- apps/tokens/api.py  (the caller's own tokens, grants, GitHub connection)
+    "list_tokens": ("self",),
+    "create_token": ("self", "human-only"),
+    "revoke_token": ("self",),
+    "tokens_list_connected_apps": ("self",),
+    "tokens_disconnect_app": ("self",),
+    "github_connection": ("self",),
+    "github_disconnect": ("self",),
+    "github_installations": ("self",),
+
+    # --- apps/tokens/connected_apps_api.py  (embed_apps.require: read/test = integrations, change = own)
+    "tokens_connected_apps_list_connected_apps": ("integrations",),
+    "connect_app": ("own",),
+    "update_connected_app": ("own",),
+    "test_connected_app": ("integrations",),
+    "tokens_connected_apps_disconnect_app": ("own",),
+
+    # --- apps/tokens/contact_api.py  (/api/contact/: ContactAuth; contact_session_q)
+    "contact_token": ("host",),  # auth=None; site-signed assertion (+ optional ID-JAG)
+    "contact_me": ("contact",),
+    "start_session": ("contact",),
+    "tokens_contact_list_sessions": ("contact",),
+    "tokens_contact_get_session": ("contact",),
+    "tokens_contact_send": ("contact",),
+    "messages": ("contact",),
+    "attach": ("contact",),
+    "detach": ("contact",),
+    "tokens_contact_declare_page_state": ("contact",),
+    "tokens_contact_declare_page_actions": ("contact",),
+    "tokens_contact_resolve_page_action": ("contact",),
+    "stop": ("contact",),
+    "my_unclaimable": ("contact",),
+    "my_turn": ("contact",),
+    "my_turn_transcript": ("contact",),
+
+    # --- apps/tokens/embed_api.py
+    "list_embeddable_agents": ("member",),  # delegated token required; app allowlist ∩ caller's workspaces
+    "embed_self": ("authenticated",),
+    "embed_self_token": ("self",),  # mints a 15-min DelegatedToken for the caller
+    # --- apps/projects/api.py  (reads: _member_project / request_workspace_slugs; writes: _may_write = CONTENT_WRITE)
+    "projects_list_projects": ("member",),
+    "projects_create_project": ("content.write",),  # creation_workspace + CONTENT_WRITE
+    "get_project_slugs": ("member",),
+    "seed_projects": ("content.write",),  # creation_workspace + CONTENT_WRITE; foreign slugs skipped
+    "batch_context": ("content.write",),  # per-slug; unwritable slug counts 0
+    "batch_actions": ("content.write",),  # per-slug; unwritable slug counts 0
+    "projects_get_project": ("member",),
+    "projects_patch_project": ("content.write",),
+    "delete_project": ("content.write",),
+    "list_context": ("member",),
+    "create_context": ("content.write",),
+    "get_context_latest": ("member",),
+    "list_actions": ("member",),
+    "create_action": ("content.write",),
+    "get_actions_summary": ("member",),
+    # insights: tenant-scoped through the insight's project (not user-scoped any more)
+    "list_insights": ("member",),
+    "clear_insights": ("content.write",),  # scoped by the WRITE set
+    "dismiss_insights": ("content.write",),  # scoped by the WRITE set
+    "dismiss_insight": ("content.write",),  # 404 non-member, 403 viewer
+    # --- apps/reviews/api.py
+    "list_reviews": ("member",),
+    "create_review": ("content.write",),  # creation_workspace + CONTENT_WRITE
+    "get_review": ("token-link",),  # auth=None; link review readable TOKENLESS by anyone, else member
+    "submit_review": ("content.write",),  # auth=None but handler requires editor + CSRF
+    "suggest_review": ("token-link",),  # auth=None; ?t= share token on a link review; never resolves the gate
+    "delete_review": ("content.write",),
+    # --- apps/runs/api.py  (mounted /api/ddd)
+    "list_narratives": ("member",),
+    "get_narrative": ("member",),
+    "runs_get_run": ("member",),
+    "get_run_release": ("token-link",),  # auth=None; member or ?t= on the primary artifact
+    "set_narrative_visibility": ("content.write",),  # scoped by editor slugs
+    "delete_run": ("content.write",),
+    "delete_version": ("content.write",),
+    "delete_narrative": ("content.write",),
+    "move_narrative": ("content.write",),  # editor on source AND destination
+    # --- apps/shareouts/api.py
+    "list_shareouts": ("member",),
+    "create_shareouts": ("content.write",),  # replaces only the caller's own rows
+    "clear_shareouts": ("content.write", "own"),  # editor clears own rows; owner clears all
+    # --- apps/storyboards/api.py
+    "list_storyboards": ("member",),
+    "create_storyboard": ("content.write",),
+    "get_storyboard": ("token-link",),  # auth=None; member or ?t=
+    "patch_storyboard": ("content.write",),
+    "storyboards_rotate_token": ("content.write",),
+    "ensure_token": ("content.write",),
+    "leave_feedback": ("token-link", "member"),  # ?t= with comment/suggest grant; ANY member bypasses the grant
+    "list_notes": ("member",),  # members only; token holder 404s
+    "get_board_narrative": ("token-link",),  # auth=None; member or ?t=
+    # --- apps/walkthroughs/api.py  (writes: uploader while still editor, or workspace owner)
+    "upload_walkthrough": ("content.write",),  # creation_workspace + CONTENT_WRITE
+    "list_walkthroughs": ("member",),
+    "get_walkthrough": ("token-link",),  # auth=None; readable_by = member or ?t=
+    "patch_walkthrough": ("content.write", "own"),  # uploader (editor) or workspace owner
+    "rotate_walkthrough_token": ("content.write", "own"),  # uploader (editor) or workspace owner
+    "delete_walkthrough": ("content.write", "own"),  # uploader (editor) or workspace owner
+    # --- apps/issues/api.py
+    "upsert_issue": ("content.write",),
+    "list_issues": ("member",),
+    "get_issue": ("member",),
+    "delete_issue": ("content.write",),
+    # --- apps/feedback/api.py
+    "ingest_feedback": ("content.write",),  # creation_workspace only — no role check
+    "list_feedback": ("member",),
+    "resolve_feedback": ("content.write",),  # scoped by CONTENT_WRITE slugs; 403 if merely visible
+    # --- apps/contacts/api.py
+    "list_contacts": ("member",),
+    "get_contact": ("member",),
+    "patch_contact": ("content.write",),
+    # --- apps/api/api.py
+    "_auth_smoke": ("authenticated",),  # internal smoke route
+    # --- apps/common/api.py
+    "health": ("anonymous",),
+    "me": ("authenticated",),
+    "get_presence_preference": ("self",),
+    "set_presence_preference": ("self",),
+    # --- apps/events/api.py
+    "record_events": ("events.write",),  # in the pinned or default workspace
+    "list_events": ("logs.read",),  # non-admin gets no rows, not 403
+    # --- apps/inbound/api.py
+    "gmail_push": ("host",),  # auth=None; Pub/Sub push verified by verify_push (OIDC/audience), 404 otherwise
+    "get_push_config": ("member",),
+    "set_push_config": ("integrations",),
+    "list_mailboxes": ("member",),
+    "create_mailbox": ("integrations",),
+    "update_mailbox": ("integrations",),
+    "delete_mailbox": ("integrations",),
+    "runner_mailboxes": ("member",),  # every workspace the caller is in
+    "report_watch": ("events.write",),  # mailbox's agent's workspace membership only
+    # --- apps/push/api.py
+    "vapid_public_key": ("authenticated",),
+    "subscribe": ("self",),
+    "unsubscribe": ("self",),
+    "get_preferences": ("self",),
+    "set_preferences": ("self",),
+    # --- apps/slack/api.py
+    "get_config": ("member",),
+    "set_config_token": ("own", "human-only"),
+    "clear_config_token": ("own", "human-only"),
+    "set_history": ("integrations",),
+    "sync": ("integrations",),
+    "declare_agent": ("own", "human-only"),
+    # --- apps/system/api.py
+    "overview": ("authenticated",),  # canopy plugin catalog, not tenant data
+    "public_stats": ("anonymous",),
+    "detail": ("authenticated",),
+    # --- apps/timeline/api.py
+    "list_timeline": ("member",),
+    # --- apps/workspaces/api.py
+    "create_workspace": ("authenticated", "own"),  # can_create_workspace; OWN on `parent` when nesting
+    "list_workspaces": ("authenticated",),  # the caller's own memberships
+    "get_workspace": ("member",),
+    "set_workspace_parent": ("own", "human-only"),  # own both ends
+    "list_joinable_workspaces": ("authenticated",),
+    "join_workspace": ("authenticated",),  # self_join_domains match, same 404 otherwise
+    "delete_workspace": ("own", "human-only"),
+    "list_members": ("member",),
+    "remove_member": ("members.manage", "human-only"),  # + may_manage_member
+    "set_member_role": ("members.manage", "human-only"),  # + may_manage_member
+    "create_invite": ("members.manage", "human-only"),
+    "list_invites": ("member",),  # tokens only to members.manage
+    "revoke_invite": ("members.manage",),
+    "reissue_invite": ("members.manage", "human-only"),
+    "preview_invite": ("signed-link",),  # auth=None; the invite token is the capability
+    "accept_invite": ("authenticated", "signed-link"),
+    "get_shared_vault": ("own",),
+    "set_shared_vault": ("own", "human-only"),
+}
+
+#: Writes a VIEWER can make, each a decision rather than a default. A write
+#: whose gate includes plain "member" must be here, with the reason a viewer may
+#: do it — or the route must be gated and its entry above changed.
+VIEWER_MAY_MUTATE: dict[str, str] = {
+    "post_command": "comment/accept/decline decide an item already on the board (interaction tier); reshaping kinds require agent.work",
+    "check_agent_github": "re-probes the stored token against GitHub and records the result; grants and changes nothing",
+    "delete_agent_github": "withdraws only the caller's OWN GitHub delegation",
+    "pair_runner": "pairing grants nothing by itself: a box serves only workspaces where its pairer holds agent.work (runner_tenant_slugs)",
+    "resolve_session": "runner protocol; the runner gate (pairer) is the real check, membership only scopes the agent",
+    "record_session": "runner protocol; the runner gate (pairer) is the real check, membership only scopes the agent",
+    "preview_cron": "POST but read-only: computes next fire times, writes nothing",
+    "create_items": "raising a plain ask is interaction; an ask carrying `dispatch` needs agent.work",
+    "decide_item": "deciding an ask is what the viewer (interaction) tier is for",
+    "dismiss_item": "dismissing an ask is deciding it; the viewer tier",
+    "create_session": "starting a chat with an agent is the interaction tier a viewer holds",
+    "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
+}

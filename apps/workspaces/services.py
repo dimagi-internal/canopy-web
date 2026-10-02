@@ -276,6 +276,25 @@ def request_workspace_slugs(request) -> set[str]:
     return user_workspace_slugs(user)
 
 
+def request_workspace_slugs_at_least(request, minimum: str) -> set[str]:
+    """The subset of `request_workspace_slugs` where the caller holds `minimum`
+    or better — the WRITE scope a bulk mutation filters by.
+
+    `request_workspace_slugs` answers "what may I read?". A bulk write (clear
+    every insight, delete a narrative across its rows) must not be scoped by
+    that answer, or a viewer's empty-filter clear wipes the tenant. This is the
+    same scope narrowed by role, read through `has_role_at_least` so the ladder
+    lives in one place. A pinned `/api/w/{ws}/` request is narrowed too: the
+    middleware checked membership, not role."""
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return set()
+    return {
+        slug for slug in request_workspace_slugs(request)
+        if has_role_at_least(user, slug, minimum)
+    }
+
+
 def workspace_slugs_for_user_id(user_id) -> set[str]:
     """The workspace slugs a user (by pk) may act within — the MCP-side counterpart
     of `request_workspace_slugs`, for tools that carry a token subject rather than a
@@ -291,10 +310,62 @@ def workspace_slugs_for_user_id(user_id) -> set[str]:
     return user_workspace_slugs(user)
 
 
+def effective_memberships(ws) -> list[WorkspaceMembership]:
+    """Everyone who is IN `ws`, as `membership()` would answer for each of them.
+
+    The listing counterpart of `membership`: a workspace's own rows are only half
+    the answer, because an owner of any ancestor is an owner here too. Every
+    surface that listed `ws.memberships` directly — the members page, an agent's
+    roster, who gets pushed, who hears a supervisor frame, the last-owner guard —
+    silently left those inherited owners out, so the org's owners were invisible
+    on, and unpushed by, every division they administer.
+
+    Direct rows come back as they are (user prefetched). An ancestor owner gets a
+    SYNTHETIC unsaved owner row — replacing a weaker direct row if they hold one,
+    exactly as `membership()` answers for them. `inherited = True` marks it: there
+    is nothing here to change or remove, the grant lives on the ancestor. Direct
+    rows carry `inherited = False`.
+    """
+    ws = ws if hasattr(ws, "pk") else Workspace.objects.get(slug=ws)
+    rows = {m.user_id: m for m in ws.memberships.select_related("user").order_by("joined_at")}
+    for m in rows.values():
+        m.inherited = False
+    ancestors = ws.ancestor_slugs()
+    if ancestors:
+        upstream = (
+            WorkspaceMembership.objects.filter(
+                workspace_id__in=ancestors, role=WorkspaceMembership.OWNER,
+            ).select_related("user").order_by("joined_at")
+        )
+        for up in upstream:
+            mine = rows.get(up.user_id)
+            if mine is not None and mine.role == WorkspaceMembership.OWNER:
+                continue  # a direct owner row already says it, and can be acted on
+            # A copy, never the direct row mutated in place: a caller that saved
+            # a row it was handed would otherwise persist an inherited grant.
+            synthetic = WorkspaceMembership(
+                workspace=ws, user=up.user, role=WorkspaceMembership.OWNER, joined_at=up.joined_at,
+            )
+            synthetic.inherited = True
+            rows[up.user_id] = synthetic
+    return list(rows.values())
+
+
+def member_user_ids(ws) -> set[int]:
+    """User ids of everyone in `ws`, inherited owners included."""
+    return {m.user_id for m in effective_memberships(ws)}
+
+
+def owner_user_ids(ws) -> set[int]:
+    """User ids of everyone who OWNS `ws`: its direct owners plus the owners of
+    every ancestor."""
+    return {m.user_id for m in effective_memberships(ws) if m.role == WorkspaceMembership.OWNER}
+
+
 def workspace_member_ids(ws) -> list[int]:
-    """User ids of every member of a workspace. Used to fan a supervisor update
-    out to each member's live socket."""
-    return list(ws.memberships.values_list("user_id", flat=True))
+    """User ids of every member of a workspace, inherited owners included. Used
+    to fan a supervisor update out to each member's live socket."""
+    return sorted(member_user_ids(ws))
 
 
 def user_default_workspace(user) -> Workspace | None:
@@ -400,12 +471,25 @@ def is_last_owner(m: WorkspaceMembership) -> bool:
     "can't strand a workspace without an owner" guard lives in exactly one
     place. Must only be called from inside `_guarded_owner_mutation`'s
     transaction — see its docstring for why an un-locked call here is a
-    TOCTOU hazard."""
-    return m.role == WorkspaceMembership.OWNER and (
-        WorkspaceMembership.objects.filter(
-            workspace_id=m.workspace_id, role=WorkspaceMembership.OWNER
-        ).count()
-        == 1
+    TOCTOU hazard.
+
+    An owner of an ANCESTOR counts: the workspace is not stranded while someone
+    up the tree still owns it, so a direct owner may step down beside them.
+    Counting only the direct rows refused exactly that — a division created by
+    someone the org's owners already administer could never be handed back."""
+    if m.role != WorkspaceMembership.OWNER:
+        return False
+    direct = WorkspaceMembership.objects.filter(
+        workspace_id=m.workspace_id, role=WorkspaceMembership.OWNER
+    ).count()
+    if direct > 1:
+        return False
+    ancestors = m.workspace.ancestor_slugs()
+    return not (
+        ancestors
+        and WorkspaceMembership.objects.filter(
+            workspace_id__in=ancestors, role=WorkspaceMembership.OWNER,
+        ).exists()
     )
 
 
@@ -453,7 +537,7 @@ def _guarded_owner_mutation(*, workspace: Workspace, user_id, mutate):
         return mutate(m)
 
 
-def set_member_role(*, workspace: Workspace, user_id, role: str) -> WorkspaceMembership:
+def set_member_role(*, workspace: Workspace, user_id, role: str, by=None) -> WorkspaceMembership:
     """Change a member's role. Idempotent: setting the role a member already
     holds succeeds as a no-op (and, deliberately, never trips the last-owner
     guard — see `test_set_member_role_is_idempotent`). Raises
@@ -464,6 +548,14 @@ def set_member_role(*, workspace: Workspace, user_id, role: str) -> WorkspaceMem
     `user_id` isn't a member of `workspace`, or `MemberError('last_owner')`
     if this would demote the workspace's only remaining owner. See
     `_guarded_owner_mutation` for the transaction/lock this runs inside.
+
+    A demotion within this workspace needs no sweep of its own: every grant
+    that hangs off being here re-reads the role when it is used (an agent
+    admin is checked against membership, editor gates against the role), and
+    the person is still in the tenant. What a demotion CAN do is take an owner
+    out of the workspaces below this one, which they only reached by
+    inheritance — so those are swept exactly as a removal would sweep them
+    (`departure.sweep`, which touches only workspaces they are no longer in).
     """
     if role not in WorkspaceMembership.ROLE_RANK:
         raise MemberError("invalid_role")
@@ -472,26 +564,39 @@ def set_member_role(*, workspace: Workspace, user_id, role: str) -> WorkspaceMem
         if role != m.role:
             if is_last_owner(m):
                 raise MemberError("last_owner")
+            was_owner = m.role == WorkspaceMembership.OWNER
             m.role = role
             m.save(update_fields=["role"])
+            if was_owner:
+                from . import departure
+
+                departure.sweep(m.user, workspace.slug, by=by)
         return m
 
     return _guarded_owner_mutation(workspace=workspace, user_id=user_id, mutate=_mutate)
 
 
-def remove_member(*, workspace: Workspace, user_id) -> None:
+def remove_member(*, workspace: Workspace, user_id, by=None) -> None:
     """Remove a member. Raises `MemberError('not_found')` if `user_id` isn't
     a member of `workspace`, or `MemberError('last_owner')` if this would
     remove the workspace's only remaining owner. See `_guarded_owner_mutation`
     for the transaction/lock this runs inside — moved here (out of the API
     view) so it shares that boundary with `set_member_role` instead of each
     route running its own independent, unlocked check-then-act.
+
+    Also revokes everything the membership carried (`departure.sweep`): agent
+    and runner admin grants, chat participation, lent GitHub tokens, agent
+    ownership, their box on this tenant's agents — and closes their live chat
+    sockets here. In the same transaction, so a removal never half-happens.
     """
 
     def _mutate(m: WorkspaceMembership) -> None:
         if is_last_owner(m):
             raise MemberError("last_owner")
         m.delete()
+        from . import departure
+
+        departure.sweep(m.user, workspace.slug, by=by)
 
     _guarded_owner_mutation(workspace=workspace, user_id=user_id, mutate=_mutate)
 

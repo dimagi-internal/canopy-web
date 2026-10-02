@@ -66,6 +66,7 @@ function member(overrides: Partial<MemberOut> = {}): MemberOut {
     email: 'alice@dimagi.com',
     role: 'owner',
     joined_at: '2026-01-01T00:00:00Z',
+    inherited: false,
     ...overrides,
   }
 }
@@ -113,6 +114,25 @@ describe('WorkspaceMembersPage', () => {
     expect(await screen.findByText('alice@dimagi.com')).toBeTruthy()
     expect(screen.getByText('carol@dimagi.com')).toBeTruthy()
     expect(screen.getByText('bob@example.com')).toBeTruthy()
+  })
+
+  it('shows an owner of a parent workspace without controls, and lets the direct owner step down', async () => {
+    listMembers.mockResolvedValue([
+      member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' }),
+      member({ user_id: 9, email: 'boss@dimagi.com', role: 'owner', inherited: true }),
+    ])
+    listInvites.mockResolvedValue([])
+
+    renderPage()
+
+    expect(await screen.findByText('boss@dimagi.com')).toBeTruthy()
+    expect(screen.getByText(/via parent workspace/i)).toBeTruthy()
+    // The inherited owner has no row here to change or remove.
+    expect(screen.queryByLabelText('Remove boss@dimagi.com')).toBeNull()
+    expect(screen.queryByLabelText('Change role for boss@dimagi.com')).toBeNull()
+    // And alice is not the "only owner": the parent's owner still owns this.
+    const select = screen.getByLabelText('Change role for alice@dimagi.com') as HTMLSelectElement
+    expect(select.disabled).toBe(false)
   })
 
   it('does not show an accepted or revoked invite, but keeps an expired one', async () => {

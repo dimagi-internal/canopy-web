@@ -24,6 +24,7 @@ import {
   watchLabel,
   watchTone,
 } from './inboundSetup'
+import { roleAllows } from '@/lib/workspaceRoles'
 
 const TONE_CLASS: Record<string, string> = {
   success: 'text-success',
@@ -67,7 +68,9 @@ function CopyField({ label, value }: { label: string; value: string }): JSX.Elem
 export function InboundPushPage(): JSX.Element | null {
   const { workspace: slug } = useParams()
   const { workspaces } = useWorkspace()
-  const isOwner = workspaces.find((w) => w.slug === slug)?.role === 'owner'
+  // Push config and mailboxes are the workspace's integrations: admin or owner
+  // (lib/workspaceRoles mirrors apps/workspaces/permissions.py).
+  const canConfigure = roleAllows(workspaces.find((w) => w.slug === slug)?.role, 'integrations')
 
   const [config, setConfig] = useState<PushConfigOut | null>(null)
   const [mailboxes, setMailboxes] = useState<MailboxOut[] | null>(null)
@@ -225,7 +228,7 @@ export function InboundPushPage(): JSX.Element | null {
         <form className="space-y-3" onSubmit={saveConfig}>
           <label className="block space-y-1 text-sm">
             <span className="text-muted-foreground">Audience (must equal the push endpoint)</span>
-            <Input value={audience} onChange={(e) => setAudience(e.target.value)} disabled={!isOwner} />
+            <Input value={audience} onChange={(e) => setAudience(e.target.value)} disabled={!canConfigure} />
           </label>
           <label className="block space-y-1 text-sm">
             <span className="text-muted-foreground">Push service account</span>
@@ -233,7 +236,7 @@ export function InboundPushPage(): JSX.Element | null {
               value={serviceAccount}
               placeholder={suggestedServiceAccount(project)}
               onChange={(e) => setServiceAccount(e.target.value)}
-              disabled={!isOwner}
+              disabled={!canConfigure}
             />
           </label>
           <label className="block space-y-1 text-sm">
@@ -244,15 +247,15 @@ export function InboundPushPage(): JSX.Element | null {
               value={watchTopic}
               placeholder={topicPath(project, topic)}
               onChange={(e) => setWatchTopic(e.target.value)}
-              disabled={!isOwner}
+              disabled={!canConfigure}
             />
           </label>
-          {isOwner ? (
+          {canConfigure ? (
             <Button type="submit" disabled={saving}>
               {saving ? 'Saving…' : 'Save'}
             </Button>
           ) : (
-            <p className="text-xs text-muted-foreground">Only a workspace owner can change this.</p>
+            <p className="text-xs text-muted-foreground">Only a workspace admin or owner can change this.</p>
           )}
         </form>
       </section>
@@ -282,7 +285,7 @@ export function InboundPushPage(): JSX.Element | null {
                   {mb.last_push_at ? new Date(mb.last_push_at).toLocaleString() : 'never'}
                 </TableCell>
                 <TableCell className="space-x-2 text-right">
-                  {isOwner && (
+                  {canConfigure && (
                     <>
                       <Button
                         variant="outline"
@@ -320,7 +323,7 @@ export function InboundPushPage(): JSX.Element | null {
           </TableBody>
         </Table>
 
-        {isOwner && (
+        {canConfigure && (
           <form className="flex flex-wrap items-end gap-2" onSubmit={addMailbox}>
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">Address</span>

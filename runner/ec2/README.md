@@ -100,18 +100,12 @@ WARN: hal: no vault registered in canopy-web — keeping any existing ~/.hal/.en
 | agent | the agent's **Overview → Credentials** — its own vault + its own service account |
 | the box itself | **`/supervisor` → Runners → the box** — its Claude login and GitHub token (no 1Password key; it is handed the two above, per agent) |
 
-Or by API, if you prefer (the key is a 1Password service account scoped to that
-one vault, minted in 1Password, then handed to canopy-web — it is never typed on
-the box):
-
-```bash
-curl -X PUT "$CANOPY/api/agents/hal/vault" -H "Authorization: Bearer $PAT" \
-  -H 'Content-Type: application/json' \
-  -d '{"vault": "Agent-Hal", "service_key": "ops_..."}'      # per agent
-curl -X PUT "$CANOPY/api/workspaces/connect/shared-vault" -H "Authorization: Bearer $PAT" \
-  -H 'Content-Type: application/json' \
-  -d '{"vault": "Canopy-Shared", "service_key": "ops_..."}'  # once per tenant
-```
+The key is a 1Password service account scoped to that one vault, minted in
+1Password, then pasted into canopy-web — it is never typed on the box. **Only in
+the browser:** `PUT /api/agents/<slug>/vault` and `PUT
+/api/workspaces/<ws>/shared-vault` refuse a PAT or an MCP client (403,
+`apps/common/human_only.py`), because a token acts with its owner's whole role
+and an agent session on the owner's laptop holds one.
 
 Then press **Refresh** on the runner page; the next bootstrap materializes it.
 

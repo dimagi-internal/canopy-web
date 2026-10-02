@@ -108,8 +108,18 @@ def _get_agent_or_404(request, slug: str):
     return agent
 
 
-def _store_for(request, slug: str) -> tuple[object, RunStore]:
+def _store_for(request, slug: str, *, write: bool = False) -> tuple[object, RunStore]:
+    """`write=True` is the reshaping tier (`AGENT_WORK`), or the agent itself
+    under its own login: creating a run, recording a gate decision or a verdict,
+    forking. They were membership-only, so a viewer could approve a run's gate."""
     agent = _get_agent_or_404(request, slug)
+    if write and not (agent.user_id is not None and agent.user_id == request.user.pk):
+        from ninja.errors import HttpError
+
+        from apps.workspaces import permissions as perms
+
+        if not perms.can(request.user, agent.workspace_id, perms.AGENT_WORK):
+            raise HttpError(403, "changing an agent's runs requires the editor role or above")
     return agent, resolver.get_run_store(agent)
 
 
@@ -131,7 +141,7 @@ def list_runs(request: HttpRequest, slug: str, limit: int = 100) -> Page[RunSumm
 
 @router.post("/{slug}/runs/", response={201: RunSummary}, summary="Create a run",)
 def create_run(request: HttpRequest, slug: str, payload: RunCreateIn) -> Status:
-    agent, store = _store_for(request, slug)
+    agent, store = _store_for(request, slug, write=True)
     try:
         summary = store.create_run(
             agent.slug,
@@ -165,7 +175,7 @@ def list_steps(request: HttpRequest, slug: str, run_id: str) -> list[Step]:
              summary="Record a gate decision on a step",)
 def record_gate(request: HttpRequest, slug: str, run_id: str, step_key: str,
                 payload: GateDecisionIn) -> Status:
-    agent, store = _store_for(request, slug)
+    agent, store = _store_for(request, slug, write=True)
     decided_by = payload.decided_by or getattr(request.user, "email", "")
     try:
         gate = store.record_gate(
@@ -181,7 +191,7 @@ def record_gate(request: HttpRequest, slug: str, run_id: str, step_key: str,
              summary="Record a judge/QA verdict on a step",)
 def record_verdict(request: HttpRequest, slug: str, run_id: str, step_key: str,
                    payload: VerdictIn) -> Status:
-    agent, store = _store_for(request, slug)
+    agent, store = _store_for(request, slug, write=True)
     try:
         verdict = store.record_verdict(
             agent.slug, run_id, step_key,
@@ -195,7 +205,7 @@ def record_verdict(request: HttpRequest, slug: str, run_id: str, step_key: str,
 
 @router.post("/{slug}/runs/{run_id}/fork", response={201: RunSummary}, summary="Fork a run",)
 def fork_run(request: HttpRequest, slug: str, run_id: str, payload: ForkIn) -> Status:
-    agent, store = _store_for(request, slug)
+    agent, store = _store_for(request, slug, write=True)
     try:
         summary = store.fork(
             agent.slug, run_id, payload.at_step,

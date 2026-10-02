@@ -212,8 +212,17 @@ def _expires(meta: dict) -> dt.datetime | None:
 
 def delegation_for(agent: Agent, service: str = AgentDelegation.GITHUB) -> AgentDelegation | None:
     """The delegation IN FORCE for this agent: its current owner's. A row left
-    behind by a previous owner is not it."""
+    behind by a previous owner is not it.
+
+    Nor is an owner's who has left the workspace: lending a GitHub identity is
+    something a member does for their tenant's agent, and an ex-member's token
+    must stop acting the moment they are out — not when someone notices the
+    `owner` field still names them."""
     if agent.owner_id is None:
+        return None
+    from apps.workspaces import services as wsvc
+
+    if not wsvc.is_member(agent.owner, agent.workspace_id):
         return None
     return AgentDelegation.objects.filter(
         agent=agent, user_id=agent.owner_id, service=service).first()

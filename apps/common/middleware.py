@@ -158,7 +158,7 @@ def _is_invite_link(request) -> bool:
     # /api/workspaces/{slug}/invites/... and would collide with that broader prefix
     # if a workspace's slug were literally "invites" (e.g.
     # /api/workspaces/invites/invites/ = list-invites for that workspace). Ninja's
-    # own per-route auth (session_auth + _require_role) would still gate those even
+    # own per-route auth (session_auth + `_require`) would still gate those even
     # under a blanket prefix, but this regex removes the ambiguity outright instead
     # of relying on that second layer.
     #

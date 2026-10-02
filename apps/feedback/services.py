@@ -24,7 +24,7 @@ _INGEST_FIELDS = (
 )
 
 
-def ingest(items: list[dict], *, submitted_by=None) -> dict:
+def ingest(items: list[dict], *, workspace, submitted_by=None) -> dict:
     """Create feedback rows, skipping ones already ingested.
 
     Items with neither ``body`` nor ``suggested_text`` are skipped and counted
@@ -33,6 +33,9 @@ def ingest(items: list[dict], *, submitted_by=None) -> dict:
     Idempotent per ``(channel, source_ref)`` so re-reading a mailbox or a doc is
     safe — an agent that re-scans its inbox must not double-file every thread. A
     blank ``source_ref`` never dedupes: a web submit has no natural id.
+
+    ``workspace`` is required: every row belongs to the tenant of the thing it
+    is about, and the caller (who resolved that thing) is the one who knows it.
 
     The whole batch commits in one transaction, so a doc with forty comments
     lands atomically rather than half-ingesting on an error.
@@ -58,12 +61,12 @@ def ingest(items: list[dict], *, submitted_by=None) -> dict:
             source_ref = data.get("source_ref") or ""
 
             if source_ref and Feedback.objects.filter(
-                channel=channel, source_ref=source_ref
+                workspace=workspace, channel=channel, source_ref=source_ref
             ).exists():
                 duplicate += 1
                 continue
 
-            fb = Feedback.objects.create(**data, submitted_by=submitted_by)
+            fb = Feedback.objects.create(**data, workspace=workspace, submitted_by=submitted_by)
             created_ids.append(fb.pk)
 
     return {
@@ -74,9 +77,10 @@ def ingest(items: list[dict], *, submitted_by=None) -> dict:
     }
 
 
-def list_feedback(*, target_kind=None, target_ref=None, state=None, channel=None):
-    """The pool, filtered. Returns a QuerySet so callers can count or slice."""
-    qs = Feedback.objects.all()
+def list_feedback(*, workspace_slugs, target_kind=None, target_ref=None, state=None, channel=None):
+    """The pool within ``workspace_slugs``, filtered. Returns a QuerySet so
+    callers can count or slice. An empty set sees nothing."""
+    qs = Feedback.objects.filter(workspace_id__in=workspace_slugs)
     if target_kind:
         qs = qs.filter(target_kind=target_kind)
     if target_ref:
@@ -88,14 +92,15 @@ def list_feedback(*, target_kind=None, target_ref=None, state=None, channel=None
     return qs
 
 
-def resolve(pk: int, *, state: str, note: str = "", resolved_in_version=None) -> Feedback:
+def resolve(pk: int, *, workspace_slugs, state: str, note: str = "", resolved_in_version=None) -> Feedback:
     """Record what a decision turn did with one piece of feedback.
 
     This is the ONLY mutation. There is no general PATCH: feedback is what
     somebody said, and editing that after the fact would make the pool
     untrustworthy as a record.
     """
-    fb = Feedback.objects.get(pk=pk)
+    # Outside the caller's tenants is DoesNotExist, the same 404 as no row.
+    fb = Feedback.objects.get(pk=pk, workspace_id__in=workspace_slugs)
     fb.state = state
     if note:
         fb.disposition_note = note

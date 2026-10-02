@@ -363,8 +363,9 @@ def _is_member(w: Walkthrough, request) -> bool:
     non-token half of Walkthrough.readable_by)."""
     from apps.workspaces import services as wsvc
 
+    # A null-workspace walkthrough has no members (see Walkthrough.readable_by).
     if w.workspace_id is None:
-        return bool(request.user.is_authenticated)
+        return False
     return w.workspace_id in wsvc.request_workspace_slugs(request)
 
 

@@ -21,6 +21,16 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 
 
+def _creator(agent):
+    """Whoever is asking about the stuck turn started the chat — a session turn
+    is listed only to someone who may read the chat (the chat ACL, not the
+    tenant)."""
+    from apps.workspaces.models import WorkspaceMembership
+
+    return WorkspaceMembership.objects.filter(
+        workspace=agent.workspace, role=WorkspaceMembership.OWNER).first().user
+
+
 @pytest.fixture
 def fleet():
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
@@ -116,7 +126,8 @@ def test_a_bound_session_turn_is_not_reported_when_its_holder_is_not_assigned(fl
     RunnerAssignment.objects.create(agent=a, runner=fleet["laptop"], rank=0)
     Runner.objects.filter(pk=cloud.pk).update(capabilities={"sessions": True})
     cloud.refresh_from_db()
-    session = Session.objects.create(agent=a, workspace=a.workspace, title="chat")
+    session = Session.objects.create(agent=a, workspace=a.workspace, title="chat",
+                                     created_by=_creator(a))
     RunnerBinding.objects.create(session=session, runner=cloud)
     _age(Turn.objects.create(
         chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
@@ -138,7 +149,8 @@ def test_an_unbound_session_turn_still_follows_its_agents_rules(fleet):
         agent=a, runner=laptop, rank=0, source=Turn.ORIGIN_CANOPY_WEB_CHAT, strict=True
     )
     _offline(laptop)
-    session = Session.objects.create(agent=a, workspace=a.workspace, title="chat")
+    session = Session.objects.create(agent=a, workspace=a.workspace, title="chat",
+                                     created_by=_creator(a))
     _age(Turn.objects.create(
         chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
         idempotency_key="c2", routing=Turn.ANY,

@@ -5,14 +5,14 @@ the repo's slash is `__`-escaped in path params (`jjackson/canopy` -> `jjackson_
 """
 from __future__ import annotations
 
-from django.db.models import Q
 from django.http import HttpRequest
 from ninja import Router, Status
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from .models import OriginIssue
@@ -30,10 +30,21 @@ def _unslug(repo_slug: str) -> str:
 
 
 def _visible(qs, request: HttpRequest):
-    """Scope to the caller's workspaces (the hard tenant boundary); legacy
-    null-workspace rows stay visible to any authenticated caller."""
-    slugs = wsvc.request_workspace_slugs(request)
-    return qs.filter(Q(workspace_id__in=slugs) | Q(workspace__isnull=True))
+    """Scope to the caller's workspaces (the hard tenant boundary)."""
+    # A null-workspace row is in nobody's scope. It used to be in everybody's —
+    # the NULL-means-allow leg — and `issues/0003` homed the rows it was keeping
+    # visible, so dropping it hides nothing anyone legitimately reads.
+    return qs.filter(workspace_id__in=wsvc.request_workspace_slugs(request))
+
+
+def _require_editor(request: HttpRequest, workspace_id: str, verb: str) -> None:
+    """Writing an origin record — filing, re-syncing or deleting one — is the
+    author tier. A viewer reads the record."""
+    if not perms.can(request.user, workspace_id, perms.CONTENT_WRITE):
+        raise ProblemError(
+            403, "Editor role required", type_=TYPE_FORBIDDEN,
+            detail=f"{verb} an origin record requires the editor role in its workspace",
+        )
 
 
 def _get_or_404(request: HttpRequest, repo_slug: str, number: int) -> OriginIssue:
@@ -68,23 +79,24 @@ def upsert_issue(request: HttpRequest, payload: OriginIssueIn) -> Status:
 
     # (repo, number) is globally unique — one origin record per GitHub issue. If a
     # record already exists in a workspace the caller isn't a member of, they must
-    # not overwrite it: 404 (don't leak existence), same as read/delete.
+    # not overwrite it: 404 (don't leak existence), same as read/delete. A record
+    # with NO workspace is one nobody can see, so it 404s too rather than being
+    # the one row anybody may overwrite.
     existing = OriginIssue.objects.filter(repo=repo, number=number).first()
-    if existing and existing.workspace_id is not None and existing.workspace_id not in wsvc.request_workspace_slugs(request):
+    if existing and existing.workspace_id not in wsvc.request_workspace_slugs(request):
         raise ProblemError(
             404, "Issue record not found", type_=TYPE_NOT_FOUND,
             detail=f"No canopy.origin record for {repo}#{number}.",
         )
+    if existing:
+        _require_editor(request, existing.workspace_id, "re-syncing")
 
     defaults = dict(data)
     if existing is None:
         ws = _assign_workspace(request, data.get("agent") or "")
         if ws is None:
-            # Never create an unhomed record. `_visible` keeps a null-workspace
-            # row readable by ANY authenticated caller (a legacy carve-out), so
-            # "could not resolve a tenant" must be a refusal rather than a
-            # fallback into that carve-out — that is the NULL-means-allow shape
-            # that has bitten this codebase repeatedly.
+            # Never create an unhomed record: nobody could read it, and its
+            # globally unique (repo, number) would then block every re-sync.
             raise ProblemError(
                 422,
                 "No workspace to file this record in",
@@ -94,6 +106,7 @@ def upsert_issue(request: HttpRequest, payload: OriginIssueIn) -> Status:
                     "ask an owner for an invite"
                 ),
             )
+        _require_editor(request, ws.slug, "filing")
         defaults["workspace"] = ws
     obj, created = OriginIssue.objects.update_or_create(repo=repo, number=number, defaults=defaults)
     return Status(201 if created else 200, _out(obj))
@@ -123,5 +136,7 @@ def get_issue(request: HttpRequest, repo_slug: str, number: int) -> OriginIssueO
 
 @router.delete("/{repo_slug}/{number}/", response={204: None}, summary="Delete an origin record (cleanup)")
 def delete_issue(request: HttpRequest, repo_slug: str, number: int) -> Status:
-    _get_or_404(request, repo_slug, number).delete()
+    obj = _get_or_404(request, repo_slug, number)
+    _require_editor(request, obj.workspace_id, "deleting")
+    obj.delete()
     return Status(204, None)

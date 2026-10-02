@@ -713,8 +713,17 @@ def runner_tenant_slugs(runner: Runner) -> set[str]:
     controlled. A NULL `paired_by` fails closed (empty set → `__in=set()`
     matches nothing): an orphaned runner has no identity to derive a tenant
     from, and inferring one from the FK would be an escalation.
+
+    And only the workspaces where that human may RUN work (`AGENT_WORK`,
+    editor and above): a box claims other people's prompts, so a VIEWER's box
+    serves nothing there — before 2026-10-02 a viewer could pair a session-
+    capable box and receive the workspace's unbound chat sends.
     """
-    return wsvc.user_workspace_slugs(runner.paired_by) if runner.paired_by_id else set()
+    if not runner.paired_by_id:
+        return set()
+    from apps.workspaces import permissions as perms
+
+    return perms.slugs_with(runner.paired_by, perms.AGENT_WORK)
 
 
 def agent_tenant_q(ws_slugs, *, prefix: str = "agent") -> Q:
@@ -931,6 +940,19 @@ def turn_reach(turn: Turn) -> Reach:
     return Reach(UNROUTED, [], blocked_by_requirements(live_only=False))
 
 
+def _readable_session_turn_q(user) -> Q:
+    """Turns that are not session turns, or are session turns in a chat `user`
+    may read. No user (a contact's view): no extra narrowing — the caller passes
+    its own `turn_q`."""
+    if user is None:
+        return Q()
+    from apps.canopy_sessions import access as session_access
+    from apps.canopy_sessions.models import Session
+
+    readable = Session.objects.filter(session_access.visible_session_q(user)).values("pk")
+    return Q(chat_session__isnull=True) | Q(chat_session__in=readable)
+
+
 def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[dict]:
     """Queued turns that look genuinely stuck — otherwise a silent stall.
 
@@ -963,6 +985,10 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         # refinement below (once per turn PER RUNNER), so preload them.
         .select_related("agent", "chat_session", "chat_session__runner_binding")
         .filter(turn_q if turn_q is not None else Q())
+        # A user sees a session turn (and its prompt) only in a chat they may
+        # read — the chat ACL, not the tenant. A contact is already narrowed to
+        # their own conversations by `turn_q`.
+        .filter(_readable_session_turn_q(user))
         .order_by("created_at")
     )
     if not queued:
@@ -1023,8 +1049,14 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         else:
             kind = "config"
             reason = f"no runner {what}"
+        from . import turn_access
+
         out.append({
-            "turn_id": str(t.pk), "target": target, "prompt": (t.prompt or "")[:120],
+            "turn_id": str(t.pk), "target": target,
+            # A prompt is a log (turn_access); a contact's view is already
+            # narrowed to their own conversations by `turn_q`.
+            "prompt": ((t.prompt or "")[:120]
+                       if user is None or turn_access.can_read_turn_content(user, t) else ""),
             "created_at": t.created_at, "reason": reason, "kind": kind,
         })
     return out
@@ -1164,11 +1196,23 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     defaults, priorities = load_assignment_rows(agent_ids)
     now = timezone.now()
     my_flags = runner.flags
+    from apps.agents.services import runner_may_hold_agent
+
+    trusted: dict[int, bool] = {}
     for turn in candidates:
         # Above the pin on purpose, like profile_q: a pin is a placement, never a
         # way past what the conversation's host requires of the box.
         if not rr.satisfies(my_flags, rr.requirements_of(turn)):
             continue
+        # An agent turn runs AS the agent: its prompt, its caller's token, its
+        # owner's GitHub identity. Only a box whose pairer is one of the agent's
+        # admins may take one — also above the pin, since pinning is open to the
+        # editor tier and must not be a way to direct an agent at your own box.
+        if turn.agent_id:
+            if turn.agent_id not in trusted:
+                trusted[turn.agent_id] = runner_may_hold_agent(runner, turn.agent)
+            if not trusted[turn.agent_id]:
+                continue
         pinned_here = turn.pinned_runner_id == runner.id
         if not pinned_here:
             if not _kind_allows(runner, turn.routing):
@@ -2790,6 +2834,7 @@ def list_visible_sessions(user) -> list[SessionView]:
     `user_workspace_slugs(user)` returns empty and their workspace's sessions
     are correctly invisible to them — no more silent auto-join here either.
     """
+    from apps.canopy_sessions import access as session_access
     from apps.canopy_sessions.models import RunnerBinding, Session
 
     ws_slugs = wsvc.user_workspace_slugs(user)
@@ -2797,6 +2842,9 @@ def list_visible_sessions(user) -> list[SessionView]:
         RunnerBinding.objects.filter(
             runner__isnull=False,
             session__workspace_id__in=ws_slugs,
+            # The chat ACL, not just the tenant: this returns each session's
+            # recent messages.
+            session__in=Session.objects.filter(session_access.visible_session_q(user)).values("pk"),
             session__status=Session.ACTIVE,
             live_seen_at__gte=stale_cutoff(),
         )
@@ -2962,7 +3010,14 @@ def can_administer_runner(user, runner) -> bool:
     """
     from .models import RunnerAdmin
 
-    if runner.paired_by_id in (getattr(user, "id", None), None):
+    if not getattr(user, "is_authenticated", False):
+        return False
+    # A runner with NO pairer is administered by nobody — it used to be
+    # administered by everyone, a NULL-means-allow leg like the six this repo
+    # has already removed elsewhere.
+    if runner.paired_by_id is None:
+        return False
+    if runner.paired_by_id == user.id:
         return True
     if not getattr(user, "is_authenticated", False):
         return False

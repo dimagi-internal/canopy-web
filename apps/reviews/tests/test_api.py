@@ -18,6 +18,10 @@ from django.utils import timezone
 
 from apps.reviews.models import ReviewRequest
 
+from apps.workspaces.models import WorkspaceMembership
+from apps.workspaces.services import ensure_member
+from apps.workspaces.testing import a_workspace
+
 User = get_user_model()
 
 BASE = "/api/reviews"
@@ -55,20 +59,22 @@ SAMPLE_RESPONSE_JSON = {
 # ---------------------------------------------------------------------------
 
 
+def _editor(email):
+    # Editors of the default workspace: submitting and deleting a review is the
+    # author tier, and a review with no workspace is visible to no member.
+    user = User.objects.create_user(username=email, email=email)
+    ensure_member(a_workspace(), user, WorkspaceMembership.EDITOR)
+    return user
+
+
 @pytest.fixture
 def owner(db):
-    return User.objects.create_user(
-        username="owner@dimagi.com",
-        email="owner@dimagi.com",
-    )
+    return _editor("owner@dimagi.com")
 
 
 @pytest.fixture
 def other_user(db):
-    return User.objects.create_user(
-        username="other@dimagi.com",
-        email="other@dimagi.com",
-    )
+    return _editor("other@dimagi.com")
 
 
 @pytest.fixture
@@ -91,6 +97,7 @@ def _make_review(owner, **kwargs) -> ReviewRequest:
         gate="pre_ship",
         request_json=SAMPLE_REQUEST_JSON,
         visibility="link",
+        workspace=a_workspace(),
     )
     defaults.update(kwargs)
     return ReviewRequest.objects.create(owner=owner, **defaults)

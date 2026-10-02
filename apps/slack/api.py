@@ -11,9 +11,11 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.common.human_only import human_only
 from apps.api.auth import session_auth
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
-from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.models import Workspace
 
 from . import commands, services
 from .models import SlackInstallation, SlackWorkspaceLink
@@ -35,10 +37,14 @@ def _workspace_or_404(user, slug: str) -> Workspace:
     return ws
 
 
-def _owner_workspace_or_404(user, slug: str) -> Workspace:
+def _workspace_with(user, slug: str, capability: str) -> Workspace:
+    """The workspace, if the caller holds `capability` there (`permissions`).
+    The Slack APP is the owner's (config token, declaring it an agent — one
+    Slack can serve several workspaces, and declaring cannot be undone);
+    reading history in and syncing are integrations, run by an admin."""
     ws = _workspace_or_404(user, slug)
-    if wsvc.member_role(user, ws) != WorkspaceMembership.OWNER:
-        raise HttpError(403, "requires the owner role")
+    if not perms.can(user, ws, capability):
+        raise HttpError(403, f"requires the {perms.MINIMUM_ROLE[capability]} role or above")
     return ws
 
 
@@ -89,10 +95,11 @@ def get_config(request: HttpRequest, workspace: str) -> dict:
 
 @router.put("/{workspace}/config-token", response=SlackSyncOut,
             summary="Let canopy manage the Slack app's slash commands (owner)")
+@human_only("Slack's app configuration token")
 def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigTokenIn) -> dict:
     """Takes the REFRESH token of a Slack app configuration token, then syncs
     the app's slash commands to the agents that are on for Slack."""
-    ws = _owner_workspace_or_404(request.user, workspace)
+    ws = _workspace_with(request.user, workspace, perms.OWN)
     inst = _installation_or_409(ws)
     try:
         commands.set_config_token(inst, payload.refresh_token, user=request.user)
@@ -103,32 +110,34 @@ def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigT
 
 @router.delete("/{workspace}/config-token", response=SlackConfigOut,
                summary="Stop managing the Slack app's slash commands (owner)")
+@human_only("Slack's app configuration token")
 def clear_config_token(request: HttpRequest, workspace: str) -> dict:
-    ws = _owner_workspace_or_404(request.user, workspace)
+    ws = _workspace_with(request.user, workspace, perms.OWN)
     commands.clear_config_token(_installation_or_409(ws))
     return _out(ws)
 
 
 @router.put("/{workspace}/history", response=SlackConfigOut,
-            summary="Allow reading channel history, and how far back (owner)")
+            summary="Allow reading channel history, and how far back (admin or owner)")
 def set_history(request: HttpRequest, workspace: str, payload: SlackHistoryIn) -> dict:
     """The policy for `@canopy <agent> --history <minutes> <ask>` in this workspace:
     whether it may read the channel's recent past at all, and the longest window."""
-    ws = _owner_workspace_or_404(request.user, workspace)
+    ws = _workspace_with(request.user, workspace, perms.INTEGRATIONS)
     _installation_or_409(ws)
     SlackWorkspaceLink.objects.filter(workspace=ws).update(
         history_enabled=payload.enabled, history_max_minutes=payload.max_minutes)
     return _out(ws)
 
 
-@router.post("/{workspace}/sync", response=SlackSyncOut, summary="Sync slash commands now (owner)")
+@router.post("/{workspace}/sync", response=SlackSyncOut, summary="Sync slash commands now (admin or owner)")
 def sync(request: HttpRequest, workspace: str) -> dict:
-    ws = _owner_workspace_or_404(request.user, workspace)
+    ws = _workspace_with(request.user, workspace, perms.INTEGRATIONS)
     return commands.sync_quietly(_installation_or_409(ws))
 
 
 @router.post("/{workspace}/declare-agent", response=SlackDeclareAgentOut,
              summary="Declare the Slack app an agent (owner)")
+@human_only("Declaring the Slack app an agent")
 def declare_agent(request: HttpRequest, workspace: str) -> dict:
     """Turn on Slack's own working indicator for this workspace's Slack app.
 
@@ -145,7 +154,7 @@ def declare_agent(request: HttpRequest, workspace: str) -> dict:
     """
     from django.utils import timezone
 
-    ws = _owner_workspace_or_404(request.user, workspace)
+    ws = _workspace_with(request.user, workspace, perms.OWN)
     inst = _installation_or_409(ws)
     try:
         result = commands.declare_agent(inst)

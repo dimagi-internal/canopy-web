@@ -1267,6 +1267,11 @@ def cloud(ws, hal):
     """An online cloud runner owned by someone else, and an offline laptop for hal."""
     owner = a_user("ops@dimagi.com")
     wsvc.ensure_member(ws, owner, WorkspaceMembership.EDITOR)
+    # Trusted with hal: a box runs an agent's work only when its pairer is one
+    # of the agent's admins (agents.services.runner_may_hold_agent).
+    from apps.agents.models import AgentAdmin
+
+    AgentAdmin.objects.create(agent=hal, user=owner)
     return _runner("cloud-ec2-1", kind=Runner.CLOUD, pairer=owner)
 
 

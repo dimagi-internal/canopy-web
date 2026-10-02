@@ -147,19 +147,27 @@ def agent_audience(agent) -> list:
     explicit admins who are still members, then the workspace's owners — so a
     workspace with an explicit admin does not also buzz every owner.
     """
-    owner = getattr(agent, "owner", None)
-    if owner is not None:
-        return [owner]
     if not agent.workspace_id:
         return []
-    from apps.workspaces.models import WorkspaceMembership
+    from django.contrib.auth import get_user_model
 
-    members = WorkspaceMembership.objects.filter(workspace_id=agent.workspace_id)
+    from apps.workspaces import services as wsvc
+
+    # Inherited owners count as members and owners (`effective_memberships`):
+    # an org owner administers every division below it, and is the person who
+    # should hear that one of its agents is waiting.
+    member_ids = wsvc.member_user_ids(agent.workspace_id)
+    owner = getattr(agent, "owner", None)
+    # An owner who has left the workspace is not pushed: the agent's work is
+    # no longer theirs to see, and the people who now run it are below.
+    if owner is not None and owner.pk in member_ids:
+        return [owner]
     admins = [g.user for g in agent.admin_grants.select_related("user")
-              .filter(user_id__in=members.values("user_id"))]
+              .filter(user_id__in=member_ids)]
     if admins:
         return admins
-    return [m.user for m in members.filter(role=WorkspaceMembership.OWNER).select_related("user")]
+    owner_ids = wsvc.owner_user_ids(agent.workspace_id)
+    return list(get_user_model().objects.filter(pk__in=owner_ids).order_by("pk"))
 
 
 def _flush() -> None:

@@ -137,11 +137,12 @@ class Walkthrough(models.Model):
         """The read gate for detail + content: a MEMBER of the walkthrough's
         workspace, or anyone presenting a matching ?t=<share_token> (visibility=
         link). Being merely authenticated is NOT enough — that was a cross-workspace
-        read leak. Legacy null-workspace rows fall back to any authenticated user."""
+        read leak. A null-workspace row has no members: only its token reads it
+        (it used to fall back to any authenticated user — NULL-means-allow)."""
         from apps.workspaces import services as wsvc
 
-        if self.workspace_id is None:
-            member = request.user.is_authenticated
-        else:
-            member = self.workspace_id in wsvc.request_workspace_slugs(request)
+        member = (
+            self.workspace_id is not None
+            and self.workspace_id in wsvc.request_workspace_slugs(request)
+        )
         return member or self.token_matches(request.GET.get("t"))

@@ -25,6 +25,10 @@ from apps.walkthroughs.models import Walkthrough
 from apps.walkthroughs.schemas import WalkthroughDetailOut, WalkthroughListItemOut
 from tests.fixtures.fake_drive import FakeDriveClient
 
+from apps.workspaces.models import WorkspaceMembership
+from apps.workspaces.services import ensure_member
+from apps.workspaces.testing import a_workspace
+
 User = get_user_model()
 
 BASE = "/api/walkthroughs"
@@ -42,20 +46,22 @@ def fake_drive(monkeypatch):
     return inst
 
 
+def _editor(email):
+    # Editors of the default workspace: uploading and editing are the author
+    # tier, and a walkthrough with no workspace is readable by no member.
+    user = User.objects.create_user(username=email, email=email)
+    ensure_member(a_workspace(), user, WorkspaceMembership.EDITOR)
+    return user
+
+
 @pytest.fixture
 def owner(db):
-    return User.objects.create_user(
-        username="owner@dimagi.com",
-        email="owner@dimagi.com",
-    )
+    return _editor("owner@dimagi.com")
 
 
 @pytest.fixture
 def other_user(db):
-    return User.objects.create_user(
-        username="other@dimagi.com",
-        email="other@dimagi.com",
-    )
+    return _editor("other@dimagi.com")
 
 
 @pytest.fixture
@@ -77,6 +83,7 @@ def _make_walkthrough(owner, **kwargs) -> Walkthrough:
         drive_folder_id="fake-folder",
         content_type="text/html",
         size_bytes=42,
+        workspace=a_workspace(),
     )
     defaults.update(kwargs)
     return Walkthrough.objects.create(owner=owner, **defaults)
@@ -492,6 +499,7 @@ def test_delete_owner_returns_204(auth_client, fake_drive, owner):
         drive_folder_id=stored.folder_id,
         content_type="text/html",
         size_bytes=7,
+        workspace=a_workspace(),
     )
     resp = auth_client.delete(f"{BASE}/{w.id}/")
     assert resp.status_code == 204

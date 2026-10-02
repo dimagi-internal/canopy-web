@@ -11,9 +11,10 @@ from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
 
+from apps.common.human_only import human_only
 from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, paginate
-from apps.common.views_debug import is_machine
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import delegations, services
@@ -125,18 +126,11 @@ def _get_agent_or_404(request: HttpRequest, slug: str):
     return agent
 
 
-def _caller_role(request: HttpRequest, workspace) -> str | None:
-    """The caller's `WorkspaceMembership.role` in `workspace` (a `Workspace`
-    instance or a bare slug), or `None` if they aren't a member at all.
-
-    A thin request-shaped wrapper over `wsvc.member_role`, which is the one
-    place the rule lives. This used to run its own membership query — a second
-    implementation of the same decision, which is how this codebase previously
-    ended up with six tenancy predicates that disagreed."""
-    return wsvc.member_role(request.user, workspace)
-
-
-_EDITOR_OR_OWNER = {wsvc.WorkspaceMembership.EDITOR, wsvc.WorkspaceMembership.OWNER}
+def _can(request: HttpRequest, workspace, capability: str) -> bool:
+    """May the caller exercise `capability` in `workspace`? The request-shaped
+    door to `apps/workspaces/permissions.py`, the one table of what each role
+    may do. This module names capabilities, never roles."""
+    return perms.can(request.user, workspace, capability)
 
 
 def _agent_for_write(request: HttpRequest, slug: str):
@@ -151,9 +145,25 @@ def _agent_for_write(request: HttpRequest, slug: str):
     `delete_agent` (below): resolve-then-authorize, never the other way.
     """
     agent = _get_agent_or_404(request, slug)
-    if _caller_role(request, agent.workspace_id) not in _EDITOR_OR_OWNER:
-        raise HttpError(403, "this action requires the editor or owner role")
+    if not _can(request, agent.workspace_id, perms.AGENT_WORK):
+        raise HttpError(403, "this action requires the editor role or above")
     return agent
+
+
+def _refuse_runners_that_cannot_hold(agent, runners) -> None:
+    """403 naming every runner whose pairer is not one of the agent's admins.
+
+    Pointing an agent's work at a box hands that box the agent's whole identity
+    (`services.runner_may_hold_agent`), and these writes are open to the editor
+    tier — so the box, not just the caller, has to be trusted with the agent.
+    """
+    refused = sorted({r.name for r in runners if not services.runner_may_hold_agent(r, agent)})
+    if refused:
+        raise HttpError(
+            403,
+            f"runner(s) {', '.join(refused)} cannot run {agent.slug}: whoever paired a runner "
+            "must be the agent's owner, a workspace owner, or one of its admins",
+        )
 
 
 def _agent_for_admin(request: HttpRequest, slug: str):
@@ -213,7 +223,7 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # brand-new agent.
     existing = services.get_agent(payload.slug)
     target_ws = existing.workspace if existing is not None else home
-    role = _caller_role(request, target_ws)
+    role = wsvc.member_role(request.user, target_ws)
     if existing is not None and role is None:
         # Resolve-then-authorize, the ordering `_agent_for_write` gets for free
         # from `_get_agent_or_404`. It has to be spelled out here because this
@@ -233,11 +243,19 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         # there is nothing to leak, and 404-ing a create would be a lie about
         # the only fact the caller already knows.
         raise HttpError(404, f"agent '{payload.slug}' not found")
-    if role not in _EDITOR_OR_OWNER:
-        raise HttpError(403, "creating or editing an agent requires the editor or owner role")
+    if not perms.role_allows(role, perms.AGENT_WORK):
+        raise HttpError(403, "creating or editing an agent requires the editor role or above")
+    explicit = (payload.workspace or "").strip()
+    # A MOVE also requires admin of the agent where it is — checked before
+    # anything is written. Moving re-decides every gate that hangs off its
+    # tenant (a workspace owner is an agent admin), so an editor (the self-join
+    # default) could otherwise move an agent into a workspace they had just
+    # created, own it there, and hold its keys.
+    if (existing is not None and explicit and existing.workspace_id != explicit
+            and not existing.is_admin(request.user)):
+        raise HttpError(403, "moving an agent requires being its owner or one of its admins")
 
     agent = services.upsert_agent(payload, workspace=home)
-    explicit = (payload.workspace or "").strip()
     if explicit and agent.workspace_id != explicit:
         # Explicit home: may MOVE an already-homed agent. A missing workspace
         # and a non-member get the same 404 (no existence leak); moving also
@@ -246,8 +264,8 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         ws = wsvc.Workspace.objects.filter(slug=explicit).first()
         if ws is None or not wsvc.is_member(request.user, explicit):
             raise HttpError(404, f"workspace '{explicit}' not found")
-        if _caller_role(request, ws) not in _EDITOR_OR_OWNER:
-            raise HttpError(403, "moving an agent requires the editor or owner role in the destination workspace")
+        if not _can(request, ws, perms.AGENT_WORK):
+            raise HttpError(403, "moving an agent requires the editor role or above in the destination workspace")
         agent.workspace = ws
         agent.save(update_fields=["workspace"])
     # No `ensure_member` here any more, and it is not an omission: since the
@@ -263,7 +281,7 @@ def _may_transfer_owner(request: HttpRequest, agent) -> bool:
     """A workspace owner, or the agent's current owner."""
     if agent.owner_id is not None and agent.owner_id == request.user.pk:
         return True
-    return _caller_role(request, agent.workspace_id) == wsvc.WorkspaceMembership.OWNER
+    return _can(request, agent.workspace_id, perms.OWN)
 
 
 def _may_manage_admins(request: HttpRequest, agent) -> bool:
@@ -292,12 +310,11 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
 # so it is a decision a PERSON makes in the canopy UI. The owner or an admin.
 @router.put("/{slug}/canopy-user", response=AgentDetailOut,
             summary="Link this agent to the canopy user it is (canopy UI only)")
+@human_only("An agent's canopy user")
 def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn) -> AgentDetailOut:
     """The canopy user account this agent's own token signs in as. `user_id`
     null unlinks it."""
     agent = _get_agent_or_404(request, slug)
-    if is_machine(request):
-        raise HttpError(403, "an agent's canopy user can only be changed from the canopy web app")
     if not agent.is_admin(request.user):
         raise HttpError(403, "only the agent's owner or an admin can change its canopy user")
     try:
@@ -316,14 +333,13 @@ def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn
 # Resolve first so a non-member still gets 404, never 403.
 @router.put("/{slug}/owner", response=AgentDetailOut,
             summary="Transfer the agent's ownership to a member of its workspace (canopy UI only)")
+@human_only("An agent's ownership")
 def transfer_owner(request: HttpRequest, slug: str, payload: AgentOwnerIn) -> AgentDetailOut:
     agent = _get_agent_or_404(request, slug)
-    if is_machine(request):
-        raise HttpError(403, "ownership can only be transferred from the canopy web app")
     if not _may_transfer_owner(request, agent):
         raise HttpError(403, "only a workspace owner or the agent's current owner can transfer it")
     if payload.user_id is None:
-        if _caller_role(request, agent.workspace_id) != wsvc.WorkspaceMembership.OWNER:
+        if not _can(request, agent.workspace_id, perms.OWN):
             raise HttpError(403, "only a workspace owner can leave an agent without an owner")
         agent.owner = None
     else:
@@ -380,6 +396,7 @@ def get_interface(request: HttpRequest, slug: str):
 # it do — so loosening it is the same kind of act as handing over its keys.
 @router.put("/{slug}/interface", response=AgentInterfaceOut,
             summary="Save the agent's declared interface (YAML source, or a parsed mapping)")
+@human_only("An agent's declared interface")
 def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
     import yaml
     from django.utils import timezone
@@ -411,6 +428,7 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
 
 @router.delete("/{slug}/interface", response=AgentInterfaceOut,
                summary="Unpublish the declared interface: every turn runs in the full profile again")
+@human_only("An agent's declared interface")
 def unpublish_interface(request: HttpRequest, slug: str):
     agent = _agent_for_admin(request, slug)
     agent.interface = {}
@@ -448,13 +466,11 @@ def agent_access(request: HttpRequest, slug: str):
     }
 
 
-# Browser-only, like ownership transfer: granting admin hands over the agent's
-# credentials, so it is a decision a PERSON makes in the canopy UI, never a
-# token. Resolve first so a non-member gets 404, never 403.
+# Browser-only (`@human_only` on both routes), like ownership transfer: granting
+# admin hands over the agent's credentials, so it is a decision a PERSON makes
+# in the canopy UI, never a token. Resolve first so a non-member gets 404.
 def _admin_change_gate(request: HttpRequest, slug: str):
     agent = _get_agent_or_404(request, slug)
-    if is_machine(request):
-        raise HttpError(403, "admins can only be changed from the canopy web app")
     if not _may_manage_admins(request, agent):
         raise HttpError(403, "only the agent's owner or a workspace owner can change its admins")
     return agent
@@ -462,6 +478,7 @@ def _admin_change_gate(request: HttpRequest, slug: str):
 
 @router.put("/{slug}/admins/{user_id}", response=list[AgentAdminOut],
             summary="Make a workspace member an admin of this agent (canopy UI only)")
+@human_only("An agent's admins")
 def grant_admin(request: HttpRequest, slug: str, user_id: int):
     from django.contrib.auth import get_user_model
 
@@ -479,6 +496,7 @@ def grant_admin(request: HttpRequest, slug: str, user_id: int):
 
 @router.delete("/{slug}/admins/{user_id}", response=list[AgentAdminOut],
                summary="Revoke an admin of this agent (canopy UI only)")
+@human_only("An agent's admins")
 def revoke_admin(request: HttpRequest, slug: str, user_id: int):
     from .models import AgentAdmin
 
@@ -661,6 +679,7 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     missing = [str(rid) for rid in ids if rid not in by_id]
     if missing:
         raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
+    _refuse_runners_that_cannot_hold(agent, runners)
     with transaction.atomic():
         # source="" ONLY. Source rules live in this table too, and an unscoped
         # delete here would destroy every one of them each time the default
@@ -787,6 +806,7 @@ def replace_agent_runner_rules(
     missing = [str(rid) for rid in ids if rid not in by_id]
     if missing:
         raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
+    _refuse_runners_that_cannot_hold(agent, runners)
 
     with transaction.atomic():
         RunnerAssignment.objects.filter(agent=agent).exclude(source="").delete()
@@ -920,6 +940,7 @@ def set_agent_actor_route(
             f"you don't administer runner(s) {', '.join(refused)} — ask whoever paired it to "
             "grant you admin (POST /api/harness/runners/{id}/admins)",
         )
+    _refuse_runners_that_cannot_hold(agent, runners.values())
 
     with transaction.atomic():
         RunnerAssignment.objects.filter(agent=agent, actor=actor).exclude(source="").delete()
@@ -982,7 +1003,12 @@ def delete_sync(request: HttpRequest, slug: str, sync_id: int) -> Status:
 def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentTurnOut]:
     limit = clamp_limit(limit)
     agent = _get_agent_or_404(request, slug)
-    items = [AgentTurnOut.model_validate(t) for t in services.list_turns(agent, limit=limit)]
+    from apps.harness import turn_access
+
+    # Everyone sees what the agent did; a turn's prompt and transcript link are
+    # a log (turn_access).
+    turns = turn_access.redact(list(services.list_turns(agent, limit=limit)), request.user)
+    items = [AgentTurnOut.model_validate(t) for t in turns]
     return paginate(items, offset=0, limit=limit)
 
 
@@ -1262,7 +1288,11 @@ def list_commands(request: HttpRequest, slug: str, status: str | None = None) ->
 @router.post("/{slug}/commands/{cmd_id}/apply", response=AgentTaskCommandOut,
              summary="Mark a command applied (the agent calls this after acting)",)
 def apply_command(request: HttpRequest, slug: str, cmd_id: int, payload: AgentCommandApplyIn) -> AgentTaskCommandOut:
+    # Marking a command applied tells the agent it is done, so the agent never
+    # acts on it — the agent's own login or the reshaping tier, not any viewer.
     agent = _get_agent_or_404(request, slug)
+    if not (agent.user_id is not None and agent.user_id == request.user.pk):
+        agent = _agent_for_write(request, slug)
     cmd = agent.commands.filter(id=cmd_id).select_related("task", "agent").first()
     if cmd is None:
         raise HttpError(404, f"command {cmd_id} not found")
@@ -1273,6 +1303,7 @@ def apply_command(request: HttpRequest, slug: str, cmd_id: int, payload: AgentCo
 
 @router.put("/{slug}/credentials", response=list[AgentCredentialStatusOut],
             summary="Set named secrets for an agent (write-only)")
+@human_only("An agent's credentials")
 def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredentialsIn):
     """Upsert. Non-clobbering: a ref absent from the body is untouched.
 
@@ -1359,6 +1390,7 @@ def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
 
 @router.put("/{slug}/vault", response=AgentVaultOut,
             summary="Set the vault + its service-account token (write-only)")
+@human_only("An agent's vault")
 def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> AgentVaultOut:
     """The key is scoped to ONE agent's vault by design.
 
@@ -1424,6 +1456,7 @@ def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 # answers 405 Method Not Allowed — the route exists, it is simply unreachable.
 @router.delete("/{slug}/credentials/{name}", response=list[AgentCredentialStatusOut],
                summary="Remove one named secret")
+@human_only("An agent's credentials")
 def delete_agent_credential(request: HttpRequest, slug: str, name: str):
     agent = _agent_for_admin(request, slug)
     services.delete_agent_credential(agent, name)

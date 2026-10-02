@@ -25,8 +25,7 @@ from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.urls import reverse
 from django.views.decorators.http import require_GET
 
-from apps.workspaces import services as wsvc
-from apps.workspaces.models import WorkspaceMembership
+from apps.workspaces import permissions as perms
 
 from . import client, services
 from .models import SlackInstallation, SlackUserLink, SlackWorkspaceLink
@@ -69,7 +68,7 @@ def install(request: HttpRequest) -> HttpResponse:
     if not services.is_configured():
         return _page("Slack is not configured", "This deployment has no Slack app credentials.", 503)
     slug = request.GET.get("workspace", "")
-    if wsvc.member_role(request.user, slug) != WorkspaceMembership.OWNER:
+    if not perms.can(request.user, slug, perms.OWN):
         return _page("Not allowed", "Only an owner of the workspace can connect Slack to it.", 403)
     state = secrets.token_urlsafe(24)
     request.session[_STATE_KEY] = {"state": state, "workspace": slug}
@@ -90,7 +89,7 @@ def oauth_callback(request: HttpRequest) -> HttpResponse:
         return _page("Install failed", "The install link expired or was not started here. Start again.", 400)
     slug = pending["workspace"]
     # Re-checked: the role may have changed while the user was on Slack.
-    if wsvc.member_role(request.user, slug) != WorkspaceMembership.OWNER:
+    if not perms.can(request.user, slug, perms.OWN):
         return _page("Not allowed", "Only an owner of the workspace can connect Slack to it.", 403)
     if request.GET.get("error"):
         return _page("Install cancelled", escape(request.GET["error"]), 400)

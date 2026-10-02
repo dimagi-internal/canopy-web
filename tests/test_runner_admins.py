@@ -115,11 +115,13 @@ def test_an_ungranted_member_still_gets_nothing(runner, pairer, agent_identity, 
 # ── what a grant does NOT buy ──────────────────────────────────────────────
 
 def test_an_administrator_cannot_speak_as_the_runner(runner, pairer, agent_identity):
-    """Administration is not impersonation. Drilling POSTs AS the box and derives
-    a tenant from `paired_by`, so it stays with the pairer."""
+    """Administration is not impersonation. STARTING a drill POSTs AS the box and
+    derives a tenant from `paired_by`, so it stays with the pairer — but READING
+    the results is a log about the box, which its administrators read."""
     _post(client_for(pairer), f"{base(runner)}/admins", {"email": "ace@dimagi-ai.com"})
     c = client_for(agent_identity)
-    assert c.get(f"{base(runner)}/drills").status_code == 404
+    assert c.get(f"{base(runner)}/drills").status_code == 200
+    assert c.post(f"{base(runner)}/drill", data={}, content_type="application/json").status_code == 404
     # …nor read the box's actual secret values, which only the runner fetches.
     assert c.get(f"{base(runner)}/credential").status_code == 404
 

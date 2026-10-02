@@ -18,6 +18,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_NOT_FOUND, ProblemError
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import services
@@ -105,9 +106,7 @@ def patch_contact(request: HttpRequest, contact_id: int, payload: ContactPatchIn
     403, so this never confirms a contact exists to someone who cannot see it.
     """
     contact = _contact_or_404(request, contact_id)
-    if not wsvc.has_role_at_least(
-        request.user, contact.workspace_id, wsvc.WorkspaceMembership.EDITOR
-    ):
+    if not perms.can(request.user, contact.workspace_id, perms.CONTENT_WRITE):
         raise HttpError(403, "editing a contact requires the editor or owner role")
 
     data = payload.model_dump(exclude_unset=True, exclude_none=True)

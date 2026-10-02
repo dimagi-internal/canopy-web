@@ -300,10 +300,20 @@ def test_a_revoked_app_stops_showing_there():
 # --- the service layer's own guard --------------------------------------------
 
 
-def test_owned_workspace_slugs_excludes_editor_memberships():
+def test_connected_sites_are_read_by_admins_and_changed_by_owners():
+    """Reading sites, their health and Test connection is the integrations
+    tier (admin); registering or changing one is the owner's — a registered
+    key vouches for visitors as members. An editor reaches neither."""
+    from apps.workspaces import permissions as perms
+
     _user, ws, _c = _ctx()
     editor = _member(ws, "ed@dimagi.com", WorkspaceMembership.EDITOR)
-    assert embed_apps.owned_workspace_slugs(editor) == set()
+    admin = _member(ws, "adm@dimagi.com", WorkspaceMembership.ADMIN)
+    with pytest.raises(embed_apps.EmbedAppError):
+        embed_apps.require(editor, ws.slug, perms.INTEGRATIONS)
+    embed_apps.require(admin, ws.slug, perms.INTEGRATIONS)
+    with pytest.raises(embed_apps.EmbedAppError):
+        embed_apps.require(admin, ws.slug, perms.OWN)
 
 
 # --- signing keys -------------------------------------------------------------

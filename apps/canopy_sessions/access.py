@@ -125,10 +125,9 @@ def _agent_admin_q(user) -> Q:
     applies the tenant gate first."""
     if not getattr(user, "is_authenticated", False):
         return Q(pk__in=[])
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import permissions as perms
 
-    owned = [slug for slug in wsvc.user_workspace_slugs(user)
-             if wsvc.member_role(user, slug) == wsvc.WorkspaceMembership.OWNER]
+    owned = perms.slugs_with(user, perms.OWN)
     return (Q(agent__owner=user)
             | Q(agent__admin_grants__user=user)
             | Q(agent__isnull=False, agent__workspace_id__in=owned))
@@ -205,7 +204,17 @@ def role_for(user, session) -> str | None:
     elif session.created_by_id is None and session.agent_id and session.agent.is_admin(user):
         derived = SessionParticipant.OWNER
     elif session.origin == Session.ORIGIN_RUNNER and session.created_by_id is None:
-        derived = SessionParticipant.EDITOR  # runner-discovered: tenant-visible, workable
+        # Runner-discovered: tenant-visible, and workable by the tenant's EDITORS.
+        # Typing into one is typing into somebody's live emdash session, which
+        # runs with permissions bypassed — a workspace VIEWER was handed that by
+        # this leg alone. They still read it.
+        from apps.workspaces import permissions as perms
+
+        derived = (
+            SessionParticipant.EDITOR
+            if perms.can(user, session.workspace_id, perms.SESSION_DRIVE)
+            else SessionParticipant.VIEWER
+        )
     else:
         derived = None  # a web chat you did not create: only a row gets you in
     candidates = [r for r in (row, derived) if r in ranks]

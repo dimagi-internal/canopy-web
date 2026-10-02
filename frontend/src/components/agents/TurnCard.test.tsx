@@ -28,7 +28,7 @@ const base: AgentTurnOut = {
   created_at: '2026-10-01T18:06:12Z', status: 'done', origin: 'api',
   emdash_task_id: 'c-fix-brief-61bb', reported_at: null,
   prompt: 'Fix the brief from Ada\nwith the details below', result_note: 'Opened PR #12',
-  origin_ref: {}, chat_session_id: null, has_transcript: false,
+  origin_ref: {}, chat_session_id: null, has_transcript: false, content_hidden: false,
 }
 
 function renderCard(turn: AgentTurnOut) {

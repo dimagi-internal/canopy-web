@@ -243,9 +243,21 @@ def upload_session(
 # List — mine (any visibility) + everyone's link-shared.
 # Agents upload under their OWN accounts (the canopy uploader resolves the PAT
 # from the repo it runs in), so an owner-only list hides exactly the shares a
-# human asked their agent to make. Link visibility already means "anyone with
-# the URL"; surfacing those rows to authed teammates grants nothing new.
+# human asked their agent to make. Link visibility means "anyone with the URL"
+# — but a LIST hands out the URL, so it is limited to TEAMMATES: people who
+# share a workspace with the sharer. It used to be every signed-in user, which
+# includes an invite-admitted partner who had never been sent any of them.
 # ---------------------------------------------------------------------------
+
+
+def _teammate_ids(user) -> set[int]:
+    """Everyone who shares a workspace with `user`, themselves included."""
+    from apps.workspaces import services as wsvc
+
+    ids: set[int] = {user.pk}
+    for slug in wsvc.user_workspace_slugs(user):
+        ids |= set(wsvc.member_user_ids(slug))
+    return ids
 
 
 @router.get("/", response=list[SessionListItemOut], summary="List shared sessions")
@@ -256,7 +268,8 @@ def list_sessions(
         Session.objects.select_related("owner")
         .filter(
             models.Q(owner=request.user)
-            | models.Q(visibility=Session.VISIBILITY_LINK)
+            | (models.Q(visibility=Session.VISIBILITY_LINK)
+               & models.Q(owner_id__in=_teammate_ids(request.user)))
         )
         .prefetch_related("share_tokens")
     )
@@ -393,7 +406,8 @@ def list_arcs(request: HttpRequest, project: str = "") -> list[ArcListItemOut]:
         SessionArc.objects.select_related("owner")
         .filter(
             models.Q(owner=request.user)
-            | models.Q(visibility=SessionArc.VISIBILITY_LINK)
+            | (models.Q(visibility=SessionArc.VISIBILITY_LINK)
+               & models.Q(owner_id__in=_teammate_ids(request.user)))
         )
         .prefetch_related("share_tokens", "items")
     )

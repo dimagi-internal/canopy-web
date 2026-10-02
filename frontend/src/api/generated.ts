@@ -292,7 +292,8 @@ export interface paths {
          *       - project: project slug exact match
          *       - older_than_days: created_at older than N days ago
          *
-         *     A body with no filters ({}) clears ALL insights — this is intended.
+         *     A body with no filters ({}) clears every insight in the workspaces where
+         *     you hold the editor role — not those you can only read.
          */
         readonly post: operations["clear_insights"];
         readonly delete?: never;
@@ -428,11 +429,11 @@ export interface paths {
         readonly get: operations["get_walkthrough"];
         readonly put?: never;
         readonly post?: never;
-        /** Delete walkthrough (owner only) */
+        /** Delete walkthrough (uploader or workspace owner) */
         readonly delete: operations["delete_walkthrough"];
         readonly options?: never;
         readonly head?: never;
-        /** Update walkthrough (owner only) */
+        /** Update walkthrough (uploader or workspace owner) */
         readonly patch: operations["patch_walkthrough"];
         readonly trace?: never;
     };
@@ -446,12 +447,12 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Rotate the share token (owner only)
+         * Rotate the share token (uploader or workspace owner)
          * @description Mint a fresh share token, killing every previously shared public link.
          *
-         *     Uses the router's default session auth (same as patch/delete below) — an
-         *     anonymous caller is rejected before reaching this body. An *authenticated*
-         *     non-owner still gets a manual 404 (not 403) to avoid leaking existence.
+         *     The uploader (while an editor of the walkthrough's workspace) or a workspace
+         *     owner. 404 to anyone who is not a member of that workspace; 403 to a member
+         *     who may read it but not re-key it.
          */
         readonly post: operations["rotate_walkthrough_token"];
         readonly delete?: never;
@@ -709,7 +710,7 @@ export interface paths {
         };
         /** Read push config */
         readonly get: operations["get_push_config"];
-        /** Set push config (owner) */
+        /** Set push config (admin or owner) */
         readonly put: operations["set_push_config"];
         readonly post?: never;
         readonly delete?: never;
@@ -728,7 +729,7 @@ export interface paths {
         /** List mailboxes */
         readonly get: operations["list_mailboxes"];
         readonly put?: never;
-        /** Register a mailbox (owner) */
+        /** Register a mailbox (admin or owner) */
         readonly post: operations["create_mailbox"];
         readonly delete?: never;
         readonly options?: never;
@@ -746,11 +747,11 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Remove a mailbox (owner) */
+        /** Remove a mailbox (admin or owner) */
         readonly delete: operations["delete_mailbox"];
         readonly options?: never;
         readonly head?: never;
-        /** Update a mailbox (owner) */
+        /** Update a mailbox (admin or owner) */
         readonly patch: operations["update_mailbox"];
         readonly trace?: never;
     };
@@ -859,7 +860,7 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Allow reading channel history, and how far back (owner)
+         * Allow reading channel history, and how far back (admin or owner)
          * @description The policy for `@canopy <agent> --history <minutes> <ask>` in this workspace:
          *     whether it may read the channel's recent past at all, and the longest window.
          */
@@ -880,7 +881,7 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Sync slash commands now (owner) */
+        /** Sync slash commands now (admin or owner) */
         readonly post: operations["sync"];
         readonly delete?: never;
         readonly options?: never;
@@ -1482,8 +1483,8 @@ export interface paths {
          * List review requests (DDD-plans dashboard)
          * @description List every review request for the DDD-plans dashboard.
          *
-         *     Team-internal: any authenticated user (session or PAT) sees all reviews —
-         *     same read rule as GET /<id>/. Supports a free-text `q` (matches narrative_slug,
+         *     Members see the reviews of their workspaces (session or PAT) — the same
+         *     read rule as GET /<id>/. Supports a free-text `q` (matches narrative_slug,
          *     run_id, gate, or title), an optional `status` filter (pending|resolved),
          *     and `order` ∈ {-last_activity, last_activity, -created, created, narrative_slug}.
          *     Default sort is most-recently-edited first.
@@ -1516,8 +1517,8 @@ export interface paths {
          * @description Returns the full review request + current status.
          *
          *     Access rules:
-         *     - Any authenticated user can read any review (they're team-internal).
-         *     - Unauthenticated callers may read if visibility=="link" (no token required).
+         *     - A member of the review's workspace can read it.
+         *     - Anyone may read if visibility=="link" (no token required).
          *     - Otherwise → 404 (don't leak existence).
          */
         readonly get: operations["get_review"];
@@ -1527,12 +1528,11 @@ export interface paths {
          * Delete a review request (dashboard cleanup)
          * @description Delete a review request.
          *
-         *     Workspace-internal cleanup: any MEMBER of the review's workspace (session or
+         *     Workspace-internal cleanup: any EDITOR of the review's workspace (session or
          *     PAT) may delete — reviews are owned by whichever identity posted them (often the
-         *     orchestrator's PAT, not the human browsing), so restricting to owner would make
-         *     the human unable to tidy up. Membership (not ownership) is the right gate, and
-         *     it's the tenant boundary: a non-member gets a 404, not the ability to delete
-         *     another workspace's review.
+         *     orchestrator's PAT, not the human browsing), so restricting to the poster would
+         *     make the human unable to tidy up. A viewer gets 403; a non-member gets 404, not
+         *     the ability to delete another workspace's review.
          */
         readonly delete: operations["delete_review"];
         readonly options?: never;
@@ -1719,8 +1719,9 @@ export interface paths {
          *     heals that, and equally serves the honest case: the narrative turned out to
          *     belong to another team.
          *
-         *     Requires membership of BOTH sides — you may not move something out of a
-         *     workspace you cannot see, nor into one you do not belong to.
+         *     Requires the editor role on BOTH sides — you may not move something out of
+         *     a workspace you cannot change, nor into one where you could not have
+         *     created it.
          */
         readonly post: operations["move_narrative"];
         readonly delete?: never;
@@ -1749,7 +1750,9 @@ export interface paths {
         /**
          * Create shareouts (batch, idempotent per period+source)
          * @description Create a batch of briefings. Re-posting the same period from the same
-         *     source replaces the prior rows (see services.upsert_shareouts).
+         *     source replaces YOUR prior rows for it (see services.upsert_shareouts);
+         *     a teammate's briefing for the same period is left alone. Requires the
+         *     editor role.
          *
          *     Rows are assigned to a workspace you already belong to: the `/w/{ws}` prefix
          *     pins it, otherwise it resolves to your default. 422 if you belong to none.
@@ -1772,9 +1775,11 @@ export interface paths {
         readonly put?: never;
         /**
          * Clear shareouts by source / project / date (AND-combined)
-         * @description Delete shareouts matching the filters, scoped to the caller's workspaces.
-         *     An empty body clears all of THE CALLER'S shareouts (the pinned /w/{ws} one, or
-         *     the union of their memberships) — never another tenant's.
+         * @description Delete shareouts matching the filters. You clear the shareouts you
+         *     posted in workspaces where you are an editor, and every shareout in a
+         *     workspace you own — never a teammate's otherwise, and never another
+         *     tenant's. An empty body clears all of those (the pinned /w/{ws} one, or the
+         *     union of your memberships).
          */
         readonly post: operations["clear_shareouts"];
         readonly delete?: never;
@@ -3398,7 +3403,11 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List members (member-only) */
+        /**
+         * List members (member-only)
+         * @description Everyone in the workspace. Owners of a parent workspace own this one
+         *     too, and are listed with `inherited: true`; they are changed on the parent.
+         */
         readonly get: operations["list_members"];
         readonly put?: never;
         readonly post?: never;
@@ -3418,11 +3427,11 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Remove a member (owner-only) */
+        /** Remove a member (admin or owner) */
         readonly delete: operations["remove_member"];
         readonly options?: never;
         readonly head?: never;
-        /** Change a member's role (owner-only) */
+        /** Change a member's role (admin or owner) */
         readonly patch: operations["set_member_role"];
         readonly trace?: never;
     };
@@ -3433,11 +3442,15 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List invites (member-only) */
+        /**
+         * List invites (member-only)
+         * @description Every member sees who has been invited; only an owner gets each invite's
+         *     `token` (it is empty for everyone else).
+         */
         readonly get: operations["list_invites"];
         readonly put?: never;
         /**
-         * Invite by email (owner-only)
+         * Invite by email (admin or owner)
          * @description Creates the invite and emails its link to the address. `email_status`
          *     says whether the email went out; the link in `token` works either way.
          *     Inviting an address that already has an outstanding invite returns that
@@ -3459,7 +3472,7 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Revoke an invite (owner-only) */
+        /** Revoke an invite (admin or owner) */
         readonly post: operations["revoke_invite"];
         readonly delete?: never;
         readonly options?: never;
@@ -3477,7 +3490,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Send a fresh link for an invite (owner-only)
+         * Send a fresh link for an invite (admin or owner)
          * @description New token and a fresh expiry for an invite nobody has accepted or
          *     revoked — including one that has expired — emailed to the invited address.
          *     The previous link stops working. Accepted or revoked invites answer 410;
@@ -6425,7 +6438,8 @@ export interface components {
          * @description Body of POST /api/insights/clear/.
          *
          *     All fields optional. Provided filters are AND-combined to narrow which
-         *     insights are deleted. A body with no filters clears ALL insights.
+         *     insights are deleted. A body with no filters clears every insight in the
+         *     workspaces where the caller holds the editor role.
          */
         readonly InsightsClearIn: {
             /** Source */
@@ -7947,6 +7961,11 @@ export interface components {
             /** Result Note */
             readonly result_note: string;
             /**
+             * Content Hidden
+             * @default false
+             */
+            readonly content_hidden: boolean;
+            /**
              * Created At
              * Format: date-time
              */
@@ -8671,7 +8690,8 @@ export interface components {
         /**
          * ShareoutsClearIn
          * @description Body of POST /api/shareouts/clear/. All optional, AND-combined. An empty
-         *     body clears ALL shareouts.
+         *     body clears every shareout the caller may clear: their own, plus every
+         *     shareout in a workspace they own.
          */
         readonly ShareoutsClearIn: {
             /** Source */
@@ -9357,7 +9377,7 @@ export interface components {
              * Workspace Role
              * @enum {string}
              */
-            readonly workspace_role: "owner" | "editor" | "viewer";
+            readonly workspace_role: "owner" | "admin" | "editor" | "viewer";
             /**
              * Agent Role
              * @enum {string}
@@ -9844,6 +9864,11 @@ export interface components {
             readonly origin_ref?: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Content Hidden
+             * @default false
+             */
+            readonly content_hidden: boolean;
             /** Chat Session Id */
             readonly chat_session_id?: string | null;
             /**
@@ -11736,6 +11761,11 @@ export interface components {
              * Format: date-time
              */
             readonly joined_at: string;
+            /**
+             * Inherited
+             * @default false
+             */
+            readonly inherited: boolean;
         };
         /** MemberRoleUpdateIn */
         readonly MemberRoleUpdateIn: {
@@ -11743,7 +11773,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            readonly role: "owner" | "editor" | "viewer";
+            readonly role: "owner" | "admin" | "editor" | "viewer";
         };
         /** InviteOut */
         readonly InviteOut: {
@@ -11785,7 +11815,7 @@ export interface components {
              * @default editor
              * @enum {string}
              */
-            readonly role: "owner" | "editor" | "viewer";
+            readonly role: "owner" | "admin" | "editor" | "viewer";
         };
         /**
          * InvitePreviewOut
@@ -12761,6 +12791,11 @@ export interface components {
             readonly session_id: string;
             /** Result Note */
             readonly result_note: string;
+            /**
+             * Content Hidden
+             * @default false
+             */
+            readonly content_hidden: boolean;
             /**
              * Created At
              * Format: date-time

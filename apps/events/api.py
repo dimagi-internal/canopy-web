@@ -21,6 +21,7 @@ from apps.api.auth import session_auth
 from apps.events import services
 from apps.events.models import Event
 from apps.events.schemas import EventBatchIn, EventListOut, EventRecordOut
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 router = Router(auth=session_auth, tags=["events"])
@@ -55,6 +56,13 @@ def record_events(request: HttpRequest, payload: EventBatchIn) -> dict:
         # Only reachable for an authenticated user who belongs to nothing.
         # Fail with a real message rather than an IntegrityError on the FK.
         raise HttpError(422, "no workspace available to record this event in")
+    # The fleet log is read by owners deciding what is broken, so writing to it
+    # is the author tier. A viewer could otherwise forge "runner.credential"
+    # alarms, or bump a real event's count and summary through coalescing. The
+    # producers that matter are runners, which post with their PAIRER's token,
+    # and pairing an agent's box already needs more than viewer.
+    if not perms.can(request.user, home, perms.EVENTS_WRITE):
+        raise HttpError(403, "recording events requires the editor role in this workspace")
     return services.record([item.model_dump() for item in payload.items], workspace=home)
 
 
@@ -73,8 +81,14 @@ def list_events(
     since = None
     if since_minutes:
         since = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=max(1, since_minutes))
+    # The event log is a LOG: the workspace admin's (`permissions.LOGS_READ`).
+    # It names who read which Slack channel, which mailbox failed, which turn
+    # errored — every member, viewers included, used to read all of it. Scoped
+    # like every request: a pinned `/api/w/{ws}/` read is about that one
+    # workspace; a non-admin simply sees no rows rather than a 403, so the same
+    # call works for someone who is admin in one workspace and not another.
     qs = services.list_events(
-        workspace_slugs=wsvc.user_workspace_slugs(request.user),
+        workspace_slugs=perms.request_slugs_with(request, perms.LOGS_READ),
         source=source,
         kind=kind,
         level=level,

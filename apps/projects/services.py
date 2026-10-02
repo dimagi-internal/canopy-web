@@ -16,7 +16,6 @@ from __future__ import annotations
 from datetime import timedelta
 
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 
 from .models import ProjectContext
@@ -33,9 +32,13 @@ def insights_queryset(
     """Return a filtered, ordered queryset of insight ProjectContext rows.
 
     `workspace_slugs` is REQUIRED and is the hard tenant boundary: only insights
-    whose project belongs to one of those workspaces (or a legacy null-workspace
-    project) are ever returned — so no caller can read or clear across the
-    boundary. Pass the empty set to match nothing.
+    whose project belongs to one of those workspaces are ever returned — so no
+    caller can read or clear across the boundary. Pass the empty set to match
+    nothing. A null-workspace project's insights match no scope at all (they
+    used to match EVERY scope, the NULL-means-allow leg).
+
+    Callers pass the READ scope to list and the WRITE scope
+    (`perms.request_slugs_with(..., perms.CONTENT_WRITE)`) to clear or dismiss.
 
     The rest are optional, AND-combined:
       - category: content starts with "[<category>]"
@@ -45,7 +48,7 @@ def insights_queryset(
     """
     qs = (
         ProjectContext.objects.filter(context_type="insight")
-        .filter(Q(project__workspace_id__in=workspace_slugs) | Q(project__workspace__isnull=True))
+        .filter(project__workspace_id__in=workspace_slugs)
         .select_related("project")
         .order_by("-created_at")
     )

@@ -1,5 +1,6 @@
 from django.core.management.base import BaseCommand
 from apps.projects.models import Project
+from apps.workspaces.services import ensure_default_workspace
 
 PROJECTS = [
     {"name": "canopy-web", "slug": "canopy-web", "repo_url": "https://github.com/dimagi-internal/canopy-web", "deploy_url": "https://canopy-web-502453377792.us-central1.run.app", "visibility": "public", "status": "active"},
@@ -29,6 +30,10 @@ class Command(BaseCommand):
             Project.objects.all().delete()
             self.stdout.write(f"Deleted {count} projects.")
 
+        # A project with no workspace is visible to nobody, so seeding one
+        # unhomed would produce rows no page can show. Home them in the org
+        # default, as the API's create does on the flat mount.
+        workspace = ensure_default_workspace()
         created = 0
         skipped = 0
         for spec in PROJECTS:
@@ -40,6 +45,7 @@ class Command(BaseCommand):
                     "deploy_url": spec.get("deploy_url", ""),
                     "visibility": spec.get("visibility", "public"),
                     "status": spec.get("status", "active"),
+                    "workspace": workspace,
                 },
             )
             if was_created:

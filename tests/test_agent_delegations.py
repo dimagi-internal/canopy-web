@@ -192,6 +192,11 @@ def operator(agent):
     # token that came back as the operator's would be caught.
     user = User.objects.create_user("op", "op@dimagi.com", "pw")
     wsvc.ensure_member(agent.workspace, user, WorkspaceMembership.EDITOR)
+    # Trusted with the agent: a box receives the owner's GitHub identity only
+    # when its pairer is one of the agent's admins (`runner_may_hold_agent`).
+    from apps.agents.models import AgentAdmin
+
+    AgentAdmin.objects.create(agent=agent, user=user)
     return user
 
 

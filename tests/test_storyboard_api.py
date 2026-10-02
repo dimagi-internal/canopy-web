@@ -567,8 +567,8 @@ def test_a_wordless_row_is_not_shown_as_a_note(member, board):
     "Anonymous" — a reviewer who appears to have said nothing."""
     from apps.feedback.models import Feedback
 
-    Feedback.objects.create(target_kind="storyboard", target_ref=board.slug, body="")
-    Feedback.objects.create(target_kind="storyboard", target_ref=board.slug, body="Real words.")
+    Feedback.objects.create(target_kind="storyboard", target_ref=board.slug, workspace=board.workspace, body="")
+    Feedback.objects.create(target_kind="storyboard", target_ref=board.slug, workspace=board.workspace, body="Real words.")
 
     items = member.get(f"/api/storyboards/{board.slug}/notes").json()["items"]
     assert [i["body"] for i in items] == ["Real words."]
@@ -635,3 +635,18 @@ def test_an_anonymous_reader_is_told_which_layout_to_render(board):
     r = Client().get(f"/api/storyboards/ecf-supply?t={token}")
     assert r.status_code == 200
     assert r.json()["layout"] == "reel"
+
+
+def test_notes_never_include_another_tenants_feedback_on_the_same_slug(member, board):
+    """Narrative slugs are not unique across workspaces, so the board's notes
+    matched another tenant's feedback whose target_ref happened to collide."""
+    from apps.feedback.models import Feedback
+    from apps.workspaces.testing import a_workspace
+
+    other = a_workspace("notes-other-ws")
+    Feedback.objects.create(target_kind="storyboard", target_ref=board.slug,
+                            workspace=other, body="Someone else's note.")
+    Feedback.objects.create(target_kind="storyboard", target_ref=board.slug,
+                            workspace=board.workspace, body="Ours.")
+    items = member.get(f"/api/storyboards/{board.slug}/notes").json()["items"]
+    assert [i["body"] for i in items] == ["Ours."]

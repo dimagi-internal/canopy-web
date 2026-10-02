@@ -18,9 +18,9 @@ import {
   type MemberOut,
   type MemberRole,
 } from '@/api/workspaces'
+import { grantableRoles, mayManageMember, roleAllows } from '@/lib/workspaceRoles'
 import { emailOutcomeText, inviteExpiryLabel, isInviteOutstanding, isInvitePending, type EmailStatus } from './workspaceInvites'
 
-const ROLES: InviteRole[] = ['owner', 'editor', 'viewer']
 
 // The absolute, copy-pasteable accept link — the same one the email carries,
 // and the fallback whenever the email did not go out.
@@ -33,7 +33,12 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   const { workspace: slug } = useParams()
   const navigate = useNavigate()
   const { workspaces, refresh: refreshWorkspaces } = useWorkspace()
-  const isOwner = workspaces.find((w) => w.slug === slug)?.role === 'owner'
+  // What I may do here, asked by capability (lib/workspaceRoles mirrors
+  // apps/workspaces/permissions.py): an admin manages members and invites
+  // strictly below admin; an owner manages everyone.
+  const myRole = workspaces.find((w) => w.slug === slug)?.role
+  const canManage = roleAllows(myRole, 'members.manage')
+  const grantable = grantableRoles(myRole) as InviteRole[]
   const auth = useAuth()
   const myEmail = auth.status === 'authenticated' ? auth.user.email.toLowerCase() : null
 
@@ -84,7 +89,14 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   }, [slug, navigate])
 
   const outstandingInvites = useMemo(() => (invites ?? []).filter(isInviteOutstanding), [invites])
-  const ownerCount = useMemo(() => (members ?? []).filter((m) => m.role === 'owner').length, [members])
+  // Owners of a parent workspace own this one too (`inherited`). They count
+  // toward "is anyone else an owner" — the server lets the last DIRECT owner
+  // step down beside them — but they have no row here to change or remove.
+  const directOwnerCount = useMemo(
+    () => (members ?? []).filter((m) => m.role === 'owner' && !m.inherited).length,
+    [members],
+  )
+  const hasInheritedOwner = useMemo(() => (members ?? []).some((m) => m.inherited), [members])
 
   async function handleRoleChange(userId: number, role: MemberRole) {
     if (!slug) return
@@ -93,9 +105,9 @@ export function WorkspaceMembersPage(): JSX.Element | null {
     try {
       const updated = await setMemberRole(slug, userId, role)
       setMembers((prev) => (prev ?? []).map((m) => (m.user_id === userId ? updated : m)))
-      // The cached workspace list (header switcher, this page's own `isOwner`)
+      // The cached workspace list (header switcher, this page's own `canManage`)
       // is fetched once and otherwise never invalidated — if I just changed
-      // MY OWN role, refresh it now so `isOwner` reflects reality immediately
+      // MY OWN role, refresh it now so `canManage` reflects reality immediately
       // instead of continuing to render owner-only controls I can no longer
       // use until a full page reload (see WorkspaceProvider.refresh's docstring).
       if (myEmail && updated.email.toLowerCase() === myEmail) {
@@ -205,17 +217,27 @@ export function WorkspaceMembersPage(): JSX.Element | null {
               <TableRow>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
-                {isOwner && <TableHead className="text-right">Actions</TableHead>}
+                {canManage && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {members.map((m) => {
-                const isSoleOwner = m.role === 'owner' && ownerCount === 1
+                const isSoleOwner =
+                  m.role === 'owner' && !m.inherited && directOwnerCount === 1 && !hasInheritedOwner
+                // A row I may act on: below me (an owner may act on anyone).
+                const manageable = !m.inherited && mayManageMember(myRole, m.role)
                 return (
                 <TableRow key={m.user_id}>
                   <TableCell className="whitespace-normal text-foreground">{m.email}</TableCell>
                   <TableCell className="capitalize">
-                    {isOwner ? (
+                    {m.inherited ? (
+                      <span>
+                        {m.role}{' '}
+                        <span className="text-[11px] normal-case text-muted-foreground">
+                          · via parent workspace
+                        </span>
+                      </span>
+                    ) : manageable ? (
                       <div className="flex flex-col gap-0.5">
                         <select
                           aria-label={`Change role for ${m.email}`}
@@ -225,7 +247,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                           onChange={(e) => void handleRoleChange(m.user_id, e.target.value as MemberRole)}
                           className="h-8 rounded-lg border border-input bg-input px-2 text-sm text-foreground capitalize disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {ROLES.map((r) => (
+                          {grantable.map((r) => (
                             <option key={r} value={r} className="capitalize">
                               {r}
                             </option>
@@ -248,17 +270,19 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                       m.role
                     )}
                   </TableCell>
-                  {isOwner && (
+                  {canManage && (
                     <TableCell className="text-right">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void handleRemoveMember(m.user_id)}
-                        aria-label={`Remove ${m.email}`}
-                      >
-                        Remove
-                      </Button>
+                      {manageable && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void handleRemoveMember(m.user_id)}
+                          aria-label={`Remove ${m.email}`}
+                        >
+                          Remove
+                        </Button>
+                      )}
                     </TableCell>
                   )}
                 </TableRow>
@@ -295,7 +319,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                 <TableHead>Role</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Invited</TableHead>
-                {isOwner && <TableHead className="text-right">Actions</TableHead>}
+                {canManage && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -315,8 +339,9 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                         <div className="text-[11px]">emailed {new Date(inv.last_emailed_at).toLocaleString()}</div>
                       )}
                     </TableCell>
-                    {isOwner && (
+                    {canManage && (
                       <TableCell className="text-right">
+                        {mayManageMember(myRole, null, inv.role) && (
                         <div className="flex justify-end gap-1">
                           {live && (
                             <Button
@@ -350,6 +375,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                             Revoke
                           </Button>
                         </div>
+                        )}
                       </TableCell>
                     )}
                   </TableRow>
@@ -360,7 +386,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
         )}
       </div>
 
-      {isOwner && (
+      {canManage && (
         <div className="rounded-lg border border-border bg-card p-5">
           <h2 className="mb-3 text-sm font-semibold text-foreground">Invite someone</h2>
           <form onSubmit={(e) => void handleCreateInvite(e)} className="flex flex-wrap items-end gap-3">
@@ -387,7 +413,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                 onChange={(e) => setRole(e.target.value as InviteRole)}
                 className="h-8 rounded-lg border border-input bg-input px-2 text-sm text-foreground"
               >
-                {ROLES.map((r) => (
+                {grantable.map((r) => (
                   <option key={r} value={r} className="capitalize">
                     {r}
                   </option>

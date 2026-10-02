@@ -7,8 +7,9 @@ from django.http import HttpRequest
 from ninja import Router, Status
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_FORBIDDEN, TYPE_VALIDATION, ProblemError
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import services
@@ -64,7 +65,9 @@ def create_shareouts(
     payload: ShareoutBatchIn,
 ) -> Status:
     """Create a batch of briefings. Re-posting the same period from the same
-    source replaces the prior rows (see services.upsert_shareouts).
+    source replaces YOUR prior rows for it (see services.upsert_shareouts);
+    a teammate's briefing for the same period is left alone. Requires the
+    editor role.
 
     Rows are assigned to a workspace you already belong to: the `/w/{ws}` prefix
     pins it, otherwise it resolves to your default. 422 if you belong to none.
@@ -82,7 +85,14 @@ def create_shareouts(
             type_=TYPE_VALIDATION,
             detail="you do not belong to a workspace that can own this; ask an owner for an invite",
         )
-    result = services.upsert_shareouts(payload.shareouts, workspace=ws)
+    if not perms.can(request.user, ws, perms.CONTENT_WRITE):
+        raise ProblemError(
+            403,
+            "Editor role required",
+            type_=TYPE_FORBIDDEN,
+            detail=f"posting a shareout requires the editor role in {ws.slug!r}",
+        )
+    result = services.upsert_shareouts(payload.shareouts, workspace=ws, created_by=request.user)
     return Status(201, ShareoutBatchOut(**result))
 
 
@@ -95,11 +105,19 @@ def clear_shareouts(
     request: HttpRequest,
     payload: ShareoutsClearIn,
 ) -> ShareoutsClearOut:
-    """Delete shareouts matching the filters, scoped to the caller's workspaces.
-    An empty body clears all of THE CALLER'S shareouts (the pinned /w/{ws} one, or
-    the union of their memberships) — never another tenant's."""
+    """Delete shareouts matching the filters. You clear the shareouts you
+    posted in workspaces where you are an editor, and every shareout in a
+    workspace you own — never a teammate's otherwise, and never another
+    tenant's. An empty body clears all of those (the pinned /w/{ws} one, or the
+    union of your memberships)."""
+    # The docstring always said "the caller's", but the query was every row in
+    # every workspace the caller could READ — so a viewer's `{}` wiped the feed.
+    owned = perms.request_slugs_with(request, perms.OWN)
+    edited = perms.request_slugs_with(request, perms.CONTENT_WRITE)
     count = services.clear_shareouts(
-        workspace_slugs=wsvc.request_workspace_slugs(request),
+        workspace_slugs=owned,
+        own_only_slugs=edited - owned,
+        user=request.user,
         source=payload.source,
         project=payload.project,
         date_from=payload.date_from,

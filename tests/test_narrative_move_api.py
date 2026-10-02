@@ -130,7 +130,9 @@ def test_you_cannot_move_OUT_of_a_workspace_you_cannot_see(both, owner):
     c = Client()
     c.force_login(both)  # member of dimagi + connect, NOT theirs
     r = _post(c, {"to_workspace": "connect", "dry_run": False})
-    assert r.status_code == 403
+    # 404, not 403: every row of it is in a workspace the caller is not in, so
+    # as far as they can tell it does not exist. A 403 confirmed it did.
+    assert r.status_code == 404
     assert ReviewRequest.objects.get().workspace_id == "theirs"
 
 

@@ -58,6 +58,13 @@ def session_group(session_id) -> str:
     return f"chat.{hexid}"
 
 
+def chat_user_group(user_id: int) -> str:
+    """Every chat socket one person holds, across sessions. Lets a change to
+    their ACCESS reach sockets already open — a removal from a workspace closes
+    them now, rather than when the person next acts (`access.recheck`)."""
+    return f"chat.user.{user_id}"
+
+
 def turn_workspace_slug(turn: Turn) -> str | None:
     """The turn's tenant slug: from the agent (agent turns), the session (chat
     turns), or the turn's own workspace FK (project turns). None when unset."""
@@ -69,12 +76,20 @@ def turn_workspace_slug(turn: Turn) -> str | None:
 
 
 def user_can_read_turn(user, turn: Turn) -> bool:
+    """The same answer `GET /api/harness/turns/{id}` gives: the tenant, and for a
+    session turn the chat's own ACL too. There is no superuser leg — a door that
+    answers differently from its REST twin is how the session-turn leak happened.
+    """
     if not getattr(user, "is_authenticated", False):
         return False
-    if user.is_superuser:
-        return True
     slug = turn_workspace_slug(turn)
-    return bool(slug) and slug in user_workspace_slugs(user)
+    if not slug or slug not in user_workspace_slugs(user):
+        return False
+    # The stream IS the turn's content (its ledger), so it is read on the
+    # content rule, which also covers a chat turn's chat ACL.
+    from apps.harness import turn_access
+
+    return turn_access.can_read_turn_content(user, turn)
 
 
 def serialize_turn_event(te: TurnEvent) -> dict:

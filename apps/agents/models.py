@@ -173,19 +173,30 @@ class Agent(models.Model):
         owner added later. The explicit grant is for everyone else — above all
         instead of `editor`, which self-join hands to anyone who clicks "join".
 
-        Fails closed: an anonymous user, an agent with no workspace, or a grant
-        whose holder has left the workspace is not an admin.
+        Fails closed: an anonymous user, an agent with no workspace, or anyone
+        who is not a CURRENT member — an explicit grant's holder, and the owner
+        too. The owner leg used to answer before membership was asked, so an
+        owner removed from the workspace kept the whole agent: its credentials,
+        its interface, the power to transfer it. Being the owner is a role on
+        an agent inside a tenant, and outside the tenant there is no role.
         """
         if not getattr(user, "is_authenticated", False) or not self.workspace_id:
             return False
-        if self.owner_id is not None and self.owner_id == user.pk:
-            return True
         from apps.workspaces import services as wsvc
 
         role = wsvc.member_role(user, self.workspace_id)
-        if role == wsvc.WorkspaceMembership.OWNER:
+        if role is None:
+            return False
+        if self.owner_id is not None and self.owner_id == user.pk:
             return True
-        return role is not None and self.admin_grants.filter(user=user).exists()
+        # A workspace OWNER holds every agent's keys. A workspace ADMIN does
+        # not: running the workspace (logs, members, integrations) is not
+        # holding its agents' credentials, which is what this answers.
+        from apps.workspaces import permissions as perms
+
+        if perms.role_allows(role, perms.OWN):
+            return True
+        return self.admin_grants.filter(user=user).exists()
 
     class Meta:
         ordering = ["name"]

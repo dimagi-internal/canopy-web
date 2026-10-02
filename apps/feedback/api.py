@@ -23,6 +23,8 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.feedback import services
 from apps.feedback.models import Feedback
+from apps.workspaces import permissions as perms
+from apps.workspaces import services as wsvc
 from apps.feedback.schemas import (
     FeedbackBatchIn,
     FeedbackIngestOut,
@@ -60,8 +62,19 @@ def ingest_feedback(request: HttpRequest, payload: FeedbackBatchIn) -> dict:
     """Idempotent per ``(channel, source_ref)`` so re-reading a mailbox or a doc
     is safe. ``submitted_by`` is the CALLER (the agent's PAT user, or the logged
     in human) — never the external author, who has no account here."""
+    # Lands in a tenant the caller is already in (pinned /w/{ws}, the org
+    # default, or their sole membership) — the same resolution every create uses.
+    ws = wsvc.creation_workspace(request)
+    if ws is None:
+        raise HttpError(422, "no workspace to file feedback in; post via /api/w/{workspace}/feedback/")
+    # Filing into the pool is a write to the tenant's product content (the
+    # agent's PAT holds editor); reviewers outside it leave notes through the
+    # storyboard's own token-gated route, which is unchanged.
+    if not perms.can(request.user, ws, perms.CONTENT_WRITE):
+        raise HttpError(403, "filing feedback requires the editor role or above")
     return services.ingest(
         [item.model_dump() for item in payload.items],
+        workspace=ws,
         submitted_by=request.user if request.user.is_authenticated else None,
     )
 
@@ -75,6 +88,7 @@ def list_feedback(
     channel: str | None = None,
 ) -> dict:
     qs = services.list_feedback(
+        workspace_slugs=wsvc.request_workspace_slugs(request),
         target_kind=target_kind, target_ref=target_ref, state=state, channel=channel
     )
     return {"items": [_out(fb) for fb in qs]}
@@ -85,13 +99,23 @@ def resolve_feedback(request: HttpRequest, feedback_id: int, payload: FeedbackRe
     """How a decision turn records what it did. The only mutation — feedback is
     what somebody said, and editing that after the fact would make the pool
     untrustworthy as a record."""
+    # Leaving a note is anyone's (the viewer tier, and token holders on a
+    # storyboard); DISPOSING of one — accepting or rejecting what a reviewer
+    # asked for — is the author's call, so it is scoped to the workspaces where
+    # the caller is an editor. A viewer who can see the note gets 403.
     try:
         fb = services.resolve(
             feedback_id,
+            workspace_slugs=perms.request_slugs_with(request, perms.CONTENT_WRITE),
             state=payload.state,
             note=payload.note,
             resolved_in_version=payload.resolved_in_version,
         )
     except Feedback.DoesNotExist:
+        visible = Feedback.objects.filter(
+            pk=feedback_id, workspace_id__in=wsvc.request_workspace_slugs(request)
+        ).exists()
+        if visible:
+            raise HttpError(403, "recording a disposition requires the editor role in its workspace")
         raise HttpError(404, "feedback not found")
     return _out(fb)

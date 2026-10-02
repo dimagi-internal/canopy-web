@@ -13,11 +13,12 @@ from ninja import Router, Status
 from canopy_sdk import contract
 from ninja.errors import HttpError
 
+from apps.common.human_only import human_only
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
-from apps.common.views_debug import is_machine
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
@@ -173,16 +174,17 @@ def _agent_for_write_or_404(request: HttpRequest, slug: str) -> Agent:
     gets `_agent_or_404`'s 404 and never a 403.
     """
     agent = _agent_or_404(request, slug)
-    if not wsvc.has_role_at_least(
-        request.user, agent.workspace_id, wsvc.WorkspaceMembership.EDITOR
-    ):
+    if not perms.can(request.user, agent.workspace_id, perms.AGENT_WORK):
         raise HttpError(403, "running a turn for this agent requires the editor or owner role")
     return agent
 
 
 def _runner_owned_q(request: HttpRequest) -> Q:
-    """Ownership: the caller paired it, or nobody did (legacy-ungated)."""
-    return Q(paired_by=request.user) | Q(paired_by__isnull=True)
+    """Ownership: the caller paired it. A runner NOBODY paired is acted on by
+    nobody — it used to be acted on by everyone (heartbeat, claim, retire, and
+    its plaintext credential bundle), the NULL-means-allow shape this repo has
+    removed everywhere else. Every live runner on labs has a pairer (2026-10-02)."""
+    return Q(paired_by=request.user)
 
 
 def _runner_read_q(request: HttpRequest) -> Q:
@@ -318,6 +320,55 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     return turn
 
 
+def _visible_sessions(request: HttpRequest):
+    """Chat sessions the caller may read — the chat ACL, as a subquery, for
+    every harness listing that would otherwise show a session turn's prompt or
+    a session's messages to the whole tenant."""
+    from apps.canopy_sessions import access as session_access
+    from apps.canopy_sessions.models import Session
+
+    return Session.objects.filter(session_access.visible_session_q(request.user)).values("pk")
+
+
+def _turn_content_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
+    """A turn whose CONTENT (ledger, transcript, caller context) the caller may
+    read (`turn_access.can_read_turn_content`) — a log, the admin's unless you
+    started or run it. Same uniform 404 as a turn you cannot see at all."""
+    from . import turn_access
+
+    turn = _turn_or_404(request, turn_id)
+    if not turn_access.can_read_turn_content(request.user, turn):
+        raise HttpError(404, "turn not found")
+    return turn
+
+
+def _reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
+    """A turn the caller may REPORT on — start, finish, append ledger events or
+    transcript lines. That is the runner protocol, so it belongs to the box that
+    claimed the turn: the caller must be the human who paired it.
+
+    `_turn_or_404` alone (membership) let any viewer fail someone else's live
+    turn, inject `question`/`approval` events, or append fake transcript lines.
+    An UNCLAIMED turn has no box yet; reporting on one is a write to the work
+    itself, so it takes the same tier as cancelling it (editor on an agent turn,
+    write access to the chat on a session turn). Same uniform 404 otherwise.
+    """
+    turn = _turn_or_404(request, turn_id)
+    if turn.claimed_by_id is not None:
+        if turn.claimed_by.paired_by_id != request.user.pk:
+            raise HttpError(404, "turn not found")
+        return turn
+    if turn.agent_id:
+        if not perms.can(request.user, turn.agent.workspace_id, perms.AGENT_WORK):
+            raise HttpError(404, "turn not found")
+    elif turn.chat_session_id:
+        from apps.canopy_sessions import access as session_access
+
+        if not session_access.can_write(request.user, turn.chat_session):
+            raise HttpError(404, "turn not found")
+    return turn
+
+
 def _site_turn_q(request: HttpRequest):
     """The turns an acting site may see, as a Q — or None when no site acts."""
     from apps.tokens import delegation
@@ -367,8 +418,15 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     # guards below fall through — any authenticated user could read the transcript).
     ws = getattr(request, "workspace_slug", None)
     if turn.chat_session_id:
+        from apps.canopy_sessions import access as session_access
+
         slug = turn.chat_session.workspace_id
         if (ws and slug != ws) or not wsvc.is_member(request.user, slug):
+            raise HttpError(404, "turn not found")
+        # And the CHAT's own ACL: a session turn's prompt and transcript are
+        # that conversation. Tenant membership alone let any co-tenant read a
+        # private web chat here that canopy_sessions/access.py hides from them.
+        if not session_access.can_read(request.user, turn.chat_session):
             raise HttpError(404, "turn not found")
         return turn
 
@@ -524,6 +582,13 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
         .first()
     )
     if turn is None:
+        raise HttpError(404, "turn not found")
+    from apps.agents.services import runner_may_hold_agent
+
+    # A claim already requires this; re-asked here because a pairer can be
+    # demoted mid-turn, and this is the owner's GitHub identity.
+    agent = delegations.turn_agent(turn)
+    if agent is not None and not runner_may_hold_agent(runner, agent):
         raise HttpError(404, "turn not found")
     try:
         issued = delegations.github_token_for_turn(turn)
@@ -698,6 +763,7 @@ def list_runner_admins(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.post("/runners/{runner_id}/admins", response=RunnerAdminOut,
              summary="Grant someone administration of this runner (pairer only)")
+@human_only("Who administers a runner")
 def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerAdminIn):
     """Granting stays with the PAIRER, not with grantees.
 
@@ -724,6 +790,7 @@ def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
 
 @router.delete("/runners/{runner_id}/admins/{user_id}", response={204: None},
                summary="Revoke administration (pairer only)")
+@human_only("Who administers a runner")
 def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int):
     runner = _runner_or_404(request, runner_id)
     user = User.objects.filter(pk=user_id).first()
@@ -734,16 +801,15 @@ def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int
 
 @router.put("/runners/{runner_id}/flags", response=RunnerOut,
             summary="Declare what this runner's owner vouches for")
+@human_only("A runner's declared flags")
 def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerFlagsIn):
     """Replace the runner's declared flags. `zdr`: this box uses only
     zero-data-retention keys for Claude. canopy cannot check a declaration; it
     records who made it. A host may require a flag of every conversation its
     visitors hold, and those conversations then run only on runners declaring it.
     """
-    # Human-only: a runner authenticates with its pairer's PAT, and a box must
-    # never be able to vouch for itself. Same refusal as the agent-owner gates.
-    if is_machine(request):
-        raise HttpError(403, "a person must declare this, from the canopy web app")
+    # Human-only (`@human_only`): a runner authenticates with its pairer's PAT,
+    # and a box must never be able to vouch for itself.
     runner = _runner_admin_or_404(request, runner_id)
     try:
         wanted = set(contract.parse_runner_requirements(payload.flags))
@@ -1514,6 +1580,11 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
                         "/api/w/{workspace}/harness/turns/",
                     )
                 raise HttpError(404, "workspace not found")
+        # A project turn is a prompt run in a repo on somebody's box — the same
+        # author tier as an agent turn. It was bare membership, so a viewer
+        # could send an arbitrary prompt to run in any repo the fleet declares.
+        if not perms.can(request.user, workspace, perms.AGENT_WORK):
+            raise HttpError(403, "running a turn requires the editor role or above")
 
     pinned = None
     if payload.runner_id is not None:
@@ -1532,6 +1603,17 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         )
         if pinned is None:
             raise HttpError(422, f"unknown or retired runner id: {payload.runner_id}")
+        if agent is not None:
+            from apps.agents.services import runner_may_hold_agent
+
+            # claim_next_turn refuses it anyway; say so now rather than leave a
+            # turn queued that nothing will ever claim.
+            if not runner_may_hold_agent(pinned, agent):
+                raise HttpError(
+                    403,
+                    f"runner {pinned.name} cannot run {agent.slug}: whoever paired it must "
+                    "be the agent's owner, a workspace owner, or one of its admins",
+                )
 
     turn, created = services.enqueue_turn(
         agent=agent,
@@ -1608,13 +1690,17 @@ def list_turns(
     qs = qs.filter(
         (Q(agent__isnull=False) & Q(agent__workspace_id__in=slugs))
         | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=slugs))
-        | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs))
+        | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs)
+           & Q(chat_session__in=_visible_sessions(request)))
     )
     site_q = _site_turn_q(request)
     if site_q is not None:
         qs = qs.filter(site_q)
     limit = max(1, min(limit, 200))  # clamp; default 100 keeps existing callers unchanged
-    return list(qs[:limit])  # filter BEFORE slicing — a sliced queryset cannot be filtered
+    from . import turn_access
+
+    # Everyone sees THAT a turn ran; its prompt is a log (turn_access).
+    return turn_access.redact(list(qs[:limit]), request.user)  # filter BEFORE slicing
 
 
 @router.get("/sessions", response=list[EmdashSessionOut])
@@ -1634,7 +1720,9 @@ def list_sessions(request: HttpRequest):
 
 @router.get("/turns/{turn_id}", response=TurnOut)
 def get_turn(request: HttpRequest, turn_id: uuid.UUID):
-    return _turn_or_404(request, turn_id)
+    from . import turn_access
+
+    return turn_access.redact([_turn_or_404(request, turn_id)], request.user)[0]
 
 
 @router.get("/turns/{turn_id}/caller-context", response=CallerContextOut,
@@ -1647,12 +1735,12 @@ def get_turn_caller_context(request: HttpRequest, turn_id: uuid.UUID):
     # /api/contacts/, which any member of the tenant can already read.
     from .caller_context import build
 
-    return {"envelope": build(_turn_or_404(request, turn_id))}
+    return {"envelope": build(_turn_content_or_404(request, turn_id))}
 
 
 @router.post("/turns/{turn_id}/events", response=TurnEventCountOut)
 def append_turn_events(request: HttpRequest, turn_id: uuid.UUID, payload: TurnEventsIn):
-    turn = _turn_or_404(request, turn_id)
+    turn = _reporting_turn_or_404(request, turn_id)
     for event in payload.events:
         if event.kind not in ALLOWED_EVENT_KINDS:
             raise HttpError(422, f"unknown event kind '{event.kind}'")
@@ -1662,7 +1750,7 @@ def append_turn_events(request: HttpRequest, turn_id: uuid.UUID, payload: TurnEv
 
 @router.get("/turns/{turn_id}/events", response=TurnEventsOut)
 def read_turn_events(request: HttpRequest, turn_id: uuid.UUID, after: int = 0):
-    turn = _turn_or_404(request, turn_id)
+    turn = _turn_content_or_404(request, turn_id)
     events = turn.events.filter(seq__gt=after).order_by("seq")[:500]
     return {"events": list(events)}
 
@@ -1686,7 +1774,7 @@ def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: Tr
     turn's transcript getting long is not a reason to fail a live run;
     `truncated` in the response tells the caller that happened.
     """
-    turn = _turn_or_404(request, turn_id)
+    turn = _reporting_turn_or_404(request, turn_id)
     total_bytes = sum(len(line.encode("utf-8")) for line in payload.lines)
     if total_bytes > TRANSCRIPT_APPEND_MAX_BYTES:
         raise HttpError(
@@ -1710,10 +1798,10 @@ def read_turn_messages(request: HttpRequest, turn_id: uuid.UUID):
     """The turn's retained transcript parsed into messages (user, assistant,
     tool use, tool result), with secrets scrubbed. Bounded: `truncated` is true
     when the view stopped early. Empty for a turn that kept no transcript."""
-    # Same gate as the raw route below — a transcript is more sensitive than a
-    # turn's status. Parsing is bounded (services.TRANSCRIPT_VIEW_MAX_MESSAGES)
-    # and reads the blob incrementally, like the raw route.
-    turn = _turn_or_404(request, turn_id)
+    # Same gate as the raw route below — a transcript is a LOG
+    # (turn_access.can_read_turn_content). Parsing is bounded
+    # (services.TRANSCRIPT_VIEW_MAX_MESSAGES) and reads the blob incrementally.
+    turn = _turn_content_or_404(request, turn_id)
     messages, truncated = services.transcript_messages(turn)
     return {"messages": messages, "truncated": truncated}
 
@@ -1744,7 +1832,7 @@ def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
     bytes `services.read_transcript` would return, with none of its
     all-at-once memory cost.
     """
-    turn = _turn_or_404(request, turn_id)
+    turn = _turn_content_or_404(request, turn_id)
     return StreamingHttpResponse(
         services.iter_transcript(turn), content_type="application/x-ndjson"
     )
@@ -1752,7 +1840,7 @@ def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
 
 @router.post("/turns/{turn_id}/start", response=TurnOut)
 def start_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnStartIn):
-    turn = _turn_or_404(request, turn_id)
+    turn = _reporting_turn_or_404(request, turn_id)
     if turn.status not in (Turn.CLAIMED, Turn.RUNNING):
         raise ProblemError(409, "Turn not startable", detail=f"status={turn.status}")
     return services.mark_running(turn, session_id=payload.session_id)
@@ -1760,7 +1848,7 @@ def start_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnStartIn):
 
 @router.post("/turns/{turn_id}/finish", response=TurnOut)
 def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn):
-    turn = _turn_or_404(request, turn_id)
+    turn = _reporting_turn_or_404(request, turn_id)
     if payload.status not in (Turn.DONE, Turn.FAILED, Turn.CANCELLED):
         raise HttpError(422, "finish status must be done|failed|cancelled")
     # Record the session BEFORE the terminal check: a re-reported finish is otherwise
@@ -1810,6 +1898,17 @@ def cancel_turn(request: HttpRequest, turn_id: uuid.UUID):
     # case the phone composer exists for. Project turns likewise have no agent.
     if turn.agent_id:
         _agent_for_write_or_404(request, turn.agent.slug)
+    elif turn.initiator_user_id != request.user.pk:
+        # Not your own send: a chat turn needs write access to that chat (a
+        # viewer participant may not withdraw someone else's message), and a
+        # project turn the same tier that enqueued it.
+        if turn.chat_session_id:
+            from apps.canopy_sessions import access as session_access
+
+            if not session_access.can_write(request.user, turn.chat_session):
+                raise HttpError(403, "you can only cancel your own send in this chat")
+        elif not perms.can(request.user, turn.workspace_id, perms.AGENT_WORK):
+            raise HttpError(403, "cancelling a turn requires the editor role or above")
     if turn.status in Turn.TERMINAL:
         return turn  # idempotent
     cancelled = services.cancel_queued_turn(turn)
@@ -1942,7 +2041,17 @@ def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: Dril
 
 @router.get("/runners/{runner_id}/drills", response=list[RunnerDrillOut])
 def list_runner_drills(request: HttpRequest, runner_id: uuid.UUID):
-    runner = _runner_or_404(request, runner_id)
+    # Readiness results are a log about the box: its pairer and the admins it
+    # granted read them, and so does a workspace admin of the runner's tenant
+    # (`permissions.LOGS_READ`). It used to be the pairer alone, so nobody
+    # operating the fleet could see why a box was failing its drills.
+    runner = (Runner.objects.exclude(status=Runner.RETIRED)
+              .filter(_runner_read_q(request)).filter(pk=runner_id).first())
+    if runner is None or not (
+        services.can_administer_runner(request.user, runner)
+        or (runner.workspace_id and perms.can(request.user, runner.workspace_id, perms.LOGS_READ))
+    ):
+        raise HttpError(404, "runner not found")
     return list(runner.drills.select_related("agent"))
 
 

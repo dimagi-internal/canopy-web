@@ -23,6 +23,17 @@ def other(db):
     return User.objects.create_user(username="other@dimagi.com", email="other@dimagi.com")
 
 
+def _teammates(*users):
+    """Link-shared rows are LISTED only to people who share a workspace with
+    the sharer (the link itself still opens for anyone holding it)."""
+    from apps.workspaces.models import WorkspaceMembership
+    from apps.workspaces.testing import a_member, a_workspace
+
+    ws = a_workspace("share-team")
+    for u in users:
+        a_member(ws, email=u.email, role=WorkspaceMembership.EDITOR)
+
+
 @pytest.fixture
 def auth_client(owner):
     c = Client()
@@ -143,10 +154,11 @@ def test_arc_create_reports_the_owning_account(auth_client):
 
 
 @pytest.mark.django_db
-def test_list_includes_link_shared_sessions_from_others(auth_client, other):
-    """A session an agent (or teammate) shared must be findable by everyone —
+def test_list_includes_link_shared_sessions_from_others(auth_client, owner, other):
+    """A session an agent (or teammate) shared must be findable by the team —
     the list is "shared with the team", not "uploaded by me". Their PRIVATE
     sessions stay invisible."""
+    _teammates(owner, other)
     _upload(auth_client, _transcript("mine"))
     other_client = Client()
     other_client.force_login(other)
@@ -275,7 +287,8 @@ def test_arc_list_and_detail_owner_only(auth_client, other):
 
 
 @pytest.mark.django_db
-def test_arc_list_includes_link_shared_arcs_from_others(auth_client, other):
+def test_arc_list_includes_link_shared_arcs_from_others(auth_client, owner, other):
+    _teammates(owner, other)
     s1 = _upload(auth_client, _transcript("v1")).json()["slug"]
     _create_arc(auth_client, [{"session_slug": s1}], title="Their arc")
 
@@ -377,3 +390,14 @@ def test_active_seconds_in_share_payload_and_arc_sum(auth_client):
     body = Client().get(f"/api/share/{token}").json()
     assert [sec["active_seconds"] for sec in body["sections"]] == [600, 1800]
     assert body["active_seconds"] == 2400
+
+
+@pytest.mark.django_db
+def test_link_shares_are_not_listed_to_someone_outside_the_team(auth_client, other):
+    """A list hands out the URL. Every signed-in user used to receive every
+    link-shared transcript and its token — including an invite-admitted partner
+    who was never sent any of them."""
+    other_client = Client()
+    other_client.force_login(other)
+    _upload(other_client, _transcript("theirs-link"), title="Agent share")
+    assert auth_client.get("/api/sessions/").json() == []

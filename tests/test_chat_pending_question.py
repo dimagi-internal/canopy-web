@@ -406,8 +406,11 @@ def test_a_push_only_goes_to_someone_who_can_open_the_chat(monkeypatch):
     agent = Agent.objects.create(slug="hal", name="Hal", owner=outsider, workspace=ws)
     session = Session.objects.create(workspace=ws, agent=agent, origin=Session.ORIGIN_RUNNER,
                                      title="ALARM")
-    assert push_services.notify_session_question(session, MENU) == 0
-    assert sent == []
+    # An owner outside the workspace is not the agent's audience at all any
+    # more (`agent_audience`): the workspace's owners are, and jj can open it.
+    push_services.notify_session_question(session, MENU)
+    assert [u.username for u, _kw in sent] == ["jj"]
+    sent.clear()
 
     agent.owner = jj
     agent.save(update_fields=["owner"])

@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 from django.db import IntegrityError, transaction
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch
 from django.http import HttpRequest
 from ninja import Body, Router, Status
 
 from apps.api.auth import session_auth
 from apps.projects import services
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.api.errors import (
     TYPE_CONFLICT,
+    TYPE_FORBIDDEN,
     TYPE_NOT_FOUND,
     TYPE_VALIDATION,
     ProblemError,
@@ -121,14 +123,14 @@ def _scoped_project_queryset(request: HttpRequest):
 
     Mirrors the agents surface: when a workspace is pinned (the `/api/w/{ws}`
     prefix) filter to exactly that tenant; on the flat mount filter to every
-    workspace the caller is a member of, plus any still-unscoped (null) rows.
+    workspace the caller is a member of.
+
+    A NULL-workspace project is in nobody's scope. It used to be in EVERYONE's
+    (a `| Q(workspace__isnull=True)` leg), which is the NULL-means-allow shape
+    CLAUDE.md forbids — `projects/0009` homed the stragglers, so the leg had
+    nothing left to keep visible except the next one somebody forgot to home.
     """
-    ws = getattr(request, "workspace_slug", None)
-    qs = Project.objects.all()
-    if ws:
-        return qs.filter(workspace_id=ws)
-    slugs = wsvc.user_workspace_slugs(request.user)
-    return qs.filter(Q(workspace_id__in=slugs) | Q(workspace__isnull=True))
+    return Project.objects.filter(workspace_id__in=wsvc.request_workspace_slugs(request))
 
 
 def _member_project(request: HttpRequest, slug: str) -> Project | None:
@@ -141,8 +143,31 @@ def _member_project(request: HttpRequest, slug: str) -> Project | None:
     ws = getattr(request, "workspace_slug", None)
     if ws and project.workspace_id != ws:
         return None  # wrong tenant
-    if project.workspace_id and not wsvc.is_member(request.user, project.workspace_id):
+    # Unconditional: a project with no workspace is visible to nobody (this was
+    # `if project.workspace_id and not is_member`, which waved a NULL row through).
+    if not project.workspace_id or not wsvc.is_member(request.user, project.workspace_id):
         return None
+    return project
+
+
+def _may_write(request: HttpRequest, project: Project) -> bool:
+    """Writing to a project — its fields, its context feed, its action log, its
+    insights — is the author tier (`editor`). A viewer reads the workbench."""
+    return perms.can(request.user, project.workspace_id, perms.CONTENT_WRITE)
+
+
+def _get_project_for_write(request: HttpRequest, slug: str) -> Project:
+    """404 for a project the caller cannot see (resolved through the read gate
+    FIRST, so a role check never confirms that a hidden project exists), 403 for
+    one they can see but may not change."""
+    project = _get_project_or_404_ninja(request, slug)
+    if not _may_write(request, project):
+        raise ProblemError(
+            403,
+            "Editor role required",
+            type_=TYPE_FORBIDDEN,
+            detail="changing a project requires the editor role in its workspace",
+        )
     return project
 
 
@@ -171,6 +196,14 @@ def _resolve_create_workspace(request: HttpRequest):
             "No workspace to create this in",
             type_=TYPE_VALIDATION,
             detail="you do not belong to a workspace that can own this; ask an owner for an invite",
+        )
+    # Membership resolved the tenant; creating in it is the editor tier.
+    if not perms.can(request.user, ws, perms.CONTENT_WRITE):
+        raise ProblemError(
+            403,
+            "Editor role required",
+            type_=TYPE_FORBIDDEN,
+            detail=f"creating a project requires the editor role in {ws.slug!r}",
         )
     return ws
 
@@ -315,6 +348,7 @@ def seed_projects(
     payload: list[ProjectCreateIn] = Body(...),
 ) -> Status:
     ws = _resolve_create_workspace(request)
+    mine = wsvc.request_workspace_slugs(request)
     results = []
     for item in payload:
         project, _ = Project.objects.get_or_create(
@@ -329,6 +363,12 @@ def seed_projects(
                 "workspace": ws,
             },
         )
+        # `slug` is globally unique, so get_or_create FOUND another tenant's
+        # project and this used to return its detail — context, insights,
+        # actions — to anyone who named it. A slug held elsewhere is simply not
+        # seeded here, and not reported, which says nothing about whether it exists.
+        if project.workspace_id not in mine:
+            continue
         results.append(_project_to_detail_out(project))
     return Status(201, results)
 
@@ -345,8 +385,11 @@ def batch_context(
     """Create context entries across multiple projects. Bearer-writable xfail (Phase 5.4)."""
     counts: dict[str, int] = {}
     for slug, entries in payload.updates.items():
+        # A project the caller may read but not write counts 0, exactly like
+        # one that does not exist: a batch reports per-slug outcomes, and one
+        # unwritable slug must not fail the rest.
         project = _member_project(request, slug)
-        if project is None:
+        if project is None or not _may_write(request, project):
             counts[slug] = 0
             continue
         created = 0
@@ -374,8 +417,11 @@ def batch_actions(
     """Create action entries across multiple projects. Bearer-writable xfail (Phase 5.4)."""
     counts: dict[str, int] = {}
     for slug, entries in payload.updates.items():
+        # A project the caller may read but not write counts 0, exactly like
+        # one that does not exist: a batch reports per-slug outcomes, and one
+        # unwritable slug must not fail the rest.
         project = _member_project(request, slug)
-        if project is None:
+        if project is None or not _may_write(request, project):
             counts[slug] = 0
             continue
         created = 0
@@ -407,7 +453,7 @@ def patch_project(
     slug: str,
     payload: ProjectPatchIn,
 ) -> ProjectDetailOut:
-    project = _get_project_or_404_ninja(request, slug)
+    project = _get_project_for_write(request, slug)
     updates = payload.model_dump(exclude_unset=True)
     if "skills" in updates and updates["skills"] is not None:
         updates["skills"] = [
@@ -425,7 +471,7 @@ def delete_project(
     request: HttpRequest,
     slug: str,
 ) -> Status:
-    project = _get_project_or_404_ninja(request, slug)
+    project = _get_project_for_write(request, slug)
     project.delete()
     return Status(204, None)
 
@@ -461,7 +507,7 @@ def create_context(
     payload: ProjectContextCreateIn,
 ) -> Status:
     """Bearer-writable xfail (Phase 5.4)."""
-    project = _get_project_or_404_ninja(request, slug)
+    project = _get_project_for_write(request, slug)
     ctx = ProjectContext.objects.create(
         project=project,
         context_type=payload.context_type,
@@ -536,7 +582,7 @@ def create_action(
     payload: ProjectActionCreateIn,
 ) -> Status:
     """Bearer-writable xfail (Phase 5.4)."""
-    project = _get_project_or_404_ninja(request, slug)
+    project = _get_project_for_write(request, slug)
     action = ProjectAction.objects.create(
         project=project,
         skill_name=payload.skill_name,
@@ -591,6 +637,11 @@ def get_actions_summary(
 # ---------------------------------------------------------------------------
 
 
+def _insight_write_slugs(request: HttpRequest) -> set[str]:
+    """Workspaces whose insights the caller may delete — `editor` or better."""
+    return perms.request_slugs_with(request, perms.CONTENT_WRITE)
+
+
 @insights_router.get(
     "/",
     response=Page[InsightOut],
@@ -634,10 +685,13 @@ def clear_insights(
       - project: project slug exact match
       - older_than_days: created_at older than N days ago
 
-    A body with no filters ({}) clears ALL insights — this is intended.
+    A body with no filters ({}) clears every insight in the workspaces where
+    you hold the editor role — not those you can only read.
     """
+    # Scoped by the WRITE set, not the read set: with the read set, a viewer's
+    # `{}` deleted every insight across every workspace they could see.
     count = services.clear_insights(
-        workspace_slugs=wsvc.request_workspace_slugs(request),
+        workspace_slugs=_insight_write_slugs(request),
         source=payload.source,
         category=payload.category,
         project=payload.project,
@@ -660,7 +714,7 @@ def dismiss_insights(request: HttpRequest, payload: InsightsDismissIn) -> Insigh
     an error, so compare the returned list against what you asked for.
     """
     dismissed = services.dismiss_insights(
-        workspace_slugs=wsvc.request_workspace_slugs(request), ids=list(payload.ids),
+        workspace_slugs=_insight_write_slugs(request), ids=list(payload.ids),
     )
     return InsightsDismissOut(dismissed=dismissed)
 
@@ -681,6 +735,14 @@ def dismiss_insight(request: HttpRequest, pk: int) -> InsightDismissOut:
             "Insight not found",
             type_=TYPE_NOT_FOUND,
             detail=f"No insight with pk={pk}.",
+        )
+    # Readable, so a refusal leaks nothing: 403 rather than 404 for a viewer.
+    if insight.project.workspace_id not in _insight_write_slugs(request):
+        raise ProblemError(
+            403,
+            "Editor role required",
+            type_=TYPE_FORBIDDEN,
+            detail="dismissing an insight requires the editor role in its workspace",
         )
     insight.delete()
     return InsightDismissOut(dismissed=pk)
