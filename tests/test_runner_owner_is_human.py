@@ -1,7 +1,7 @@
 """A runner is owned by a person, never by an agent's login.
 
-`paired_by` is a box's identity for life: claims run with the pairer's
-memberships, and only the pairer may grant administration. On 2026-10-02 a
+`owner` is a box's identity for life: claims run with the owner's
+memberships, and only the owner may grant administration. On 2026-10-02 a
 teammate's laptop was paired with ACE's token, which produced a box its own
 operator could not manage, and on which their work would be attributed to ACE.
 An agent may still ADMINISTER a box, through an explicit grant.
@@ -58,4 +58,4 @@ def test_a_person_can_pair_and_then_grant_the_agent_admin(fleet):
                    data=json.dumps({"email": "ace@dimagi-ai.com"}),
                    content_type="application/json")
     assert grant.status_code == 200, grant.content
-    assert Runner.objects.get(pk=runner_id).paired_by == fleet["human"]
+    assert Runner.objects.get(pk=runner_id).owner == fleet["human"]

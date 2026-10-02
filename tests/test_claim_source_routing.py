@@ -1,7 +1,7 @@
 """Claim routing keyed on Turn.origin (spec 2026-07-27).
 
 Tenancy here is deliberately real rather than stubbed: runner_tenant_slugs derives
-from runner.paired_by, and a runner whose pairer is not in the agent's workspace
+from runner.owner, and a runner whose owner is not in the agent's workspace
 claims nothing regardless of any rule.
 """
 from __future__ import annotations
@@ -28,11 +28,11 @@ def fleet():
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
     now = timezone.now()
     laptop = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=now, capabilities={},
     )
     cloud = Runner.objects.create(
-        name="cloud-1", kind=Runner.CLOUD, paired_by=jj, status=Runner.ONLINE,
+        name="cloud-1", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=now, capabilities={},
     )
     return {"user": jj, "ws": ws, "agent": echo, "laptop": laptop, "cloud": cloud}
@@ -155,7 +155,7 @@ def test_a_rule_never_crosses_the_tenant_boundary(fleet):
     a = fleet["agent"]
     outsider = get_user_model().objects.create_user(username="mal", email="mal@evil.com")
     theirs = Runner.objects.create(
-        name="mal-box", kind=Runner.CLOUD, paired_by=outsider, status=Runner.ONLINE,
+        name="mal-box", kind=Runner.CLOUD, owner=outsider, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={},
     )
     RunnerAssignment.objects.create(agent=a, runner=theirs, rank=0, source=Turn.ORIGIN_ACE_WEB)

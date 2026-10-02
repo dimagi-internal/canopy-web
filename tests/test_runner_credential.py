@@ -2,7 +2,7 @@
 
 A cloud runner fetches its own secret bundle (Claude token, GitHub token, 1Password
 SA token) with its canopy-pat; the value is encrypted at rest and only the runner's
-owner (paired_by) can set or read it."""
+owner (owner) can set or read it."""
 from __future__ import annotations
 
 import pytest
@@ -30,7 +30,7 @@ def client(owner):
 
 @pytest.fixture()
 def runner(owner):
-    return Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, paired_by=owner)
+    return Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=owner)
 
 
 def _cred_url(runner):

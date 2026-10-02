@@ -43,13 +43,13 @@ def fleet(client):
     admit_contacts(eva)
     now = timezone.now()
     laptop = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=now, capabilities={},
     )
     # Session-capable: an email with a thread id becomes a SESSION turn (the
     # thread is the conversation), and only such a runner claims one.
     cloud = Runner.objects.create(
-        name="cloud-1", kind=Runner.CLOUD, paired_by=jj, status=Runner.ONLINE,
+        name="cloud-1", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=now, capabilities={"sessions": True},
     )
     RunnerAssignment.objects.create(agent=eva, runner=laptop, rank=0)

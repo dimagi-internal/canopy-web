@@ -597,7 +597,7 @@ async def test_snapshot_falls_back_to_the_binding_tail():
     def _bind():
         ws = session.workspace
         r = Runner.objects.create(
-            name="jj-mbp", workspace=ws, location=Runner.LOCAL, paired_by=owner,
+            name="jj-mbp", workspace=ws, location=Runner.LOCAL, owner=owner,
             host="jj@mbp", status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         )
         RunnerBinding.objects.create(
@@ -707,7 +707,7 @@ async def test_a_dialog_appearing_reaches_a_chat_already_open():
 
     def _runner():
         return Runner.objects.create(
-            name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=owner,
+            name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=owner,
             status=Runner.ONLINE, last_heartbeat_at=timezone.now())
 
     runner = await database_sync_to_async(_runner)()
@@ -759,7 +759,7 @@ async def test_an_unchanged_dialog_is_not_republished_every_report():
     def _setup():
         from apps.canopy_sessions.models import RunnerBinding
         runner = Runner.objects.create(
-            name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=owner,
+            name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=owner,
             status=Runner.ONLINE, last_heartbeat_at=timezone.now())
         RunnerBinding.objects.create(session=session, session_key="spark",
                                      runner=runner, host="jj-mac")
@@ -816,7 +816,7 @@ async def test_presence_joined_names_the_person_who_joined():
 
         SessionParticipant.objects.filter(session=session, user=teammate).delete()
         Session.objects.filter(pk=session.pk).update(origin=Session.ORIGIN_RUNNER, created_by=None)
-        runner = Runner.objects.create(name="r", kind=Runner.EMDASH, host="h", paired_by=owner)
+        runner = Runner.objects.create(name="r", kind=Runner.EMDASH, host="h", owner=owner)
         RunnerBinding.objects.create(session=session, runner=runner, session_key="k")
 
     await database_sync_to_async(_discovered)()

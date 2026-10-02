@@ -30,7 +30,7 @@ def _ctx():
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     runner = Runner.objects.create(
-        name="jj-mbp", workspace=ws, location=Runner.LOCAL, paired_by=user,
+        name="jj-mbp", workspace=ws, location=Runner.LOCAL, owner=user,
         host="jj@mbp", status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     return user, ws, runner

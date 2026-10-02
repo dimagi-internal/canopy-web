@@ -69,7 +69,7 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     expected_code_committed_at: 0,
     expected_code_sha: '',
     workspace: null,
-    paired_by_email: null,
+    owner_email: null,
     can_manage: true,
     can_administer: true,
     flags: [],

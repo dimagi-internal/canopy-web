@@ -152,7 +152,7 @@ def test_stranger_cannot_claim_victim_turn_via_own_untenanted_runner(
     stranger = User.objects.get(username="stranger")
     rid = Runner.objects.create(
         name="attacker-mbp", kind="emdash", capabilities={"agents": ["echo"]},
-        paired_by=stranger, workspace=None,
+        owner=stranger, workspace=None,
     ).id
     hb = stranger_client.post(
         f"/api/harness/runners/{rid}/heartbeat",
@@ -209,7 +209,7 @@ def test_tenanted_attacker_cannot_claim_other_workspace_turn(owner_client, agent
 # --- claim scope: one runner, a fleet that spans workspaces (the outage) -------
 
 
-def test_runner_claims_for_agents_in_any_workspace_its_pairer_belongs_to(owner, owner_client, workspace):
+def test_runner_claims_for_agents_in_any_workspace_its_runner_owner_belongs_to(owner, owner_client, workspace):
     """The production shape, and the outage this pins closed.
 
     There is ONE laptop runner but the agent fleet deliberately spans workspaces:
@@ -219,7 +219,7 @@ def test_runner_claims_for_agents_in_any_workspace_its_pairer_belongs_to(owner, 
     forever, which is exactly what happened on production (4 of 5 agents unable to
     execute any turn at all).
 
-    The claim must scope by the workspaces `runner.paired_by` is a member of —
+    The claim must scope by the workspaces `runner.owner` is a member of —
     consistent with `_runner_schedule_qs`, which already derives tenancy that way
     for the schedule-sync route. `owner` can already drive `ace` through the UI,
     so claiming for it is no escalation.
@@ -266,20 +266,20 @@ def test_runner_claims_for_agents_in_any_workspace_its_pairer_belongs_to(owner, 
     assert str(claimed.claimed_by_id) == rid
 
 
-def test_runner_with_null_paired_by_claims_nothing_tenanted(owner_client, agent, workspace):
-    """Runner.paired_by is SET_NULL, so an orphaned runner must fail closed: with
-    no pairer there is no identity to derive a tenant from, and inferring one
+def test_runner_with_null_owner_claims_nothing_tenanted(owner_client, agent, workspace):
+    """Runner.owner is SET_NULL, so an orphaned runner must fail closed: with
+    no owner there is no identity to derive a tenant from, and inferring one
     would be a privilege escalation. It must claim NOTHING tenanted — not
     everything, and not the workspace it happens to still be homed to.
 
     (It retains the null-workspace legacy leg, which is what the pre-tenancy
     suite runs on; see test_harness_services.py, whose runners are all
-    paired_by=None. A null-workspace agent is ungated everywhere in this
+    owner=None. A null-workspace agent is ungated everywhere in this
     codebase, and none exist in production.)
     """
     orphan = Runner.objects.create(
         name="orphan", kind=Runner.EMDASH, capabilities={"agents": ["echo"]},
-        paired_by=None, workspace=workspace,
+        owner=None, workspace=workspace,
     )
     from apps.harness import services as hsvc
 
@@ -390,7 +390,7 @@ def test_pinned_null_workspace_runner_is_neither_listed_nor_actionable(owner_cli
     on BOTH halves: not in the list, and 404 on heartbeat. Asserted together —
     the agreement between list and gate is the property under test."""
     runner = Runner.objects.create(
-        name="legacy-runner", kind=Runner.EMDASH, capabilities={}, paired_by=owner,
+        name="legacy-runner", kind=Runner.EMDASH, capabilities={}, owner=owner,
         workspace=None,
     )
     listed_ids = [
@@ -411,7 +411,7 @@ def test_pinned_matching_workspace_runner_is_listed_and_actionable(owner_client,
     """Under /api/w/{ws}/harness/..., a runner homed to THAT workspace is listed
     and heartbeat succeeds — the positive counterpart to the null-workspace case."""
     runner = Runner.objects.create(
-        name="tenant-runner", kind=Runner.EMDASH, capabilities={}, paired_by=owner,
+        name="tenant-runner", kind=Runner.EMDASH, capabilities={}, owner=owner,
         workspace=workspace,
     )
     listed_ids = [

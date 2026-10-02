@@ -387,7 +387,7 @@ def test_nothing_probes_on_a_clock():
     # on demand now (Test connection). Every probe mints a real grant and calls
     # a real host, so nothing may start one that a person did not ask for.
     with mock.patch.object(live_probe, "probe_and_record") as probe:
-        sessions_reported.send(sender=None, runner=mock.Mock(paired_by_id=None))
+        sessions_reported.send(sender=None, runner=mock.Mock(owner_id=None))
     assert not probe.called
     assert not hasattr(live_probe, "sweep")
 

@@ -124,8 +124,8 @@ def test_it_sees_only_its_own_agents_turns(world):
 
 
 def test_it_sees_only_the_runners_serving_its_agents(world):
-    mine = Runner.objects.create(name="ace-box", kind=Runner.EMDASH, paired_by=world["me"])
-    theirs = Runner.objects.create(name="eva-box", kind=Runner.EMDASH, paired_by=world["me"])
+    mine = Runner.objects.create(name="ace-box", kind=Runner.EMDASH, owner=world["me"])
+    theirs = Runner.objects.create(name="eva-box", kind=Runner.EMDASH, owner=world["me"])
     RunnerAssignment.objects.create(agent=world["ace"], runner=mine, rank=0)
     RunnerAssignment.objects.create(agent=world["eva"], runner=theirs, rank=0)
 

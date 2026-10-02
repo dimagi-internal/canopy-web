@@ -24,7 +24,7 @@ def _ctx():
     c.force_login(user)
     runner = Runner.objects.create(
         name="jj-air", workspace=ws, location=Runner.LOCAL, status=Runner.ONLINE,
-        last_heartbeat_at=timezone.now(), paired_by=user,
+        last_heartbeat_at=timezone.now(), owner=user,
     )
     return user, ws, c, runner
 

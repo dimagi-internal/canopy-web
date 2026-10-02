@@ -59,7 +59,7 @@ def record_events(request: HttpRequest, payload: EventBatchIn) -> dict:
     # The fleet log is read by owners deciding what is broken, so writing to it
     # is the author tier. A viewer could otherwise forge "runner.credential"
     # alarms, or bump a real event's count and summary through coalescing. The
-    # producers that matter are runners, which post with their PAIRER's token,
+    # producers that matter are runners, which post with their OWNER's token,
     # and pairing an agent's box already needs more than viewer.
     if not perms.can(request.user, home, perms.EVENTS_WRITE):
         raise HttpError(403, "recording events requires the editor role in this workspace")

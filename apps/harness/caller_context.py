@@ -89,12 +89,12 @@ def _relationship_without_agent(turn, user) -> str:
     message, that they did not hold the agent's authority and must not push or
     deploy (2026-09-27, on Jonathan's own canopy-web session).
 
-    OWNER: the human who paired the runner doing the work (it is their box and
+    OWNER: the runner's owner doing the work (it is their box and
     their Claude login), or the session's owner by the session ACL. MEMBER:
     anyone else the session ACL lets write. Everyone else stays a CALLER.
     """
     runner = getattr(turn, "claimed_by", None)
-    if runner is not None and getattr(runner, "paired_by_id", None) == user.pk:
+    if runner is not None and getattr(runner, "owner_id", None) == user.pk:
         return OWNER
     # An agent's OWN login (`Agent.user`, #983) working on a box its OWNER paired is
     # that agent acting where its owner's authority already runs — the dispatch shape
@@ -104,8 +104,8 @@ def _relationship_without_agent(turn, user) -> str:
     # `relationship_for_user` gives the agent's own login; still only its own, and
     # only on its owner's box — anywhere else it stays a CALLER.
     agent_self = getattr(user, "agent_identity", None)
-    paired_by = getattr(runner, "paired_by_id", None) if runner is not None else None
-    if agent_self is not None and paired_by is not None and agent_self.owner_id == paired_by:
+    owner = getattr(runner, "owner_id", None) if runner is not None else None
+    if agent_self is not None and owner is not None and agent_self.owner_id == owner:
         return SYSTEM
     session = getattr(turn, "chat_session", None)
     if session is None:

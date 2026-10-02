@@ -29,9 +29,9 @@ def _ws(slug, owner):
     return ws
 
 
-def _runner(pairer, **kw):
+def _runner(runner_owner, **kw):
     defaults = dict(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=pairer,
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=runner_owner,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         capabilities={"projects": ["canopy-web"]},
     )
@@ -39,8 +39,8 @@ def _runner(pairer, **kw):
     return Runner.objects.create(**defaults)
 
 
-def _session_runner(pairer, **kw):
-    return _runner(pairer, name="cloud-1", kind=Runner.CLOUD, host="",
+def _session_runner(runner_owner, **kw):
+    return _runner(runner_owner, name="cloud-1", kind=Runner.CLOUD, host="",
                    capabilities={"sessions": True}, **kw)
 
 

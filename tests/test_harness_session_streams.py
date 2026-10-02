@@ -14,7 +14,7 @@ def _ctx():
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
-                                   status=Runner.ONLINE, paired_by=user)
+                                   status=Runner.ONLINE, owner=user)
     c = Client(); c.force_login(user)
     return user, ws, runner, c
 
@@ -86,7 +86,7 @@ def test_session_stream_rejects_unbound_runner():
     user, ws, runner, c = _ctx()
     s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="a")
     # binding belongs to a DIFFERENT runner
-    other = Runner.objects.create(name="other", workspace=ws, location=Runner.LOCAL, paired_by=user)
+    other = Runner.objects.create(name="other", workspace=ws, location=Runner.LOCAL, owner=user)
     RunnerBinding.objects.create(session=s, runner=other, session_key="echo-1")
     resp = c.post(
         f"/api/harness/runners/{runner.id}/session-stream",

@@ -148,7 +148,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
     """A runner's persistent control channel (RC1).
 
     PAT-authed via the handshake (channels_auth sets scope["user"]); the runner may
-    connect only to a runner it owns (paired_by == user, or null — legacy-ungated,
+    connect only to a runner it owns (owner == user, or null — legacy-ungated,
     matching the REST _runner_visibility_q). Joins the per-runner group + its
     workspaces' runnable groups, so:
       - server → runner: a `wake` frame when a turn becomes claimable (enqueue
@@ -319,15 +319,15 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         return (
             Runner.objects.exclude(status=Runner.RETIRED)
             .filter(pk=rid)
-            .filter(Q(paired_by=user) | Q(paired_by__isnull=True))
+            .filter(Q(owner=user) | Q(owner__isnull=True))
             .first()
         )
 
     @database_sync_to_async
     def _runner_workspaces(self, runner):
-        if not runner.paired_by_id:
+        if not runner.owner_id:
             return []
-        return sorted(user_workspace_slugs(runner.paired_by))
+        return sorted(user_workspace_slugs(runner.owner))
 
     @database_sync_to_async
     def _claim(self):

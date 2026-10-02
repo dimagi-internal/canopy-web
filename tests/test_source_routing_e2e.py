@@ -29,11 +29,11 @@ def fleet(client):
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
     now = timezone.now()
     laptop = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=now, capabilities={},
     )
     cloud = Runner.objects.create(
-        name="cloud-1", kind=Runner.CLOUD, paired_by=jj, status=Runner.ONLINE,
+        name="cloud-1", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=now, capabilities={"sessions": True},
     )
     for agent in (ace, echo):
@@ -193,7 +193,7 @@ def test_a_strict_operator_rule_survives_one_of_the_two_accounts_being_down(flee
     logged-out one would park roughly half the time. Naming both is the fix, and
     this is the assertion that proves a one-runner rule could not have done it."""
     acedimagi = Runner.objects.create(
-        name="acedimagi-mbp", kind=Runner.EMDASH, paired_by=fleet["laptop"].paired_by,
+        name="acedimagi-mbp", kind=Runner.EMDASH, owner=fleet["laptop"].owner,
         status=Runner.DISCONNECTED, last_heartbeat_at=timezone.now() - dt.timedelta(hours=2),
         capabilities={},
     )
@@ -277,7 +277,7 @@ def test_claim_and_unclaimable_agree_per_actor(fleet):
     # `kind` is the classification the UI branches on; `reason` is its prose.
     reported = {
         r["turn_id"]: r["kind"]
-        for r in services.unclaimable_queued_turns(fleet["laptop"].paired_by)
+        for r in services.unclaimable_queued_turns(fleet["laptop"].owner)
     }
     assert reported.get(str(parked.id)) == "offline"
 

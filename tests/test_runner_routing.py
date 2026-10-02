@@ -39,7 +39,7 @@ def _user(name=None):
     user = User.objects.create_user(username=name, email=f"{name}@dimagi.com")
     # A member of the default workspace, which is where _agent() homes agents
     # that name no tenant of their own. A runner's tenant is the workspaces of
-    # its pairer (services.runner_tenant_slugs), so a pairer who belongs
+    # its owner (services.runner_tenant_slugs), so a owner who belongs
     # nowhere can claim nothing — the cascade tests below would all read as
     # "correctly refused" for entirely the wrong reason.
     wsvc.ensure_member(a_workspace(), user)
@@ -52,9 +52,9 @@ def _ws(slug, owner):
     return ws
 
 
-def _runner(name, pairer, **kw):
+def _runner(name, runner_owner, **kw):
     defaults = dict(
-        name=name, kind=Runner.EMDASH, host=name, paired_by=pairer,
+        name=name, kind=Runner.EMDASH, host=name, owner=runner_owner,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(), capabilities={},
     )
     defaults.update(kw)
@@ -101,7 +101,7 @@ def test_pinned_turn_invisible_to_other_runners():
 
 
 def test_pin_bypasses_assignments_but_not_tenancy():
-    """The security-critical case: a runner paired by a non-member of the
+    """The security-critical case: a runner owned by a non-member of the
     agent's workspace must NOT be able to claim a pinned turn just because it
     is the pin target. Tenancy gates before the pin ever gets a look."""
     owner = _user("owner")
@@ -137,7 +137,7 @@ def test_rank0_available_blocks_rank1():
 
 def test_rank1_takes_over_when_rank0_offline():
     u = _user()
-    r0 = Runner.objects.create(name="r0", kind=Runner.EMDASH, capabilities={}, paired_by=u)  # never heartbeat
+    r0 = Runner.objects.create(name="r0", kind=Runner.EMDASH, capabilities={}, owner=u)  # never heartbeat
     r1 = _online_runner("r1", u)
     a = _agent("echo")
     _assign(a, r0, 0); _assign(a, r1, 1)
@@ -230,7 +230,7 @@ def test_bound_session_with_offline_holder_waits_for_placement():
     u = _user()
     ws = _ws("w1", u)
     holder = Runner.objects.create(name="gone", kind=Runner.EMDASH,
-                                   capabilities={"sessions": True}, paired_by=u)
+                                   capabilities={"sessions": True}, owner=u)
     other = _online_runner("other", u, capabilities={"sessions": True})
     s = _session(workspace=ws, project="canopy-web")
     _bind(s, holder)
@@ -242,7 +242,7 @@ def test_unbound_agent_session_follows_assignment_order():
     u = _user()
     ws = _ws("w1", u)
     a = _agent("echo", workspace=ws)
-    r0 = Runner.objects.create(name="r0", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=u)
+    r0 = Runner.objects.create(name="r0", kind=Runner.EMDASH, capabilities={"sessions": True}, owner=u)
     r1 = _online_runner("r1", u, capabilities={"sessions": True})
     _assign(a, r0, 0); _assign(a, r1, 1)
     s = _session(agent=a, workspace=ws)

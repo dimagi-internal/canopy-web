@@ -1101,7 +1101,7 @@ def _placeable_runner(session: Session, runner_id):
         return None
     # A chat WITH an agent runs as that agent on the box it lands on, so the box
     # must be one that may hold the agent (agents.services.runner_may_hold_agent:
-    # its pairer is the agent's admin, or the agent's own login) — the rule
+    # its owner is the agent's admin, or the agent's own login) — the rule
     # claiming, credential resolve and every routing write already apply. A
     # transfer approved by a box's admin could otherwise move an agent's
     # conversation onto a box nobody trusted with the agent.
@@ -1129,8 +1129,8 @@ def _placement_refused(session: Session, runner_id, default: str) -> ValueError:
 
 def _eligible_runner(session: Session, runner_id):
     """A runner may be a placement target only if it could actually CLAIM this
-    session's turns — its pairer belongs to the session's workspace (mirrors
-    claim_next_turn's tenant derivation from paired_by; a foreign or orphaned
+    session's turns — its owner belongs to the session's workspace (mirrors
+    claim_next_turn's tenant derivation from owner; a foreign or orphaned
     runner would leave the pinned turn permanently unclaimable) AND it is
     session-capable (capabilities.sessions — the runner-side truth for who
     may execute a chat turn; a pin can't override that). Invisible ids
@@ -1147,7 +1147,7 @@ def _eligible_runner(session: Session, runner_id):
     except (ValueError, AttributeError, TypeError):
         return None
     runner = (
-        Runner.objects.filter(id=runner_id, paired_by__isnull=False)
+        Runner.objects.filter(id=runner_id, owner__isnull=False)
         .exclude(status=Runner.RETIRED)
         .first()
     )
@@ -1155,7 +1155,7 @@ def _eligible_runner(session: Session, runner_id):
         return None
     if not runner.session_capable():
         return None
-    if not wsvc.is_member(runner.paired_by, session.workspace_id):
+    if not wsvc.is_member(runner.owner, session.workspace_id):
         return None
     return runner
 
@@ -1663,7 +1663,7 @@ def available_cloud_runner(session: Session):
     answer is never a box that would leave the turn pinned and unclaimable."""
     from apps.harness.models import Runner
 
-    for runner in (Runner.objects.filter(kind=Runner.CLOUD, paired_by__isnull=False)
+    for runner in (Runner.objects.filter(kind=Runner.CLOUD, owner__isnull=False)
                    .exclude(status=Runner.RETIRED).order_by("name")):
         if runner.live_status != Runner.ONLINE:
             continue

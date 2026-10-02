@@ -31,11 +31,11 @@ def _runner(agent=None, **kw):
     """agent: when given, this runner is assigned rank 0 for that agent —
     agent turns route by RunnerAssignment now (spec 2026-07-24), not
     capabilities, so tests that need a claim to succeed must assign."""
-    # paired_by is REQUIRED for a claim: a runner's tenant is the workspaces of
+    # owner is REQUIRED for a claim: a runner's tenant is the workspaces of
     # the human who paired it, and NULL fails closed (services.runner_tenant_slugs).
     defaults = dict(
         name="jj-mbp", kind=Runner.EMDASH, capabilities={"agents": ["echo"]},
-        paired_by=a_member(),
+        owner=a_member(),
     )
     defaults.update(kw)
     r = Runner.objects.create(**defaults)

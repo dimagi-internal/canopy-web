@@ -7,7 +7,7 @@ box the session lands on. With every runner belonging to one operator that didn'
 matter; once a colleague runs an agent on their own laptop (2026-10-02) it does —
 a transfer spends their machine and Claude subscription. So a move onto a box the
 requester does not administer becomes a REQUEST, and the box's administrator
-(`can_administer_runner`: its pairer, or someone they granted) approves it. A move
+(`can_administer_runner`: its owner, or someone they granted) approves it. A move
 between two boxes of the SAME owner never asks.
 
 There is ONE way in: `POST /{id}/transfer` calls `request()`, which either moves
@@ -53,8 +53,8 @@ def resolve_runner(value: str) -> Runner | None:
 
 
 def approvers(runner: Runner) -> list:
-    """Everyone who may say yes for this box: its pairer and its admin grantees."""
-    users = [runner.paired_by] if runner.paired_by_id else []
+    """Everyone who may say yes for this box: its owner and its admin grantees."""
+    users = [runner.owner] if runner.owner_id else []
     users += [a.user for a in RunnerAdmin.objects.filter(runner=runner).select_related("user")]
     return list({u.pk: u for u in users}.values())
 
@@ -109,8 +109,8 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
     # move stays inside one owner's boxes (two macOS accounts of the same person —
     # ada's user-switch): the machine and subscription spent are the same owner's.
     same_owner = (binding.runner_id is not None
-                  and binding.runner.paired_by_id is not None
-                  and binding.runner.paired_by_id == target.paired_by_id)
+                  and binding.runner.owner_id is not None
+                  and binding.runner.owner_id == target.owner_id)
     if same_owner or harness_services.can_administer_runner(user, target):
         binding_after, turn = services.transfer_session(
             session=session, placement=str(target.id), brief=brief, user=user,
@@ -141,7 +141,7 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
 def visible_to(user):
     """Requests this person can see: ones they asked for, and ones waiting on a
     box they administer."""
-    administered = Q(to_runner__paired_by=user) | Q(to_runner__admins__user=user)
+    administered = Q(to_runner__owner=user) | Q(to_runner__admins__user=user)
     return (TransferRequest.objects.filter(Q(requested_by=user) | administered)
             .select_related("session", "session__agent", "to_runner", "from_runner",
                             "requested_by", "decided_by")

@@ -58,7 +58,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     code_sha: '',
     expected_code_sha: '',
     workspace: 'dimagi',
-    paired_by_email: 'jjackson@dimagi.com',
+    owner_email: 'jjackson@dimagi.com',
     can_manage: true,
     can_administer: true,
     flags: [],
@@ -124,7 +124,7 @@ describe('RunnerDetail', () => {
     expect(note.textContent).toContain('jjackson@dimagi.com')
   })
 
-  it('tells an admin who is not the pairer that they may declare the box ZDR', () => {
+  it('tells an admin who is not the owner that they may declare the box ZDR', () => {
     render(<RunnerDetail runner={runner({ can_manage: false, can_administer: true })} agents={agents} onBack={() => {}} />)
     const note = screen.getByTestId('runner-detail-readonly')
     expect(note.textContent).toMatch(/declare what it runs with/)
@@ -197,7 +197,7 @@ describe('RunnerDetail — pause', () => {
 })
 
 describe('RunnerDetail — Slack & chat sessions', () => {
-  it('lets the pairer turn sessions on and re-renders from the server row', async () => {
+  it('lets the owner turn sessions on and re-renders from the server row', async () => {
     const on = runner({ capabilities: { agents: ['hal'], sessions: true } })
     setRunnerSessions.mockResolvedValue(on)
     const onChanged = vi.fn()

@@ -38,7 +38,7 @@ def _seed(*, with_tail: bool, with_rows: bool):
             Message.objects.create(session=session, turn_index=i, role=role, plaintext=text)
     if with_tail:
         r = Runner.objects.create(
-            name="jj-mbp", workspace=ws, location=Runner.LOCAL, paired_by=owner,
+            name="jj-mbp", workspace=ws, location=Runner.LOCAL, owner=owner,
             host="jj@mbp", status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         )
         RunnerBinding.objects.create(

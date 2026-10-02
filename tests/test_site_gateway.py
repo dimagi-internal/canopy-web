@@ -412,7 +412,7 @@ def _zdr_turn(w, *, flags=(), runner=True):
     w["session"].save()
     if runner:
         r = Runner.objects.create(name="box", workspace=w["ws"], kind=Runner.CLOUD,
-                                  status=Runner.ONLINE, paired_by=w["owner"], host="box")
+                                  status=Runner.ONLINE, owner=w["owner"], host="box")
         for f in flags:
             RunnerFlag.objects.create(runner=r, flag=f, declared_by=w["owner"])
         Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=r)
@@ -448,7 +448,7 @@ def _runner(w, *, flags=()):
     from apps.harness.models import Runner, RunnerFlag
 
     r = Runner.objects.create(name="box", workspace=w["ws"], kind=Runner.CLOUD,
-                              status=Runner.ONLINE, paired_by=w["owner"], host="box")
+                              status=Runner.ONLINE, owner=w["owner"], host="box")
     for f in flags:
         RunnerFlag.objects.create(runner=r, flag=f, declared_by=w["owner"])
     Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=r)

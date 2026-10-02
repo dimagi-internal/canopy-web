@@ -214,7 +214,7 @@ def _binding_with_tail(session, tail):
 
     runner = Runner.objects.create(
         name="jj-mbp", workspace=session.workspace, location=Runner.LOCAL,
-        paired_by=session.workspace.created_by, host="jj@mbp", status=Runner.ONLINE,
+        owner=session.workspace.created_by, host="jj@mbp", status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
     return RunnerBinding.objects.create(

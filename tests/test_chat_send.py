@@ -128,9 +128,9 @@ def test_maybe_execute_inline_runs_stub_when_enabled(settings):
 # --- Task 9: directed session placement -----------------------------------
 
 
-def _runner(name: str, *, paired_by) -> Runner:
+def _runner(name: str, *, owner) -> Runner:
     return Runner.objects.create(
-        name=name, kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=paired_by,
+        name=name, kind=Runner.EMDASH, capabilities={"sessions": True}, owner=owner,
     )
 
 
@@ -140,7 +140,7 @@ def test_directed_new_chat_pins_first_turn():
     user = User.objects.create_user("o", "o@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-directed", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
-    r2 = _runner("r2", paired_by=user)
+    r2 = _runner("r2", owner=user)
     session = Session.objects.create(
         workspace=ws, project="canopy-web", metadata={"requested_runner_id": str(r2.id)},
     )
@@ -154,7 +154,7 @@ def test_send_placement_wait_pins_to_bound_runner():
     # rather than let it drift to whoever else is available.
     user = User.objects.create_user("o2", "o2@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-wait", display_name="W", created_by=user)
-    r1 = _runner("r1", paired_by=user)  # offline: default Runner.status is DISCONNECTED
+    r1 = _runner("r1", owner=user)  # offline: default Runner.status is DISCONNECTED
     session = Session.objects.create(workspace=ws, project="canopy-web")
     RunnerBinding.objects.create(session=session, runner=r1, thread_key=str(session.id))
     _msg, turn = chat.send_message(
@@ -169,8 +169,8 @@ def test_place_repins_queued_turn():
     user = User.objects.create_user("o3", "o3@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-place", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
-    r1 = _runner("r1", paired_by=user)
-    r2 = _runner("r2", paired_by=user)
+    r1 = _runner("r1", owner=user)
+    r2 = _runner("r2", owner=user)
     session = Session.objects.create(workspace=ws, project="canopy-web")
     RunnerBinding.objects.create(session=session, runner=r1, thread_key=str(session.id))
     _msg, turn = chat.send_message(session=session, text="hi", user=user, client_id="c3")
@@ -216,15 +216,15 @@ def test_send_placement_unknown_runner_raises_value_error():
 
 
 def test_send_placement_foreign_tenant_runner_raises_value_error():
-    # A runner paired by a user who is NOT a member of the session's workspace
+    # A runner owned by a user who is NOT a member of the session's workspace
     # is not a valid placement target — it could never claim the turn it would
-    # be pinned to (claim_next_turn's tenant_q derives from paired_by's
+    # be pinned to (claim_next_turn's tenant_q derives from owner's
     # memberships), so this must 422 like an unknown id, not orphan the turn.
     user = User.objects.create_user("o8", "o8@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-send-foreign", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
     outsider = User.objects.create_user("outsider", "outsider@dimagi.com", "pw")
-    foreign_runner = _runner("foreign", paired_by=outsider)  # not a member of `ws`
+    foreign_runner = _runner("foreign", owner=outsider)  # not a member of `ws`
     session = Session.objects.create(workspace=ws, project="canopy-web")
 
     with pytest.raises(ValueError):
@@ -267,7 +267,7 @@ def test_send_placement_sessions_incapable_runner_raises_value_error():
     ws = Workspace.objects.create(slug="w-send-incapable", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
     incapable = Runner.objects.create(
-        name="incapable", kind=Runner.EMDASH, capabilities={}, paired_by=user,
+        name="incapable", kind=Runner.EMDASH, capabilities={}, owner=user,
     )
     session = Session.objects.create(workspace=ws, project="canopy-web")
     with pytest.raises(ValueError):
@@ -280,13 +280,13 @@ def test_send_placement_sessions_incapable_runner_raises_value_error():
 
 def test_place_queued_turn_foreign_tenant_runner_raises_value_error():
     # Same gap, after-the-fact: place_queued_turn must reject a runner whose
-    # pairer isn't a member of the session's workspace, and must leave the
+    # owner isn't a member of the session's workspace, and must leave the
     # turn's existing pin untouched.
     user = User.objects.create_user("o9", "o9@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="w-place-foreign", display_name="W", created_by=user)
     WorkspaceMembership.objects.create(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
     outsider = User.objects.create_user("outsider2", "outsider2@dimagi.com", "pw")
-    foreign_runner = _runner("foreign2", paired_by=outsider)  # not a member of `ws`
+    foreign_runner = _runner("foreign2", owner=outsider)  # not a member of `ws`
 
     session = Session.objects.create(workspace=ws, project="canopy-web")
     _msg, turn = chat.send_message(session=session, text="hi", user=user, client_id="c9")

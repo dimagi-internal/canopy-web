@@ -47,7 +47,7 @@ def _world():
     _member(mate, ws)
     _member(viewer, ws)
     agent = Agent.objects.create(slug="hal", name="Hal", owner=owner, workspace=ws)
-    runner = Runner.objects.create(name="r", kind=Runner.EMDASH, host="h", paired_by=owner,
+    runner = Runner.objects.create(name="r", kind=Runner.EMDASH, host="h", owner=owner,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now())
 
     def bound(session, key):

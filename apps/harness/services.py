@@ -759,15 +759,15 @@ def runner_tenant_slugs(runner: Runner) -> set[str]:
     One definition, called by every runner-scoped predicate, because this rule
     diverging across call sites is a production outage and not a nicety: claim
     routing once scoped to the FK while `_runner_schedule_qs` derived from
-    `paired_by`, so a runner could SEE and FIRE a schedule whose turn it could
+    `owner`, so a runner could SEE and FIRE a schedule whose turn it could
     never CLAIM. One laptop runner deliberately serves a fleet spanning
     workspaces, so that stopped 4 of 5 production agents from executing at all
     and their turns sat QUEUED forever (2026-07-25).
 
-    The FK records where a runner LIVES; `paired_by` records who it may work
-    FOR. `paired_by` is server-assigned from `request.user` at pairing, so
+    The FK records where a runner LIVES; `owner` records who it may work
+    FOR. `owner` is server-assigned from `request.user` at pairing, so
     unlike the caller-supplied `capabilities` hint it is not attacker-
-    controlled. A NULL `paired_by` fails closed (empty set → `__in=set()`
+    controlled. A NULL `owner` fails closed (empty set → `__in=set()`
     matches nothing): an orphaned runner has no identity to derive a tenant
     from, and inferring one from the FK would be an escalation.
 
@@ -776,11 +776,11 @@ def runner_tenant_slugs(runner: Runner) -> set[str]:
     serves nothing there — before 2026-10-02 a viewer could pair a session-
     capable box and receive the workspace's unbound chat sends.
     """
-    if not runner.paired_by_id:
+    if not runner.owner_id:
         return set()
     from apps.workspaces import permissions as perms
 
-    return perms.slugs_with(runner.paired_by, perms.AGENT_WORK)
+    return perms.slugs_with(runner.owner, perms.AGENT_WORK)
 
 
 def agent_tenant_q(ws_slugs, *, prefix: str = "agent") -> Q:
@@ -980,7 +980,7 @@ def turn_reach(turn: Turn) -> Reach:
     else:
         ws = turn.workspace_id
     runners = [
-        r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("paired_by")
+        r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("owner")
         .prefetch_related("declared_flags").order_by("name")
         if ws in runner_tenant_slugs(r)
     ]
@@ -1063,15 +1063,15 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         return []
     # Candidate runners for "could ANY runner take this?" are the runners VISIBLE
     # in the caller's tenant, not merely the ones the caller personally paired.
-    # Scoping to `paired_by=user` made every stuck turn read as `config` for
+    # Scoping to `owner=user` made every stuck turn read as `config` for
     # anyone who didn't pair a runner themselves (a delegated identity, or a
     # teammate in a workspace someone else's runner serves) — the workspace's
     # runner could be sitting right there, offline, and the diagnosis would still
     # say "no runner is assigned; fix your routing." Use the SAME tenancy rule as
-    # claim_next_turn (`runner_tenant_slugs`, paired_by-derived, NULL-fails-closed)
+    # claim_next_turn (`runner_tenant_slugs`, owner-derived, NULL-fails-closed)
     # so this warning can't disagree with what claiming actually does.
     runners = [
-        r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("paired_by")
+        r for r in Runner.objects.exclude(status=Runner.RETIRED).select_related("owner")
         .prefetch_related("declared_flags")
         if runner_tenant_slugs(r) & ws_slugs
     ]
@@ -1198,11 +1198,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # comments agreeing with each other; tests/test_claim_schedule_parity.py
     # pins the behaviour end to end.
     #
-    # The b4f5ead exploit stays closed: paired_by is server-assigned from
+    # The b4f5ead exploit stays closed: owner is server-assigned from
     # request.user at pairing, so unlike capabilities it is not attacker-
     # controlled. An outsider pairing a runner that declares a victim's agent
     # slug gets only THEIR OWN workspaces, so the victim's agent stays
-    # unclaimable. Conversely a runner paired by someone who is a member of a
+    # unclaimable. Conversely a runner owned by someone who is a member of a
     # workspace may claim its agents' turns — that human can already drive those
     # agents through the UI, so there is no escalation.
     ws_slugs = runner_tenant_slugs(runner)
@@ -1276,7 +1276,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         if not rr.satisfies(my_flags, rr.requirements_of(turn)):
             continue
         # An agent turn runs AS the agent: its prompt, its caller's token, its
-        # owner's GitHub identity. Only a box whose pairer is one of the agent's
+        # owner's GitHub identity. Only a box whose owner is one of the agent's
         # admins may take one — also above the pin, since pinning is open to the
         # editor tier and must not be a way to direct an agent at your own box.
         if turn.agent_id:
@@ -2315,7 +2315,7 @@ def record_session(
     """Upsert the thread's durable Session + RunnerBinding and re-point the live-session
     hint at THIS runner/host. Only overwrites agent_task_ext_id/summary when passed,
     preserving accumulated context. The API caller has already gated the runner's
-    pairer against `workspace` — this stores, it does not authorize."""
+    owner against `workspace` — this stores, it does not authorize."""
     from apps.canopy_sessions.models import RunnerBinding
 
     with transaction.atomic():
@@ -3077,7 +3077,7 @@ def can_administer_runner(user, runner) -> bool:
     """May this person change what this box RUNS ON — its credentials, its
     sign-in — as opposed to speaking as it?
 
-    The pairer always can: they own the credential the box authenticates with,
+    The owner always can: they own the credential the box authenticates with,
     so withholding administration from them would be theatre. Anyone else needs
     an explicit grant, because the alternatives are a workspace with one owner
     (too narrow — that IS the single point of failure) or every auto-joined
@@ -3087,12 +3087,12 @@ def can_administer_runner(user, runner) -> bool:
 
     if not getattr(user, "is_authenticated", False):
         return False
-    # A runner with NO pairer is administered by nobody — it used to be
+    # A runner with NO owner is administered by nobody — it used to be
     # administered by everyone, a NULL-means-allow leg like the six this repo
     # has already removed elsewhere.
-    if runner.paired_by_id is None:
+    if runner.owner_id is None:
         return False
-    if runner.paired_by_id == user.id:
+    if runner.owner_id == user.id:
         return True
     if not getattr(user, "is_authenticated", False):
         return False
@@ -3110,7 +3110,7 @@ def grant_runner_admin(runner, user, *, granted_by=None):
 
 
 def revoke_runner_admin(runner, user) -> bool:
-    """True when a grant was actually removed. The pairer is not stored as a
+    """True when a grant was actually removed. The owner is not stored as a
     grant, so this can never revoke them — losing the last administrator of a box
     is not a state this should be able to produce."""
     from .models import RunnerAdmin
@@ -3433,7 +3433,7 @@ def drill_report_token_ok(drill: RunnerDrill, token: str) -> bool:
 
 def _drill_initiator(runner):
     from . import initiator as who
-    return who.system(via="drill", accountable=runner.paired_by)
+    return who.system(via="drill", accountable=runner.owner)
 
 
 def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
@@ -3461,7 +3461,7 @@ def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
             prompt=DRILL_PROMPT.format(agent_slug=agent.slug, report_url=report_url,
                                        github_check=_drill_github_check(agent)),
             pinned_runner=runner,
-            # A readiness drill is canopy checking a box; the runner's pairer is
+            # A readiness drill is canopy checking a box; the runner's owner is
             # the person it is being run for.
             initiator=_drill_initiator(runner),
         )

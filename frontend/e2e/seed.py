@@ -88,7 +88,7 @@ from apps.harness.models import Runner
 from apps.canopy_sessions.models import Session as CanopySession, RunnerBinding, SessionParticipant
 from django.utils import timezone as _tz
 _runner = Runner.objects.create(
-    name="e2e-mbp", kind=Runner.EMDASH, host="e2e-host", paired_by=user, workspace=ws,
+    name="e2e-mbp", kind=Runner.EMDASH, host="e2e-host", owner=user, workspace=ws,
     status=Runner.ONLINE, last_heartbeat_at=_tz.now(), capabilities={"projects": ["canopy-web"]},
     ready=False, ready_note="emdash CDP unreachable",
 )

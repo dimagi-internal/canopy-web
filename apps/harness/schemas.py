@@ -51,7 +51,7 @@ class RunnerIn(Schema):
     kind: str  # emdash|cloud|remote
     capabilities: dict = {}
     host: str = ""  # macOS user@hostname — load-bearing for session reuse across accounts
-    workspace: str = ""  # tenant slug; defaults to the pairer's default workspace
+    workspace: str = ""  # tenant slug; defaults to the owner's default workspace
 
 
 class UnclaimableTurnOut(Schema):
@@ -142,13 +142,19 @@ class RunnerOut(Schema):
     expected_code_committed_at: int
 
     workspace: str | None
-    # The human who paired the runner. This — NOT `workspace` — is what governs
+    # The runner's OWNER — the human whose token it authenticates with. This — NOT `workspace` — is what governs
     # what the runner may WORK FOR (claim_next_turn derives the tenant from the
-    # pairer's workspace memberships, so a runner serves agents across every
-    # workspace its pairer belongs to). `workspace` is only the home/visibility
+    # owner's workspace memberships, so a runner serves agents across every
+    # workspace its owner belongs to). `workspace` is only the home/visibility
     # tenant. Surfaced so the supervisor can show the meaningful owner instead of
     # implying a single-workspace serving scope.
-    paired_by_email: str | None
+    owner_email: str | None
+    # DEPRECATED compat alias of `owner_email` (the field was `paired_by_email`
+    # until 2026-10-02). Runners and the canopy CLI update independently of this
+    # server, so ones installed before the rename still read this key. Remove once
+    # every runner reports a code_sha at/after the rename and canopy >= the release
+    # that reads `owner_email` is the floor (target: 2026-10-16).
+    paired_by_email: str | None = None
     # Whether THIS caller may mutate the runner (declare capabilities, retire,
     # heartbeat/claim as it) — a property of the (caller, runner) pair, so
     # list_runners stamps it on each row; a Ninja resolver only sees the row.
@@ -253,8 +259,12 @@ class RunnerOut(Schema):
         return obj.workspace_id
 
     @staticmethod
+    def resolve_owner_email(obj) -> str | None:
+        return obj.owner.email if obj.owner_id else None
+
+    @staticmethod
     def resolve_paired_by_email(obj) -> str | None:
-        return obj.paired_by.email if obj.paired_by_id else None
+        return obj.owner.email if obj.owner_id else None
 
     @staticmethod
     def resolve_status(obj) -> str:
@@ -326,7 +336,7 @@ class HeartbeatIn(Schema):
 class ResolveSessionIn(Schema):
     agent_slug: str = ""
     project: str = ""  # set instead of agent_slug for a repo session
-    workspace: str = ""  # required with project: the turn's tenant (gates the pairer)
+    workspace: str = ""  # required with project: the turn's tenant (gates the owner)
     thread_key: str
 
 
@@ -366,7 +376,7 @@ class ResolveSessionOut(Schema):
 class RecordSessionIn(Schema):
     agent_slug: str = ""
     project: str = ""  # set instead of agent_slug for a repo session
-    workspace: str = ""  # required with project: the turn's tenant (gates the pairer)
+    workspace: str = ""  # required with project: the turn's tenant (gates the owner)
     thread_key: str
     session_key: str = ""
     session_id: str = ""
@@ -509,7 +519,7 @@ class TurnOut(Schema):
     project: str
     target: str
     # The tenant the runner must pass back to record/resolve a PROJECT session
-    # link (the pairer may belong to several workspaces; the turn knows its own).
+    # link (the owner may belong to several workspaces; the turn knows its own).
     # Derived: agent turns report their agent's workspace, project turns their own.
     workspace_slug: str | None
     origin: str

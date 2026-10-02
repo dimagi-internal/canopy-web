@@ -131,7 +131,7 @@ def test_a_runner_backed_session_keeps_the_emdash_task_name():
     WorkspaceMembership.objects.create(user=user, workspace=ws,
                                        role=WorkspaceMembership.OWNER)
     runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
-                                   paired_by=user)
+                                   owner=user)
     session = Session.objects.create(workspace=ws, created_by=user, title="")
     RunnerBinding.objects.create(session=session, runner=runner,
                                  session_key="canopy-web-api-7716")

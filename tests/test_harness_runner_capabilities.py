@@ -32,9 +32,9 @@ def _ws(slug, owner):
     return ws
 
 
-def _runner(pairer, ws, **kw):
+def _runner(runner_owner, ws, **kw):
     return Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", paired_by=pairer, workspace=ws,
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=runner_owner, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         capabilities={"agents": ["echo"]}, **kw,
     )

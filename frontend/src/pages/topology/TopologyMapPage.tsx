@@ -836,7 +836,7 @@ function RunnerPanel({
         </span>
         <span className="text-[12px] text-muted-foreground">
           {runner.kind}
-          {runner.host ? ` · ${runner.host}` : ''} · lives in {runner.workspace ?? '—'} · paired by {runner.paired_by_email ?? '—'}
+          {runner.host ? ` · ${runner.host}` : ''} · lives in {runner.workspace ?? '—'} · owned by {runner.owner_email ?? '—'}
         </span>
       </div>
       <section className="flex flex-col gap-1">

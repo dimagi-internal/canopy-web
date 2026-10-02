@@ -93,7 +93,7 @@ def test_a_cancelled_turn_is_not_claimable(cli, canopy, jj):
     cli.post(f"/api/harness/turns/{turn.id}/cancel")
 
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={"projects": ["canopy-web"]},
     )
     assert services.claim_next_turn(runner) is None
@@ -138,7 +138,7 @@ def test_cancel_turn_signals_running_turn(canopy, jj, monkeypatch):
 
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={"agents": ["echo"]},
     )
     turn = Turn.objects.create(
@@ -193,7 +193,7 @@ def test_a_turn_that_completed_despite_a_cancel_stays_done_and_says_so(canopy, j
 
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
     turn = Turn.objects.create(
@@ -225,7 +225,7 @@ def test_a_completed_scheduled_turn_discharges_its_nag_even_after_a_cancel(canop
 
     agent = Agent.objects.create(slug="echo-nag", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
-        name="jj-mbp2", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp2", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
     turn = Turn.objects.create(
@@ -257,7 +257,7 @@ def test_a_drill_whose_stop_was_ignored_still_resolves(canopy, jj):
 
     agent = Agent.objects.create(slug="echo-drill-ignored", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
-        name="jj-mbp3", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp3", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
     [drill] = services.start_drill(runner, [agent])
@@ -283,7 +283,7 @@ def test_finish_turn_done_without_cancel_request_stays_done(canopy, jj):
 
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
     turn = Turn.objects.create(
@@ -308,7 +308,7 @@ def test_cancel_turn_race_guard_does_not_force_cancel_a_claimed_turn(canopy, jj,
 
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
     turn = Turn.objects.create(
@@ -342,7 +342,7 @@ def test_sweep_finishes_cancel_requested_drill_as_cancelled_not_stranded(canopy,
 
     agent = Agent.objects.create(slug="echo-drill-sweep", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
     [drill] = services.start_drill(runner, [agent])
@@ -375,7 +375,7 @@ def test_cancel_queued_drill_turn_resolves_runner_drill(canopy, jj):
 
     agent = Agent.objects.create(slug="echo-drill", name="Echo", workspace=canopy)
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, status=Runner.ONLINE,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(),
     )
     [drill] = services.start_drill(runner, [agent])

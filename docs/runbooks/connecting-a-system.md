@@ -185,7 +185,7 @@ JWKS path is live rather than merely configured.
 Some hosts must not have their visitors' conversations run on a box that uses
 retaining Claude keys. Two steps, one on each side:
 
-1. **The box's pairer or a runner admin declares the flag** on the box that qualifies:
+1. **The box's owner or a runner admin declares the flag** on the box that qualifies:
    `/supervisor` → Runners → the box → **Declared by the owner** → ZDR. canopy cannot
    verify it (it is an attestation, recorded with who made it), so declare it only for
    a box that uses zero-data-retention keys.

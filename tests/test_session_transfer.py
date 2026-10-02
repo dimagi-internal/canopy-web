@@ -35,11 +35,11 @@ def _ctx():
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     cloud = Runner.objects.create(
         name="cloud-ec2-1", workspace=ws, kind=Runner.CLOUD, status=Runner.ONLINE,
-        paired_by=user, host="cloud-ec2-1", capabilities=SESSION_CAPABLE,
+        owner=user, host="cloud-ec2-1", capabilities=SESSION_CAPABLE,
     )
     laptop = Runner.objects.create(
         name="jj-mbp-cdp", workspace=ws, location=Runner.LOCAL, status=Runner.ONLINE,
-        paired_by=user, host="jjackson@mbp", capabilities=SESSION_CAPABLE,
+        owner=user, host="jjackson@mbp", capabilities=SESSION_CAPABLE,
     )
     c = Client()
     c.force_login(user)
@@ -231,7 +231,7 @@ def test_transfer_refuses_an_unknown_or_non_session_capable_runner():
     user, ws, cloud, _laptop, _c = _ctx()
     s = _bound_session(ws, cloud)
     no_sessions = Runner.objects.create(
-        name="build-box", workspace=ws, status=Runner.ONLINE, paired_by=user,
+        name="build-box", workspace=ws, status=Runner.ONLINE, owner=user,
         capabilities={"projects": ["canopy-web"]},  # sessions: absent
     )
     with pytest.raises(ValueError):

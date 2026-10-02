@@ -48,7 +48,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
   grants).
 * ``session-acl`` — ``apps/canopy_sessions/access.py`` (read/write/share per chat).
 * ``turn-content`` — ``apps/harness/turn_access.can_read_turn_content``.
-* ``runner`` — the runner protocol: the human who paired the runner, or the box
+* ``runner`` — the runner protocol: the runner's owner, or the box
   that claimed the turn.
 * ``runner-admin`` — ``can_administer_runner``.
 * ``runner-holds-agent`` — ``services.caller_runs_agent`` /
@@ -147,12 +147,12 @@ GATES: dict[str, tuple[str, ...]] = {
     "record_gate": ("agent.work",),
     "record_verdict": ("agent.work",),
     "fork_run": ("agent.work",),
-    # --- apps/harness/api.py: runner registry (the runner protocol speaks AS the pairer)
+    # --- apps/harness/api.py: runner registry (the runner protocol speaks AS the owner)
     "pair_runner": ("member",),  # member of the explicit/default workspace; any role
     "set_runner_credential": ("runner-admin",),
     "swap_runner_logins": ("runner-admin",),
     "get_runner_credential_status": ("runner-admin",),
-    "get_runner_credential": ("runner",),  # plaintext to the pairer's token
+    "get_runner_credential": ("runner",),  # plaintext to the owner's token
     "turn_github_token": ("runner", "runner-holds-agent"),  # turn must be claimed by this box
     "runner_github_readiness": ("runner",),
     "start_runner_mint": ("runner-admin",),
@@ -162,7 +162,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "post_runner_mint_code": ("runner-admin",),
     "post_runner_mint_result": ("runner",),
     "list_runner_admins": ("runner-admin",),
-    "grant_runner_admin": ("runner",),  # pairer only (not RunnerAdmins)
+    "grant_runner_admin": ("runner",),  # owner only (not RunnerAdmins)
     "revoke_runner_admin": ("runner",),
     "set_runner_flags": ("runner-admin",),
     "list_runners": ("member",),  # _runner_read_q: the tenant's fleet
@@ -191,7 +191,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "harness_list_sessions": ("member", "session-acl"),
     "get_turn": ("member", "session-acl", "turn-content"),  # redacted unless turn-content
     "get_turn_caller_context": ("turn-content",),
-    "append_turn_events": ("runner", "agent.work", "session-acl"),  # claimed: pairer; unclaimed: agent.work / chat write
+    "append_turn_events": ("runner", "agent.work", "session-acl"),  # claimed: owner; unclaimed: agent.work / chat write
     "read_turn_messages": ("turn-content",),
     "read_turn_events": ("turn-content",),
     "append_turn_transcript": ("runner", "agent.work", "session-acl"),
@@ -204,7 +204,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "fire_schedule_route": ("runner",),
     "start_runner_drill": ("runner",),
     "list_runner_drills": ("runner-admin", "logs.read"),
-    "report_drill": ("signed-link", "runner"),  # ?t= link, the drilled agent's own login, or the pairer
+    "report_drill": ("signed-link", "runner"),  # ?t= link, the drilled agent's own login, or the owner
     # --- apps/harness/api_schedules.py
     "schedule_week": ("member",),
     "list_schedules": ("member",),
@@ -450,7 +450,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_shared_vault": ("own",),
     "set_shared_vault": ("own",),
     "get_runner_order": ("member",),
-    "set_runner_order": ("agent.work",),  # each runner's pairer must be a member (422 otherwise)
+    "set_runner_order": ("agent.work",),  # each runner's owner must be a member (422 otherwise)
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
 }
@@ -462,9 +462,9 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "post_command": "comment/accept/decline decide an item already on the board (interaction tier); reshaping kinds require agent.work",
     "check_agent_github": "re-probes the stored token against GitHub and records the result; grants and changes nothing",
     "delete_agent_github": "withdraws only the caller's OWN GitHub delegation",
-    "pair_runner": "pairing grants nothing by itself: a box serves only workspaces where its pairer holds agent.work (runner_tenant_slugs)",
-    "resolve_session": "runner protocol; the runner gate (pairer) is the real check, membership only scopes the agent",
-    "record_session": "runner protocol; the runner gate (pairer) is the real check, membership only scopes the agent",
+    "pair_runner": "pairing grants nothing by itself: a box serves only workspaces where its owner holds agent.work (runner_tenant_slugs)",
+    "resolve_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
+    "record_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "preview_cron": "POST but read-only: computes next fire times, writes nothing",
     "create_items": "raising a plain ask is interaction; an ask carrying `dispatch` needs agent.work",
     "decide_item": "deciding an ask is what the viewer (interaction) tier is for",

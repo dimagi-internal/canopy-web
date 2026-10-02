@@ -28,7 +28,7 @@ def _ctx():
     c = Client()
     c.force_login(user)
     runner = Runner.objects.create(
-        name="jj-mbp-cdp", kind=Runner.EMDASH, workspace=ws, paired_by=user,
+        name="jj-mbp-cdp", kind=Runner.EMDASH, workspace=ws, owner=user,
         host="jj@mbp", status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     return user, ws, c, runner

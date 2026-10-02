@@ -37,7 +37,7 @@ def client(owner):
 
 @pytest.fixture()
 def runner(owner):
-    return Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, paired_by=owner)
+    return Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, owner=owner)
 
 
 def _post(client, url, body=None):
@@ -166,7 +166,7 @@ def test_no_sign_in_started_reads_as_null_not_an_error(client, runner):
 
 
 def test_a_stranger_cannot_drive_someone_elses_runner(client, runner):
-    """Same trust boundary as claim/heartbeat: paired_by == caller."""
+    """Same trust boundary as claim/heartbeat: owner == caller."""
     other = User.objects.create_user("other", "other@dimagi.com", "pw")
     stranger = Client()
     stranger.force_login(other)

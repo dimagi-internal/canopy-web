@@ -43,7 +43,7 @@ def supervisor_snapshot(user) -> dict:
 
     runners = Runner.objects.exclude(status=Runner.RETIRED).filter(
         (Q(workspace_id__in=slugs) | Q(workspace_id__isnull=True))
-        & (Q(paired_by=user) | Q(paired_by__isnull=True))
+        & (Q(owner=user) | Q(owner__isnull=True))
     )
 
     return {

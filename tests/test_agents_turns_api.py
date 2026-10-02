@@ -197,7 +197,7 @@ def _cloud_runner(user):
     from apps.harness.models import Runner
 
     return Runner.objects.create(name="cloud-ec2-1", kind="cloud", capabilities={},
-                                 host="cloud-ec2-1", paired_by=user)
+                                 host="cloud-ec2-1", owner=user)
 
 
 def test_a_cloud_agent_turn_links_to_the_session_the_runner_recorded(
@@ -303,7 +303,7 @@ def test_only_the_claiming_runner_keys_a_turn_and_only_once(authed_user, workspa
 
     agent = _echo(workspace)
     runner = _cloud_runner(authed_user)
-    other = Runner.objects.create(name="other", kind="cloud", capabilities={}, paired_by=authed_user)
+    other = Runner.objects.create(name="other", kind="cloud", capabilities={}, owner=authed_user)
     turn = _turn(agent, "early-2", status="running", claimed_by=runner)
     assert harness_services.stamp_turn_session(turn.id, other, "x") is False
     assert harness_services.stamp_turn_session(turn.id, runner, "first") is True

@@ -35,7 +35,7 @@ def seeded():
     # board/scheduled turn: origin=runner, no chat messages, no live Turn.
     session = Session.objects.create(agent=agent, workspace=ws,
                                      origin=Session.ORIGIN_RUNNER, title="hal:turn")
-    runner = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, paired_by=owner,
+    runner = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, owner=owner,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now())
     return owner, ws, agent, session, runner
 

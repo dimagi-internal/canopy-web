@@ -214,9 +214,9 @@ export async function cancelTurn(turnId: string): Promise<TurnOut> {
 }
 
 // Who may ADMINISTER a box — the explicit grant that lets someone other than the
-// pairer set its credentials, sign it back in, and send work to it. Listing is
+// owner set its credentials, sign it back in, and send work to it. Listing is
 // open to anyone who already administers it; granting and revoking stay with the
-// PAIRER (a grantee minting grantees makes the list self-propagating).
+// OWNER (a grantee minting grantees makes the list self-propagating).
 export type RunnerAdmin = components['schemas']['RunnerAdminOut']
 
 export async function listRunnerAdmins(runnerId: string): Promise<RunnerAdmin[]> {
@@ -243,7 +243,7 @@ export async function revokeRunnerAdmin(runnerId: string, userId: number): Promi
 
 // Whether a box takes SESSION work — Slack threads and web chat. Without it a runner
 // never appears in "start a session" and a Slack turn routed only to it reads as
-// unrouted. Pairer-only (PATCH resolves through _runner_or_404). `projects` and
+// unrouted. Owner-only (PATCH resolves through _runner_or_404). `projects` and
 // `profiles` are REPORTED by the box on every heartbeat, so they are left out of
 // the write rather than echoed back stale.
 export async function setRunnerSessions(runner: RunnerOut, sessions: boolean): Promise<RunnerOut> {
@@ -257,7 +257,7 @@ export async function setRunnerSessions(runner: RunnerOut, sessions: boolean): P
   return toRunner(unwrap(res, 'setRunnerSessions'))
 }
 
-// Declare what a box's owner vouches for (`zdr`). Human-only, and only its pairer or a runner admin;
+// Declare what a box's owner vouches for (`zdr`). Human-only, and only its owner or a runner admin;
 // an unknown flag is a 422 that names it.
 export async function setRunnerFlags(runnerId: string, flags: string[]): Promise<RunnerOut> {
   const res = await apiV2.PUT('/api/harness/runners/{runner_id}/flags', {

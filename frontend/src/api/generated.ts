@@ -2300,7 +2300,7 @@ export interface paths {
          *     `actor` is the person's email. With `strict` (the default) only the named
          *     runners may take their work — if those are offline it waits; with
          *     `strict=false` it falls back to the agent's usual runners after a minute.
-         *     You may name only runners you administer (you paired it, or its pairer
+         *     You may name only runners you administer (you own it, or its owner
          *     granted you admin) — this decides where work runs, so it is gated on the box,
          *     not just the agent. Remove a route with DELETE on the same path.
          */
@@ -3635,7 +3635,7 @@ export interface paths {
         /**
          * Replace the ordered runner list this workspace's repo turns route by
          * @description Wholesale replace (index = rank), at the tier that routes an agent's work
-         *     (`agent.work`). Every runner must be able to SERVE this workspace — its pairer
+         *     (`agent.work`). Every runner must be able to SERVE this workspace — its owner
          *     a member (`runner_tenant_slugs`) — or the order would name a box the claim path
          *     refuses anyway; such a runner is a 422, as is an unknown or retired one.
          */
@@ -3871,7 +3871,7 @@ export interface paths {
          * List the fleet I can see
          * @description The supervisor's runner status, and the fleet read every preflight makes.
          *
-         *     Scoped by TENANT (`_runner_read_q`), not by who paired what: a member who
+         *     Scoped by TENANT (`_runner_read_q`), not by who owns what: a member who
          *     paired nothing used to list nothing, which reads identically to "this
          *     workspace has no runners" and is the wrong answer to draw a conclusion from.
          *     Each row carries `can_manage` for the ownership half. Retired runners are
@@ -3897,7 +3897,7 @@ export interface paths {
         /**
          * Fetch this runner's credential bundle (the runner, via its PAT)
          * @description A cloud runner fetches its own secrets to stage into its environment. Returns
-         *     the actual token values over HTTPS, gated to the runner's owner (paired_by ==
+         *     the actual token values over HTTPS, gated to the runner's owner (owner ==
          *     caller) — the same trust boundary that lets that caller claim turns as the
          *     runner. Laptop/emdash runners never call this (they use ambient auth).
          */
@@ -3908,7 +3908,7 @@ export interface paths {
          * @description Store the per-runner secrets a cloud runner fetches at startup — its Claude
          *     login (plus the secondary subscription and API key it fails over to).
          *     Owner-gated exactly
-         *     like heartbeat/claim (paired_by == caller). Non-clobbering per field. Encrypted
+         *     like heartbeat/claim (owner == caller). Non-clobbering per field. Encrypted
          *     at rest; the response is masked (booleans, never values).
          */
         readonly post: operations["set_runner_credential"];
@@ -4151,8 +4151,8 @@ export interface paths {
         readonly get: operations["list_runner_admins"];
         readonly put?: never;
         /**
-         * Grant someone administration of this runner (pairer only)
-         * @description Granting stays with the PAIRER, not with grantees.
+         * Grant someone administration of this runner (owner only)
+         * @description Granting stays with the OWNER, not with grantees.
          *
          *     Deliberate: an administrator can change what the box runs on, but letting
          *     them mint more administrators makes the grant self-propagating, and then the
@@ -4175,7 +4175,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Revoke administration (pairer only) */
+        /** Revoke administration (owner only) */
         readonly delete: operations["revoke_runner_admin"];
         readonly options?: never;
         readonly head?: never;
@@ -4508,7 +4508,7 @@ export interface paths {
          * Report Sessions
          * @description The runner reports the open emdash sessions it can see. Wholesale per runner.
          *     Owner-gated via _runner_or_404 (404, not 403). Sessions are tenant-owned; they
-         *     default to the runner's workspace (dimagi in practice), which the pairer is a
+         *     default to the runner's workspace (dimagi in practice), which the owner is a
          *     member of by construction.
          */
         readonly post: operations["report_sessions"];
@@ -12036,7 +12036,7 @@ export interface components {
          * TopologyRouteOut
          * @description One `RunnerAssignment` row. `source` "" = the agent's default ordered list
          *     (`rank` orders it); non-empty = a source rule (optionally narrowed to one
-         *     `actor`). `can_claim` is False when the runner's PAIRER is not in the agent's
+         *     `actor`). `can_claim` is False when the runner's OWNER is not in the agent's
          *     workspace — the row routes on paper and the turn is never claimed.
          */
         readonly TopologyRouteOut: {
@@ -12093,8 +12093,8 @@ export interface components {
             readonly workspace: string | null;
             /** In Tree */
             readonly in_tree: boolean;
-            /** Paired By Email */
-            readonly paired_by_email: string | null;
+            /** Owner Email */
+            readonly owner_email: string | null;
             /** Flags */
             readonly flags: readonly string[];
             /** Agent Count */
@@ -12682,8 +12682,10 @@ export interface components {
             readonly expected_code_committed_at: number;
             /** Workspace */
             readonly workspace: string | null;
+            /** Owner Email */
+            readonly owner_email: string | null;
             /** Paired By Email */
-            readonly paired_by_email: string | null;
+            readonly paired_by_email?: string | null;
             /**
              * Can Manage
              * @default true

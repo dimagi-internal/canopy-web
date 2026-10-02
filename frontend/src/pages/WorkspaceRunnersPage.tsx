@@ -108,7 +108,7 @@ function Topology({ slug }: { slug: string }): JSX.Element {
                   <th className="py-1.5 pr-3 font-medium">Runner</th>
                   <th className="py-1.5 pr-3 font-medium">Status</th>
                   <th className="py-1.5 pr-3 font-medium">Lives in</th>
-                  <th className="py-1.5 pr-3 font-medium">Paired by</th>
+                  <th className="py-1.5 pr-3 font-medium">Owned by</th>
                   <th className="py-1.5 pr-3 font-medium text-right">Agents</th>
                   <th className="py-1.5 font-medium">Heartbeat</th>
                 </tr>
@@ -147,7 +147,7 @@ function Topology({ slug }: { slug: string }): JSX.Element {
                       {r.workspace ?? '—'}
                       {!r.in_tree && <span className="ml-1 text-muted-foreground">(outside)</span>}
                     </td>
-                    <td className="py-1.5 pr-3 text-foreground-secondary">{r.paired_by_email ?? '—'}</td>
+                    <td className="py-1.5 pr-3 text-foreground-secondary">{r.owner_email ?? '—'}</td>
                     <td className="py-1.5 pr-3 text-right tabular-nums text-foreground-secondary">{r.agent_count}</td>
                     <td className="py-1.5 text-muted-foreground">
                       {r.last_heartbeat_at ? relativeTime(r.last_heartbeat_at, now) : 'never'}
@@ -260,7 +260,7 @@ function Topology({ slug }: { slug: string }): JSX.Element {
         </div>
         <p className="mt-2 max-w-3xl text-[11px] text-muted-foreground">
           A struck-through runner is switched off for that agent. <span className="text-destructive">⚠</span> means
-          the runner&rsquo;s pairer is not a member of the agent&rsquo;s workspace, so it can never claim that
+          the runner&rsquo;s owner is not a member of the agent&rsquo;s workspace, so it can never claim that
           agent&rsquo;s turns — re-pair it from someone who is, or route elsewhere.
         </p>
       </section>
@@ -301,7 +301,7 @@ function RouteChips({
               r.runner_id === selected ? 'border-primary bg-primary/10' : 'border-border',
               !r.enabled && 'line-through opacity-60',
             )}
-            title={r.can_claim ? undefined : "This runner's pairer is not in the agent's workspace — it cannot claim these turns"}
+            title={r.can_claim ? undefined : "This runner's owner is not in the agent's workspace — it cannot claim these turns"}
           >
             {ordered && <span className="text-muted-foreground">{i + 1}</span>}
             <span className={statusTone(runner?.status)}>●</span>

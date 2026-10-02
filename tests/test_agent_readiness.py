@@ -32,7 +32,7 @@ def fleet(client):
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws)
     runner = Runner.objects.create(
-        name="cloud-ec2-1", kind=Runner.CLOUD, paired_by=jj, status=Runner.ONLINE,
+        name="cloud-ec2-1", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={},
     )
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)

@@ -45,9 +45,9 @@ def test_turn_event_fanout():
     assert msg["event"]["kind"] == "assistant"
 
 
-def test_runner_fanout_to_pairer():
+def test_runner_fanout_to_runner_owner():
     user, _ws, _agent = _fixtures()
-    runner = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, paired_by=user)
+    runner = Runner.objects.create(name="cloud-1", kind=Runner.CLOUD, owner=user)
     layer = get_channel_layer()
     async_to_sync(layer.group_add)(groups.supervisor_user_group(user.id), "sup-chan")
 
@@ -61,9 +61,9 @@ def test_runner_fanout_to_pairer():
     assert msg["runner"]["name"] == "cloud-1"
 
 
-def test_runner_with_no_pairer_does_not_fan_out():
+def test_runner_with_no_runner_owner_does_not_fan_out():
     # No subscriber assertion is fragile; instead assert the guard directly by
-    # saving a pairer-less runner and confirming nothing lands for a bystander.
+    # saving a owner-less runner and confirming nothing lands for a bystander.
     _user, _ws, _agent = _fixtures()
     runner = Runner.objects.create(name="orphan", kind=Runner.CLOUD)
     layer = get_channel_layer()
@@ -100,7 +100,7 @@ def test_waiting_fanout_to_members():
     assert msg["waiting_count"] == 3
 
 
-def test_sessions_fanout_to_pairer():
+def test_sessions_fanout_to_runner_owner():
     """A runner's session report pushes the owner's visible sessions to their
     supervisor group — the WS broadcast that replaces per-client polling."""
     from django.utils import timezone
@@ -109,7 +109,7 @@ def test_sessions_fanout_to_pairer():
 
     user, ws, _agent = _fixtures()
     runner = Runner.objects.create(
-        name="laptop", kind=Runner.EMDASH, paired_by=user, workspace=ws,
+        name="laptop", kind=Runner.EMDASH, owner=user, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     layer = get_channel_layer()

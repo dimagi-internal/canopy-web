@@ -41,7 +41,7 @@ def _pat(user) -> str:
 
 def _runner(user, name) -> Runner:
     return Runner.objects.create(
-        name=name, kind=Runner.EMDASH, paired_by=user, status=Runner.ONLINE,
+        name=name, kind=Runner.EMDASH, owner=user, status=Runner.ONLINE,
         workspace_id=WS, last_heartbeat_at=timezone.now(), capabilities={},
     )
 
@@ -62,7 +62,7 @@ def _client(user) -> Client:
     return c
 
 
-# --- C1: a box holds an agent only if its pairer is the agent's admin ---------
+# --- C1: a box holds an agent only if its owner is the agent's admin ---------
 
 def test_an_editor_cannot_put_their_own_box_on_an_agent(esc):
     box = _runner(esc["editor"], "editor-box")

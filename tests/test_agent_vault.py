@@ -88,7 +88,7 @@ def fleet(client):
     from apps.harness.models import Runner, RunnerAssignment
 
     runner = Runner.objects.create(
-        name="cloud-ec2-1", kind=Runner.CLOUD, paired_by=jj, status=Runner.ONLINE,
+        name="cloud-ec2-1", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={},
     )
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)

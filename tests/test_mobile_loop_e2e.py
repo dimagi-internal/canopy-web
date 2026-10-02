@@ -38,7 +38,7 @@ def _seed():
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     raw, _ = PersonalToken.create_for_user(user=user, label="e2e-runner")
     runner = Runner.objects.create(
-        name="test-mbp", kind=Runner.EMDASH, host=HOST, paired_by=user, workspace=ws,
+        name="test-mbp", kind=Runner.EMDASH, host=HOST, owner=user, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         capabilities={"projects": ["canopy-web"]},
     )

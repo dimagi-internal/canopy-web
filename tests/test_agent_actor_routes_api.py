@@ -34,12 +34,12 @@ def fleet(client):
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, user=ace_user)
     now = timezone.now()
     jj_laptop = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, workspace=ws,
+        name="jj-mbp", kind=Runner.EMDASH, owner=jj, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=now, capabilities={},
     )
-    # Paired under the agent's identity — the operator is NOT the pairer.
+    # Paired under the agent's identity — the operator is NOT the owner.
     st_laptop = Runner.objects.create(
-        name="st-mbp", kind=Runner.EMDASH, paired_by=ace_user, workspace=ws,
+        name="st-mbp", kind=Runner.EMDASH, owner=ace_user, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=now, capabilities={},
     )
     RunnerAdmin.objects.create(runner=st_laptop, user=sarvesh, granted_by=ace_user)

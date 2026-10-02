@@ -156,7 +156,7 @@ class SharedVaultOut(StrictModel):
 class TopologyRouteOut(StrictModel):
     """One `RunnerAssignment` row. `source` "" = the agent's default ordered list
     (`rank` orders it); non-empty = a source rule (optionally narrowed to one
-    `actor`). `can_claim` is False when the runner's PAIRER is not in the agent's
+    `actor`). `can_claim` is False when the runner's OWNER is not in the agent's
     workspace — the row routes on paper and the turn is never claimed."""
 
     runner_id: uuid.UUID
@@ -200,7 +200,7 @@ class TopologyRunnerOut(StrictModel):
     last_heartbeat_at: dt.datetime | None
     workspace: str | None
     in_tree: bool
-    paired_by_email: str | None
+    owner_email: str | None
     flags: list[str]
     agent_count: int
 

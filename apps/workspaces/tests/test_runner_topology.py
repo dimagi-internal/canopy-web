@@ -34,12 +34,12 @@ def tree():
     WorkspaceMembership.objects.create(workspace=dimagi, user=staff, role=EDITOR)
     WorkspaceMembership.objects.create(workspace=other, user=outsider, role=OWNER)
 
-    laptop = Runner.objects.create(name="laptop", kind=Runner.EMDASH, workspace=dimagi, paired_by=ceo)
-    # Homed outside the tree, paired by someone with no membership in it: it
+    laptop = Runner.objects.create(name="laptop", kind=Runner.EMDASH, workspace=dimagi, owner=ceo)
+    # Homed outside the tree, owned by someone with no membership in it: it
     # can be assigned, and can never claim.
-    stray = Runner.objects.create(name="stray", kind=Runner.CLOUD, workspace=other, paired_by=outsider)
+    stray = Runner.objects.create(name="stray", kind=Runner.CLOUD, workspace=other, owner=outsider)
     Runner.objects.create(name="dead", kind=Runner.EMDASH, workspace=dimagi, status=Runner.RETIRED)
-    Runner.objects.create(name="elsewhere", kind=Runner.EMDASH, workspace=other, paired_by=outsider)
+    Runner.objects.create(name="elsewhere", kind=Runner.EMDASH, workspace=other, owner=outsider)
 
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=connect)
     Agent.objects.create(slug="eva", name="Eva", workspace=dimagi)

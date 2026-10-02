@@ -24,7 +24,7 @@ def setup(client):
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws)
     runner = Runner.objects.create(
-        name="cloud-1", kind=Runner.CLOUD, paired_by=jj, status=Runner.ONLINE,
+        name="cloud-1", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={},
     )
     client.force_login(jj)
@@ -57,7 +57,7 @@ def test_omitting_runner_id_leaves_the_turn_unpinned(setup):
 def test_a_runner_the_caller_cannot_see_is_rejected(setup):
     outsider = get_user_model().objects.create_user(username="mal", email="mal@evil.com")
     theirs = Runner.objects.create(
-        name="mal-box", kind=Runner.CLOUD, paired_by=outsider, status=Runner.ONLINE,
+        name="mal-box", kind=Runner.CLOUD, owner=outsider, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={},
     )
 

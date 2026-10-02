@@ -40,9 +40,9 @@ def _ctx():
     return user, ws, agent, session
 
 
-def _runner(name, *, pairer, ws, agent=None, online=True):
+def _runner(name, *, runner_owner, ws, agent=None, online=True):
     beat = timezone.now() - (_dt.timedelta(0) if online else _dt.timedelta(hours=2))
-    r = Runner.objects.create(name=name, kind=Runner.EMDASH, host=name, paired_by=pairer,
+    r = Runner.objects.create(name=name, kind=Runner.EMDASH, host=name, owner=runner_owner,
                               workspace_id=ws.pk, status=Runner.ONLINE,
                               last_heartbeat_at=beat, capabilities={"sessions": True})
     if agent is not None:
@@ -73,7 +73,7 @@ def test_enqueueing_behind_an_offline_runner_says_so_immediately(monkeypatch):
     """The whole point. Nothing has touched the turn and nothing will, so no
     later event would ever report it — the status has to ride the enqueue."""
     user, ws, agent, session = _ctx()
-    _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=False)
+    _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=False)
     sent = _capture(monkeypatch)
 
     harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
@@ -89,7 +89,7 @@ def test_enqueueing_behind_an_offline_runner_says_so_immediately(monkeypatch):
 
 def test_enqueueing_with_a_live_runner_says_it_is_being_picked_up(monkeypatch):
     user, ws, agent, session = _ctx()
-    _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=True)
+    _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=True)
     sent = _capture(monkeypatch)
 
     harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
@@ -130,7 +130,7 @@ def test_a_turn_with_no_session_publishes_nothing(monkeypatch):
 
 def test_the_status_is_republished_as_the_turn_moves(monkeypatch):
     user, ws, agent, session = _ctx()
-    runner = _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=True)
+    runner = _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=True)
     turn, _ = harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
                                    idempotency_key="k1", prompt="hi")
     turn.status, turn.claimed_by = Turn.RUNNING, runner
@@ -146,7 +146,7 @@ def test_a_non_status_row_does_not_republish(monkeypatch):
     """Every assistant token would otherwise re-derive the status, which means
     a fleet query per token."""
     user, ws, agent, session = _ctx()
-    runner = _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=True)
+    runner = _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=True)
     turn, _ = harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
                                    idempotency_key="k1", prompt="hi")
     turn.status, turn.claimed_by = Turn.RUNNING, runner
@@ -166,7 +166,7 @@ def test_the_connect_snapshot_carries_the_same_answer():
     from apps.canopy_sessions import serializers
 
     user, ws, agent, session = _ctx()
-    _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=False)
+    _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=False)
     harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
                          idempotency_key="k1", prompt="hi")
 
@@ -220,7 +220,7 @@ def test_the_sweep_is_throttled_across_the_fleet(monkeypatch):
 
     cache.delete(status_feed.SWEEP_LOCK)
     user, ws, agent, session = _ctx()
-    _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=False)
+    _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=False)
     harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
                          idempotency_key="k1", prompt="hi")
 
@@ -238,7 +238,7 @@ def test_force_bypasses_the_throttle_so_a_test_does_not_depend_on_lock_state():
     from apps.canopy_sessions import status_feed
 
     user, ws, agent, session = _ctx()
-    _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=False)
+    _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=False)
     harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
                          idempotency_key="k1", prompt="hi")
     cache.add(status_feed.SWEEP_LOCK, 1, timeout=60)   # somebody else holds it
@@ -253,7 +253,7 @@ def test_a_settled_turn_is_not_swept(monkeypatch):
 
     cache.delete(status_feed.SWEEP_LOCK)
     user, ws, agent, session = _ctx()
-    runner = _runner("jj-mbp", pairer=user, ws=ws, agent=agent, online=True)
+    runner = _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=True)
     turn, _ = harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
                                    idempotency_key="k1", prompt="hi")
     turn.status, turn.claimed_by = Turn.DONE, runner

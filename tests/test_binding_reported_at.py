@@ -29,7 +29,7 @@ def _ctx():
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     runner = Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mbp", paired_by=user, workspace=ws
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mbp", owner=user, workspace=ws
     )
     return user, ws, runner
 

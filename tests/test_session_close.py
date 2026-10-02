@@ -24,7 +24,7 @@ def _ctx():
 
 def _runner(user, ws, *, status=Runner.ONLINE, paused=False):
     return Runner.objects.create(
-        name="jj-mbp", kind=Runner.EMDASH, host="jj-mbp", paired_by=user, workspace=ws,
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mbp", owner=user, workspace=ws,
         status=status, last_heartbeat_at=timezone.now(), paused=paused,
     )
 

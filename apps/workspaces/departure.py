@@ -61,10 +61,10 @@ def sweep(user, slug: str, *, by=None) -> dict:
     counts["delegations"] = AgentDelegation.objects.filter(
         user=user, agent__workspace_id__in=left).delete()[0]
     # Their box stops serving that tenant's agents. A runner holds an agent's
-    # secrets and claimed turns; one paired by an outsider must not, even
-    # disabled, sit on the list waiting for its pairer to rejoin.
+    # secrets and claimed turns; one owned by an outsider must not, even
+    # disabled, sit on the list waiting for its owner to rejoin.
     counts["runner_assignments"] = RunnerAssignment.objects.filter(
-        runner__paired_by=user, agent__workspace_id__in=left).delete()[0]
+        runner__owner=user, agent__workspace_id__in=left).delete()[0]
     orphaned = list(Agent.objects.filter(owner=user, workspace_id__in=left))
     for agent in orphaned:
         agent.owner = None

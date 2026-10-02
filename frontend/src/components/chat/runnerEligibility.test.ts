@@ -33,7 +33,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     expected_code_committed_at: 0,
     expected_code_sha: "",
     workspace: null,
-    paired_by_email: null,
+    owner_email: null,
     can_manage: true,
     can_administer: true,
     flags: [],
@@ -209,7 +209,7 @@ describe("findBoundRunner", () => {
   });
 
   it("is null when the runner is not in the caller's fleet", () => {
-    // Retired, or paired by someone else — either way there is no id to act on
+    // Retired, or owned by someone else — either way there is no id to act on
     // and no permission to act with, which is what the caller does with null.
     expect(findBoundRunner("Gamma", fleet)).toBeNull();
     expect(findBoundRunner("Alpha", [])).toBeNull();

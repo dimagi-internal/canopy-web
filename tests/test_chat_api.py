@@ -91,7 +91,7 @@ def test_create_rejects_agent_and_project_together(client):
 def test_create_with_runner_id_stashes_requested_runner_id(client, ctx):
     user, _ws, _agent = ctx
     runner = Runner.objects.create(
-        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, owner=user,
     )
     r = client.post(
         "/api/canopy-sessions/",
@@ -107,7 +107,7 @@ def test_create_with_runner_id_stashes_requested_runner_id(client, ctx):
 def test_send_with_placement_pins_the_turn(client, ctx):
     user, _ws, _agent = ctx
     runner = Runner.objects.create(
-        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, owner=user,
     )
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
     r = client.post(
@@ -138,10 +138,10 @@ def test_place_repins_queued_turn(client, ctx, settings):
     settings.CHAT_STUB_EXECUTOR = False
     user, _ws, _agent = ctx
     r1 = Runner.objects.create(
-        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, owner=user,
     )
     r2 = Runner.objects.create(
-        name="r2", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+        name="r2", kind=Runner.EMDASH, capabilities={"sessions": True}, owner=user,
     )
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
     RunnerBinding.objects.create(session_id=sid, runner=r1, thread_key=sid)
@@ -155,14 +155,14 @@ def test_place_repins_queued_turn(client, ctx, settings):
 
 
 def test_send_with_foreign_tenant_placement_is_422(client, ctx):
-    # A runner paired by a user who is NOT a member of this session's workspace
+    # A runner owned by a user who is NOT a member of this session's workspace
     # is not a valid placement target (it could never claim the resulting
     # turn) — must 422 exactly like an unknown runner id, not silently pin a
     # turn that becomes permanently unclaimable.
     user, _ws, _agent = ctx
     outsider = User.objects.create_user("outsider", "outsider@dimagi.com", "pw")
     foreign_runner = Runner.objects.create(
-        name="foreign", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=outsider,
+        name="foreign", kind=Runner.EMDASH, capabilities={"sessions": True}, owner=outsider,
     )
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
     r = client.post(
@@ -202,7 +202,7 @@ def test_send_with_sessions_incapable_placement_is_422(client, ctx):
     # bypass target/routing matching) but could never bridge the reply back.
     user, _ws, _agent = ctx
     incapable = Runner.objects.create(
-        name="incapable", kind=Runner.EMDASH, capabilities={}, paired_by=user,
+        name="incapable", kind=Runner.EMDASH, capabilities={}, owner=user,
     )
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
     r = client.post(
@@ -285,7 +285,7 @@ def test_web_origin_session_with_title_reports_own_title(client, ctx):
     session.title = "Help me plan the Q3 field visit schedule"
     session.save(update_fields=["title"])
     runner = Runner.objects.create(
-        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, owner=user,
     )
     # live_seen_at is what `record_session` stamps when this binding forms for real
     # (unconditionally, as does the wholesale report). Without it the binding reads as
@@ -310,7 +310,7 @@ def test_runner_origin_session_still_reports_task_name(client, ctx):
     user, ws, _agent = ctx
     session = Session.objects.create(workspace=ws, created_by=user, origin=Session.ORIGIN_RUNNER, title="")
     runner = Runner.objects.create(
-        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, paired_by=user,
+        name="r1", kind=Runner.EMDASH, capabilities={"sessions": True}, owner=user,
     )
     RunnerBinding.objects.create(
         session_id=session.id, runner=runner, thread_key=str(session.id), session_key="ace-api-1a2b-cdef",
@@ -367,7 +367,7 @@ def test_stop_with_nothing_to_cancel_returns_false(client):
 
 def test_runner_online_reflects_binding_liveness(client, ctx):
     """A delegated embedder user cannot list runners (harness scopes that to the
-    pairer), so the session payload must carry its bound runner's liveness —
+    owner), so the session payload must carry its bound runner's liveness —
     otherwise a stalled chat is indistinguishable from a slow one."""
     import datetime as dt
 
@@ -381,7 +381,7 @@ def test_runner_online_reflects_binding_liveness(client, ctx):
 
     runner = Runner.objects.create(
         name="r1", kind=Runner.EMDASH, capabilities={"sessions": True},
-        paired_by=user, status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+        owner=user, status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
     )
     RunnerBinding.objects.create(session=session, runner=runner, thread_key=str(session.id))
     assert client.get(f"/api/canopy-sessions/{session.id}").json()["runner_online"] is True

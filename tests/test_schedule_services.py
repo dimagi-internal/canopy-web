@@ -158,7 +158,7 @@ def test_release_all_unwedges_on_the_claim_tick(schedule, agent):
     runner = Runner.objects.create(
         name="mac-a", kind=Runner.EMDASH, host="mac-a", status=Runner.ONLINE,
         capabilities={"agents": ["echo"]}, last_heartbeat_at=timezone.now(),
-        paired_by=a_member(),  # a runner's tenant derives from its pairer
+        owner=a_member(),  # a runner's tenant derives from its owner
     )
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
 

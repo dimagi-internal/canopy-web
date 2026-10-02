@@ -29,7 +29,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     code_sha: '',
     expected_code_sha: '',
     workspace: 'dimagi',
-    paired_by_email: 'jjackson@dimagi.com',
+    owner_email: 'jjackson@dimagi.com',
     can_manage: true,
     can_administer: true,
     drill_rollup: null,

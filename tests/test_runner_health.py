@@ -31,7 +31,7 @@ HEALTH = {
 @pytest.fixture
 def owner_and_runner(django_user_model):
     u = django_user_model.objects.create_user(username="jj", email="jj@dimagi.com", password="x")
-    r = Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, paired_by=u,
+    r = Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, owner=u,
                               status=Runner.ONLINE, last_heartbeat_at=timezone.now())
     c = Client()
     c.force_login(u)

@@ -45,10 +45,10 @@ def _client(user):
     return c
 
 
-def _bind(session, ws, paired_by):
+def _bind(session, ws, owner):
     runner = Runner.objects.create(
         name=f"runner-{session.id.hex[:6]}", workspace=ws, location=Runner.LOCAL,
-        status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paired_by=paired_by,
+        status=Runner.ONLINE, last_heartbeat_at=timezone.now(), owner=owner,
     )
     RunnerBinding.objects.create(
         session=session, runner=runner, session_key="k",

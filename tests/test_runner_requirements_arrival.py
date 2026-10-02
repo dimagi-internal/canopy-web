@@ -231,10 +231,10 @@ def _runners(site):
 
     caps = {"sessions": True, "projects": ["canopy-web"]}
     cloud = Runner.objects.create(name="cloud", workspace=site["ws"], kind=Runner.CLOUD,
-                                  status=Runner.ONLINE, paired_by=site["owner"], host="cloud",
+                                  status=Runner.ONLINE, owner=site["owner"], host="cloud",
                                   capabilities=caps)
     zdr = Runner.objects.create(name="zdr-box", workspace=site["ws"], kind=Runner.CLOUD,
-                                status=Runner.ONLINE, paired_by=site["owner"], host="zdr-box",
+                                status=Runner.ONLINE, owner=site["owner"], host="zdr-box",
                                 capabilities=caps)
     RunnerFlag.objects.create(runner=zdr, flag="zdr", declared_by=site["owner"])
     return cloud, zdr

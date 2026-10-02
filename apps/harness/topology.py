@@ -2,7 +2,7 @@
 
 Routing is spread over four rows — `Workspace.parent` (the tree), `Agent.workspace`
 (where an agent lives), `RunnerAssignment` (its ordered list + source/actor rules)
-and `Runner` (where a box lives, who paired it, whether it is up). Each screen
+and `Runner` (where a box lives, who owns it, whether it is up). Each screen
 showed one of them: the agent's Routing table one agent at a time, `/supervisor`
 the boxes with no agents. "What does the connect division actually run on, and
 what breaks if this laptop closes?" had no answer short of opening every agent.
@@ -16,7 +16,7 @@ owner of the root owns every descendant, so they see the whole tree; an admin
 sees only where they are admin. Nothing here is beyond what that reader could
 open agent by agent. A runner homed outside the subtree still appears when an agent
 inside routes to it; its row carries only what the agent's own Routing table
-already shows (name, kind, liveness) plus where it lives and who paired it, which
+already shows (name, kind, liveness) plus where it lives and who owns it, which
 is the fact an owner needs to know who to call when it goes dark.
 """
 from __future__ import annotations
@@ -41,13 +41,13 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
     agents = list(Agent.objects.filter(workspace_id__in=slugs).order_by("name"))
     assignments = list(
         RunnerAssignment.objects.filter(agent__in=agents)
-        .select_related("runner", "runner__paired_by")
+        .select_related("runner", "runner__owner")
         .order_by("agent_id", "source", "actor", "rank")
     )
     home_runners = list(
         Runner.objects.filter(workspace_id__in=slugs)
         .exclude(status=Runner.RETIRED)
-        .select_related("paired_by")
+        .select_related("owner")
         .prefetch_related("declared_flags")
     )
     runners: dict = {r.pk: r for r in home_runners}
@@ -55,7 +55,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
         runners.setdefault(a.runner_id, a.runner)
 
     # One tenant lookup per runner, not per assignment: a runner may claim an
-    # agent's turn only if its PAIRER's workspaces include the agent's
+    # agent's turn only if its OWNER's workspaces include the agent's
     # (`services.runner_tenant_slugs`). An assignment that fails this is the
     # quietest misconfiguration there is — the row looks fine on the agent's
     # Routing table and its turns simply never get claimed.
@@ -111,7 +111,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
             "last_heartbeat_at": r.last_heartbeat_at,
             "workspace": r.workspace_id,
             "in_tree": r.workspace_id in slugs,
-            "paired_by_email": r.paired_by.email if r.paired_by_id else None,
+            "owner_email": r.owner.email if r.owner_id else None,
             "flags": sorted(f.flag for f in r.declared_flags.all()),
             "agent_count": len(serves.get(r.pk, ())),
         })

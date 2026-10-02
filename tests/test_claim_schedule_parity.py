@@ -4,8 +4,8 @@ fails if they drift again.
 The invariant: **every schedule a runner may SEE and FIRE must produce a turn
 that same runner may CLAIM.** They diverged once and it was a production
 outage, not a nicety. `claim_next_turn` shipped scoped to the `Runner.workspace`
-FK while `_runner_schedule_qs` derived the tenant from `paired_by`, so a runner
-homed to `alpha` whose pairer also belonged to `beta` could sync and fire
+FK while `_runner_schedule_qs` derived the tenant from `owner`, so a runner
+homed to `alpha` whose owner also belonged to `beta` could sync and fire
 beta's schedules but never claim the resulting turns. One laptop runner serves
 a fleet that deliberately spans workspaces, so 4 of 5 production agents stopped
 executing entirely and their turns sat QUEUED forever (2026-07-25).
@@ -71,9 +71,9 @@ def _schedule(agent):
     )
 
 
-def _online_runner(pairer, name="mbp"):
+def _online_runner(runner_owner, name="mbp"):
     return Runner.objects.create(
-        name=name, kind=Runner.EMDASH, host=name, paired_by=pairer,
+        name=name, kind=Runner.EMDASH, host=name, owner=runner_owner,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(), capabilities={},
     )
 
@@ -101,20 +101,20 @@ def _syncable_agent_slugs(runner) -> set[str]:
 
 @pytest.fixture
 def fleet():
-    """One runner, one pairer, three tenants — the production shape that broke.
+    """One runner, one owner, three tenants — the production shape that broke.
 
-    `mine` and `also_mine` are both the pairer's; `theirs` is not. The runner's
+    `mine` and `also_mine` are both the owner's; `theirs` is not. The runner's
     own `workspace` FK points at `mine` ONLY, which is the trap: scoping by the
-    FK (rather than by the pairer's memberships) silently loses `also_mine`,
+    FK (rather than by the owner's memberships) silently loses `also_mine`,
     and that is precisely the regression that took prod down.
     """
-    pairer = _user("pairer")
+    runner_owner = _user("owner")
     stranger = _user("stranger")
-    mine = _ws("mine", pairer)
-    also_mine = _ws("also-mine", pairer)
+    mine = _ws("mine", runner_owner)
+    also_mine = _ws("also-mine", runner_owner)
     theirs = _ws("theirs", stranger)
 
-    runner = _online_runner(pairer)
+    runner = _online_runner(runner_owner)
     runner.workspace = mine
     runner.save(update_fields=["workspace"])
 
@@ -126,7 +126,7 @@ def fleet():
     for agent in agents.values():
         _schedule(agent)
         RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
-    return {"runner": runner, "pairer": pairer, "agents": agents}
+    return {"runner": runner, "owner": runner_owner, "agents": agents}
 
 
 def test_what_a_runner_may_fire_is_exactly_what_it_may_claim(fleet):
@@ -143,12 +143,12 @@ def test_what_a_runner_may_fire_is_exactly_what_it_may_claim(fleet):
     claimable = _claimable_agent_slugs(runner)
 
     assert syncable == claimable
-    # And the value is the RIGHT one, not two matching empties: the pairer's
+    # And the value is the RIGHT one, not two matching empties: the owner's
     # workspaces, both of them, and not the stranger's.
     assert syncable == {"here", "elsewhere"}
 
 
-def test_a_second_workspace_of_the_pairer_is_not_lost_to_the_runner_fk(fleet):
+def test_a_second_workspace_of_the_runner_owner_is_not_lost_to_the_runner_fk(fleet):
     """The outage, stated directly: the runner's own workspace FK is `mine`,
     but `elsewhere` lives in `also-mine`. Both halves must reach it — scoping
     either one by the FK reintroduces 4-of-5-agents-stop-executing."""
@@ -163,14 +163,14 @@ def test_a_second_workspace_of_the_pairer_is_not_lost_to_the_runner_fk(fleet):
 
 
 def test_an_orphaned_runner_can_neither_fire_nor_claim(fleet):
-    """NULL `paired_by` fails closed on BOTH sides — no pairer means no identity
+    """NULL `owner` fails closed on BOTH sides — no owner means no identity
     to derive a tenant from, and inferring one from the FK would be an
     escalation (the runner keeps working for a workspace whose owner is gone).
     Used to be a `.none()` special case on the schedule side and an empty-set
     fallthrough on the claim side; now one mechanism serves both."""
     runner = fleet["runner"]
-    runner.paired_by = None
-    runner.save(update_fields=["paired_by"])
+    runner.owner = None
+    runner.save(update_fields=["owner"])
     for agent in fleet["agents"].values():
         services.enqueue_turn(initiator=_BY_CANOPY, 
             agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key=f"o-{agent.slug}"
@@ -181,13 +181,13 @@ def test_an_orphaned_runner_can_neither_fire_nor_claim(fleet):
 
 
 def test_losing_a_membership_narrows_both_sides_together(fleet):
-    """The tenant is live state, not a snapshot: revoking the pairer's
+    """The tenant is live state, not a snapshot: revoking the owner's
     membership must remove the agent from the sync list and from the claim set
     in the same breath. A runner that keeps firing a schedule it can no longer
     claim for is the outage in slow motion."""
-    runner, pairer = fleet["runner"], fleet["pairer"]
-    WorkspaceMembership.objects.filter(user=pairer, workspace_id="also-mine").delete()
-    assert wsvc.user_workspace_slugs(pairer) == {"mine"}
+    runner, runner_owner = fleet["runner"], fleet["owner"]
+    WorkspaceMembership.objects.filter(user=runner_owner, workspace_id="also-mine").delete()
+    assert wsvc.user_workspace_slugs(runner_owner) == {"mine"}
 
     for agent in fleet["agents"].values():
         services.enqueue_turn(initiator=_BY_CANOPY, 
