@@ -7,6 +7,12 @@ from django.contrib.auth import get_user_model
 
 from apps.realtime.presence_consumer import PresenceConsumer
 
+# How long a "nothing was sent" check listens. A broadcast through the in-memory
+# channel layer lands in milliseconds, so a quarter second is still a wide margin
+# for one that WAS coming; these checks used to wait a full second each, ~25s of
+# the backend suite spent sleeping.
+QUIET = 0.25
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
@@ -111,7 +117,7 @@ async def test_a_foreign_workspace_key_is_silently_rejected(member_user):
         "page_key": "canopy:someone-elses-workspace:opp:secret/run-001",
         "sub_location": "",
     })
-    assert await communicator.receive_nothing(timeout=1)
+    assert await communicator.receive_nothing(timeout=QUIET)
     assert await presence_store.roster("canopy:someone-elses-workspace:opp:secret/run-001") == []
     await communicator.disconnect()
 
@@ -120,7 +126,7 @@ async def test_a_foreign_workspace_key_is_silently_rejected(member_user):
 async def test_a_malformed_page_key_is_silently_rejected(member_user):
     communicator, _ = await _connect(member_user)
     await communicator.send_json_to({"type": "presence.enter", "page_key": "junk", "sub_location": ""})
-    assert await communicator.receive_nothing(timeout=1)
+    assert await communicator.receive_nothing(timeout=QUIET)
     await communicator.disconnect()
 
 
@@ -275,7 +281,7 @@ async def test_the_bare_word_global_no_longer_skips_the_membership_gate(member_u
         "page_key": "canopy:global:activity",
         "sub_location": "Activity",
     })
-    assert await communicator.receive_nothing(timeout=1)
+    assert await communicator.receive_nothing(timeout=QUIET)
     assert await presence_store.roster("canopy:global:activity") == []
     await communicator.disconnect()
 
@@ -309,7 +315,7 @@ async def test_a_workspace_shadowing_the_sentinel_cannot_be_used_to_bypass_the_g
         "page_key": "canopy:~global:settings",
         "sub_location": "Settings",
     })
-    assert await communicator.receive_nothing(timeout=1)
+    assert await communicator.receive_nothing(timeout=QUIET)
     assert await presence_store.roster("canopy:~global:settings") == []
     await communicator.disconnect()
 
@@ -328,7 +334,7 @@ async def test_a_page_key_for_a_different_app_is_rejected(member_user):
         "page_key": "ace:test-ws:activity",
         "sub_location": "Activity",
     })
-    assert await communicator.receive_nothing(timeout=1)
+    assert await communicator.receive_nothing(timeout=QUIET)
     assert await presence_store.roster("ace:test-ws:activity") == []
     await communicator.disconnect()
 
@@ -368,7 +374,7 @@ async def test_a_colon_bearing_workspace_slug_gets_no_presence_rather_than_a_for
         "page_key": "canopy:acme:eu:activity",
         "sub_location": "Activity",
     })
-    assert await communicator.receive_nothing(timeout=1)
+    assert await communicator.receive_nothing(timeout=QUIET)
     assert await presence_store.roster("canopy:acme:eu:activity") == []
     await communicator.disconnect()
 
@@ -534,7 +540,7 @@ async def test_membership_is_re_checked_on_every_enter_not_cached_at_connect(mem
         "page_key": "canopy:test-ws:opp:b",
         "sub_location": "Page B",
     })
-    assert await communicator.receive_nothing(timeout=1)
+    assert await communicator.receive_nothing(timeout=QUIET)
 
     from apps.realtime import presence_store
 
@@ -570,7 +576,7 @@ async def test_a_revoked_member_is_torn_down_from_their_old_page_too(member_user
         "page_key": "canopy:test-ws:opp:b",
         "sub_location": "Page B",
     })
-    assert await communicator.receive_nothing(timeout=1)
+    assert await communicator.receive_nothing(timeout=QUIET)
 
     from apps.realtime import presence_store
 

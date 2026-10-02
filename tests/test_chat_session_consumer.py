@@ -22,6 +22,12 @@ from apps.canopy_sessions.models import Message, SessionParticipant
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
+# How long a "nothing was sent" check listens. A broadcast through the in-memory
+# channel layer lands in milliseconds, so a quarter second is still a wide margin
+# for one that WAS coming; these checks used to wait a full second each, ~25s of
+# the backend suite spent sleeping.
+QUIET = 0.25
+
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
@@ -577,7 +583,7 @@ async def test_stop_with_nothing_to_cancel_does_not_broadcast():
     await a.receive_json_from()  # drain connect's own presence.joined broadcast
 
     await a.send_json_to({"action": "chat.stop", "data": {"message_id": "m1"}})
-    assert await a.receive_nothing(timeout=1)
+    assert await a.receive_nothing(timeout=QUIET)
     await a.disconnect()
 
 
@@ -781,7 +787,7 @@ async def test_an_unchanged_dialog_is_not_republished_every_report():
     await _recv_match(comm, lambda f: f.get("event") == "session.menu")
 
     await database_sync_to_async(_report)()          # same dialog, second tick
-    assert await comm.receive_nothing(timeout=0.5)
+    assert await comm.receive_nothing(timeout=QUIET)
     await comm.disconnect()
 
 
