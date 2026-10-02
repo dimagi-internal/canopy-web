@@ -1611,6 +1611,32 @@ def test_a_reply_to_something_typed_in_emdash_is_not_mirrored(bound, slack, djan
     assert "outside Slack" in note["text"]                       # announced, not mirrored
 
 
+def test_something_typed_in_emdash_during_the_slack_turn_does_not_hold_back_the_answer(
+        bound, slack, django_capture_on_commit_callbacks):
+    """2026-10-02: the owner added a screenshot in emdash while the Slack turn was
+    running. The turn then yielded to a merge-wait, and the merge, the deploy and
+    the summary never reached the thread — the mid-turn note was the latest human
+    message, so the guard read the conversation as having moved into emdash."""
+    from django.utils import timezone
+
+    session, runner, pairer = bound
+    session.metadata = {**session.metadata, "transcript_sourced": True}
+    session.save()
+    turn = Turn.objects.get(chat_session=session)
+    _stream(runner, pairer, session, [
+        {"seq": 1, "index": 1000, "kind": "user", "payload": {"text": "run it"}},
+        {"seq": 2, "index": 2000, "kind": "user", "payload": {"text": "here's the screenshot, also fix X"}},
+    ], django_capture_on_commit_callbacks)
+    _reply(turn, {"kind": "assistant", "payload": {"text": "Waiting on the merge."}},
+           capture=django_capture_on_commit_callbacks)
+    Turn.objects.filter(pk=turn.pk).update(status=Turn.DONE, finished_at=timezone.now())
+    slack.calls.clear()
+    _stream(runner, pairer, session, [{"seq": 3, "index": 3000, "kind": "assistant",
+                                       "payload": {"text": "Merged and deployed."}}],
+            django_capture_on_commit_callbacks)
+    assert [p["text"] for p in slack.said("chat.postMessage")] == ["Merged and deployed."]
+
+
 def test_nothing_is_relayed_this_way_while_a_turn_is_running(bound, slack, django_capture_on_commit_callbacks):
     session, runner, pairer = _yielded(bound, django_capture_on_commit_callbacks)
     Turn.objects.filter(chat_session=session).update(status=Turn.RUNNING)
