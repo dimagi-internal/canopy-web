@@ -32,11 +32,28 @@ describe('RunnerAdmins', () => {
     render(<RunnerAdmins runnerId="r1" canManage pairedByEmail="jjackson@dimagi.com" />)
     expect(await screen.findByText('smazumdar@dimagi.com')).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText('Grant administration to'),
+    fireEvent.change(screen.getByLabelText('Email'),
                      { target: { value: 'stewari@dimagi.com' } })
     fireEvent.click(screen.getByTestId('runner-admins-grant'))
     await waitFor(() => expect(grant).toHaveBeenCalledWith('r1', 'stewari@dimagi.com'))
     // Re-read rather than trusting the local list: the server decides.
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+  })
+
+  it('shows the pairer as a fixed role row and lets the pairer remove an admin', async () => {
+    list.mockResolvedValue([ROW])
+    revoke.mockResolvedValue(undefined)
+    render(<RunnerAdmins runnerId="r1" canManage pairedByEmail="jjackson@dimagi.com" />)
+    const pairer = await screen.findByTestId('runner-admin-pairer')
+    expect(pairer.textContent).toContain('Pairer')
+    expect(pairer.textContent).toContain('paired this runner')
+    expect(screen.getByTestId('runner-admin-4').textContent).toContain('Admin')
+    expect(screen.getByTestId('runner-admin-4').textContent).toContain('granted by jjackson@dimagi.com')
+    // a single grantable role reads as text, never a one-option dropdown
+    expect(screen.queryByRole('combobox')).toBeNull()
+
+    fireEvent.click(screen.getByLabelText(`Remove ${ROW.email}`))
+    await waitFor(() => expect(revoke).toHaveBeenCalledWith('r1', 4))
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
   })
 
@@ -45,7 +62,7 @@ describe('RunnerAdmins', () => {
     render(<RunnerAdmins runnerId="r1" canManage={false} />)
     expect(await screen.findByText('smazumdar@dimagi.com')).toBeTruthy()
     expect(screen.queryByTestId('runner-admins-grant')).toBeNull()
-    expect(screen.queryByLabelText(`Revoke ${ROW.email}`)).toBeNull()
+    expect(screen.queryByLabelText(`Remove ${ROW.email}`)).toBeNull()
   })
 
   it('says a refused read is refused, not empty', async () => {
@@ -60,7 +77,7 @@ describe('RunnerAdmins', () => {
     grant.mockRejectedValue(new Error('aking@dimagi.com is not a member of the workspace this runner belongs to'))
     render(<RunnerAdmins runnerId="r1" canManage />)
     await screen.findByTestId('runner-admins-empty')
-    fireEvent.change(screen.getByLabelText('Grant administration to'),
+    fireEvent.change(screen.getByLabelText('Email'),
                      { target: { value: 'aking@dimagi.com' } })
     fireEvent.click(screen.getByTestId('runner-admins-grant'))
     expect((await screen.findByTestId('runner-admins-error')).textContent).toContain('not a member of the workspace')

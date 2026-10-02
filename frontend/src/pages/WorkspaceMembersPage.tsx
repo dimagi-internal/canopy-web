@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent, type JSX } from 'react'
+import { useEffect, useMemo, useState, type JSX } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Button, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'canopy-ui/ui'
+import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'canopy-ui/ui'
 import { WorkbenchSubHeader } from 'canopy-ui'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { useAuth } from '@/auth/AuthProvider'
@@ -18,6 +18,8 @@ import {
   type MemberOut,
   type MemberRole,
 } from '@/api/workspaces'
+import { AddPersonForm, PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
+import { roleOptions } from '@/components/people/roles'
 import { grantableRoles, mayManageMember, roleAllows } from '@/lib/workspaceRoles'
 import { emailOutcomeText, inviteExpiryLabel, isInviteOutstanding, isInvitePending, type EmailStatus } from './workspaceInvites'
 
@@ -46,12 +48,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   const [invites, setInvites] = useState<InviteOut[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [rowError, setRowError] = useState<string | null>(null)
-  const [savingRoleFor, setSavingRoleFor] = useState<number | null>(null)
 
-  const [email, setEmail] = useState('')
-  const [role, setRole] = useState<InviteRole>('editor')
-  const [creating, setCreating] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
   const [created, setCreated] = useState<{ email: string; link: string; status: EmailStatus | null } | null>(null)
   const [copied, setCopied] = useState(false)
   // Per-row link actions on an outstanding invite: which row's link was just
@@ -98,37 +95,26 @@ export function WorkspaceMembersPage(): JSX.Element | null {
   )
   const hasInheritedOwner = useMemo(() => (members ?? []).some((m) => m.inherited), [members])
 
+  // Both reject on failure: the shared PeopleTable shows the error inline on
+  // the row that failed, which is where the person is looking.
   async function handleRoleChange(userId: number, role: MemberRole) {
     if (!slug) return
-    setRowError(null)
-    setSavingRoleFor(userId)
-    try {
-      const updated = await setMemberRole(slug, userId, role)
-      setMembers((prev) => (prev ?? []).map((m) => (m.user_id === userId ? updated : m)))
-      // The cached workspace list (header switcher, this page's own `canManage`)
-      // is fetched once and otherwise never invalidated — if I just changed
-      // MY OWN role, refresh it now so `canManage` reflects reality immediately
-      // instead of continuing to render owner-only controls I can no longer
-      // use until a full page reload (see WorkspaceProvider.refresh's docstring).
-      if (myEmail && updated.email.toLowerCase() === myEmail) {
-        void refreshWorkspaces()
-      }
-    } catch (e) {
-      setRowError(e instanceof Error ? e.message : 'Failed to change role')
-    } finally {
-      setSavingRoleFor(null)
+    const updated = await setMemberRole(slug, userId, role)
+    setMembers((prev) => (prev ?? []).map((m) => (m.user_id === userId ? updated : m)))
+    // The cached workspace list (header switcher, this page's own `canManage`)
+    // is fetched once and otherwise never invalidated — if I just changed
+    // MY OWN role, refresh it now so `canManage` reflects reality immediately
+    // instead of continuing to render owner-only controls I can no longer
+    // use until a full page reload (see WorkspaceProvider.refresh's docstring).
+    if (myEmail && updated.email.toLowerCase() === myEmail) {
+      void refreshWorkspaces()
     }
   }
 
   async function handleRemoveMember(userId: number) {
     if (!slug) return
-    setRowError(null)
-    try {
-      await removeMember(slug, userId)
-      setMembers((prev) => (prev ?? []).filter((m) => m.user_id !== userId))
-    } catch (e) {
-      setRowError(e instanceof Error ? e.message : 'Failed to remove member')
-    }
+    await removeMember(slug, userId)
+    setMembers((prev) => (prev ?? []).filter((m) => m.user_id !== userId))
   }
 
   async function handleRevoke(inviteId: number) {
@@ -169,25 +155,16 @@ export function WorkspaceMembersPage(): JSX.Element | null {
     }
   }
 
-  async function handleCreateInvite(e: FormEvent) {
-    e.preventDefault()
-    if (!slug || !email.trim()) return
-    setCreating(true)
-    setCreateError(null)
+  // Rejects on failure; the shared add row shows the server's words inline.
+  async function handleCreateInvite(email: string, role: InviteRole) {
+    if (!slug) return
     setCreated(null)
     setCopied(false)
-    try {
-      const inv = await createInvite(slug, email.trim(), role)
-      // Re-inviting an address with an outstanding invite returns THAT row
-      // (re-armed server-side), not a new one — replace, don't duplicate.
-      setInvites((prev) => [inv, ...(prev ?? []).filter((i) => i.id !== inv.id)])
-      setCreated({ email: inv.email, link: inviteLink(inv.token), status: inv.email_status ?? null })
-      setEmail('')
-    } catch (e2) {
-      setCreateError(e2 instanceof Error ? e2.message : 'Failed to create invite')
-    } finally {
-      setCreating(false)
-    }
+    const inv = await createInvite(slug, email, role)
+    // Re-inviting an address with an outstanding invite returns THAT row
+    // (re-armed server-side), not a new one — replace, don't duplicate.
+    setInvites((prev) => [inv, ...(prev ?? []).filter((i) => i.id !== inv.id)])
+    setCreated({ email: inv.email, link: inviteLink(inv.token), status: inv.email_status ?? null })
   }
 
   async function handleCopy() {
@@ -212,84 +189,30 @@ export function WorkspaceMembersPage(): JSX.Element | null {
         {members === null ? (
           <div className="h-24 animate-pulse rounded-lg bg-muted" />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Email</TableHead>
-                <TableHead>Role</TableHead>
-                {canManage && <TableHead className="text-right">Actions</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {members.map((m) => {
-                const isSoleOwner =
-                  m.role === 'owner' && !m.inherited && directOwnerCount === 1 && !hasInheritedOwner
-                // A row I may act on: below me (an owner may act on anyone).
-                const manageable = !m.inherited && mayManageMember(myRole, m.role)
-                return (
-                <TableRow key={m.user_id}>
-                  <TableCell className="whitespace-normal text-foreground">{m.email}</TableCell>
-                  <TableCell className="capitalize">
-                    {m.inherited ? (
-                      <span>
-                        {m.role}{' '}
-                        <span className="text-[11px] normal-case text-muted-foreground">
-                          · via parent workspace
-                        </span>
-                      </span>
-                    ) : manageable ? (
-                      <div className="flex flex-col gap-0.5">
-                        <select
-                          aria-label={`Change role for ${m.email}`}
-                          aria-describedby={isSoleOwner ? `sole-owner-hint-${m.user_id}` : undefined}
-                          value={m.role}
-                          disabled={isSoleOwner || savingRoleFor === m.user_id}
-                          onChange={(e) => void handleRoleChange(m.user_id, e.target.value as MemberRole)}
-                          className="h-8 rounded-lg border border-input bg-input px-2 text-sm text-foreground capitalize disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {grantable.map((r) => (
-                            <option key={r} value={r} className="capitalize">
-                              {r}
-                            </option>
-                          ))}
-                        </select>
-                        {/* Visible, not just a `title` tooltip — a disabled
-                            <select> isn't focusable, so a hover-only
-                            explanation is invisible to screen readers and
-                            touch. */}
-                        {isSoleOwner && (
-                          <span
-                            id={`sole-owner-hint-${m.user_id}`}
-                            className="text-[11px] normal-case text-muted-foreground"
-                          >
-                            Only owner — promote someone else first
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      m.role
-                    )}
-                  </TableCell>
-                  {canManage && (
-                    <TableCell className="text-right">
-                      {manageable && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => void handleRemoveMember(m.user_id)}
-                          aria-label={`Remove ${m.email}`}
-                        >
-                          Remove
-                        </Button>
-                      )}
-                    </TableCell>
-                  )}
-                </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
+          <PeopleTable
+            actions={canManage}
+            rows={members.map((m): PersonRow => {
+              const isSoleOwner =
+                m.role === 'owner' && !m.inherited && directOwnerCount === 1 && !hasInheritedOwner
+              // A row I may act on: below me (an owner may act on anyone).
+              const manageable = !m.inherited && mayManageMember(myRole, m.role)
+              return {
+                key: m.user_id,
+                name: m.email,
+                role: m.role,
+                options: roleOptions(grantable),
+                editable: manageable,
+                roleDisabled: isSoleOwner,
+                why: m.inherited
+                  ? 'via parent workspace'
+                  : manageable && isSoleOwner
+                    ? 'Only owner — promote someone else first'
+                    : null,
+                onRoleChange: (next) => handleRoleChange(m.user_id, next as MemberRole),
+                onRemove: manageable ? () => handleRemoveMember(m.user_id) : undefined,
+              }
+            })}
+          />
         )}
       </div>
 
@@ -389,43 +312,14 @@ export function WorkspaceMembersPage(): JSX.Element | null {
       {canManage && (
         <div className="rounded-lg border border-border bg-card p-5">
           <h2 className="mb-3 text-sm font-semibold text-foreground">Invite someone</h2>
-          <form onSubmit={(e) => void handleCreateInvite(e)} className="flex flex-wrap items-end gap-3">
-            <div className="min-w-[14rem] flex-1">
-              <label htmlFor="invite-email" className="mb-1 block text-[11px] text-muted-foreground">
-                Email
-              </label>
-              <Input
-                id="invite-email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="teammate@example.com"
-              />
-            </div>
-            <div>
-              <label htmlFor="invite-role" className="mb-1 block text-[11px] text-muted-foreground">
-                Role
-              </label>
-              <select
-                id="invite-role"
-                value={role}
-                onChange={(e) => setRole(e.target.value as InviteRole)}
-                className="h-8 rounded-lg border border-input bg-input px-2 text-sm text-foreground"
-              >
-                {grantable.map((r) => (
-                  <option key={r} value={r} className="capitalize">
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <Button type="submit" disabled={creating || !email.trim()}>
-              {creating ? 'Sending…' : 'Send invite'}
-            </Button>
-          </form>
-
-          {createError && <p className="mt-3 text-sm text-destructive">{createError}</p>}
+          <AddPersonForm
+            options={roleOptions(grantable)}
+            defaultRole="editor"
+            onAdd={(email, role) => handleCreateInvite(email, role as InviteRole)}
+            submitLabel="Send invite"
+            busyLabel="Sending…"
+            placeholder="teammate@example.com"
+          />
 
           {created && (
             <div
