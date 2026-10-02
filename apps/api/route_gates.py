@@ -449,6 +449,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "accept_invite": ("authenticated", "signed-link"),
     "get_shared_vault": ("own",),
     "set_shared_vault": ("own",),
+    "get_runner_order": ("member",),
+    "set_runner_order": ("agent.work",),  # each runner's pairer must be a member (422 otherwise)
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
 }

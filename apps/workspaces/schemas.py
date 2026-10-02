@@ -260,3 +260,30 @@ class AgentTopologyOut(StrictModel):
     workspaces: list[TopologyWorkspaceRefOut]
     agents: list[AgentTopologyAgentOut]
     edges: list[AgentEdgeOut]
+
+
+class RunnerOrderRowOut(StrictModel):
+    """One row of a workspace's ordered runner list — the order REPO turns (project
+    dispatches) in this workspace route by. `projects` is what the runner declares:
+    a runner only ever takes a repo turn for a repo it lists there."""
+
+    runner_id: uuid.UUID
+    runner_name: str
+    kind: str
+    rank: int
+    online: bool
+    ready: bool
+    enabled: bool
+    projects: list[str]
+
+
+class RunnerOrderRowIn(StrictModel):
+    runner_id: uuid.UUID
+    enabled: bool = True
+
+
+class RunnerOrderIn(StrictModel):
+    """Wholesale replace — index = rank. An empty list removes the order, and the
+    workspace's repo turns go back to any runner that declares the repo."""
+
+    runners: list[RunnerOrderRowIn]
