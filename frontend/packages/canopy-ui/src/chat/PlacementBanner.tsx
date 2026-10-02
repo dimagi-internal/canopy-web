@@ -32,7 +32,7 @@ export interface PlacementBannerProps {
    *  resuming is safe (e.g. "token limit on this account" usually is not). */
   pausedNote?: string;
   /** Un-park the runner in place. Omit when the viewer cannot — only the human
-   *  who owns a runner may pause or resume it, so offering this to anyone else
+   *  who paired a runner may pause or resume it, so offering this to anyone else
    *  would render a button that 404s. */
   onResume?: () => void;
 }

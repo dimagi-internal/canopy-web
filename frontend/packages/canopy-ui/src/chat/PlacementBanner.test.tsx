@@ -128,7 +128,7 @@ describe("PlacementBanner", () => {
     expect(onResume).toHaveBeenCalledTimes(1);
   });
 
-  it("omits Resume when no handler is given — only the owner may resume", () => {
+  it("omits Resume when no handler is given — only the pairer may resume", () => {
     render(
       <PlacementBanner
         runnerName="Laptop"
