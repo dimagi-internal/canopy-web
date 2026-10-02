@@ -1,5 +1,5 @@
 import { useState, type JSX } from 'react'
-import { pauseRunner, unpauseRunner, type RunnerOut } from '@/api/harness'
+import { pauseRunner, setRunnerSessions, unpauseRunner, type RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
 import { AgentRouting } from '@/components/agents/AgentRouting'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
@@ -74,6 +74,23 @@ export function RunnerDetail({
         setPauseErr(err instanceof Error ? err.message : 'could not change pause state')
       })
       .finally(() => setPausing(false))
+  }
+
+  // Slack/chat sessions on or off. Was settable only over the API, so a box paired
+  // before pairing set it (haldimagi-mbp-cdp, 2026-10-02) silently never appeared
+  // in "start a session" and nobody could see why.
+  const takesSessions = Boolean((runner.capabilities as { sessions?: boolean } | null)?.sessions)
+  const [savingSessions, setSavingSessions] = useState(false)
+  const [sessionsErr, setSessionsErr] = useState<string | null>(null)
+  const toggleSessions = () => {
+    setSavingSessions(true)
+    setSessionsErr(null)
+    setRunnerSessions(runner, !takesSessions)
+      .then((fresh) => onChanged?.(fresh))
+      .catch((err: unknown) =>
+        setSessionsErr(err instanceof Error ? err.message : 'could not change session setting'),
+      )
+      .finally(() => setSavingSessions(false))
   }
 
   const row = (label: string, value: string) => (
@@ -185,6 +202,38 @@ export function RunnerDetail({
           {pauseErr && <p className="text-[12px] text-destructive" data-testid="runner-pause-error">{pauseErr}</p>}
         </div>
       )}
+
+      {/* Takes Slack & chat sessions — same pairer-only gate as Pause. Shown
+          read-only to everyone else, because "why isn't this box in the session
+          picker?" is a question any member asks. */}
+      <div className="flex flex-col gap-1 rounded-lg border border-border bg-card p-3" data-testid="runner-sessions">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Slack &amp; chat sessions</span>
+          {runner.can_manage ? (
+            <button
+              type="button"
+              onClick={toggleSessions}
+              disabled={savingSessions}
+              data-testid="runner-sessions-toggle"
+              className={`ml-auto rounded-md px-2.5 py-1 text-[12px] font-medium disabled:opacity-50 ${
+                takesSessions ? 'border border-border text-foreground hover:bg-muted' : 'bg-primary text-primary-foreground'
+              }`}
+            >
+              {savingSessions ? '…' : takesSessions ? 'Turn off' : 'Turn on'}
+            </button>
+          ) : (
+            <span className="ml-auto text-[12px] text-foreground" data-testid="runner-sessions-state">
+              {takesSessions ? 'on' : 'off'}
+            </span>
+          )}
+        </div>
+        <p className="text-[12px] text-muted-foreground">
+          {takesSessions
+            ? 'Takes Slack threads and web chat, and appears in "start a session".'
+            : 'Off — this box never takes Slack or chat work and is hidden from "start a session".'}
+        </p>
+        {sessionsErr && <p className="text-[12px] text-destructive" data-testid="runner-sessions-error">{sessionsErr}</p>}
+      </div>
 
       {/* Owner-only surface. The fleet list is workspace-scoped since
           _runner_read_q, so this view can open a runner the caller did not pair;

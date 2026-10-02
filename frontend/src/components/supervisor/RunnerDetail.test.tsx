@@ -14,10 +14,12 @@ import type { AgentOut } from '@/api/agents'
 
 const pauseRunner = vi.fn<(id: string, note?: string) => Promise<RunnerOut>>()
 const unpauseRunner = vi.fn<(id: string) => Promise<RunnerOut>>()
+const setRunnerSessions = vi.fn<(r: RunnerOut, on: boolean) => Promise<RunnerOut>>()
 
 vi.mock('@/api/harness', () => ({
   pauseRunner,
   unpauseRunner,
+  setRunnerSessions,
   // The administrators panel reads on mount; who may administer a box is its own
   // component's subject (RunnerAdmins.test.tsx), so here it just has to resolve.
   listRunnerAdmins: vi.fn().mockResolvedValue([]),
@@ -191,5 +193,35 @@ describe('RunnerDetail — pause', () => {
   it('is absent on a runner the caller did not pair — POST /pause would 404', () => {
     render(<RunnerDetail runner={runner({ can_manage: false })} agents={agents} onBack={() => {}} />)
     expect(screen.queryByTestId('runner-pause')).toBeNull()
+  })
+})
+
+describe('RunnerDetail — Slack & chat sessions', () => {
+  it('lets the pairer turn sessions on and re-renders from the server row', async () => {
+    const on = runner({ capabilities: { agents: ['hal'], sessions: true } })
+    setRunnerSessions.mockResolvedValue(on)
+    const onChanged = vi.fn()
+    const off = runner({ capabilities: { agents: ['hal'] } })
+
+    render(<RunnerDetail runner={off} agents={agents} onBack={() => {}} onChanged={onChanged} />)
+
+    expect(screen.getByTestId('runner-sessions').textContent).toContain('hidden from')
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('runner-sessions-toggle'))
+    })
+    expect(setRunnerSessions).toHaveBeenCalledWith(off, true)
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(on))
+  })
+
+  it('shows the setting read-only to someone who did not pair the box', () => {
+    render(
+      <RunnerDetail
+        runner={runner({ can_manage: false, can_administer: false, capabilities: { sessions: true } })}
+        agents={agents}
+        onBack={() => {}}
+      />,
+    )
+    expect(screen.queryByTestId('runner-sessions-toggle')).toBeNull()
+    expect(screen.getByTestId('runner-sessions-state').textContent).toBe('on')
   })
 })
