@@ -5,21 +5,32 @@ import {
   removeParticipant,
   type Participant,
 } from "@/api/chat";
+import { AddPersonForm, PeopleTable, type PersonRow } from "@/components/people/PeopleTable";
+import type { RoleOption } from "@/components/people/roles";
+
+// The roles a chat's owner may hand out. Owner is whoever started the chat and
+// only ever renders fixed.
+const SHARE_ROLES: RoleOption[] = [
+  { value: "editor", label: "Editor" },
+  { value: "viewer", label: "Viewer" },
+];
 
 /**
  * "People", opened from the chat's session menu: who has been given this chat, and (for its owner)
- * giving it to a workspace teammate.
+ * giving it to a workspace teammate or changing their role.
  *
  * Being in the workspace does NOT put you in someone else's chat. The chat
  * socket used to add any member who opened one, which is what made a private
  * conversation reachable by anyone holding its link. Sharing is explicit now,
  * and this is where it happens (apps/canopy_sessions/access.py).
+ *
+ * Rendered through the shared PeopleTable so a role reads and changes the same
+ * way here as on workspace members, an agent's access and a runner's admins.
+ * Changing a role re-POSTs the participant, which the API treats as "give them
+ * this chat at this role".
  */
 export function ChatPeoplePanel({ sessionId, myRole }: { sessionId: string; myRole: string | null }) {
   const [people, setPeople] = useState<Participant[] | null>(null);
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"editor" | "viewer">("editor");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const isOwner = myRole === "owner";
 
@@ -33,18 +44,21 @@ export function ChatPeoplePanel({ sessionId, myRole }: { sessionId: string; myRo
     };
   }, [sessionId]);
 
-  const act = async (fn: () => Promise<Participant[]>) => {
-    setBusy(true);
-    setError("");
-    try {
-      setPeople(await fn());
-      setEmail("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "That did not work.");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const rows: PersonRow[] = (people ?? []).map((p) => {
+    const isChatOwner = p.role === "owner";
+    return {
+      key: p.user_id,
+      name: p.display_name,
+      email: p.email,
+      role: p.role,
+      options: SHARE_ROLES,
+      editable: isOwner && !isChatOwner,
+      why: isChatOwner ? "owns the chat" : null,
+      onRoleChange: async (next) => setPeople(await addParticipant(sessionId, p.email, next as "editor" | "viewer")),
+      onRemove:
+        isOwner && !isChatOwner ? async () => setPeople(await removeParticipant(sessionId, p.user_id)) : undefined,
+    };
+  });
 
   return (
     <div className="space-y-3 text-[13px]">
@@ -52,64 +66,19 @@ export function ChatPeoplePanel({ sessionId, myRole }: { sessionId: string; myRo
       {people && people.length === 0 && (
         <p className="text-muted-foreground">Nobody has been given this chat.</p>
       )}
-      {people && people.length > 0 && (
-        <table className="w-full">
-          <tbody>
-            {people.map((p) => (
-              <tr key={p.user_id} className="border-b border-border last:border-0">
-                <td className="py-1.5 text-foreground">{p.display_name}</td>
-                <td className="py-1.5 text-muted-foreground">{p.role}</td>
-                <td className="py-1.5 text-right">
-                  {p.role !== "owner" && isOwner && (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void act(() => removeParticipant(sessionId, p.user_id))}
-                      className="text-foreground-secondary hover:text-destructive disabled:opacity-50"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {people && people.length > 0 && <PeopleTable rows={rows} actions={isOwner} />}
       {isOwner ? (
-        <form
-          className="space-y-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (email.trim()) void act(() => addParticipant(sessionId, email.trim(), role));
-          }}
-        >
-          <div className="flex gap-2">
-            <input
-              autoFocus
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="teammate@dimagi.com"
-              className="min-w-0 flex-1 rounded-md border border-input bg-input px-2 py-1.5 text-foreground"
-            />
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as "editor" | "viewer")}
-              className="rounded-md border border-input bg-input px-1 py-1.5 text-foreground"
-            >
-              <option value="editor">Editor</option>
-              <option value="viewer">Viewer</option>
-            </select>
-            <button
-              type="submit"
-              disabled={!email.trim() || busy}
-              className="rounded-md bg-primary px-3 py-1.5 text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {busy ? "Adding…" : "Add"}
-            </button>
-          </div>
+        <div className="space-y-1">
+          <AddPersonForm
+            autoFocus
+            options={SHARE_ROLES}
+            defaultRole="editor"
+            onAdd={async (email, role) =>
+              setPeople(await addParticipant(sessionId, email, role as "editor" | "viewer"))
+            }
+          />
           <p className="text-muted-foreground">They must already be in this workspace.</p>
-        </form>
+        </div>
       ) : (
         myRole && <p className="text-muted-foreground">Only the chat's owner can add people.</p>
       )}

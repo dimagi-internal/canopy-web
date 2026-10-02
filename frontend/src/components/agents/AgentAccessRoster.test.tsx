@@ -53,25 +53,47 @@ describe('AgentAccessRoster', () => {
     expect(within(rowFor('vw@partner.org')).getByText('Only: ask')).toBeTruthy()
     expect(within(rowFor('no@partner.org')).getByText('No access')).toBeTruthy()
     expect(screen.getByText(/only ask/)).toBeTruthy()
-    // no controls for someone who may not manage admins
-    expect(screen.queryByText('Make admin')).toBeNull()
-    expect(screen.queryByText('Remove admin')).toBeNull()
+    // the role is plain text, never a dropdown, for someone who may not manage admins
+    expect(screen.queryAllByRole('combobox')).toHaveLength(0)
+    expect(within(rowFor('ed@dimagi.com')).getByText('Member')).toBeTruthy()
   })
 
-  it('a manager can grant admin to a member and revoke a granted admin, never a workspace owner or the owner', async () => {
+  it('a manager changes a role from the dropdown; the owner and workspace owners stay fixed', async () => {
     getAgentAccess.mockResolvedValue(ACCESS)
     grantAgentAdmin.mockResolvedValue([])
+    revokeAgentAdmin.mockResolvedValue([])
     render(<AgentAccessRoster agentSlug="ace" canManage />)
     await screen.findAllByTestId('agent-access-row')
 
-    expect(within(rowFor('op@dimagi.com')).queryByRole('button')).toBeNull()
-    expect(within(rowFor('boss@dimagi.com')).queryByRole('button')).toBeNull()
-    expect(screen.getByLabelText('Remove adm@dimagi.com as admin')).toBeTruthy()
+    // fixed rows: same column, plain text, with the reason under it
+    expect(within(rowFor('op@dimagi.com')).queryByRole('combobox')).toBeNull()
+    expect(within(rowFor('op@dimagi.com')).getByText('Owner')).toBeTruthy()
+    expect(within(rowFor('op@dimagi.com')).getByText('Owns this agent')).toBeTruthy()
+    expect(within(rowFor('boss@dimagi.com')).queryByRole('combobox')).toBeNull()
+    // no link-buttons left
+    expect(screen.queryByText('Make admin')).toBeNull()
+    expect(screen.queryByText('Remove admin')).toBeNull()
 
-    fireEvent.click(screen.getByLabelText('Make ed@dimagi.com an admin'))
+    const ed = screen.getByLabelText('Change role for ed@dimagi.com') as HTMLSelectElement
+    expect(ed.value).toBe('member')
+    fireEvent.change(ed, { target: { value: 'admin' } })
     await waitFor(() => expect(grantAgentAdmin).toHaveBeenCalledWith('ace', 4))
     // the whole answer is re-read, since admin changes access as well as role
     await waitFor(() => expect(getAgentAccess).toHaveBeenCalledTimes(2))
+
+    const adm = screen.getByLabelText('Change role for adm@dimagi.com') as HTMLSelectElement
+    expect(adm.value).toBe('admin')
+    fireEvent.change(adm, { target: { value: 'member' } })
+    await waitFor(() => expect(revokeAgentAdmin).toHaveBeenCalledWith('ace', 3))
+  })
+
+  it('shows a failed change inline on the row', async () => {
+    getAgentAccess.mockResolvedValue(ACCESS)
+    grantAgentAdmin.mockRejectedValue(new Error('not allowed'))
+    render(<AgentAccessRoster agentSlug="ace" canManage />)
+    await screen.findAllByTestId('agent-access-row')
+    fireEvent.change(screen.getByLabelText('Change role for ed@dimagi.com'), { target: { value: 'admin' } })
+    expect(await within(rowFor('ed@dimagi.com')).findByText('not allowed')).toBeTruthy()
   })
 
   it('says plainly when no caller rules are published', async () => {
