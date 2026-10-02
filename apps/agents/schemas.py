@@ -486,10 +486,10 @@ class AgentTurnOut(StrictModel):
     result_note: str = ""
     origin_ref: dict = Field(default_factory=dict)
     # Where to see what the turn DID (services.list_turns). `chat_session_id` is
-    # the chat holding its work — a chat turn's own session, or the emdash session a
-    # laptop runner drove. A cloud-runner agent turn has no session; its work is
-    # the retained transcript (`has_transcript`, read via
-    # /api/harness/turns/{id}/messages).
+    # the chat holding its work — a chat turn's own session, or the session a
+    # runner drove (an emdash session on a laptop, a recorded Claude session on a
+    # cloud runner). A turn with no session falls back to its retained transcript
+    # (`has_transcript`, read via /api/harness/turns/{id}/messages).
     chat_session_id: uuid.UUID | None = Field(default=None, validation_alias="linked_session_id")
     has_transcript: bool = False
 

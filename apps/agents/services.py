@@ -255,6 +255,13 @@ def _claim_dispatch_row(agent: Agent, data) -> Turn | None:
          for that task wins, because a reused session serves many turns and the one
          being closed is the latest.
 
+      3. cli_session_id AS the session key — a CLOUD runner has no emdash task:
+         it stamps the turn with the Claude session id it ran (`finish`), and the
+         closing agent, whose cwd is the shared agent clone rather than an emdash
+         worktree, has no task name to recover. The Claude session id it reports
+         is that same id, so it is the join. Without this every cloud close-out
+         became its own report-only row beside the turn it was closing.
+
     No time window on (2): an agent turn legitimately runs for hours, and a wrong
     window would silently split one turn into two rows — the exact failure this
     merge exists to end. The `reported_at__isnull=True` filter is what keeps an
@@ -264,7 +271,7 @@ def _claim_dispatch_row(agent: Agent, data) -> Turn | None:
         existing = agent.turns.filter(cli_session_id=data.cli_session_id).first()
         if existing is not None:
             return existing
-    task = getattr(data, "emdash_task_id", "") or ""
+    task = getattr(data, "emdash_task_id", "") or data.cli_session_id or ""
     if task:
         return (
             agent.turns.filter(emdash_task_id=task, reported_at__isnull=True)
@@ -352,12 +359,12 @@ def _link_turn_sessions(agent: Agent, turns: list[Turn]) -> None:
 
     Three cases, by how the turn ran:
     - a CHAT turn targets its session directly (`chat_session`);
-    - an agent turn on a LAPTOP (emdash) runner created or reused an emdash
-      session, recorded as `emdash_task_id` — the same string the runner's session
-      report stores as `RunnerBinding.session_key`, so that is the join;
-    - an agent turn on a CLOUD runner has no session at all (it runs one-shot
-      `claude -p` and keeps its transcript on the turn — `has_transcript`), so it
-      stays unlinked.
+    - an agent turn on a runner stamps `emdash_task_id` with the session it drove
+      — an emdash task name on a LAPTOP, the Claude session id on a CLOUD runner
+      — the same string the runner's record-session stores as
+      `RunnerBinding.session_key`, so that is the join;
+    - an older cloud turn (before the cloud runner recorded agent sessions) has
+      no session; at most its transcript is on the turn (`has_transcript`).
 
     Session keys are emdash task names and names get reused, so a match must be a
     session that existed by the time the turn finished: a later session that

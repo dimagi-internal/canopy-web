@@ -185,3 +185,87 @@ def test_a_cloud_turn_has_no_session_but_has_its_transcript(authed_client, works
     item = _items(authed_client)[str(turn.id)]
     assert item["chat_session_id"] is None
     assert item["has_transcript"] is True
+
+
+# ---- a cloud agent turn: one session, one row ------------------------------
+# The cloud runner records `<agent>:<turn id>` the moment the turn's Claude
+# session starts and finishes the turn with that session id as its key. The
+# agent's close-out, whose cwd is the shared clone, knows no emdash task — only
+# its Claude session id, which is that same key.
+
+def _cloud_runner(user):
+    from apps.harness.models import Runner
+
+    return Runner.objects.create(name="cloud-ec2-1", kind="cloud", capabilities={},
+                                 host="cloud-ec2-1", paired_by=user)
+
+
+def test_a_cloud_agent_turn_links_to_the_session_the_runner_recorded(
+        authed_client, authed_user, workspace):
+    from django.utils import timezone
+
+    from apps.harness import services as harness_services
+
+    agent = _echo(workspace)
+    turn = _turn(agent, "cloud-1", status="running")
+    harness_services.record_session(
+        agent, f"echo:{turn.id}", runner=_cloud_runner(authed_user), emdash_task_id="cli-1")
+    turn.status, turn.emdash_task_id, turn.finished_at = "done", "cli-1", timezone.now()
+    turn.save()
+
+    item = _items(authed_client)[str(turn.id)]
+    assert item["chat_session_id"] is not None
+
+
+def test_a_cloud_close_out_attaches_to_its_turn_instead_of_adding_a_row(
+        authed_client, workspace):
+    """The duplicate seen on labs: echo's 17:00 scheduled turn and, beside it, a
+    'Scheduled turn 2026-10-01 — nothing in queue' report-only row."""
+    agent = _echo(workspace)
+    turn = _turn(agent, "sched-1", status="done", emdash_task_id="772b76a6-cli")
+    resp = authed_client.post(
+        "/api/agents/echo/turns/",
+        data={"cli_session_id": "772b76a6-cli", "title": "Scheduled turn — nothing in queue",
+              "source": "turn"},
+        content_type="application/json",
+    )
+    assert resp.status_code == 201, resp.content
+    items = authed_client.get("/api/agents/echo/turns/?limit=10").json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == str(turn.id)
+    assert items[0]["title"] == "Scheduled turn — nothing in queue"
+    assert items[0]["reported_at"] is not None
+
+
+def test_a_laptop_close_out_still_joins_on_its_emdash_task(authed_client, workspace):
+    agent = _echo(workspace)
+    turn = _turn(agent, "lap-1", status="done", emdash_task_id="c-daily-turn-ad53")
+    authed_client.post(
+        "/api/agents/echo/turns/",
+        data={"cli_session_id": "some-claude-id", "title": "Daily turn",
+              "emdash_task_id": "c-daily-turn-ad53", "source": "turn"},
+        content_type="application/json",
+    )
+    items = authed_client.get("/api/agents/echo/turns/?limit=10").json()["items"]
+    assert [i["id"] for i in items] == [str(turn.id)]
+
+
+def test_a_cloud_session_is_named_by_the_runners_title_not_its_uuid(authed_user, workspace):
+    from apps.harness import services as harness_services
+
+    agent = _echo(workspace)
+    binding = harness_services.record_session(
+        agent, "echo:t-1", runner=_cloud_runner(authed_user),
+        emdash_task_id="6b1f9c2e-cli-uuid", title="Daily turn")
+    binding.session.refresh_from_db()
+    assert binding.session.title == "Daily turn"
+
+
+def test_a_laptop_session_is_still_named_after_its_emdash_task(authed_user, workspace):
+    from apps.harness import services as harness_services
+
+    agent = _echo(workspace)
+    binding = harness_services.record_session(
+        agent, "echo:t-2", runner=_cloud_runner(authed_user), emdash_task_id="c-daily-turn-ad53")
+    binding.session.refresh_from_db()
+    assert binding.session.title == "c-daily-turn-ad53"

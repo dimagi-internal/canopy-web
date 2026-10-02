@@ -2191,6 +2191,7 @@ def record_session(
     session_id: str = "",  # accepted for wire-compat; the binding keys on session_key
     agent_task_ext_id: str | None = None,
     summary: str | None = None,
+    title: str = "",
 ):
     """Upsert the thread's durable Session + RunnerBinding and re-point the live-session
     hint at THIS runner/host. Only overwrites agent_task_ext_id/summary when passed,
@@ -2234,8 +2235,12 @@ def record_session(
         # sentence for a name while the sidebar showed the task
         # (observed 2026-07-27). A human-set title is still never clobbered — it
         # won't match the fallback and won't match the first message either.
-        if emdash_task_id and _title_is_derived(binding.session, thread_key):
-            binding.session.title = emdash_task_id[:200]
+        #
+        # A runner-supplied `title` beats the key: a cloud runner's key is a
+        # Claude session UUID, which names nothing a person would recognise.
+        name = (title or "").strip() or emdash_task_id
+        if name and _title_is_derived(binding.session, thread_key):
+            binding.session.title = name[:200]
             binding.session.save(update_fields=["title"])
         binding.live_seen_at = timezone.now()
         if agent_task_ext_id is not None:

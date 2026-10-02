@@ -1063,6 +1063,7 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
             None, payload.thread_key, runner=runner, project=payload.project, workspace=ws,
             emdash_task_id=payload.emdash_task_id, session_id=payload.session_id,
             agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
+            title=payload.title,
         )
         return services.resolve_session(
             None, payload.thread_key, runner, project=payload.project, workspace=ws
@@ -1072,6 +1073,7 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
         agent, payload.thread_key, runner=runner,
         emdash_task_id=payload.emdash_task_id, session_id=payload.session_id,
         agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
+        title=payload.title,
     )
     return services.resolve_session(agent, payload.thread_key, runner)
 
