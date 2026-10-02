@@ -23,9 +23,15 @@ said. Design: `docs/superpowers/specs/2026-09-18-slack-front-door-design.md`
    nothing to call.
 5. **Audited** — see `services._record_window`.
 
-Known gap, accepted (spec): a reply posted inside the window to a thread whose
-parent is older than the window is missed, because history returns parents by
-parent time. The thread the request itself is in is always read whole.
+Threads: history returns parents by PARENT time, so a reply posted inside the
+window to an older thread is invisible to a plain windowed read. That gap was
+accepted in the spec and bit the first real use (2026-10-01: a 20-minute read
+came back empty while the conversation it was asked about was a reply in a
+day-old thread). So the parent scan reaches back
+`SLACK_HISTORY_THREAD_LOOKBACK_HOURS` and keeps any thread whose `latest_reply`
+is inside the window; only those threads' in-window replies (and their parent,
+for context) are handed over. The thread the request itself is in is always
+read whole.
 """
 from __future__ import annotations
 
@@ -112,17 +118,28 @@ def fetch(token: str, *, channel_id: str, minutes: int, thread_ts: str = "",
     the request itself, which the agent receives as its prompt anyway.
     """
     minutes = max(1, int(minutes))
-    oldest = f"{(now if now is not None else time.time()) - minutes * 60:.6f}"
+    now = now if now is not None else time.time()
+    start = now - minutes * 60
+    oldest = f"{start:.6f}"
+    lookback = max(minutes * 60, int(settings.SLACK_HISTORY_THREAD_LOOKBACK_HOURS) * 3600)
     budget = message_ceiling()
-    parents = _messages(token, "conversations.history",
-                        {"channel": channel_id, "oldest": oldest}, budget=budget)
+    # One scan reaching back past the window, so an old thread with a new reply
+    # is seen; only in-window parents are kept as lines.
+    scanned = _messages(token, "conversations.history",
+                        {"channel": channel_id, "oldest": f"{now - lookback:.6f}"},
+                        budget=max(budget, int(settings.SLACK_HISTORY_SCAN_CEILING)))
+    parents = [m for m in scanned if float(m.get("ts") or 0) >= start][:budget]
     budget -= len(parents)
     lines: dict[str, Line] = {}
     for m in parents:
         if m.get("ts") == skip_ts:
             continue
         lines[m["ts"]] = Line(m["ts"], m.get("user") or m.get("bot_id") or "", m.get("text") or "")
-    threads = [m["ts"] for m in parents if m.get("reply_count")]
+    # Newest activity first, so the ceiling drops the stalest threads.
+    active = sorted((m for m in scanned if m.get("reply_count")
+                     and float(m.get("latest_reply") or m.get("ts") or 0) >= start),
+                    key=lambda m: -float(m.get("latest_reply") or m.get("ts") or 0))
+    threads = [m["ts"] for m in active]
     if thread_ts and thread_ts not in threads:
         threads.insert(0, thread_ts)
     for parent_ts in threads:

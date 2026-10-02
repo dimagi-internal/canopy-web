@@ -141,6 +141,8 @@ STALE = "stale"
 MEMBERS_ONLY = "members_only"
 #: A reply in a thread whose shared session has since been closed.
 SESSION_CLOSED = "session_closed"
+#: The agent's interface offers this caller nothing; the turn was written cancelled.
+REFUSED = "refused"
 #: A `--history N` ask canopy would not, or could not, read the channel for.
 WINDOW_REFUSED = "window_refused"
 # Sending waiting work to a cloud runner, and the ways that can go.
@@ -232,6 +234,45 @@ def agent_list(installation: SlackInstallation) -> str:
         return "No agents in this workspace are turned on for Slack yet."
     return "Agents you can talk to here: " + ", ".join(f"`{s}`" for s in slugs) + \
         ". Start your message with one, e.g. `@canopy " + slugs[0] + " summarise this thread`."
+
+
+#: What every "this went nowhere" reply opens with when no agent was named:
+#: people read `@canopy` as a bot that answers, and it is a switchboard.
+NOT_AN_AGENT = ("canopy doesn't answer messages itself — it hands each one to an agent, "
+                "named as the first word after `@canopy`.")
+
+
+def unaddressed(installation: SlackInstallation, text: str) -> str:
+    """Why a message that named no agent went nowhere, and how to address one.
+
+    A near-miss first word (`@canopy hall …`) is called out by name: a typo
+    otherwise reads exactly like "canopy ignored me".
+    """
+    import difflib
+
+    first = (text or "").partition(" ")[0].rstrip(":,").lower()
+    slugs = [a.slug for a in enabled_agents(installation)]
+    close = difflib.get_close_matches(first, slugs, n=1, cutoff=0.7) if first else []
+    hint = f" `{first}` isn't an agent here — did you mean `{close[0]}`?" if close else \
+        " Your message didn't start with one."
+    return f"{NOT_AN_AGENT}{hint} {agent_list(installation)}"
+
+
+def refusal_message(agent: Agent, turn: Turn, *, named: bool, installation: SlackInstallation) -> str:
+    """The private note to someone whose ask the agent's interface turned away.
+
+    The public status line only says it was not run; this says why and what to
+    do instead — the difference between "Cancelled." and an answer.
+    """
+    reason = (turn.result_note or "").removeprefix("not run:").strip()
+    parts = [f"`{agent.slug}` didn't run this: it only takes requests from the people its owner "
+             f"has opened it to, and that doesn't include you here ({reason})."]
+    if not named:
+        parts.append(f"Your message didn't name an agent, so it went to `{agent.slug}`, the agent "
+                     f"this thread was already talking to. {NOT_AN_AGENT}")
+    parts.append(f"{agent_list(installation)} If you think you should have access, ask "
+                 f"`{agent.slug}`'s owner.")
+    return " ".join(parts)
 
 
 def slack_profile(installation: SlackInstallation, slack_user_id: str) -> dict:
@@ -434,7 +475,23 @@ def handle_message(inbound: Inbound) -> Outcome:
         return _continue_shared(shared, principal, text, inbound)
     agent, prompt = resolve_agent(installation, text, key)
     if agent is None:
-        return Outcome(NO_AGENT, agent_list(installation))
+        return Outcome(NO_AGENT, unaddressed(installation, text))
+    named = named_agent(installation, text)[0] is not None
+    if not named:
+        closed = _closed_thread_session(agent, key)
+        if closed is not None and inbound.follow and not _first_closed_notice(closed, inbound.slack_user_id):
+            # People keep talking in a thread after its agent is gone; each
+            # person is told once, not on every line of their own conversation.
+            return Outcome(STALE, "", session=closed, agent=agent)
+        if closed is not None:
+            # Nothing named, and the conversation this would continue is over:
+            # say so rather than silently re-waking it — the sender may not even
+            # know there was an agent here, let alone that it was closed.
+            return Outcome(SESSION_CLOSED, (
+                f"This thread's conversation with `{agent.slug}` was closed, so your message "
+                f"wasn't sent anywhere. To ask `{agent.slug}` again, start with its name: "
+                f"`@canopy {agent.slug} <your ask>`. {NOT_AN_AGENT}"),
+                session=closed, agent=agent)
     # The tenant is the agent's — decided by what the message is about, never
     # by the Slack it arrived through, which may serve several tenants.
     principal, refusal = resolve_principal(installation, inbound.slack_user_id, agent.workspace_id)
@@ -463,7 +520,30 @@ def handle_message(inbound: Inbound) -> Outcome:
         title = f"Slack: last {minutes} min" + (f" — {ask}" if ask else "")
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
                                       title=title)
-    return _send(session, created, agent, principal, prompt, inbound)
+    return _send(session, created, agent, principal, prompt, inbound, named=named)
+
+
+def _closed_thread_session(agent: Agent, key: str) -> Session | None:
+    """This agent's session for the thread, if there is one and it was closed."""
+    return (Session.objects.filter(agent=agent, status=Session.ARCHIVED,
+                                   **{f"metadata__{SLACK_THREAD_KEY}": key})
+            .order_by("created_at").first())
+
+
+def _first_closed_notice(session: Session, slack_user_id: str) -> bool:
+    """Record that this person was told the thread's session is closed; True the first time."""
+    from django.db import transaction
+
+    with transaction.atomic():
+        locked = Session.objects.select_for_update().get(pk=session.pk)
+        meta = dict(locked.metadata or {})
+        told = list(meta.get("slack_closed_told") or [])
+        if slack_user_id in told:
+            return False
+        meta["slack_closed_told"] = told + [slack_user_id]
+        locked.metadata = meta
+        locked.save(update_fields=["metadata", "updated_at"])
+    return True
 
 
 def _with_window(installation: SlackInstallation, principal: Principal, agent: Agent,
@@ -545,7 +625,7 @@ def _adoption_ref(inbound: Inbound) -> dict | None:
 
 
 def _send(session: Session, created: bool, agent: Agent | None, principal: Principal, prompt: str,
-          inbound: Inbound) -> Outcome:
+          inbound: Inbound, *, named: bool = True) -> Outcome:
     # A SHARED session that has been closed has no one left to answer: say so
     # instead of queueing a turn nothing will ever take. (A Slack-born one is
     # simply asked again, which still works.)
@@ -581,6 +661,13 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         # channel's — see `status.adoption`.
         origin_ref=origin_ref,
     )
+    if turn is not None and turn.status == Turn.CANCELLED and agent is not None:
+        # Written already-cancelled: the agent's interface offers this caller
+        # nothing (harness `_apply_capability`). The public line says "not run";
+        # the sender is owed the why, privately.
+        return Outcome(REFUSED, refusal_message(agent, turn, named=named,
+                                                installation=installation_for(inbound.team_id)),
+                       session=session, turn=turn, agent=agent)
     # The public status line in the thread IS the acknowledgement: it says at
     # once whether a live runner is taking this or it is stuck, and carries the
     # canopy link for a member. Posted for every message, not just the first —

@@ -281,3 +281,43 @@ def test_only_an_owner_sets_the_policy(installation, ws, alice):
                                    content_type="application/json")
     assert resp.status_code == 403
     assert SlackWorkspaceLink.objects.get(workspace=ws).history_max_minutes == 120
+
+
+# ---- a new reply in an OLD thread ----------------------------------------------------
+
+def test_a_reply_in_an_old_thread_is_read(settings):
+    """History lists threads by PARENT time, so a reply posted inside the window
+    to a day-old thread used to be invisible: on 2026-10-01 a 20-minute read came
+    back "(nothing was posted in this window)" while the message it was asked
+    about sat in exactly such a thread."""
+    import unittest.mock as mock
+
+    settings.SLACK_HISTORY_THREAD_LOOKBACK_HOURS = 48
+    old, quiet = _ts(60 * 24), _ts(60 * 30)
+    history = [  # newest first
+        {"ts": old, "user": BOB, "text": "the cloud runner caveat", "reply_count": 3,
+         "latest_reply": _ts(17)},
+        {"ts": quiet, "user": BOB, "text": "a thread nobody touched", "reply_count": 1,
+         "latest_reply": _ts(60 * 29)},
+    ]
+    replies = {old: [
+        {"ts": old, "user": BOB, "text": "the cloud runner caveat"},
+        {"ts": _ts(60 * 23), "user": ALICE, "text": "yesterday's reply"},
+        {"ts": _ts(17), "user": ALICE, "text": "can you search and summarize slack for me?"},
+    ]}
+
+    def call(method, *, token, data):
+        if method == "conversations.history":
+            return {"ok": True, "has_more": False,
+                    "messages": [m for m in history if float(m["ts"]) >= float(data["oldest"])]}
+        msgs = replies.get(data["ts"], [])
+        if data.get("oldest"):
+            msgs = [m for m in msgs if m["ts"] == data["ts"] or float(m["ts"]) >= float(data["oldest"])]
+        return {"ok": True, "has_more": False, "messages": msgs}
+
+    with mock.patch("apps.slack.client.call", side_effect=call):
+        lines = window.fetch("xoxb", channel_id="C1", minutes=20, now=NOW)
+
+    (parent,) = lines                                   # the quiet thread is not handed over
+    assert parent.text == "the cloud runner caveat"     # its parent, for context
+    assert [r.text for r in parent.replies] == ["can you search and summarize slack for me?"]
