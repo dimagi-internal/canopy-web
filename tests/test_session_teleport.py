@@ -54,7 +54,7 @@ def _as(user) -> Client:
 
 
 def _ask(user, session, runner, brief="pick up the partner thread"):
-    return _as(user).post(f"/api/canopy-sessions/{session.id}/teleport",
+    return _as(user).post(f"/api/canopy-sessions/{session.id}/transfer",
                           data={"runner": runner, "brief": brief}, content_type="application/json")
 
 
@@ -66,15 +66,15 @@ def test_a_move_onto_someone_elses_box_waits_and_their_approval_carries_it_out(w
     res = _ask(world["jj"], world["session"], "sarveshtewari-mbp-cdp")  # by NAME
     assert res.status_code == 200, res.content
     body = res.json()
-    assert body["status"] == "pending" and body["transfer"] is None
+    assert body["status"] == "pending" and body["turn_id"] == ""
     assert "stewari@dimagi.com" in body["approvers"]
     assert _bound_to(world["session"]) == "jj-mbp-cdp"   # nothing moved yet
 
     # It shows up for the approver.
     waiting = _as(world["st"]).get("/api/canopy-sessions/teleport-requests").json()
-    assert [r["id"] for r in waiting] == [body["id"]]
+    assert [r["id"] for r in waiting] == [body["request_id"]]
 
-    ok = _as(world["st"]).post(f"/api/canopy-sessions/teleport-requests/{body['id']}/approve")
+    ok = _as(world["st"]).post(f"/api/canopy-sessions/teleport-requests/{body['request_id']}/approve")
     assert ok.status_code == 200, ok.content
     assert ok.json()["status"] == "approved"
     assert ok.json()["transfer"]["runner"] == "sarveshtewari-mbp-cdp"
@@ -87,10 +87,10 @@ def test_a_move_onto_someone_elses_box_waits_and_their_approval_carries_it_out(w
 def test_only_the_targets_administrator_can_approve(world):
     req = _ask(world["jj"], world["session"], str(world["st_box"].id)).json()
     # The requester can't approve their own ask onto a box they don't run…
-    r = _as(world["jj"]).post(f"/api/canopy-sessions/teleport-requests/{req['id']}/approve")
+    r = _as(world["jj"]).post(f"/api/canopy-sessions/teleport-requests/{req['request_id']}/approve")
     assert r.status_code == 403
     # …and a bystander can't even see it.
-    r = _as(world["bystander"]).post(f"/api/canopy-sessions/teleport-requests/{req['id']}/approve")
+    r = _as(world["bystander"]).post(f"/api/canopy-sessions/teleport-requests/{req['request_id']}/approve")
     assert r.status_code == 404
     assert _bound_to(world["session"]) == "jj-mbp-cdp"
 
@@ -98,7 +98,7 @@ def test_only_the_targets_administrator_can_approve(world):
 def test_admin_is_rechecked_at_decision_time(world):
     req = _ask(world["jj"], world["session"], str(world["st_box"].id)).json()
     RunnerAdmin.objects.filter(user=world["st"]).delete()
-    r = _as(world["st"]).post(f"/api/canopy-sessions/teleport-requests/{req['id']}/approve")
+    r = _as(world["st"]).post(f"/api/canopy-sessions/teleport-requests/{req['request_id']}/approve")
     assert r.status_code in (403, 404)
     assert _bound_to(world["session"]) == "jj-mbp-cdp"
 
@@ -109,14 +109,14 @@ def test_a_move_onto_your_own_box_happens_now(world):
                                       role=SessionParticipant.EDITOR)
     res = _ask(world["st"], world["session"], "sarveshtewari-mbp-cdp")
     assert res.status_code == 200, res.content
-    assert res.json()["status"] == "approved"
-    assert res.json()["transfer"]["transferred_from"] == "jj-mbp-cdp"
+    assert res.json()["status"] == "moved"
+    assert res.json()["transferred_from"] == "jj-mbp-cdp"
     assert _bound_to(world["session"]) == "sarveshtewari-mbp-cdp"
 
 
 def test_decline_leaves_the_session_where_it_is(world):
     req = _ask(world["jj"], world["session"], "sarveshtewari-mbp-cdp").json()
-    r = _as(world["st"]).post(f"/api/canopy-sessions/teleport-requests/{req['id']}/decline",
+    r = _as(world["st"]).post(f"/api/canopy-sessions/teleport-requests/{req['request_id']}/decline",
                               data={"note": "mid-demo"}, content_type="application/json")
     assert r.status_code == 200, r.content
     assert r.json()["status"] == "declined" and r.json()["note"] == "mid-demo"
@@ -131,17 +131,17 @@ def test_a_second_pending_request_is_refused(world):
 
 def test_the_requester_can_cancel_and_ask_again(world):
     req = _ask(world["jj"], world["session"], "sarveshtewari-mbp-cdp").json()
-    r = _as(world["jj"]).post(f"/api/canopy-sessions/teleport-requests/{req['id']}/cancel")
+    r = _as(world["jj"]).post(f"/api/canopy-sessions/teleport-requests/{req['request_id']}/cancel")
     assert r.json()["status"] == "cancelled"
     assert _ask(world["jj"], world["session"], "sarveshtewari-mbp-cdp").json()["status"] == "pending"
 
 
 def test_an_unanswered_request_expires(world):
     req = _ask(world["jj"], world["session"], "sarveshtewari-mbp-cdp").json()
-    TeleportRequest.objects.filter(pk=req["id"]).update(
-        created_at=TeleportRequest.objects.get(pk=req["id"]).created_at
+    TeleportRequest.objects.filter(pk=req["request_id"]).update(
+        created_at=TeleportRequest.objects.get(pk=req["request_id"]).created_at
         - __import__("datetime").timedelta(hours=25))
-    r = _as(world["st"]).post(f"/api/canopy-sessions/teleport-requests/{req['id']}/approve")
+    r = _as(world["st"]).post(f"/api/canopy-sessions/teleport-requests/{req['request_id']}/approve")
     assert r.status_code == 422 and "expired" in r.json()["detail"]
     assert _bound_to(world["session"]) == "jj-mbp-cdp"
 
@@ -153,8 +153,23 @@ def test_a_slack_born_session_hears_about_it(world, django_capture_on_commit_cal
         with django_capture_on_commit_callbacks(execute=True):
             req = _ask(world["jj"], world["session"], "sarveshtewari-mbp-cdp").json()
         with django_capture_on_commit_callbacks(execute=True):
-            _as(world["st"]).post(f"/api/canopy-sessions/teleport-requests/{req['id']}/approve")
+            _as(world["st"]).post(f"/api/canopy-sessions/teleport-requests/{req['request_id']}/approve")
     assert [c.args[0].status for c in notify.call_args_list] == ["pending", "approved"]
     assert "asked to move this conversation to *sarveshtewari-mbp-cdp*" in relay.teleport_text(
         TeleportRequest(session=world["session"], to_runner=world["st_box"],
                         requested_by=world["jj"], status="pending"))
+
+
+def test_a_move_between_two_boxes_of_the_same_owner_never_asks(world):
+    """Jonathan's two macOS accounts (ada's user-switch): same owner, same
+    subscription holder — even a collaborator moving it needs no one's yes."""
+    jj2 = Runner.objects.create(name="jj-other-account", workspace=world["jj_box"].workspace,
+                                status=Runner.ONLINE, paired_by=world["jj"], host="jj2@mbp",
+                                capabilities=SESSION_CAPABLE)
+    SessionParticipant.objects.create(session=world["session"], user=world["st"],
+                                      role=SessionParticipant.EDITOR)
+    res = _ask(world["st"], world["session"], jj2.name)
+    assert res.status_code == 200, res.content
+    assert res.json()["status"] == "moved"
+    assert _bound_to(world["session"]) == "jj-other-account"
+    assert "same owner" in TeleportRequest.objects.get(pk=res.json()["request_id"]).note

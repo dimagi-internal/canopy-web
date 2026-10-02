@@ -66,7 +66,6 @@ from .schemas import (
     SessionSecretOut,
     StreamStateOut,
     TeleportDecisionIn,
-    TeleportRequestIn,
     TeleportRequestOut,
     TransferIn,
     TransferOut,
@@ -429,35 +428,6 @@ def _teleport_request_or_404(request: HttpRequest, request_id: uuid.UUID):
     return req
 
 
-@router.post("/{session_id}/teleport", response=TeleportRequestOut,
-             summary="Ask to move a session onto another runner")
-def request_session_teleport(request: HttpRequest, session_id: uuid.UUID, payload: TeleportRequestIn):
-    """Ask to move this session onto `runner` (id or name), carrying its history.
-
-    If you administer that runner it moves now (`status: approved`, `transfer`
-    set). Otherwise the request waits (`status: pending`) for one of `approvers` —
-    whoever paired that box or was granted admin on it — because the move runs on
-    their machine and their Claude subscription. They are notified, and so is the
-    session's Slack thread if it has one. Requests expire after 24h unanswered.
-    409 while a turn is executing (stop the session first) or while another
-    request for this session is waiting.
-    """
-    from . import teleport
-
-    session = _session_or_404(request, session_id, write=True)
-    try:
-        req, transfer = teleport.request(
-            session=session, runner_value=payload.runner, brief=payload.brief, user=request.user,
-            initiator=who.for_request(request, via="teleport"))
-    except LookupError as exc:
-        raise HttpError(404, str(exc))
-    except (RuntimeError, FileExistsError) as exc:
-        raise HttpError(409, str(exc))
-    except ValueError as exc:
-        raise HttpError(422, str(exc))
-    return _teleport_out(req, transfer)
-
-
 @router.get("/teleport-requests", response=list[TeleportRequestOut],
             summary="Teleport requests waiting on you, or that you made")
 def list_teleport_requests(request: HttpRequest, status: str = "pending"):
@@ -741,23 +711,39 @@ def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
     execution DID move, and the session's entire pre-transfer history was deleted
     on the new box's first ship (session 169212e2, 2026-09-12).
 
+    WHOSE box it lands on decides whether it moves now (`status: moved`) or asks
+    (`status: pending`): onto a runner you administer, or between two runners with
+    the SAME owner, it moves now. Onto someone else's box it becomes a teleport
+    request that one of `approvers` must approve (`approve_teleport_request`),
+    because the move spends their machine and Claude subscription. `runner` is the
+    target's id or name.
+
     409, not 422, while a turn executes: the request is well-formed and will
     succeed once the source box is idle, which is a state conflict rather than a
-    bad body. Stop the session (`POST /{id}/stop`) and retry.
+    bad body. Stop the session (`POST /{id}/stop`) and retry. Also 409 while
+    another request for this session is waiting.
     """
+    from . import teleport
+
     session = _session_or_404(request, session_id, write=True)
     try:
-        binding, turn = services.transfer_session(
-            session=session, placement=payload.runner, brief=payload.brief,
-            user=request.user,
-            initiator=who.for_request(request, via="transfer"),
+        req, moved = teleport.request(
+            session=session, runner_value=payload.runner, brief=payload.brief,
+            user=request.user, initiator=who.for_request(request, via="transfer"),
         )
     except LookupError as exc:
         raise HttpError(404, str(exc))
-    except RuntimeError as exc:
+    except (RuntimeError, FileExistsError) as exc:
         raise HttpError(409, str(exc))
     except ValueError as exc:
         raise HttpError(422, str(exc))
+    if moved is None:
+        return {
+            "session_id": str(session.id), "runner": "", "transferred_from": "",
+            "index_offset": 0, "turn_id": "", "status": "pending", "request_id": req.id,
+            "approvers": sorted(u.email for u in teleport.approvers(req.to_runner)),
+        }
+    binding, turn = moved
     return {
         "session_id": str(session.id),
         "runner": binding.runner.name if binding.runner_id else "",
@@ -766,6 +752,8 @@ def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
         ),
         "index_offset": binding.index_offset,
         "turn_id": str(turn.id),
+        "status": "moved",
+        "request_id": req.id,
     }
 
 

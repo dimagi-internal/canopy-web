@@ -7,7 +7,12 @@ box the session lands on. With every runner belonging to one operator that didn'
 matter; once a colleague runs an agent on their own laptop (2026-10-02) it does —
 a transfer spends their machine and Claude subscription. So a move onto a box the
 requester does not administer becomes a REQUEST, and the box's administrator
-(`can_administer_runner`: its pairer, or someone they granted) approves it.
+(`can_administer_runner`: its pairer, or someone they granted) approves it. A move
+between two boxes of the SAME owner never asks.
+
+There is ONE way in: `POST /{id}/transfer` calls `request()`, which either moves
+now or opens the request. (There used to be a separate `/teleport` route that did
+the same thing; two doors to one operation was removed on 2026-10-02.)
 
 Notifications ride `teleport_changed` (fired after commit), so this framework
 module never imports Slack or push; their receivers post to the session's Slack
@@ -101,7 +106,13 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
     for stale in TeleportRequest.objects.filter(session=session, status=TeleportRequest.PENDING):
         _expire_if_stale(stale)
 
-    if harness_services.can_administer_runner(user, target):
+    # No one to ask when the requester already administers the target, or when the
+    # move stays inside one owner's boxes (two macOS accounts of the same person —
+    # ada's user-switch): the machine and subscription spent are the same owner's.
+    same_owner = (binding.runner_id is not None
+                  and binding.runner.paired_by_id is not None
+                  and binding.runner.paired_by_id == target.paired_by_id)
+    if same_owner or harness_services.can_administer_runner(user, target):
         binding_after, turn = services.transfer_session(
             session=session, placement=str(target.id), brief=brief, user=user,
             initiator=initiator)
@@ -109,7 +120,8 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
             session=session, to_runner=target, from_runner=binding.runner, requested_by=user,
             brief=brief, status=TeleportRequest.APPROVED, decided_by=user,
             decided_at=timezone.now(), turn_id=turn.id,
-            note="requester administers the target — no approval needed",
+            note=("same owner on both runners — no approval needed" if same_owner
+                  else "requester administers the target — no approval needed"),
         )
         _fire(req)
         return req, (binding_after, turn)

@@ -5078,34 +5078,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/canopy-sessions/{session_id}/teleport": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Ask to move a session onto another runner
-         * @description Ask to move this session onto `runner` (id or name), carrying its history.
-         *
-         *     If you administer that runner it moves now (`status: approved`, `transfer`
-         *     set). Otherwise the request waits (`status: pending`) for one of `approvers` —
-         *     whoever paired that box or was granted admin on it — because the move runs on
-         *     their machine and their Claude subscription. They are notified, and so is the
-         *     session's Slack thread if it has one. Requests expire after 24h unanswered.
-         *     409 while a turn is executing (stop the session first) or while another
-         *     request for this session is waiting.
-         */
-        readonly post: operations["request_session_teleport"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/canopy-sessions/teleport-requests": {
         readonly parameters: {
             readonly query?: never;
@@ -5419,9 +5391,17 @@ export interface paths {
          *     execution DID move, and the session's entire pre-transfer history was deleted
          *     on the new box's first ship (session 169212e2, 2026-09-12).
          *
+         *     WHOSE box it lands on decides whether it moves now (`status: moved`) or asks
+         *     (`status: pending`): onto a runner you administer, or between two runners with
+         *     the SAME owner, it moves now. Onto someone else's box it becomes a teleport
+         *     request that one of `approvers` must approve (`approve_teleport_request`),
+         *     because the move spends their machine and Claude subscription. `runner` is the
+         *     target's id or name.
+         *
          *     409, not 422, while a turn executes: the request is well-formed and will
          *     succeed once the source box is idle, which is a state conflict rather than a
-         *     bad body. Stop the session (`POST /{id}/stop`) and retry.
+         *     bad body. Stop the session (`POST /{id}/stop`) and retry. Also 409 while
+         *     another request for this session is waiting.
          */
         readonly post: operations["transfer"];
         readonly delete?: never;
@@ -13619,21 +13599,18 @@ export interface components {
             readonly index_offset: number;
             /** Turn Id */
             readonly turn_id: string;
-        };
-        /**
-         * TeleportRequestIn
-         * @description Body for POST /{session_id}/teleport — ask to move a session onto `runner`
-         *     (its id, or its name as `list_runners` shows it). `brief` is the handoff the
-         *     receiving session reads, exactly as for a transfer.
-         */
-        readonly TeleportRequestIn: {
-            /** Runner */
-            readonly runner: string;
             /**
-             * Brief
-             * @default
+             * Status
+             * @default moved
              */
-            readonly brief: string;
+            readonly status: string;
+            /** Request Id */
+            readonly request_id?: string | null;
+            /**
+             * Approvers
+             * @default []
+             */
+            readonly approvers: readonly string[];
         };
         /** TeleportDecisionIn */
         readonly TeleportDecisionIn: {
@@ -21164,32 +21141,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ResetSummaryOut"];
-                };
-            };
-        };
-    };
-    readonly request_session_teleport: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly session_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["TeleportRequestIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["TeleportRequestOut"];
                 };
             };
         };
