@@ -124,9 +124,17 @@ function RuleModeSelect({
 export function AgentRouting({
   agentSlug,
   initialTurnMode,
+  workspace,
+  onSaved,
 }: {
   agentSlug: string
+  /** The agent's workspace, when the page is under another (the fleet map at a
+   *  parent, the supervisor). Its routes resolve the agent within one tenant. */
+  workspace?: string
   initialTurnMode: TurnMode
+  /** A rule, the default order or the mode was saved — for a host that draws
+   *  the routing elsewhere too (the fleet map) and must redraw it. */
+  onSaved?: () => void
 }): JSX.Element {
   const [rules, setRules] = useState<AgentRunnerRuleOut[] | null>(null)
   const [fleet, setFleet] = useState<readonly RunnerOut[]>([])
@@ -149,7 +157,7 @@ export function AgentRouting({
     setRules(null)
     rulesRef.current = []
     setError(null)
-    Promise.all([getAgentRunnerRules(agentSlug), listRunners()])
+    Promise.all([getAgentRunnerRules(agentSlug, workspace), listRunners()])
       .then(([r, f]) => {
         if (cancelled) return
         apply(r)
@@ -163,7 +171,7 @@ export function AgentRouting({
     return () => {
       cancelled = true
     }
-  }, [agentSlug])
+  }, [agentSlug, workspace])
 
   const commit = async (next: RuleRow[], prev: AgentRunnerRuleOut[]) => {
     const mySeq = ++seqRef.current
@@ -194,9 +202,10 @@ export function AgentRouting({
     )
     setError(null)
     try {
-      const saved = await putAgentRunnerRules(agentSlug, next)
+      const saved = await putAgentRunnerRules(agentSlug, next, workspace)
       if (seqRef.current !== mySeq) return
       apply(saved)
+      onSaved?.()
     } catch (e: unknown) {
       if (seqRef.current !== mySeq) return
       apply(prev)
@@ -257,13 +266,20 @@ export function AgentRouting({
             <span className="text-[12px] font-medium text-foreground">Everything else</span>
           </Cell>
           <Cell label="Runs on">
-            <RunnerAssignments agentSlug={agentSlug} fleet={fleet} />
+            <RunnerAssignments agentSlug={agentSlug} workspace={workspace} fleet={fleet} onSaved={onSaved} />
           </Cell>
           <Cell label="If all down">
             <span className="text-[11px] text-muted-foreground">Waits</span>
           </Cell>
           <Cell label="Mode">
-            <TurnModeToggle agentSlug={agentSlug} initialMode={initialTurnMode} compact onChange={setAgentMode} />
+            <TurnModeToggle
+              agentSlug={agentSlug}
+              initialMode={initialTurnMode}
+              workspace={workspace}
+              compact
+              onChange={setAgentMode}
+              onSaved={onSaved}
+            />
           </Cell>
           <span />
         </div>

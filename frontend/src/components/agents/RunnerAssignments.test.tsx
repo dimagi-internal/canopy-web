@@ -135,7 +135,7 @@ describe('RunnerAssignments', () => {
       expect(putAgentRunners).toHaveBeenCalledWith('echo', [
         { runnerId: 'b', enabled: true },
         { runnerId: 'a', enabled: true },
-      ]),
+      ], undefined),
     )
   })
 
@@ -153,7 +153,7 @@ describe('RunnerAssignments', () => {
       expect(putAgentRunners).toHaveBeenCalledWith('echo', [
         { runnerId: 'a', enabled: false },
         { runnerId: 'b', enabled: true },
-      ]),
+      ], undefined),
     )
     // Still in the list — no removal — just visibly disabled.
     const chip = await screen.findByTestId('runner-chip-a')
@@ -175,7 +175,7 @@ describe('RunnerAssignments', () => {
       expect(putAgentRunners).toHaveBeenCalledWith('echo', [
         { runnerId: 'a', enabled: true },
         { runnerId: 'b', enabled: true },
-      ]),
+      ], undefined),
     )
     await waitFor(() => expect(screen.getByTestId('runner-chip-a').className).not.toMatch(/opacity-50/))
   })
@@ -222,7 +222,7 @@ describe('RunnerAssignments', () => {
       { runnerId: 'b', enabled: true },
       { runnerId: 'a', enabled: true },
       { runnerId: 'c', enabled: true },
-    ])
+    ], undefined)
 
     // Second click, fired before the first resolves: disable `c` on top of the
     // OPTIMISTIC (post-first-click) order -> [b, a, c-disabled]. Proves the
@@ -234,7 +234,7 @@ describe('RunnerAssignments', () => {
       { runnerId: 'b', enabled: true },
       { runnerId: 'a', enabled: true },
       { runnerId: 'c', enabled: false },
-    ])
+    ], undefined)
 
     // Resolve the NEWER (second) commit first, then the OLDER (first) commit —
     // the out-of-order-resolve case. The newer result must win.

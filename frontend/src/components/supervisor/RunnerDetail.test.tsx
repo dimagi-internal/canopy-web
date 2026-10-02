@@ -8,6 +8,7 @@
 // runner every action then 404s on" failure the split predicate had to give up.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 
 import type { RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
@@ -15,11 +16,13 @@ import type { AgentOut } from '@/api/agents'
 const pauseRunner = vi.fn<(id: string, note?: string) => Promise<RunnerOut>>()
 const unpauseRunner = vi.fn<(id: string) => Promise<RunnerOut>>()
 const setRunnerSessions = vi.fn<(r: RunnerOut, on: boolean) => Promise<RunnerOut>>()
+const retireRunner = vi.fn<(id: string) => Promise<void>>()
 
 vi.mock('@/api/harness', () => ({
   pauseRunner,
   unpauseRunner,
   setRunnerSessions,
+  retireRunner,
   // The administrators panel reads on mount; who may administer a box is its own
   // component's subject (RunnerAdmins.test.tsx), so here it just has to resolve.
   listRunnerAdmins: vi.fn().mockResolvedValue([]),
@@ -223,5 +226,41 @@ describe('RunnerDetail — Slack & chat sessions', () => {
     )
     expect(screen.queryByTestId('runner-sessions-toggle')).toBeNull()
     expect(screen.getByTestId('runner-sessions-state').textContent).toBe('on')
+  })
+})
+
+// The fleet map (Settings → Topology) mounts this same component in its side
+// panel, without Back or the routing matrix — routing is edited on the agent.
+describe('RunnerDetail embedded in the fleet map', () => {
+  it('leaves out Back and the routing matrix when not given them', () => {
+    render(<RunnerDetail runner={runner()} />)
+    expect(screen.queryByTestId('runner-detail-back')).toBeNull()
+    expect(screen.queryByTestId('runner-priority')).toBeNull()
+    expect(screen.getByTestId('runner-pause')).toBeTruthy()
+  })
+
+  it('links the supervisor view to the runner on the map', () => {
+    render(
+      <MemoryRouter>
+        <RunnerDetail runner={runner()} agents={agents} onBack={() => {}} mapHref="/w/dimagi/settings/topology?runner=r1" />
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('runner-detail-map').getAttribute('href')).toBe('/w/dimagi/settings/topology?runner=r1')
+  })
+
+  it('retires only after a second, explicit click', async () => {
+    retireRunner.mockResolvedValue(undefined)
+    const onRetired = vi.fn()
+    render(<RunnerDetail runner={runner()} onRetired={onRetired} />)
+    fireEvent.click(screen.getByTestId('runner-retire-toggle'))
+    expect(retireRunner).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('runner-retire-confirm'))
+    await waitFor(() => expect(onRetired).toHaveBeenCalled())
+    expect(retireRunner).toHaveBeenCalledWith('r1')
+  })
+
+  it('offers no Retire on a box the caller may not manage', () => {
+    render(<RunnerDetail runner={runner({ can_manage: false })} onRetired={() => {}} />)
+    expect(screen.queryByTestId('runner-retire')).toBeNull()
   })
 })

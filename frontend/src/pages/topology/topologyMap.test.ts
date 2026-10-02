@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { AgentTopologyOut, RunnerTopologyOut } from '@/api/workspaces'
-import { buildFleetMap, curve, hiddenBy, initials, initiallyCollapsed, shortRunner } from './topologyMap'
+import { buildFleetMap, curve, hiddenBy, initials, initiallyCollapsed, pairingCommand, shortRunner } from './topologyMap'
 
 const runner = (id: string, workspace: string, paired: string, status = 'online', in_tree = true) => ({
   id, name: `${id}-mbp-cdp`, kind: 'emdash', location: 'local', status, ready: true, ready_note: '',
@@ -87,5 +87,18 @@ describe('curve', () => {
   })
   it('draws nothing between a box and itself', () => {
     expect(curve({ x: 0, y: 0, w: 10, h: 10 }, { x: 0, y: 0, w: 10, h: 10 })).toBeNull()
+  })
+})
+
+describe('pairingCommand', () => {
+  it('names the workspace and leaves the default deployment implicit', () => {
+    expect(pairingCommand('connect', 'https://labs.connect.dimagi.com/canopy/')).toBe(
+      '~/emdash-projects/canopy-web/runner/canopy_runner/scripts/install-runner.sh --workspace connect',
+    )
+  })
+  it('points a runner at any other deployment', () => {
+    expect(pairingCommand('dimagi', 'http://localhost:5173')).toBe(
+      '~/emdash-projects/canopy-web/runner/canopy_runner/scripts/install-runner.sh --workspace dimagi --base-url http://localhost:5173',
+    )
   })
 })

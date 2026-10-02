@@ -19,11 +19,17 @@ export function TurnModeToggle({
   initialMode,
   compact = false,
   onChange,
+  onSaved,
+  workspace,
 }: {
   agentSlug: string
+  /** The agent's workspace, when the page is under another. */
+  workspace?: string
   initialMode: TurnMode
   compact?: boolean
   onChange?: (mode: TurnMode) => void
+  /** After the server has the new mode (onChange fires before, optimistically). */
+  onSaved?: () => void
 }) {
   const [mode, setMode] = useState<TurnMode>(initialMode)
   const [busy, setBusy] = useState(false)
@@ -37,7 +43,8 @@ export function TurnModeToggle({
     setMode(next)
     onChange?.(next)
     try {
-      await setAgentTurnMode(agentSlug, next)
+      await setAgentTurnMode(agentSlug, next, workspace)
+      onSaved?.()
     } catch (e: unknown) {
       setMode(prev)
       onChange?.(prev)

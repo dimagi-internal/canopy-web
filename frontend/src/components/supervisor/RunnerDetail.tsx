@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react'
-import { pauseRunner, setRunnerSessions, unpauseRunner, type RunnerOut } from '@/api/harness'
+import { Link } from 'react-router-dom'
+import { pauseRunner, retireRunner, setRunnerSessions, unpauseRunner, type RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
 import { AgentRouting } from '@/components/agents/AgentRouting'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
@@ -17,18 +18,31 @@ import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
 // runner detail view. (Assignments are now per-RUNNER, not per-kind, so there is
 // no cheap query for "agents that include just this runner" — the matrix's chips
 // already surface this runner's name/rank wherever it appears.)
+//
+// Two hosts mount it: the supervisor's Runners tab (with Back and the routing
+// matrix) and the side panel of Settings → Topology, which leaves both out —
+// the map already shows who routes here, and an agent's routing is edited on
+// the agent there.
 export function RunnerDetail({
   runner,
   agents,
   onBack,
   onChanged,
+  onRetired,
+  mapHref,
 }: {
   runner: RunnerOut
-  agents: AgentOut[]
-  onBack: () => void
+  /** Omit to leave out the per-agent routing matrix. */
+  agents?: AgentOut[]
+  /** Omit to leave out the Back link. */
+  onBack?: () => void
   /** A pause changed this runner server-side — hand the fresh row back so the
    *  list behind this view stops disagreeing with the detail in front of it. */
   onChanged?: (runner: RunnerOut) => void
+  /** Offers Retire (to whoever may manage the box) when given. */
+  onRetired?: (runner: RunnerOut) => void
+  /** Where this runner sits on the fleet map, when the viewer can open it. */
+  mapHref?: string
 }): JSX.Element {
   const online = runner.status === 'online'
   // Real availability, not last-known ready: a stale runner's ready flag is
@@ -44,7 +58,7 @@ export function RunnerDetail({
   // the assignment editor rows without an extra click (the routing tab is
   // gone; this is now where routing gets edited). A small fleet makes
   // "expand every row" cheap, so simplicity wins over a per-row default.
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(agents.map((a) => a.slug)))
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set((agents ?? []).map((a) => a.slug)))
   const toggle = (slug: string) =>
     setExpanded((prev) => {
       const next = new Set(prev)
@@ -93,6 +107,20 @@ export function RunnerDetail({
       .finally(() => setSavingSessions(false))
   }
 
+  // Retire. Two clicks, because it drops every route to this box (the server
+  // deletes its assignments and /unretire does not bring them back).
+  const [confirmRetire, setConfirmRetire] = useState(false)
+  const [retiring, setRetiring] = useState(false)
+  const [retireErr, setRetireErr] = useState<string | null>(null)
+  const retire = () => {
+    setRetiring(true)
+    setRetireErr(null)
+    retireRunner(runner.id)
+      .then(() => onRetired?.(runner))
+      .catch((err: unknown) => setRetireErr(err instanceof Error ? err.message : 'could not retire'))
+      .finally(() => setRetiring(false))
+  }
+
   const row = (label: string, value: string) => (
     <div className="flex items-baseline justify-between gap-3 border-b border-border py-1.5">
       <span className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</span>
@@ -113,7 +141,7 @@ export function RunnerDetail({
       </button>
       {expanded.has(a.slug) && (
         <div className="px-2 pb-2">
-          <AgentRouting agentSlug={a.slug} initialTurnMode={a.turn_mode} />
+          <AgentRouting agentSlug={a.slug} workspace={a.workspace ?? undefined} initialTurnMode={a.turn_mode} />
         </div>
       )}
     </div>
@@ -121,9 +149,21 @@ export function RunnerDetail({
 
   return (
     <div className="flex flex-col gap-2" data-testid={`runner-detail-${runner.name}`}>
-      <button type="button" onClick={onBack} className="self-start text-[12px] text-primary" data-testid="runner-detail-back">
-        ← Runners
-      </button>
+      {(onBack || mapHref) && (
+        <div className="flex items-center justify-between gap-3">
+          {onBack && (
+            <button type="button" onClick={onBack} className="text-[12px] text-primary" data-testid="runner-detail-back">
+              ← Runners
+            </button>
+          )}
+          {/* The configuration home: who routes here, in context, and the add-a-runner card. */}
+          {mapHref && (
+            <Link to={mapHref} className="ml-auto text-[12px] text-primary hover:underline" data-testid="runner-detail-map">
+              On the fleet map →
+            </Link>
+          )}
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <span className={`h-2 w-2 rounded-full ${online ? 'bg-success' : 'bg-muted-foreground'}`} />
         <span className="text-[15px] font-semibold text-foreground">{runner.name}</span>
@@ -203,6 +243,50 @@ export function RunnerDetail({
         </div>
       )}
 
+      {runner.can_manage && onRetired && (
+        <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-card p-3" data-testid="runner-retire">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Retire</span>
+            {confirmRetire ? (
+              <span className="ml-auto flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmRetire(false)}
+                  disabled={retiring}
+                  className="rounded-md border border-border px-2.5 py-1 text-[12px] text-foreground hover:bg-muted"
+                >
+                  Keep
+                </button>
+                <button
+                  type="button"
+                  onClick={retire}
+                  disabled={retiring}
+                  data-testid="runner-retire-confirm"
+                  className="rounded-md bg-destructive px-2.5 py-1 text-[12px] font-medium text-destructive-foreground disabled:opacity-50"
+                >
+                  {retiring ? '…' : 'Retire it'}
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmRetire(true)}
+                data-testid="runner-retire-toggle"
+                className="ml-auto rounded-md border border-border px-2.5 py-1 text-[12px] text-destructive hover:bg-muted"
+              >
+                Retire…
+              </button>
+            )}
+          </div>
+          <p className="text-[12px] text-muted-foreground">
+            {confirmRetire
+              ? 'Every agent stops routing here, and un-retiring does not restore those routes. Pause instead if it is coming back.'
+              : 'Decommission this box. Use Pause for a box that is coming back.'}
+          </p>
+          {retireErr && <p className="text-[12px] text-destructive">{retireErr}</p>}
+        </div>
+      )}
+
       {/* Takes Slack & chat sessions — same owner-only gate as Pause. Shown
           read-only to everyone else, because "why isn't this box in the session
           picker?" is a question any member asks. */}
@@ -276,11 +360,13 @@ export function RunnerDetail({
       {/* The fleet-wide routing matrix, expandable per agent — no cheap query for
           "agents that route to just this runner" now that assignments are
           per-runner rather than per-kind (see file header). */}
-      <div className="flex flex-col gap-1.5" data-testid="runner-priority">
-        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Agent routing</span>
-        {agents.length === 0 && <p className="text-[12px] text-muted-foreground">No agents.</p>}
-        {agents.map((a) => agentRow(a))}
-      </div>
+      {agents && (
+        <div className="flex flex-col gap-1.5" data-testid="runner-priority">
+          <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Agent routing</span>
+          {agents.length === 0 && <p className="text-[12px] text-muted-foreground">No agents.</p>}
+          {agents.map((a) => agentRow(a))}
+        </div>
+      )}
     </div>
   )
 }

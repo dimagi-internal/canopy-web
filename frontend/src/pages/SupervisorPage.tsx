@@ -14,6 +14,8 @@ import { InstallPrompt } from '@/pwa/InstallPrompt'
 import { PushToggle } from '@/pwa/PushToggle'
 import { setBadge } from '@/pwa/usePush'
 import { Skeleton, Tabs, TabsList, TabsTrigger, TabsContent } from 'canopy-ui'
+import { useWorkspace } from '@/workspace/WorkspaceProvider'
+import { roleAllows } from '@/lib/workspaceRoles'
 
 function BandError({ message }: { message: string }): JSX.Element {
   return (
@@ -170,6 +172,16 @@ export default function SupervisorPage(): JSX.Element {
     const hit = runners.find((r) => r.id === runnerParam)
     if (hit) setSelectedRunner(hit)
   }, [runnerParam, runners, selectedRunner])
+  // This tab is the live status view; configuring a box happens on the fleet map
+  // (Settings → Topology), which needs logs.read in the runner's workspace — so
+  // the link is offered only where it would open.
+  const { workspaces } = useWorkspace()
+  const mapHrefFor = (r: RunnerOut): string | undefined => {
+    const role = workspaces.find((w) => w.slug === r.workspace)?.role
+    return r.workspace && roleAllows(role, 'logs.read')
+      ? `/w/${r.workspace}/settings/topology?runner=${r.id}`
+      : undefined
+  }
   const selectRunner = (r: RunnerOut | null) => {
     setSelectedRunner(r)
     setSearchParams(r ? { tab: 'runners', runner: r.id } : { tab: 'runners' })
@@ -291,6 +303,11 @@ export default function SupervisorPage(): JSX.Element {
               agents={agents ?? []}
               onBack={() => selectRunner(null)}
               onChanged={handleRunnerChanged}
+              onRetired={(r) => {
+                setRunners((prev) => prev?.filter((x) => x.id !== r.id) ?? prev)
+                selectRunner(null)
+              }}
+              mapHref={mapHrefFor(selectedRunner)}
             />
           ) : errs.runners ? (
             <BandError message={errs.runners} />
