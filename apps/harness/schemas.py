@@ -348,6 +348,10 @@ class RecordSessionIn(Schema):
     session_id: str = ""
     agent_task_ext_id: str | None = None
     summary: str | None = None
+    # A readable name for the session, used where the session would otherwise be
+    # named after its key. A laptop's key is an emdash task name a person can
+    # read; a cloud runner's is a Claude session UUID, so it sends one of these.
+    title: str = Field(default="", max_length=200)
 
 
 class ReportedSessionIn(Schema):

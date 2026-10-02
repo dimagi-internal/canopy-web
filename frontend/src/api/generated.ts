@@ -12826,6 +12826,11 @@ export interface components {
             readonly agent_task_ext_id?: string | null;
             /** Summary */
             readonly summary?: string | null;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
         };
         /**
          * SessionReportOut
