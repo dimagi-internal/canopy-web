@@ -242,3 +242,53 @@ def test_announcing_with_no_hook_or_a_failing_hook_is_harmless(cloud_runner):
         cloud_runner._announce_session("t-bad", "x")  # must not raise
     finally:
         cloud_runner._SESSION_HOOKS.pop("t-bad", None)
+
+
+# ── a reply in an agent turn's chat continues it ─────────────────────────────
+# The agent turn ran (and wrote its session) in AGENT_ROOT/<agent>; a reply is a
+# session turn in WORK_DIR/sessions/<id>. Claude finds a resume target by cwd, so
+# without adoption the reply started fresh with none of the turn's context.
+
+def test_a_reply_adopts_the_agent_turns_session_so_it_can_resume(cloud_runner, roots):
+    agent_dir = roots / "agents" / "echo"
+    chat_dir = roots / "work" / "sessions" / "sess-1"
+    src = _transcript(roots, cloud_runner, agent_dir, "cli-1")
+    assert cloud_runner._resume_target_exists(chat_dir, "cli-1") is False
+
+    assert cloud_runner._adopt_resume_transcript(chat_dir, "cli-1", "echo") is True
+    assert cloud_runner._resume_target_exists(chat_dir, "cli-1") is True
+    assert src.is_file(), "the agent clone's copy is a record — copy, never move"
+    # The stream tail now reads the chat dir's copy, which the resume extends.
+    assert cloud_runner._session_transcript_path("sess-1", "cli-1", "echo").parent.name \
+        != src.parent.name
+
+
+def test_adoption_leaves_an_existing_transcript_alone(cloud_runner, roots):
+    chat_dir = roots / "work" / "sessions" / "sess-2"
+    _transcript(roots, cloud_runner, roots / "agents" / "echo", "cli-2")
+    here = _transcript(roots, cloud_runner, chat_dir, "cli-2")
+    here.write_text("already here\n")
+    assert cloud_runner._adopt_resume_transcript(chat_dir, "cli-2", "echo") is False
+    assert here.read_text() == "already here\n"
+
+
+def test_adoption_needs_a_source_and_a_safe_agent(cloud_runner, roots):
+    chat_dir = roots / "work" / "sessions" / "sess-3"
+    assert cloud_runner._adopt_resume_transcript(chat_dir, "missing", "echo") is False
+    assert cloud_runner._adopt_resume_transcript(chat_dir, "cli-3", "../echo") is False
+    assert cloud_runner._adopt_resume_transcript(chat_dir, "", "echo") is False
+
+
+def test_a_resuming_turn_adopts_before_it_runs(run, monkeypatch, tmp_path):
+    mod, timeline = run
+    adopted = []
+    monkeypatch.setattr(mod, "_adopt_resume_transcript",
+                        lambda cwd, sid, slug: adopted.append((sid, slug)) or True)
+    monkeypatch.setattr(mod, "execute_prompt",
+                        lambda prompt, tid, emit, cwd=None, agent_slug=None, resume_session_id=None:
+                        (timeline.append(("run", resume_session_id)) or True, "ok", "cli-1"))
+    chat = _agent_turn(origin_ref={"chat_session_id": "sess-1", "thread_key": f"echo:{TID}"},
+                       _resume_id="cli-1")
+    mod._run_turn("r-1", chat)
+    assert adopted == [("cli-1", "echo")]
+    assert ("run", "cli-1") in timeline
