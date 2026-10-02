@@ -47,6 +47,7 @@ from .schemas import (
     RunnerCapabilitiesIn,
     RunnerCredentialIn,
     RunnerCredentialOut,
+    RetireOut,
     RunnerAdminIn,
     RunnerAdminOut,
     RunnerFlagsIn,
@@ -847,7 +848,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     return runner
 
 
-@router.post("/runners/{runner_id}/retire", response={204: None})
+@router.post("/runners/{runner_id}/retire", response=RetireOut)
 def retire_runner(request: HttpRequest, runner_id: uuid.UUID):
     """Retire a runner — a decommission, not a liveness state (see
     Runner.live_status). Idempotent by construction: _runner_or_404 already excludes
@@ -872,8 +873,23 @@ def retire_runner(request: HttpRequest, runner_id: uuid.UUID):
     with transaction.atomic():
         runner.status = Runner.RETIRED
         runner.save(update_fields=["status"])
+        rows = list(RunnerAssignment.objects.filter(runner=runner).select_related("agent")
+                    .order_by("agent__slug", "source", "actor"))
         RunnerAssignment.objects.filter(runner=runner).delete()
-    return Status(204, None)
+    dropped = [{"agent": r.agent.slug, "source": r.source, "actor": r.actor} for r in rows]
+    if dropped and runner.workspace_id:
+        from apps.events import services as events
+
+        events.record([
+            {"source": "harness.runners", "kind": "runner.route_dropped", "level": "warning",
+             "summary": (f"{request.user.email} retired {runner.name}: {d['agent']} "
+                         f"{d['source'] or 'default order'}"
+                         + (f" for {d['actor']}" if d["actor"] else "")
+                         + " no longer routes there"),
+             "payload": {"runner": str(runner.pk), **d}}
+            for d in dropped
+        ], workspace=runner.workspace)
+    return {"runner": runner.name, "dropped_routes": dropped}
 
 
 @router.post("/runners/{runner_id}/unretire", response=RunnerOut)

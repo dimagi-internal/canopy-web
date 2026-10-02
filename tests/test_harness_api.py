@@ -386,7 +386,7 @@ def test_retired_runner_404s_on_gated_routes(client, agent):
 def test_retire_runner_removes_it_from_the_list(client, agent):
     rid = _pair(client)
     resp = client.post(f"/api/harness/runners/{rid}/retire")
-    assert resp.status_code == 204
+    assert resp.status_code == 200
     assert Runner.objects.get(pk=rid).status == Runner.RETIRED
     assert client.get("/api/harness/runners/").json() == []
 
@@ -396,7 +396,7 @@ def test_retiring_an_already_retired_runner_404s(client, agent):
     lookup, so a second retire is a 404, not a no-op 204 — the existing
     lookup behaviour, not a special case added for this route."""
     rid = _pair(client)
-    assert client.post(f"/api/harness/runners/{rid}/retire").status_code == 204
+    assert client.post(f"/api/harness/runners/{rid}/retire").status_code == 200
     assert client.post(f"/api/harness/runners/{rid}/retire").status_code == 404
 
 

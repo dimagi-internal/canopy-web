@@ -36,7 +36,7 @@ def _ctx():
 
 def test_unretire_brings_a_retired_runner_back():
     _user, _ws, c, runner = _ctx()
-    assert c.post(f"/api/harness/runners/{runner.id}/retire").status_code == 204
+    assert c.post(f"/api/harness/runners/{runner.id}/retire").status_code == 200
     assert c.get("/api/harness/runners/").json() == []
 
     resp = c.post(f"/api/harness/runners/{runner.id}/unretire")

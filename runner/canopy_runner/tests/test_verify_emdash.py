@@ -13,7 +13,7 @@ _SCHEMA = """
       deleted_at TEXT
     );
     CREATE TABLE conversations (
-      id TEXT PRIMARY KEY, task_id TEXT NOT NULL, agent_status TEXT,
+      id TEXT PRIMARY KEY, task_id TEXT NOT NULL, agent_status TEXT, cwd TEXT,
       last_session_activity_at TEXT,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
     );

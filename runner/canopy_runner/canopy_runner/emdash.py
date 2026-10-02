@@ -40,10 +40,13 @@ gives that a session is over.
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+
+logger = logging.getLogger(__name__)
 
 # The columns the reads below depend on, split by WHEN emdash grew them.
 #
@@ -119,11 +122,14 @@ def _not_deleted(conn: sqlite3.Connection, table: str, alias: str) -> str:
 _CONV_ORDER_CANDIDATES = ("last_session_activity_at", "last_interacted_at", "updated_at")
 
 
-def _conv_order(conn: sqlite3.Connection) -> str:
-    """The ORDER BY expression for `conversations`, from what this emdash actually has."""
-    have = [c for c in _CONV_ORDER_CANDIDATES if c in _cols(conn, "conversations")]
+def _conv_order(conn: sqlite3.Connection, alias: str = "") -> str:
+    """The ORDER BY expression for `conversations`, from what this emdash actually has.
+
+    `alias` qualifies the columns for a join (`tasks` has an `updated_at` too)."""
+    pre = f"{alias}." if alias else ""
+    have = [f"{pre}{c}" for c in _CONV_ORDER_CANDIDATES if c in _cols(conn, "conversations")]
     if not have:
-        return "rowid"          # no timestamp at all: insertion order still beats nothing
+        return f"{pre}rowid"    # no timestamp at all: insertion order still beats nothing
     return f"COALESCE({', '.join(have)})" if len(have) > 1 else have[0]
 
 
@@ -436,9 +442,9 @@ def session_transcript_ref(db_path: str, project: str, task: str) -> tuple[str, 
                 FROM tasks t
                 JOIN projects p ON p.id = t.project_id
                 JOIN conversations cv ON cv.task_id = t.id
-                WHERE t.name = ? AND p.name = ? AND t.deleted_at IS NULL
+                WHERE t.name = ? AND p.name = ?""" + _not_deleted(conn, "tasks", "t") + """
                   AND cv.cwd IS NOT NULL AND cv.provider_session_id IS NOT NULL
-                ORDER BY COALESCE(cv.last_session_activity_at, cv.updated_at) DESC
+                ORDER BY """ + _conv_order(conn, "cv") + """ DESC
                 LIMIT 1
                 """,
                 (task, project),
@@ -469,13 +475,17 @@ def task_worktree(db_path: str, project: str, task: str) -> str | None:
                 FROM tasks t
                 JOIN projects p ON p.id = t.project_id
                 JOIN conversations cv ON cv.task_id = t.id
-                WHERE t.name = ? AND p.name = ? AND t.deleted_at IS NULL
+                WHERE t.name = ? AND p.name = ?""" + _not_deleted(conn, "tasks", "t") + """
                   AND cv.cwd IS NOT NULL
-                ORDER BY cv.created_at DESC
+                ORDER BY """ + _conv_order(conn, "cv") + """ DESC
                 LIMIT 1
                 """,
                 (task, project),
             ).fetchone()
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
+        # Named, not just swallowed: this None costs a caller's session its native
+        # permission layer, and "emdash did not name the worktree" hid a query that
+        # RAISED on every 1.1.x box (2026-10-02). `verify-emdash` checks it too.
+        logger.warning("task_worktree(%s/%s) query failed: %s", project, task, exc)
         return None
     return row["cwd"] if row is not None and row["cwd"] else None

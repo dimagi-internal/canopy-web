@@ -22,7 +22,7 @@ _SCHEMA_12 = """
       type TEXT DEFAULT 'task' NOT NULL, deleted_at TEXT
     );
     CREATE TABLE conversations (
-      id TEXT PRIMARY KEY, task_id TEXT, agent_status TEXT,
+      id TEXT PRIMARY KEY, task_id TEXT, agent_status TEXT, cwd TEXT,
       last_session_activity_at TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
       provider_session_id TEXT
     );
@@ -306,3 +306,50 @@ def test_startup_never_raises_even_when_the_check_itself_breaks(paths, tmp_path,
     upgrade_check.log_startup_drift("whatever", home=home, claude_home=claude_home, log=log)
 
     assert log.warns == []
+
+
+# emdash 1.1.x: no deleted_at anywhere, no provider_session_id / last_session_activity_at.
+_SCHEMA_11 = """
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+    CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, project_id TEXT, name TEXT NOT NULL, status TEXT,
+      archived_at TEXT, created_at TEXT, last_interacted_at TEXT,
+      type TEXT DEFAULT 'task' NOT NULL
+    );
+    CREATE TABLE conversations (
+      id TEXT PRIMARY KEY, task_id TEXT, agent_status TEXT, cwd TEXT,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+"""
+
+
+def _open_conversation(db, *, repo, task, cwd):
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT OR IGNORE INTO projects (id, name) VALUES (?, ?)", (repo, repo))
+    conn.execute("INSERT INTO tasks (id, project_id, name, type) VALUES (?, ?, ?, 'task')",
+                 (task, repo, task))
+    conn.execute("INSERT INTO conversations (id, task_id, cwd) VALUES (?, ?, ?)",
+                 (f"c-{task}", task, cwd))
+    conn.commit()
+    conn.close()
+
+
+def test_worktrees_resolve_on_emdash_1_1(tmp_path):
+    """The read a caller's native permission layer depends on must work — and be
+    CHECKED — on 1.1, where the transcript check skips for lack of ground truth."""
+    db = _db(tmp_path, _SCHEMA_11)
+    _open_conversation(db, repo="ace", task="cx-a-1", cwd="/wt/emdash-cx-a-1-xyz")
+    c = upgrade_check.check_worktrees(db)
+    assert c.ok and not c.skipped, c.summary
+
+
+def test_an_unresolvable_worktree_fails_the_check(tmp_path, monkeypatch):
+    """If task_worktree cannot answer for an open session, verify-emdash must NOT say
+    OK: a caller's session there would run with one permission layer instead of two."""
+    from canopy_runner import emdash
+
+    db = _db(tmp_path, _SCHEMA_11)
+    _open_conversation(db, repo="ace", task="cx-a-1", cwd="/wt/emdash-cx-a-1-xyz")
+    monkeypatch.setattr(emdash, "task_worktree", lambda *a: None)
+    c = upgrade_check.check_worktrees(db)
+    assert not c.ok and "native permission layer" in c.summary

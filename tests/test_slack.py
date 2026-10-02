@@ -246,6 +246,22 @@ def test_mention_queues_a_slack_turn_on_a_private_session(slack, linked, hal, al
     assert f"/w/{hal.workspace_id}/chat/{session.id}" in line["text"]
 
 
+def test_a_routed_runner_without_sessions_is_named_not_reported_as_no_runner(slack, linked, hal, alice):
+    """A freshly paired laptop that never declared `sessions` IS routed — it just
+    can't take chat. "No runner is set up" sent the first person to hit it chasing
+    identity and routes (2026-10-02); the line must name the box and the cause."""
+    from apps.harness.models import Runner, RunnerAssignment
+
+    box = Runner.objects.create(name="new-laptop", kind=Runner.EMDASH, paired_by=alice,
+                                workspace=hal.workspace, status=Runner.ONLINE,
+                                capabilities={"agents": ["hal"]})
+    RunnerAssignment.objects.create(agent=hal, runner=box, rank=0)
+    mention(f"<@{BOT}> hal summarise this thread")
+    (line,) = slack.said("chat.postMessage")
+    assert "*new-laptop*" in line["text"] and "capabilities.sessions" in line["text"]
+    assert "no runner is set up" not in line["text"]
+
+
 def test_unrouted_line_names_a_zdr_requirement(slack, linked, hal):
     from types import SimpleNamespace
 

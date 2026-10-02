@@ -135,8 +135,19 @@ def test_retire_runner_cascades_its_assignment_rows(client, agent, runner_a, run
     RunnerAssignment.objects.create(agent=agent, runner=runner_a, rank=0)
     RunnerAssignment.objects.create(agent=agent, runner=runner_b, rank=1)
 
+    Runner.objects.filter(pk=runner_a.pk).update(workspace=agent.workspace)
+    RunnerAssignment.objects.create(agent=agent, runner=runner_a, rank=0,
+                                    source="slack", actor="alice@dimagi.com", strict=True)
     resp = client.post(f"/api/harness/runners/{runner_a.id}/retire")
-    assert resp.status_code == 204, resp.content
+    assert resp.status_code == 200, resp.content
+    # Said, not silent: dropping Alice's route sends her work to another box, and
+    # nothing surfaced that when this was a bare 204 (2026-10-02).
+    assert resp.json()["dropped_routes"] == [
+        {"agent": agent.slug, "source": "", "actor": ""},
+        {"agent": agent.slug, "source": "slack", "actor": "alice@dimagi.com"},
+    ]
+    from apps.events.models import Event
+    assert Event.objects.filter(kind="runner.route_dropped").count() == 2
 
     # The retired runner's row is gone, not just invisible.
     assert not RunnerAssignment.objects.filter(runner=runner_a).exists()

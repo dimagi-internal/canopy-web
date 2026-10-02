@@ -223,6 +223,54 @@ def check_transcripts(db_path: str, *, home: Path, claude_home: Path) -> Check:
                  f"{resolved}/{truth} resolvable transcripts found across {len(rows)} open sessions")
 
 
+def check_worktrees(db_path: str) -> Check:
+    """Can we name each open session's worktree — the read a caller's session needs?
+
+    `emdash.task_worktree` is where the runner writes a confined (`cx-`) session's
+    SECOND permission layer. When it cannot answer, that layer is silently skipped and
+    `profile_guard` confines the session alone. On 2026-10-02 it could not answer on
+    ANY emdash 1.1.x — its query named `tasks.deleted_at`, a 1.2 column — while this
+    command reported OK, because the only check near it (transcripts) skips on pre-1.2
+    for an unrelated reason. So this one runs on every version and is never skipped
+    while there is a session to try: it asks `task_worktree` itself, exactly as a
+    caller turn would, so it cannot pass while the real read fails.
+    """
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(conversations)")}
+            if "cwd" not in cols:
+                # Every emdash we run (1.1.40 and 1.2) has it; without it no worktree
+                # can be named at all, so this is a hard fail, never a skip.
+                return Check("worktrees", False,
+                             "emdash has no conversations.cwd — no caller session can get "
+                             "its native permission layer")
+            rows = conn.execute(
+                """
+                SELECT DISTINCT t.name AS task, p.name AS repo
+                FROM tasks t
+                JOIN projects p ON p.id = t.project_id
+                JOIN conversations cv ON cv.task_id = t.id
+                WHERE t.archived_at IS NULL AND cv.cwd IS NOT NULL
+                """
+            ).fetchall()
+    except sqlite3.Error as exc:
+        return Check("worktrees", False, f"could not list open sessions: {exc}")
+    if not rows:
+        return Check("worktrees", True, "no open sessions to check", skipped=True)
+    misses = [f"{r['repo']}/{r['task']}" for r in rows
+              if emdash.task_worktree(db_path, r["repo"], r["task"]) is None]
+    if misses:
+        return Check(
+            "worktrees", False,
+            f"{len(misses)} of {len(rows)} open sessions have no resolvable worktree — "
+            "a caller's session there would run WITHOUT its native permission layer",
+            notes=misses[:10] + ["fix: the task_worktree read in canopy_runner/emdash.py "
+                                 "no longer matches this emdash's schema"],
+        )
+    return Check("worktrees", True, f"all {len(rows)} open sessions resolve a worktree")
+
+
 def check_cdp(*, port: int) -> Check:
     """The DOM contracts the CDP sidecar depends on. Read-only; nothing is clicked."""
     from . import cdp_control
@@ -262,6 +310,7 @@ def run(db_path: str, *, port: int, home: Path, claude_home: Path) -> tuple[list
     # nothing they don't already know from the first.
     if checks[-1].ok:
         checks.append(check_transcripts(db_path, home=home, claude_home=claude_home))
+        checks.append(check_worktrees(db_path))
     checks.append(check_cdp(port=port))
 
     failed = [c for c in checks if not c.ok]
@@ -305,7 +354,8 @@ def log_startup_drift(db_path: str, *, home: Path, claude_home: Path, log) -> No
     """
     try:
         checks = [check_schema(db_path),
-                  check_transcripts(db_path, home=home, claude_home=claude_home)]
+                  check_transcripts(db_path, home=home, claude_home=claude_home),
+                  check_worktrees(db_path)]
     except Exception:  # noqa: BLE001 — a diagnostic must never cost the runner its start
         log.debug("emdash startup check failed to run (non-fatal)", exc_info=True)
         return

@@ -183,3 +183,24 @@ def test_emdash_names_the_worktree_from_its_own_db(tmp_path):
     assert emdash.task_worktree(str(db), "ace", "cx-payments-9abc") == "/wt/emdash-cx-payments-9abc-k2j4l"
     assert emdash.task_worktree(str(db), "hal", "cx-payments-9abc") is None
     assert emdash.task_worktree(str(tmp_path / "missing.db"), "ace", "x") is None
+
+
+def test_the_worktree_is_named_on_emdash_1_1_too(tmp_path):
+    """emdash 1.1.x has no `tasks.deleted_at`. The query used to name it, raise, and
+    return None — so on every 1.1 box a caller's session silently ran without its
+    native permission layer (2026-10-02, emdash 1.1.40 on a second ACE laptop)."""
+    import sqlite3
+
+    db = tmp_path / "emdash4.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE projects (id text, name text);
+        CREATE TABLE tasks (id text, project_id text, name text);
+        CREATE TABLE conversations (id text, task_id text, cwd text, created_at text);
+        INSERT INTO projects VALUES ('p1', 'ace');
+        INSERT INTO tasks VALUES ('t1', 'p1', 'cx-payments-9abc');
+        INSERT INTO conversations VALUES ('c1', 't1', '/wt/emdash-cx-payments-9abc-k2j4l', '2026-10-02');
+    """)
+    con.commit()
+    con.close()
+    assert emdash.task_worktree(str(db), "ace", "cx-payments-9abc") == "/wt/emdash-cx-payments-9abc-k2j4l"
