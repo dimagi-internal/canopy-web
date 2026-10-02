@@ -388,6 +388,21 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
 def pair_runner(request: HttpRequest, payload: RunnerIn):
     if payload.kind not in dict(Runner.KIND_CHOICES):
         raise HttpError(422, f"unknown runner kind '{payload.kind}'")
+    # A runner is OWNED by a person. `paired_by` is the box's identity for life —
+    # its claims run with the pairer's memberships and only the pairer may grant
+    # administration — so pairing with an agent's token makes a box nobody owns:
+    # the human at the keyboard can't manage it, and their own work on it is
+    # attributed to the agent. Measured 2026-10-02 (sarveshtewari-mbp-cdp, paired
+    # as ace@dimagi-ai.com). An agent may still ADMINISTER a box through a grant.
+    agent = getattr(request.user, "agent_identity", None)
+    if agent is not None:
+        raise HttpError(
+            403,
+            f"{request.user.email} is the login of agent '{agent.slug}', and a runner must "
+            "be owned by a person — pair with YOUR canopy-web token (the "
+            "canopy:canopy-web-pat-mint skill writes ~/.claude/canopy/workbench-token); "
+            "the agent can then be granted admin via POST /api/harness/runners/{id}/admins",
+        )
     explicit = (payload.workspace or "").strip()
     if explicit:
         # Membership-gated: a missing workspace and a non-member get the same
