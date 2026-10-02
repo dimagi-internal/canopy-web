@@ -148,6 +148,33 @@ def port_free(port: int) -> bool:
     return True
 
 
+def emdash_live_cdp_port(home: Path, *, is_up=None) -> int | None:
+    """The CDP port THIS account's running emdash already exposes, or None.
+
+    Electron writes `DevToolsActivePort` (first line = port) into its userData dir
+    when launched with --remote-debugging-port. Without this, pairing on a box whose
+    emdash is already up saw 9222 as "taken" and proposed 9223 — a port nothing
+    listens on, so the runner would have been `cdp_down` forever (2026-10-02, a
+    re-pair with emdash running). The file outlives the process, so it is trusted
+    only while something actually answers DevTools on that port.
+    """
+    is_up = is_up or cdp_up
+    support = home / "Library" / "Application Support"
+    try:
+        names = sorted(os.listdir(support))
+    except OSError:
+        return None
+    for name in (n for n in names if n.lower() == "emdash"):
+        try:
+            first = (support / name / "DevToolsActivePort").read_text().splitlines()[0]
+            port = int(first.strip())
+        except (OSError, ValueError, IndexError):
+            continue
+        if 0 < port < 65536 and is_up(port):
+            return port
+    return None
+
+
 def choose_port(base: int, taken: set[int], is_free=port_free) -> int:
     for port in range(base, base + PORT_SPAN):
         if port not in taken and is_free(port):
@@ -300,7 +327,8 @@ def run_pair(config_path: Path, *, name: str = "", workspace: str = "",
              token_ref: str = DEFAULT_TOKEN_REF, home: Path | None = None,
              users_root: Path = Path("/Users"), launcher: bool = True,
              dry_run: bool = False, client_factory=Client, is_free=port_free,
-             ensure_launcher_fn=ensure_launcher, out=print) -> int:
+             ensure_launcher_fn=ensure_launcher, live_cdp_port=emdash_live_cdp_port,
+             out=print) -> int:
     """Pair this account (or confirm it already is) and write its runner.json.
 
     Returns 0 on success, including "already paired". Raises PairError to refuse.
@@ -348,6 +376,17 @@ def run_pair(config_path: Path, *, name: str = "", workspace: str = "",
     else:
         name = name or default_runner_name(macos_user())
         clash = next((r for r in runners if r.get("name") == name), None)
+        if clash is not None and not clash.get("can_manage"):
+            # Re-pairing under a NEW owner (e.g. a box first paired with the wrong
+            # token). Adoption can't help — it never transfers ownership — so say
+            # what does (2026-10-02).
+            raise PairError(
+                f"a runner named '{name}' already exists ({clash.get('id')}) and it is "
+                f"not yours (paired by {clash.get('paired_by_email') or 'someone else'}), "
+                "so it can't be adopted — --runner-id never transfers ownership. Pick "
+                "another --name, or have its pairer retire it first "
+                f"(POST /api/harness/runners/{clash.get('id')}/retire); retired runners "
+                "don't count.")
         if clash is not None:
             raise PairError(
                 f"a runner named '{name}' already exists ({clash.get('id')}). If it is "
@@ -362,12 +401,25 @@ def run_pair(config_path: Path, *, name: str = "", workspace: str = "",
             raise PairError("none of your runners serve an agent to copy — pass --agents a,b,c")
 
     taken = sibling_ports(users_root, home)
-    cdp = cdp_port or choose_port(CDP_BASE, taken, is_free)
+    if cdp_port:
+        cdp, cdp_source = cdp_port, "--cdp-port"
+    else:
+        live = live_cdp_port(home)
+        if live is not None and live not in taken:
+            # emdash on THIS account is already serving DevTools here: the runner must
+            # drive that port, not the next free one (which nothing would listen on).
+            cdp, cdp_source = live, "this account's running emdash (DevToolsActivePort)"
+        else:
+            if live is not None:
+                out(f"    (emdash's DevTools port {live} is claimed by another account's "
+                    "runner.json — choosing a fresh one; relaunch emdash with "
+                    "'Emdash CDP' after pairing)")
+            cdp, cdp_source = choose_port(CDP_BASE, taken, is_free), "first free port"
     hook = hook_port or choose_port(HOOK_BASE, taken | {cdp}, is_free)
     db = find_emdash_db(home)
 
     out(f"==> pairing '{name}' | workspace {ws} | agents {','.join(agents) or '(unchanged)'}")
-    out(f"    cdp_port {cdp} | hook_port {hook} | emdash_db {db}")
+    out(f"    cdp_port {cdp} (from {cdp_source}) | hook_port {hook} | emdash_db {db}")
     if not db.exists():
         out("    (no emdash db there yet — fine if emdash has never run on this account)")
     if dry_run:
