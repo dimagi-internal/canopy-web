@@ -160,14 +160,21 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Add or remove a watched mailbox', 'Enable/disable a mailbox', 'Copy the GCP setup commands'],
   },
   {
-    path: '/w/:workspace/settings/runners',
+    path: '/w/:workspace/settings/topology',
+    title: 'Fleet map',
+    audience: 'Workspace admin or owner',
+    what: "The fleet as one picture: this workspace and every one below it as nested boxes, each holding a lane per owner with that owner's runners and agents. Select an agent to see which runners it runs on, in order, and arrows to every agent it can send work to, coloured by whether it gets the whole agent or only some capabilities; select a runner to see which agents stop if it goes dark. Each workspace collapses. The panel says why an agent is confined and grants it from there.",
+    actions: ['Collapse or expand a workspace', "Select an agent to see its runners and who it can reach", 'Select a runner to see who depends on it', 'Make one agent an admin of another', 'Switch to the Runners or Agent access table'],
+  },
+  {
+    path: '/w/:workspace/settings/topology/runners',
     title: 'Runner topology',
     audience: 'Workspace admin or owner',
     what: "Which runner each agent's turns land on, across this workspace and every one below it: each agent's runners in order and its source rules, every runner they use with its status and who paired it, and which agents are unrouted or have no live runner. Flags a route whose runner can never claim (its pairer is not in the agent's workspace). Read-only — routes are changed on each agent.",
     actions: ['See what each workspace runs on', 'Select a runner to see which agents stop if it goes dark', "Open a runner's supervisor page"],
   },
   {
-    path: '/w/:workspace/settings/agent-access',
+    path: '/w/:workspace/settings/topology/agents',
     title: 'Agent topology',
     audience: 'Workspace admin or owner',
     what: "Which agent can send which other agent work, across this workspace and every one below it. An agent sends work with its own canopy login, and to the receiving agent that login is just a person — so each cell says what the sender gets (the whole agent, the capabilities its interface allows members, or nothing) and why. The receiving agent's owner or a workspace owner can make the sender's login an admin from the cell, one at a time or all at once; the grant says who could then steer the receiver through the sender.",

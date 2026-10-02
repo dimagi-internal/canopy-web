@@ -29,6 +29,8 @@ export function flattenRoutePaths(routes: RouteObject[], parent = ''): string[] 
  */
 const NOT_DOCUMENTABLE = new Set([
   '*',
+  '/w/:workspace/settings/runners',
+  '/w/:workspace/settings/agent-access',
   '/',
   '/timeline',
   '/shareouts/*',
