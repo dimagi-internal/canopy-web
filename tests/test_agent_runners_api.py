@@ -40,14 +40,18 @@ def agent(workspace):
     return Agent.objects.create(slug="echo", name="Echo", workspace=workspace)
 
 
+# Paired by the agent's admin (the workspace owner): a box on an agent's list
+# holds the agent, so an unpaired one is refused (`runner_may_hold_agent`).
 @pytest.fixture()
-def runner_a():
-    return Runner.objects.create(name="runner-a", kind=Runner.EMDASH)
+def runner_a(owner, workspace):
+    return Runner.objects.create(name="runner-a", kind=Runner.EMDASH, paired_by=owner,
+                                 workspace=workspace)
 
 
 @pytest.fixture()
-def runner_b():
-    return Runner.objects.create(name="runner-b", kind=Runner.CLOUD)
+def runner_b(owner, workspace):
+    return Runner.objects.create(name="runner-b", kind=Runner.CLOUD, paired_by=owner,
+                                 workspace=workspace)
 
 
 def _put(client, slug, runner_ids):
@@ -98,10 +102,12 @@ def test_put_agent_runners_replaces_ordered_list(client, agent, runner_a, runner
     assert [x["rank"] for x in got] == [0, 1]
 
 
-def test_put_agent_runners_reorders_removes_and_adds_atomically(client, agent, runner_a, runner_b):
+def test_put_agent_runners_reorders_removes_and_adds_atomically(client, agent, runner_a, runner_b,
+                                                                  owner, workspace):
     RunnerAssignment.objects.create(agent=agent, runner=runner_a, rank=0)
     RunnerAssignment.objects.create(agent=agent, runner=runner_b, rank=1)
-    runner_c = Runner.objects.create(name="runner-c", kind=Runner.REMOTE)
+    runner_c = Runner.objects.create(name="runner-c", kind=Runner.REMOTE, paired_by=owner,
+                                     workspace=workspace)
 
     r = _put(client, agent.slug, [runner_b.id, runner_c.id])
     assert r.status_code == 200, r.content

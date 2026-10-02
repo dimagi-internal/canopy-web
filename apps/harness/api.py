@@ -316,6 +316,44 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     return turn
 
 
+def _visible_sessions(request: HttpRequest):
+    """Chat sessions the caller may read — the chat ACL, as a subquery, for
+    every harness listing that would otherwise show a session turn's prompt or
+    a session's messages to the whole tenant."""
+    from apps.canopy_sessions import access as session_access
+    from apps.canopy_sessions.models import Session
+
+    return Session.objects.filter(session_access.visible_session_q(request.user)).values("pk")
+
+
+def _reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
+    """A turn the caller may REPORT on — start, finish, append ledger events or
+    transcript lines. That is the runner protocol, so it belongs to the box that
+    claimed the turn: the caller must be the human who paired it.
+
+    `_turn_or_404` alone (membership) let any viewer fail someone else's live
+    turn, inject `question`/`approval` events, or append fake transcript lines.
+    An UNCLAIMED turn has no box yet; reporting on one is a write to the work
+    itself, so it takes the same tier as cancelling it (editor on an agent turn,
+    write access to the chat on a session turn). Same uniform 404 otherwise.
+    """
+    turn = _turn_or_404(request, turn_id)
+    if turn.claimed_by_id is not None:
+        if turn.claimed_by.paired_by_id != request.user.pk:
+            raise HttpError(404, "turn not found")
+        return turn
+    if turn.agent_id:
+        if not wsvc.has_role_at_least(request.user, turn.agent.workspace_id,
+                                      wsvc.WorkspaceMembership.EDITOR):
+            raise HttpError(404, "turn not found")
+    elif turn.chat_session_id:
+        from apps.canopy_sessions import access as session_access
+
+        if not session_access.can_write(request.user, turn.chat_session):
+            raise HttpError(404, "turn not found")
+    return turn
+
+
 def _site_turn_q(request: HttpRequest):
     """The turns an acting site may see, as a Q — or None when no site acts."""
     from apps.tokens import delegation
@@ -365,8 +403,15 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     # guards below fall through — any authenticated user could read the transcript).
     ws = getattr(request, "workspace_slug", None)
     if turn.chat_session_id:
+        from apps.canopy_sessions import access as session_access
+
         slug = turn.chat_session.workspace_id
         if (ws and slug != ws) or not wsvc.is_member(request.user, slug):
+            raise HttpError(404, "turn not found")
+        # And the CHAT's own ACL: a session turn's prompt and transcript are
+        # that conversation. Tenant membership alone let any co-tenant read a
+        # private web chat here that canopy_sessions/access.py hides from them.
+        if not session_access.can_read(request.user, turn.chat_session):
             raise HttpError(404, "turn not found")
         return turn
 
@@ -507,6 +552,13 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
         .first()
     )
     if turn is None:
+        raise HttpError(404, "turn not found")
+    from apps.agents.services import runner_may_hold_agent
+
+    # A claim already requires this; re-asked here because a pairer can be
+    # demoted mid-turn, and this is the owner's GitHub identity.
+    agent = delegations.turn_agent(turn)
+    if agent is not None and not runner_may_hold_agent(runner, agent):
         raise HttpError(404, "turn not found")
     try:
         issued = delegations.github_token_for_turn(turn)
@@ -1496,6 +1548,17 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         )
         if pinned is None:
             raise HttpError(422, f"unknown or retired runner id: {payload.runner_id}")
+        if agent is not None:
+            from apps.agents.services import runner_may_hold_agent
+
+            # claim_next_turn refuses it anyway; say so now rather than leave a
+            # turn queued that nothing will ever claim.
+            if not runner_may_hold_agent(pinned, agent):
+                raise HttpError(
+                    403,
+                    f"runner {pinned.name} cannot run {agent.slug}: whoever paired it must "
+                    "be the agent's owner, a workspace owner, or one of its admins",
+                )
 
     turn, created = services.enqueue_turn(
         agent=agent,
@@ -1572,7 +1635,8 @@ def list_turns(
     qs = qs.filter(
         (Q(agent__isnull=False) & Q(agent__workspace_id__in=slugs))
         | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=slugs))
-        | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs))
+        | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs)
+           & Q(chat_session__in=_visible_sessions(request)))
     )
     site_q = _site_turn_q(request)
     if site_q is not None:
@@ -1616,7 +1680,7 @@ def get_turn_caller_context(request: HttpRequest, turn_id: uuid.UUID):
 
 @router.post("/turns/{turn_id}/events", response=TurnEventCountOut)
 def append_turn_events(request: HttpRequest, turn_id: uuid.UUID, payload: TurnEventsIn):
-    turn = _turn_or_404(request, turn_id)
+    turn = _reporting_turn_or_404(request, turn_id)
     for event in payload.events:
         if event.kind not in ALLOWED_EVENT_KINDS:
             raise HttpError(422, f"unknown event kind '{event.kind}'")
@@ -1650,7 +1714,7 @@ def append_turn_transcript(request: HttpRequest, turn_id: uuid.UUID, payload: Tr
     turn's transcript getting long is not a reason to fail a live run;
     `truncated` in the response tells the caller that happened.
     """
-    turn = _turn_or_404(request, turn_id)
+    turn = _reporting_turn_or_404(request, turn_id)
     total_bytes = sum(len(line.encode("utf-8")) for line in payload.lines)
     if total_bytes > TRANSCRIPT_APPEND_MAX_BYTES:
         raise HttpError(
@@ -1700,7 +1764,7 @@ def read_turn_transcript(request: HttpRequest, turn_id: uuid.UUID):
 
 @router.post("/turns/{turn_id}/start", response=TurnOut)
 def start_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnStartIn):
-    turn = _turn_or_404(request, turn_id)
+    turn = _reporting_turn_or_404(request, turn_id)
     if turn.status not in (Turn.CLAIMED, Turn.RUNNING):
         raise ProblemError(409, "Turn not startable", detail=f"status={turn.status}")
     return services.mark_running(turn, session_id=payload.session_id)
@@ -1708,7 +1772,7 @@ def start_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnStartIn):
 
 @router.post("/turns/{turn_id}/finish", response=TurnOut)
 def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn):
-    turn = _turn_or_404(request, turn_id)
+    turn = _reporting_turn_or_404(request, turn_id)
     if payload.status not in (Turn.DONE, Turn.FAILED, Turn.CANCELLED):
         raise HttpError(422, "finish status must be done|failed|cancelled")
     # Record the session BEFORE the terminal check: a re-reported finish is otherwise

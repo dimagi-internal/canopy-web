@@ -156,6 +156,22 @@ def _agent_for_write(request: HttpRequest, slug: str):
     return agent
 
 
+def _refuse_runners_that_cannot_hold(agent, runners) -> None:
+    """403 naming every runner whose pairer is not one of the agent's admins.
+
+    Pointing an agent's work at a box hands that box the agent's whole identity
+    (`services.runner_may_hold_agent`), and these writes are open to the editor
+    tier — so the box, not just the caller, has to be trusted with the agent.
+    """
+    refused = sorted({r.name for r in runners if not services.runner_may_hold_agent(r, agent)})
+    if refused:
+        raise HttpError(
+            403,
+            f"runner(s) {', '.join(refused)} cannot run {agent.slug}: whoever paired a runner "
+            "must be the agent's owner, a workspace owner, or one of its admins",
+        )
+
+
 def _agent_for_admin(request: HttpRequest, slug: str):
     """An agent whose SECRETS the caller may change: its owner or an admin.
 
@@ -235,9 +251,17 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         raise HttpError(404, f"agent '{payload.slug}' not found")
     if role not in _EDITOR_OR_OWNER:
         raise HttpError(403, "creating or editing an agent requires the editor or owner role")
+    explicit = (payload.workspace or "").strip()
+    # A MOVE also requires admin of the agent where it is — checked before
+    # anything is written. Moving re-decides every gate that hangs off its
+    # tenant (a workspace owner is an agent admin), so an editor (the self-join
+    # default) could otherwise move an agent into a workspace they had just
+    # created, own it there, and hold its keys.
+    if (existing is not None and explicit and existing.workspace_id != explicit
+            and not existing.is_admin(request.user)):
+        raise HttpError(403, "moving an agent requires being its owner or one of its admins")
 
     agent = services.upsert_agent(payload, workspace=home)
-    explicit = (payload.workspace or "").strip()
     if explicit and agent.workspace_id != explicit:
         # Explicit home: may MOVE an already-homed agent. A missing workspace
         # and a non-member get the same 404 (no existence leak); moving also
@@ -661,6 +685,7 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     missing = [str(rid) for rid in ids if rid not in by_id]
     if missing:
         raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
+    _refuse_runners_that_cannot_hold(agent, runners)
     with transaction.atomic():
         # source="" ONLY. Source rules live in this table too, and an unscoped
         # delete here would destroy every one of them each time the default
@@ -787,6 +812,7 @@ def replace_agent_runner_rules(
     missing = [str(rid) for rid in ids if rid not in by_id]
     if missing:
         raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
+    _refuse_runners_that_cannot_hold(agent, runners)
 
     with transaction.atomic():
         RunnerAssignment.objects.filter(agent=agent).exclude(source="").delete()
@@ -920,6 +946,7 @@ def set_agent_actor_route(
             f"you don't administer runner(s) {', '.join(refused)} — ask whoever paired it to "
             "grant you admin (POST /api/harness/runners/{id}/admins)",
         )
+    _refuse_runners_that_cannot_hold(agent, runners.values())
 
     with transaction.atomic():
         RunnerAssignment.objects.filter(agent=agent, actor=actor).exclude(source="").delete()

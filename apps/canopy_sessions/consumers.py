@@ -227,11 +227,21 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             # >1h session doesn't lose it and miscount the detach edge (Plan 4 Task 1).
             await database_sync_to_async(attach.renew)(self.session.id)
             return
+        if action == "chat.stop" or action in _EDIT_ACTIONS:
+            # Re-asked on EVERY acting frame, never trusted from connect: a
+            # member removed or demoted mid-session kept sending until they
+            # closed the tab. `chat.stop` is an edit too — REST `POST /stop`
+            # requires write, and the socket used to handle it before this check.
+            self.role = await database_sync_to_async(access.role_for)(self.user, self.session)
+            if self.role is None:
+                await self._error("forbidden", "You no longer have access to this session.")
+                await self.close(code=4003)
+                return
+            if self.role not in _EDIT_ROLES:
+                await self._error("forbidden", "You do not have edit access to this session.")
+                return
         if action == "chat.stop":
             await self._chat_stop(data)
-            return
-        if action in _EDIT_ACTIONS and self.role not in _EDIT_ROLES:
-            await self._error("forbidden", "You do not have edit access to this session.")
             return
         if action == "draft.update":
             await self._draft_update(data)

@@ -278,6 +278,7 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn) -> 
     }
     return feedback_services.ingest(
         [item],
+        workspace=board.workspace,
         submitted_by=request.user if request.user.is_authenticated else None,
     )
 

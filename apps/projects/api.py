@@ -315,6 +315,7 @@ def seed_projects(
     payload: list[ProjectCreateIn] = Body(...),
 ) -> Status:
     ws = _resolve_create_workspace(request)
+    mine = wsvc.request_workspace_slugs(request)
     results = []
     for item in payload:
         project, _ = Project.objects.get_or_create(
@@ -329,6 +330,12 @@ def seed_projects(
                 "workspace": ws,
             },
         )
+        # `slug` is globally unique, so get_or_create FOUND another tenant's
+        # project and this used to return its detail — context, insights,
+        # actions — to anyone who named it. A slug held elsewhere is simply not
+        # seeded here, and not reported, which says nothing about whether it exists.
+        if project.workspace_id not in mine:
+            continue
         results.append(_project_to_detail_out(project))
     return Status(201, results)
 

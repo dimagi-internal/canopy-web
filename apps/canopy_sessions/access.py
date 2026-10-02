@@ -205,7 +205,17 @@ def role_for(user, session) -> str | None:
     elif session.created_by_id is None and session.agent_id and session.agent.is_admin(user):
         derived = SessionParticipant.OWNER
     elif session.origin == Session.ORIGIN_RUNNER and session.created_by_id is None:
-        derived = SessionParticipant.EDITOR  # runner-discovered: tenant-visible, workable
+        # Runner-discovered: tenant-visible, and workable by the tenant's EDITORS.
+        # Typing into one is typing into somebody's live emdash session, which
+        # runs with permissions bypassed — a workspace VIEWER was handed that by
+        # this leg alone. They still read it.
+        from apps.workspaces import services as wsvc
+
+        derived = (
+            SessionParticipant.EDITOR
+            if wsvc.has_role_at_least(user, session.workspace_id, wsvc.WorkspaceMembership.EDITOR)
+            else SessionParticipant.VIEWER
+        )
     else:
         derived = None  # a web chat you did not create: only a row gets you in
     candidates = [r for r in (row, derived) if r in ranks]

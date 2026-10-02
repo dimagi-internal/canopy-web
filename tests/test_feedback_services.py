@@ -8,6 +8,21 @@ from apps.feedback.models import Feedback
 
 pytestmark = pytest.mark.django_db
 
+WS = "fb-ws"
+
+
+@pytest.fixture(autouse=True)
+def _ws():
+    from apps.workspaces.testing import a_workspace
+
+    return a_workspace(WS)
+
+
+def _ingest(items, **kw):
+    from apps.workspaces.models import Workspace
+
+    return services.ingest(items, workspace=Workspace.objects.get(slug=WS), **kw)
+
 
 def _item(**over):
     d = dict(
@@ -26,25 +41,25 @@ def _item(**over):
 
 
 def test_ingest_creates_rows():
-    out = services.ingest([_item(), _item(source_ref="<m2@mail>")])
+    out = _ingest([_item(), _item(source_ref="<m2@mail>")])
     assert (out["created"], out["duplicate"]) == (2, 0)
 
 
 def test_re_ingesting_the_same_source_ref_is_a_no_op():
-    services.ingest([_item()])
-    out = services.ingest([_item(body="edited in the mail client")])
+    _ingest([_item()])
+    out = _ingest([_item(body="edited in the mail client")])
     assert (out["created"], out["duplicate"]) == (0, 1)
     assert Feedback.objects.count() == 1
 
 
 def test_a_partial_duplicate_batch_still_creates_the_new_rows():
-    services.ingest([_item()])
-    out = services.ingest([_item(), _item(source_ref="<m3@mail>")])
+    _ingest([_item()])
+    out = _ingest([_item(), _item(source_ref="<m3@mail>")])
     assert (out["created"], out["duplicate"]) == (1, 1)
 
 
 def test_two_web_submits_without_a_source_ref_are_both_kept():
-    out = services.ingest([
+    out = _ingest([
         _item(channel="web", source_ref=""),
         _item(channel="web", source_ref=""),
     ])
@@ -52,28 +67,28 @@ def test_two_web_submits_without_a_source_ref_are_both_kept():
 
 
 def test_the_same_id_on_two_channels_is_two_rows():
-    out = services.ingest([_item(channel="email"), _item(channel="gdoc")])
+    out = _ingest([_item(channel="email"), _item(channel="gdoc")])
     assert out["created"] == 2
 
 
 def test_list_filters_by_target_and_state():
-    services.ingest([_item(), _item(target_ref="other", source_ref="<m9@mail>")])
-    assert services.list_feedback(target_ref="verified-monitoring").count() == 1
-    assert services.list_feedback(state="new").count() == 2
-    assert services.list_feedback(channel="email").count() == 2
+    _ingest([_item(), _item(target_ref="other", source_ref="<m9@mail>")])
+    assert services.list_feedback(workspace_slugs={WS}, target_ref="verified-monitoring").count() == 1
+    assert services.list_feedback(workspace_slugs={WS}, state="new").count() == 2
+    assert services.list_feedback(workspace_slugs={WS}, channel="email").count() == 2
 
 
 def test_resolve_records_the_disposition():
-    pk = services.ingest([_item()])["ids"][0]
-    fb = services.resolve(pk, state="answered", note="folded into v18", resolved_in_version=18)
+    pk = _ingest([_item()])["ids"][0]
+    fb = services.resolve(pk, workspace_slugs={WS}, state="answered", note="folded into v18", resolved_in_version=18)
     assert (fb.state, fb.resolved_in_version) == ("answered", 18)
     assert "v18" in fb.disposition_note
 
 
 def test_resolve_without_a_note_keeps_the_existing_one():
-    pk = services.ingest([_item()])["ids"][0]
-    services.resolve(pk, state="triaged", note="looked at it")
-    fb = services.resolve(pk, state="answered")
+    pk = _ingest([_item()])["ids"][0]
+    services.resolve(pk, workspace_slugs={WS}, state="triaged", note="looked at it")
+    fb = services.resolve(pk, workspace_slugs={WS}, state="answered")
     assert fb.disposition_note == "looked at it"
 
 
@@ -86,5 +101,5 @@ def test_ingest_creates_no_work():
     from apps.agents.models import AgentTask
 
     before = AgentTask.objects.count()
-    services.ingest([_item()])
+    _ingest([_item()])
     assert AgentTask.objects.count() == before

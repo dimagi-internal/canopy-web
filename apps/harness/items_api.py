@@ -112,6 +112,16 @@ def list_agent_items(
                          summary="Raise items for an agent (batch, idempotent)",)
 def create_items(request: HttpRequest, slug: str, payload: list[ItemIn]):
     agent = _get_agent_or_404(request, slug)
+    # An item that carries `dispatch` is a prompt queued to run the moment anyone
+    # decides `implement` — and deciding is the viewer tier. So WRITING one is the
+    # reshaping tier, exactly like the board's `dispatch` command and POST /turns:
+    # an editor, or the agent itself raising its own asks under its own login.
+    if any(p.dispatch for p in payload):
+        is_self = agent.user_id is not None and agent.user_id == request.user.pk
+        if not is_self and not wsvc.has_role_at_least(
+            request.user, agent.workspace_id, wsvc.WorkspaceMembership.EDITOR
+        ):
+            raise HttpError(403, "raising an item that dispatches work requires the editor role")
     # `.dict()` first: `dispatch` holds nested TurnSpecIn models, and a JSON
     # column cannot store those — it raised a 500 until this was a plain dict.
     tasks = agent_services.raise_asks(

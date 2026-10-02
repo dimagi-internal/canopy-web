@@ -23,6 +23,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.feedback import services
 from apps.feedback.models import Feedback
+from apps.workspaces import services as wsvc
 from apps.feedback.schemas import (
     FeedbackBatchIn,
     FeedbackIngestOut,
@@ -60,8 +61,14 @@ def ingest_feedback(request: HttpRequest, payload: FeedbackBatchIn) -> dict:
     """Idempotent per ``(channel, source_ref)`` so re-reading a mailbox or a doc
     is safe. ``submitted_by`` is the CALLER (the agent's PAT user, or the logged
     in human) — never the external author, who has no account here."""
+    # Lands in a tenant the caller is already in (pinned /w/{ws}, the org
+    # default, or their sole membership) — the same resolution every create uses.
+    ws = wsvc.creation_workspace(request)
+    if ws is None:
+        raise HttpError(422, "no workspace to file feedback in; post via /api/w/{workspace}/feedback/")
     return services.ingest(
         [item.model_dump() for item in payload.items],
+        workspace=ws,
         submitted_by=request.user if request.user.is_authenticated else None,
     )
 
@@ -75,6 +82,7 @@ def list_feedback(
     channel: str | None = None,
 ) -> dict:
     qs = services.list_feedback(
+        workspace_slugs=wsvc.request_workspace_slugs(request),
         target_kind=target_kind, target_ref=target_ref, state=state, channel=channel
     )
     return {"items": [_out(fb) for fb in qs]}
@@ -88,6 +96,7 @@ def resolve_feedback(request: HttpRequest, feedback_id: int, payload: FeedbackRe
     try:
         fb = services.resolve(
             feedback_id,
+            workspace_slugs=wsvc.request_workspace_slugs(request),
             state=payload.state,
             note=payload.note,
             resolved_in_version=payload.resolved_in_version,

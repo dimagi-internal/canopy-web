@@ -29,10 +29,14 @@ router = Router(auth=session_auth, tags=["agents"])
 GOG_TOKEN_REF = "gog-token"
 
 
-def _agent_or_404(request: HttpRequest, slug: str):
-    from .api import _get_agent_or_404
+def _agent_for_mint(request: HttpRequest, slug: str):
+    """An agent whose mailbox credential the caller may REPLACE — its owner or
+    an admin, the same tier as `PUT /{slug}/credentials`. The mint writes the
+    `gog-token` credential, so membership alone let a viewer attach their own
+    Google account as the agent's mailbox."""
+    from .api import _agent_for_admin
 
-    return _get_agent_or_404(request, slug)
+    return _agent_for_admin(request, slug)
 
 
 @router.get("/{slug}/google/authorize", response=GoogleMintStartOut,
@@ -45,7 +49,7 @@ def start_google_mint(request: HttpRequest, slug: str, login_hint: str = "") -> 
     page do a top-level navigation, which is the only thing that can show a
     consent screen.
     """
-    agent = _agent_or_404(request, slug)
+    agent = _agent_for_mint(request, slug)
     client_id, _ = google_oauth.google_client_credentials()
     if not client_id:
         raise HttpError(503, "this deployment has no Google OAuth client configured")
@@ -99,7 +103,7 @@ def google_callback(request: HttpRequest, code: str = "", state: str = "", error
     if str(claims.get("user")) != str(request.user.pk):
         raise HttpError(403, "this sign-in was started by a different user")
 
-    agent = _agent_or_404(request, claims["agent"])
+    agent = _agent_for_mint(request, claims["agent"])
     if error or not code:
         return done(agent, "denied")
 

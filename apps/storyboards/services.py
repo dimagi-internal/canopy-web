@@ -104,7 +104,9 @@ def board_feedback(board: Storyboard):
         .distinct()
     )
     return (
-        Feedback.objects.filter(
+        # The board's own tenant only: narrative slugs are not unique across
+        # workspaces, so matching on the slug alone read another tenant's notes.
+        Feedback.objects.filter(workspace_id=board.workspace_id).filter(
             Q(target_kind="storyboard", target_ref=board.slug)
             | Q(target_kind="narrative", target_ref__in=slugs)
         )

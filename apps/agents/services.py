@@ -960,9 +960,41 @@ def caller_runs_agent(user, agent) -> bool:
     # The trust boundary is unchanged in substance: an assignment row at all
     # means this agent's work may be directed at this runner, and the caller must
     # still PAIR it. Disabling governs automatic routing, not trust.
+    #
+    # AND the pairer must be one of the agent's admins (`runner_may_hold_agent`).
+    # An assignment row alone is written by the EDITOR tier, which self-join
+    # hands out — so without this, an editor paired a box, added it to the list
+    # (disabled, at the bottom) and read every secret, both vault keys and the
+    # owner's GitHub token through `/credentials/resolve`.
+    if not agent.is_admin(user):
+        return False
     return RunnerAssignment.objects.filter(
         agent=agent, runner__paired_by=user,
     ).exclude(runner__status=Runner.RETIRED).exists()
+
+
+def runner_may_hold_agent(runner, agent) -> bool:
+    """May this box run AS this agent — hold its prompt, its caller's token, its
+    secrets and its owner's GitHub identity?
+
+    Only when the human who paired it is one of the agent's admins (its owner, a
+    workspace owner, or an `AgentAdmin`). A runner speaks with its pairer's
+    authority, so this is "is the pairer trusted with the whole agent?", asked of
+    the box. The one predicate behind every place an agent's identity leaves
+    canopy: claiming an agent turn, the per-turn GitHub token, credential
+    resolve, and the routing writes that point work at a box.
+
+    The agent's OWN canopy login (`Agent.user`) counts too: a box paired under
+    the agent's identity is the agent's box, and whoever operates it does so by
+    a RunnerAdmin grant from that login.
+
+    Fails closed on a runner with no pairer."""
+    paired_by_id = getattr(runner, "paired_by_id", None)
+    if paired_by_id is None:
+        return False
+    if agent.user_id is not None and agent.user_id == paired_by_id:
+        return True
+    return agent.is_admin(runner.paired_by)
 
 
 # ---- 1Password vault + import (spec 2026-09-06) -------------------------------

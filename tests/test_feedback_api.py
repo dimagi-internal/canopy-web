@@ -12,7 +12,9 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture()
 def user():
-    return User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    from apps.workspaces.testing import a_member, a_workspace
+
+    return a_member(a_workspace("fb-api-ws"), email="jj@dimagi.com")
 
 
 @pytest.fixture()
@@ -95,7 +97,7 @@ def test_submitted_by_is_the_caller_not_the_author(client):
     fb = Feedback.objects.get()
     assert fb.author_name == "Sophie"
     assert fb.submitted_by is not None
-    assert fb.submitted_by.username == "jj"
+    assert fb.submitted_by.email == "jj@dimagi.com"
 
 
 def test_an_unknown_field_is_rejected_rather_than_silently_dropped(client):
@@ -142,3 +144,30 @@ def test_a_suggestion_counts_as_content_even_with_no_body(client):
         content_type="application/json",
     )
     assert r.json()["created"] == 1
+
+
+def test_another_tenant_cannot_read_or_resolve_feedback(client):
+    """The pool had no tenant boundary: any signed-in user read every
+    workspace's reviewer notes (author emails included) and resolved them."""
+    from apps.workspaces.testing import a_member, a_workspace
+
+    client.post("/api/feedback/", _batch(), content_type="application/json")
+    pk = Feedback.objects.get().pk
+
+    outsider = Client()
+    outsider.force_login(a_member(a_workspace("fb-other-ws"), email="out@dimagi.com"))
+    assert outsider.get("/api/feedback/").json()["items"] == []
+    r = outsider.post(f"/api/feedback/{pk}/resolve", {"state": "declined"},
+                      content_type="application/json")
+    assert r.status_code == 404
+    assert Feedback.objects.get(pk=pk).state == "new"
+
+
+def test_a_user_in_no_workspace_cannot_file_feedback():
+    from apps.workspaces.testing import a_workspace
+
+    a_workspace()  # the org default exists, owned by someone else
+    nobody = Client()
+    nobody.force_login(User.objects.create_user("nobody", "nobody@dimagi.com", "pw"))
+    r = nobody.post("/api/feedback/", _batch(), content_type="application/json")
+    assert r.status_code == 422

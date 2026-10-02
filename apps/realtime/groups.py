@@ -69,12 +69,20 @@ def turn_workspace_slug(turn: Turn) -> str | None:
 
 
 def user_can_read_turn(user, turn: Turn) -> bool:
+    """The same answer `GET /api/harness/turns/{id}` gives: the tenant, and for a
+    session turn the chat's own ACL too. There is no superuser leg — a door that
+    answers differently from its REST twin is how the session-turn leak happened.
+    """
     if not getattr(user, "is_authenticated", False):
         return False
-    if user.is_superuser:
-        return True
     slug = turn_workspace_slug(turn)
-    return bool(slug) and slug in user_workspace_slugs(user)
+    if not slug or slug not in user_workspace_slugs(user):
+        return False
+    if turn.chat_session_id:
+        from apps.canopy_sessions import access as session_access
+
+        return session_access.can_read(user, turn.chat_session)
+    return True
 
 
 def serialize_turn_event(te: TurnEvent) -> dict:

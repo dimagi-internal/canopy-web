@@ -23,6 +23,16 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 
 
+def _creator(agent):
+    """Whoever is asking about the stuck turn started the chat — a session turn
+    is listed only to someone who may read the chat (the chat ACL, not the
+    tenant)."""
+    from apps.workspaces.models import WorkspaceMembership
+
+    return WorkspaceMembership.objects.filter(
+        workspace=agent.workspace, role=WorkspaceMembership.OWNER).first().user
+
+
 @pytest.fixture
 def fleet():
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
@@ -66,6 +76,7 @@ def _sessions(*runners):
 
 def _zdr_turn(agent, key="c1", **kw):
     s = Session.objects.create(agent=agent, workspace=agent.workspace, title="chat",
+                                     created_by=_creator(agent),
                                metadata={"runner_requirements": ["zdr"]})
     return Turn.objects.create(chat_session=s, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
                                idempotency_key=key, routing=Turn.ANY, **kw), s
@@ -178,7 +189,8 @@ def test_a_turn_without_requirements_is_unaffected(fleet):
     a, laptop = fleet["agent"], fleet["laptop"]
     _sessions(laptop)
     RunnerAssignment.objects.create(agent=a, runner=laptop, rank=0)
-    s = Session.objects.create(agent=a, workspace=a.workspace, title="chat")
+    s = Session.objects.create(agent=a, workspace=a.workspace, title="chat",
+                                     created_by=_creator(a))
     turn = Turn.objects.create(chat_session=s, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
                                idempotency_key="plain", routing=Turn.ANY)
 

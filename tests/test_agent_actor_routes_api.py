@@ -29,7 +29,9 @@ def fleet(client):
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     WorkspaceMembership.objects.create(workspace=ws, user=sarvesh, role=WorkspaceMembership.EDITOR)
     WorkspaceMembership.objects.create(workspace=ws, user=ace_user, role=WorkspaceMembership.EDITOR)
-    ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws)
+    # `user` links the agent's own login: a box paired under the agent's
+    # identity is the agent's box (`runner_may_hold_agent`).
+    ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, user=ace_user)
     now = timezone.now()
     jj_laptop = Runner.objects.create(
         name="jj-mbp", kind=Runner.EMDASH, paired_by=jj, workspace=ws,
