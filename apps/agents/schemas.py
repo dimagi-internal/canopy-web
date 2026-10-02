@@ -186,6 +186,43 @@ class AgentRunnerRulesIn(StrictModel):
     rules: list[AgentRunnerRuleIn] = Field(default_factory=list)
 
 
+class AgentActorRouteRunnerOut(StrictModel):
+    runner_id: uuid.UUID
+    runner_name: str
+    online: bool
+    enabled: bool = True
+
+
+class AgentActorRouteOut(StrictModel):
+    """One person's routing for an agent: whose work, which boxes, on which sources.
+
+    A VIEW over the per-source actor rules, grouped by actor — the same rows
+    `GET /runner-rules` lists one per (source, actor, runner). An actor whose
+    sources route differently comes back as one entry per distinct routing."""
+
+    actor: str
+    runners: list[AgentActorRouteRunnerOut]
+    strict: bool
+    sources: list[str]
+    turn_mode: str = ""
+    queued_count: int = 0
+
+
+class AgentActorRouteIn(StrictModel):
+    """Route ONE person's work for this agent onto the given runners.
+
+    `runners` is ordered — first is preferred. `strict` (default on) means only
+    these runners may take the work: if they are all offline the turn waits rather
+    than falling back to the agent's default order. `sources` defaults to every
+    source that carries an actor; `canopy_scheduler` is refused because a
+    schedule has no person behind it, so a rule on it could never match."""
+
+    runners: list[AgentRunnerRowIn] = Field(default_factory=list)
+    strict: bool = True
+    sources: list[RoutableSource] | None = None
+    turn_mode: Literal["", "manual", "auto"] = ""
+
+
 class AgentRuntimeOut(StrictModel):
     """What a runner needs from canopy-web to run this agent: the repo pointer
     (whose runtime.yaml is the declarative spec), the secret-reference names to

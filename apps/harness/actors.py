@@ -85,6 +85,16 @@ def resolve_actor(origin: str, origin_ref, enqueued_by_email: str | None) -> str
 def actor_of(turn: Turn) -> str:
     """`resolve_actor` for a loaded Turn. The one place that knows an email is
     reached through the `enqueued_by` FK, so callers can select_related it once
-    rather than each re-deriving the traversal."""
+    rather than each re-deriving the traversal.
+
+    Falls back to the INITIATING CONTACT's address when no member enqueued the
+    turn. A Slack sender who is not a workspace member, and every ace-web widget
+    turn, arrive as a contact with `enqueued_by` NULL — so before this a person
+    route for them could never match, and the turn silently took the default box
+    (measured 2026-10-02: 4 Slack + 2 ace-web ACE turns in 72h with no actor).
+    Safe for the one decision that trusts the actor: an actor rule's `auto` mode
+    is separately gated on `caller_context._verified` (turn_mode.py)."""
     email = turn.enqueued_by.email if turn.enqueued_by_id else ""
+    if not email and turn.initiator_contact_id:
+        email = turn.initiator_contact.email or ""
     return resolve_actor(turn.origin, turn.origin_ref, email)
