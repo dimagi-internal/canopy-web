@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { clsx } from 'clsx'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, Plus } from 'lucide-react'
 
-import { grantAgentAdmin, revokeAgentAdmin } from '@/api/agents'
+import { grantAgentAdmin, revokeAgentAdmin, type TurnMode } from '@/api/agents'
+import { listRunners, type RunnerOut } from '@/api/harness'
+import { useAuth } from '@/auth/AuthProvider'
+import { AgentRouting } from '@/components/agents/AgentRouting'
+import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
 import {
   getAgentTopology,
   getRunnerTopology,
@@ -20,6 +24,7 @@ import {
   hiddenBy,
   initials,
   initiallyCollapsed,
+  pairingCommand,
   shortRunner,
   type FleetMap,
   type Lane,
@@ -41,8 +46,19 @@ import {
 // inside a collapsed box land on the box, so collapsing hides detail, never a
 // relationship. Selection lives in the URL (?agent= / ?runner=) so a link names
 // what it is about.
+//
+// It is also where runners are CONFIGURED: the panel mounts the supervisor's own
+// runner detail (login, admins, flags, drills, pause, retire) and the agent's own
+// routing table, so there is one implementation of each and two doors onto it;
+// every control gates on what the server says the viewer may do (can_manage /
+// can_administer, the routing PUT's own check). An owner lane's "Add a runner"
+// gives the pairing command, since pairing is something you run on the box.
 
-type Selection = { kind: 'agent'; slug: string } | { kind: 'runner'; id: string } | null
+type Selection =
+  | { kind: 'agent'; slug: string }
+  | { kind: 'runner'; id: string }
+  | { kind: 'add'; workspace: string; owner: string }
+  | null
 
 const HEALTH = {
   ok: null,
@@ -63,6 +79,19 @@ function FleetMapView({ slug }: { slug: string }): JSX.Element {
   const [params, setParams] = useSearchParams()
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  // The fleet as GET /harness/runners/ serves it: the RunnerOut (with can_manage /
+  // can_administer) the runner detail gates on. The topology rows do not carry
+  // those, and must not — they answer "what is wired", not "what may I change".
+  const [fleet, setFleet] = useState<Map<string, RunnerOut>>(new Map())
+  const loadFleet = useCallback(
+    () =>
+      listRunners()
+        .then((rs) => setFleet(new Map(rs.map((r) => [r.id, r] as const))))
+        // The map still works without it; the panel then says where to look.
+        .catch(() => setFleet(new Map())),
+    [],
+  )
+  useEffect(() => { void loadFleet() }, [loadFleet])
 
   const load = useCallback(
     () => Promise.all([getRunnerTopology(slug), getAgentTopology(slug)]).then(([r, a]) => buildFleetMap(r, a)),
@@ -87,20 +116,33 @@ function FleetMapView({ slug }: { slug: string }): JSX.Element {
 
   const agentParam = params.get('agent')
   const runnerParam = params.get('runner')
+  const addParam = params.get('add')
   const selection: Selection = agentParam
     ? { kind: 'agent', slug: agentParam }
     : runnerParam
       ? { kind: 'runner', id: runnerParam }
-      : null
+      : addParam
+        ? { kind: 'add', workspace: addParam, owner: params.get('owner') ?? '' }
+        : null
 
   const select = (next: Selection) => {
     const p = new URLSearchParams(params)
-    p.delete('agent')
-    p.delete('runner')
+    for (const k of ['agent', 'runner', 'add', 'owner']) p.delete(k)
     if (next?.kind === 'agent') p.set('agent', next.slug)
     if (next?.kind === 'runner') p.set('runner', next.id)
+    if (next?.kind === 'add') {
+      p.set('add', next.workspace)
+      p.set('owner', next.owner)
+    }
     setParams(p, { replace: true })
   }
+
+  // A change made in the panel redraws the map from the server, keeping what is
+  // collapsed — the picture must not disagree with the control beside it.
+  const refresh = useCallback(() => {
+    load().then(setMap).catch(() => { /* keep the last good picture */ })
+    void loadFleet()
+  }, [load, loadFleet])
 
   const toggle = (ws: string) =>
     setCollapsed((prev) => {
@@ -143,8 +185,8 @@ function FleetMapView({ slug }: { slug: string }): JSX.Element {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-3xl text-[13px] text-foreground-secondary">
           Each workspace holds a lane per owner, with that owner&rsquo;s runners and agents. Select an agent to see
-          which runners it runs on and what it gets when it sends each other agent work; select a runner to see who
-          depends on it.
+          and change which runners it runs on, and what it gets when it sends each other agent work; select a runner
+          to configure it and see who depends on it.
         </p>
         <div className="flex flex-wrap items-center gap-3 text-[12px] text-muted-foreground">
           <Legend />
@@ -171,7 +213,13 @@ function FleetMapView({ slug }: { slug: string }): JSX.Element {
         />
         <SidePanel
           map={map}
+          fleet={fleet}
           selection={selection}
+          onRefresh={refresh}
+          onRunnerChanged={(fresh) => {
+            setFleet((prev) => new Map(prev).set(fresh.id, fresh))
+            refresh()
+          }}
           busy={busy}
           error={actionError}
           onSelect={select}
@@ -329,6 +377,7 @@ function MapCanvas({
 
   const selectedAgent = selection?.kind === 'agent' ? map.agents.get(selection.slug) : undefined
   const selectedRunner = selection?.kind === 'runner' ? map.runners.get(selection.id) : undefined
+  const adding = selection?.kind === 'add' ? addKey(selection.workspace, selection.owner) : null
 
   return (
     <div ref={container} className="relative min-w-0 flex-[999_1_640px]" data-testid="map-canvas">
@@ -338,6 +387,7 @@ function MapCanvas({
         collapsed={collapsed}
         selectedAgent={selectedAgent}
         selectedRunner={selectedRunner}
+        adding={adding}
         onToggle={onToggle}
         onSelect={onSelect}
         register={register}
@@ -375,6 +425,7 @@ function WorkspaceBox({
   collapsed,
   selectedAgent,
   selectedRunner,
+  adding,
   onToggle,
   onSelect,
   register,
@@ -384,6 +435,7 @@ function WorkspaceBox({
   collapsed: Set<string>
   selectedAgent: MapAgent | undefined
   selectedRunner: TopologyRunnerOut | undefined
+  adding: string | null
   onToggle: (ws: string) => void
   onSelect: (s: Selection) => void
   register: (key: string) => (el: HTMLElement | null) => void
@@ -434,10 +486,12 @@ function WorkspaceBox({
               {ws.lanes.map((lane) => (
                 <OwnerLane
                   key={lane.owner ?? '∅'}
+                  workspace={ws.slug}
                   lane={lane}
                   map={map}
                   selectedAgent={selectedAgent}
                   selectedRunner={selectedRunner}
+                  adding={adding === addKey(ws.slug, lane.owner ?? '')}
                   onSelect={onSelect}
                   register={register}
                 />
@@ -454,6 +508,7 @@ function WorkspaceBox({
                   collapsed={collapsed}
                   selectedAgent={selectedAgent}
                   selectedRunner={selectedRunner}
+                  adding={adding}
                   onToggle={onToggle}
                   onSelect={onSelect}
                   register={register}
@@ -467,6 +522,10 @@ function WorkspaceBox({
   )
 }
 
+function addKey(workspace: string, owner: string): string {
+  return `${workspace}\u0000${owner}`
+}
+
 /** Grow by agent count, and ask for room for up to four cards side by side
  *  (each 200px + gap) before wrapping onto a row of its own. */
 function laneFlex(lane: Lane): string {
@@ -475,17 +534,21 @@ function laneFlex(lane: Lane): string {
 }
 
 function OwnerLane({
+  workspace,
   lane,
   map,
   selectedAgent,
   selectedRunner,
+  adding,
   onSelect,
   register,
 }: {
+  workspace: string
   lane: Lane
   map: FleetMap
   selectedAgent: MapAgent | undefined
   selectedRunner: TopologyRunnerOut | undefined
+  adding: boolean
   onSelect: (s: Selection) => void
   register: (key: string) => (el: HTMLElement | null) => void
 }): JSX.Element {
@@ -506,11 +569,28 @@ function OwnerLane({
         </span>
         <span className="truncate text-foreground-secondary">{lane.owner ?? 'No owner set'}</span>
       </div>
-      {lane.runners.length > 0 && (
+      {(lane.runners.length > 0 || lane.owner) && (
         <div className="flex flex-wrap gap-1.5">
           {lane.runners.map((r) => (
             <RunnerChip key={r.id} runner={r} selectedAgent={selectedAgent} selectedRunner={selectedRunner} onSelect={onSelect} register={register} />
           ))}
+          {/* A runner always has an owner, so the "No owner set" lane has no
+              one to add a box for. */}
+          {lane.owner && (
+            <button
+              type="button"
+              onClick={() => onSelect(adding ? null : { kind: 'add', workspace, owner: lane.owner! })}
+              aria-pressed={adding}
+              className={clsx(
+                'inline-flex min-h-8 items-center gap-1 rounded-md border border-dashed px-2 py-1 text-[12px]',
+                adding ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
+              data-testid={`map-add-runner-${workspace}-${lane.owner}`}
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              Add a runner
+            </button>
+          )}
         </div>
       )}
       {lane.agents.length > 0 && (
@@ -631,7 +711,10 @@ function AgentCard({
 
 function SidePanel({
   map,
+  fleet,
   selection,
+  onRefresh,
+  onRunnerChanged,
   busy,
   error,
   onSelect,
@@ -639,7 +722,10 @@ function SidePanel({
   onRevoke,
 }: {
   map: FleetMap
+  fleet: Map<string, RunnerOut>
   selection: Selection
+  onRefresh: () => void
+  onRunnerChanged: (r: RunnerOut) => void
   busy: boolean
   error: string | null
   onSelect: (s: Selection) => void
@@ -648,13 +734,37 @@ function SidePanel({
 }): JSX.Element {
   return (
     <aside
-      className="flex min-w-0 flex-[1_1_300px] flex-col gap-4 rounded-xl border border-border bg-card p-4 text-[13px] lg:max-w-sm"
+      className={clsx(
+        'flex min-w-0 flex-[1_1_300px] flex-col gap-4 rounded-xl border border-border bg-card p-4 text-[13px]',
+        // Room for the routing table and the runner's controls once there is one.
+        selection?.kind === 'agent' ? 'lg:max-w-lg' : selection ? 'lg:max-w-md' : 'lg:max-w-sm',
+      )}
       data-testid="map-panel"
     >
       {selection?.kind === 'agent' && map.agents.get(selection.slug) ? (
-        <AgentPanel agent={map.agents.get(selection.slug)!} map={map} busy={busy} onSelect={onSelect} onGrant={onGrant} onRevoke={onRevoke} />
+        <AgentPanel
+          agent={map.agents.get(selection.slug)!}
+          map={map}
+          busy={busy}
+          onSelect={onSelect}
+          onGrant={onGrant}
+          onRevoke={onRevoke}
+          onRoutingSaved={onRefresh}
+        />
       ) : selection?.kind === 'runner' && map.runners.get(selection.id) ? (
-        <RunnerPanel runner={map.runners.get(selection.id)!} map={map} onSelect={onSelect} />
+        <RunnerPanel
+          runner={map.runners.get(selection.id)!}
+          detail={fleet.get(selection.id)}
+          map={map}
+          onSelect={onSelect}
+          onChanged={onRunnerChanged}
+          onRetired={() => {
+            onSelect(null)
+            onRefresh()
+          }}
+        />
+      ) : selection?.kind === 'add' ? (
+        <AddRunnerPanel workspace={selection.workspace} owner={selection.owner} map={map} />
       ) : (
         <Summary map={map} onSelect={onSelect} />
       )}
@@ -674,6 +784,7 @@ function AgentPanel({
   onSelect,
   onGrant,
   onRevoke,
+  onRoutingSaved,
 }: {
   agent: MapAgent
   map: FleetMap
@@ -681,9 +792,8 @@ function AgentPanel({
   onSelect: (s: Selection) => void
   onGrant: (e: AgentEdgeOut) => void
   onRevoke: (e: AgentEdgeOut) => void
+  onRoutingSaved: () => void
 }): JSX.Element {
-  const order = agent.routing ? defaultRoutes(agent.routing) : []
-  const rules = agent.routing ? ruleRoutes(agent.routing) : []
   const others = [...map.agents.values()].filter((a) => a.slug !== agent.slug)
   const rank = { full: 0, confined: 1, none: 2 } as const
   const outgoing = others
@@ -711,30 +821,22 @@ function AgentPanel({
         </span>
       </div>
 
-      <section className="flex flex-col gap-1.5">
-        <PanelHeading>Runs on, in order</PanelHeading>
-        {order.length === 0 && <span className="text-destructive">No runner: its turns cannot run.</span>}
-        {order.map((r, i) => {
-          const runner = map.runners.get(r.runner_id)
-          return (
-            <button
-              key={`${r.runner_id}-${i}`}
-              type="button"
-              onClick={() => onSelect({ kind: 'runner', id: r.runner_id })}
-              className={clsx('flex min-h-8 items-center gap-2 rounded px-1 text-left hover:bg-muted', !r.enabled && 'text-muted-foreground line-through')}
-            >
-              <span className="w-3 text-muted-foreground">{i + 1}</span>
-              <span className={statusTone(runner?.status)} aria-hidden="true">●</span>
-              <span className="font-mono">{runner?.name ?? 'unknown'}</span>
-              <span className="ml-auto text-[11px] text-muted-foreground">{runner?.status}</span>
-            </button>
-          )
-        })}
-        {rules.length > 0 && (
-          <span className="text-[12px] text-muted-foreground">
-            + {rules.length} source rule{rules.length === 1 ? '' : 's'} ({[...new Set(rules.map((r) => r.source))].join(', ')})
+      {/* The agent's own routing table, the one on its Settings page — edited
+          here, redrawn on the map (its runner chips number themselves). */}
+      <section className="flex flex-col gap-1.5" data-testid="map-agent-routing">
+        <PanelHeading>Where its work runs</PanelHeading>
+        {agent.health !== 'ok' && (
+          <span className="text-[12px] text-destructive">
+            {agent.health === 'unrouted' ? 'No runner: its turns cannot run.' : 'None of its runners is live.'}
           </span>
         )}
+        <AgentRouting
+          key={agent.slug}
+          agentSlug={agent.slug}
+          workspace={agent.workspace}
+          initialTurnMode={(agent.turnMode || 'manual') as TurnMode}
+          onSaved={onRoutingSaved}
+        />
       </section>
 
       <section className="flex flex-col gap-1.5">
@@ -813,33 +915,57 @@ function AgentPanel({
 
 function RunnerPanel({
   runner,
+  detail,
   map,
   onSelect,
+  onChanged,
+  onRetired,
 }: {
   runner: TopologyRunnerOut
+  /** The same runner as GET /harness/runners/ serves it — absent when the
+   *  viewer cannot list it (a box homed outside their workspaces). */
+  detail: RunnerOut | undefined
   map: FleetMap
   onSelect: (s: Selection) => void
+  onChanged: (r: RunnerOut) => void
+  onRetired: () => void
 }): JSX.Element {
   const users = [...map.agents.values()].filter((a) => a.routing?.routes.some((r) => r.runner_id === runner.id))
+  const liveLink = (
+    <Link to={`/supervisor?tab=runners&runner=${runner.id}`} className="text-[12px] text-primary hover:underline">
+      Live status →
+    </Link>
+  )
   return (
     <>
-      <div className="flex flex-col gap-1">
-        <div className="flex items-baseline justify-between gap-2">
-          <h3 className="m-0 font-mono text-[16px] font-semibold text-foreground">{runner.name}</h3>
-          <Link to={`/supervisor?tab=runners&runner=${runner.id}`} className="text-[12px] text-primary hover:underline">
-            Open →
-          </Link>
+      {detail ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex justify-end">{liveLink}</div>
+          {/* The supervisor's own runner detail: login, admins, flags, drills,
+              pause and retire, each shown only to whoever the server says may
+              use it. Routing is left to the agents, below and on the map. */}
+          <RunnerDetail key={detail.id} runner={detail} onChanged={onChanged} onRetired={onRetired} />
         </div>
-        <span className={clsx('text-[12px]', statusTone(runner.status))}>
-          ● {runner.status}
-          {!runner.ready && <span className="text-warning"> · not ready</span>}
-        </span>
-        <span className="text-[12px] text-muted-foreground">
-          {runner.kind}
-          {runner.host ? ` · ${runner.host}` : ''} · lives in {runner.workspace ?? '—'} · owned by {runner.owner_email ?? '—'}
-        </span>
-      </div>
-      <section className="flex flex-col gap-1">
+      ) : (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="m-0 font-mono text-[16px] font-semibold text-foreground">{runner.name}</h3>
+            {liveLink}
+          </div>
+          <span className={clsx('text-[12px]', statusTone(runner.status))}>
+            ● {runner.status}
+            {!runner.ready && <span className="text-warning"> · not ready</span>}
+          </span>
+          <span className="text-[12px] text-muted-foreground">
+            {runner.kind}
+            {runner.host ? ` · ${runner.host}` : ''} · lives in {runner.workspace ?? '—'} · owned by {runner.owner_email ?? '—'}
+          </span>
+          <span className="text-[12px] text-muted-foreground" data-testid="map-runner-not-listed">
+            You cannot configure this runner: it is not in a workspace you belong to. {runner.owner_email ?? 'Its owner'} can.
+          </span>
+        </div>
+      )}
+      <section className="flex flex-col gap-1" data-testid="map-runner-users">
         <PanelHeading>Agents that route to it</PanelHeading>
         {users.length === 0 && <span className="text-muted-foreground">None: this runner serves nobody.</span>}
         {users.map((a) => {
@@ -857,9 +983,91 @@ function RunnerPanel({
             </div>
           )
         })}
+        {users.length > 0 && (
+          <span className="text-[11px] text-muted-foreground">Select an agent to change where it runs.</span>
+        )}
       </section>
     </>
   )
+}
+
+function AddRunnerPanel({ workspace, owner, map }: { workspace: string; owner: string; map: FleetMap }): JSX.Element {
+  const auth = useAuth()
+  const me = auth.user?.email ?? null
+  const isMe = me !== null && me === owner
+  const base = `${window.location.origin}${import.meta.env.BASE_URL}`
+  const command = pairingCommand(workspace, base)
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    void navigator.clipboard?.writeText(command).then(() => {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    })
+  }
+  const wsName = findWorkspace(map.root, workspace)?.displayName ?? workspace
+  return (
+    <div className="flex flex-col gap-3" data-testid="map-add-runner-panel">
+      <div className="flex flex-col gap-1">
+        <h3 className="m-0 text-[16px] font-semibold text-foreground">Add a runner</h3>
+        <span className="text-[12px] text-muted-foreground">
+          {wsName} · {isMe ? 'your lane' : `${owner}'s lane`}
+        </span>
+      </div>
+      <p className="m-0 text-[13px] text-foreground-secondary">
+        A runner is paired from the box itself, one per macOS account. Run this in a terminal on that account:
+      </p>
+      <div className="flex items-start gap-2 rounded-md border border-input bg-input p-2">
+        <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-foreground" data-testid="map-pairing-command">
+          {command}
+        </code>
+        <button
+          type="button"
+          onClick={copy}
+          className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-[12px] text-foreground hover:bg-muted"
+          data-testid="map-pairing-copy"
+        >
+          {copied ? <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <section className="flex flex-col gap-1">
+        <PanelHeading>Before you run it</PanelHeading>
+        <ul className="m-0 flex list-disc flex-col gap-1 pl-4 text-[12px] text-foreground-secondary">
+          <li>
+            canopy-web cloned at <code className="font-mono">~/emdash-projects/canopy-web</code>, and{' '}
+            <code className="font-mono">uv</code> installed. The script fetches and installs from{' '}
+            <code className="font-mono">main</code> itself.
+          </li>
+          <li>
+            A canopy token at <code className="font-mono">~/.claude/canopy/workbench-token</code> (the{' '}
+            <code className="font-mono">canopy:canopy-web-pat-mint</code> skill writes it).{' '}
+            {isMe
+              ? 'The box pairs as whoever that token belongs to, so use yours to land it here.'
+              : `The box pairs as whoever that token belongs to, so it lands in ${owner}'s lane only if it is theirs.`}
+          </li>
+          <li>
+            Afterwards, relaunch emdash with the <span className="text-foreground">Emdash CDP</span> app it builds. That
+            quits emdash first, so every session open in it stops.
+          </li>
+        </ul>
+      </section>
+      <p className="m-0 text-[12px] text-muted-foreground">
+        It appears here once it heartbeats. Then select it to set its login and admins, and add it to an agent&rsquo;s
+        runners. A cloud runner is stood up with <code className="font-mono">runner/ec2/up.sh</code> and{' '}
+        <code className="font-mono">wire.sh</code> instead, which need AWS access.
+      </p>
+    </div>
+  )
+}
+
+function findWorkspace(ws: MapWorkspace | null, slug: string): MapWorkspace | null {
+  if (!ws) return null
+  if (ws.slug === slug) return ws
+  for (const c of ws.children) {
+    const hit = findWorkspace(c, slug)
+    if (hit) return hit
+  }
+  return null
 }
 
 function Summary({ map, onSelect }: { map: FleetMap; onSelect: (s: Selection) => void }): JSX.Element {

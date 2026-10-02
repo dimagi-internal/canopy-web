@@ -289,8 +289,11 @@ export async function listPendingCommands(slug: string): Promise<AgentCommandOut
 
 // The ordered runner-assignment API (the routing-matrix UI's read/write
 // model) — supersedes the deprecated kind-based runner_preference above.
-export async function getAgentRunners(slug: string): Promise<AgentRunnerOut[]> {
-  const res = await apiV2.GET('/api/agents/{slug}/runners', { params: { path: { slug } } })
+export async function getAgentRunners(slug: string, workspace?: string): Promise<AgentRunnerOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/runners', {
+    params: { path: { slug } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+  })
   return Array.from(unwrap(res, 'getAgentRunners'))
 }
 
@@ -303,9 +306,10 @@ export async function getAgentRunners(slug: string): Promise<AgentRunnerOut[]> {
 // `runner_preference` array into an ArrayLike-shaped object, so declaring
 // AgentDetailOut here fails to compile (TS2719 — same root cause as toPage's
 // note above). The mode is all any caller wants back from a toggle.
-export async function setAgentTurnMode(slug: string, mode: TurnMode): Promise<TurnMode> {
+export async function setAgentTurnMode(slug: string, mode: TurnMode, workspace?: string): Promise<TurnMode> {
   const res = await apiV2.PATCH('/api/agents/{slug}/turn-mode', {
     params: { path: { slug } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
     body: { turn_mode: mode },
   })
   return unwrap(res, 'setAgentTurnMode').turn_mode
@@ -356,9 +360,11 @@ export async function setAgentSlackEnabled(slug: string, enabled: boolean): Prom
 export async function putAgentRunners(
   slug: string,
   rows: readonly { runnerId: string; enabled: boolean }[],
+  workspace?: string,
 ): Promise<AgentRunnerOut[]> {
   const res = await apiV2.PUT('/api/agents/{slug}/runners', {
     params: { path: { slug } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
     body: { runners: rows.map((r) => ({ runner_id: r.runnerId, enabled: r.enabled })) },
   })
   return Array.from(unwrap(res, 'putAgentRunners'))
@@ -478,8 +484,11 @@ export async function deleteAgentGitHub(slug: string): Promise<AgentGitHub> {
   return githubResult(res as unknown as GitHubRes, 'Removing the token')
 }
 
-export async function getAgentRunnerRules(slug: string): Promise<AgentRunnerRuleOut[]> {
-  const res = await apiV2.GET('/api/agents/{slug}/runner-rules', { params: { path: { slug } } })
+export async function getAgentRunnerRules(slug: string, workspace?: string): Promise<AgentRunnerRuleOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/runner-rules', {
+    params: { path: { slug } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+  })
   return Array.from(unwrap(res, 'getAgentRunnerRules'))
 }
 
@@ -492,9 +501,11 @@ export async function putAgentRunnerRules(
     strict: boolean
     turnMode: RuleTurnMode
   }[],
+  workspace?: string,
 ): Promise<AgentRunnerRuleOut[]> {
   const res = await apiV2.PUT('/api/agents/{slug}/runner-rules', {
     params: { path: { slug } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
     body: {
       rules: rules.map((r) => ({
         // Cast against the REQUEST type, not the response's: AgentRunnerRuleOut

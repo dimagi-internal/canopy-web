@@ -95,8 +95,14 @@ export function buildOptimisticRows(
 export function RunnerAssignments({
   agentSlug,
   fleet: fleetProp,
+  workspace,
+  onSaved,
 }: {
   agentSlug: string
+  /** The agent's workspace, when the page is under another. */
+  workspace?: string
+  /** After the server accepted a change to the order. */
+  onSaved?: () => void
   // The routing table already holds the fleet (its rules need it too); passing
   // it saves a second fetch. Standalone callers leave it out.
   fleet?: readonly RunnerOut[]
@@ -132,7 +138,7 @@ export function RunnerAssignments({
     setRows(null)
     rowsRef.current = []
     setError(null)
-    Promise.all([getAgentRunners(agentSlug), fleetProp ? Promise.resolve(null) : listRunners()])
+    Promise.all([getAgentRunners(agentSlug, workspace), fleetProp ? Promise.resolve(null) : listRunners()])
       .then(([r, f]) => {
         if (cancelled) return
         applyRows(r)
@@ -149,7 +155,7 @@ export function RunnerAssignments({
     // fleetProp is read once, to decide whether to fetch — deliberately not a
     // dependency, or every fleet refresh upstream would reload the list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentSlug])
+  }, [agentSlug, workspace])
 
   const assignedIds = useMemo(() => new Set((rows ?? []).map((r) => r.runner_id)), [rows])
   const unassigned = useMemo(
@@ -168,9 +174,10 @@ export function RunnerAssignments({
     applyRows(optimistic)
     setError(null)
     try {
-      const saved = await putAgentRunners(agentSlug, nextRows)
+      const saved = await putAgentRunners(agentSlug, nextRows, workspace)
       if (commitSeqRef.current !== mySeq) return // superseded by a newer commit
       applyRows(saved)
+      onSaved?.()
     } catch (e: unknown) {
       if (commitSeqRef.current !== mySeq) return // superseded by a newer commit
       applyRows(prev)

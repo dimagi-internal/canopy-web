@@ -29,7 +29,7 @@ describe('TurnModeToggle', () => {
     setAgentTurnMode.mockResolvedValue('auto')
     render(<TurnModeToggle agentSlug="echo" initialMode="manual" />)
     fireEvent.click(screen.getByTestId('turn-mode-auto'))
-    await waitFor(() => expect(setAgentTurnMode).toHaveBeenCalledWith('echo', 'auto'))
+    await waitFor(() => expect(setAgentTurnMode).toHaveBeenCalledWith('echo', 'auto', undefined))
     expect(checked('turn-mode-auto')).toBe('true')
   })
 

@@ -211,3 +211,18 @@ export function curve(a: Rect, b: Rect): { d: string; labelX: number; labelY: nu
     labelY: r(at(0.78, p0.y, c.y, p2.y) - 6),
   }
 }
+
+/** The canopy-web the runner pairs with when told nothing else
+ *  (runner/canopy_runner/canopy_runner/pair.py::DEFAULT_BASE_URL). */
+export const RUNNER_DEFAULT_BASE_URL = 'https://labs.connect.dimagi.com/canopy'
+
+/** The one command that pairs a new laptop runner into `workspace`, as run on
+ *  that macOS account (runner/canopy_runner/README.md, "One-time laptop setup").
+ *  The installer fetches the checkout and builds from origin/main itself, then
+ *  pairs AS the PAT on that account — so the box lands in that person's lane.
+ *  `--base-url` only when this deployment is not the runner's default. */
+export function pairingCommand(workspace: string, baseUrl: string): string {
+  const base = baseUrl.replace(/\/+$/, '')
+  const cmd = `~/emdash-projects/canopy-web/runner/canopy_runner/scripts/install-runner.sh --workspace ${workspace}`
+  return base && base !== RUNNER_DEFAULT_BASE_URL ? `${cmd} --base-url ${base}` : cmd
+}

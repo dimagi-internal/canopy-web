@@ -163,8 +163,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/settings/topology',
     title: 'Fleet map',
     audience: 'Workspace admin or owner',
-    what: "The fleet as one picture: this workspace and every one below it as nested boxes, each holding a lane per owner with that owner's runners and agents. Select an agent to see which runners it runs on, in order, and arrows to every agent it can send work to, coloured by whether it gets the whole agent or only some capabilities; select a runner to see which agents stop if it goes dark. Each workspace collapses. The panel says why an agent is confined and grants it from there.",
-    actions: ['Collapse or expand a workspace', "Select an agent to see its runners and who it can reach", 'Select a runner to see who depends on it', 'Make one agent an admin of another', 'Switch to the Runners or Agent access table'],
+    what: "The fleet as one picture: this workspace and every one below it as nested boxes, each holding a lane per owner with that owner's runners and agents. Select an agent to see which runners it runs on, in order, and arrows to every agent it can send work to, coloured by whether it gets the whole agent or only some capabilities; select a runner to see which agents stop if it goes dark. Each workspace collapses. The panel says why an agent is confined and grants it from there. It is also where runners are configured: select a runner for its Claude login, admins, declared flags, drills, pause and retire; select an agent to change its runner order and source rules; each owner lane's Add a runner gives the command that pairs a new box into that workspace.",
+    actions: ['Collapse or expand a workspace', "Select an agent to see its runners and who it can reach", "Change an agent's runner order and source rules", 'Select a runner to see who depends on it', "Set a runner's login, admins and flags; pause or retire it", 'Copy the command that pairs a new runner', 'Make one agent an admin of another', 'Switch to the Runners or Agent access table'],
   },
   {
     path: '/w/:workspace/settings/topology/runners',
