@@ -352,7 +352,7 @@ class AgentAccessRowOut(StrictModel):
     user_id: int
     email: str
     name: str
-    workspace_role: Literal["owner", "editor", "viewer"]
+    workspace_role: Literal["owner", "admin", "editor", "viewer"]
     agent_role: Literal["owner", "admin", "member"]
     # Why they hold `agent_role`, in words: "Owns the workspace", "Made admin by …".
     basis: str
@@ -485,6 +485,9 @@ class AgentTurnOut(StrictModel):
     prompt: str = ""
     result_note: str = ""
     origin_ref: dict = Field(default_factory=dict)
+    # True when the content above (and `share_token`, the transcript's public
+    # link) was blanked: a turn's content is a log (apps/harness/turn_access.py).
+    content_hidden: bool = False
 
 
 # ---- Work products ----

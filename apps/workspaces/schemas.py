@@ -10,7 +10,7 @@ from apps.common.schemas import StrictModel
 
 from .models import SLUG_PATTERN
 
-Role = Literal["owner", "editor", "viewer"]
+Role = Literal["owner", "admin", "editor", "viewer"]
 
 
 class WorkspaceCreateIn(StrictModel):

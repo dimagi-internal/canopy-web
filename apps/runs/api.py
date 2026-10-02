@@ -12,6 +12,7 @@ from ninja import Router, Status
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import aggregate, delete
@@ -46,7 +47,7 @@ def _editor_slugs(request: HttpRequest) -> set[str]:
     narrative is a grouping over rows that may sit in several workspaces, so
     scoping by role (rather than refusing the whole call) means an editor of A
     who can also read B changes A's rows and leaves B's alone."""
-    return wsvc.request_workspace_slugs_at_least(request, wsvc.WorkspaceMembership.EDITOR)
+    return perms.request_slugs_with(request, perms.CONTENT_WRITE)
 
 
 def _forbidden(what: str) -> ProblemError:
@@ -223,8 +224,7 @@ def move_narrative(request: HttpRequest, slug: str, payload: NarrativeMoveIn) ->
     # surely as delete_narrative does, and lands rows in the destination as
     # surely as an upload does — both are author-tier acts.
     mine = wsvc.user_workspace_slugs(request.user)
-    editable = {ws for ws in mine if wsvc.has_role_at_least(
-        request.user, ws, wsvc.WorkspaceMembership.EDITOR)}
+    editable = {ws for ws in mine if perms.can(request.user, ws, perms.CONTENT_WRITE)}
 
     if payload.to_workspace not in editable:
         raise ProblemError(

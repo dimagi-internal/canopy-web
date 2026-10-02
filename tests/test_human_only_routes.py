@@ -76,6 +76,13 @@ def _routes(world):
         ("delete", f"/api/slack-config/{WS}/config-token", None),
         ("post", f"/api/slack-config/{WS}/declare-agent", None),
         ("post", "/api/tokens/", {"label": "forever"}),
+        # Converted from inline `is_machine` refusals so the registry, the MCP
+        # exclusions and apps/api/route_gates.py all know about them.
+        ("put", "/api/agents/humanbot/owner", {"user_id": None}),
+        ("put", f"/api/agents/humanbot/admins/{oid}", None),
+        ("delete", f"/api/agents/humanbot/admins/{oid}", None),
+        ("put", "/api/agents/humanbot/canopy-user", {"user_id": None}),
+        ("put", f"/api/harness/runners/{rid}/flags", {"flags": []}),
     ]
 
 

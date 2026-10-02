@@ -34,6 +34,7 @@ from apps.runs.ddd import (
     is_run_child_gate,
     narrative_slug_from_run_id,
 )
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from .models import ReviewRequest
@@ -114,7 +115,7 @@ def _can_write(request: HttpRequest, review: ReviewRequest) -> bool:
     return (
         request.user.is_authenticated
         and _in_caller_workspaces(request, review)
-        and wsvc.has_role_at_least(request.user, review.workspace_id, wsvc.WorkspaceMembership.EDITOR)
+        and perms.can(request.user, review.workspace_id, perms.CONTENT_WRITE)
     )
 
 
@@ -325,7 +326,7 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
             type_=TYPE_VALIDATION,
             detail="you do not belong to a workspace that can own this; ask an owner for an invite",
         )
-    if not wsvc.has_role_at_least(request.user, ws, wsvc.WorkspaceMembership.EDITOR):
+    if not perms.can(request.user, ws, perms.CONTENT_WRITE):
         raise ProblemError(
             403,
             "Editor role required",
@@ -521,7 +522,7 @@ def delete_review(request: HttpRequest, rid: UUID):
     review = _get_or_404(rid)
     if not _in_caller_workspaces(request, review):
         raise ProblemError(404, "Review request not found", type_=TYPE_NOT_FOUND)
-    if not wsvc.has_role_at_least(request.user, review.workspace_id, wsvc.WorkspaceMembership.EDITOR):
+    if not perms.can(request.user, review.workspace_id, perms.CONTENT_WRITE):
         raise ProblemError(
             403, "Deleting a review requires the editor role in its workspace",
             type_=TYPE_FORBIDDEN,

@@ -85,11 +85,11 @@ def user_can_read_turn(user, turn: Turn) -> bool:
     slug = turn_workspace_slug(turn)
     if not slug or slug not in user_workspace_slugs(user):
         return False
-    if turn.chat_session_id:
-        from apps.canopy_sessions import access as session_access
+    # The stream IS the turn's content (its ledger), so it is read on the
+    # content rule, which also covers a chat turn's chat ACL.
+    from apps.harness import turn_access
 
-        return session_access.can_read(user, turn.chat_session)
-    return True
+    return turn_access.can_read_turn_content(user, turn)
 
 
 def serialize_turn_event(te: TurnEvent) -> dict:

@@ -17,6 +17,7 @@ import {
   type ConnectionTest,
 } from '@/api/connectedApps'
 import { WorkspaceApiError } from '@/api/workspaces'
+import { roleAllows } from '@/lib/workspaceRoles'
 
 /**
  * Connect a site to canopy — the page that replaced the Django admin.
@@ -386,7 +387,12 @@ export function ConnectionTester({ slug, app }: { slug: string; app: ConnectedAp
 export function ConnectedAppsPage(): JSX.Element | null {
   const { workspace: slug } = useParams()
   const { workspaces } = useWorkspace()
-  const isOwner = workspaces.find((w) => w.slug === slug)?.role === 'owner'
+  // Two tiers (lib/workspaceRoles): an admin reads the sites and runs Test
+  // connection; only an owner registers, changes or disconnects one — a
+  // registered key vouches for visitors as members of this workspace.
+  const myRole = workspaces.find((w) => w.slug === slug)?.role
+  const isOwner = roleAllows(myRole, 'own')
+  const canTest = roleAllows(myRole, 'integrations')
 
   const [apps, setApps] = useState<ConnectedApp[] | null>(null)
   const [agents, setAgents] = useState<AgentOut[]>([])
@@ -411,7 +417,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
     } catch (e) {
       setLoadError(
         e instanceof WorkspaceApiError && e.status === 403
-          ? 'Only a workspace owner can manage connected sites.'
+          ? 'Only a workspace admin or owner can see connected sites.'
           : e instanceof Error
             ? e.message
             : 'Could not load connected sites.',
@@ -474,7 +480,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
 
       {!isOwner && (
         <p className="text-sm text-muted-foreground">
-          Only a workspace owner can change these.
+          Only a workspace owner can change these{canTest ? '; you can test them.' : '.'}
         </p>
       )}
       {loadError && <p className="text-sm text-destructive">{loadError}</p>}
@@ -545,7 +551,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   }
                 />
               )}
-              {isOwner && !app.revoked && <ConnectionTester slug={slug} app={app} />}
+              {canTest && !app.revoked && <ConnectionTester slug={slug} app={app} />}
             </div>
           ))}
       </section>

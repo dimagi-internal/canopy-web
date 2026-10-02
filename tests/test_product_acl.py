@@ -495,15 +495,19 @@ def test_recording_events_is_editor(acl):
     assert not Event.objects.exists()
     assert _json(_c(acl["editor"]), "post", f"/api/w/{WS}/events/", body).status_code == 200
     assert Event.objects.get().workspace_id == WS
-    # Reading the log stays membership.
-    assert len(_c(acl["viewer"]).get("/api/events/").json()["items"]) == 1
+    # Reading the log is the admin tier (permissions.LOGS_READ): a viewer and
+    # an editor see no rows, an owner sees it.
+    assert _c(acl["viewer"]).get("/api/events/").json()["items"] == []
+    assert _c(acl["editor"]).get("/api/events/").json()["items"] == []
+    assert len(_c(acl["owner"]).get("/api/events/").json()["items"]) == 1
 
 
 def test_a_pinned_event_list_is_that_workspace_only(acl):
     Event.objects.create(workspace=acl["ws"], source="s", key="a")
     Event.objects.create(workspace=acl["other"], source="s", key="b")
-    a_member(acl["other"], email="pa-viewer@dimagi.com", role=WorkspaceMembership.VIEWER)
-    viewer = _c(acl["viewer"])
+    admin = a_member(acl["ws"], email="pa-admin@dimagi.com", role=WorkspaceMembership.ADMIN)
+    a_member(acl["other"], email="pa-admin@dimagi.com", role=WorkspaceMembership.ADMIN)
+    viewer = _c(admin)
     assert len(viewer.get("/api/events/").json()["items"]) == 2
     pinned = viewer.get(f"/api/w/{WS}/events/").json()["items"]
     assert [e["workspace"] for e in pinned] == [WS]

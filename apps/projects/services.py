@@ -38,7 +38,7 @@ def insights_queryset(
     used to match EVERY scope, the NULL-means-allow leg).
 
     Callers pass the READ scope to list and the WRITE scope
-    (`request_workspace_slugs_at_least(..., EDITOR)`) to clear or dismiss.
+    (`perms.request_slugs_with(..., perms.CONTENT_WRITE)`) to clear or dismiss.
 
     The rest are optional, AND-combined:
       - category: content starts with "[<category>]"

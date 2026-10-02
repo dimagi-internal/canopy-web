@@ -20,6 +20,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.agents.models import Agent
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import services
@@ -117,7 +118,7 @@ def _apply_timing(fields: dict, *, current: AgentSchedule | None = None) -> dict
 # reshaping tier as apps/agents/api.py::_agent_for_write, which is where the
 # rest of that surface's writes already sit. Reads (list, preview) stay at bare
 # membership: seeing when your team's agent runs is interaction, not authorship.
-WRITE_ROLE = wsvc.WorkspaceMembership.EDITOR
+WRITE_CAPABILITY = perms.AGENT_WORK
 
 
 def _resolve_agent(
@@ -125,7 +126,7 @@ def _resolve_agent(
     agent_slug: str,
     *,
     workspace_slug: str | None = None,
-    require_role: str | None = None,
+    require: str | None = None,
 ) -> Agent:
     """Resolve an agent, gated by workspace membership. Request-free twin of
     apps/harness/api.py::_agent_or_404 — the tenant-URL pin is a parameter.
@@ -142,7 +143,7 @@ def _resolve_agent(
     is NOT NULL as of agents/0013 so no such row can exist, but the fail-open
     SHAPE is the bug that kept recurring, so it goes too.
 
-    `require_role` is the role floor, and it lives HERE rather than in the Ninja
+    `require` is the capability (`apps/workspaces/permissions.py`), and it lives HERE rather than in the Ninja
     handlers on purpose. A schedule is arbitrary prompt text that the runner
     later executes AS the agent, with the agent's resolved credentials — and
     `run-now` means "immediately". So schedule CRUD is the same reshaping tier
@@ -164,8 +165,8 @@ def _resolve_agent(
         raise ScheduleNotFound(agent_slug)  # wrong tenant
     if not agent.workspace_id or not wsvc.is_member(user, agent.workspace_id):
         raise ScheduleNotFound(agent_slug)
-    if require_role and not wsvc.has_role_at_least(user, agent.workspace_id, require_role):
-        raise ScheduleForbidden(agent_slug, required=require_role)
+    if require and not perms.can(user, agent.workspace_id, require):
+        raise ScheduleForbidden(agent_slug, required=perms.MINIMUM_ROLE[require])
     return agent
 
 
@@ -175,10 +176,10 @@ def _resolve_schedule(
     schedule_id: int,
     *,
     workspace_slug: str | None = None,
-    require_role: str | None = None,
+    require: str | None = None,
 ) -> AgentSchedule:
     agent = _resolve_agent(
-        user, agent_slug, workspace_slug=workspace_slug, require_role=require_role
+        user, agent_slug, workspace_slug=workspace_slug, require=require
     )
     schedule = AgentSchedule.objects.filter(pk=schedule_id, agent=agent).first()
     if schedule is None:
@@ -234,7 +235,7 @@ def create_schedule(
     user, agent_slug: str, fields: dict, *, workspace_slug: str | None = None
 ) -> AgentSchedule:
     agent = _resolve_agent(
-        user, agent_slug, workspace_slug=workspace_slug, require_role=WRITE_ROLE
+        user, agent_slug, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
     )
     creator = user if getattr(user, "is_authenticated", False) else None
     fields = _apply_timing(fields)
@@ -254,7 +255,7 @@ def update_schedule(
     user, agent_slug: str, schedule_id: int, fields: dict, *, workspace_slug: str | None = None
 ) -> AgentSchedule:
     schedule = _resolve_schedule(
-        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require_role=WRITE_ROLE
+        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
     )
     fields = _apply_timing(fields, current=schedule)
     for key, value in fields.items():
@@ -276,7 +277,7 @@ def delete_schedule(
     There is no Turn->AgentSchedule FK, so nothing cascades; an executing
     occurrence would otherwise hold one_executing_turn_per_agent forever."""
     schedule = _resolve_schedule(
-        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require_role=WRITE_ROLE
+        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
     )
     services.supersede_open_turns(schedule, reason="schedule deleted")
     schedule.delete()
@@ -286,7 +287,7 @@ def run_schedule_now(
     user, agent_slug: str, schedule_id: int, *, workspace_slug: str | None = None
 ) -> AgentSchedule:
     schedule = _resolve_schedule(
-        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require_role=WRITE_ROLE
+        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
     )
     services.run_schedule_now(schedule)
     return schedule

@@ -1,17 +1,39 @@
 # Roles — who can do what, and what actually enforces it
 
-There are four roles. Each contains the one below it.
+There are five roles. Each contains the one below it.
 
 | Role | Enforced as | Can |
 |---|---|---|
 | **Viewer** | *no account* — a link you were sent | Read what was shared: a storyboard, a narrative, a walkthrough, a session transcript, the public explainer. |
-| **User** | workspace member, `viewer` | Interact with an agent: chat, answer a blocked question, decide an item, read the board. Cannot change what an agent *is*. |
-| **Author / executor** | workspace member, `editor` | Create and edit agents, run turns, publish work products, edit schedules, assign runners, **delete an agent**. |
-| **Administrator** | workspace member, `owner` | Members and invites, agent credentials, the shared vault, inbound configuration, deleting the workspace. |
+| **User** | workspace member, `viewer` | Interact with an agent: chat, answer a blocked question, decide an item, read the board. Read the turns you started. Cannot change what an agent *is*, or anything else. |
+| **Author / executor** | workspace member, `editor` | Create and edit agents, run turns, edit schedules, assign runners, **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
+| **Administrator** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **below admin**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection). Holds no keys. |
+| **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace. |
 
-The three membership roles are a real total order in the code —
-`WorkspaceMembership.ROLE_RANK` (`apps/workspaces/models.py`) is `{viewer: 0, editor: 1,
-owner: 2}` and is the single place that ordering lives.
+The membership roles are a total order — `WorkspaceMembership.ROLE_RANK`
+(`apps/workspaces/models.py`) is `{viewer: 0, editor: 1, admin: 2, owner: 3}`.
+
+**What each role may DO lives in one table: `apps/workspaces/permissions.py`.** It maps every
+capability (`CONTENT_WRITE`, `AGENT_WORK`, `LOGS_READ`, `MEMBERS_MANAGE`, `INTEGRATIONS`,
+`OWN`, …) to the lowest role that holds it, and every gate outside `apps/workspaces/` asks
+`perms.can(user, workspace, perms.<CAPABILITY>)` — never a role name.
+`tests/test_roles_named_only_in_workspaces.py` fails the build on a role constant, a
+`member_role(...)` comparison or a rank check anywhere else. That is the lesson of adding
+`admin` (2026-10-02): the same tier had been written five ways, and two of them silently
+changed meaning when a role was inserted. The frontend mirrors the table in
+`frontend/src/lib/workspaceRoles.ts`, and a vitest reads `permissions.py` to keep the two equal.
+
+**Every route declares its gate.** `apps/api/route_gates.py` lists, for every operation in the
+OpenAPI schema, the gate it enforces, and `tests/test_every_route_declares_its_gate.py` fails
+on a route that has none — so a new route is a decision about who may call it, made when it is
+written, not discovered by an audit. A write a VIEWER may make must also be listed with its
+reason (`VIEWER_MAY_MUTATE`), and a route marked human-only must actually be `@human_only`.
+
+An admin manages members only **strictly below themselves** (`permissions.may_manage_member`):
+they invite, re-role and remove viewers and editors, see invite links only for those roles,
+and can neither touch nor mint an admin or an owner. An admin is not an agent's admin either —
+`Agent.is_admin` is the agent's owner, a workspace OWNER, or an explicit `AgentAdmin` grant —
+because running a workspace is not holding its agents' keys.
 
 ## Workspaces nest — and only OWNERSHIP flows down
 
@@ -106,59 +128,51 @@ would let any signed-in user enumerate tenants and learn which domains they trus
 
 ## What enforces the membership tiers
 
-Role checks are **not** uniform across the app, and it is worth knowing where they are real.
+Every surface is gated now, through the table above; this section is about the shapes that
+recur and the routes that deliberately sit off the ladder.
 
-**The agents surface** (`apps/agents/api.py`) is the surface with a genuine three-tier gate:
+**The agents surface** (`apps/agents/api.py`):
 
 - `_get_agent_or_404` — membership. Interaction and reads. A non-member gets 404, never 403,
   so the API never confirms an agent exists to someone who cannot see it.
-- `_agent_for_write` — `editor` or `owner`. Reshaping: upsert, runner assignment, runner
-  rules, turn mode, syncs, turns, work products, skills, task create/patch.
-- `_agent_for_admin` — `owner` only. Credentials, the vault pointer, credential deletion.
+- `_agent_for_write` — `AGENT_WORK` (editor and above). Reshaping: upsert, runner assignment,
+  runner rules, turn mode, syncs, turns, work products, skills, task create/patch.
+- `_agent_for_admin` — `Agent.is_admin`: the agent's owner, a workspace owner, or an explicit
+  `AgentAdmin`, each a CURRENT member. Credentials, the vault pointer, the interface, the
+  Google mailbox mint, moving the agent to another workspace.
 
-Two endpoints on that surface sit deliberately off the ladder:
+**A box holds an agent only if its pairer is one of the agent's admins** (or the agent's own
+login) — `agents.services.runner_may_hold_agent`. Claiming an agent turn, resolving its
+credentials, the per-turn GitHub token, pinning a turn to a box, and every routing write
+(runner list, source rules, actor routes) all ask it. Before 2026-10-02 an editor paired a
+box, listed it (disabled) on an agent and read every secret, both vault keys and the owner's
+GitHub token through `/credentials/resolve`; an assignment row was the whole trust boundary,
+and the editor tier wrote it. A teammate whose own laptop runs an agent's work therefore needs
+an admin grant on that agent.
+
+**Only the box that claimed a turn reports on it** — start, finish, ledger events, transcript
+lines (`harness.api._reporting_turn_or_404`). An unclaimed turn takes the editor tier.
+
+**A turn's CONTENT is a log** (`apps/harness/turn_access.py`). Every member sees that a turn
+ran, when and how it ended; its prompt, result, ledger, raw transcript, caller context and
+public transcript link are read by whoever started it, the agent's admins, the box that ran
+it, and workspace admins — and, for a chat turn, by exactly the people who may read that chat.
+Lists blank the content and set `content_hidden`; detail routes and the live turn socket 404.
+
+Deliberately off the ladder:
 
 - **`POST /{slug}/tasks/{id}/commands` branches on `kind`.** `comment`, `accept` and
-  `decline` are *deciding an item already on the board*, which is what the User tier is for;
-  `edit`, `reassign`, `done` and `dispatch` reshape or queue work and require `editor`. The
-  split matters because `kind: "edit"` reaches the same mutation as the `editor`-gated
-  `PATCH /tasks/{id}/` — gating one and not the other left the gate with a door beside it.
-  `tests/test_agent_acl_gates.py` asserts the two tiers partition `KIND_CHOICES`, so a new
-  kind cannot default into the viewer tier unnoticed.
-- **`POST /{slug}/bootstrap-report` is gated on pairing a live runner, not on a role**
-  (`services.caller_runs_agent`), which is strictly tighter. A role check on top would add
-  no security and would let readiness reporting start failing because a runner's pairing
-  human happens to hold `viewer` — and a machine saying "I could not materialize this" is
-  the last signal you want to lose.
-
-Both gated helpers resolve through `_get_agent_or_404` **first**, so the 404-not-403 property
-survives the role check. There is a test pinning exactly that; it is the property most likely
-to be lost in a refactor.
-
-`POST /api/agents/` (upsert) is the one route that cannot resolve through that helper — the
-slug arrives in the **body** and may name nothing yet — so it spells the ordering out by hand.
-It gates on the *existing* agent's own workspace, which is what stops a caller reshaping
-another tenant's agent by defaulting into their own; and a non-member of that workspace gets
-**404**, not 403, because `Agent.slug` is globally unique and a 403 would turn the route into
-an oracle over every agent name in the fleet (201 = free, 403 = exists somewhere you cannot
-see). On a genuine create the 403 stands: there is nothing to leak, and the caller's own role
-in the target workspace is something they are entitled to learn.
-
-Credentials are owner-only for a specific reason: they are the keys a runner resolves
-everything else from, so writing one is equivalent to controlling the agent end to end. The
-exposure this closed was substitution and denial rather than disclosure — but be precise
-about why, because "credentials cannot be read" is not true. They cannot be read **from a
-browser session**: `AgentCredentialStatusOut` is a masked view, "booleans and timestamps,
-NEVER values". `GET /{slug}/credentials/resolve` does return plaintext, and it is gated on a
-different axis entirely — bearer-token only, and only for a caller pairing a live runner the
-agent's routing could actually send work to (`services.caller_runs_agent`). The trust
-boundary there is "the box that runs this agent", not "a senior enough human".
-
-**Workspace administration** (`apps/workspaces/api.py`) is `owner`-only via `_require_role`:
-members, invites, the shared vault, deletion. Two routes in that file are deliberately not,
-and both are load-bearing: `GET /joinable` and `POST /{slug}/join` are how a non-member gets
-in at all (owner-gating them would make self-join unreachable), and inbound configuration is
-owner-gated through its own `_owner_workspace_or_404` rather than `_require_role`.
+  `decline` decide an item already on the board (the User tier); `edit`, `reassign`, `done`
+  and `dispatch` reshape or queue work and take `AGENT_WORK`. `tests/test_agent_acl_gates.py`
+  asserts the two tiers partition `KIND_CHOICES`. Raising an ITEM that carries a `dispatch`
+  spec takes `AGENT_WORK` too, because deciding it (the User tier) runs the prompt.
+- **`POST /{slug}/bootstrap-report`** is gated on running the agent (`caller_runs_agent`),
+  strictly tighter than any role.
+- **`POST /api/agents/` (upsert)** takes the slug in the body, so it spells resolve-then-
+  authorize out by hand: a non-member of an EXISTING agent's workspace gets 404 (a 403 would
+  make it an oracle over every agent name, since `Agent.slug` is globally unique).
+- **`GET /{slug}/credentials/resolve`** returns plaintext, bearer-only, to a box that may hold
+  the agent (above). A browser session only ever sees the masked status.
 
 ### Owner actions are a person's, not a token's
 
@@ -218,8 +232,8 @@ feed with `{}`). Three shapes recur, all pinned by `tests/test_product_acl.py`:
 
 - **By-id writes resolve through the read gate first**: a non-member gets 404, a viewer who
   can already see the row gets 403, an editor writes.
-- **Bulk writes are scoped by the WRITE set**, `services.request_workspace_slugs_at_least(request,
-  EDITOR)`, never by the read set — `clear_insights({})`, a narrative delete or visibility flip
+- **Bulk writes are scoped by the WRITE set**, `perms.request_slugs_with(request,
+  perms.CONTENT_WRITE)`, never by the read set — `clear_insights({})`, a narrative delete or visibility flip
   that spans workspaces touches only the rows in workspaces where the caller is an editor.
 - **Some rows belong to a person within the tenant.** A walkthrough is changed by its uploader
   *while they are still an editor there*, or by a workspace owner; a shareout is replaced or

@@ -421,9 +421,9 @@ def history_payload(agent: Agent, viewer) -> dict:
     The viewer fields exist so the page can say WHO must act: the credential
     is the owner's, so only the owner can connect GitHub, and syncing is an
     editor action. The role comes from the one authorizer
-    (`wsvc.has_role_at_least`), never a query of its own.
+    (`apps/workspaces/permissions.py`), never a query of its own.
     """
-    from apps.workspaces import services as wsvc
+    from apps.workspaces import permissions as perms
 
     row = SkillHistorySync.objects.filter(agent=agent).first()
     commits = list(SkillHistoryCommit.objects.filter(agent=agent).order_by("committed_at", "id"))
@@ -442,8 +442,7 @@ def history_payload(agent: Agent, viewer) -> dict:
         "credential_state": credential_state(agent),
         "owner_name": _display_name(agent.owner),
         "viewer_is_owner": agent.owner_id is not None and agent.owner_id == getattr(viewer, "pk", None),
-        "viewer_can_sync": wsvc.has_role_at_least(viewer, agent.workspace_id,
-                                                  wsvc.WorkspaceMembership.EDITOR),
+        "viewer_can_sync": perms.can(viewer, agent.workspace_id, perms.AGENT_WORK),
         "install_url": github_app.install_url() if github_app.is_configured() else "",
         "groups": row.groups if row else [],
         "checks": row.checks if row else {},

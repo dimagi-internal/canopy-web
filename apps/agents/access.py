@@ -16,7 +16,6 @@ property of the message, not of the person, so it has no row of its own here.
 """
 from __future__ import annotations
 
-from apps.workspaces.models import WorkspaceMembership
 
 from . import interface as iface_mod
 from .models import AgentAdmin
@@ -56,6 +55,7 @@ def roster(agent) -> list[dict]:
     rows = []
     # Everyone in the workspace as the authorizer sees them — owners of an
     # ancestor workspace included, since they are owners (and so admins) here.
+    from apps.workspaces import permissions as perms
     from apps.workspaces import services as wsvc
 
     for m in wsvc.effective_memberships(agent.workspace_id):
@@ -63,7 +63,7 @@ def roster(agent) -> list[dict]:
         grant = grants.get(user.pk)
         if agent.owner_id == user.pk:
             role, basis = OWNER, "Owns this agent"
-        elif m.role == WorkspaceMembership.OWNER:
+        elif perms.role_allows(m.role, perms.OWN):
             role, basis = ADMIN, ("Owns a parent workspace" if getattr(m, "inherited", False)
                                   else "Owns the workspace")
         elif grant is not None:

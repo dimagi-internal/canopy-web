@@ -713,8 +713,17 @@ def runner_tenant_slugs(runner: Runner) -> set[str]:
     controlled. A NULL `paired_by` fails closed (empty set → `__in=set()`
     matches nothing): an orphaned runner has no identity to derive a tenant
     from, and inferring one from the FK would be an escalation.
+
+    And only the workspaces where that human may RUN work (`AGENT_WORK`,
+    editor and above): a box claims other people's prompts, so a VIEWER's box
+    serves nothing there — before 2026-10-02 a viewer could pair a session-
+    capable box and receive the workspace's unbound chat sends.
     """
-    return wsvc.user_workspace_slugs(runner.paired_by) if runner.paired_by_id else set()
+    if not runner.paired_by_id:
+        return set()
+    from apps.workspaces import permissions as perms
+
+    return perms.slugs_with(runner.paired_by, perms.AGENT_WORK)
 
 
 def agent_tenant_q(ws_slugs, *, prefix: str = "agent") -> Q:
@@ -1040,8 +1049,14 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         else:
             kind = "config"
             reason = f"no runner {what}"
+        from . import turn_access
+
         out.append({
-            "turn_id": str(t.pk), "target": target, "prompt": (t.prompt or "")[:120],
+            "turn_id": str(t.pk), "target": target,
+            # A prompt is a log (turn_access); a contact's view is already
+            # narrowed to their own conversations by `turn_q`.
+            "prompt": ((t.prompt or "")[:120]
+                       if user is None or turn_access.can_read_turn_content(user, t) else ""),
             "created_at": t.created_at, "reason": reason, "kind": kind,
         })
     return out
@@ -2928,7 +2943,14 @@ def can_administer_runner(user, runner) -> bool:
     """
     from .models import RunnerAdmin
 
-    if runner.paired_by_id in (getattr(user, "id", None), None):
+    if not getattr(user, "is_authenticated", False):
+        return False
+    # A runner with NO pairer is administered by nobody — it used to be
+    # administered by everyone, a NULL-means-allow leg like the six this repo
+    # has already removed elsewhere.
+    if runner.paired_by_id is None:
+        return False
+    if runner.paired_by_id == user.id:
         return True
     if not getattr(user, "is_authenticated", False):
         return False

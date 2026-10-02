@@ -36,6 +36,7 @@ from apps.storyboards.schemas import (
     NarrativeReadOut,
     StoryboardPatchIn,
 )
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 router = Router(tags=["storyboards"])
@@ -93,7 +94,7 @@ def _editable_or_404(request: HttpRequest, slug: str) -> Storyboard:
     board and its notes but does not reshape what was sent, or kill the link
     everyone else was sent."""
     board = _owned_or_404(request, slug)
-    if not wsvc.has_role_at_least(request.user, board.workspace_id, wsvc.WorkspaceMembership.EDITOR):
+    if not perms.can(request.user, board.workspace_id, perms.CONTENT_WRITE):
         raise HttpError(403, "changing a storyboard requires the editor role in its workspace")
     return board
 
@@ -175,7 +176,7 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
         if ws is None:
             raise HttpError(400, "no workspace to create this storyboard in")
         workspace_slug = ws.slug
-    if not wsvc.has_role_at_least(request.user, workspace_slug, wsvc.WorkspaceMembership.EDITOR):
+    if not perms.can(request.user, workspace_slug, perms.CONTENT_WRITE):
         raise HttpError(403, "creating a storyboard requires the editor role in this workspace")
     with transaction.atomic():
         board = Storyboard.objects.create(

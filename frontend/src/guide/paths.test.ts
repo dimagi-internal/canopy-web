@@ -8,8 +8,8 @@ import { USER_ROLES } from './paths'
 import { describedPaths } from './surfaces'
 
 describe('USER_ROLES', () => {
-  it('describes the four roles as a ladder', () => {
-    expect(USER_ROLES).toHaveLength(4)
+  it('describes the five roles as a ladder', () => {
+    expect(USER_ROLES).toHaveLength(5)
   })
 
   it('has unique ids', () => {

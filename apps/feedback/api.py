@@ -23,6 +23,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.feedback import services
 from apps.feedback.models import Feedback
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.feedback.schemas import (
     FeedbackBatchIn,
@@ -66,6 +67,11 @@ def ingest_feedback(request: HttpRequest, payload: FeedbackBatchIn) -> dict:
     ws = wsvc.creation_workspace(request)
     if ws is None:
         raise HttpError(422, "no workspace to file feedback in; post via /api/w/{workspace}/feedback/")
+    # Filing into the pool is a write to the tenant's product content (the
+    # agent's PAT holds editor); reviewers outside it leave notes through the
+    # storyboard's own token-gated route, which is unchanged.
+    if not perms.can(request.user, ws, perms.CONTENT_WRITE):
+        raise HttpError(403, "filing feedback requires the editor role or above")
     return services.ingest(
         [item.model_dump() for item in payload.items],
         workspace=ws,
@@ -100,9 +106,7 @@ def resolve_feedback(request: HttpRequest, feedback_id: int, payload: FeedbackRe
     try:
         fb = services.resolve(
             feedback_id,
-            workspace_slugs=wsvc.request_workspace_slugs_at_least(
-                request, wsvc.WorkspaceMembership.EDITOR
-            ),
+            workspace_slugs=perms.request_slugs_with(request, perms.CONTENT_WRITE),
             state=payload.state,
             note=payload.note,
             resolved_in_version=payload.resolved_in_version,

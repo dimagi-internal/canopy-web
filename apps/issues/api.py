@@ -12,6 +12,7 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from .models import OriginIssue
@@ -39,7 +40,7 @@ def _visible(qs, request: HttpRequest):
 def _require_editor(request: HttpRequest, workspace_id: str, verb: str) -> None:
     """Writing an origin record — filing, re-syncing or deleting one — is the
     author tier. A viewer reads the record."""
-    if not wsvc.has_role_at_least(request.user, workspace_id, wsvc.WorkspaceMembership.EDITOR):
+    if not perms.can(request.user, workspace_id, perms.CONTENT_WRITE):
         raise ProblemError(
             403, "Editor role required", type_=TYPE_FORBIDDEN,
             detail=f"{verb} an origin record requires the editor role in its workspace",

@@ -8,6 +8,7 @@ from ninja import Body, Router, Status
 
 from apps.api.auth import session_auth
 from apps.projects import services
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.api.errors import (
     TYPE_CONFLICT,
@@ -152,7 +153,7 @@ def _member_project(request: HttpRequest, slug: str) -> Project | None:
 def _may_write(request: HttpRequest, project: Project) -> bool:
     """Writing to a project — its fields, its context feed, its action log, its
     insights — is the author tier (`editor`). A viewer reads the workbench."""
-    return wsvc.has_role_at_least(request.user, project.workspace_id, wsvc.WorkspaceMembership.EDITOR)
+    return perms.can(request.user, project.workspace_id, perms.CONTENT_WRITE)
 
 
 def _get_project_for_write(request: HttpRequest, slug: str) -> Project:
@@ -197,7 +198,7 @@ def _resolve_create_workspace(request: HttpRequest):
             detail="you do not belong to a workspace that can own this; ask an owner for an invite",
         )
     # Membership resolved the tenant; creating in it is the editor tier.
-    if not wsvc.has_role_at_least(request.user, ws, wsvc.WorkspaceMembership.EDITOR):
+    if not perms.can(request.user, ws, perms.CONTENT_WRITE):
         raise ProblemError(
             403,
             "Editor role required",
@@ -638,7 +639,7 @@ def get_actions_summary(
 
 def _insight_write_slugs(request: HttpRequest) -> set[str]:
     """Workspaces whose insights the caller may delete — `editor` or better."""
-    return wsvc.request_workspace_slugs_at_least(request, wsvc.WorkspaceMembership.EDITOR)
+    return perms.request_slugs_with(request, perms.CONTENT_WRITE)
 
 
 @insights_router.get(

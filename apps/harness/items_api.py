@@ -19,6 +19,7 @@ from apps.agents import services as agent_services
 from apps.agents.api import _get_agent_or_404, _visible_agent_workspace_ids
 from apps.agents.models import AgentTask
 from apps.api.auth import session_auth
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from .schemas import ItemDecideIn, ItemDismissIn, ItemIn, ItemOut
@@ -118,9 +119,7 @@ def create_items(request: HttpRequest, slug: str, payload: list[ItemIn]):
     # an editor, or the agent itself raising its own asks under its own login.
     if any(p.dispatch for p in payload):
         is_self = agent.user_id is not None and agent.user_id == request.user.pk
-        if not is_self and not wsvc.has_role_at_least(
-            request.user, agent.workspace_id, wsvc.WorkspaceMembership.EDITOR
-        ):
+        if not is_self and not perms.can(request.user, agent.workspace_id, perms.AGENT_WORK):
             raise HttpError(403, "raising an item that dispatches work requires the editor role")
     # `.dict()` first: `dispatch` holds nested TurnSpecIn models, and a JSON
     # column cannot store those — it raised a 500 until this was a plain dict.

@@ -25,6 +25,7 @@ function unreported(over: Partial<AgentTurnOut> = {}): AgentTurnOut {
     prompt: '',
     result_note: '',
     origin_ref: {},
+    content_hidden: false,
     ...over,
   }
 }

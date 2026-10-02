@@ -205,15 +205,20 @@ MAX_DEPTH = 8
 
 
 class WorkspaceMembership(models.Model):
-    OWNER, EDITOR, VIEWER = "owner", "editor", "viewer"
-    ROLE_CHOICES = [(OWNER, "Owner"), (EDITOR, "Editor"), (VIEWER, "Viewer")]
-    # Total order used to decide "higher" vs "lower" role — the single place
-    # role ORDERING lives (consumed by `accept_invite`'s upgrade-only
-    # semantic, and by `services.set_member_role` as the valid-role check
-    # via `role not in ROLE_RANK`). `is_last_owner`/`set_member_role`'s own
-    # role comparisons are plain `==`/`!=` — ROLE_RANK is only for "which of
-    # two roles outranks the other", not membership/equality checks.
-    ROLE_RANK = {VIEWER: 0, EDITOR: 1, OWNER: 2}
+    OWNER, ADMIN, EDITOR, VIEWER = "owner", "admin", "editor", "viewer"
+    ROLE_CHOICES = [(OWNER, "Owner"), (ADMIN, "Admin"), (EDITOR, "Editor"), (VIEWER, "Viewer")]
+    # Total order — the single place role ORDERING lives. What each role may
+    # DO is not here: that is `apps/workspaces/permissions.py`, which maps
+    # every capability to the lowest role that holds it, and is the only thing
+    # outside this app allowed to reason about roles at all
+    # (`tests/test_roles_named_only_in_workspaces.py`).
+    #
+    # ADMIN (2026-10-02) sits between editor and owner: it runs the workspace
+    # day to day — reads every log, manages invites and members below itself,
+    # and the integrations (mailboxes, connected sites, Slack sync) — without
+    # the owner's keys: the shared vault, deleting or moving the workspace, the
+    # Slack app itself, and agents' credentials.
+    ROLE_RANK = {VIEWER: 0, EDITOR: 1, ADMIN: 2, OWNER: 3}
 
     workspace = models.ForeignKey(
         Workspace, on_delete=models.CASCADE, related_name="memberships"

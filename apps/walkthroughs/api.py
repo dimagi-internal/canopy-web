@@ -28,6 +28,7 @@ from apps.api.errors import (
 
 from apps.runs.ddd import narrative_slug_from_run_id
 from apps.runs.aggregate import has_narrative_version
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import storage
@@ -154,11 +155,9 @@ def _may_write(request: HttpRequest, w: Walkthrough) -> bool:
     user = request.user
     if not user.is_authenticated or w.workspace_id is None:
         return False
-    if wsvc.has_role_at_least(user, w.workspace_id, wsvc.WorkspaceMembership.OWNER):
+    if perms.can(user, w.workspace_id, perms.OWN):
         return True
-    return w.owner_id == user.id and wsvc.has_role_at_least(
-        user, w.workspace_id, wsvc.WorkspaceMembership.EDITOR
-    )
+    return w.owner_id == user.id and perms.can(user, w.workspace_id, perms.CONTENT_WRITE)
 
 
 def _get_for_write(request: HttpRequest, wid: UUID) -> Walkthrough:
@@ -271,7 +270,7 @@ def upload_walkthrough(
             type_=TYPE_VALIDATION,
             detail="you do not belong to a workspace that can own this; ask an owner for an invite",
         )
-    if not wsvc.has_role_at_least(request.user, ws, wsvc.WorkspaceMembership.EDITOR):
+    if not perms.can(request.user, ws, perms.CONTENT_WRITE):
         raise ProblemError(
             403,
             "Editor role required",
@@ -346,6 +345,12 @@ def upload_walkthrough(
             run_id=resolved_run_id, role=resolved_role, workspace=ws
         ).exclude(pk=w.pk)
         for old in superseded:
+            # Only what you could have deleted by hand (the uploader while still
+            # an editor, or a workspace owner): replacing must not be a way past
+            # the rule DELETE enforces. Someone else's artifact stays; the run
+            # simply holds both until its uploader or an owner removes one.
+            if not _may_write(request, old):
+                continue
             if old.drive_file_id:
                 try:
                     storage.delete_stored(

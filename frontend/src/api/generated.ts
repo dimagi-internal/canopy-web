@@ -710,7 +710,7 @@ export interface paths {
         };
         /** Read push config */
         readonly get: operations["get_push_config"];
-        /** Set push config (owner) */
+        /** Set push config (admin or owner) */
         readonly put: operations["set_push_config"];
         readonly post?: never;
         readonly delete?: never;
@@ -729,7 +729,7 @@ export interface paths {
         /** List mailboxes */
         readonly get: operations["list_mailboxes"];
         readonly put?: never;
-        /** Register a mailbox (owner) */
+        /** Register a mailbox (admin or owner) */
         readonly post: operations["create_mailbox"];
         readonly delete?: never;
         readonly options?: never;
@@ -747,11 +747,11 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Remove a mailbox (owner) */
+        /** Remove a mailbox (admin or owner) */
         readonly delete: operations["delete_mailbox"];
         readonly options?: never;
         readonly head?: never;
-        /** Update a mailbox (owner) */
+        /** Update a mailbox (admin or owner) */
         readonly patch: operations["update_mailbox"];
         readonly trace?: never;
     };
@@ -860,7 +860,7 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Allow reading channel history, and how far back (owner)
+         * Allow reading channel history, and how far back (admin or owner)
          * @description The policy for `@canopy <agent> --history <minutes> <ask>` in this workspace:
          *     whether it may read the channel's recent past at all, and the longest window.
          */
@@ -881,7 +881,7 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Sync slash commands now (owner) */
+        /** Sync slash commands now (admin or owner) */
         readonly post: operations["sync"];
         readonly delete?: never;
         readonly options?: never;
@@ -3427,11 +3427,11 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         readonly post?: never;
-        /** Remove a member (owner-only) */
+        /** Remove a member (admin or owner) */
         readonly delete: operations["remove_member"];
         readonly options?: never;
         readonly head?: never;
-        /** Change a member's role (owner-only) */
+        /** Change a member's role (admin or owner) */
         readonly patch: operations["set_member_role"];
         readonly trace?: never;
     };
@@ -3450,7 +3450,7 @@ export interface paths {
         readonly get: operations["list_invites"];
         readonly put?: never;
         /**
-         * Invite by email (owner-only)
+         * Invite by email (admin or owner)
          * @description Creates the invite and emails its link to the address. `email_status`
          *     says whether the email went out; the link in `token` works either way.
          *     Inviting an address that already has an outstanding invite returns that
@@ -3472,7 +3472,7 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Revoke an invite (owner-only) */
+        /** Revoke an invite (admin or owner) */
         readonly post: operations["revoke_invite"];
         readonly delete?: never;
         readonly options?: never;
@@ -3490,7 +3490,7 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Send a fresh link for an invite (owner-only)
+         * Send a fresh link for an invite (admin or owner)
          * @description New token and a fresh expiry for an invite nobody has accepted or
          *     revoked — including one that has expired — emailed to the invited address.
          *     The previous link stops working. Accepted or revoked invites answer 410;
@@ -7849,6 +7849,11 @@ export interface components {
             /** Result Note */
             readonly result_note: string;
             /**
+             * Content Hidden
+             * @default false
+             */
+            readonly content_hidden: boolean;
+            /**
              * Created At
              * Format: date-time
              */
@@ -9260,7 +9265,7 @@ export interface components {
              * Workspace Role
              * @enum {string}
              */
-            readonly workspace_role: "owner" | "editor" | "viewer";
+            readonly workspace_role: "owner" | "admin" | "editor" | "viewer";
             /**
              * Agent Role
              * @enum {string}
@@ -9747,6 +9752,11 @@ export interface components {
             readonly origin_ref?: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Content Hidden
+             * @default false
+             */
+            readonly content_hidden: boolean;
         };
         /** Page[AgentTurnOut] */
         readonly Page_AgentTurnOut_: {
@@ -11644,7 +11654,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            readonly role: "owner" | "editor" | "viewer";
+            readonly role: "owner" | "admin" | "editor" | "viewer";
         };
         /** InviteOut */
         readonly InviteOut: {
@@ -11686,7 +11696,7 @@ export interface components {
              * @default editor
              * @enum {string}
              */
-            readonly role: "owner" | "editor" | "viewer";
+            readonly role: "owner" | "admin" | "editor" | "viewer";
         };
         /**
          * InvitePreviewOut
@@ -12637,6 +12647,11 @@ export interface components {
             readonly session_id: string;
             /** Result Note */
             readonly result_note: string;
+            /**
+             * Content Hidden
+             * @default false
+             */
+            readonly content_hidden: boolean;
             /**
              * Created At
              * Format: date-time

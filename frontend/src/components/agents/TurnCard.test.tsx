@@ -18,6 +18,7 @@ const turn = {
   emdash_task_id: 'c-fix-brief-61bb', reported_at: null,
   prompt: 'Fix the brief from Ada\nwith the details below', result_note: 'Opened PR #12',
   origin_ref: {},
+  content_hidden: false,
 }
 
 describe('TurnCard', () => {

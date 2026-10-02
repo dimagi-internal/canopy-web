@@ -7,6 +7,7 @@ import {
   type AgentAccessOut,
   type AgentAccessRowOut,
 } from '@/api/agents'
+import { roleAllows } from '@/lib/workspaceRoles'
 
 // EVERYONE'S ROLE ON THIS AGENT, in one table.
 //
@@ -93,7 +94,8 @@ export function AgentAccessRoster({ agentSlug, canManage }: { agentSlug: string;
         </thead>
         <tbody className="divide-y divide-border">
           {data.members.map((r) => {
-            const granted = r.agent_role === 'admin' && r.workspace_role !== 'owner'
+            // A workspace owner is an admin implicitly; anyone else holds a grant.
+            const granted = r.agent_role === 'admin' && !roleAllows(r.workspace_role, 'own')
             return (
               <tr key={r.user_id} data-testid="agent-access-row">
                 <td className="py-1.5 pr-3 text-foreground">

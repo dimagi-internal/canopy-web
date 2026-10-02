@@ -9,6 +9,7 @@ from ninja import Router, Status
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_VALIDATION, ProblemError
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
 from . import services
@@ -84,7 +85,7 @@ def create_shareouts(
             type_=TYPE_VALIDATION,
             detail="you do not belong to a workspace that can own this; ask an owner for an invite",
         )
-    if not wsvc.has_role_at_least(request.user, ws, wsvc.WorkspaceMembership.EDITOR):
+    if not perms.can(request.user, ws, perms.CONTENT_WRITE):
         raise ProblemError(
             403,
             "Editor role required",
@@ -111,8 +112,8 @@ def clear_shareouts(
     union of your memberships)."""
     # The docstring always said "the caller's", but the query was every row in
     # every workspace the caller could READ — so a viewer's `{}` wiped the feed.
-    owned = wsvc.request_workspace_slugs_at_least(request, wsvc.WorkspaceMembership.OWNER)
-    edited = wsvc.request_workspace_slugs_at_least(request, wsvc.WorkspaceMembership.EDITOR)
+    owned = perms.request_slugs_with(request, perms.OWN)
+    edited = perms.request_slugs_with(request, perms.CONTENT_WRITE)
     count = services.clear_shareouts(
         workspace_slugs=owned,
         own_only_slugs=edited - owned,

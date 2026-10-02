@@ -490,6 +490,9 @@ class TurnOut(Schema):
     turn_mode_basis: str = ""
     session_id: str
     result_note: str
+    # True when `prompt`, `origin_ref` and `result_note` were blanked because
+    # the caller may not read this turn's content (apps/harness/turn_access.py).
+    content_hidden: bool = False
     created_at: dt.datetime
     claimed_at: dt.datetime | None
     started_at: dt.datetime | None

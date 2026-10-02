@@ -23,7 +23,11 @@ export function turnHeadline(turn: AgentTurnOut): string {
 
 /** The card's body text: the reported summary, else the runner's result note. */
 export function turnBody(turn: AgentTurnOut): string {
-  return turn.summary.trim() || (turn.result_note ?? '').trim()
+  const text = turn.summary.trim() || (turn.result_note ?? '').trim()
+  // A turn's prompt and result are a log: below admin you read only the turns
+  // you started (apps/harness/turn_access.py). Say so rather than show nothing.
+  if (!text && turn.content_hidden) return 'Details are visible to whoever started this turn, the agent’s admins, and workspace admins.'
+  return text
 }
 
 /** What fired the turn, in the words the schedule/routing UI uses. */

@@ -189,7 +189,12 @@ class Agent(models.Model):
             return False
         if self.owner_id is not None and self.owner_id == user.pk:
             return True
-        if role == wsvc.WorkspaceMembership.OWNER:
+        # A workspace OWNER holds every agent's keys. A workspace ADMIN does
+        # not: running the workspace (logs, members, integrations) is not
+        # holding its agents' credentials, which is what this answers.
+        from apps.workspaces import permissions as perms
+
+        if perms.role_allows(role, perms.OWN):
             return True
         return self.admin_grants.filter(user=user).exists()
 
