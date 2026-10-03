@@ -511,3 +511,128 @@ def test_a_plain_user_on_the_owners_runner_is_still_a_caller(ctx):
     box = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, owner=owner)
     env = caller_context.build(_dispatched_turn(stranger, box))
     assert env["relationship"] == caller_context.CALLER
+
+
+# --- the repo-internal ship grant (owner decision, 2026-10-03) -----------------------
+#
+# Ada's fix dispatches to sibling agents (eva#343, eva#347, canopy#715) each stopped for
+# the owner to type "yes merge" though the brief said to merge: the envelope said
+# relationship=admin, turn_mode=manual, and manual means the owner approves a merge.
+# The grant lifts exactly that — push / PR / merge in the TARGET agent's own repo — when
+# another agent's login that holds the target's keys dispatched the turn. Nothing else.
+
+from apps.agents.models import AgentAdmin  # noqa: E402
+
+
+@pytest.fixture()
+def fleet(ctx):
+    """`ace` (the target, with a repo) and `ada` (a sibling agent whose login dispatches)."""
+    owner, ws, ace = ctx
+    ace.repo_url = "https://github.com/dimagi-internal/ace"
+    ace.save(update_fields=["repo_url"])
+    ada_login = User.objects.create_user("ada-bot", "ada@dimagi-ai.com", "pw")
+    WorkspaceMembership.objects.create(user=ada_login, workspace=ws, role=WorkspaceMembership.EDITOR)
+    ada = Agent.objects.create(slug="ada", name="Ada", workspace=ws, owner=owner, user=ada_login)
+    return owner, ws, ace, ada
+
+
+def _dispatch(agent, user, *, key="d-1", assurance=who.PAT):
+    turn, _ = services.enqueue_turn(
+        agent=agent, origin=Turn.ORIGIN_API, idempotency_key=key, prompt="fix it and merge",
+        initiator=who.for_user(user, via="api", assurance=assurance))
+    return turn
+
+
+def test_an_admin_agent_dispatch_carries_a_ship_grant_for_the_targets_own_repo(fleet):
+    _owner, _ws, ace, ada = fleet
+    AgentAdmin.objects.create(agent=ace, user=ada.user)
+    env = caller_context.build(_dispatch(ace, ada.user))
+    assert env["relationship"] == caller_context.ADMIN
+    grant = env["ship_grant"]
+    assert grant["repo"] == "dimagi-internal/ace"
+    assert grant["actions"] == ["push", "pull_request", "merge"]
+    assert grant["dispatched_by"] == {"email": "ada@dimagi-ai.com", "agent": "ada"}
+    assert grant["basis"] == "dispatched by ada@dimagi-ai.com (agent ada), admin of ace"
+    assert "send email or messages" in grant["not_granted"]
+    # The grant lifts the merge wait; it does not flip the turn to auto.
+    assert env["turn_mode"]["mode"] == "manual"
+
+
+def test_an_agent_login_that_owns_the_target_gets_the_grant_too(fleet):
+    _owner, _ws, ace, ada = fleet
+    ace.owner = ada.user
+    ace.save(update_fields=["owner"])
+    env = caller_context.build(_dispatch(ace, ada.user))
+    assert env["relationship"] == caller_context.OWNER
+    assert env["ship_grant"]["basis"].endswith("owner of ace")
+
+
+def test_a_member_agent_dispatch_gets_no_grant(fleet):
+    _owner, _ws, ace, ada = fleet          # ada is an editor of the workspace, not an admin
+    env = caller_context.build(_dispatch(ace, ada.user))
+    assert env["relationship"] == caller_context.MEMBER
+    assert env["ship_grant"] is None
+
+
+def test_a_human_gets_no_grant_whatever_their_role(fleet):
+    owner, ws, ace, _ada = fleet
+    human_admin = User.objects.create_user("ha", "ha@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=human_admin, workspace=ws, role=WorkspaceMembership.EDITOR)
+    AgentAdmin.objects.create(agent=ace, user=human_admin)
+    member = User.objects.create_user("hm", "hm@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=member, workspace=ws, role=WorkspaceMembership.EDITOR)
+    for i, user in enumerate((owner, human_admin, member)):
+        env = caller_context.build(_dispatch(ace, user, key=f"h-{i}"))
+        assert env["ship_grant"] is None, user.username
+
+
+def test_an_unverified_admin_agent_login_gets_no_grant(fleet):
+    _owner, _ws, ace, ada = fleet
+    AgentAdmin.objects.create(agent=ace, user=ada.user)
+    env = caller_context.build(_dispatch(ace, ada.user, assurance=who.HOST_SIGNED))
+    assert env["verified"] is False
+    assert env["ship_grant"] is None
+
+
+def test_a_repo_turn_gets_no_grant(fleet):
+    from apps.harness.models import Runner
+
+    owner, _ws, ace, ada = fleet
+    AgentAdmin.objects.create(agent=ace, user=ada.user)
+    box = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, owner=owner)
+    env = caller_context.build(_dispatched_turn(ada.user, box))
+    assert env["agent"] is None
+    assert env["ship_grant"] is None
+
+
+def test_an_item_dispatch_by_agent_slug_gets_no_grant(fleet):
+    # `kind=agent` names a slug, not a login canopy authenticated: it is `system`, and
+    # no grant rides on it.
+    _owner, _ws, ace, _ada = fleet
+    turn, _ = services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="item-1",
+                                    initiator=who.for_agent("ada", via="item:1"))
+    env = caller_context.build(turn)
+    assert env["relationship"] == caller_context.SYSTEM
+    assert env["ship_grant"] is None
+
+
+def test_an_agent_dispatching_itself_gets_no_grant(fleet):
+    _owner, _ws, ace, _ada = fleet
+    ace.user = User.objects.create_user("ace-bot", "ace@dimagi-ai.com", "pw")
+    ace.save(update_fields=["user"])
+    env = caller_context.build(_dispatch(ace, ace.user))
+    assert env["relationship"] == caller_context.SYSTEM
+    assert env["ship_grant"] is None
+
+
+def test_a_target_with_no_repo_gets_no_grant(fleet):
+    _owner, _ws, ace, ada = fleet
+    AgentAdmin.objects.create(agent=ace, user=ada.user)
+    ace.repo_url = ""
+    ace.save(update_fields=["repo_url"])
+    assert caller_context.build(_dispatch(ace, ada.user))["ship_grant"] is None
+
+
+def test_an_ordinary_email_turn_has_no_grant(ctx):
+    _o, _ws, agent = ctx
+    assert caller_context.build(_email(agent, headers=HDRS))["ship_grant"] is None

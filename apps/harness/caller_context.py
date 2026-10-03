@@ -169,13 +169,14 @@ def build(turn) -> dict:
     agent = _agent_of(turn)
     ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
     cs = getattr(turn, "chat_session", None)
+    rel = relationship(turn, agent)
     return {
         "version": VERSION,
         "turn_id": str(turn.pk),
         "agent": agent.slug if agent is not None else None,
         "who": who.describe(turn),
         "verified": _verified(turn),
-        "relationship": relationship(turn, agent),
+        "relationship": rel,
         "contact": _contact(turn.initiator_contact) if turn.initiator_contact_id else None,
         "conversation": {
             "session_id": str(cs.pk) if cs is not None else None,
@@ -199,6 +200,15 @@ def build(turn) -> dict:
         # procedure without the agent asking canopy a second question. null for a
         # turn with no agent.
         "turn_mode": _turn_mode(turn),
+        # The owner-approved REPO-INTERNAL SHIP GRANT (Jonathan, 2026-10-03): when
+        # another agent's login that holds this agent's keys (an explicit admin, or
+        # the owner) dispatches work AT this agent, the session may push, open PRs
+        # and merge in THIS AGENT'S OWN repo without stopping for the owner. Nothing
+        # else — mail, publishing, public writes, deploys, other systems' state, and
+        # every other repo stay exactly where `turn_mode` puts them. null otherwise.
+        # See `_ship_grant` for the conditions; an envelope without the field (an
+        # older canopy-web) means no grant.
+        "ship_grant": _ship_grant(turn, agent, rel),
         # WHY THIS TURN EXISTS, not just who sent it: which message, found how, and
         # what already ran on the thread. Without it a confined session can't tell a
         # new message from a re-fire, or say whether a Gmail filter would have stopped
@@ -293,6 +303,60 @@ def _thread_history(turn, ref: dict) -> dict | None:
         "last_prior_message_count": (
             _trigger(last, last.origin_ref if isinstance(last.origin_ref, dict) else {})
             ["message_count"] if last is not None else None),
+    }
+
+
+#: What a ship grant covers, by name, and what it pointedly does not. Both travel in
+#: the envelope so the receiving session never has to infer the boundary.
+SHIP_ACTIONS = ("push", "pull_request", "merge")
+SHIP_NOT_GRANTED = ("send email or messages", "publish or share documents", "public writes",
+                    "deploy or change other systems' state", "spend",
+                    "any repo other than the one named")
+
+
+def _ship_grant(turn, agent, rel: str) -> dict | None:
+    """The repo-internal ship grant for an agent-to-agent dispatch, or None.
+
+    Owner decision, 2026-10-03 (Jonathan): Ada's fix dispatches to its sibling
+    agents (eva#343, eva#347, canopy#715) each stopped for the owner to type "yes
+    merge" although the brief said to merge — the receiving session read
+    `turn_mode: manual` and, correctly by its envelope, waited. The grant lifts
+    THAT wait and only that one. Every condition is required:
+
+    * the turn targets an AGENT directly (`turn.agent`) — not a repo/project
+      turn, and not a chat or email session that happens to belong to one;
+    * it was asked by a canopy USER on a verified credential for this request
+      (a PAT or a signed-in session) — never a contact, an unverified grade, or
+      the anonymous `kind=agent` an approved item records (which names a slug,
+      not a login canopy authenticated);
+    * that user is ANOTHER agent's own login (`Agent.user`) — a human is out of
+      scope for v1, and an agent dispatching itself is `system`, not a grant;
+    * that login is the target's OWNER or an ADMIN (`Agent.is_admin`, so a
+      workspace owner's agent login counts; `editor` membership does not);
+    * the target names a GitHub repo (`repo_url`) — the grant is scoped to it,
+      so with no repo there is nothing to grant.
+    """
+    if agent is None or not turn.agent_id:
+        return None
+    if turn.initiator_kind != who.USER or not _verified(turn):
+        return None
+    if rel not in (OWNER, ADMIN):
+        return None
+    user = turn.initiator_user
+    dispatcher = getattr(user, "agent_identity", None) if user is not None else None
+    if dispatcher is None or dispatcher.pk == agent.pk:
+        return None
+    from apps.agents.delegations import agent_repo
+
+    repo = agent_repo(agent)
+    if not repo:
+        return None
+    return {
+        "repo": repo,
+        "actions": list(SHIP_ACTIONS),
+        "dispatched_by": {"email": user.email, "agent": dispatcher.slug},
+        "basis": f"dispatched by {user.email} (agent {dispatcher.slug}), {rel} of {agent.slug}",
+        "not_granted": list(SHIP_NOT_GRANTED),
     }
 
 
