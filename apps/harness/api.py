@@ -250,7 +250,16 @@ def _runner_visibility_q(request: HttpRequest) -> Q:
     """
     ws = getattr(request, "workspace_slug", None)
     if ws:
-        wq = Q(workspace_id=ws)
+        # This workspace or one above it. A division's agents run on boxes that
+        # live in its parent (the fleet's do: they live in `dimagi`, the agents in
+        # `connect`), so an exact match refused the caller's OWN box on every
+        # tenant-scoped routing save — the agent's Settings page and the fleet
+        # map — while the flat route took it. Ownership still applies below; this
+        # widens only where the caller's own box may live, never whose it is.
+        from apps.workspaces.models import Workspace
+
+        here = Workspace.objects.filter(slug=ws).first()
+        wq = Q(workspace_id__in=[ws, *(here.ancestor_slugs() if here else [])])
     else:
         wq = Q(workspace_id__in=wsvc.user_workspace_slugs(request.user)) | Q(workspace_id__isnull=True)
     return wq & _runner_owned_q(request)
