@@ -102,6 +102,30 @@ describe('SessionFeed', () => {
     expect(screen.getByRole('link', { name: /Answer it in the chat/ }).getAttribute('href')).toBe('/w/dimagi/chat/q')
   })
 
+  it('a short single-workspace feed shows no chips and no workspace names', async () => {
+    listSessions.mockResolvedValue([s('a'), s('b')])
+    renderFeed()
+    await screen.findByTestId('feed-card-a')
+    expect(screen.queryByTestId('feed-chips')).toBeNull()
+    expect(screen.queryByText(/· dimagi/)).toBeNull()
+  })
+
+  it('a dense cross-workspace feed gets agent chips and names each workspace', async () => {
+    listSessions.mockResolvedValue([
+      s('h1'), s('h2'),
+      s('a1', { agent_slug: 'ace', workspace: 'connect' }),
+      s('p1', { agent_slug: null, project: 'canopy-web' }),
+    ])
+    renderFeed()
+    const chips = await screen.findByTestId('feed-chips')
+    expect(chips.textContent).toContain('All 4')
+    expect(chips.textContent).toContain('Hal 2')
+    expect(screen.getAllByText(/· connect/).length).toBe(1)
+    fireEvent.click(screen.getByRole('button', { name: /^Hal/ }))
+    expect(screen.queryByTestId('feed-card-a1')).toBeNull()
+    expect(screen.getByTestId('feed-card-h1')).toBeTruthy()
+  })
+
   it('counts what it holds back on offline runners', async () => {
     listSessions.mockResolvedValue([s('a'), s('dead', { runner_online: false, runner_status: 'stale' })])
     renderFeed()

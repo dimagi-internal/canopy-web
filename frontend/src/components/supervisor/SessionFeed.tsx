@@ -7,7 +7,7 @@ import { Markdown } from '@/components/Markdown'
 import { relativeTime } from '@/components/activity/turnLog'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
-import { feedSessions } from './feedRules'
+import { CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, sourceKey } from './feedRules'
 
 const POLL_MS = 20_000
 
@@ -27,6 +27,8 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
   // session can claim your reply, run, and finish its NEXT turn between two
   // polls, and that new reply must not stay hidden behind the old dismissal.
   const [handled, setHandled] = useState<Map<string, string>>(() => new Map())
+  // The agent/project chip filter (null = All).
+  const [source, setSource] = useState<string | null>(null)
 
   const reload = useCallback(() => {
     listSessions('active', { reply: true })
@@ -75,11 +77,43 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
   }
 
   const { feed, parked } = feedSessions(sessions)
-  const visible = feed.filter((s) => handled.get(s.id) !== s.last_activity_at)
+  const pending = feed.filter((s) => handled.get(s.id) !== s.last_activity_at)
+  const sources = feedSources(pending)
+  const showChips = pending.length >= CHIPS_AT && sources.length > 1
+  // A filter whose source has emptied out falls back to All rather than
+  // stranding you on a blank feed.
+  const activeSource = showChips && sources.some((x) => x.key === source) ? source : null
+  const visible = activeSource ? pending.filter((s) => sourceKey(s) === activeSource) : pending
+  const compact = visible.length > COMPACT_ABOVE
+  // Name the workspace only when the feed spans several — one person's feed
+  // crosses every workspace they are in, and then "which one" matters.
+  const multiWorkspace = new Set(pending.map((s) => s.workspace)).size > 1
   const now = new Date()
+  const sourceLabel = (s: ChatSession) => agentName(s.agent_slug) ?? (s.project || 'no agent')
 
   return (
     <div className="flex flex-col gap-3" data-testid="session-feed">
+      {showChips && (
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by agent" data-testid="feed-chips">
+          {[{ key: null, label: 'All', count: pending.length }, ...sources.map((x) => ({
+            key: x.key, label: sourceLabel(x.sample), count: x.count,
+          }))].map((c) => (
+            <button
+              key={c.key ?? 'all'}
+              type="button"
+              aria-pressed={activeSource === c.key}
+              onClick={() => setSource(c.key)}
+              className={`min-h-9 rounded-full border px-3 text-[12px] sm:min-h-0 sm:py-1 ${
+                activeSource === c.key
+                  ? 'border-primary/40 bg-primary/10 font-medium text-primary'
+                  : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              {c.label} <span className="opacity-70">{c.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {visible.length === 0 ? (
         <div className="rounded-lg border border-border bg-card p-4 text-center" data-testid="feed-empty">
           <p className="text-sm font-medium text-foreground">You're all caught up</p>
@@ -92,8 +126,12 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
           <FeedCard
             key={s.id}
             session={s}
-            label={sessionTargetLabel(agentName(s.agent_slug), s.project ?? '')}
+            label={
+              sessionTargetLabel(agentName(s.agent_slug), s.project ?? '') +
+              (multiWorkspace ? ` · ${s.workspace}` : '')
+            }
             age={relativeTime(s.last_activity_at, now)}
+            compact={compact}
             onHandled={markHandled}
           />
         ))
@@ -115,11 +153,13 @@ function FeedCard({
   session: s,
   label,
   age,
+  compact,
   onHandled,
 }: {
   session: ChatSession
   label: string
   age: string
+  compact: boolean
   onHandled: (s: ChatSession) => void
 }): JSX.Element {
   const [draft, setDraft] = useState('')
@@ -129,8 +169,11 @@ function FeedCard({
   const chatHref = `/w/${s.workspace}/chat/${s.id}`
   const reply = (s.last_reply ?? '').trim()
   // Long replies are clamped so one essay does not push every other card off
-  // the screen; "Show more" opens it in place.
-  const long = reply.length > 700 || reply.split('\n').length > 12
+  // the screen; "Show more" opens it in place. In a long feed (compact) every
+  // card starts as a short preview, so the list stays scannable.
+  const long = compact
+    ? reply.length > 240 || reply.split('\n').length > 4
+    : reply.length > 700 || reply.split('\n').length > 12
 
   const send = async () => {
     const text = draft.trim()
@@ -198,7 +241,7 @@ function FeedCard({
 
       <div className="px-3 pt-2">
         {reply ? (
-          <div className={long && !expanded ? 'relative max-h-60 overflow-hidden' : ''}>
+          <div className={long && !expanded ? `relative overflow-hidden ${compact ? 'max-h-24' : 'max-h-60'}` : ''}>
             <Markdown className="text-[13px] leading-relaxed text-foreground-secondary">{reply}</Markdown>
             {long && !expanded && (
               <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card to-transparent" />

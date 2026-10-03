@@ -36,3 +36,29 @@ export function feedSessions(sessions: readonly ChatSession[]): {
   )
   return { feed, parked: parked.length }
 }
+
+// The feed is per PERSON, across every workspace they are in — so it has to stay
+// usable as the fleet grows. These thresholds keep the density tools out of the
+// way while the feed is short (one person, a handful of agents), and bring them
+// in once it is long enough that scanning needs help.
+/** Filter chips appear at this many cards (and 2+ sources). */
+export const CHIPS_AT = 4
+/** Cards open as a short preview above this many. */
+export const COMPACT_ABOVE = 5
+
+/** Which agent — or, for an agentless chat, which project — a session is. */
+export function sourceKey(s: ChatSession): string {
+  return s.agent_slug ? `agent:${s.agent_slug}` : `project:${s.project || ''}`
+}
+
+/** One chip per source in the feed, busiest first; ties keep feed order. */
+export function feedSources(feed: readonly ChatSession[]): { key: string; count: number; sample: ChatSession }[] {
+  const by = new Map<string, { key: string; count: number; sample: ChatSession }>()
+  for (const s of feed) {
+    const k = sourceKey(s)
+    const hit = by.get(k)
+    if (hit) hit.count += 1
+    else by.set(k, { key: k, count: 1, sample: s })
+  }
+  return [...by.values()].sort((a, b) => b.count - a.count)
+}

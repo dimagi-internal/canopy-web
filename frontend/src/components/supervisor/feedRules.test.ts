@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatSession } from '@/api/chat'
-import { feedSessions, needsNextPrompt } from './feedRules'
+import { feedSessions, feedSources, needsNextPrompt } from './feedRules'
 
 const s = (id: string, fields: Partial<ChatSession> = {}): ChatSession =>
   ({
@@ -52,5 +52,19 @@ describe('feedSessions', () => {
     ])
     expect(feed.map((x) => x.id)).toEqual(['live'])
     expect(parked).toBe(1)
+  })
+})
+
+describe('feedSources', () => {
+  it('groups by agent, or by project for an agentless chat, busiest first', () => {
+    const src = feedSources([
+      s('a', { agent_slug: 'hal' }),
+      s('b', { agent_slug: null, project: 'canopy-web' }),
+      s('c', { agent_slug: 'hal' }),
+    ])
+    expect(src.map((x) => [x.key, x.count])).toEqual([
+      ['agent:hal', 2],
+      ['project:canopy-web', 1],
+    ])
   })
 })
