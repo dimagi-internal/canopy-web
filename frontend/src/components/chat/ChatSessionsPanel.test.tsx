@@ -19,7 +19,9 @@ const listRunners = vi.fn<() => Promise<RunnerOut[]>>()
 const listSlugs = vi.fn<() => Promise<ProjectSlug[]>>()
 
 vi.mock('@/api/chat', () => ({ createSession, listSessions, closeSession }))
-vi.mock('@/api/agents', () => ({ getAgentRunners, listAgents: vi.fn() }))
+// Default: the agent has runners of its own, so the picker reads getAgentRunners.
+const getAgentDefaultOrder = vi.fn().mockResolvedValue({ own: true, workspace: null, runners: [], missing_repo: [], cannot_hold: [], repo_url: '' })
+vi.mock('@/api/agents', () => ({ getAgentRunners, getAgentDefaultOrder, listAgents: vi.fn() }))
 vi.mock('@/api/harness', () => ({ listRunners }))
 vi.mock('@/api/projects', () => ({ projectsApi: { listSlugs } }))
 
@@ -102,9 +104,30 @@ function deferred<T>() {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  getAgentDefaultOrder.mockResolvedValue({ own: true, workspace: null, runners: [], missing_repo: [], cannot_hold: [], repo_url: '' })
 })
 
 describe('ChatSessionsPanel — Run on picker', () => {
+  it('offers the runners of the default order an agent follows when it has none of its own', async () => {
+    listSessions.mockResolvedValue([])
+    listSlugs.mockResolvedValue([])
+    getAgentDefaultOrder.mockResolvedValue({
+      own: false, workspace: 'dimagi', missing_repo: [], cannot_hold: [], repo_url: '',
+      runners: [agentRunner('r1', { runner_name: 'haldimagi-mbp-cdp', online: true }),
+                agentRunner('r2', { runner_name: 'cloud-ec2-1', online: true })],
+    })
+
+    renderPanel([agent()])
+    fireEvent.click(await screen.findByText('New chat'))
+    fireEvent.click(await screen.findByText('Echo'))
+
+    const select = (await screen.findByTestId('run-on-select')) as HTMLSelectElement
+    await waitFor(() => expect(Array.from(select.options).map((o) => o.textContent)).toEqual(
+      ['Auto', '● haldimagi-mbp-cdp', '● cloud-ec2-1'],
+    ))
+    expect(getAgentRunners).not.toHaveBeenCalled()
+  })
+
   it('lists the agent’s assigned runners with an online/offline marker, defaulting to Auto', async () => {
     listSessions.mockResolvedValue([])
     listSlugs.mockResolvedValue([])
@@ -119,7 +142,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
     fireEvent.click(await screen.findByText('Echo'))
 
     const select = (await screen.findByTestId('run-on-select')) as HTMLSelectElement
-    await waitFor(() => expect(getAgentRunners).toHaveBeenCalledWith('echo'))
+    await waitFor(() => expect(getAgentRunners).toHaveBeenCalledWith('echo', expect.anything()))
 
     const options = Array.from(select.options).map((o) => o.textContent)
     expect(options).toEqual(['Auto', '● Laptop', '○ Cloud'])
@@ -212,12 +235,12 @@ describe('ChatSessionsPanel — Run on picker', () => {
     // Pick Echo — still in flight.
     fireEvent.click(await screen.findByText('New chat'))
     fireEvent.click(await screen.findByText('Echo'))
-    await waitFor(() => expect(getAgentRunners).toHaveBeenNthCalledWith(1, 'echo'))
+    await waitFor(() => expect(getAgentRunners).toHaveBeenNthCalledWith(1, 'echo', expect.anything()))
 
     // Before it resolves, go back and pick Hal instead — also in flight.
     fireEvent.click(screen.getByText('Back'))
     fireEvent.click(await screen.findByText('Hal'))
-    await waitFor(() => expect(getAgentRunners).toHaveBeenNthCalledWith(2, 'hal'))
+    await waitFor(() => expect(getAgentRunners).toHaveBeenNthCalledWith(2, 'hal', 'dimagi'))
 
     // Resolve the NEWER (Hal) request first.
     await act(async () => {
