@@ -20,6 +20,8 @@ import {
   consoleLinks,
   setupCommands,
   suggestedServiceAccount,
+  readerLabel,
+  readerTone,
   topicPath,
   watchLabel,
   watchTone,
@@ -269,6 +271,7 @@ export function InboundPushPage(): JSX.Element | null {
               <TableHead>Address</TableHead>
               <TableHead>Agent</TableHead>
               <TableHead>Watch</TableHead>
+              <TableHead>Readable by</TableHead>
               <TableHead>Last push</TableHead>
               <TableHead />
             </TableRow>
@@ -280,6 +283,21 @@ export function InboundPushPage(): JSX.Element | null {
                 <TableCell>{mb.agent_slug}</TableCell>
                 <TableCell className={TONE_CLASS[watchTone(mb.watch_state)]}>
                   {watchLabel(mb.watch_state, mb.watch_expires_at, mb.watch_error)}
+                </TableCell>
+                <TableCell className="text-xs">
+                  {mb.readers.length === 0 ? (
+                    <span className={TONE_CLASS.warning}>No runner routes or reads this mailbox</span>
+                  ) : (
+                    mb.readers.map((r) => (
+                      <div
+                        key={r.runner}
+                        className={TONE_CLASS[readerTone(r)]}
+                        title={r.checked_at ? `Checked ${new Date(r.checked_at).toLocaleString()}` : undefined}
+                      >
+                        {readerLabel(r)}
+                      </div>
+                    ))
+                  )}
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {mb.last_push_at ? new Date(mb.last_push_at).toLocaleString() : 'never'}
@@ -315,7 +333,7 @@ export function InboundPushPage(): JSX.Element | null {
             ))}
             {mailboxes?.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground">
+                <TableCell colSpan={6} className="text-muted-foreground">
                   No mailboxes registered — push has nothing to deliver to.
                 </TableCell>
               </TableRow>

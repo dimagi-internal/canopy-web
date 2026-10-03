@@ -281,12 +281,16 @@ def test_runner_mailboxes_serve_the_configured_topic(owner, workspace, agent):
     InboundPushConfig.objects.create(workspace=workspace, watch_topic="projects/p/topics/t")
     InboundMailbox.objects.create(address="eva@dimagi-ai.com", agent=agent)
     items = _c(owner).get("/api/inbound/runner-mailboxes").json()["items"]
-    assert items == [{"address": "eva@dimagi-ai.com", "watch_topic": "projects/p/topics/t"}]
+    assert items == [{"address": "eva@dimagi-ai.com", "agent_slug": "eva",
+                      "watch_topic": "projects/p/topics/t"}]
 
 
-def test_a_workspace_with_no_topic_arms_nothing(owner, workspace, agent):
+def test_a_workspace_with_no_topic_serves_its_mailboxes_without_one(owner, workspace, agent):
+    """Still served — the runner's probe reads it — but with a blank topic, which
+    the watch re-arm treats as "arm nothing"."""
     InboundMailbox.objects.create(address="eva@dimagi-ai.com", agent=agent)
-    assert _c(owner).get("/api/inbound/runner-mailboxes").json()["items"] == []
+    items = _c(owner).get("/api/inbound/runner-mailboxes").json()["items"]
+    assert [i["watch_topic"] for i in items] == [""]
 
 
 def test_a_disabled_mailbox_is_not_armed(owner, workspace, agent):

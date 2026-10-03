@@ -383,7 +383,7 @@ def heartbeat(
     ready: bool = True, ready_note: str = "", code_branch: str = "",
     code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
     projects: list[str] | None = None, profiles: int = 0,
-    health: dict | None = None,
+    health: dict | None = None, mailboxes_readable: list[str] | None = None,
 ) -> Runner:
     """`profiles` is the profile-enforcement version the runner REPORTS it can
     honour (see `profile_q`). Written on every beat, and 0 from a runner that
@@ -403,6 +403,9 @@ def heartbeat(
 
     Only the one key is written. `sessions` gates chat routing and `agents` is
     still read by older paths; replacing the whole dict would unwire both.
+
+    `mailboxes_readable` follows the same None-is-not-[] rule: None leaves the
+    stored list (and its `mailboxes_checked_at`) alone.
     """
     now = timezone.now()
     runner.last_heartbeat_at = now
@@ -430,6 +433,14 @@ def heartbeat(
     if health is not None:
         runner.health = {**health, "received_at": now.isoformat()}
         fields.append("health")
+    if mailboxes_readable is not None:
+        # Lowercased and de-duplicated here, not trusted from the wire: the
+        # doorbell compares against `InboundMailbox.address` case-insensitively.
+        runner.mailboxes_readable = sorted(
+            {a.strip().lower() for a in mailboxes_readable if a and a.strip()}
+        )
+        runner.mailboxes_checked_at = now
+        fields += ["mailboxes_readable", "mailboxes_checked_at"]
     if int(runner.capabilities.get("profiles") or 0) != int(profiles or 0):
         runner.capabilities = {**runner.capabilities, "profiles": int(profiles or 0)}
         if "capabilities" not in fields:

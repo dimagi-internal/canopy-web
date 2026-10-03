@@ -31,3 +31,15 @@ def _no_real_transcripts(monkeypatch):
     # And don't sit out _wait_for_transcript's 45s poll against a path that can never
     # resolve: a test that needs a transcript patches this with its tmp file.
     monkeypatch.setattr(execute, "_wait_for_transcript", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_mailbox_probe():
+    """The mailbox probe shells out to `gog` (a real keyring read — on macOS it can
+    pop a Keychain prompt) from any test that drives the loop. Park it for every
+    test; the probe's own tests call `mailbox_probe.reset()` and inject a runner."""
+    from canopy_runner import mailbox_probe
+    mailbox_probe.reset()
+    mailbox_probe._state["next_at"] = float("inf")
+    yield
+    mailbox_probe.reset()

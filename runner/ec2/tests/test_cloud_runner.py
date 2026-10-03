@@ -2121,3 +2121,25 @@ def test_run_claude_announces_the_session_once_from_its_init_line(cloud_runner, 
     finally:
         cloud_runner._SESSION_HOOKS.pop("turn-ann", None)
     assert announced == ["real-cli-session-2"]
+
+
+def test_the_heartbeat_reports_the_mailboxes_the_probe_could_read(cloud_runner, tmp_path, monkeypatch):
+    """The doorbell rings only runners that can read the rung mailbox
+    (canopy-web#1087), so the cloud box reports what `_resolve_mailbox_clients`
+    proved — and nothing at all (unknown) before it has looked."""
+    _gog_home(tmp_path, monkeypatch)
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    monkeypatch.setattr(cloud_runner, "health_report", lambda: {})
+    cloud_runner._GOG_CLIENT_LIVE.clear()
+    cloud_runner._MAILBOX_READABLE.clear()
+    assert "mailboxes_readable" not in cloud_runner._heartbeat_body([])
+
+    def probe(account, client):
+        if account.startswith("echo"):
+            raise RuntimeError("No auth")
+
+    cloud_runner._resolve_mailbox_clients({
+        "hal": {"account": "Hal@dimagi-ai.com", "client": "canopy"},
+        "echo": {"account": "echo@dimagi-ai.com", "client": "canopy"},
+    }, probe)
+    assert cloud_runner._heartbeat_body([])["mailboxes_readable"] == ["hal@dimagi-ai.com"]

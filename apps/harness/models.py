@@ -173,6 +173,20 @@ class Runner(models.Model):
     # and the only record was a journald line. Empty = the runner does not
     # report health (the laptops, an older box): UNKNOWN, never "healthy".
     health = models.JSONField(default=dict, blank=True)
+    # The mailboxes this box can actually READ, lowercased — what its own probe
+    # found (a gog token for the address that answered a one-message search),
+    # REPORTED on the heartbeat. OBSERVED, never typed, like `projects`: it
+    # replaced a hand-kept `mailboxes` map in runner.json that the owner did not
+    # know existed, and a runner with `{}` there was still rung by the doorbell
+    # for every mail and silently ignored each ring (canopy-web#1087).
+    #
+    # NULL means NEVER REPORTED (an older runner) and is read as "unknown", never
+    # as "reads nothing": the doorbell keeps ringing such a box, exactly as it did
+    # before this column existed. [] is a real answer — "I hold no working token".
+    mailboxes_readable = models.JSONField(null=True, blank=True, default=None)
+    # Server clock, stamped when a report arrives — tells a current answer from
+    # an old one, since a box that stops reporting keeps its last list.
+    mailboxes_checked_at = models.DateTimeField(null=True, blank=True)
     # An operator asked this box to refresh itself (re-run bootstrap: plugins,
     # the canopy CLI, Claude Code, agent provisioning). DURABLE, not a frame: a
     # control frame is a doorbell, and one sent while the socket is down is

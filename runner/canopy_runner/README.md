@@ -132,13 +132,25 @@ What `pair` automates, for reference or a non-macOS box:
    The emdash data directory is `emdash` on newer installs and `Emdash` on older
    ones — use whichever `ls ~/Library/Application\ Support` shows.
 
-   **Email trigger.** `mailboxes` maps each agent to its gog `{account, client}`
-   (e.g. `{"hal": {"account": "hal@dimagi-ai.com", "client": "canopy"}}`);
-   the runner polls them every `inbox_poll_seconds` and enqueues an email-origin
-   turn per new thread — the runner then reuses that thread's existing emdash
-   session (continuity) or spawns a fresh one, rehydrating context. Cross-account:
-   the durable link lives in canopy-web, so switching macOS accounts continues the
-   thread (fresh local session, rehydrated) rather than losing it.
+   **Email trigger.** Which mailboxes this box reads is DISCOVERED — there is
+   nothing to configure. At startup and every `mailbox_probe_seconds` (600) the
+   runner takes every mailbox canopy-web serves it (`GET
+   /api/inbound/runner-mailboxes`), finds the gog clients holding a token for each
+   (`gog auth tokens list`, no network), and keeps the ones where a one-message
+   `gog gmail search` succeeds. The log says one line per mailbox ("readable via
+   client X" / "no token" / "token but search failed: …"), the readable list
+   rides the heartbeat, and the push doorbell rings only runners that can read the
+   mailbox (the Inbound push page shows who can). It polls those every
+   `inbox_poll_seconds` and enqueues an email-origin turn per new thread — the
+   runner then reuses that thread's existing emdash session (continuity) or spawns
+   a fresh one, rehydrating context. Cross-account: the durable link lives in
+   canopy-web, so switching macOS accounts continues the thread (fresh local
+   session, rehydrated) rather than losing it.
+
+   `mailboxes` is an optional per-agent OVERRIDE, `{}` by default: a non-empty
+   entry such as `{"hal": {"account": "hal@dimagi-ai.com", "client": "canopy",
+   "query": "in:inbox is:unread from:@dimagi.com"}}` replaces what was discovered
+   for that agent (pin a client, narrow the search).
 
 4. **Install the daemon.** One command — it also renders and loads the launchd
    job, and provisions the sidecar's node deps:

@@ -56,11 +56,17 @@ class Config:
     # and NOT the delivery path — delivery is Gmail -> Pub/Sub -> canopy-web ->
     # the check_inbox doorbell, which involves this runner only as the receiver.
     gmail_watch_topic: str = ""
+    # OPTIONAL OVERRIDE. Which mailboxes this box reads is DISCOVERED
+    # (mailbox_probe.py: every mailbox canopy-web serves, kept when a gog token
+    # for it answers a search) — nobody has to write this. A non-empty entry
     # {agent_slug: {"account": "<mailbox>", "client": "<gog client>", "query": "<opt>"}}
-    # — the deterministic email trigger polls these and enqueues email-origin turns.
-    # Per-mailbox "query" overrides the default Gmail search (e.g. restrict to certain
-    # senders/labels) so junk never becomes a turn (= a session = tokens).
+    # replaces the discovered one for that agent: pin a client, or set "query" to
+    # narrow the default Gmail search (e.g. certain senders/labels) so junk never
+    # becomes a turn (= a session = tokens).
     mailboxes: dict = field(default_factory=dict)
+    # How often to re-probe which mailboxes are readable. One `gog auth tokens
+    # list` plus one `--max 1` search per mailbox — cheap, but not per-tick cheap.
+    mailbox_probe_seconds: int = 600
     # Hard safety cap: at most this many threads become turns per mailbox per poll,
     # so a flooded/misconfigured inbox can't spawn dozens of sessions at once.
     inbox_max_threads: int = 8
