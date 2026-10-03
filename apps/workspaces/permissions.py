@@ -111,8 +111,11 @@ def slugs_with(user, capability: str, within: set[str] | None = None) -> set[str
 
     if not getattr(user, "is_authenticated", False):
         return set()
-    candidates = within if within is not None else services.user_workspace_slugs(user)
-    return {s for s in candidates if can(user, s, capability)}
+    # Every role in one read (`services.member_roles`), not a membership walk per
+    # workspace — this runs on every runner's claim poll.
+    roles = services.member_roles(user)
+    candidates = within if within is not None else set(roles)
+    return {s for s in candidates if role_allows(roles.get(s), capability)}
 
 
 def request_slugs_with(request, capability: str) -> set[str]:

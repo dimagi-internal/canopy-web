@@ -245,6 +245,23 @@ def membership(user, workspace):
     return row
 
 
+def member_roles(user) -> dict[str, str]:
+    """`member_role` for EVERY workspace the user is in, at once: {slug: role}.
+
+    The same answer `membership` gives one workspace at a time — a direct row's
+    role, except that owning any ancestor makes you an owner, outranking a weaker
+    direct row — from one query for the direct rows and one per tree level for the
+    inherited ownership, instead of several queries per workspace. Built for the
+    paths that ask it of every workspace on every poll (`runner_tenant_slugs`)."""
+    if not getattr(user, "is_authenticated", False) and not getattr(user, "pk", None):
+        return {}
+    roles = dict(WorkspaceMembership.objects.filter(user=user)
+                 .values_list("workspace_id", "role"))
+    for slug in inherited_owner_slugs(user):
+        roles[slug] = WorkspaceMembership.OWNER
+    return roles
+
+
 def member_role(user, workspace) -> str | None:
     """The caller's role in `workspace` (a `Workspace` or a bare slug), or
     `None` if they are not a member at all.
