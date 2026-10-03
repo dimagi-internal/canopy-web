@@ -1,4 +1,5 @@
 import { useState, type JSX } from 'react'
+import { Link } from 'react-router-dom'
 import { refreshRunner, type RunnerOut } from '@/api/harness'
 import { relativeAge } from '@/lib/relativeAge'
 
@@ -17,12 +18,27 @@ const TONE: Record<string, { dot: string; text: string }> = {
   fail: { dot: 'bg-destructive', text: 'text-destructive' },
 }
 
+// A check that names an agent (`github.<slug>`: the owner has not lent it a
+// GitHub token) is fixed on that agent's Settings → Credentials, so the row
+// links there. The agent's workspace comes from the host, which already holds
+// the agents; without it the row stays text, since the bare /agents/<slug>
+// redirect would land in whatever workspace is active rather than the agent's.
+export function fixHref(checkName: string, agentWorkspace: (slug: string) => string | undefined): string | null {
+  const m = /^github\.(.+)$/.exec(checkName)
+  if (!m) return null
+  const ws = agentWorkspace(m[1])
+  return ws ? `/w/${ws}/agents/${m[1]}/settings#credentials` : null
+}
+
 export function RunnerHealth({
   runner,
   onChanged,
+  agentWorkspace = () => undefined,
 }: {
   runner: RunnerOut
   onChanged?: (runner: RunnerOut) => void
+  /** Which workspace an agent lives in, for links to fix a check. */
+  agentWorkspace?: (slug: string) => string | undefined
 }): JSX.Element | null {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -79,7 +95,18 @@ export function RunnerHealth({
                     <span className={`mt-1.5 inline-block h-2 w-2 rounded-full ${tone.dot}`} />
                   </td>
                   <td className="whitespace-nowrap py-1 pr-3 align-top font-mono text-[11px] text-foreground">{c.name}</td>
-                  <td className={`py-1 align-top ${tone.text}`}>{c.detail || c.status}</td>
+                  <td className={`py-1 align-top ${tone.text}`}>
+                    {c.detail || c.status}
+                    {c.status !== 'ok' && fixHref(c.name, agentWorkspace) && (
+                      <Link
+                        to={fixHref(c.name, agentWorkspace)!}
+                        className="ml-1 whitespace-nowrap text-primary hover:underline"
+                        data-testid={`runner-health-fix-${c.name}`}
+                      >
+                        Fix it →
+                      </Link>
+                    )}
+                  </td>
                 </tr>
               )
             })}

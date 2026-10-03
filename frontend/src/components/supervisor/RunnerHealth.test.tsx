@@ -112,3 +112,30 @@ describe('RunnerStatus health badge', () => {
     expect(screen.queryByTestId('runner-health-badge-clean')).toBeNull()
   })
 })
+
+describe('a check that names an agent links to its fix', () => {
+  const lent = {
+    health_received_at: '2026-09-22T12:00:00Z',
+    health_checks: {
+      'github.ace': { name: 'github.ace', status: 'fail' as const, detail: 'owner has not lent ace a GitHub token' },
+      'github.ada': { name: 'github.ada', status: 'ok' as const, detail: 'lent' },
+    },
+  }
+
+  it("goes to the agent's own Settings → Credentials, in the agent's workspace", async () => {
+    const { MemoryRouter } = await import('react-router-dom')
+    render(
+      <MemoryRouter>
+        <RunnerHealth runner={runner(lent as Partial<RunnerOut>)} agentWorkspace={(s) => (s === 'ace' ? 'connect' : undefined)} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('runner-health-fix-github.ace').getAttribute('href')).toBe('/w/connect/agents/ace/settings#credentials')
+    // A passing check has nothing to fix.
+    expect(screen.queryByTestId('runner-health-fix-github.ada')).toBeNull()
+  })
+
+  it('stays text when the agent is not one the page knows', () => {
+    render(<RunnerHealth runner={runner(lent as Partial<RunnerOut>)} />)
+    expect(screen.queryByTestId('runner-health-fix-github.ace')).toBeNull()
+  })
+})
