@@ -592,6 +592,18 @@ def agents_following_runner(runner: Runner) -> set:
             if any(r.id == runner.id for r in inh.runners)}
 
 
+def agents_served_by(runner: Runner):
+    """Agents that route to `runner` by their own list or by following a
+    workspace order, by slug."""
+    from apps.agents.models import Agent
+
+    return (
+        Agent.objects.filter(Q(runner_assignments__runner=runner)
+                             | Q(id__in=agents_following_runner(runner)))
+        .select_related("owner").distinct().order_by("slug")
+    )
+
+
 def default_order_source(agent) -> str | None:
     """The workspace whose default order this agent would follow: its own
     workspace or the nearest above it with an enabled order. None: none has one."""

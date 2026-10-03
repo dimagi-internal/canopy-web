@@ -305,6 +305,31 @@ def test_readiness_reports_each_agent_this_runner_serves(agent, owner, github, r
     assert row["status"] == "fail" and "Pull requests" in row["detail"]
 
 
+def test_the_fleet_view_answers_github_from_the_rows_not_the_boot_report(agent, owner, github, runner):
+    """The box asks about GitHub once, at boot, then repeats that answer on every
+    heartbeat. A token lent after the boot must show as lent — eva, 2026-10-03:
+    `github.eva: fail` sat beside a fresh `health_received_at` while canopy was
+    issuing eva's token to that very box."""
+    boot = _as_runner(runner).get(f"/api/harness/runners/{runner.pk}/github-readiness").json()
+    services.heartbeat(runner, active_turn_ids=[], health={
+        "checks": [{"name": "claude.version", "status": "ok", "detail": "2.1"},
+                   *({"name": f"github.{r['agent_slug']}", "status": r["status"],
+                      "detail": r["detail"]} for r in boot)],
+        "checked_at": 0, "bootstrapped_at": 0,
+    })
+
+    def checks():
+        [row] = [r for r in _client(runner.owner).get("/api/harness/runners/").json()
+                 if r["id"] == str(runner.pk)]
+        return row["health_checks"]
+
+    assert checks()["github.echo"]["status"] == "fail"
+    _lend(agent, owner, github)
+    now = checks()
+    assert now["github.echo"]["status"] == "ok" and "@olive" in now["github.echo"]["detail"]
+    assert now["claude.version"]["status"] == "ok"  # the box's own checks are untouched
+
+
 def test_bootstrap_resolve_carries_the_owners_token_for_private_clones(agent, owner, github, runner):
     from apps.tokens.models import PersonalToken
 
