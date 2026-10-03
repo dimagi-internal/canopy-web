@@ -11,6 +11,7 @@ import gzip
 import io
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -2466,6 +2467,50 @@ def _aware(value: dt.datetime | None) -> dt.datetime | None:
     if timezone.is_naive(value):
         return timezone.make_aware(value, dt.UTC)
     return value
+
+
+_COMMAND = re.compile(r"^/[\w:.-]+")          # "/ace:turn", "/eva:turn"
+_FLAG = re.compile(r"^--?[\w-]+(?:[ =](?!--)\S+)?")  # "--thread 1a0f…", "--x=y"
+TITLE_CAP = 80
+
+
+def readable_title(text: str) -> str:
+    """A name a person can read, from a prompt's first line — or "" when the line
+    is nothing but a command. A cloud turn's prompt is often a slash command
+    ("/ace:turn --thread 1a0f24bf9b830273"), which made a session's title the
+    command itself (2026-10-03); the words after it, if any, are the name."""
+    line = next((ln.strip() for ln in (text or "").splitlines() if ln.strip()), "")
+    if line.startswith("/"):
+        rest = _COMMAND.sub("", line, count=1).strip()
+        while True:
+            m = _FLAG.match(rest)
+            if not m:
+                break
+            rest = rest[m.end():].strip()
+        line = rest.lstrip("—–-:· ").strip()
+    if not line:
+        return ""
+    # One sentence, cut at a word: a title, not the brief.
+    first = re.split(r"(?<=[.!?])\s", line, maxsplit=1)[0].rstrip(".")
+    if len(first) > TITLE_CAP:
+        first = first[:TITLE_CAP].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+    return first[:1].upper() + first[1:]
+
+
+def turn_session_title(turn, proposed: str = "") -> str:
+    """What a session started by `turn` is called: the email's subject, else its
+    schedule's name, else a readable form of what the runner proposed (or of the
+    prompt), else "<Agent> turn". Never a bare command."""
+    ref = turn.origin_ref or {}
+    for key in ("subject", "schedule_name"):
+        value = ref.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:200]
+    named = readable_title(proposed) or readable_title(turn.prompt or "")
+    if named:
+        return named[:200]
+    agent = turn.agent or (turn.chat_session.agent if turn.chat_session_id else None)
+    return f"{agent.name} turn" if agent else "Turn"
 
 
 def record_session(

@@ -62,6 +62,17 @@ def test_an_agent_session_is_named_for_a_person_not_by_its_uuid(cloud_runner):
         _agent_turn(origin_ref={}, prompt="\nFix brief from Ada\nmore")) == "Fix brief from Ada"
 
 
+def test_a_command_prompt_is_not_a_session_name(cloud_runner):
+    """2026-10-03: ACE's email session was titled "/ace:turn --thread 1a0f…"."""
+    email = _agent_turn(origin_ref={"subject": "Latest on workflows", "thread_id": "1a0f"},
+                        prompt="/ace:turn --thread 1a0f24bf9b830273")
+    assert cloud_runner._agent_session_title(email) == "Latest on workflows"
+    bare = _agent_turn(origin_ref={}, prompt="/ace:turn --thread 1a0f24bf9b830273")
+    assert cloud_runner._agent_session_title(bare) == ""
+    brief = _agent_turn(origin_ref={}, prompt="/eva:turn — catch-up brief from Jonathan")
+    assert cloud_runner._agent_session_title(brief) == "catch-up brief from Jonathan"
+
+
 def test_a_chat_turn_sends_no_title(cloud_runner, monkeypatch):
     posts = []
     monkeypatch.setattr(cloud_runner, "_api",
