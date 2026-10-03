@@ -142,7 +142,7 @@ def test_member_roles_agrees_with_member_role_everywhere():
     u = User.objects.create_user("r", "r@dimagi.com", "pw")
     org = Workspace.objects.create(slug="org", display_name="O", created_by=u)
     div = Workspace.objects.create(slug="div", display_name="D", created_by=u, parent=org)
-    team = Workspace.objects.create(slug="team", display_name="T", created_by=u, parent=div)
+    Workspace.objects.create(slug="team", display_name="T", created_by=u, parent=div)
     other = Workspace.objects.create(slug="other", display_name="X", created_by=u)
     WorkspaceMembership.objects.create(user=u, workspace=org, role=WorkspaceMembership.OWNER)
     WorkspaceMembership.objects.create(user=u, workspace=div, role=WorkspaceMembership.VIEWER)
