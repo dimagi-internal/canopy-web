@@ -482,6 +482,12 @@ Resources:
       # check counts against it. At 0 a slow start is a killed task and a restart
       # loop; 60s is enough headroom without meaningfully delaying a real failure.
       HealthCheckGracePeriodSeconds: 60
+      # ECS Exec (`aws ecs execute-command`) — a shell in the live container for
+      # supported admin ops (`manage.py shell`) without a throwaway run-task. The
+      # task role already carries the SSM channel grant (`ecs-exec-ssm` inline
+      # policy on labs-jj-ecs-task-role). Stated here so a CFN deploy does not
+      # silently reset it after it was enabled by hand (2026-10-03).
+      EnableExecuteCommand: true
 
 Outputs:
   EcrRepoUri:
