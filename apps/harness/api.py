@@ -328,6 +328,20 @@ def _turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     return turn
 
 
+def _agents_own_thread_q():
+    """Session turns on an AGENT's own thread (an email or Slack thread: a runner-
+    origin session nobody created), which every member of its workspace may see
+    ran — the same interaction tier as an agent turn. Before #734 these were agent
+    turns and the whole tenant listed them; converting them to session turns hid
+    them from everyone but the agent's admins, and a member's routing audit read
+    the silence as "0 turns" (#1087). Their CONTENT stays gated by the session
+    (`turn_access.redact`), and a person's own chat is not one of these."""
+    from apps.canopy_sessions.models import Session
+
+    return Q(chat_session__origin=Session.ORIGIN_RUNNER, chat_session__created_by__isnull=True,
+             chat_session__agent__isnull=False)
+
+
 def _visible_sessions(request: HttpRequest):
     """Chat sessions the caller may read — the chat ACL, as a subquery, for
     every harness listing that would otherwise show a session turn's prompt or
@@ -1686,8 +1700,13 @@ def list_turns(
         #
         # 404 rather than 403, and the same 404 for a typo, so the endpoint cannot
         # be used to enumerate which tenants' agents exist (see _agent_or_404).
-        _agent_or_404(request, agent)
-        qs = qs.filter(agent__slug=agent)
+        target = _agent_or_404(request, agent)
+        # An email or Slack thread targets a SESSION, not the agent (enqueue_turn
+        # converts it — the XOR check constraint allows only one), so the agent
+        # sits on `chat_session.agent`. Filtering on `agent` alone dropped every
+        # one of them: `?agent=ace` listed no ACE email turn after 2026-09-10, for
+        # every caller, and hal's routing audit read that as "0 turns" (#1087).
+        qs = qs.filter(Q(agent=target) | Q(agent__isnull=True, chat_session__agent=target))
     if status:
         qs = qs.filter(status__in=status.split(","))
     # Tenant filter, split by target kind (agent / project / session) — mirrors
@@ -1714,7 +1733,7 @@ def list_turns(
         (Q(agent__isnull=False) & Q(agent__workspace_id__in=slugs))
         | (Q(agent__isnull=True) & Q(chat_session__isnull=True) & Q(workspace_id__in=slugs))
         | (Q(chat_session__isnull=False) & Q(chat_session__workspace_id__in=slugs)
-           & Q(chat_session__in=_visible_sessions(request)))
+           & (Q(chat_session__in=_visible_sessions(request)) | _agents_own_thread_q()))
     )
     site_q = _site_turn_q(request)
     if site_q is not None:
