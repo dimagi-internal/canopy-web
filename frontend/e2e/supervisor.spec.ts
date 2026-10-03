@@ -1,46 +1,50 @@
 import { test, expect } from '@playwright/test'
 
-// Reach a tab's content. Inbox is the default landing; Sessions/Agents need a click.
+// Reach a screen. The feed is home; every other screen is behind the header menu.
 async function openTab(
   page: import('@playwright/test').Page,
-  tab: 'inbox' | 'sessions' | 'agents' | 'runners',
+  tab: 'feed' | 'inbox' | 'sessions' | 'agents' | 'runners',
 ) {
-  if (tab !== 'inbox') await page.getByTestId(`tab-${tab}`).click()
+  await page.getByTestId('supervisor-menu').click()
+  await page.getByTestId(`menu-${tab}`).click()
 }
 
 test.describe('/supervisor', () => {
-  test('renders without horizontal scroll on every tab', async ({ page }) => {
+  test('renders without horizontal scroll on every screen', async ({ page }) => {
     await page.goto('/supervisor')
     await expect(page.getByTestId('supervisor-page')).toBeVisible()
-    for (const tab of ['inbox', 'sessions', 'agents', 'runners'] as const) {
+    for (const tab of ['feed', 'inbox', 'sessions', 'agents', 'runners'] as const) {
       await openTab(page, tab)
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       )
-      expect(overflow, `tab ${tab} overflows`).toBeLessThanOrEqual(0)
+      expect(overflow, `screen ${tab} overflows`).toBeLessThanOrEqual(0)
     }
   })
 
-  test('defaults to Inbox and deep-links via ?tab=', async ({ page }) => {
-    // Default landing (what push drops you into) is Inbox: the waiting queue is
-    // visible and the other tabs' content is not.
+  test('defaults to the session feed and deep-links other screens via ?tab=', async ({ page }) => {
+    // Home is the feed of sessions waiting for your next prompt; the other
+    // screens' content is not on it.
     await page.goto('/supervisor')
-    // `item-inbox`/`inbox-empty` (were `waiting-on-you`/`waiting-empty`) — renamed when
-    // the needs_you aggregation was deleted and the queue became a plain Item list.
-    await expect(page.getByTestId('item-inbox').or(page.getByTestId('inbox-empty'))).toBeVisible()
-    // The Sessions tab is now ChatSessionsPanel; the composer's `open-sessions` is gone.
+    await expect(page.getByTestId('session-feed').or(page.getByTestId('feed-empty'))).toBeVisible()
     await expect(page.getByTestId('sessions-panel')).toBeHidden()
+    await expect(page.getByTestId('item-inbox').or(page.getByTestId('inbox-empty'))).toBeHidden()
 
-    // Deep-link straight to Agents.
-    // Runners split out of the Agents tab into their own.
+    // Item pushes deep-link to the Inbox screen.
+    await page.goto('/supervisor?tab=inbox')
+    await expect(page.getByTestId('item-inbox').or(page.getByTestId('inbox-empty'))).toBeVisible()
+
     await page.goto('/supervisor?tab=agents')
     await expect(page.locator('[data-testid^="agent-card-"]').first()).toBeVisible()
+
+    // And back to the feed.
+    await page.getByTestId('back-to-feed').click()
+    await expect(page).toHaveURL(/\/supervisor$/)
   })
 
-  test('the inbox is above the fold', async ({ page }) => {
+  test('the feed is above the fold', async ({ page }) => {
     await page.goto('/supervisor')
-    const inbox = page.getByTestId('item-inbox').or(page.getByTestId('inbox-empty'))
-    await expect(inbox).toBeInViewport()
+    await expect(page.getByTestId('session-feed')).toBeInViewport()
   })
 
   test('one failed call does not blank the page', async ({ page }) => {

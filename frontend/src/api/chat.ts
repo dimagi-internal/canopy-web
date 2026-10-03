@@ -105,15 +105,32 @@ export function getSession(
 
 export type SessionState = "active" | "archived" | "all";
 
-/** The list URL for a state. `active` is the server default, so it sends no param. */
-export function sessionsPath(state: SessionState = "active"): string {
-  return state === "active"
-    ? "/api/canopy-sessions/"
-    : `/api/canopy-sessions/?state=${state}`;
+/**
+ * The list URL for a state. `active` is the server default, so it sends no param.
+ * `reply` asks for each session's last agent reply (`last_reply` /
+ * `agent_spoke_last`) — the supervisor feed's fields, opt-in so the other list
+ * callers do not carry text they never render.
+ */
+export function sessionsPath(state: SessionState = "active", opts: { reply?: boolean } = {}): string {
+  const params = new URLSearchParams();
+  if (state !== "active") params.set("state", state);
+  if (opts.reply) params.set("reply", "true");
+  const q = params.toString();
+  return q ? `/api/canopy-sessions/?${q}` : "/api/canopy-sessions/";
 }
 
-export function listSessions(state: SessionState = "active"): Promise<ChatSession[]> {
-  return request<ChatSession[]>(sessionsPath(state));
+export function listSessions(
+  state: SessionState = "active",
+  opts: { reply?: boolean } = {},
+): Promise<ChatSession[]> {
+  return request<ChatSession[]>(sessionsPath(state, opts));
+}
+
+/** Archive a session — reversible (`/unarchive`), and never touches emdash. */
+export function archiveSession(id: string): Promise<ChatSession> {
+  return request<ChatSession>(`/api/canopy-sessions/${encodeURIComponent(id)}/archive`, {
+    method: "POST",
+  });
 }
 
 /** One backward page of transcript, for "Load earlier" scroll-back. */

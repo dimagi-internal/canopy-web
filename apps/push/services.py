@@ -129,7 +129,9 @@ def refresh_agent_waiting(agent: Agent) -> int:
             user,
             title=f"{agent.name} needs you",
             body=f"{delta} new item{'s' if delta != 1 else ''} · {count} waiting",
-            url="/supervisor",
+            # The Inbox screen, not the bare /supervisor: that is the session
+            # feed now, and this push is about items.
+            url="/supervisor?tab=inbox",
             count=count,
         )
         for user in agent_audience(agent)

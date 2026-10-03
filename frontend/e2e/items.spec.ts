@@ -38,7 +38,8 @@ test('an open item shows in the agent inbox and the fleet supervisor', async ({ 
   await page.goto('/w/dimagi/agents/ada/needs-you')
   await expect(page.getByText('hal: discard 81 junk/stale unread emails')).toBeVisible()
 
-  await page.goto('/supervisor')
+  // The Inbox is its own screen now; the bare /supervisor is the session feed.
+  await page.goto('/supervisor?tab=inbox')
   // `item-inbox` (was `waiting-on-you`): the supervisor's queue became a plain
   // Item list when the needs_you aggregation was deleted, and the testid moved
   // with it. The spec kept asserting the old name and had been red ever since.

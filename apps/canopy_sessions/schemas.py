@@ -187,6 +187,12 @@ class SessionOut(Schema):
     waiting_on_you: bool = False
     # Push on every finished turn, rather than once the chat has gone quiet.
     notify_every_completion: bool = False
+    # The supervisor feed's two fields, filled only when the list is asked for
+    # them (`?reply=true`) — every other list caller would pay for text it never
+    # shows. The agent's most recent reply (trimmed to LAST_REPLY_CHARS), and
+    # whether the agent had the last word, i.e. it is the person's turn.
+    last_reply: str = ""
+    agent_spoke_last: bool = False
     # What this conversation's host requires of the runner it runs on (e.g.
     # `zdr`), so placement offers only runners whose `flags` include every one.
     # A malformed stored value comes back as an entry no runner can declare.

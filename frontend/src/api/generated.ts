@@ -9170,6 +9170,16 @@ export interface components {
              */
             readonly notify_every_completion: boolean;
             /**
+             * Last Reply
+             * @default
+             */
+            readonly last_reply: string;
+            /**
+             * Agent Spoke Last
+             * @default false
+             */
+            readonly agent_spoke_last: boolean;
+            /**
              * Runner Requirements
              * @default []
              */
@@ -14016,6 +14026,16 @@ export interface components {
              * @default false
              */
             readonly notify_every_completion: boolean;
+            /**
+             * Last Reply
+             * @default
+             */
+            readonly last_reply: string;
+            /**
+             * Agent Spoke Last
+             * @default false
+             */
+            readonly agent_spoke_last: boolean;
             /**
              * Runner Requirements
              * @default []
@@ -21779,6 +21799,7 @@ export interface operations {
                 readonly embed_app?: string;
                 readonly resource?: string;
                 readonly page_path?: string;
+                readonly reply?: boolean;
             };
             readonly header?: never;
             readonly path?: never;

@@ -10,4 +10,9 @@ describe("sessionsPath", () => {
     expect(sessionsPath("archived")).toBe("/api/canopy-sessions/?state=archived");
     expect(sessionsPath("all")).toBe("/api/canopy-sessions/?state=all");
   });
+
+  it("asks for the last reply only when the feed wants it", () => {
+    expect(sessionsPath("active", { reply: true })).toBe("/api/canopy-sessions/?reply=true");
+    expect(sessionsPath("all", { reply: true })).toBe("/api/canopy-sessions/?state=all&reply=true");
+  });
 });

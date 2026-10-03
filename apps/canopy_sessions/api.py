@@ -98,8 +98,9 @@ def _runner_status(runner) -> str | None:
     return None if runner is None else runner.live_status
 
 
-def _out(session: Session) -> dict:
+def _out(session: Session, *, reply: bool = False) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
+    last_reply, agent_spoke_last = services.last_reply_of(session, binding) if reply else ("", False)
     runner = binding.runner if (binding and binding.runner_id) else None
     # The name a human recognises for a runner-bound session is the emdash
     # task (what they see in emdash), not a thread_key hash a fallback title
@@ -163,6 +164,8 @@ def _out(session: Session) -> dict:
         "backfill_pending": bool(binding and binding.backfill_requested),
         "notify_every_completion": session.notify_every_completion,
         "runner_requirements": sorted(rr.requirements_of_session(session)),
+        "last_reply": last_reply,
+        "agent_spoke_last": agent_spoke_last,
     }
 
 
@@ -264,7 +267,7 @@ def list_sessions(
     request: HttpRequest, state: str = "active", limit: int = 200,
     source: str = "", opp_slug: str = "", opp_run_id: str = "",
     origin_key: str = "", embed_app: str = "",
-    resource: str = "", page_path: str = "",
+    resource: str = "", page_path: str = "", reply: bool = False,
 ):
     # The ONE unified list (Plan 4): every session the caller can see in their
     # workspaces — their own web sessions UNION any session that has a
@@ -350,7 +353,9 @@ def list_sessions(
     elif state == "archived":
         rows = rows.filter(Q(status=Session.ARCHIVED) | unseen)
 
-    out = [_out(s) for s in rows]
+    if reply:
+        rows = services.with_last_reply(rows)
+    out = [_out(s, reply=reply) for s in rows]
     # Waiting first, then running, then genuinely-most-recent. Sorting by
     # created_at made a dead repo and a live one interleave arbitrarily (both
     # "created" in the same report sweep); last_activity_at is the real signal.

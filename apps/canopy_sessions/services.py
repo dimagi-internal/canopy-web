@@ -126,6 +126,60 @@ def opening_of(session) -> str:
     return text if len(text) <= OPENING_CHARS else text[: OPENING_CHARS - 1].rstrip() + "…"
 
 
+#: How much of the agent's last reply the supervisor feed carries. Enough to
+#: read a turn's summary in place; the chat is one tap away for the rest.
+LAST_REPLY_CHARS = 2400
+
+_SPOKEN_ROLES = (Message.USER, Message.ASSISTANT)
+
+
+def with_last_reply(sessions):
+    """`sessions` annotated with `_last_speaker` (role of the newest user/agent
+    row) and `_last_reply` (text of the newest agent row) — the supervisor feed's
+    "is it my turn, and what did it say?", in the same query as the list."""
+    spoken = (
+        Message.objects.filter(session=OuterRef("pk"), role__in=_SPOKEN_ROLES)
+        .exclude(plaintext="")
+        .order_by("-turn_index")
+    )
+    return sessions.annotate(
+        _last_speaker=Subquery(spoken.values("role")[:1]),
+        _last_reply=Subquery(spoken.filter(role=Message.ASSISTANT).values("plaintext")[:1]),
+    )
+
+
+def _clip_reply(text: str) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= LAST_REPLY_CHARS else text[: LAST_REPLY_CHARS - 1].rstrip() + "…"
+
+
+def last_reply_from(rows) -> tuple[str, bool]:
+    """(the agent's last reply, did the agent have the last word) from
+    chronological (role, text) pairs. Tool and system rows are not speech."""
+    spoken = [(r, t) for r, t in rows if r in _SPOKEN_ROLES and (t or "").strip()]
+    if not spoken:
+        return "", False
+    reply = next((t for r, t in reversed(spoken) if r == Message.ASSISTANT), "")
+    return _clip_reply(reply), spoken[-1][0] == Message.ASSISTANT
+
+
+def last_reply_of(session, binding) -> tuple[str, bool]:
+    """The feed's reply for one session (needs `with_last_reply` for web chats).
+
+    The runner-reported tail wins when there is one: a discovered session holds
+    no Message rows until somebody opens it, and the tail is refreshed on every
+    report — so an emdash task that finished while nobody watched still shows
+    what it said.
+    """
+    tail = tail_as_messages(session, binding)
+    if tail:
+        return last_reply_from([(m.role, m.plaintext) for m in tail])
+    speaker = getattr(session, "_last_speaker", None)
+    if speaker is None:
+        return "", False
+    return _clip_reply(getattr(session, "_last_reply", None) or ""), speaker == Message.ASSISTANT
+
+
 def all_messages(session: Session):
     """Every message, chronological — the explicit "load full session" escape
     hatch. Returns (messages, has_more_before=False, oldest_turn_index)."""
