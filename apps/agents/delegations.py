@@ -305,6 +305,28 @@ def status(agent: Agent) -> dict:
     }
 
 
+def readiness(agent: Agent) -> tuple[str, str]:
+    """`(status, detail)` for the `github.<slug>` health check of a box that runs
+    this agent — the one verdict both the box's boot-time ask and every read of
+    the runner's health give. Reads the stored checks; never calls GitHub."""
+    st = status(agent)
+    if not st["set"]:
+        return "fail", (
+            f"owner {st['owner_email'] or '(none)'} has not lent {agent.slug} a GitHub "
+            f"token — /agents/{agent.slug}/settings → Credentials → GitHub")
+    if st["expired"]:
+        return "fail", f"token expired {st['expires_at']:%Y-%m-%d}"
+    if st["error"]:
+        return "fail", st["error"]
+    bad = next((c for c in st["checks"] if not c["ok"]), None)
+    if bad:
+        return "fail", f"{bad['repo']}: {bad['detail']}"
+    if st["expiring_soon"]:
+        return "warn", f"token expires {st['expires_at']:%Y-%m-%d} — replace it soon"
+    return "ok", f"acts as @{st['login']}" + (
+        f", can push and open pull requests on {st['repo']}" if st["repo"] else "")
+
+
 # ---- handing it to a turn ----------------------------------------------------
 
 def turn_agent(turn) -> Agent | None:

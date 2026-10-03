@@ -213,7 +213,21 @@ class RunnerOut(Schema):
     def resolve_health_checks(obj) -> dict[str, HealthCheck] | None:
         if not obj.health:
             return None
-        return {c["name"]: HealthCheck(**c) for c in obj.health.get("checks") or []}
+        checks = {c["name"]: HealthCheck(**c) for c in obj.health.get("checks") or []}
+        # `github.<slug>` is canopy-web's own delegation state, which the box only
+        # asks about at boot. Served from the box's report it stayed red for a
+        # token lent after that boot, under a fresh `health_received_at` (eva,
+        # 2026-10-03). So it is answered here, from the rows, on every read.
+        from apps.agents import delegations
+
+        from .services import agents_served_by
+
+        checks = {n: c for n, c in checks.items() if n != "github" and not n.startswith("github.")}
+        for agent in agents_served_by(obj):
+            status, detail = delegations.readiness(agent)
+            checks[f"github.{agent.slug}"] = HealthCheck(
+                name=f"github.{agent.slug}", status=status, detail=detail)
+        return checks
 
     @staticmethod
     def resolve_health_received_at(obj) -> dt.datetime | None:

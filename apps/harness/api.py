@@ -647,32 +647,11 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
     from apps.agents import delegations
 
     runner = _runner_or_404(request, runner_id)
-    # Agents that route here by their own list, or by following a workspace order.
-    agents = (
-        Agent.objects.filter(Q(runner_assignments__runner=runner)
-                             | Q(id__in=services.agents_following_runner(runner)))
-        .select_related("owner").distinct().order_by("slug")
-    )
     out = []
-    for agent in agents:
+    for agent in services.agents_served_by(runner):
         delegations.check_github(agent)
+        status, detail = delegations.readiness(agent)
         st = delegations.status(agent)
-        if not st["set"]:
-            status, detail = "fail", (
-                f"owner {st['owner_email'] or '(none)'} has not lent {agent.slug} a GitHub "
-                f"token — /agents/{agent.slug}/settings → Credentials → GitHub")
-        elif st["expired"]:
-            status, detail = "fail", f"token expired {st['expires_at']:%Y-%m-%d}"
-        elif st["error"]:
-            status, detail = "fail", st["error"]
-        elif any(not c["ok"] for c in st["checks"]):
-            bad = next(c for c in st["checks"] if not c["ok"])
-            status, detail = "fail", f"{bad['repo']}: {bad['detail']}"
-        elif st["expiring_soon"]:
-            status, detail = "warn", f"token expires {st['expires_at']:%Y-%m-%d} — replace it soon"
-        else:
-            status, detail = "ok", f"acts as @{st['login']}" + (
-                f", can push and open pull requests on {st['repo']}" if st["repo"] else "")
         out.append({"agent_slug": agent.slug, "status": status, "detail": detail,
                     "login": st.get("login", ""), "expires_at": st.get("expires_at")})
     return out
