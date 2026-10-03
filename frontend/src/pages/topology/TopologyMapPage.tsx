@@ -944,7 +944,13 @@ function RunnerPanel({
           {/* The supervisor's own runner detail: login, admins, flags, drills,
               pause and retire, each shown only to whoever the server says may
               use it. Routing is left to the agents, below and on the map. */}
-          <RunnerDetail key={detail.id} runner={detail} onChanged={onChanged} onRetired={onRetired} />
+          <RunnerDetail
+            key={detail.id}
+            runner={detail}
+            onChanged={onChanged}
+            onRetired={onRetired}
+            agentWorkspace={(slug) => map.agents.get(slug)?.workspace}
+          />
         </div>
       ) : (
         <div className="flex flex-col gap-1">

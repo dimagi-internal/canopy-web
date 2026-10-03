@@ -30,6 +30,7 @@ export function RunnerDetail({
   onChanged,
   onRetired,
   mapHref,
+  agentWorkspace,
 }: {
   runner: RunnerOut
   /** Omit to leave out the per-agent routing matrix. */
@@ -43,6 +44,9 @@ export function RunnerDetail({
   onRetired?: (runner: RunnerOut) => void
   /** Where this runner sits on the fleet map, when the viewer can open it. */
   mapHref?: string
+  /** Which workspace an agent lives in — lets a health check link to its fix.
+   *  Defaults to looking the slug up in `agents`. */
+  agentWorkspace?: (slug: string) => string | undefined
 }): JSX.Element {
   const online = runner.status === 'online'
   // Real availability, not last-known ready: a stale runner's ready flag is
@@ -196,7 +200,11 @@ export function RunnerDetail({
       {/* What the box says about its own features, and the refresh control.
           Above pause because it answers the first question on opening a box —
           "is it actually working" — which ready alone cannot. */}
-      <RunnerHealth runner={runner} onChanged={onChanged} />
+      <RunnerHealth
+        runner={runner}
+        onChanged={onChanged}
+        agentWorkspace={agentWorkspace ?? ((slug) => agents?.find((a) => a.slug === slug)?.workspace ?? undefined)}
+      />
 
       {/* Pause — the one control this view offers on the runner itself, and the
           only way to park a box from a phone (the alternative is the local
