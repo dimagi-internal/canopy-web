@@ -202,28 +202,42 @@ def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
 @router.post("/", response={201: AgentOut}, summary="Create or update an agent (upsert by slug)",)
 def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # The tenant is resolved BEFORE the row is written, because Agent.workspace is
-    # NOT NULL (agents/0013) — an agent is never briefly unhomed. Scope to the
-    # request's workspace (from the /w/{ws} prefix or the compat shim's default),
-    # falling back to the org default so an unchanged register() (e.g. Echo's)
-    # keeps working.
-    pinned = getattr(request, "workspace_slug", None)
-    home = (
-        wsvc.Workspace.objects.filter(slug=pinned).first() if pinned else None
-    ) or wsvc.ensure_default_workspace()
-    if home is None:
-        # Only reachable on a DB with no users at all, which an authenticated
-        # request cannot be. Fail with a real message rather than an IntegrityError.
-        raise HttpError(422, "no workspace available to home this agent in")
+    # NOT NULL (agents/0013) — an agent is never briefly unhomed. A home matters
+    # only on CREATE (`services.upsert_agent` applies it via create_defaults), so
+    # an EXISTING agent keeps the one it has: Echo re-registers flat on every
+    # sync, and that must neither move it nor depend on what its caller's
+    # default workspace happens to be.
+    #
+    # A new agent homes in the explicit `workspace` when given (the caller must
+    # be a member — same 404 as below), else in `wsvc.creation_workspace`: the
+    # membership-bound resolver every other create uses. It used to fall back to
+    # `ensure_default_workspace()`, which guessed the org default for any flat
+    # caller whether or not they were in it; now an unpinned create lands in a
+    # workspace the caller is actually in, or 422s when that is ambiguous.
+    existing = services.get_agent(payload.slug)
+    explicit = (payload.workspace or "").strip()
+    if existing is not None:
+        home = existing.workspace
+    elif explicit:
+        home = wsvc.Workspace.objects.filter(slug=explicit).first()
+        if home is None or not wsvc.is_member(request.user, explicit):
+            raise HttpError(404, f"workspace '{explicit}' not found")
+    else:
+        home = wsvc.creation_workspace(request)
+        if home is None:
+            raise HttpError(
+                422,
+                "no unambiguous workspace to home this agent in; "
+                "post to /api/w/{workspace}/agents/ or pass `workspace`",
+            )
 
     # This is the reshaping tier (same as _agent_for_write), but there is no
     # existing agent to resolve through _get_agent_or_404 on a create — so the
     # gate is against the TARGET workspace directly: an already-existing
     # agent's CURRENT home (this write reshapes that tenant's row, whatever
     # workspace the caller happens to default into), or `home` for a
-    # brand-new agent.
-    existing = services.get_agent(payload.slug)
-    target_ws = existing.workspace if existing is not None else home
-    role = wsvc.member_role(request.user, target_ws)
+    # brand-new agent — which is the same thing, `home` above.
+    role = wsvc.member_role(request.user, home)
     if existing is not None and role is None:
         # Resolve-then-authorize, the ordering `_agent_for_write` gets for free
         # from `_get_agent_or_404`. It has to be spelled out here because this
@@ -245,7 +259,6 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         raise HttpError(404, f"agent '{payload.slug}' not found")
     if not perms.role_allows(role, perms.AGENT_WORK):
         raise HttpError(403, "creating or editing an agent requires the editor role or above")
-    explicit = (payload.workspace or "").strip()
     # A MOVE also requires admin of the agent where it is — checked before
     # anything is written. Moving re-decides every gate that hangs off its
     # tenant (a workspace owner is an agent admin), so an editor (the self-join

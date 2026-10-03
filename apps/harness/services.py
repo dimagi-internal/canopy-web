@@ -2292,11 +2292,9 @@ def _thread_session(agent, project, workspace, thread_key):
     str(session.id) — bind that exact existing Session. Otherwise create a durable
     origin=runner Session for the phone/agent/project thread.
 
-    Session.workspace is required (not nullable) but Agent.workspace IS nullable
-    ("migration safety" per apps/agents/models.py) — an agent thread with no
-    workspace of its own falls back to the tenancy default, mirroring every other
-    app's `wsvc.ensure_default_workspace()` fallback (apps/projects/api.py et al),
-    rather than crashing the record-session call with a NOT NULL violation."""
+    The Session's workspace is the one the caller pinned, else the agent's own
+    home (Agent.workspace is NOT NULL). A thread with neither has no tenant, and
+    guessing one would file it in a workspace nobody chose — so it fails loudly."""
     from apps.canopy_sessions.models import Session
 
     try:
@@ -2305,10 +2303,13 @@ def _thread_session(agent, project, workspace, thread_key):
         existing = None
     if existing is not None:
         return existing
+    home = workspace or (agent.workspace if agent else None)
+    if home is None:
+        raise ValueError("a new thread session needs an agent or a workspace")
     return Session.objects.create(
         agent=agent,
         project=project or "",
-        workspace=workspace or (agent.workspace if agent else None) or wsvc.ensure_default_workspace(),
+        workspace=home,
         origin=Session.ORIGIN_RUNNER,
         title=thread_key[:200],
     )
@@ -2345,6 +2346,8 @@ def email_thread_session(agent, thread_id: str, subject: str = ""):
     """
     from apps.canopy_sessions.models import Session
 
+    if agent is None:
+        raise ValueError("an email thread session belongs to an agent")
     key = f"{EMAIL_THREAD_PREFIX}{thread_id}"
     # A KEY-PATH lookup, not `metadata__contains`: `contains` on a JSONField is
     # PostgreSQL-only and raises NotSupportedError on SQLite, so the production
@@ -2356,7 +2359,7 @@ def email_thread_session(agent, thread_id: str, subject: str = ""):
     )
     if existing is not None:
         return existing
-    workspace = (agent.workspace if agent else None) or wsvc.ensure_default_workspace()
+    workspace = agent.workspace  # NOT NULL: an agent always has its one home
     return Session.objects.create(
         agent=agent,
         workspace=workspace,
