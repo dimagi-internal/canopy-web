@@ -14,6 +14,8 @@ export ALLOWED_HOSTS="localhost,127.0.0.1"
 E2E_API_PORT="${E2E_API_PORT:-8000}"
 rm -f e2e.sqlite3 frontend/e2e/.auth/session.txt frontend/e2e/.auth/session2.txt \
       frontend/e2e/.auth/mp-session-id.txt
-uv run python manage.py migrate --noinput >/tmp/e2e-migrate.log 2>&1
+# Per-user log for the same shared-Mac reason as the port: a fixed /tmp path
+# left by the other account is not writable, and `set -e` then kills the suite.
+uv run python manage.py migrate --noinput >"${TMPDIR:-/tmp}/e2e-migrate-$(id -un).log" 2>&1
 uv run python manage.py shell -c "exec(open('frontend/e2e/seed.py').read())"
 exec uv run uvicorn config.asgi:application --host 127.0.0.1 --port "$E2E_API_PORT"

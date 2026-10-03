@@ -3,7 +3,18 @@ import { useSearchParams } from 'react-router-dom'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { listOpenItems, type ItemOut } from '@/api/items'
 import { listRunners, listUnclaimableTurns, retireRunner, type RunnerOut, type UnclaimableTurn } from '@/api/harness'
+import { Menu } from 'lucide-react'
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from 'canopy-ui/ui'
 import { RunnerAlerts } from '@/components/supervisor/RunnerAlerts'
+import { runnerAlerts } from '@/components/supervisor/runnerAlertRules'
+import { SessionFeed } from '@/components/supervisor/SessionFeed'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
@@ -13,7 +24,7 @@ import { ChatSessionsPanel } from '@/components/chat/ChatSessionsPanel'
 import { InstallPrompt } from '@/pwa/InstallPrompt'
 import { PushToggle } from '@/pwa/PushToggle'
 import { setBadge } from '@/pwa/usePush'
-import { Skeleton, Tabs, TabsList, TabsTrigger, TabsContent } from 'canopy-ui'
+import { Skeleton } from 'canopy-ui'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { roleAllows } from '@/lib/workspaceRoles'
 
@@ -25,9 +36,23 @@ function BandError({ message }: { message: string }): JSX.Element {
   )
 }
 
+// The supervisor's screens. The feed is home; the rest live behind the menu.
+const SCREENS = [
+  { id: 'feed', label: 'Feed' },
+  { id: 'inbox', label: 'Inbox' },
+  { id: 'sessions', label: 'Sessions' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'runners', label: 'Runners' },
+] as const
+type Screen = (typeof SCREENS)[number]['id']
+
 // The ONE supervisor surface (spec 2026-07-14). Three consumers will load this
 // same route: the phone as an installed PWA, the menubar's WKWebView (Phase 5),
 // and a desktop browser. Phone-first layout — a single column that widens.
+//
+// Home is a FEED of sessions that finished a turn and need your next prompt,
+// readable and answerable in place (Jonathan, 2026-10-03). Inbox, Sessions,
+// Agents and Runners are separate screens reached from the header menu.
 export default function SupervisorPage(): JSX.Element {
   const [agents, setAgents] = useState<AgentOut[] | null>(null)
   const [runners, setRunners] = useState<RunnerOut[] | null>(null)
@@ -152,15 +177,15 @@ export default function SupervisorPage(): JSX.Element {
 
   const [searchParams, setSearchParams] = useSearchParams()
   const raw = searchParams.get('tab')
-  // Unknown / absent value falls back to Inbox — never a blank tab, and no param
-  // means Inbox (what push targets). Routing edits moved onto the Runners tab
-  // (RunnerDetail's per-agent RunnerAssignments editor) — there is no
-  // standalone Routing tab anymore.
-  const tab = raw === 'sessions' || raw === 'agents' || raw === 'runners' ? raw : 'inbox'
-  const onTab = (value: string) =>
-    // Push history (not replace) so the phone back button steps through tabs.
-    // Inbox is the bare URL; the others carry ?tab=.
-    setSearchParams(value === 'inbox' ? {} : { tab: value })
+  // The bare URL is the FEED — sessions waiting for your next prompt. Every
+  // other view is its own screen behind the menu, addressed by ?tab= (kept as
+  // the param name so existing deep links — Settings → Runners, the topology
+  // map, item pushes — still land). Unknown values fall back to the feed.
+  const tab: Screen = SCREENS.some((s) => s.id === raw) ? (raw as Screen) : 'feed'
+  const go = (value: Screen) =>
+    // Push history (not replace) so the phone back button steps back to the feed.
+    setSearchParams(value === 'feed' ? {} : { tab: value })
+  const alertCount = runnerAlerts(renderRunners).length + stuck.length
 
   // One runner, by link: `?tab=runners&runner=<id>` opens its detail — what
   // Settings → Runners points at, so "where is this box's Claude login" has an
@@ -187,95 +212,116 @@ export default function SupervisorPage(): JSX.Element {
     setSearchParams(r ? { tab: 'runners', runner: r.id } : { tab: 'runners' })
   }
 
+  const screen = SCREENS.find((s) => s.id === tab)
+  const badgeFor = (id: Screen): number => (id === 'inbox' ? totalWaiting : id === 'runners' ? alertCount : 0)
+  const menuBadge = totalWaiting + alertCount
+
   return (
-    // `max-w-2xl` (672px) is the right measure for the Inbox, whose cards are
-    // prose you read. It was applied to the whole page, so on a 1440 laptop —
-    // one of this surface's three declared consumers, alongside the phone PWA
-    // and the menubar — the runner and session tables also sat in a 672px column
-    // with the right half of the window empty. Prose keeps its measure; the
-    // tables get the room from `lg` up.
+    // `max-w-2xl` (672px) is the right measure for the feed and the Inbox, whose
+    // cards are prose you read. The runner and session tables get the room from
+    // `lg` up — on a 1440 laptop (one of this surface's three consumers, beside
+    // the phone PWA and the menubar) a 672px table leaves half the window empty.
     <div
-      className={`mx-auto flex w-full flex-col gap-4 p-4 ${tab === 'inbox' ? 'max-w-2xl' : 'max-w-2xl lg:max-w-5xl'}`}
+      className={`mx-auto flex w-full flex-col gap-4 p-4 ${tab === 'feed' || tab === 'inbox' ? 'max-w-2xl' : 'max-w-2xl lg:max-w-5xl'}`}
       data-testid="supervisor-page"
     >
-      <header>
-        <h1 className="text-lg font-semibold text-foreground">Supervisor</h1>
-        <p className="mt-0.5 text-[12px] text-muted-foreground">Your fleet, and what it needs from you.</p>
+      <header className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          {tab === 'feed' ? (
+            <>
+              <h1 className="text-lg font-semibold text-foreground">Supervisor</h1>
+              <p className="mt-0.5 text-[12px] text-muted-foreground">Sessions waiting for your next prompt.</p>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => go('feed')}
+                className="text-[12px] text-muted-foreground hover:text-foreground"
+                data-testid="back-to-feed"
+              >
+                ← Feed
+              </button>
+              <h1 className="text-lg font-semibold text-foreground">{screen?.label}</h1>
+            </>
+          )}
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button variant="outline" size="sm" aria-label="Supervisor menu" data-testid="supervisor-menu" />}
+          >
+            <Menu className="h-4 w-4" />
+            {menuBadge > 0 && (
+              <span className="ml-1 rounded bg-primary/15 px-1.5 text-[11px] font-medium text-primary">{menuBadge}</span>
+            )}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-44">
+            <DropdownMenuItem onClick={() => go('feed')} data-testid="menu-feed">
+              Feed
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {SCREENS.filter((s) => s.id !== 'feed').map((s) => (
+              <DropdownMenuItem key={s.id} onClick={() => go(s.id)} data-testid={`menu-${s.id}`}>
+                <span className="flex-1">{s.label}</span>
+                {badgeFor(s.id) > 0 && (
+                  <span className="ml-3 rounded bg-primary/15 px-1.5 text-[11px] font-medium text-primary">
+                    {badgeFor(s.id)}
+                  </span>
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </header>
 
-      {/* LOUD alert: a queued turn addressed to an agent/repo NOTHING online declares
-          sits forever with no signal (one sat 12h). Make the stall visible. */}
-      {stuck.length > 0 && (
-        <div
-          role="alert"
-          data-testid="unclaimable-turns-alert"
-          className="rounded-lg border-2 border-warning bg-warning/15 p-3 text-warning"
-        >
-          <p className="text-[13px] font-bold uppercase tracking-wide">
-            {stuck.every((t) => t.kind === 'offline')
-              ? `⚠ ${stuck.length} queued turn${stuck.length === 1 ? '' : 's'} waiting on an unreachable runner`
-              : `⚠ ${stuck.length} queued turn${stuck.length === 1 ? '' : 's'} no runner can claim`}
-          </p>
-          <ul className="mt-1 space-y-1">
-            {stuck.slice(0, 5).map((t) => (
-              <li key={t.turn_id} className="text-[13px] leading-snug">
-                <span className="rounded bg-warning/20 px-1 font-mono font-semibold">{t.target}</span>{' '}
-                {t.prompt ? <span className="opacity-90">“{t.prompt}”</span> : null}
-                <span className="block text-[12px] opacity-90">{t.reason}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-1.5 text-[12px] leading-snug opacity-90">
-            {stuck.every((t) => t.kind === 'offline')
-              ? 'These will run as soon as a runner reconnects — no action needed unless it stays.'
-              : 'Declare it on a runner (Runners tab) or cancel the turn — it will not run otherwise.'}
-          </p>
-        </div>
+      {/* Feed — finished sessions waiting for the next prompt. Fleet problems
+          get ONE line here pointing at Runners, not the full banners: the feed
+          is for moving work forward, but a stalled queue must not go unseen. */}
+      {tab === 'feed' && (
+        <>
+          {alertCount > 0 && (
+            <button
+              type="button"
+              role="alert"
+              onClick={() => go('runners')}
+              data-testid="feed-fleet-alert"
+              className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-left text-[12px] font-medium text-warning hover:bg-warning/15"
+            >
+              ⚠ {alertCount} fleet alert{alertCount === 1 ? '' : 's'} — stuck turns or runner problems. View runners →
+            </button>
+          )}
+          {totalWaiting > 0 && (
+            <button
+              type="button"
+              onClick={() => go('inbox')}
+              data-testid="feed-inbox-link"
+              className="rounded-lg border border-border bg-card px-3 py-2 text-left text-[12px] text-foreground-secondary hover:bg-muted"
+            >
+              {totalWaiting} item{totalWaiting === 1 ? '' : 's'} in your inbox — reviews and questions →
+            </button>
+          )}
+          <SessionFeed agents={agents} />
+        </>
       )}
 
-      <RunnerAlerts runners={renderRunners} retiringId={retiring} onRetire={handleRetire} />
+      {/* Inbox — the fleet's open items, actionable in place. */}
+      {tab === 'inbox' &&
+        (errs.items ? (
+          <BandError message={errs.items} />
+        ) : items === null ? (
+          <Skeleton className="h-24 w-full" />
+        ) : (
+          <ItemInbox items={items} onActed={reloadItems} />
+        ))}
 
-      <Tabs value={tab} onValueChange={onTab} className="gap-4">
-        <TabsList className="w-full">
-          <TabsTrigger value="inbox" data-testid="tab-inbox">
-            Inbox
-            {totalWaiting > 0 && (
-              <span className="ml-1 rounded bg-primary/15 px-1.5 py-0.5 text-[11px] font-medium text-primary">
-                {totalWaiting}
-              </span>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="sessions" data-testid="tab-sessions">
-            Sessions
-          </TabsTrigger>
-          <TabsTrigger value="agents" data-testid="tab-agents">
-            Agents
-          </TabsTrigger>
-          <TabsTrigger value="runners" data-testid="tab-runners">
-            Runners
-          </TabsTrigger>
-        </TabsList>
+      {/* Sessions — ONE unified list (web-started + runner-discovered). Every row
+          opens into the streaming ChatPanel; "New chat with <agent> or project"
+          is the creation entry point. */}
+      {tab === 'sessions' && <ChatSessionsPanel agents={agents ?? undefined} heading="All sessions" />}
 
-        {/* Inbox — the fleet's open items, actionable in place (the act-now surface). */}
-        <TabsContent value="inbox" className="flex flex-col gap-3">
-          {errs.items ? (
-            <BandError message={errs.items} />
-          ) : items === null ? (
-            <Skeleton className="h-24 w-full" />
-          ) : (
-            <ItemInbox items={items} onActed={reloadItems} />
-          )}
-        </TabsContent>
-
-        {/* Sessions — ONE unified list (web-started + runner-discovered are the same
-            Session now). Every row opens into the streaming ChatPanel; "New chat with
-            <agent> or project" stays as the creation entry point. */}
-        <TabsContent value="sessions" className="flex flex-col gap-4">
-          <ChatSessionsPanel agents={agents ?? undefined} heading="Sessions" />
-        </TabsContent>
-
-        {/* Agents — fleet KPIs + the one-time setup prompts. */}
-        <TabsContent value="agents" className="flex flex-col gap-4">
+      {/* Agents — fleet KPIs + the one-time setup prompts. */}
+      {tab === 'agents' && (
+        <div className="flex flex-col gap-4">
           {errs.agents ? (
             <BandError message={errs.agents} />
           ) : agents === null ? (
@@ -290,13 +336,46 @@ export default function SupervisorPage(): JSX.Element {
               ))}
             </div>
           )}
-
           <InstallPrompt />
           <PushToggle />
-        </TabsContent>
+        </div>
+      )}
 
-        {/* Runners — fleet runner health + which agents prioritize each kind. */}
-        <TabsContent value="runners" className="flex flex-col gap-4">
+      {/* Runners — fleet runner health, the LOUD alerts, and per-runner detail. */}
+      {tab === 'runners' && (
+        <div className="flex flex-col gap-4">
+          {/* LOUD alert: a queued turn addressed to an agent/repo NOTHING online
+              declares sits forever with no signal (one sat 12h). */}
+          {stuck.length > 0 && (
+            <div
+              role="alert"
+              data-testid="unclaimable-turns-alert"
+              className="rounded-lg border-2 border-warning bg-warning/15 p-3 text-warning"
+            >
+              <p className="text-[13px] font-bold uppercase tracking-wide">
+                {stuck.every((t) => t.kind === 'offline')
+                  ? `⚠ ${stuck.length} queued turn${stuck.length === 1 ? '' : 's'} waiting on an unreachable runner`
+                  : `⚠ ${stuck.length} queued turn${stuck.length === 1 ? '' : 's'} no runner can claim`}
+              </p>
+              <ul className="mt-1 space-y-1">
+                {stuck.slice(0, 5).map((t) => (
+                  <li key={t.turn_id} className="text-[13px] leading-snug">
+                    <span className="rounded bg-warning/20 px-1 font-mono font-semibold">{t.target}</span>{' '}
+                    {t.prompt ? <span className="opacity-90">“{t.prompt}”</span> : null}
+                    <span className="block text-[12px] opacity-90">{t.reason}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-[12px] leading-snug opacity-90">
+                {stuck.every((t) => t.kind === 'offline')
+                  ? 'These will run as soon as a runner reconnects — no action needed unless it stays.'
+                  : 'Declare it on a runner (below) or cancel the turn — it will not run otherwise.'}
+              </p>
+            </div>
+          )}
+
+          <RunnerAlerts runners={renderRunners} retiringId={retiring} onRetire={handleRetire} />
+
           {selectedRunner ? (
             <RunnerDetail
               runner={selectedRunner}
@@ -316,8 +395,8 @@ export default function SupervisorPage(): JSX.Element {
           ) : (
             <RunnerStatus runners={renderRunners} onSelect={selectRunner} />
           )}
-        </TabsContent>
-      </Tabs>
+        </div>
+      )}
     </div>
   )
 }

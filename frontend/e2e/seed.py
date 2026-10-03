@@ -221,6 +221,42 @@ mp_session = CanopySession.objects.create(
 )
 SessionParticipant.objects.create(session=mp_session, user=mp_user, role=SessionParticipant.EDITOR)
 
+# The supervisor feed: sessions that finished a turn and are waiting for the next
+# prompt. One web chat (its reply lives in Message rows) and one emdash task
+# nobody has opened (its reply lives only in the runner-reported tail) — the two
+# sources `services.last_reply_of` reads.
+from apps.canopy_sessions.models import Message as CanopyMessage
+feed_web = CanopySession.objects.create(
+    workspace=ws, agent=_hal, title="Fix the flaky supervisor test", created_by=user,
+    status=CanopySession.ACTIVE, origin=CanopySession.ORIGIN_WEB,
+)
+for _i, (_role, _text) in enumerate([
+    ("user", "The supervisor e2e is flaky on CI — find out why and fix it."),
+    ("assistant",
+     "## Fixed\n\nThe flake was a **timezone bug** in `relativeTime`: CI runs in UTC, so a "
+     "session from 23:30 local read as *tomorrow*.\n\n- Pinned the clock in the spec\n"
+     "- Added a unit test for the midnight edge\n\nPR is green. **Merge it?**"),
+]):
+    CanopyMessage.objects.create(session=feed_web, turn_index=_i, role=_role,
+                                 plaintext=_text, content={"text": _text})
+feed_runner = CanopySession.objects.create(
+    workspace=ws, project="canopy-web", title="labs-perf-audit",
+    status=CanopySession.ACTIVE, origin=CanopySession.ORIGIN_RUNNER,
+)
+RunnerBinding.objects.create(
+    session=feed_runner, runner=_runner, session_key="labs-perf-audit", status="idle",
+    agent_status="awaiting-input", last_interacted_at=_tz.now() - dt.timedelta(minutes=12),
+    # Reported just now, as a real report stamps it — without this `unseen_q`
+    # (staleness.py) archives it on read and it never reaches the feed.
+    live_seen_at=_tz.now(),
+    tail=[
+        {"role": "user", "text": "Why is the audit page slow?"},
+        {"role": "assistant", "text":
+            "Two N+1 queries on the visit table — **4.1s → 0.3s** after `select_related`. "
+            "Want me to open the PR, or check the export path first?"},
+    ],
+)
+
 
 def _mint(u):
     st = SessionStore()
