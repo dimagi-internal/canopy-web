@@ -224,3 +224,32 @@ def test_an_agent_with_its_own_order_is_told_what_it_would_follow(tree):
     c.force_login(jj)
     body = c.get("/api/w/connect/agents/hal/default-order").json()
     assert body["own"] is True and body["workspace"] == "dimagi" and body["runners"] == []
+
+
+def test_a_divisions_agent_takes_its_owners_box_from_the_parent_workspace(tree):
+    """The fleet's boxes live in `dimagi`, its agents in `connect`. Saving an
+    agent's own list through the tenant URL refused the caller's OWN box because
+    it lived one workspace up (found on labs, 2026-10-03)."""
+    jj, _dimagi, connect, (_jj_box, _hal_box, cloud) = tree
+    Runner.objects.filter(pk=cloud.pk).update(workspace_id="dimagi")
+    Agent.objects.create(slug="echo", name="Echo", workspace=connect, owner=jj)
+    c = Client()
+    c.force_login(jj)
+    r = c.put("/api/w/connect/agents/echo/runners",
+              {"runners": [{"runner_id": str(cloud.pk), "enabled": True}]}, content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert [x["runner_name"] for x in r.json()] == ["cloud-1"]
+
+
+def test_someone_elses_box_in_the_parent_is_still_refused(tree):
+    jj, dimagi, connect, _boxes = tree
+    other = _user("other")
+    WorkspaceMembership.objects.create(workspace=dimagi, user=other, role=WorkspaceMembership.EDITOR)
+    box = _runner(other, "other-mbp")
+    Runner.objects.filter(pk=box.pk).update(workspace_id="dimagi")
+    Agent.objects.create(slug="echo", name="Echo", workspace=connect, owner=jj)
+    c = Client()
+    c.force_login(jj)
+    r = c.put("/api/w/connect/agents/echo/runners",
+              {"runners": [{"runner_id": str(box.pk), "enabled": True}]}, content_type="application/json")
+    assert r.status_code == 422
