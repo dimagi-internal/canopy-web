@@ -1685,6 +1685,8 @@ def list_turns(
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
     qs = Turn.objects.select_related(
         "agent", "claimed_by", "initiator_user", "initiator_contact",
+        # A chat turn's session and its agent are read per row by TurnOut.
+        "chat_session", "chat_session__agent",
     ).order_by("-created_at")
     if agent:
         # Resolve the TARGET before filtering. The tenant filter below would

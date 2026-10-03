@@ -78,6 +78,17 @@ def redact(turns, user):
     memory only, and mark it (`content_hidden`) so a page can say why rather
     than show an empty prompt. Returns the same iterable for chaining."""
     memo: dict = {}
+    # Every chat turn's answer in ONE query, through the same chat ACL
+    # `can_read_turn_content` asks per row. Per row it was a session load and a
+    # read check each — ~3 queries a turn, 2,468 for one page on labs
+    # (SLOW_REQUEST, 2026-10-03).
+    chat_ids = {t.chat_session_id for t in turns if t.chat_session_id}
+    if chat_ids and getattr(user, "is_authenticated", False):
+        from apps.canopy_sessions import access as session_access
+
+        readable = session_access.readable_ids(user, chat_ids)
+        for sid in chat_ids:
+            memo[("chat", sid)] = sid in readable
     for t in turns:
         if can_read_turn_content(user, t, memo):
             t.content_hidden = False

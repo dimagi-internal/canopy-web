@@ -174,6 +174,16 @@ def readable_sessions(user, *, workspace_slugs=None):
             .filter(visible_session_q(user)).distinct())
 
 
+def readable_ids(user, session_ids) -> set:
+    """Which of `session_ids` `user` may read — `can_read` for a whole list, in
+    one query. The same predicate (`readable_sessions`), so it cannot disagree
+    with `can_read`; it exists because a page of turns asked once per row."""
+    ids = {i for i in session_ids if i}
+    if not ids or not getattr(user, "is_authenticated", False):
+        return set()
+    return set(readable_sessions(user).filter(pk__in=ids).values_list("pk", flat=True))
+
+
 def can_read(user, session) -> bool:
     if session is None or not getattr(user, "is_authenticated", False):
         return False

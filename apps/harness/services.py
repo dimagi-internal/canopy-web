@@ -576,18 +576,27 @@ class InheritedOrder:
     cannot_hold: list  # boxes whose owner is not one of the agent's admins
 
 
-def agents_following_runner(runner: Runner) -> set:
+def agents_following_runner(runner: Runner, among=None) -> set:
     """Agents that reach `runner` through an INHERITED order: no order of their
     own, and the order they follow lists it as usable for them. The claim's
-    target filter joins assignment rows, which an inheriting agent has none of."""
+    target filter joins assignment rows, which an inheriting agent has none of.
+
+    `among` narrows the question to those agent ids — the claim passes the agents
+    with queued work, so an idle poll (the common case, every box every few
+    seconds) asks it of nobody rather than of the whole tree."""
     from apps.agents.models import Agent
 
+    if among is not None and not among:
+        return set()
     listed = set(WorkspaceRunnerOrder.objects.filter(runner=runner, enabled=True)
                  .values_list("workspace_id", flat=True))
     if not listed:
         return set()
     scope = listed | wsvc.descendant_slugs(listed)
-    candidates = set(Agent.objects.filter(workspace_id__in=scope).values_list("id", flat=True))
+    agents = Agent.objects.filter(workspace_id__in=scope)
+    if among is not None:
+        agents = agents.filter(id__in=among)
+    candidates = set(agents.values_list("id", flat=True))
     return {aid for aid, inh in inherited_orders(candidates).items()
             if any(r.id == runner.id for r in inh.runners)}
 
@@ -601,6 +610,23 @@ def default_order_source(agent) -> str | None:
     have = set(WorkspaceRunnerOrder.objects.filter(workspace_id__in=chain, enabled=True)
                .values_list("workspace_id", flat=True))
     return next((s for s in chain if s in have), None)
+
+
+def _ancestor_chains(slugs) -> dict:
+    """{slug: [slug, parent, grandparent, …]} from ONE read of the workspace tree
+    (a small table), instead of a query per level per workspace."""
+    from apps.workspaces.models import MAX_DEPTH, Workspace
+
+    parent = dict(Workspace.objects.values_list("slug", "parent_id"))
+    out: dict = {}
+    for slug in slugs:
+        chain, seen, cur = [slug], {slug}, parent.get(slug)
+        while cur and cur not in seen and len(chain) <= MAX_DEPTH:
+            chain.append(cur)
+            seen.add(cur)
+            cur = parent.get(cur)
+        out[slug] = chain
+    return out
 
 
 def agents_with_own_order(agent_ids) -> set:
@@ -638,9 +664,7 @@ def inherited_orders(agent_ids) -> dict:
     agents = list(Agent.objects.filter(id__in=agent_ids - own).select_related("workspace"))
     if not agents:
         return {}
-    chains: dict = {}
-    for ws in {a.workspace for a in agents if a.workspace_id}:
-        chains[ws.slug] = [ws.slug, *ws.ancestor_slugs()]
+    chains = _ancestor_chains({a.workspace_id for a in agents if a.workspace_id})
     orders = load_workspace_orders({s for chain in chains.values() for s in chain})
     held: dict = {}  # (agent_id, owner_id) -> bool; owners are few
 
@@ -839,7 +863,10 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q
     # so they share the join — a disabled row for this runner must not match
     # via some OTHER enabled row on the same agent.
     agent_leg = Q(agent__runner_assignments__runner=runner, agent__runner_assignments__enabled=True)
-    following = agents_following_runner(runner)
+    # Only agents with queued work can be targeted, so only they need asking.
+    queued_agents = set(Turn.objects.filter(status=Turn.QUEUED, agent__isnull=False)
+                        .values_list("agent_id", flat=True).distinct())
+    following = agents_following_runner(runner, among=queued_agents)
     if following:
         agent_leg |= Q(agent_id__in=following)
     if exclude_slugs:
@@ -2702,6 +2729,21 @@ def replace_reported_sessions(
     # Wrapping the loop is the real fix: the lock was always meant to serialize
     # concurrent reports for a task, and without a transaction it never did.
     with transaction.atomic():
+        # Every candidate binding for this report, locked and loaded in ONE query
+        # with its session, instead of up to two locked lookups plus a lazy
+        # session load per reported task — that loop was ~8 queries a session,
+        # ~160 a report, from every box every ~10s, all on the one process that
+        # also serves every page (SLOW_REQUEST, 2026-10-03). Same predicate as the
+        # per-task lookup below, keyed by (task, project) for the same reason.
+        candidates: dict[tuple[str, str], RunnerBinding] = {}
+        if deduped:
+            host_match_all = Q(runner__isnull=True) & Q(host=runner.host) & ~Q(host="")
+            for row in (RunnerBinding.objects.select_for_update(of=("self",))
+                        .select_related("session")
+                        .filter(session_key__in=[x.emdash_task for x in deduped])
+                        .filter(Q(runner=runner) | host_match_all)
+                        .order_by("pk")):
+                candidates.setdefault((row.session_key, row.emdash_project), row)
         for s in deduped:
             # Find this runner's binding for the task WITHOUT depending on the live
             # `runner` FK — the clear step below nulls it for anything that fell off the
@@ -2716,13 +2758,7 @@ def replace_reported_sessions(
             # would otherwise be recoverable by any runner whose own host is "" (two
             # un-heartbeated runners would fuse). `runner=runner` still covers a
             # host="" binding this runner currently owns, so that case is unaffected.
-            host_match = Q(runner__isnull=True) & Q(host=runner.host) & ~Q(host="")
             project = _reported_project(s)
-            by_key = (
-                RunnerBinding.objects.select_for_update()
-                .filter(session_key=s.emdash_task)
-                .filter(Q(runner=runner) | host_match)
-            )
             # The project is HALF THE KEY, not a detail carried alongside it (see
             # RunnerBinding.emdash_project). Matching on the name alone fused two
             # repos' same-named tasks into one row.
@@ -2734,9 +2770,9 @@ def replace_reported_sessions(
             # then FILLED, exactly as `host` and `thread_key` are below. It cannot
             # re-open the hole it closes: a blank is adopted once and is no longer
             # blank, and a binding carrying a DIFFERENT project is never matched.
-            binding = by_key.filter(emdash_project=project).first()
+            binding = candidates.get((s.emdash_task, project))
             if binding is None and project:
-                binding = by_key.filter(emdash_project="").first()
+                binding = candidates.pop((s.emdash_task, ""), None)
             if binding is None:
                 # Tenant AND agent follow the project when it names an agent —
                 # not the runner. A runner is a machine serving several agents
@@ -2778,10 +2814,12 @@ def replace_reported_sessions(
                 # The enclosing `transaction.atomic()` (see below) is what makes the
                 # select_for_update above legal at all; this inner block only stops a
                 # retitle failure from rolling the whole report back.
+                # The cheap comparison first: in the steady state the title already
+                # IS the task name, and `_title_is_derived` reads a message to decide.
                 try:
-                    with transaction.atomic():
-                        if _title_is_derived(binding.session, binding.thread_key or ""):
-                            if binding.session.title != s.emdash_task:
+                    if binding.session.title != s.emdash_task[:200]:
+                        with transaction.atomic():
+                            if _title_is_derived(binding.session, binding.thread_key or ""):
                                 binding.session.title = s.emdash_task[:200]
                                 binding.session.save(update_fields=["title"])
                 except Exception:  # noqa: BLE001 — a title must never cost liveness
