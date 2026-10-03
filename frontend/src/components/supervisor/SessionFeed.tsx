@@ -5,7 +5,7 @@ import { closeSession, listSessions, sendMessage, type ChatSession } from '@/api
 import type { AgentOut } from '@/api/agents'
 import { Markdown } from '@/components/Markdown'
 import { relativeTime } from '@/components/activity/turnLog'
-import { closeIntent, closeResultMessage } from '@/components/chat/closeAction'
+import { CLOSE_POLL_MS, closeIntent, closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, sourceKey } from './feedRules'
@@ -30,12 +30,25 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
   const [handled, setHandled] = useState<Map<string, string>>(() => new Map())
   // The agent/project chip filter (null = All).
   const [source, setSource] = useState<string | null>(null)
+  // Closes relayed to a runner and not yet confirmed (id -> when), and the ones
+  // the runner never confirmed. Same contract as the Sessions list's ×: the card
+  // stays, marked "Closing…", until the runner has deleted the emdash task and
+  // its report retires the session — hiding it at once would be a lie whenever
+  // the delete failed.
+  const [closing, setClosing] = useState<Record<string, number>>({})
+  const [stuck, setStuck] = useState<Set<string>>(() => new Set())
 
   const reload = useCallback(() => {
     listSessions('active', { reply: true })
       .then((rows) => {
         setSessions(rows)
         setError(null)
+        setClosing((prev) => {
+          if (Object.keys(prev).length === 0) return prev
+          const { pending, stuck: late } = settleClosing(prev, rows, Date.now())
+          if (late.length > 0) setStuck((s) => new Set([...s, ...late]))
+          return pending
+        })
         setHandled((prev) => {
           if (prev.size === 0) return prev
           const stamp = new Map(rows.map((s) => [s.id, s.last_activity_at] as const))
@@ -56,6 +69,24 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
       window.removeEventListener('focus', onFocus)
     }
   }, [reload])
+
+  // Watch relayed closes through quickly rather than leaving them to the 20s poll.
+  const awaitingClose = Object.keys(closing).length > 0
+  useEffect(() => {
+    if (!awaitingClose) return
+    const id = window.setInterval(reload, CLOSE_POLL_MS)
+    return () => window.clearInterval(id)
+  }, [awaitingClose, reload])
+
+  const markClosing = useCallback((s: ChatSession) => {
+    setStuck((prev) => {
+      if (!prev.has(s.id)) return prev
+      const next = new Set(prev)
+      next.delete(s.id)
+      return next
+    })
+    setClosing((prev) => ({ ...prev, [s.id]: Date.now() }))
+  }, [])
 
   const agentName = useMemo(() => {
     const by = new Map((agents ?? []).map((a) => [a.slug, a.name]))
@@ -147,7 +178,11 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
             }
             age={relativeTime(s.last_activity_at, now)}
             compact={compact}
+            closing={s.id in closing}
+            stuck={stuck.has(s.id)}
             onHandled={markHandled}
+            onClosing={markClosing}
+            onClosed={reload}
           />
         ))
       )}
@@ -169,13 +204,23 @@ function FeedCard({
   label,
   age,
   compact,
+  closing,
+  stuck,
   onHandled,
+  onClosing,
+  onClosed,
 }: {
   session: ChatSession
   label: string
   age: string
   compact: boolean
+  /** A close was relayed to the runner and it has not confirmed yet. */
+  closing: boolean
+  /** The runner never confirmed a close (CLOSE_CONFIRM_TIMEOUT_MS). */
+  stuck: boolean
   onHandled: (s: ChatSession) => void
+  onClosing: (s: ChatSession) => void
+  onClosed: () => void
 }): JSX.Element {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState<'send' | 'done' | null>(null)
@@ -208,9 +253,9 @@ function FeedCard({
   // runner session's emdash task is still open — the runner's next report
   // (~10s) un-archives anything it reports open (harness/services.py), so the
   // card came straight back. /close deletes the task; the report then retires it.
+  const intent = closeIntent(s)
   const done = async () => {
-    if (busy) return
-    const intent = closeIntent(s)
+    if (busy || closing) return
     if (intent.kind === 'blocked') {
       setErr(intent.why)
       return
@@ -223,12 +268,12 @@ function FeedCard({
     try {
       const result = await closeSession(s.id)
       const message = closeResultMessage(result, s)
-      if (message) {
-        setErr(message)
-        setBusy(null)
-        return
-      }
-      onHandled(s)
+      if (message) setErr(message)
+      // Relayed to the runner: the card stays, marked, until its report has
+      // retired the session — hiding it on faith would hide a failed delete.
+      else if (result.closing) onClosing(s)
+      else onClosed()   // closed server-side (unbound) — it leaves the list now
+      setBusy(null)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not close this session')
       setBusy(null)
@@ -329,6 +374,11 @@ function FeedCard({
           className="text-[13px] placeholder:text-muted-foreground dark:placeholder:text-foreground-secondary"
         />
         {err && <p className="text-[12px] text-destructive">{err}</p>}
+        {stuck && !closing && (
+          <p className="text-[12px] text-destructive" data-testid={`feed-close-stuck-${s.id}`}>
+            Still open: {s.runner_name ?? 'its runner'} has not confirmed the close. Try again, or close it in emdash.
+          </p>
+        )}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5">
             {/* Bordered, so they read as buttons rather than captions. */}
@@ -341,12 +391,16 @@ function FeedCard({
             <button
               type="button"
               onClick={() => void done()}
-              disabled={busy !== null}
-              title="Close this session — ends its emdash task and removes it from the feed"
+              disabled={busy !== null || closing}
+              title={
+                intent.kind === 'blocked'
+                  ? intent.why
+                  : 'Close this session — ends its emdash task and removes it from the feed'
+              }
               className="inline-flex min-h-8 items-center rounded-md border border-border bg-background px-2.5 text-[12px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
               data-testid={`feed-done-${s.id}`}
             >
-              {busy === 'done' ? 'Closing…' : 'Close'}
+              {closing ? 'Closing in emdash…' : busy === 'done' ? 'Closing…' : 'Close'}
             </button>
           </div>
           <Button size="sm" onClick={() => void send()} disabled={!draft.trim() || busy !== null}>
