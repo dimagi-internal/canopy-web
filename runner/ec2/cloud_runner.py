@@ -3141,15 +3141,26 @@ def _session_thread_key(turn: dict) -> str:
 
 
 def _agent_session_title(turn: dict) -> str:
-    """A readable name for an agent turn's session: its schedule's name, else the
-    first line of its prompt."""
+    """A readable name for an agent turn's session: its email's subject, else its
+    schedule's name, else the first line of its prompt with any leading slash
+    command and its flags removed ("/ace:turn --thread 1a0f…" is not a name —
+    it was one on 2026-10-03). "" when nothing readable is left; the server
+    names it then (harness.services.turn_session_title, which also decides)."""
     ref = turn.get("origin_ref") or {}
-    name = ref.get("schedule_name")
-    if isinstance(name, str) and name.strip():
-        return name.strip()[:200]
+    for key in ("subject", "schedule_name"):
+        name = ref.get(key)
+        if isinstance(name, str) and name.strip():
+            return name.strip()[:200]
     for line in str(turn.get("prompt") or "").splitlines():
-        if line.strip():
-            return line.strip()[:200]
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("/"):
+            words = line.split()[1:]
+            while words and words[0].startswith("-"):
+                words = words[2:] if len(words) > 1 and "=" not in words[0] and not words[1].startswith("-") else words[1:]
+            line = " ".join(words).lstrip("—–-:· ").strip()
+        return line[:200]
     return ""
 
 

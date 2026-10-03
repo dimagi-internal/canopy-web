@@ -1168,11 +1168,20 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
             None, payload.thread_key, runner, project=payload.project, workspace=ws
         )
     agent = _agent_or_404(request, payload.agent_slug)
+    title = payload.title
+    if payload.turn_id:
+        # The server names the session from the turn when it knows it: the email's
+        # subject, the schedule's name — never the raw command a cloud turn's
+        # prompt often is ("/ace:turn --thread …", 2026-10-03).
+        turn = (Turn.objects.select_related("agent", "chat_session__agent")
+                .filter(pk=payload.turn_id, claimed_by=runner).first())
+        if turn is not None:
+            title = services.turn_session_title(turn, payload.title)
     services.record_session(
         agent, payload.thread_key, runner=runner,
         session_key=payload.session_key, session_id=payload.session_id,
         agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
-        title=payload.title,
+        title=title,
     )
     if payload.turn_id and payload.session_key:
         services.stamp_turn_session(payload.turn_id, runner, payload.session_key)
