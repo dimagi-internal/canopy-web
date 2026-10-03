@@ -101,11 +101,14 @@ WARN: hal: no vault registered in canopy-web — keeping any existing ~/.hal/.en
 | the box itself | **`/supervisor` → Runners → the box** — its Claude login and GitHub token (no 1Password key; it is handed the two above, per agent) |
 
 The key is a 1Password service account scoped to that one vault, minted in
-1Password, then pasted into canopy-web — it is never typed on the box. **Only in
-the browser:** `PUT /api/agents/<slug>/vault` and `PUT
-/api/workspaces/<ws>/shared-vault` refuse a PAT or an MCP client (403,
-`apps/common/human_only.py`), because a token acts with its owner's whole role
-and an agent session on the owner's laptop holds one.
+1Password, then handed to canopy-web — it is never typed on the box. Name it
+`canopy-web-<slug>`. `PUT /api/agents/<slug>/vault` takes the agent's owner or an
+admin (`_agent_for_admin`), by browser or PAT; the shared vault
+(`PUT /api/workspaces/<ws>/shared-vault`) is workspace-owner only. Never pass the
+key through an agent session's tool arguments or a file it can read — that lands
+it in the transcript. The safe agent-run path is Ada's `bin/ada-vault-provision
+--slug <slug>`, which pipes the key from `op` straight into the API and never
+prints it (its raw alternatives are deny-railed in Ada's gating).
 
 Then press **Refresh** on the runner page; the next bootstrap materializes it.
 

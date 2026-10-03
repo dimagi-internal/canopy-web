@@ -122,12 +122,13 @@ vault alone, handed to canopy-web (never to a box, never to Secrets Manager):
 
 $(for slug in "$@"; do
     v="Agent-$(printf '%s' "${slug:0:1}" | tr '[:lower:]' '[:upper:]')${slug:1}"
-    printf '  op service-account create "agent-%s" --account %s \\\n' "$slug" "$ACCOUNT"
+    printf '  op service-account create "canopy-web-%s" --account %s \\\n' "$slug" "$ACCOUNT"
     printf '    --vault "%s:read_items,write_items" --expires-in 90d\n' "$v"
   done)
 
-Each prints its key ONCE. Paste it into that agent's Settings on canopy-web, in the
-browser (the API refuses a token for this: apps/common/human_only.py).
+Each prints its key ONCE. Paste it into that agent's Settings on canopy-web (the
+agent's owner or an admin may set it; or run Ada's bin/ada-vault-provision, which
+mints and uploads it without ever printing the key).
 
 The agent's WORKSPACE also needs a shared-vault key (read on $SHARED_VAULT) so a
 runner can load the shared gog OAuth client — a per-agent key cannot read it, by
