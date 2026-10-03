@@ -85,6 +85,19 @@ class MailboxPatchIn(StrictModel):
     agent_slug: str | None = None
 
 
+class MailboxReaderOut(StrictModel):
+    """One runner that could pick up a mailbox's mail, and whether it can read it."""
+
+    runner: str
+    status: str
+    """The runner's ``live_status`` — ``online`` | ``paused`` | ``stale`` | …."""
+    can_read: bool | None
+    """What the runner's own probe REPORTS. None = it has never reported (an
+    older runner) — unknown, and still rung by the doorbell."""
+    checked_at: str = ""
+    """When that report last arrived; blank when never."""
+
+
 class MailboxOut(StrictModel):
     id: int
     address: str
@@ -101,15 +114,21 @@ class MailboxOut(StrictModel):
     server-side so the UI and the event log cannot disagree about what counts as
     healthy."""
 
+    readers: list[MailboxReaderOut] = []
+    """The runners that route this agent's email, plus any other box in the
+    workspace that reports it can read this address."""
+
 
 class MailboxListOut(StrictModel):
     items: list[MailboxOut]
 
 
 class RunnerMailboxOut(StrictModel):
-    """What a runner needs to arm a watch: which address, on which topic."""
+    """A mailbox a runner may read: which address, for which agent, and the
+    topic to arm its watch on (blank = this workspace arms no watches)."""
 
     address: str
+    agent_slug: str = ""
     watch_topic: str
 
 

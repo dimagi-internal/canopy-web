@@ -184,6 +184,10 @@ class RunnerOut(Schema):
     # list, and this is how a reader tells a current answer from an old one.
     health_received_at: dt.datetime | None = None
     health_bootstrapped_at: float | None = None
+    # Which mailboxes the box reports it can read (Runner.mailboxes_readable).
+    # None = never reported (unknown), [] = it can read none.
+    mailboxes_readable: list[str] | None = None
+    mailboxes_checked_at: dt.datetime | None = None
 
     # What this box's owner has declared about it (RunnerFlag) — e.g. `zdr`.
     flags: list[str] = []
@@ -331,6 +335,13 @@ class HeartbeatIn(Schema):
     # as `projects`, so a beat from a path that does not build the list (a lease
     # renewer) cannot wipe it.
     health: RunnerHealthIn | None = None
+    # The mailboxes this box PROVED it can read (a token that answered a search),
+    # lowercased. Same absent-is-not-empty rule as `projects`: None = not
+    # reported this beat (an older runner, or a beat from a path that does not
+    # probe) and leaves the stored list alone; [] = "I can read none of them".
+    # The doorbell rings only boxes whose list holds the address (or that never
+    # reported one) — see apps/inbound/services.online_runners_for.
+    mailboxes_readable: list[str] | None = None
 
 
 class ResolveSessionIn(Schema):

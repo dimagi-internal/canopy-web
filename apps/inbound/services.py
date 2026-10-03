@@ -12,6 +12,7 @@ mode this app exists to make visible, not a defence.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 
 from django.utils import timezone
 
@@ -20,6 +21,8 @@ from apps.harness import services as harness
 from apps.harness.models import Runner, Turn
 from apps.inbound.models import InboundMailbox
 from apps.realtime.groups import publish, runner_group
+
+logger = logging.getLogger(__name__)
 
 SOURCE = "inbound.gmail"
 
@@ -86,7 +89,75 @@ def online_runners_for(mailbox: InboundMailbox) -> list[Runner]:
     # this" is answered the same way here as at claim time. It also picks up the
     # pause for free — `live_status` serves PAUSED, which is exactly the design
     # that stops a new caller forgetting to check it.
-    return [r for _rank, r in rows if r.is_available]
+    out = []
+    for _rank, r in rows:
+        if not r.is_available:
+            continue
+        # Ringing a box that cannot READ this mailbox wakes it for nothing: it
+        # has no token, so the check it runs is a no-op and the ring is silently
+        # dropped — which is how a runner with an empty `mailboxes` map answered
+        # every push for months (canopy-web#1087). Routing still decides who
+        # CLAIMS the resulting turn; this only decides who is asked to LOOK.
+        if can_read(r, mailbox.address) is False:
+            logger.info("doorbell: skipping %s for %s — it reports it cannot read it",
+                        r.name, mailbox.address)
+            continue
+        out.append(r)
+    return out
+
+
+def can_read(runner: Runner, address: str) -> bool | None:
+    """Whether this runner REPORTS it can read ``address``; None = never reported.
+
+    None is "unknown", not "no": a runner on code older than the probe sends
+    nothing, and treating that as unreadable would stop ringing every box that
+    has not upgraded yet.
+    """
+    if runner.mailboxes_readable is None:
+        return None
+    return (address or "").strip().lower() in {
+        (a or "").lower() for a in runner.mailboxes_readable
+    }
+
+
+def readers_for(mailbox: InboundMailbox) -> list[dict]:
+    """Who could pick up this mailbox's mail, and whether each can actually read it.
+
+    Two sources, unioned: the runners that ROUTE the agent's email (the same
+    assignment rows the doorbell rings — but every one, not just the online
+    ones, so an offline box still shows up as a reader you are relying on), and
+    any runner that REPORTS it can read the address without being routed to (it
+    polls and enqueues, routing then hands the turn to someone else). Reporters
+    are limited to runners whose owner is a member of the mailbox's workspace,
+    so this never names another tenant's box.
+    """
+    from apps.workspaces.models import WorkspaceMembership
+
+    defaults, priorities = harness.load_assignment_rows([mailbox.agent_id])
+    routed = harness.assignment_rows_for(
+        mailbox.agent_id, Turn.ORIGIN_EMAIL, "", defaults, priorities
+    )
+    runners: dict = {}
+    for _rank, r in routed:
+        if r.status != Runner.RETIRED:
+            runners.setdefault(r.pk, r)
+    members = WorkspaceMembership.objects.filter(
+        workspace_id=mailbox.agent.workspace_id
+    ).values("user_id")
+    address = mailbox.address.lower()
+    for r in (Runner.objects.filter(mailboxes_readable__isnull=False, owner_id__in=members)
+              .exclude(status=Runner.RETIRED)):
+        if r.pk not in runners and can_read(r, address):
+            runners[r.pk] = r
+    return [
+        {
+            "runner": r.name,
+            "status": r.live_status,
+            "can_read": can_read(r, address),
+            "checked_at": r.mailboxes_checked_at.isoformat() if r.mailboxes_checked_at else "",
+        }
+        for r in runners.values()
+    ]
 
 
 def ring(mailbox: InboundMailbox) -> list[Runner]:
@@ -138,8 +209,8 @@ def handle_push(address: str, workspace, history_id: str = "") -> dict:
             kind="gmail.push.no_runner",
             level="warn",
             key=mailbox.address,
-            summary=f"push for {mailbox.address} but no online runner is assigned to "
-                    f"{mailbox.agent.slug}",
+            summary=f"push for {mailbox.address} but no online runner that can read it "
+                    f"is assigned to {mailbox.agent.slug}",
             payload={"address": mailbox.address, "agent": mailbox.agent.slug},
         )
         return {"ok": False, "reason": "no_runner"}

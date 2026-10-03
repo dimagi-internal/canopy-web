@@ -785,13 +785,16 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * Mailboxes this caller should arm, and on which topic
-         * @description What a runner needs to keep watches armed, served from config.
+         * Mailboxes this caller may read, and the topic to arm each on
+         * @description Every enabled mailbox in the caller's workspaces, with its agent and topic.
          *
-         *     The topic used to be hand-written into every runner's ``runner.json``, which
-         *     meant onboarding a tenant required editing a file on each box. Serving it
-         *     here makes the UI the single place it is set; the runner intersects this with
-         *     the mailboxes it actually holds credentials for.
+         *     Two readers. The runner's mailbox PROBE takes every row as a candidate and
+         *     keeps the ones it holds a working token for — that is how a box learns what
+         *     it can read without a hand-kept ``mailboxes`` map in ``runner.json``. The
+         *     watch re-arm takes only the rows with a ``watch_topic``: the topic used to be
+         *     hand-written into every runner's config, and serving it here makes the UI the
+         *     single place it is set. A row with no topic is in a workspace that arms no
+         *     watches, and is still a mailbox worth reading.
          */
         readonly get: operations["runner_mailboxes"];
         readonly put?: never;
@@ -7293,6 +7296,28 @@ export interface components {
             readonly watch_error: string;
             /** Watch State */
             readonly watch_state: string;
+            /**
+             * Readers
+             * @default []
+             */
+            readonly readers: readonly components["schemas"]["MailboxReaderOut"][];
+        };
+        /**
+         * MailboxReaderOut
+         * @description One runner that could pick up a mailbox's mail, and whether it can read it.
+         */
+        readonly MailboxReaderOut: {
+            /** Runner */
+            readonly runner: string;
+            /** Status */
+            readonly status: string;
+            /** Can Read */
+            readonly can_read: boolean | null;
+            /**
+             * Checked At
+             * @default
+             */
+            readonly checked_at: string;
         };
         /** MailboxIn */
         readonly MailboxIn: {
@@ -7320,11 +7345,17 @@ export interface components {
         };
         /**
          * RunnerMailboxOut
-         * @description What a runner needs to arm a watch: which address, on which topic.
+         * @description A mailbox a runner may read: which address, for which agent, and the
+         *     topic to arm its watch on (blank = this workspace arms no watches).
          */
         readonly RunnerMailboxOut: {
             /** Address */
             readonly address: string;
+            /**
+             * Agent Slug
+             * @default
+             */
+            readonly agent_slug: string;
             /** Watch Topic */
             readonly watch_topic: string;
         };
@@ -12822,6 +12853,10 @@ export interface components {
             readonly health_received_at?: string | null;
             /** Health Bootstrapped At */
             readonly health_bootstrapped_at?: number | null;
+            /** Mailboxes Readable */
+            readonly mailboxes_readable?: readonly string[] | null;
+            /** Mailboxes Checked At */
+            readonly mailboxes_checked_at?: string | null;
             /**
              * Flags
              * @default []
@@ -13209,6 +13244,8 @@ export interface components {
             /** Projects */
             readonly projects?: readonly string[] | null;
             readonly health?: components["schemas"]["RunnerHealthIn"] | null;
+            /** Mailboxes Readable */
+            readonly mailboxes_readable?: readonly string[] | null;
         };
         /** RunnerHealthIn */
         readonly RunnerHealthIn: {

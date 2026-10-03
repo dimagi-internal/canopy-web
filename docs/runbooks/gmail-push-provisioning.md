@@ -62,9 +62,12 @@ gog auth add <email> --client canopy --force-consent \
 #    until the old bucket is deleted, so trust this instead:
 gog auth tokens list          # want token:canopy:<email>
 
-# 3. Repoint the runner and RESTART it — Config.load runs once at startup.
-#    Check ~/.canopy/in-flight is 0 first so no chat reply is stranded.
-#    (edit ~/.canopy/runner.json: mailboxes.<agent>.client = "canopy")
+# 3. Nothing to repoint: the runner DISCOVERS which client reads each mailbox
+#    (mailbox_probe.py — `gog auth tokens list`, then a one-message search,
+#    `canopy` tried first) and re-probes every 10 minutes. To pick it up now,
+#    restart it — check ~/.canopy/in-flight is 0 first so no chat reply is
+#    stranded. Only if ~/.canopy/runner.json still carries an explicit
+#    `mailboxes.<agent>` OVERRIDE does that entry's `client` need editing.
 launchctl kickstart -k gui/$(id -u)/com.canopy.runner
 
 # 4. Only NOW delete the old client. Doing this before step 1 succeeds takes that
@@ -105,7 +108,10 @@ quickest confirmation that an agent is actually on push.
 
 3. **Register the mailboxes.** Address → agent. Explicit rather than derived from
    the address: `eva@dimagi-ai.com` → agent `eva` holds today, and the day it
-   does not, the failure is silent.
+   does not, the failure is silent. No runner needs configuring to READ them:
+   each runner probes every registered mailbox for a working gog token and
+   reports which it can read, the doorbell rings only those runners, and the
+   mailbox table's "Readable by" column shows who they are.
 
 4. **Set the watch topic.** Served to every runner, so onboarding a tenant needs
    no `runner.json` edit on any box. The runner arms each mailbox on its next

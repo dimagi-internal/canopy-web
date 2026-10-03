@@ -37,7 +37,8 @@ import sys
 import time
 from pathlib import Path
 
-from . import chat_bridge, chat_pump, close, hooks, inbox_due, sessions, session_interrupt, streams
+from . import chat_bridge, chat_pump, close, hooks, inbox_due, mailbox_probe, sessions
+from . import session_interrupt, streams
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -178,8 +179,13 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
     Best-effort — a failing inbox (auth expired) logs and is skipped, never
     crashes the loop. Paused agents are skipped so no new email turns are
     enqueued for them.
+
+    WHICH mailboxes is the probe's answer (``mailbox_probe.effective_mailboxes``:
+    what this box proved it can read, with runner.json entries as overrides), not
+    a hand-kept map.
     """
-    if not getattr(cfg, "mailboxes", None):
+    boxes = mailbox_probe.effective_mailboxes(cfg)
+    if not boxes:
         return
     stamp = Path(cfg.state_path).with_name("inbox-last.json") if cfg.state_path else Path("inbox-last.json")
     try:
@@ -192,13 +198,13 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
     rung = inbox_due.take_pending()
     now = now_fn()
     due_slugs = inbox_due.due(
-        cfg.mailboxes, stamps, now=now, interval=cfg.inbox_poll_seconds, rung=rung
+        boxes, stamps, now=now, interval=cfg.inbox_poll_seconds, rung=rung
     )
     if not due_slugs:
         return
     rung_slugs = {
         slug for slug in due_slugs
-        if (cfg.mailboxes[slug].get("account") or "").strip().lower() in rung
+        if (boxes[slug].get("account") or "").strip().lower() in rung
     }
 
     from . import inbox as inbox_mod
@@ -209,7 +215,7 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
     alarm_state = (Path(cfg.state_path).with_name("alarm-incidents.json")
                    if cfg.state_path else Path("alarm-incidents.json"))
     for agent in due_slugs:
-        box = cfg.mailboxes[agent]
+        box = boxes[agent]
         if paused and agent in paused:
             continue
         try:
@@ -326,8 +332,12 @@ def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time, *,
     the server the mailbox is unwatched. Waiting for `watch.expired` to make it
     loud was a 7-day lie: push is dead the moment the arm starts failing, and the
     row that eventually appeared blamed the clock rather than the credential.
+
+    Arms the mailboxes this box can READ (the probe's map), never one it holds no
+    token for — that arm could only fail.
     """
-    if not getattr(cfg, "mailboxes", None):
+    boxes = mailbox_probe.effective_mailboxes(cfg)
+    if not boxes:
         return
     from . import gmail_watch
 
@@ -337,8 +347,10 @@ def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time, *,
     # fallback for a box running against a server that has no config yet.
     local_topic = getattr(cfg, "gmail_watch_topic", "") or ""
     try:
+        # Topic-less rows are served too (they are the probe's candidates); only a
+        # row WITH a topic is something to arm.
         served = {row.get("address", "").lower(): row.get("watch_topic", "")
-                  for row in client.runner_mailboxes()}
+                  for row in client.runner_mailboxes() if row.get("watch_topic")}
     except Exception as exc:  # noqa: BLE001 — a config read never breaks the tick
         logger.debug("runner-mailboxes fetch failed (%s); using local topic", exc)
         served = {}
@@ -353,7 +365,7 @@ def _maybe_rearm_watches(cfg: Config, client: Client, now_fn=time.time, *,
 
     now = now or dt.datetime.now(dt.UTC)
     changed = False
-    for agent, box in cfg.mailboxes.items():
+    for agent, box in boxes.items():
         address = box.get("account") or ""
         if not address:
             continue
@@ -440,10 +452,9 @@ def _clear_watch_failures(cfg: Config, client: Client) -> None:
 
     Local state is dropped along with the report, so resuming re-discovers the
     failure and reports it again rather than staying quiet about a mailbox that is
-    still broken.
+    still broken. Driven by the state file alone — the mailboxes it names are the
+    ones that failed, whether or not they are still in the probe's map.
     """
-    if not getattr(cfg, "mailboxes", None):
-        return
     state_path = _watch_state_path(cfg)
     state = _load_watch_state(state_path)
     failures = state.get(_FAILURES_KEY)
@@ -586,7 +597,8 @@ def run_once(cfg: Config, client: Client) -> str:
         # and a runner that isn't claiming has no use for a refreshed list.
         me = client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), host=host,
                               ready=_ready, ready_note=_rnote,
-                              projects=sessions.reported_projects(cfg))
+                              projects=sessions.reported_projects(cfg),
+                              mailboxes_readable=mailbox_probe.readable())
     else:
         _cdp_down_ticks += 1
         # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
@@ -595,7 +607,10 @@ def run_once(cfg: Config, client: Client) -> str:
         me = client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), degraded=True,
                               note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
                               host=host, ready=False,
-                              ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}")
+                              ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}",
+                              # The inbox still runs with CDP down, so what this box
+                              # can read is still what the doorbell should know.
+                              mailboxes_readable=mailbox_probe.readable())
         # ...and ONE loud WARNING after sustained downtime (not per tick), for the human log.
         if _cdp_down_ticks >= CDP_DOWN_SIGNAL_TICKS and not _cdp_down_signalled:
             logger.warning(
@@ -676,6 +691,10 @@ def _decide_and_claim(cfg: Config, client: Client, me, healthy: bool) -> str:
         return "paused"
 
     paused = _paused_agents(cfg)
+    # Which mailboxes this box can read: at startup, then every
+    # `mailbox_probe_seconds`. Ahead of the inbox so the very first tick already
+    # reads what it found; the readable list rides the NEXT heartbeat.
+    _step("mailbox probe", mailbox_probe.maybe_probe, cfg, client)
     # Inbound triggers run whether or not CDP is up, so inbound work still ENQUEUES while
     # emdash is down (it just waits, queued, until emdash is back). Only the claim is gated.
     _step("inboxes", _maybe_check_inboxes, cfg, client, paused=paused)
@@ -1040,9 +1059,10 @@ def main() -> None:
         host = "?"
     logger.info("canopy-runner starting | runner=%s host=%s cdp_port=%s",
                 cfg.runner_id, host, cfg.cdp_port)
-    logger.info("  poll: claim every %ss | inbox every %ss | mailboxes=%s",
-                cfg.poll_seconds, cfg.inbox_poll_seconds,
-                ",".join(sorted(getattr(cfg, "mailboxes", {}))) or "(none)")
+    logger.info("  poll: claim every %ss | inbox every %ss | mailboxes discovered every %ss"
+                " (runner.json overrides: %s)",
+                cfg.poll_seconds, cfg.inbox_poll_seconds, cfg.mailbox_probe_seconds,
+                ",".join(sorted(mailbox_probe.effective_mailboxes(cfg))) or "none")
     logger.info("  COST note: idle cycles + inbox polls are ~free (HTTP only); a 'CREATE' "
                 "line = one NEW claude session (tokens), 'REUSE' = none. grep the log for CREATE.")
 

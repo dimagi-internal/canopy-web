@@ -146,7 +146,8 @@ class Client:
                   note: str = "", host: str = "", ready: bool = True, ready_note: str = "",
                   code_branch: str | None = None, code_version: str | None = None,
                   code_sha: str | None = None, code_committed_at: int | None = None,
-                  projects: list[str] | None = None, profiles: int | None = None) -> dict:
+                  projects: list[str] | None = None, profiles: int | None = None,
+                  mailboxes_readable: list[str] | None = None) -> dict:
         """Report liveness. Code provenance is stamped HERE, not by callers.
 
         `services.heartbeat` assigns these unconditionally, so any heartbeat that
@@ -164,6 +165,9 @@ class Client:
         read emdash. Pass an empty LIST only when the box genuinely has none;
         never [] for a failed read, which would blank the list and make every
         repo turn on this runner unclaimable.
+
+        `mailboxes_readable` follows the `projects` contract: None omits it (no
+        probe has finished yet), and the server keeps ringing this box.
         """
         from . import provenance
         body = {"active_turn_ids": active_turn_ids, "degraded": degraded, "note": note,
@@ -175,6 +179,8 @@ class Client:
                                       if code_committed_at is None else code_committed_at)}
         if projects is not None:
             body["projects"] = projects
+        if mailboxes_readable is not None:
+            body["mailboxes_readable"] = mailboxes_readable
         # Sent on EVERY beat, from every call site: the server writes whatever it
         # gets (absent = 0), so one caller that left it out would flap this runner
         # between "may be given a caller's turn" and "may not" beat to beat.
@@ -358,10 +364,13 @@ class Client:
         return {**(payload or {}), "_created": status == 201}
 
     def runner_mailboxes(self) -> list[dict]:
-        """[{address, watch_topic}] — which mailboxes to arm, and on which topic.
+        """[{address, agent_slug, watch_topic}] — every mailbox this box may read.
 
-        Served from each workspace's InboundPushConfig so a tenant sets its topic
-        in the UI once, instead of someone hand-editing runner.json on every box.
+        The mailbox probe takes each row as a candidate; the watch re-arm takes
+        only rows with a topic. Topics are served from each workspace's
+        InboundPushConfig so a tenant sets one in the UI, instead of someone
+        hand-editing runner.json on every box. (An older server sends only the
+        rows with a topic, and no `agent_slug`.)
         """
         _status, payload = self._call_api("/inbound/runner-mailboxes", method="GET")
         return (payload or {}).get("items", []) if isinstance(payload, dict) else []

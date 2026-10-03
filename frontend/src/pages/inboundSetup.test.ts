@@ -5,6 +5,8 @@ import {
   setupCommands,
   suggestedServiceAccount,
   topicPath,
+  readerLabel,
+  readerTone,
   watchLabel,
   watchTone,
 } from './inboundSetup'
@@ -122,5 +124,26 @@ describe('watch state copy', () => {
 
   it('marks a healthy watch as success', () => {
     expect(watchTone('armed')).toBe('success')
+  })
+})
+
+describe('mailbox readers', () => {
+  it('says who can read, and colours a runner that cannot', () => {
+    const ok = { runner: 'jj-mbp-cdp', status: 'online', can_read: true }
+    const blind = { runner: 'cloud-ec2-1', status: 'online', can_read: false }
+    expect(readerLabel(ok)).toBe('jj-mbp-cdp: can read')
+    expect(readerTone(ok)).toBe('success')
+    expect(readerLabel(blind)).toBe('cloud-ec2-1: cannot read')
+    expect(readerTone(blind)).toBe('destructive')
+  })
+
+  it('treats a runner that never reported as unknown, not unreadable', () => {
+    const legacy = { runner: 'old-laptop', status: 'stale', can_read: null }
+    expect(readerLabel(legacy)).toBe('old-laptop (stale): not reported')
+    expect(readerTone(legacy)).toBe('muted')
+  })
+
+  it('warns when the only reader is not online', () => {
+    expect(readerTone({ runner: 'r', status: 'paused', can_read: true })).toBe('warning')
   })
 })

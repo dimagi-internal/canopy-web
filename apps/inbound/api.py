@@ -106,6 +106,7 @@ def _mailbox_out(mb: InboundMailbox) -> dict:
         "watch_expires_at": mb.watch_expires_at.isoformat() if mb.watch_expires_at else "",
         "watch_error": mb.watch_error,
         "watch_state": services.watch_state(mb),
+        "readers": services.readers_for(mb),
     }
 
 
@@ -265,14 +266,17 @@ def delete_mailbox(request: HttpRequest, workspace: str, mailbox_id: int):
 
 
 @router.get("/runner-mailboxes", response=RunnerMailboxListOut,
-            summary="Mailboxes this caller should arm, and on which topic")
+            summary="Mailboxes this caller may read, and the topic to arm each on")
 def runner_mailboxes(request: HttpRequest) -> dict:
-    """What a runner needs to keep watches armed, served from config.
+    """Every enabled mailbox in the caller's workspaces, with its agent and topic.
 
-    The topic used to be hand-written into every runner's ``runner.json``, which
-    meant onboarding a tenant required editing a file on each box. Serving it
-    here makes the UI the single place it is set; the runner intersects this with
-    the mailboxes it actually holds credentials for.
+    Two readers. The runner's mailbox PROBE takes every row as a candidate and
+    keeps the ones it holds a working token for — that is how a box learns what
+    it can read without a hand-kept ``mailboxes`` map in ``runner.json``. The
+    watch re-arm takes only the rows with a ``watch_topic``: the topic used to be
+    hand-written into every runner's config, and serving it here makes the UI the
+    single place it is set. A row with no topic is in a workspace that arms no
+    watches, and is still a mailbox worth reading.
     """
     slugs = wsvc.user_workspace_slugs(request.user)
     qs = (
@@ -284,11 +288,11 @@ def runner_mailboxes(request: HttpRequest) -> dict:
         cfg.workspace_id: cfg.watch_topic
         for cfg in services.configs_for(slugs)
     }
-    items = [
-        {"address": mb.address, "watch_topic": topics.get(mb.agent.workspace_id, "")}
+    return {"items": [
+        {"address": mb.address, "agent_slug": mb.agent.slug,
+         "watch_topic": topics.get(mb.agent.workspace_id, "")}
         for mb in qs
-    ]
-    return {"items": [i for i in items if i["watch_topic"]]}
+    ]}
 
 
 @router.post("/watch/", response=WatchReportOut,

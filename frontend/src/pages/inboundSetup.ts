@@ -132,3 +132,26 @@ export function watchTone(state: string): 'success' | 'warning' | 'destructive' 
   if (state === 'expired') return 'destructive'
   return 'muted'
 }
+
+export interface MailboxReader {
+  runner: string
+  status: string
+  can_read: boolean | null
+  checked_at?: string
+}
+
+/** One runner in a mailbox's "Readable by" cell. `can_read` is what the
+ *  runner's own probe REPORTED (a gog token for the address that answered a
+ *  search); null means it has never reported — an older runner, which the
+ *  doorbell still rings because unknown is not "no". */
+export function readerLabel(r: MailboxReader): string {
+  const verdict =
+    r.can_read === true ? 'can read' : r.can_read === false ? 'cannot read' : 'not reported'
+  return r.status === 'online' ? `${r.runner}: ${verdict}` : `${r.runner} (${r.status}): ${verdict}`
+}
+
+export function readerTone(r: MailboxReader): 'success' | 'warning' | 'destructive' | 'muted' {
+  if (r.can_read === false) return 'destructive'
+  if (r.can_read === true) return r.status === 'online' ? 'success' : 'warning'
+  return 'muted'
+}

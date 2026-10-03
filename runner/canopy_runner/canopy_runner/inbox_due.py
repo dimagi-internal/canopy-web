@@ -49,9 +49,9 @@ def due(mailboxes: dict, stamps: dict, *, now: float, interval: float,
         rung: set[str] | None = None) -> list[str]:
     """The agent slugs whose mailbox should be checked this tick.
 
-    ``mailboxes`` is ``Config.mailboxes`` ({slug: {account, client, ...}}),
-    ``stamps`` is ``{slug: last_checked_epoch}``. A mailbox is due when it was
-    rung, or when its own timer has elapsed.
+    ``mailboxes`` is ``mailbox_probe.effective_mailboxes`` ({slug: {account,
+    client, ...}}), ``stamps`` is ``{slug: last_checked_epoch}``. A mailbox is due
+    when it was rung, or when its own timer has elapsed.
     """
     rung = rung or set()
     out = []

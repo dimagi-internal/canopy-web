@@ -1103,6 +1103,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         projects=payload.projects,
         profiles=payload.profiles,
         health=payload.health.model_dump() if payload.health is not None else None,
+        mailboxes_readable=payload.mailboxes_readable,
     )
 
 

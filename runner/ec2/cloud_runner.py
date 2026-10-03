@@ -362,7 +362,7 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
     """
     info = build_info()
     _mark_in_flight(len(active_turn_ids))
-    return {
+    body = {
         "active_turn_ids": active_turn_ids,
         "host": RUNNER_HOST,
         "code_sha": info["sha"],
@@ -370,8 +370,12 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
         "health": health_report(),
         # Whether canopy may give this box a CALLER's turn (see `_confine`).
         "profiles": profiles_supported(),
-        **extra,
     }
+    # Omitted until the first inbox probe: absent is "unknown", [] is "none".
+    readable = mailboxes_readable()
+    if readable is not None:
+        body["mailboxes_readable"] = readable
+    return {**body, **extra}
 
 
 # ── self-reported health ─────────────────────────────────────────────────────
@@ -2951,6 +2955,20 @@ _INBOX_STAMPS: dict = {}
 #: so a rotated token is re-probed on the next tick rather than mourned forever.
 _GOG_CLIENT_LIVE: dict = {}
 
+#: account -> whether the last probe of it found a client that reads it. Empty
+#: until the first probe, which is what lets the heartbeat say "unknown" (omit
+#: the field) rather than "reads nothing" before the box has looked.
+_MAILBOX_READABLE: dict = {}
+
+
+def mailboxes_readable() -> list | None:
+    """The addresses this box PROVED it can read, for the heartbeat; None before
+    the first probe. The doorbell rings only runners whose list holds the rung
+    address (or that never reported one) — canopy-web#1087."""
+    if not _MAILBOX_READABLE:
+        return None
+    return sorted(a.lower() for a, ok in _MAILBOX_READABLE.items() if ok)
+
 
 def _gog_config_dir() -> pathlib.Path:
     """gog's own config dir on Linux — $GOG_HOME, else $XDG_CONFIG_HOME/gogcli,
@@ -3022,12 +3040,14 @@ def _resolve_mailbox_clients(boxes: dict, probe) -> dict:
                     continue
                 live = client
                 _GOG_CLIENT_LIVE[account] = client
+                _MAILBOX_READABLE[account] = True
                 if client != declared:
                     _log(f"inbox {slug}: token for {account} lives under client "
                          f"{client!r}, config declares {declared!r} — reading "
                          f"with {client!r}")
                 break
             if not live:
+                _MAILBOX_READABLE[account] = False
                 _log(f"inbox {slug}: no gog client can read {account} "
                      f"(tried: {', '.join(tried) or 'none'})")
                 continue
@@ -3097,6 +3117,7 @@ def _drain_inbox(runner_id: str) -> None:
                 # re-probed next time, not presented forever from the cache.
                 if "no auth" in str(exc).lower():
                     _GOG_CLIENT_LIVE.pop(box.get("account"), None)
+                    _MAILBOX_READABLE[box.get("account")] = False
             finally:
                 # Stamp even on failure, or a broken mailbox is retried every tick.
                 _INBOX_STAMPS[slug] = time.time()
