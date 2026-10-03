@@ -15,7 +15,7 @@ const POLL_MS = 20_000
  * The supervisor's main screen: every session that finished a turn (or is
  * blocked on a dialog) and is waiting for your next prompt — what the agent
  * said, rendered, with a reply box right under it. Answer in place, open the
- * chat for the full transcript, or mark it Done (archive; reversible from
+ * chat for the full transcript, or Close it (archive; reversible from
  * Sessions → Show archived).
  */
 export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Element {
@@ -73,7 +73,21 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
     )
   }
   if (sessions === null) {
-    return <div className="py-6 text-sm text-muted-foreground">Loading…</div>
+    // Placeholder cards, pulsing: on a slow load a line of grey text read as
+    // nothing happening.
+    return (
+      <div className="flex flex-col gap-3" aria-busy="true" aria-label="Loading sessions" data-testid="feed-loading">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="animate-pulse rounded-lg border border-border bg-card p-3">
+            <div className="h-4 w-1/3 rounded bg-muted" />
+            <div className="mt-2 h-3 w-1/4 rounded bg-muted" />
+            <div className="mt-4 h-3 w-full rounded bg-muted" />
+            <div className="mt-2 h-3 w-5/6 rounded bg-muted" />
+            <div className="mt-4 h-14 w-full rounded bg-muted" />
+          </div>
+        ))}
+      </div>
+    )
   }
 
   const { feed, parked } = feedSessions(sessions)
@@ -241,7 +255,20 @@ function FeedCard({
 
       <div className="px-3 pt-2">
         {reply ? (
-          <div className={long && !expanded ? `relative overflow-hidden ${compact ? 'max-h-24' : 'max-h-60'}` : ''}>
+          // The reply itself toggles a long card open AND closed — only the small
+          // "Show less" at the very bottom used to close it, which after a long
+          // reply is a scroll away. Not when the click lands on a link in the
+          // reply, or ends a text selection.
+          <div
+            className={`${long ? 'cursor-pointer' : ''} ${long && !expanded ? `relative overflow-hidden ${compact ? 'max-h-24' : 'max-h-60'}` : ''}`}
+            onClick={(e) => {
+              if (!long) return
+              if ((e.target as HTMLElement).closest('a')) return
+              if (window.getSelection()?.toString()) return
+              setExpanded((v) => !v)
+            }}
+            data-testid={`feed-reply-${s.id}`}
+          >
             <Markdown className="text-[13px] leading-relaxed text-foreground-secondary">{reply}</Markdown>
             {long && !expanded && (
               <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-card to-transparent" />
@@ -284,10 +311,11 @@ function FeedCard({
         />
         {err && <p className="text-[12px] text-destructive">{err}</p>}
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
+            {/* Bordered, so they read as buttons rather than captions. */}
             <Link
               to={chatHref}
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="inline-flex min-h-8 items-center rounded-md border border-border bg-background px-2.5 text-[12px] font-medium text-foreground hover:bg-muted"
             >
               Open chat
             </Link>
@@ -296,10 +324,10 @@ function FeedCard({
               onClick={() => void done()}
               disabled={busy !== null}
               title="Archive this session — it leaves the feed; Sessions → Show archived brings it back"
-              className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+              className="inline-flex min-h-8 items-center rounded-md border border-border bg-background px-2.5 text-[12px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
               data-testid={`feed-done-${s.id}`}
             >
-              {busy === 'done' ? 'Archiving…' : 'Done'}
+              {busy === 'done' ? 'Closing…' : 'Close'}
             </button>
           </div>
           <Button size="sm" onClick={() => void send()} disabled={!draft.trim() || busy !== null}>

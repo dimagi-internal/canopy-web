@@ -73,7 +73,7 @@ describe('SessionFeed', () => {
     expect(sendMessage).toHaveBeenCalledWith('a', 'ship it', 'client-1')
   })
 
-  it('Done archives the session and drops the card', async () => {
+  it('Close archives the session and drops the card', async () => {
     listSessions.mockResolvedValue([s('a')])
     archiveSession.mockResolvedValue({})
     renderFeed()

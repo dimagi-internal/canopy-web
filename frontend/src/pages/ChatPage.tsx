@@ -607,14 +607,27 @@ export function ChatPage() {
     }
   }, [id, loadingFull, socket])
 
+  // Until the socket is up the transcript is not empty, it is unknown: saying
+  // "Start the conversation" over a session still loading read as a blank chat.
+  const loadingTranscript = !socket.connected && socket.state.messages.length === 0
   const emptyState = useMemo(
-    () => (
-      <div className="flex h-full flex-col items-center justify-center gap-1 p-8 text-center text-sm text-muted-foreground">
-        <div className="text-foreground">Start the conversation</div>
-        <div className="text-xs">Type a message below to begin.</div>
-      </div>
-    ),
-    [],
+    () =>
+      loadingTranscript ? (
+        <div
+          className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground"
+          aria-busy="true"
+          data-testid="chat-loading"
+        >
+          <span className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-primary" aria-hidden="true" />
+          <div>Loading the conversation…</div>
+        </div>
+      ) : (
+        <div className="flex h-full flex-col items-center justify-center gap-1 p-8 text-center text-sm text-muted-foreground">
+          <div className="text-foreground">Start the conversation</div>
+          <div className="text-xs">Type a message below to begin.</div>
+        </div>
+      ),
+    [loadingTranscript],
   )
 
   const showLoadFull = shouldShowLoadFull({
