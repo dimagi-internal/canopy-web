@@ -66,3 +66,30 @@ def test_with_nothing_readable_it_is_the_agents_turn():
     turn = Turn.objects.create(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="a1",
                                prompt="/ace:turn --thread 1a0f")
     assert services.turn_session_title(turn, "/ace:turn --thread 1a0f") == "ACE turn"
+
+
+def test_the_migration_renames_sessions_already_titled_with_a_command():
+    import importlib
+
+    from django.apps import apps as django_apps
+
+    from apps.canopy_sessions.models import RunnerBinding
+
+    mig = importlib.import_module("apps.canopy_sessions.migrations.0039_retitle_command_named_sessions")
+    u = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="connect", display_name="C", created_by=u)
+    ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=u)
+    turn = Turn.objects.create(agent=ace, origin=Turn.ORIGIN_EMAIL, idempotency_key="e1",
+                               prompt="/ace:turn --thread 1a0f",
+                               origin_ref={"thread_id": "1a0f", "subject": "Latest on workflows"})
+    named = Session.objects.create(agent=ace, workspace=ws, origin=Session.ORIGIN_RUNNER,
+                                   title="/ace:turn --thread 1a0f")
+    RunnerBinding.objects.create(session=named, session_key="cli", thread_key=f"ace:{turn.pk}")
+    orphan = Session.objects.create(agent=ace, workspace=ws, origin=Session.ORIGIN_RUNNER,
+                                    title="/eva:turn — catch-up brief from Jonathan. More")
+    chosen = Session.objects.create(agent=ace, workspace=ws, title="My own title")
+    mig.retitle(django_apps, None)
+    named.refresh_from_db(); orphan.refresh_from_db(); chosen.refresh_from_db()
+    assert named.title == "Latest on workflows"
+    assert orphan.title == "Catch-up brief from Jonathan"
+    assert chosen.title == "My own title"
