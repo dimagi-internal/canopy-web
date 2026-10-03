@@ -248,3 +248,30 @@ export async function getAgentTopology(slug: string): Promise<AgentTopologyOut> 
   }
   return res.data as unknown as AgentTopologyOut
 }
+
+export type RunnerOrderRowOut = components['schemas']['RunnerOrderRowOut']
+
+/** The workspace's default runner order: repo turns, and every agent here (or in
+ *  a workspace below without its own) that has no order of its own. */
+export async function getRunnerOrder(slug: string): Promise<RunnerOrderRowOut[]> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/runner-order', { params: { path: { slug } } })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load the runner order'))
+  }
+  return Array.from(res.data as unknown as RunnerOrderRowOut[])
+}
+
+/** Wholesale replace (index = rank). Workspace owners only. */
+export async function setRunnerOrder(
+  slug: string,
+  rows: readonly { runnerId: string; enabled: boolean }[],
+): Promise<RunnerOrderRowOut[]> {
+  const res = await apiV2.PUT('/api/workspaces/{slug}/runner-order', {
+    params: { path: { slug } },
+    body: { runners: rows.map((r) => ({ runner_id: r.runnerId, enabled: r.enabled })) },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to save the runner order'))
+  }
+  return Array.from(res.data as unknown as RunnerOrderRowOut[])
+}

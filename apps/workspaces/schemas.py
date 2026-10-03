@@ -167,6 +167,19 @@ class TopologyRouteOut(StrictModel):
     strict: bool
     turn_mode: str
     can_claim: bool
+    # True for a default-order row the agent FOLLOWS from its workspace's order
+    # (it has none of its own), rather than a row of its own.
+    inherited: bool = False
+
+
+class TopologyFollowsOut(StrictModel):
+    """An agent with no default order of its own follows `workspace`'s. Runners
+    in that order the agent cannot use are listed here, not routed: laptops
+    without the agent's repo, and boxes whose owner cannot hold the agent."""
+
+    workspace: str
+    missing_repo: list[uuid.UUID]
+    cannot_hold: list[uuid.UUID]
 
 
 class TopologyAgentOut(StrictModel):
@@ -174,6 +187,14 @@ class TopologyAgentOut(StrictModel):
     name: str
     turn_mode: str
     routes: list[TopologyRouteOut]
+    # None = it has an order of its own, or nothing to follow.
+    follows: TopologyFollowsOut | None = None
+    repo_url: str = ""
+
+
+class TopologyOrderRowOut(StrictModel):
+    runner_id: uuid.UUID
+    enabled: bool
 
 
 class TopologyWorkspaceOut(StrictModel):
@@ -182,6 +203,10 @@ class TopologyWorkspaceOut(StrictModel):
     parent: str | None
     depth: int
     agents: list[TopologyAgentOut]
+    # This workspace's own runner order (rank order). Empty = it follows
+    # `order_from`, the nearest ancestor with one, or none at all.
+    order: list[TopologyOrderRowOut] = []
+    order_from: str | None = None
 
 
 class TopologyRunnerOut(StrictModel):

@@ -23,7 +23,7 @@ from apps.workspaces.models import Workspace
 
 from . import initiator as who
 from . import services
-from .models import AgentSchedule, Runner, RunnerAssignment, RunnerDrill, Turn
+from .models import AgentSchedule, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder
 from .schedule_services import serialize_schedule
 from .schemas import (
     CallerContextOut,
@@ -624,8 +624,10 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
     from apps.agents import delegations
 
     runner = _runner_or_404(request, runner_id)
+    # Agents that route here by their own list, or by following a workspace order.
     agents = (
-        Agent.objects.filter(runner_assignments__runner=runner)
+        Agent.objects.filter(Q(runner_assignments__runner=runner)
+                             | Q(id__in=services.agents_following_runner(runner)))
         .select_related("owner").distinct().order_by("slug")
     )
     out = []
@@ -852,7 +854,8 @@ def list_runners(request: HttpRequest):
     if offered is not None:
         # A site sees only the runners that serve its own agents — enough for a
         # "continue on…" picker, and nothing about the rest of the fleet.
-        qs = qs.filter(agent_assignments__agent_id__in=offered).distinct()
+        following = {r.pk for r in qs if services.agents_following_runner(r) & set(offered)}
+        qs = qs.filter(Q(agent_assignments__agent_id__in=offered) | Q(pk__in=following)).distinct()
     rows = list(qs[:50])
     for r in rows:
         # Resolved here rather than in the schema because it is a property of the
@@ -936,7 +939,24 @@ def retire_runner(request: HttpRequest, runner_id: uuid.UUID):
         rows = list(RunnerAssignment.objects.filter(runner=runner).select_related("agent")
                     .order_by("agent__slug", "source", "actor"))
         RunnerAssignment.objects.filter(runner=runner).delete()
+        # And out of every workspace's default order. Left in, it reads as a
+        # listed runner the order's next save then 422s on — the 2026-07-25
+        # incident, one level up — and every agent following that order would
+        # silently lose the box.
+        orders = [row.workspace for row in WorkspaceRunnerOrder.objects.filter(runner=runner)
+                  .select_related("workspace")]
+        WorkspaceRunnerOrder.objects.filter(runner=runner).delete()
     dropped = [{"agent": r.agent.slug, "source": r.source, "actor": r.actor} for r in rows]
+    if orders:
+        from apps.events import services as events
+
+        for ws in orders:
+            events.record([{
+                "source": "harness.runners", "kind": "runner.route_dropped", "level": "warning",
+                "summary": (f"{request.user.email} retired {runner.name}: it is no longer in "
+                            f"{ws.slug}'s default runner order"),
+                "payload": {"runner": str(runner.pk), "workspace_order": ws.slug},
+            }], workspace=ws)
     if dropped and runner.workspace_id:
         from apps.events import services as events
 
@@ -2024,7 +2044,10 @@ def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: Dril
     stay drillable even though it can never claim routed traffic."""
     runner = _runner_or_404(request, runner_id)
     # No enabled=True filter here on purpose — see the docstring above.
-    assigned = Agent.objects.filter(runner_assignments__runner=runner)
+    # An agent following a workspace order that lists this runner counts too.
+    assigned = Agent.objects.filter(
+        Q(runner_assignments__runner=runner) | Q(id__in=services.agents_following_runner(runner))
+    ).distinct()
     # `is not None` (not truthy) so an explicit [] narrows to "drill nothing" and
     # hits the 422 below, rather than being treated the same as "drill everyone".
     agents = list(assigned.filter(slug__in=payload.agents) if payload.agents is not None else assigned)

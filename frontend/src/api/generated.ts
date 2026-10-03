@@ -2229,6 +2229,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/default-order": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What the agent's work runs on when no rule matches
+         * @description Its own ordered runner list when it has one; otherwise the default order of
+         *     its workspace, or of the nearest workspace above it that has one, which the
+         *     agent follows live. Saving an empty list to `PUT /runners` makes an agent
+         *     follow its workspace again; its source rules are unaffected either way.
+         */
+        readonly get: operations["get_agent_default_order"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runner-rules": {
         readonly parameters: {
             readonly query?: never;
@@ -3624,20 +3647,26 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * The ordered runner list this workspace's repo turns route by
+         * The workspace's default runner order: repo turns, and agents without their own
          * @description Repo turns (a project dispatch — no agent) route by this list: rank 0 takes
          *     the turn while it is available, the next rank only once every better one is
          *     not (or the turn has waited past the cascade grace), and a runner not listed
-         *     never takes one. Empty: any runner that declares the repo. Member-readable,
-         *     like an agent's own order.
+         *     never takes one. Empty: any runner that declares the repo.
+         *
+         *     It is also the default order of every AGENT here that has none of its own,
+         *     and of every workspace below this one that has no order of its own. Such an
+         *     agent's source rules still come first. Member-readable, like an agent's own
+         *     order.
          */
         readonly get: operations["get_runner_order"];
         /**
-         * Replace the ordered runner list this workspace's repo turns route by
-         * @description Wholesale replace (index = rank), at the tier that routes an agent's work
-         *     (`agent.work`). Every runner must be able to SERVE this workspace — its owner
-         *     a member (`runner_tenant_slugs`) — or the order would name a box the claim path
-         *     refuses anyway; such a runner is a 422, as is an unknown or retired one.
+         * Replace the workspace's default runner order
+         * @description Wholesale replace (index = rank). Workspace owners only: the order routes
+         *     agents in every workspace below this one too, and ownership is the only role
+         *     that flows down the tree. Every runner must be able to SERVE this workspace —
+         *     its owner a member (`runner_tenant_slugs`) — or the order would name a box the
+         *     claim path refuses anyway; such a runner is a 422, as is an unknown or retired
+         *     one.
          */
         readonly put: operations["set_runner_order"];
         readonly post?: never;
@@ -9670,6 +9699,42 @@ export interface components {
             readonly runners?: readonly components["schemas"]["AgentRunnerRowIn"][] | null;
         };
         /**
+         * AgentDefaultOrderOut
+         * @description What an agent's "everything else" runs on. `own` True: its own list
+         *     (`GET /runners`). Otherwise it follows `workspace`'s default order —
+         *     `runners` is that order as it applies to this agent, and two kinds of listed
+         *     runner are left out, each named so a screen can say why: laptops without the
+         *     agent's repo (`missing_repo`) and boxes whose owner cannot hold the agent
+         *     (`cannot_hold`). With `own` True, `workspace` names the order it WOULD
+         *     follow if its own list were cleared. `workspace` None: nothing to follow.
+         */
+        readonly AgentDefaultOrderOut: {
+            /** Own */
+            readonly own: boolean;
+            /** Workspace */
+            readonly workspace?: string | null;
+            /**
+             * Runners
+             * @default []
+             */
+            readonly runners: readonly components["schemas"]["AgentRunnerOut"][];
+            /**
+             * Missing Repo
+             * @default []
+             */
+            readonly missing_repo: readonly string[];
+            /**
+             * Cannot Hold
+             * @default []
+             */
+            readonly cannot_hold: readonly string[];
+            /**
+             * Repo Url
+             * @default
+             */
+            readonly repo_url: string;
+        };
+        /**
          * AgentRunnerRuleOut
          * @description One per-source routing rule: the priority runner for a source, and whether
          *     it is the ONLY runner allowed to take that source's work.
@@ -12031,6 +12096,36 @@ export interface components {
             readonly turn_mode: string;
             /** Routes */
             readonly routes: readonly components["schemas"]["TopologyRouteOut"][];
+            readonly follows?: components["schemas"]["TopologyFollowsOut"] | null;
+            /**
+             * Repo Url
+             * @default
+             */
+            readonly repo_url: string;
+        };
+        /**
+         * TopologyFollowsOut
+         * @description An agent with no default order of its own follows `workspace`'s. Runners
+         *     in that order the agent cannot use are listed here, not routed: laptops
+         *     without the agent's repo, and boxes whose owner cannot hold the agent.
+         */
+        readonly TopologyFollowsOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Missing Repo */
+            readonly missing_repo: readonly string[];
+            /** Cannot Hold */
+            readonly cannot_hold: readonly string[];
+        };
+        /** TopologyOrderRowOut */
+        readonly TopologyOrderRowOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Enabled */
+            readonly enabled: boolean;
         };
         /**
          * TopologyRouteOut
@@ -12059,6 +12154,11 @@ export interface components {
             readonly turn_mode: string;
             /** Can Claim */
             readonly can_claim: boolean;
+            /**
+             * Inherited
+             * @default false
+             */
+            readonly inherited: boolean;
         };
         /**
          * TopologyRunnerOut
@@ -12112,6 +12212,13 @@ export interface components {
             readonly depth: number;
             /** Agents */
             readonly agents: readonly components["schemas"]["TopologyAgentOut"][];
+            /**
+             * Order
+             * @default []
+             */
+            readonly order: readonly components["schemas"]["TopologyOrderRowOut"][];
+            /** Order From */
+            readonly order_from?: string | null;
         };
         /**
          * RunnerOrderRowOut
@@ -17848,6 +17955,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentRunnerOut"][];
+                };
+            };
+        };
+    };
+    readonly get_agent_default_order: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDefaultOrderOut"];
                 };
             };
         };

@@ -484,6 +484,19 @@ export async function deleteAgentGitHub(slug: string): Promise<AgentGitHub> {
   return githubResult(res as unknown as GitHubRes, 'Removing the token')
 }
 
+export type AgentDefaultOrderOut = components['schemas']['AgentDefaultOrderOut']
+
+// What the agent's "everything else" runs on: its own list, or the workspace
+// default order it follows (own=false), with the runners that order lists but
+// this agent cannot use, named.
+export async function getAgentDefaultOrder(slug: string, workspace?: string): Promise<AgentDefaultOrderOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/default-order', {
+    params: { path: { slug } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+  })
+  return unwrap(res, 'getAgentDefaultOrder') as unknown as AgentDefaultOrderOut
+}
+
 export async function getAgentRunnerRules(slug: string, workspace?: string): Promise<AgentRunnerRuleOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/runner-rules', {
     params: { path: { slug } },

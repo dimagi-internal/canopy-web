@@ -45,11 +45,12 @@ def sweep(user, slug: str, *, by=None) -> dict:
 
     from apps.agents.models import Agent, AgentAdmin, AgentDelegation
     from apps.canopy_sessions.models import SessionParticipant
-    from apps.harness.models import RunnerAdmin, RunnerAssignment
+    from apps.harness.models import RunnerAdmin, RunnerAssignment, WorkspaceRunnerOrder
 
     left = workspaces_left(user, slug)
     counts = {"agent_admins": 0, "runner_admins": 0, "session_participants": 0,
-              "delegations": 0, "agents_unowned": 0, "runner_assignments": 0}
+              "delegations": 0, "agents_unowned": 0, "runner_assignments": 0,
+              "workspace_orders": 0}
     if not left:
         return counts
     counts["agent_admins"] = AgentAdmin.objects.filter(
@@ -65,6 +66,9 @@ def sweep(user, slug: str, *, by=None) -> dict:
     # disabled, sit on the list waiting for its owner to rejoin.
     counts["runner_assignments"] = RunnerAssignment.objects.filter(
         runner__owner=user, agent__workspace_id__in=left).delete()[0]
+    # Likewise out of those workspaces' default orders, which agents follow.
+    counts["workspace_orders"] = WorkspaceRunnerOrder.objects.filter(
+        runner__owner=user, workspace_id__in=left).delete()[0]
     orphaned = list(Agent.objects.filter(owner=user, workspace_id__in=left))
     for agent in orphaned:
         agent.owner = None

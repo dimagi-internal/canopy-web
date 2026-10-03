@@ -13,6 +13,7 @@ vi.mock('@/api/agents', () => ({ getAgentRunnerRules, putAgentRunnerRules }))
 vi.mock('@/api/harness', () => ({ listRunners }))
 // The last row's controls have their own tests; here they only need to render.
 vi.mock('@/components/agents/RunnerAssignments', () => ({ RunnerAssignments: () => <div>default-runners</div> }))
+vi.mock('@/components/agents/AgentDefaultRunners', () => ({ AgentDefaultRunners: () => <div>default-runners</div> }))
 vi.mock('@/components/agents/TurnModeToggle', () => ({ TurnModeToggle: () => <div>agent-mode</div> }))
 
 const { AgentRouting } = await import('./AgentRouting')

@@ -38,6 +38,7 @@ from .schemas import (
     AgentActorRouteIn,
     AgentActorRouteOut,
     AgentActorRouteRunnerOut,
+    AgentDefaultOrderOut,
     AgentRunnerOut,
     AgentRunnerRowIn,
     AgentRunnerRuleOut,
@@ -626,6 +627,38 @@ def list_agent_runners(request: HttpRequest, slug: str) -> list[AgentRunnerOut]:
         # chip in the order row.
         for a in agent.runner_assignments.filter(source="").select_related("runner")
     ]
+
+
+@router.get("/{slug}/default-order", response=AgentDefaultOrderOut,
+            summary="What the agent's work runs on when no rule matches")
+def get_agent_default_order(request: HttpRequest, slug: str) -> AgentDefaultOrderOut:
+    """Its own ordered runner list when it has one; otherwise the default order of
+    its workspace, or of the nearest workspace above it that has one, which the
+    agent follows live. Saving an empty list to `PUT /runners` makes an agent
+    follow its workspace again; its source rules are unaffected either way."""
+    from apps.harness.services import agents_with_own_order, default_order_source, inherited_orders
+
+    agent = _get_agent_or_404(request, slug)
+    if agent.pk in agents_with_own_order([agent.pk]):
+        # `workspace` still names the order it WOULD follow, so a screen can
+        # offer "follow it instead".
+        return AgentDefaultOrderOut(own=True, workspace=default_order_source(agent),
+                                    repo_url=agent.repo_url or "")
+    inh = inherited_orders([agent.pk]).get(agent.pk)
+    if inh is None:
+        return AgentDefaultOrderOut(own=False, repo_url=agent.repo_url or "")
+    return AgentDefaultOrderOut(
+        own=False,
+        workspace=inh.workspace,
+        runners=[
+            AgentRunnerOut(runner_id=r.pk, runner_name=r.name, kind=r.kind, rank=i,
+                           online=r.live_status == r.ONLINE, ready=r.ready)
+            for i, r in enumerate(inh.runners)
+        ],
+        missing_repo=[r.name for r in inh.missing_repo],
+        cannot_hold=[r.name for r in inh.cannot_hold],
+        repo_url=agent.repo_url or "",
+    )
 
 
 @router.put("/{slug}/runners", response=list[AgentRunnerOut],

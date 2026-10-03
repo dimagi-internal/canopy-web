@@ -102,6 +102,23 @@ class AgentRunnerOut(StrictModel):
     enabled: bool = True
 
 
+
+class AgentDefaultOrderOut(StrictModel):
+    """What an agent's "everything else" runs on. `own` True: its own list
+    (`GET /runners`). Otherwise it follows `workspace`'s default order —
+    `runners` is that order as it applies to this agent, and two kinds of listed
+    runner are left out, each named so a screen can say why: laptops without the
+    agent's repo (`missing_repo`) and boxes whose owner cannot hold the agent
+    (`cannot_hold`). With `own` True, `workspace` names the order it WOULD
+    follow if its own list were cleared. `workspace` None: nothing to follow."""
+
+    own: bool
+    workspace: str | None = None
+    runners: list[AgentRunnerOut] = []
+    missing_repo: list[str] = []
+    cannot_hold: list[str] = []
+    repo_url: str = ""
+
 class AgentRunnerRowIn(StrictModel):
     """One row of the rows-form PUT body — carries `enabled` per runner,
     unlike the legacy all-enabled `runner_ids` form below."""

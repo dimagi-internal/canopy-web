@@ -90,6 +90,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_slack_enabled": ("agent-admin",),
     "get_agent_runtime": ("member",),
     "list_agent_runners": ("member",),
+    "get_agent_default_order": ("member",),
     "replace_agent_runners": ("agent.work", "runner"),  # runners must be visible + holdable
     "list_agent_runner_rules": ("member",),
     "replace_agent_runner_rules": ("agent.work", "runner"),
@@ -450,7 +451,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_shared_vault": ("own",),
     "set_shared_vault": ("own",),
     "get_runner_order": ("member",),
-    "set_runner_order": ("agent.work",),  # each runner's owner must be a member (422 otherwise)
+    "set_runner_order": ("own",),  # routes agents in every division below too; each runner's owner must be a member (422 otherwise)
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
 }

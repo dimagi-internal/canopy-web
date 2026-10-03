@@ -18,6 +18,7 @@ import {
 import { edgeKey, explainEdge } from '../agentTopology'
 import { defaultRoutes, dependsSolelyOn, ruleRoutes, statusTone } from '../runnerTopology'
 import { TopologyViews } from './TopologyViews'
+import { WorkspaceOrderPanel } from './WorkspaceOrderPanel'
 import {
   buildFleetMap,
   curve,
@@ -58,6 +59,7 @@ type Selection =
   | { kind: 'agent'; slug: string }
   | { kind: 'runner'; id: string }
   | { kind: 'add'; workspace: string; owner: string }
+  | { kind: 'order'; workspace: string }
   | null
 
 const HEALTH = {
@@ -117,7 +119,10 @@ function FleetMapView({ slug }: { slug: string }): JSX.Element {
   const agentParam = params.get('agent')
   const runnerParam = params.get('runner')
   const addParam = params.get('add')
-  const selection: Selection = agentParam
+  const orderParam = params.get('order')
+  const selection: Selection = orderParam
+    ? { kind: 'order', workspace: orderParam }
+    : agentParam
     ? { kind: 'agent', slug: agentParam }
     : runnerParam
       ? { kind: 'runner', id: runnerParam }
@@ -127,9 +132,10 @@ function FleetMapView({ slug }: { slug: string }): JSX.Element {
 
   const select = (next: Selection) => {
     const p = new URLSearchParams(params)
-    for (const k of ['agent', 'runner', 'add', 'owner']) p.delete(k)
+    for (const k of ['agent', 'runner', 'add', 'owner', 'order']) p.delete(k)
     if (next?.kind === 'agent') p.set('agent', next.slug)
     if (next?.kind === 'runner') p.set('runner', next.id)
+    if (next?.kind === 'order') p.set('order', next.workspace)
     if (next?.kind === 'add') {
       p.set('add', next.workspace)
       p.set('owner', next.owner)
@@ -388,6 +394,7 @@ function MapCanvas({
         selectedAgent={selectedAgent}
         selectedRunner={selectedRunner}
         adding={adding}
+        orderSelected={selection?.kind === 'order' ? selection.workspace : null}
         onToggle={onToggle}
         onSelect={onSelect}
         register={register}
@@ -426,6 +433,7 @@ function WorkspaceBox({
   selectedAgent,
   selectedRunner,
   adding,
+  orderSelected,
   onToggle,
   onSelect,
   register,
@@ -436,6 +444,7 @@ function WorkspaceBox({
   selectedAgent: MapAgent | undefined
   selectedRunner: TopologyRunnerOut | undefined
   adding: string | null
+  orderSelected: string | null
   onToggle: (ws: string) => void
   onSelect: (s: Selection) => void
   register: (key: string) => (el: HTMLElement | null) => void
@@ -479,6 +488,9 @@ function WorkspaceBox({
           )}
         </button>
       </h3>
+      {!isCollapsed && (
+        <DefaultOrderLine ws={ws} map={map} selected={orderSelected === ws.slug} onSelect={onSelect} />
+      )}
       {!isCollapsed && !empty && (
         <div className="flex flex-col gap-3 px-3 pb-3">
           {ws.lanes.length > 0 && (
@@ -509,6 +521,7 @@ function WorkspaceBox({
                   selectedAgent={selectedAgent}
                   selectedRunner={selectedRunner}
                   adding={adding}
+                  orderSelected={orderSelected}
                   onToggle={onToggle}
                   onSelect={onSelect}
                   register={register}
@@ -524,6 +537,46 @@ function WorkspaceBox({
 
 function addKey(workspace: string, owner: string): string {
   return `${workspace}\u0000${owner}`
+}
+
+/** The workspace's default runners, one line, at the top of its box — the
+ *  order every agent here without its own follows. Selecting it opens the editor. */
+function DefaultOrderLine({
+  ws,
+  map,
+  selected,
+  onSelect,
+}: {
+  ws: MapWorkspace
+  map: FleetMap
+  selected: boolean
+  onSelect: (s: Selection) => void
+}): JSX.Element {
+  const from = map.orderFrom.get(ws.slug) ?? null
+  const names = ws.order.map((id) => shortRunner(map.runners.get(id)?.name ?? '?'))
+  return (
+    <div className="px-3 pb-2">
+      <button
+        type="button"
+        onClick={() => onSelect(selected ? null : { kind: 'order', workspace: ws.slug })}
+        aria-pressed={selected}
+        className={clsx(
+          'inline-flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border px-2 py-1 text-left text-[12px]',
+          selected ? 'border-primary bg-primary/10' : 'border-dashed border-border hover:bg-muted',
+        )}
+        data-testid={`map-order-${ws.slug}`}
+      >
+        <span className="text-muted-foreground">Default runners:</span>
+        {names.length > 0 ? (
+          <span className="font-mono text-foreground">{names.join(' → ')}</span>
+        ) : from ? (
+          <span className="text-foreground-secondary">follows {from}&rsquo;s</span>
+        ) : (
+          <span className="text-warning">none set</span>
+        )}
+      </button>
+    </div>
+  )
 }
 
 /** Grow by agent count, and ask for room for up to four cards side by side
@@ -699,7 +752,13 @@ function AgentCard({
           ? `runs on ${order.map((r) => shortRunner(map.runners.get(r.runner_id)?.name ?? '?')).join(' → ')}`
           : 'no runner'}
         {rules ? ` + ${rules} rule${rules === 1 ? '' : 's'}` : ''}
+        {agent.follows ? ` · ${agent.follows.workspace} default` : ''}
       </span>
+      {(agent.follows?.missing_repo ?? []).length > 0 && (
+        <span className="text-[11px] text-warning">
+          {(agent.follows?.missing_repo ?? []).map((id) => shortRunner(map.runners.get(id)?.name ?? '?')).join(', ')} lacks its repo
+        </span>
+      )}
       {agent.interfacePublished && <span className="text-[11px] text-info">interface published</span>}
       {health && <span className={clsx('text-[11px]', health.className)}>{health.text}</span>}
       {sole && <span className="text-[11px] font-semibold text-destructive">stops if it goes dark</span>}
@@ -762,6 +821,15 @@ function SidePanel({
             onSelect(null)
             onRefresh()
           }}
+        />
+      ) : selection?.kind === 'order' ? (
+        <WorkspaceOrderPanel
+          key={selection.workspace}
+          workspace={selection.workspace}
+          map={map}
+          fleet={fleet}
+          onSaved={onRefresh}
+          onSelectAgent={(slug) => onSelect({ kind: 'agent', slug })}
         />
       ) : selection?.kind === 'add' ? (
         <AddRunnerPanel workspace={selection.workspace} owner={selection.owner} map={map} />
@@ -833,6 +901,7 @@ function AgentPanel({
         <AgentRouting
           key={agent.slug}
           agentSlug={agent.slug}
+          agentName={agent.name}
           workspace={agent.workspace}
           initialTurnMode={(agent.turnMode || 'manual') as TurnMode}
           onSaved={onRoutingSaved}

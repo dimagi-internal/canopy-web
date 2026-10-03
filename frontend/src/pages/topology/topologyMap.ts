@@ -23,6 +23,9 @@ export interface MapAgent {
   turnMode: string
   routing: TopologyAgentOut | null
   health: AgentHealth
+  /** Set when it has no runners of its own and follows a workspace's default order. */
+  follows: TopologyAgentOut['follows']
+  repoUrl: string
 }
 
 /** An owner's lane inside one workspace: the runners they paired that live
@@ -43,6 +46,8 @@ export interface MapWorkspace {
   runnerCount: number
   /** Agents in this workspace whose turns cannot run now (unrouted or no live runner). */
   problemCount: number
+  /** Its own default runner order (enabled runner ids, rank order); empty = none. */
+  order: string[]
 }
 
 export interface FleetMap {
@@ -54,6 +59,8 @@ export interface FleetMap {
   edges: Map<string, AgentEdgeOut>
   /** The agent-topology rows as served, for the shared edge explanations. */
   profiles: Map<string, AgentTopologyAgentOut>
+  /** For a workspace with no order of its own: the nearest one above it that has one. */
+  orderFrom: Map<string, string | null>
 }
 
 
@@ -84,6 +91,8 @@ export function buildFleetMap(runnerTopo: RunnerTopologyOut, agentTopo: AgentTop
       turnMode: r?.turn_mode ?? '',
       routing: r,
       health: r ? agentHealth(r, runners) : 'unrouted',
+      follows: r?.follows ?? null,
+      repoUrl: r?.repo_url ?? '',
     })
   }
 
@@ -124,6 +133,7 @@ export function buildFleetMap(runnerTopo: RunnerTopologyOut, agentTopo: AgentTop
       agentCount: own.length + children.reduce((n, c) => n + c.agentCount, 0),
       runnerCount: lanes.reduce((n, l) => n + l.runners.length, 0) + children.reduce((n, c) => n + c.runnerCount, 0),
       problemCount: own.filter((a) => a.health !== 'ok').length + children.reduce((n, c) => n + c.problemCount, 0),
+      order: (ws.order ?? []).filter((o) => o.enabled).map((o) => o.runner_id),
     }
   }
 
@@ -135,6 +145,7 @@ export function buildFleetMap(runnerTopo: RunnerTopologyOut, agentTopo: AgentTop
     outside: runnerTopo.runners.filter((r) => !r.in_tree),
     edges: new Map(agentTopo.edges.map((e) => [edgeKey(e.source, e.target), e] as const)),
     profiles: new Map(agentTopo.agents.map((a) => [a.slug, a] as const)),
+    orderFrom: new Map(runnerTopo.workspaces.map((w) => [w.slug, w.order_from ?? null] as const)),
   }
 }
 
