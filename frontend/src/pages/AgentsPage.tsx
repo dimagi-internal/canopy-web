@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { listAgents, type AgentOut } from '@/api/agents'
+import { agentHref } from './agentHref'
 
 function formatDate(s: string): string {
   return new Date(s).toLocaleDateString(undefined, {
@@ -22,7 +23,7 @@ function CountStat({ value, label }: { value: number; label: string }) {
 function AgentCard({ agent }: { agent: AgentCardData }) {
   return (
     <Link
-      to={`/agents/${encodeURIComponent(agent.slug)}`}
+      to={agentHref(agent)}
       className="group block bg-card border border-border rounded-xl p-5 hover:border-primary/40 hover:bg-card/80 transition-colors"
     >
       <div className="flex items-start gap-3">
