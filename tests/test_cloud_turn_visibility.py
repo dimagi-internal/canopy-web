@@ -148,3 +148,37 @@ def test_agent_filter_does_not_pull_in_another_agents_session_turns():
     )
     ids = {t["id"] for t in _client(user).get("/api/harness/turns/", {"agent": "ace"}).json()}
     assert str(turn.id) not in ids
+
+
+def _member(ws, name):
+    u = User.objects.create_user(name, f"{name}@dimagi-ai.com", "pw")
+    WorkspaceMembership.objects.create(user=u, workspace=ws, role=WorkspaceMembership.EDITOR)
+    return u
+
+
+def test_a_member_sees_that_an_agents_email_turn_ran_but_not_what_it_said():
+    """hal, a member of `connect` and not an ACE admin, saw no ACE email turn."""
+    user, ws, agent = _ctx()
+    turn, _ = services.enqueue_turn(
+        agent=agent, origin=Turn.ORIGIN_EMAIL, idempotency_key="email-ace-t3-1",
+        prompt="/ace:turn --thread t3",
+        origin_ref={"thread_id": "t3", "subject": "Private", "from": "ali@example.org"},
+    )
+    hal = _member(ws, "hal")
+    rows = {t["id"]: t for t in _client(hal).get("/api/harness/turns/", {"agent": "ace"}).json()}
+    assert str(turn.id) in rows
+    assert rows[str(turn.id)]["content_hidden"] is True
+    assert rows[str(turn.id)]["prompt"] == "" and rows[str(turn.id)]["origin_ref"] == {}
+
+
+def test_a_members_private_chat_turn_stays_hidden_from_other_members():
+    from apps.canopy_sessions.models import Session
+
+    user, ws, agent = _ctx()
+    chat = Session.objects.create(workspace=ws, agent=agent, created_by=user,
+                                  origin=Session.ORIGIN_WEB, title="mine")
+    turn, _ = services.enqueue_turn(session=chat, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+                                    idempotency_key="chat-1", prompt="secret")
+    hal = _member(ws, "hal")
+    ids = {t["id"] for t in _client(hal).get("/api/harness/turns/").json()}
+    assert str(turn.id) not in ids
