@@ -115,6 +115,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # First, so its clock covers every other middleware too.
+    "apps.common.request_timing.SlowRequestLogMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
