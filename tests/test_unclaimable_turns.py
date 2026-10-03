@@ -166,7 +166,7 @@ def test_capabilities_without_assignment_reports_CONFIG():
     _age(services.enqueue_turn(initiator=_BY_CANOPY, agent=ace, origin=Turn.ORIGIN_API, idempotency_key="ka1", prompt="hi")[0])
     rows = services.unclaimable_queued_turns(user)
     assert [r["kind"] for r in rows] == ["config"]
-    assert "is assigned the agent 'ace'" in rows[0]["reason"]
+    assert "routes the agent 'ace'" in rows[0]["reason"]
 
 
 def test_assignment_with_offline_runner_reports_OFFLINE():

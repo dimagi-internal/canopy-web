@@ -5,9 +5,9 @@ import { agentHealth, dependsSolelyOn } from './runnerTopology'
 
 const runner = (id: string, status: string) => ({ id, status }) as TopologyRunnerOut
 const route = (runner_id: string, rank: number, extra: Partial<TopologyRouteOut> = {}): TopologyRouteOut => ({
-  runner_id, rank, enabled: true, source: '', actor: '', strict: false, turn_mode: '', can_claim: true, ...extra,
+  runner_id, rank, enabled: true, source: '', actor: '', strict: false, turn_mode: '', can_claim: true, inherited: false, ...extra,
 })
-const agent = (routes: TopologyRouteOut[]) => ({ slug: 'hal', name: 'Hal', turn_mode: 'manual', routes }) as TopologyAgentOut
+const agent = (routes: TopologyRouteOut[]) => ({ slug: 'hal', name: 'Hal', turn_mode: 'manual', routes, repo_url: '' }) as TopologyAgentOut
 const fleet = new Map([
   ['up', runner('up', 'online')],
   ['up2', runner('up2', 'online')],

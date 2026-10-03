@@ -68,10 +68,17 @@ def _routed_but_not_session_capable(turn: Turn) -> list[str]:
         return []
     rows = (RunnerAssignment.objects.filter(agent_id=agent_id, enabled=True)
             .exclude(runner__status=Runner.RETIRED).select_related("runner"))
+    runners = [row.runner for row in rows]
+    if not any(not row.source for row in rows):
+        # No order of its own: the agent follows its workspace's.
+        from apps.harness.services import inherited_orders
+
+        inh = inherited_orders([agent_id]).get(agent_id)
+        runners += inh.runners if inh else []
     seen: dict[str, None] = {}
-    for row in rows:
-        if not row.runner.session_capable():
-            seen.setdefault(row.runner.name, None)
+    for r in runners:
+        if not r.session_capable():
+            seen.setdefault(r.name, None)
     return list(seen)
 
 

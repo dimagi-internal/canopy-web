@@ -155,6 +155,21 @@ for slug in "${AGENT_SLUGS[@]}"; do
   api GET "/api/agents/${slug}/runner-rules" > "$TMP/rules-${slug}.json" 2>/dev/null || true
 done
 
+# Workspace default orders too: agents with no order of their own FOLLOW their
+# workspace's, so this is where most of the fleet's cloud routing lives now
+# (2026-10-03). Retiring drops the predecessor from every order, so snapshot first.
+api GET "/api/workspaces/" > "$TMP/workspaces.json"
+WS_SLUGS=($(python3 -c "
+import json
+rows = json.load(open('$TMP/workspaces.json'))
+rows = rows.get('items', rows) if isinstance(rows, dict) else rows
+print(' '.join(w['slug'] for w in rows))
+"))
+for ws in ${WS_SLUGS[@]+"${WS_SLUGS[@]}"}; do
+  [[ -n "$ws" ]] || continue
+  api GET "/api/workspaces/${ws}/runner-order" > "$TMP/order-${ws}.json" 2>/dev/null || true
+done
+
 echo ">> retiring other non-retired '$RUNNER_NAME' cloud runners"
 api GET /api/harness/runners/ > "$TMP/runners.json"
 python3 -c "
@@ -258,6 +273,36 @@ print(f'{len(out)} rule(s), {swapped} row(s) moved')
   if [[ "$RULE_ACTION" != "none" ]]; then
     api PUT "/api/agents/${slug}/runner-rules" "$TMP/put-rules-${slug}.json" >/dev/null
     echo "   $slug rules: $RULE_ACTION"
+  fi
+done
+
+# …and in each workspace default order that named a predecessor, from the
+# pre-retire snapshot. An order that did not name one is left alone: adding the
+# new box to a workspace's order is a routing decision, not part of a rebuild.
+echo ">> swapping workspace default orders -> $RUNNER_ID"
+for ws in ${WS_SLUGS[@]+"${WS_SLUGS[@]}"}; do
+  [[ -s "$TMP/order-${ws}.json" ]] || continue
+  rm -f "$TMP/put-order-${ws}.json"
+  ORDER_ACTION=$(python3 -c "
+import json, os
+rows = json.load(open('$TMP/order-${ws}.json'))
+if not isinstance(rows, list) or not rows:
+    print('none'); raise SystemExit(0)
+predecessors = set(l.strip() for l in open('$TMP/predecessors.txt')) if os.path.exists('$TMP/predecessors.txt') else set()
+if not any(r['runner_id'] in predecessors for r in rows):
+    print('none'); raise SystemExit(0)
+new_id = '$RUNNER_ID'
+out = []
+for r in sorted(rows, key=lambda r: r['rank']):
+    rid = new_id if r['runner_id'] in predecessors else r['runner_id']
+    if rid not in [x['runner_id'] for x in out]:
+        out.append({'runner_id': rid, 'enabled': r['enabled']})
+json.dump({'runners': out}, open('$TMP/put-order-${ws}.json', 'w'))
+print('replaced')
+")
+  if [[ "$ORDER_ACTION" == "replaced" ]]; then
+    api PUT "/api/workspaces/${ws}/runner-order" "$TMP/put-order-${ws}.json" >/dev/null
+    echo "   $ws: replaced"
   fi
 done
 

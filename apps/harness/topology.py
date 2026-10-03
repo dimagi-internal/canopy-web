@@ -27,8 +27,8 @@ from apps.agents.models import Agent
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from .models import Runner, RunnerAssignment
-from .services import runner_tenant_slugs
+from .models import Runner, RunnerAssignment, WorkspaceRunnerOrder
+from .services import inherited_orders, runner_tenant_slugs
 
 
 def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) -> dict:
@@ -53,6 +53,18 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
     runners: dict = {r.pk: r for r in home_runners}
     for a in assignments:
         runners.setdefault(a.runner_id, a.runner)
+    # Agents with no default order of their own follow their workspace's (or its
+    # nearest ancestor's) — drawn as routes marked `inherited`.
+    following = inherited_orders([a.pk for a in agents])
+    for inh in following.values():
+        for r in [*inh.runners, *inh.missing_repo, *inh.cannot_hold]:
+            runners.setdefault(r.pk, r)
+    own_orders: dict[str, list] = {}
+    for row in (WorkspaceRunnerOrder.objects.filter(workspace_id__in=slugs)
+                .select_related("runner", "runner__owner").order_by("rank")):
+        own_orders.setdefault(row.workspace_id, []).append(row)
+        if row.runner.status != Runner.RETIRED:
+            runners.setdefault(row.runner_id, row.runner)
 
     # One tenant lookup per runner, not per assignment: a runner may claim an
     # agent's turn only if its OWNER's workspaces include the agent's
@@ -75,6 +87,13 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
             "can_claim": None,  # filled below, once the agent's workspace is known
         })
         serves.setdefault(a.runner_id, set()).add(a.agent_id)
+    for agent_id, inh in following.items():
+        for rank, r in enumerate(inh.runners):
+            routes_by_agent.setdefault(agent_id, []).append({
+                "runner_id": r.pk, "rank": rank, "enabled": True, "source": "", "actor": "",
+                "strict": False, "turn_mode": "", "can_claim": None, "inherited": True,
+            })
+            serves.setdefault(r.pk, set()).add(agent_id)
 
     agents_by_ws: dict[str, list[dict]] = {}
     for agent in agents:
@@ -86,14 +105,27 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True) 
             "name": agent.name,
             "turn_mode": agent.turn_mode,
             "routes": routes,
+            "follows": ({
+                "workspace": following[agent.pk].workspace,
+                "missing_repo": [r.pk for r in following[agent.pk].missing_repo],
+                "cannot_hold": [r.pk for r in following[agent.pk].cannot_hold],
+            } if agent.pk in following else None),
+            "repo_url": agent.repo_url or "",
         })
 
+    # Which workspaces (in the tree or above it) have an enabled order — one
+    # query, rather than one per ancestor per workspace.
+    ordered_anywhere = set(WorkspaceRunnerOrder.objects.filter(enabled=True)
+                           .values_list("workspace_id", flat=True).distinct())
     ordered = [{
         "slug": ws.slug,
         "display_name": ws.display_name,
         "parent": ws.parent_id if depth else None,
         "depth": depth,
         "agents": agents_by_ws.get(ws.slug, []),
+        "order": [{"runner_id": r.runner_id, "enabled": r.enabled} for r in own_orders.get(ws.slug, [])],
+        "order_from": None if own_orders.get(ws.slug) else next(
+            (s for s in ws.ancestor_slugs() if s in ordered_anywhere), None),
     } for ws, depth in tree]
 
     runner_rows = []

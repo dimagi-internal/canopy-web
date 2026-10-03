@@ -1032,9 +1032,16 @@ def caller_runs_agent(user, agent) -> bool:
     # owner's GitHub token through `/credentials/resolve`.
     if not agent.is_admin(user):
         return False
-    return RunnerAssignment.objects.filter(
+    if RunnerAssignment.objects.filter(
         agent=agent, runner__owner=user,
-    ).exclude(runner__status=Runner.RETIRED).exists()
+    ).exclude(runner__status=Runner.RETIRED).exists():
+        return True
+    # An agent with no order of its own follows its workspace's: a box of this
+    # user's in that order is one the agent's work is directed at.
+    from apps.harness.services import inherited_orders
+
+    inh = inherited_orders([agent.id]).get(agent.id)
+    return bool(inh) and any(r.owner_id == user.pk for r in inh.runners)
 
 
 def runner_may_hold_agent(runner, agent) -> bool:

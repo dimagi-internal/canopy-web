@@ -8,7 +8,7 @@ import {
   type TurnMode,
 } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
-import { RunnerAssignments } from '@/components/agents/RunnerAssignments'
+import { AgentDefaultRunners } from '@/components/agents/AgentDefaultRunners'
 import { ZdrBadge, hasZdr } from '@/components/agents/ZdrBadge'
 import {
   ACTORLESS_SOURCES,
@@ -126,8 +126,10 @@ export function AgentRouting({
   initialTurnMode,
   workspace,
   onSaved,
+  agentName,
 }: {
   agentSlug: string
+  agentName?: string
   /** The agent's workspace, when the page is under another (the fleet map at a
    *  parent, the supervisor). Its routes resolve the agent within one tenant. */
   workspace?: string
@@ -266,7 +268,13 @@ export function AgentRouting({
             <span className="text-[12px] font-medium text-foreground">Everything else</span>
           </Cell>
           <Cell label="Runs on">
-            <RunnerAssignments agentSlug={agentSlug} workspace={workspace} fleet={fleet} onSaved={onSaved} />
+            <AgentDefaultRunners
+              agentSlug={agentSlug}
+              agentName={agentName ?? agentSlug}
+              workspace={workspace}
+              fleet={fleet}
+              onSaved={onSaved}
+            />
           </Cell>
           <Cell label="If all down">
             <span className="text-[11px] text-muted-foreground">Waits</span>

@@ -547,7 +547,115 @@ def load_assignment_rows(agent_ids) -> tuple[dict, dict]:
             priorities.setdefault((row.agent_id, row.source, row.actor), []).append(row)
         else:
             defaults.setdefault(row.agent_id, []).append((row.rank, row.runner))
+    # An agent with no default order of its own follows its workspace's, so
+    # every reader of `defaults` — claim, turn status, the unclaimable report,
+    # the inbound mailbox routing — sees the inherited list without knowing.
+    for agent_id, inh in inherited_orders(agent_ids).items():
+        defaults[agent_id] = list(enumerate(inh.runners))
     return defaults, priorities
+
+
+@dataclass
+class InheritedOrder:
+    """The default order an agent FOLLOWS because it has none of its own."""
+
+    workspace: str  # the workspace whose order it is (the agent's own, or an ancestor's)
+    runners: list  # usable, in rank order
+    missing_repo: list  # laptops in the order that do not have the agent's repo
+    cannot_hold: list  # boxes whose owner is not one of the agent's admins
+
+
+def agents_following_runner(runner: Runner) -> set:
+    """Agents that reach `runner` through an INHERITED order: no order of their
+    own, and the order they follow lists it as usable for them. The claim's
+    target filter joins assignment rows, which an inheriting agent has none of."""
+    from apps.agents.models import Agent
+
+    listed = set(WorkspaceRunnerOrder.objects.filter(runner=runner, enabled=True)
+                 .values_list("workspace_id", flat=True))
+    if not listed:
+        return set()
+    scope = listed | wsvc.descendant_slugs(listed)
+    candidates = set(Agent.objects.filter(workspace_id__in=scope).values_list("id", flat=True))
+    return {aid for aid, inh in inherited_orders(candidates).items()
+            if any(r.id == runner.id for r in inh.runners)}
+
+
+def default_order_source(agent) -> str | None:
+    """The workspace whose default order this agent would follow: its own
+    workspace or the nearest above it with an enabled order. None: none has one."""
+    if not agent.workspace_id:
+        return None
+    chain = [agent.workspace_id, *agent.workspace.ancestor_slugs()]
+    have = set(WorkspaceRunnerOrder.objects.filter(workspace_id__in=chain, enabled=True)
+               .values_list("workspace_id", flat=True))
+    return next((s for s in chain if s in have), None)
+
+
+def agents_with_own_order(agent_ids) -> set:
+    """Agents that have a default order of their own — ANY default row, enabled
+    or not. An owner who switched every runner off has still chosen a list;
+    falling back to the workspace's would route work they parked."""
+    return set(
+        RunnerAssignment.objects.filter(agent_id__in=agent_ids, source="")
+        .values_list("agent_id", flat=True).distinct()
+    )
+
+
+def inherited_orders(agent_ids) -> dict:
+    """{agent_id: InheritedOrder} for every agent here WITHOUT an order of its
+    own, whose workspace (or nearest ancestor) has one.
+
+    The order is followed live, never copied: replacing a cloud box means
+    editing one workspace's list, not every agent (2026-10-03).
+
+    Two kinds of listed runner are dropped for an agent rather than kept — kept,
+    each would read as an available better rank and stall the agent behind a box
+    that can never take its work, until the cascade grace:
+      - a laptop that does not have the agent's repo (it reports the emdash
+        projects it has, and an agent's project is its slug). A cloud runner sets
+        agents up itself and is never dropped for this.
+      - a box whose owner is not one of the agent's admins
+        (`runner_may_hold_agent`) — the claim would refuse it anyway.
+    Both are returned so a screen can say why."""
+    from apps.agents.models import Agent
+
+    agent_ids = set(agent_ids or ())
+    if not agent_ids:
+        return {}
+    own = agents_with_own_order(agent_ids)
+    agents = list(Agent.objects.filter(id__in=agent_ids - own).select_related("workspace"))
+    if not agents:
+        return {}
+    chains: dict = {}
+    for ws in {a.workspace for a in agents if a.workspace_id}:
+        chains[ws.slug] = [ws.slug, *ws.ancestor_slugs()]
+    orders = load_workspace_orders({s for chain in chains.values() for s in chain})
+    held: dict = {}  # (agent_id, owner_id) -> bool; owners are few
+
+    def may_hold(runner, agent) -> bool:
+        key = (agent.id, runner.owner_id)
+        if key not in held:
+            from apps.agents.services import runner_may_hold_agent
+
+            held[key] = runner_may_hold_agent(runner, agent)
+        return held[key]
+
+    out: dict = {}
+    for agent in agents:
+        source = next((s for s in chains.get(agent.workspace_id, []) if orders.get(s)), None)
+        if source is None:
+            continue
+        inh = InheritedOrder(workspace=source, runners=[], missing_repo=[], cannot_hold=[])
+        for r in orders[source]:
+            if r.kind == Runner.EMDASH and agent.slug not in r.project_names():
+                inh.missing_repo.append(r)
+            elif not may_hold(r, agent):
+                inh.cannot_hold.append(r)
+            else:
+                inh.runners.append(r)
+        out[agent.id] = inh
+    return out
 
 
 def assignment_rows_for(
@@ -720,6 +828,9 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q
     # so they share the join — a disabled row for this runner must not match
     # via some OTHER enabled row on the same agent.
     agent_leg = Q(agent__runner_assignments__runner=runner, agent__runner_assignments__enabled=True)
+    following = agents_following_runner(runner)
+    if following:
+        agent_leg |= Q(agent_id__in=following)
     if exclude_slugs:
         # Per-agent pause: the runner locally paused these agents; never claim their
         # queued turns (they stay QUEUED, resumed the moment the pause is lifted).
@@ -1098,7 +1209,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         if t.chat_session_id:
             target, what = "session", "can take this session (session-capable + its binding)"
         elif t.agent_id:
-            target, what = f"agent {t.agent.slug}", f"is assigned the agent '{t.agent.slug}'"
+            target, what = f"agent {t.agent.slug}", f"routes the agent '{t.agent.slug}' (by its own runners or its workspace's default order)"
         else:
             target, what = f"project {t.project}", f"declares the repo '{t.project}'"
         reqs = rr.requirements_of(t)
@@ -1152,7 +1263,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     projects = runner.project_names()
     session_capable = runner.session_capable()
     has_pins = Turn.objects.filter(status=Turn.QUEUED, pinned_runner=runner).exists()
-    has_assignments = RunnerAssignment.objects.filter(runner=runner).exists()
+    # A workspace's order counts: agents with no order of their own follow it,
+    # so a box named only there still has agent work to look for.
+    has_assignments = (
+        RunnerAssignment.objects.filter(runner=runner).exists()
+        or WorkspaceRunnerOrder.objects.filter(runner=runner, enabled=True).exists()
+    )
     if not has_assignments and not projects and not session_capable and not has_pins:
         return None
     routing_q = Q(routing__in=[Turn.PREFER_LOCAL, Turn.LOCAL_ONLY, Turn.ANY])

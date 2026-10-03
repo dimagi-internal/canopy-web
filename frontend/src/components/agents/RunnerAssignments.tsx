@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { getAgentRunners, putAgentRunners, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { ZdrBadge, hasZdr } from '@/components/agents/ZdrBadge'
+import { RepoSetupDialog } from '@/components/agents/RepoSetupDialog'
 
 // The DEFAULT order — the "Everything else" row of the routing table
 // (AgentRouting.tsx), rendered as that row's runners cell: which RUNNERS (not kinds) this agent will route to, in
@@ -97,8 +98,14 @@ export function RunnerAssignments({
   fleet: fleetProp,
   workspace,
   onSaved,
+  agentName,
+  repoUrl,
 }: {
   agentSlug: string
+  /** With `repoUrl`: adding a laptop that lacks the agent's repo offers the
+   *  steps to get it there. Without them, no prompt. */
+  agentName?: string
+  repoUrl?: string
   /** The agent's workspace, when the page is under another. */
   workspace?: string
   /** After the server accepted a change to the order. */
@@ -198,10 +205,16 @@ export function RunnerAssignments({
     void commit(nextRowsForToggle(prev, id), prev)
   }
 
+  // A laptop runs an agent in the emdash project named after its slug and
+  // reports the projects it has; one without it can never take this work.
+  const [needsRepo, setNeedsRepo] = useState<string | null>(null)
   const add = (id: string) => {
     const prev = rowsRef.current
     setMenuOpen(false)
     void commit(nextRowsForAdd(prev, id), prev)
+    const r = fleet.find((x) => x.id === id)
+    const projects = ((r?.capabilities ?? {}) as { projects?: string[] }).projects ?? []
+    if (r && repoUrl !== undefined && r.kind === 'emdash' && !projects.includes(agentSlug)) setNeedsRepo(r.name)
   }
 
   if (rows === null) {
@@ -321,6 +334,16 @@ export function RunnerAssignments({
 
         {error && <span className="text-[11px] text-destructive">{error}</span>}
       </div>
+      {repoUrl !== undefined && (
+        <RepoSetupDialog
+          open={needsRepo !== null}
+          onClose={() => setNeedsRepo(null)}
+          agentSlug={agentSlug}
+          agentName={agentName ?? agentSlug}
+          repoUrl={repoUrl}
+          runners={needsRepo ? [needsRepo] : []}
+        />
+      )}
     </div>
   )
 }
