@@ -1,7 +1,7 @@
 """GET|PUT|DELETE /api/agents/{slug}/actor-routes[/{actor}] — per-person routing.
 
 The case this exists for: a teammate runs an agent on their own laptop (paired
-under the AGENT's identity, administered by them through a RunnerAdmin grant) and
+under their OWN login, and an admin of the agent so the box may hold it) and
 wants to say "route Alice's work to my box" in one call, without being able to
 clobber — or even having to re-send — everyone else's rules.
 """
@@ -11,7 +11,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from apps.agents.models import Agent
+from apps.agents.models import Agent, AgentAdmin
 from apps.harness import services
 from apps.harness.models import Runner, RunnerAdmin, RunnerAssignment, Turn, TurnEvent
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -29,22 +29,23 @@ def fleet(client):
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     WorkspaceMembership.objects.create(workspace=ws, user=sarvesh, role=WorkspaceMembership.EDITOR)
     WorkspaceMembership.objects.create(workspace=ws, user=ace_user, role=WorkspaceMembership.EDITOR)
-    # `user` links the agent's own login: a box paired under the agent's
-    # identity is the agent's box (`runner_may_hold_agent`).
+    # `user` links the agent's own login. It does NOT make a box paired under
+    # that login the agent's box — pairing as an agent is refused (#1049), and a
+    # box holds the agent only when its OWNER is an agent admin.
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, user=ace_user)
+    AgentAdmin.objects.create(agent=ace, user=sarvesh, granted_by=jj)
     now = timezone.now()
     jj_laptop = Runner.objects.create(
         name="jj-mbp", kind=Runner.EMDASH, owner=jj, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=now, capabilities={},
     )
-    # Paired under the agent's identity — the operator is NOT the owner.
+    # Paired under Sarvesh's own login; he holds the agent as its admin.
     st_laptop = Runner.objects.create(
-        name="st-mbp", kind=Runner.EMDASH, owner=ace_user, workspace=ws,
+        name="st-mbp", kind=Runner.EMDASH, owner=sarvesh, workspace=ws,
         status=Runner.ONLINE, last_heartbeat_at=now, capabilities={},
     )
-    RunnerAdmin.objects.create(runner=st_laptop, user=sarvesh, granted_by=ace_user)
     RunnerAssignment.objects.create(agent=ace, runner=jj_laptop, rank=0)
-    return {"client": client, "jj": jj, "sarvesh": sarvesh, "ace": ace,
+    return {"client": client, "jj": jj, "sarvesh": sarvesh, "ace": ace, "ace_user": ace_user,
             "jj_laptop": jj_laptop, "st_laptop": st_laptop}
 
 
@@ -173,3 +174,29 @@ def test_a_contact_who_is_not_a_member_can_be_routed(fleet):
     assert services.claim_next_turn(fleet["jj_laptop"]) is None
     claimed = services.claim_next_turn(fleet["st_laptop"])
     assert claimed is not None and claimed.idempotency_key == "c1"
+
+
+def test_a_box_owned_by_the_agents_own_login_cannot_hold_the_agent(fleet):
+    """The pre-#1049 shape: a box paired AS the agent. Its owner is the agent's
+    own login, which is no admin of the agent, so the box may not hold it —
+    not even for an operator with a RunnerAdmin grant on it. Routing work onto
+    it is refused, and it cannot claim the agent's turns."""
+    from apps.agents.services import runner_may_hold_agent
+
+    legacy = Runner.objects.create(
+        name="as-ace", kind=Runner.EMDASH, owner=fleet["ace_user"],
+        workspace=fleet["ace"].workspace, status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(), capabilities={},
+    )
+    RunnerAdmin.objects.create(runner=legacy, user=fleet["sarvesh"], granted_by=fleet["ace_user"])
+    assert runner_may_hold_agent(legacy, fleet["ace"]) is False
+
+    fleet["client"].force_login(fleet["sarvesh"])
+    res = _route(fleet["client"], "alice@dimagi.com", legacy)
+    assert res.status_code == 403
+    assert not RunnerAssignment.objects.filter(actor="alice@dimagi.com").exists()
+
+    RunnerAssignment.objects.create(agent=fleet["ace"], runner=legacy, rank=1)
+    Turn.objects.create(agent=fleet["ace"], origin=Turn.ORIGIN_SLACK, idempotency_key="l1",
+                        routing=Turn.ANY, enqueued_by=fleet["jj"])
+    assert services.claim_next_turn(legacy) is None

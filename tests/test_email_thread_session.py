@@ -135,3 +135,18 @@ def test_a_session_failure_does_not_lose_the_turn(agent, monkeypatch):
     turn, _ = _email_turn(agent, "thread-E")
     assert turn.pk is not None, "the mail still has to be handled"
     assert turn.chat_session_id is None
+
+
+def test_the_session_homes_in_the_agents_own_workspace_never_a_default(agent):
+    """No `ensure_default_workspace()` fallback: Agent.workspace is NOT NULL, so
+    the email session lives where the agent lives (here `connect`, not the org
+    default) — and a session with no agent at all fails loudly, not guessed."""
+    session = services.email_thread_session(agent, "thread-home", "subj")
+    assert session.workspace_id == agent.workspace_id == "connect"
+    with pytest.raises(ValueError):
+        services.email_thread_session(None, "thread-orphan")
+
+
+def test_a_thread_session_with_neither_agent_nor_workspace_fails_loudly():
+    with pytest.raises(ValueError):
+        services._thread_session(None, "repo", None, "some-thread")

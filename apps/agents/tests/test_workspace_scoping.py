@@ -126,3 +126,53 @@ def test_register_with_nonmember_workspace_404s_and_does_not_move():
     r = _post(c, "/api/agents/", {"slug": "echo", "name": "Echo", "workspace": "private"})
     assert r.status_code == 404
     assert Agent.objects.get(slug="echo").workspace_id == DEFAULT_WORKSPACE_SLUG
+
+
+# ---- flat (unpinned) upsert homes only on CREATE, membership-bound ----
+
+def test_flat_reregister_of_an_existing_agent_leaves_its_home_alone():
+    """Echo re-registers flat on every sync. A member of the agent's workspace
+    who is NOT in the org default (and has several memberships, so no default
+    is resolvable for them) must still update it, without moving it."""
+    from apps.workspaces import services as wsvc
+
+    jj = _user("jj@dimagi.com", is_superuser=True)
+    wsvc.ensure_default_workspace()  # `dimagi` exists; the member below is not in it
+    member = _user("m@partner.org")
+    connect = _make_ws("connect", jj)
+    other = _make_ws("other", jj)
+    wsvc.ensure_member(connect, member)
+    wsvc.ensure_member(other, member)
+    c = _client(member)
+    r = _post(c, "/api/w/connect/agents/", {"slug": "echo", "name": "Echo"})
+    assert r.status_code == 201, r.content
+    r = _post(c, "/api/agents/", {"slug": "echo", "name": "Echo v2"})
+    assert r.status_code == 201, r.content
+    echo = Agent.objects.get(slug="echo")
+    assert echo.workspace_id == "connect"
+    assert echo.name == "Echo v2"
+
+
+def test_flat_create_lands_in_a_workspace_the_caller_is_in_not_the_default():
+    from apps.workspaces import services as wsvc
+
+    jj = _user("jj@dimagi.com", is_superuser=True)
+    wsvc.ensure_default_workspace()
+    member = _user("m@partner.org")
+    wsvc.ensure_member(_make_ws("connect", jj), member)  # sole membership
+    r = _post(_client(member), "/api/agents/", {"slug": "newbie", "name": "Newbie"})
+    assert r.status_code == 201, r.content
+    assert Agent.objects.get(slug="newbie").workspace_id == "connect"
+
+
+def test_flat_create_with_an_ambiguous_home_422s_and_writes_nothing():
+    from apps.workspaces import services as wsvc
+
+    jj = _user("jj@dimagi.com", is_superuser=True)
+    wsvc.ensure_default_workspace()
+    member = _user("m@partner.org")
+    wsvc.ensure_member(_make_ws("connect", jj), member)
+    wsvc.ensure_member(_make_ws("other", jj), member)
+    r = _post(_client(member), "/api/agents/", {"slug": "newbie", "name": "Newbie"})
+    assert r.status_code == 422
+    assert not Agent.objects.filter(slug="newbie").exists()

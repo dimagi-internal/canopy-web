@@ -1055,16 +1055,13 @@ def runner_may_hold_agent(runner, agent) -> bool:
     canopy: claiming an agent turn, the per-turn GitHub token, credential
     resolve, and the routing writes that point work at a box.
 
-    The agent's OWN canopy login (`Agent.user`) counts too: a box paired under
-    the agent's identity is the agent's box, and whoever operates it does so by
-    a RunnerAdmin grant from that login.
+    The agent's OWN canopy login (`Agent.user`) is NOT a holder: pairing a box
+    as an agent has been refused since #1049, so a box owned by an agent login
+    is a pre-#1049 leftover, and the agent's own login is no admin of it.
 
     Fails closed on a runner with no owner."""
-    owner_id = getattr(runner, "owner_id", None)
-    if owner_id is None:
+    if getattr(runner, "owner_id", None) is None:
         return False
-    if agent.user_id is not None and agent.user_id == owner_id:
-        return True
     return agent.is_admin(runner.owner)
 
 
