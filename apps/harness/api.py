@@ -1686,8 +1686,13 @@ def list_turns(
         #
         # 404 rather than 403, and the same 404 for a typo, so the endpoint cannot
         # be used to enumerate which tenants' agents exist (see _agent_or_404).
-        _agent_or_404(request, agent)
-        qs = qs.filter(agent__slug=agent)
+        target = _agent_or_404(request, agent)
+        # An email or Slack thread targets a SESSION, not the agent (enqueue_turn
+        # converts it — the XOR check constraint allows only one), so the agent
+        # sits on `chat_session.agent`. Filtering on `agent` alone dropped every
+        # one of them: `?agent=ace` listed no ACE email turn after 2026-09-10, for
+        # every caller, and hal's routing audit read that as "0 turns" (#1087).
+        qs = qs.filter(Q(agent=target) | Q(agent__isnull=True, chat_session__agent=target))
     if status:
         qs = qs.filter(status__in=status.split(","))
     # Tenant filter, split by target kind (agent / project / session) — mirrors

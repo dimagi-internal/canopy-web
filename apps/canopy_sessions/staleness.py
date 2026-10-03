@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import datetime as dt
 
-from django.db.models import Q
+from django.apps import apps
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 # How long a runner-discovered session survives with no runner sighting before it
@@ -36,6 +37,17 @@ from django.utils import timezone
 # offered promptly. The rule is derived on every read, so a returning runner
 # un-retires its sessions with no repair step.
 SESSION_LIVE_WINDOW = dt.timedelta(minutes=3)
+
+# How long a session held by a box that posts NO wholesale reports (the cloud runner)
+# stays listed after its last message. There is no sighting to poll there: the cloud
+# runner records a session once, when its turn starts, so `live_seen_at` is a
+# creation stamp. Measured against SESSION_LIVE_WINDOW it retired every cloud turn's
+# session 3 minutes after it began — a manual-mode ACE turn on cloud-ec2-1 finished
+# with a reply drafted for approval, and Supervisor never showed it (canopy-web#1087,
+# 2026-10-03). The signal that does exist is the transcript the runner streams in, so
+# that is what this window measures; it is long because what it protects is a draft
+# that waits on a human. An explicit archive still ends one at any time.
+CLOUD_SESSION_LIVE_WINDOW = dt.timedelta(days=3)
 
 
 def stale_cutoff(now=None):
@@ -75,7 +87,26 @@ def unseen_q() -> Q:
     # UNCHANGED. A runner-discovered session could only have come from a report, so
     # absence — of a sighting or of a binding entirely — is staleness with no further
     # qualification. Narrowing this leg would resurrect the 47 zombies of 2026-07-25.
-    runner_unseen = Q(origin="runner") & quiet
+    #
+    # Except on the cloud runner, which records a session per agent turn and never
+    # reports it again, so there quiet means the TRANSCRIPT stopped, for
+    # CLOUD_SESSION_LIVE_WINDOW. Gated on the runner's KIND, not on its never having
+    # reported: a laptop that went quiet before `sessions_reported_at` existed has no
+    # stamp either, and its sessions are exactly the zombies this leg retires. A
+    # session with no binding, or whose binding lost its runner, keeps the rule above.
+    unobserved = Q(runner_binding__runner__kind="cloud") & Q(
+        runner_binding__runner__sessions_reported_at__isnull=True
+    )
+    cutoff = timezone.now() - CLOUD_SESSION_LIVE_WINDOW
+    talked_recently = Exists(
+        apps.get_model("canopy_sessions", "Message").objects.filter(
+            session=OuterRef("pk"), created_at__gte=cutoff
+        )
+    )
+    cloud_quiet = Q(runner_binding__live_seen_at__lt=cutoff) & ~Q(talked_recently)
+    runner_unseen = Q(origin="runner") & (
+        (~unobserved & quiet) | (unobserved & cloud_quiet)
+    )
 
     # NEW, and gated on an OBSERVER existing. A sent web chat is held and reported
     # like any other, so its going quiet means the same thing — but ONLY on a box that
