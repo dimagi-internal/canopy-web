@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
 import { closeSession, createSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
-import { getAgentRunners, listAgents, type AgentOut, type AgentRunnerOut } from '@/api/agents'
+import { getAgentDefaultOrder, getAgentRunners, listAgents, type AgentOut, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { projectsApi, type ProjectSlug } from '@/api/projects'
 import { relativeTime } from '@/components/activity/turnLog'
@@ -258,7 +258,12 @@ export function ChatSessionsPanel({
     // the send/place call (canopy_sessions.services._placeable_runner rejects
     // a non-session-capable runner) rather than pinning a turn no runner can
     // ever claim.
-    getAgentRunners(agent.slug)
+    // Its own runners, or — when it has none — the workspace default order it
+    // follows (2026-10-03). Reading only its own left "Auto" as the sole choice
+    // for every agent that follows a default.
+    const workspace = agent.workspace ?? undefined
+    getAgentDefaultOrder(agent.slug, workspace)
+      .then((d) => (d.own ? getAgentRunners(agent.slug, workspace) : Array.from(d.runners ?? [])))
       .then((options) => {
         if (pickedAgentSlugRef.current === agent.slug) setAgentRunnerOptions(options)
       })
