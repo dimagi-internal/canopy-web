@@ -218,7 +218,8 @@ def test_acp_announces_the_session_before_prompting(cloud_runner, monkeypatch, t
         def start(self):
             pass
 
-        def new_session(self):
+        def new_session(self, timeout=None):
+            order.append(f"timeout:{timeout}")
             return self.session_id
 
         def prompt(self, _p):
@@ -243,7 +244,11 @@ def test_acp_announces_the_session_before_prompting(cloud_runner, monkeypatch, t
     finally:
         cloud_runner._SESSION_HOOKS.pop("t-acp", None)
     assert (ok, sid) == (True, "acp-1")
-    assert order == ["session:acp-1", "prompt"]
+    # Session start gets its own, generous timeout — not canopy_acp's 120s default
+    # (eva's environment sometimes needs ~125s to boot; 2026-10-04).
+    assert order == [f"timeout:{cloud_runner.ACP_SESSION_START_TIMEOUT_SECONDS}",
+                     "session:acp-1", "prompt"]
+    assert cloud_runner.ACP_SESSION_START_TIMEOUT_SECONDS >= 300
 
 
 def test_announcing_with_no_hook_or_a_failing_hook_is_harmless(cloud_runner):
