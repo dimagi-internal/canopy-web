@@ -14112,6 +14112,11 @@ export interface components {
             readonly session_id: string;
             /** Session Key */
             readonly session_key: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
         };
         /** CloseSyncOut */
         readonly CloseSyncOut: {
@@ -14127,6 +14132,11 @@ export interface components {
             readonly session_id: string;
             /** Session Key */
             readonly session_key: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
             /** Answer Id */
             readonly answer_id: string;
             /** Option */

@@ -980,7 +980,9 @@ def make_control_handler(cfg: Config, waker, client=None):
             outcome, screen = hooks.answer_menu(session_key, msg.get("option"),
                                                 selections=msg.get("selections"),
                                                 texts=msg.get("texts"),
-                                                cdp_port=cfg.cdp_port)
+                                                cdp_port=cfg.cdp_port,
+                                                project=str(msg.get("project") or ""),
+                                                emdash_db=getattr(cfg, "emdash_db", None))
             hooks.note_answer_outcome(session_key, outcome, screen)
             # RETIRE IT. The server holds the answer until a runner reports on it
             # (that is what makes it survive a dead control channel), so a fast
@@ -1006,7 +1008,10 @@ def make_control_handler(cfg: Config, waker, client=None):
             # thread and must never raise: this socket also carries cancel and wake,
             # and losing it would cost the runner its liveness for one delete.
             try:
-                close.close_session(str(msg["session_key"]), cdp_port=cfg.cdp_port)
+                close.close_session(str(msg["session_key"]),
+                                    project=str(msg.get("project") or ""),
+                                    cdp_port=cfg.cdp_port,
+                                    emdash_db=getattr(cfg, "emdash_db", None))
             except Exception:  # noqa: BLE001
                 logger.warning("close failed for %s", msg.get("session_key"),
                                exc_info=True)

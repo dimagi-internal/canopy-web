@@ -15,22 +15,48 @@ from __future__ import annotations
 
 import logging
 
-from . import cdp_control, sessions
+from . import cdp_control, session_target, sessions
 
 logger = logging.getLogger(__name__)
 
 
-def close_session(session_key: str, *, cdp_port: int = 9222) -> str:
-    """Delete `session_key`'s emdash task and queue its closing signal.
+class CloseRefused(Exception):
+    """The session could not be placed in exactly one emdash project, so it was
+    NOT deleted. A delete is irreversible; by name alone it can take another
+    agent's same-named session (ada's and eva's "editing", 2026-10-04)."""
+
+
+# Keys already warned about, so a refusal retried every poll tick logs once.
+_warned: set[str] = set()
+
+
+def close_session(session_key: str, *, project: str = "", cdp_port: int = 9222,
+                  emdash_db: str | None = None) -> str:
+    """Delete `session_key`'s emdash task — the one under `project` — and queue its
+    closing signal.
 
     Returns the CDP action — "deleted", or "absent" when the task was already gone
     (a double-tap, or a human who deleted it in emdash a moment earlier). Both
     queue the signal: the task is gone either way, and the server may not know.
 
-    Raises CDPError if the delete could not be completed. The caller logs it and
-    moves on; nothing needs undoing.
+    Raises CloseRefused, touching nothing, when the project cannot be resolved
+    (see session_target) — never a delete by name alone. Raises CDPError if the
+    delete could not be completed. The caller logs either and moves on.
     """
-    result = cdp_control.close_task(session_key, port=cdp_port)
+    target = session_target.resolve(emdash_db, session_key, project)
+    if target.reason == session_target.ABSENT:
+        sessions.request_close_report(session_key)
+        logger.info("close %s: no live task by that name under %r — already gone",
+                    session_key, project or "any project")
+        return "absent"
+    if not target.ok:
+        if session_key not in _warned:
+            _warned.add(session_key)
+            logger.warning("close %s REFUSED (%s): cannot tell which project's task it is, "
+                           "and a delete by name alone could remove another agent's "
+                           "same-named session", session_key, target.reason)
+        raise CloseRefused(f"{session_key}: {target.reason}")
+    result = cdp_control.close_task(session_key, port=cdp_port, project=target.project)
     action = str(result.get("action") or "deleted")
     sessions.request_close_report(session_key)
     logger.info("closed emdash task %s (%s)", session_key, action)

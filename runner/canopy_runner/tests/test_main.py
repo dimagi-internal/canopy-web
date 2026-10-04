@@ -700,10 +700,10 @@ class _FakeMenuCDP:
         self.screen = screen
         self.sent = []
 
-    def read_terminal(self, task, *, port=9222):
+    def read_terminal(self, task, *, port=9222, project=""):
         return self.screen
 
-    def send_keys(self, task, keys, *, port=9222):
+    def send_keys(self, task, keys, *, port=9222, project=""):
         self.sent.append((task, keys))
         return {"ok": True}
 
@@ -728,14 +728,14 @@ NO_DIALOG = """\
 def test_answering_presses_the_option(monkeypatch):
     fake = _FakeMenuCDP(DIALOG)
     monkeypatch.setattr(hooks, "cdp_control", fake)
-    hooks.answer_menu("agent-task", 1)
+    hooks.answer_menu("agent-task", 1, project="hal")
     assert fake.sent == [("agent-task", ["1", "\r"])]
 
 
 def test_refusing_sends_escape(monkeypatch):
     fake = _FakeMenuCDP(DIALOG)
     monkeypatch.setattr(hooks, "cdp_control", fake)
-    hooks.answer_menu("agent-task", None)
+    hooks.answer_menu("agent-task", None, project="hal")
     assert fake.sent == [("agent-task", ["\x1b"])]
 
 
@@ -745,7 +745,7 @@ def test_a_stale_answer_is_dropped_rather_than_typed(monkeypatch):
     where the agent reads it as an instruction."""
     fake = _FakeMenuCDP(NO_DIALOG)
     monkeypatch.setattr(hooks, "cdp_control", fake)
-    hooks.answer_menu("agent-task", 1)
+    hooks.answer_menu("agent-task", 1, project="hal")
     assert fake.sent == []
 
 
@@ -753,7 +753,7 @@ def test_an_option_not_on_the_dialog_is_dropped(monkeypatch):
     """The menu on screen may have changed shape since it was rendered."""
     fake = _FakeMenuCDP(DIALOG)
     monkeypatch.setattr(hooks, "cdp_control", fake)
-    hooks.answer_menu("agent-task", 7)
+    hooks.answer_menu("agent-task", 7, project="hal")
     assert fake.sent == []
 
 

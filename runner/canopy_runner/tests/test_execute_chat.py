@@ -165,7 +165,7 @@ def _bounce_off_a_dialog(monkeypatch, screen):
             '— refusing a blind send')
 
     monkeypatch.setattr(execute.cdp_control, "open_and_send", _no_composer)
-    monkeypatch.setattr(execute.cdp_control, "read_terminal", lambda task, port=9222: screen)
+    monkeypatch.setattr(execute.cdp_control, "read_terminal", lambda task, port=9222, project="": screen)
     monkeypatch.setattr(execute.emdash, "task_state", lambda *a, **k: "open")
     cfg = types.SimpleNamespace(cdp_port=9222, emdash_db="/nonexistent")
     client = _ReuseClient()

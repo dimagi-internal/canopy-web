@@ -1975,6 +1975,9 @@ def answer_menu(*, session: Session, option: int | None,
         "type": "runner.menu_answer",
         "session_id": str(session.id),
         "session_key": binding.session_key,
+        # emdash task names are unique per PROJECT only; without this the runner
+        # could press the key in a same-named session of another agent.
+        "project": session.emdash_project,
         "option": option,
         "selections": selections,
         "texts": texts,
@@ -2114,6 +2117,9 @@ def close_session(*, session: Session) -> str:
             "type": "runner.close_session",
             "session_id": str(session.id),
             "session_key": binding.session_key,
+            # A DELETE aimed by name alone can remove another agent's same-named
+            # session; the runner refuses one it cannot place in a project.
+            "project": session.emdash_project,
         })
         return "closing"
 

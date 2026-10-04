@@ -459,6 +459,9 @@ def test_an_answer_survives_the_control_channel_being_down():
     assert [(a["session_key"], a["option"]) for a in answers] == [("chat-1", 2)], (
         "an answer that only ever existed as a WS frame is one the runner can "
         "never recover")
+    # Task names are unique per emdash PROJECT only (ada's and eva's "editing",
+    # 2026-10-04): the runner aims the keystroke by (project, task).
+    assert answers[0]["project"] == binding.session.emdash_project != ""
     answer_id = answers[0]["answer_id"]
 
     ok = client.post(f"/api/harness/runners/{runner.id}/menu-answer-result",
@@ -534,6 +537,9 @@ def test_a_close_survives_the_control_channel_being_down():
     assert [c["session_key"] for c in closes] == ["chat-1"], (
         "a close that only ever existed as a WS frame is one the runner can "
         "never recover")
+    # The runner REFUSES a delete it cannot place in one project, so the project
+    # must ride along — by name alone it could delete another agent's session.
+    assert closes[0]["project"] == binding.session.emdash_project != ""
 
     # The task going away IS the close being satisfied — the wholesale report
     # already decides what is open, so nothing else needs to ack it.

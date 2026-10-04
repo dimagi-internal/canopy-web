@@ -288,9 +288,9 @@ def test_a_wrong_pane_is_told_apart_from_a_dead_runner():
     orig = hooks.cdp_control
     try:
         hooks.cdp_control = Boom()
-        assert hooks.answer_menu("t", 1) == (hooks.WRONG_PANE, None)
+        assert hooks.answer_menu("t", 1, project="hal") == (hooks.WRONG_PANE, None)
         hooks.cdp_control = Dead()
-        assert hooks.answer_menu("t", 1) == (hooks.UNREACHABLE, None)
+        assert hooks.answer_menu("t", 1, project="hal") == (hooks.UNREACHABLE, None)
     finally:
         hooks.cdp_control = orig
 
@@ -451,7 +451,7 @@ def test_a_gone_session_is_told_apart_from_a_dead_box():
     orig = hooks.cdp_control
     try:
         hooks.cdp_control = Gone()
-        assert hooks.answer_menu("t", 1) == (hooks.NO_SESSION, None)
+        assert hooks.answer_menu("t", 1, project="hal") == (hooks.NO_SESSION, None)
     finally:
         hooks.cdp_control = orig
     assert hooks.ANSWER_NOTES[hooks.NO_SESSION]
