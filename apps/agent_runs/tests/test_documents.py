@@ -222,3 +222,24 @@ def test_the_state_lock_never_outer_joins():
 
     sql = str(_locked(1).query).upper()
     assert "OUTER JOIN" not in sql and "JOIN" not in sql
+
+
+def test_every_string_the_api_accepts_fits_its_column():
+    """SQLite (the test DB) does not enforce varchar lengths; Postgres does. A
+    schema max_length above its column's 500'd every state write once a DDD run
+    ended (status "stopped_not_converged" = 21 chars into varchar(20)). Hold every
+    run-document input field to the column it lands in."""
+    from apps.agent_runs.documents import RunDocCreateIn, RunDocStateIn
+
+    lands_in = {"status": "status", "holder": "holder", "kind": "kind", "subject": "subject",
+                "label": "label", "ext_id": "ext_id", "current_step": "current_step",
+                "session_link": "session_link"}
+    for schema in (RunDocCreateIn, RunDocStateIn):
+        for name, field in schema.model_fields.items():
+            column = lands_in.get(name)
+            if column is None:
+                continue
+            limit = next((m.max_length for m in field.metadata if hasattr(m, "max_length")), None)
+            col_max = AgentRun._meta.get_field(column).max_length
+            assert limit is not None and limit <= col_max, f"{schema.__name__}.{name}: {limit} > column {col_max}"
+    assert len("converged_with_open_questions") <= AgentRun._meta.get_field("status").max_length

@@ -31,7 +31,10 @@ class AgentRun(models.Model):
     label = models.CharField(max_length=300, blank=True, default="", help_text="Human label for the run.")
     mode = models.CharField(max_length=10, choices=MODE_CHOICES, default=REVIEW)
     # Stored convenience mirror of the derived status; the read model recomputes.
-    status = models.CharField(max_length=20, blank=True, default="", help_text="Mirror of derived status; read model recomputes from steps.")
+    # 40, not 20: a run document stores its workflow's terminal status here
+    # ("stopped_not_converged" is 21, "converged_with_open_questions" 29); the
+    # 20-char column 500'd every state write once a DDD run ended (2026-10-04).
+    status = models.CharField(max_length=40, blank=True, default="", help_text="Mirror of derived status; read model recomputes from steps.")
     current_step = models.CharField(max_length=120, blank=True, default="", help_text="Key of the step currently in focus.")
     forked_from = models.ForeignKey(
         "self",
