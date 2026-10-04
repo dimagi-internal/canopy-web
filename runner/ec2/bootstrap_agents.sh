@@ -1329,6 +1329,22 @@ reinstall_cli_from_marketplace_clone() {
   fi
 }
 
+# ── Step 4b: prune caches ────────────────────────────────────────────────────────
+# AFTER step 4, so the plugin versions just installed are already recorded and
+# kept. cloud-ec2-1's 20 GB root reached 100% on 2026-10-04 because nothing ever
+# removed a plugin version (33 canopy, 24 ace, ~9 GB) or an npm/uv download.
+# Full bootstrap only — never the --credentials-only timer pass — so it runs at a
+# service start or the daily self-refresh, when no turn is running.
+step4b_prune_caches() {
+  log "step 4b: prune plugin / npm / uv caches"
+  local before after
+  before="$(df -P / 2>/dev/null | awk 'NR==2 {print $5}')"
+  python3 "$SCRIPT_DIR/prune_caches.py" \
+    || warn "cache prune failed — disk usage unchanged (see the runner's disk health check)"
+  after="$(df -P / 2>/dev/null | awk 'NR==2 {print $5}')"
+  ok "root volume ${before:-?} -> ${after:-?} used"
+}
+
 # ── Step 5: readiness summary ────────────────────────────────────────────────────
 step5_summary() {
   log "step 5: readiness summary"
@@ -1379,6 +1395,7 @@ main() {
   step2_gog_config
   step3_agents
   step4_claude_plugins
+  step4b_prune_caches
   step5_summary
 }
 

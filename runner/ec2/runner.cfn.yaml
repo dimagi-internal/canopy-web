@@ -4,8 +4,9 @@ Description: >
   kind=cloud runner with canopy-web, claims harness Turns in its capabilities, and
   runs `claude -p` on each. Secrets (the claude OAuth token + the canopy PAT) are
   read from Secrets Manager by the instance role at boot — never baked into the
-  template. cloud_runner.py is ALSO delivered via Secrets Manager (up.sh publishes it
-  there); single source of truth is runner/ec2/cloud_runner.py.
+  template. cloud_runner.py's first-boot seed is ALSO delivered via Secrets Manager
+  (up.sh publishes it there as a manifest + parts); single source of truth is
+  runner/ec2/cloud_runner.py.
 
 Parameters:
   SshCidr:
@@ -106,38 +107,40 @@ Parameters:
       (exported as GOG_KEYRING_PASSWORD). Optional — if the secret is absent the
       runner still boots, but every `gog auth tokens import` fails and the fleet
       has no Gmail/Drive auth. Stage it with `./secrets.sh gog <file|->`.
-  RunnerCodeSecret:
+  RunnerSeedSecret:
     Type: String
-    Default: canopy/cloud-runner/runner-code
+    Default: canopy/cloud-runner/runner-seed
     Description: >
-      Secrets Manager id holding cloud_runner.py as a single-line gzip+base64
-      blob, published by up.sh. The code does NOT live in UserData: EC2 caps
-      UserData at 16 KB and the gz+b64 runner alone is ~12 KB, which (plus the
-      rest of this cloud-config) blew the cap and made the stack undeployable —
-      CREATE_FAILED "User data is limited to 16384 bytes".
+      Secrets Manager id of the FIRST-BOOT SEED of cloud_runner.py, published by
+      up.sh (runner/ec2/seed.py): a JSON manifest {format, parts, sha256, sha,
+      committed_at} plus N parts named `<this id>-part-<i>`, each a slice of the
+      file as gzip+base64. Concatenated, decoded and sha256-checked on the box.
 
-      As of spec 2026-07-30 this is a FIRST-BOOT SEED, not the update channel:
-      canopy-fetch-env installs it only when there is no cloud_runner.py on disk.
-      Past that the auto-updater owns the file and tracks the DEPLOYED sha, so
-      re-fetching the secret on every start would revert every update at the next
-      restart. `canopy-runner-update --from-secret` is the way back to these bytes.
-  RunnerCodeShaSecret:
-    Type: String
-    Default: canopy/cloud-runner/runner-code-sha
+      Parts rather than one value because Secrets Manager caps a value at 65536
+      bytes and the runner outgrew it (2026-10-04: 91 KB encoded), which made
+      up.sh fail on every run. The code is not in UserData either: EC2 caps
+      UserData at 16 KB. The manifest also carries the seed's provenance (what
+      the old runner-code-sha secret held), so a fresh box's first auto-update
+      check is a real answer instead of `unknown`.
+
+      A seed, not the update channel: canopy-fetch-env installs it only when
+      there is no cloud_runner.py on disk. Past that the auto-updater owns the
+      file and tracks the DEPLOYED sha. `canopy-runner-update --from-secret` is
+      the deliberate way back to these bytes.
+
+      Stacks created before 2026-10-04 read the legacy single-value secrets
+      canopy/cloud-runner/runner-code + runner-code-sha instead; up.sh no longer
+      writes those, so they stay exactly as such a box last read them.
+  VolumeSize:
+    Type: Number
+    Default: 40
+    MinValue: 20
     Description: >
-      Secrets Manager id holding the PROVENANCE of the seed above, as the JSON
-      `{"sha": ..., "committed_at": ...}` up.sh resolves from git (path-scoped to
-      runner/ec2/{cloud_runner.py,bootstrap_agents.sh} — the same quantity the
-      deploy computes for `expected_code_sha`). canopy-fetch-env writes it to
-      /opt/canopy-runner/build-info.json when it installs the seed, so a fresh
-      box's FIRST update check is a real answer instead of `unknown` — which would
-      mean it never auto-updates, and looks exactly like being up to date.
-
-      A SECRET rather than a CloudFormation parameter deliberately: a parameter is
-      interpolated into UserData, and CFN applies a UserData change to a running
-      instance as a stop/start. The sha changes on every runner commit, so passing
-      it as a parameter would bounce the live box (new public IP and all) every
-      time anyone ran up.sh. Absent → unknown → silent, as everywhere else.
+      Root EBS volume, GiB. 20 filled to 100% on cloud-ec2-1 (2026-10-04): the
+      plugin cache kept every version it had ever installed (33 canopy, 24 ace,
+      ~9 GB) on top of npm/uv caches and eight agent clones. bootstrap_agents.sh
+      now prunes those caches; this is the headroom. Changing it on an existing
+      stack REPLACES the instance (a new runner row; re-run wire.sh).
 
 Resources:
   KeyPair:
@@ -194,7 +197,7 @@ Resources:
       SecurityGroupIds: [ !Ref SecurityGroup ]
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
-          Ebs: { VolumeSize: 20, VolumeType: gp3 }
+          Ebs: { VolumeSize: !Ref VolumeSize, VolumeType: gp3 }
       Tags:
         - { Key: Name, Value: !Ref AWS::StackName }
         - { Key: purpose, Value: canopy-cloud-runner }
@@ -202,11 +205,11 @@ Resources:
       # stop/start of the SAME instance, which does NOT re-run cloud-init
       # (cloud-init only runs write_files/runcmd on an instance's first boot). So
       # editing anything baked in below and redeploying does NOT ship it to a
-      # running box — recycle the stack (`./down.sh && ./up.sh`) to pick it up.
-      # cloud_runner.py is EXEMPT: it comes from Secrets Manager and is re-fetched
-      # by canopy-fetch-env on every start, so a runner-code change ships with
-      # `./up.sh && systemctl restart canopy-runner`. Keep this block small — the
-      # whole rendered UserData must stay under EC2's hard 16 KB cap.
+      # running box — recycle (`./down.sh --keep-runner && ./up.sh && ./wire.sh`).
+      # cloud_runner.py is EXEMPT: it is seeded from Secrets Manager on first boot
+      # and then kept current by the auto-updater (canopy-runner-update.timer).
+      # Keep this block small — the whole rendered UserData must stay under EC2's
+      # hard 16 KB cap (tests/test_seed_roundtrip.py measures it).
       UserData:
         Fn::Base64: !Sub |
           #cloud-config
@@ -215,10 +218,10 @@ Resources:
               permissions: '0755'
               content: |
                 #!/usr/bin/env bash
-                # Re-materialize the runner env + claude credentials + the runner
-                # CODE from Secrets Manager on every start, so a rotated secret or a
-                # freshly-published cloud_runner.py is picked up on `systemctl
-                # restart` with no redeploy.
+                # Re-materialize the runner env + claude credentials from Secrets
+                # Manager on every start, so a rotated secret is picked up on
+                # `systemctl restart` with no redeploy — and, on FIRST boot only,
+                # install the runner code seed (below).
                 set -euo pipefail
                 R="${AWS::Region}"
                 secret() { aws --region "$R" secretsmanager get-secret-value --secret-id "$1" --query SecretString --output text; }
@@ -231,19 +234,34 @@ Resources:
                 # every update at the next restart, silently, forever.
                 # `canopy-runner-update --from-secret` is the deliberate way back.
                 # Decode to a temp file and mv into place so a failed fetch can never
-                # leave a truncated script that systemd would then try to exec.
+                # leave a truncated script that systemd would then try to exec. The
+                # stamp (build-info.json) is the seed's provenance, from the
+                # manifest, so the first update check can answer at all.
                 if [ ! -s /opt/canopy-runner/cloud_runner.py ]; then
-                  secret ${RunnerCodeSecret} | base64 -d | gunzip > /opt/canopy-runner/cloud_runner.py.new
-                  chown ubuntu:ubuntu /opt/canopy-runner/cloud_runner.py.new
+                  # Manifest + parts (runner/ec2/seed.py): Secrets Manager caps a
+                  # value at 64 KB and the runner outgrew one. The sha256 check
+                  # turns a publish caught half-way into a failed start that
+                  # systemd retries, never a box running mixed bytes.
+                  SEED=/opt/canopy-runner/seed
+                  rm -rf "$SEED"; install -d -m 700 "$SEED"
+                  secret ${RunnerSeedSecret} > "$SEED/manifest.json"
+                  N=$(python3 -c 'import json,sys; print(int(json.load(open(sys.argv[1]))["parts"]))' "$SEED/manifest.json")
+                  for i in $(seq 0 $((N - 1))); do
+                    secret "${RunnerSeedSecret}-part-$i" >> "$SEED/code.b64"
+                  done
+                  base64 -d < "$SEED/code.b64" | gunzip > /opt/canopy-runner/cloud_runner.py.new
+                  python3 - "$SEED/manifest.json" /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/build-info.json <<'PY'
+                import hashlib, json, sys
+                m = json.load(open(sys.argv[1]))
+                if hashlib.sha256(open(sys.argv[2], "rb").read()).hexdigest() != m["sha256"]:
+                    sys.exit("seed sha256 mismatch: a publish was in progress; retrying on restart")
+                json.dump({"sha": m.get("sha", ""), "committed_at": int(m.get("committed_at") or 0),
+                           "ref": "seed"}, open(sys.argv[3], "w"))
+                PY
+                  chown ubuntu:ubuntu /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/build-info.json
                   chmod 0755 /opt/canopy-runner/cloud_runner.py.new
                   mv /opt/canopy-runner/cloud_runner.py.new /opt/canopy-runner/cloud_runner.py
-                  # What the seed IS, so the first update check can answer at all.
-                  # Its own secret, not a template parameter — a parameter would be
-                  # baked into UserData, and this value changes on every runner
-                  # commit, so up.sh would stop/start the live box every time.
-                  secret ${RunnerCodeShaSecret} > /opt/canopy-runner/build-info.json 2>/dev/null \
-                    || echo '{}' > /opt/canopy-runner/build-info.json
-                  chown ubuntu:ubuntu /opt/canopy-runner/build-info.json
+                  rm -rf "$SEED"
                 fi
                 # gog's `file` keyring backend (the only option on a headless box —
                 # there is no OS keychain) encrypts with a password it PROMPTS for.

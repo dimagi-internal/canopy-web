@@ -55,6 +55,10 @@ REPO_URL="${CANOPY_WEB_REPO_URL:-https://github.com/dimagi-internal/canopy-web.g
 STATE_FILE="${STATE_FILE:-$HOME/.canopy-cloud-runner.json}"
 SERVICE="${SERVICE:-canopy-runner.service}"
 RESTART_CMD="${RESTART_CMD:-sudo -n systemctl restart}"
+# The first-boot seed (runner/ec2/seed.py): a manifest + "<id>-part-<i>" parts.
+SEED_SECRET="${SEED_SECRET:-canopy/cloud-runner/runner-seed}"
+# The single-value seed stacks created before 2026-10-04 were built from. up.sh no
+# longer writes it; read only when there is no manifest seed to read.
 CODE_SECRET="${CODE_SECRET:-canopy/cloud-runner/runner-code}"
 RUNNER_SRC="runner/ec2/cloud_runner.py"
 # The paths the DEPLOYED sha is computed over (deploy-labs.yml's cloud_sha step).
@@ -230,17 +234,50 @@ install_from_git() {  # <git ref or sha>
   install_bytes "$tmp" "$sha" "${committed_at:-0}" "$ref"
 }
 
+_secret() {  # <id> -> SecretString on stdout
+  aws secretsmanager get-secret-value --secret-id "$1" --query SecretString --output text 2>/dev/null
+}
+
 install_from_secret() {
-  local tmp="$TARGET.new"
-  if ! aws secretsmanager get-secret-value --secret-id "$CODE_SECRET" \
-        --query SecretString --output text 2>/dev/null | base64 -d | gunzip > "$tmp"; then
-    log "could not read $CODE_SECRET; nothing installed."
+  local tmp="$TARGET.new" dir sha committed_at n i
+  dir="$(mktemp -d)"
+  # The manifest seed first: it is what up.sh publishes, and it carries its own
+  # provenance, so the stamp can name what was installed.
+  if _secret "$SEED_SECRET" > "$dir/manifest.json" && [ -s "$dir/manifest.json" ]; then
+    n="$(json_field "$dir/manifest.json" parts 0)"
+    : > "$dir/code.b64"
+    for i in $(seq 0 $((n - 1))); do
+      _secret "${SEED_SECRET}-part-$i" >> "$dir/code.b64" || {
+        log "could not read ${SEED_SECRET}-part-$i; nothing installed."
+        rm -rf "$dir"; return 1
+      }
+    done
+    if ! base64 -d < "$dir/code.b64" 2>/dev/null | gunzip > "$tmp" 2>/dev/null \
+       || ! python3 - "$dir/manifest.json" "$tmp" <<'PY'
+import hashlib, json, sys
+m = json.load(open(sys.argv[1]))
+sys.exit(0 if hashlib.sha256(open(sys.argv[2], "rb").read()).hexdigest() == m["sha256"] else 1)
+PY
+    then
+      log "the $SEED_SECRET seed did not decode to its own sha256 (a publish in progress?); nothing installed."
+      rm -rf "$dir" "$tmp"; return 1
+    fi
+    sha="$(json_field "$dir/manifest.json" sha "")"
+    committed_at="$(json_field "$dir/manifest.json" committed_at 0)"
+    rm -rf "$dir"
+    install_bytes "$tmp" "$sha" "$committed_at" "secret:$SEED_SECRET"
+    return $?
+  fi
+  rm -rf "$dir"
+  if ! _secret "$CODE_SECRET" | base64 -d | gunzip > "$tmp"; then
+    log "could not read $SEED_SECRET or $CODE_SECRET; nothing installed."
     rm -f "$tmp"
     return 1
   fi
-  # The secret carries no provenance, so the stamp is CLEARED rather than guessed.
-  # Unknown is the honest answer: those bytes are whatever an operator published,
-  # and a borrowed sha would tell the fleet this box is current when it is not.
+  # The legacy secret carries no provenance, so the stamp is CLEARED rather than
+  # guessed. Unknown is the honest answer: those bytes are whatever an operator
+  # published, and a borrowed sha would tell the fleet this box is current when
+  # it is not.
   install_bytes "$tmp" "" 0 "secret:$CODE_SECRET"
 }
 

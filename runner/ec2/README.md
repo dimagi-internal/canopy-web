@@ -21,43 +21,88 @@ wire.
 
 ## Files
 - `runner.cfn.yaml` — the whole stack (instance + SG + IAM role + key pair + cloud-init).
-- `cloud_runner.py` — the self-contained (stdlib-only) runner. `up.sh` publishes it to Secrets Manager as the first-boot seed; after that the box updates itself from git (see "Updating the runner code" below).
+- `cloud_runner.py` — the self-contained (stdlib-only) runner. `up.sh` publishes it to Secrets Manager as the first-boot seed (`seed.py`: a manifest + parts); after that the box updates itself from git (see "Updating the runner code" below).
+- `_lib.sh` — what the three lifecycle scripts must agree on: the runner-name → stack mapping and the seed's secret names.
+- `seed.py` — builds the first-boot seed (manifest + ≤60 KB parts, sha256-checked on the box).
+- `prune_caches.py` — bootstrap step 4b: drops plugin-cache versions nothing has installed, and npm/uv download caches.
 - `update_runner.sh` — the auto-updater: installs the DEPLOYED runner sha when this box is behind and idle. Run on a 30-minute systemd timer via a thin `/usr/local/bin/canopy-runner-update` shim, and read from the canopy-web clone so it ships by deploy like everything else.
 - `bootstrap_agents.sh` — idempotent agent-fleet bootstrap (tooling, gog, per-agent clones + secrets, claude plugins, Claude Code itself). Runs ON the box, from the runner's own `canopy-web` clone (`RUNNER_SRC_DIR`) — not baked into the template. See "Bootstrap" below.
 - `secrets.sh` — put/update this runner's secrets in Secrets Manager (values read from a file/stdin, never shell history).
-- `up.sh` — validate + render + `cloudformation deploy`; pulls the private key from SSM for SSH.
-- `wire.sh` — operator-side: stage the fresh runner's credential bundle, retire its predecessor, swap agent assignments onto it, optionally drill it. Run this after `up.sh`.
-- `down.sh` — `delete-stack` (add `--purge-secrets` to also remove the secrets).
+- `up.sh` — preflight every one-time prerequisite, publish the seed, `cloudformation deploy` (updates via a reviewed change set); pulls the private key from SSM for SSH.
+- `wire.sh` — operator-side: stage the fresh runner's credential bundle, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else. Run this after `up.sh`.
+- `down.sh` — delete the stack, remove the SSH key, retire the runner row (dropping every route to it); `--keep-runner` for a recycle, `--purge-secrets` to also remove the shared secrets.
 
 `*.pem` and the rendered template are gitignored.
 
-## Lifecycle
+## Lifecycle — commands only
 
+Every runner is identified by its **name** (`Runner.name` in canopy-web); the stack
+is derived from it (`_lib.sh`): `cloud-ec2-1` → `canopy-cloud-runner` (the live box,
+and what every script means with no `--name`), `cloud-ec2-<x>` → `canopy-cloud-runner-<x>`.
+Pass `--stack` to override.
+
+**Replace / rebuild the live box** (the new box takes the old one's slots):
 ```bash
 cd runner/ec2
-aws sso login --profile labs   # you, once per session
-./up.sh                        # stand up the box (~3 min to fully boot)
-./wire.sh --drill               # stage credentials, retire the predecessor,
-                                 # swap agent assignments onto it, drill it
-# ...runner is live, claiming turns for its assigned agents/projects...
-./down.sh                       # tear it down (it bills hourly) — keeps secrets
+aws sso login --profile labs      # you, once per session
+./up.sh                           # stand up the box (refuses to touch a RUNNING instance — see below)
+./wire.sh --drill                 # stage creds, retire the predecessor, swap its rows/rules/orders
+                                  # onto the new box, drill it (non-zero exit unless all PASS)
 ```
 
-`up.sh` alone is not enough to make the box do agent work: it pairs a runner with
-no credential, which sits waiting (see "Ordering" below). `wire.sh` is the second
-half — it is what turns a paired-but-idle box into the fleet's active cloud
-standby. `wire.sh --runner-id <uuid>` skips discovery if you already know the id;
-`wire.sh --agents ace,echo` narrows which agents' assignment lists get swapped
-(default: every agent that already has an assignment list). Re-running `wire.sh`
-(e.g. after a `down.sh && up.sh` recycle) is the normal way to promote a fresh box
-over its predecessor — it finds the new runner, stages it, retires the old one, and
-moves every assignment across in one command.
+**A second box, proven without routing any work to it** (what was run on 2026-10-04):
+```bash
+./up.sh   --name cloud-ec2-test --standby                    # stack canopy-cloud-runner-test; claims no
+                                                             # repo or chat turns (RunnerProjects='', RunnerSessions=0)
+./wire.sh --name cloud-ec2-test --standby --agents ada,eva --drill
+                                                             # DISABLED row for ada+eva only, wait for the first
+                                                             # bootstrap, drill ada+eva; nothing else touched
+./down.sh --name cloud-ec2-test                              # delete the stack + key, retire the row
+                                                             # (which deletes its assignment rows), verify none remain
+```
+`--standby` refuses an agent that **follows its workspace's runner order**: giving it a
+row of its own — even a disabled one — would replace that order with a list holding
+no enabled runner. Drill such an agent by adding the box to the workspace order.
+Promote a proven standby by enabling its row on the agent's Settings → Runners.
+
+**Tear down** (it bills hourly): `./down.sh [--name X]`. It deletes the stack, then
+retires the runner row — only a row that has STOPPED heartbeating, so a same-name
+replacement that is still alive is never touched — then checks no agent's list or
+rules still name it. Secrets stay (they are shared by every runner stack).
+
+**Which Claude logins a new box gets.** `wire.sh` copies the whole credential bundle
+(primary + fallback login, API key, their labels) from a live runner — `--credential-from
+<name|id>`, else the same-name predecessor, else `cloud-ec2-1` — and only falls back to
+Secrets Manager's `claude-oauth-token` when there is none. The fleet's current logins are
+kept on the runner page, not in Secrets Manager: on 2026-10-04 that secret (from July)
+was at its weekly usage cap, and a box staged from it failed every drill.
+
+`wire.sh --runner-id <uuid>` skips discovery; `wire.sh --agents ace,echo` narrows which
+agents' lists a (non-standby) wire swaps. `wire.sh` waits up to 15 min for the box to
+pair (`--discover-minutes`) and, with `--drill`, up to 40 min for its first bootstrap
+before drilling — a drill fired earlier just queues behind the bootstrap.
 
 Watch it come up / work:
 ```bash
-ssh -i canopy-cloud-runner-key.pem ubuntu@<ip> 'journalctl -u canopy-runner -f'
+ssh -i canopy-cloud-runner-test-key.pem ubuntu@<ip> 'journalctl -u canopy-runner -f'
 # cloud-init progress: ssh ... 'sudo cat /var/log/cloud-init-output.log'
 ```
+
+### One-time human steps (checked up front, never discovered mid-build)
+Nothing in a build needs a human EXCEPT these, each done once and then reused by
+every box. `up.sh`/`wire.sh` check each before writing anything and print the fix:
+
+| prerequisite | checked by | fix |
+|---|---|---|
+| AWS SSO session for `labs` | `up.sh`, `down.sh` | `aws sso login --profile labs` |
+| `canopy/cloud-runner/canopy-pat` exists **and authenticates** | `up.sh` | mint a canopy-web PAT, `./secrets.sh canopy <file>` |
+| `canopy/cloud-runner/claude-oauth-token` (fallback only) | `up.sh` | `claude setup-token` as the subscription account (a human login), `./secrets.sh claude <file>` |
+| a live Claude login on some cloud runner (what new boxes copy) | `wire.sh` (prints its source) | `/supervisor` → Runners → the box → Claude login (a human `claude setup-token` per subscription) |
+| `canopy/cloud-runner/gog-keyring-password` | `up.sh` | any strong password, `./secrets.sh gog <file>` |
+| operator token `~/.claude/canopy/workbench-token` | `wire.sh`, `down.sh` | `/canopy:canopy-web-pat-mint` |
+| per agent: its vault + service-account key | `wire.sh` (refuses in `--standby`) | agent Settings → Credentials, or Ada's `bin/ada-vault-provision --slug <slug>` |
+| per agent: GitHub delegation (owner's token) | `wire.sh` | agent Settings → Credentials → GitHub (the owner) |
+| per workspace: shared vault key | `wire.sh` | `/w/<ws>/settings/secrets` (workspace owner) |
 
 ## Where secrets live, and which key reads them
 
@@ -373,9 +418,17 @@ back to `rm -f`) whether the import succeeded or not.
 - `canopy/cloud-runner/claude-oauth-token` — a **dedicated** claude setup-token (`CLAUDE_CODE_OAUTH_TOKEN`). Mint with `claude setup-token` as `ace@dimagi-ai.com` (Max subscription). It's long-lived and non-rotating, so the runner is self-sufficient after one bootstrap. **Do not copy ace-web's live OAuth blob** — its refresh tokens rotate on every use, so a second consumer gets invalidated (verified: it 401s / can't refresh). **Required**.
 - ~~`canopy/cloud-runner/op-service-account-token`~~ — **gone.** `wire.sh` no longer reads it, the credential bundle no longer carries it, and `RunnerCredential` no longer stores it. A box-wide 1Password key lived in the runner's environment, which every turn inherits: one credential that reads EVERY agent's vault, handed to each of them. Agent secrets are read with the per-agent and per-tenant keys canopy-web issues (see "Where secrets live"). The Secrets Manager entry can be deleted; nothing reads it.
 
-Two more are published by `up.sh` itself, not staged by hand:
-- `canopy/cloud-runner/runner-code` — `cloud_runner.py` as gzip+base64, the first-boot seed.
-- `canopy/cloud-runner/runner-code-sha` — that seed's provenance (`{"sha", "committed_at"}`), which the box stamps into `/opt/canopy-runner/build-info.json` so its first auto-update check can answer. A secret rather than a stack parameter because a parameter lives in UserData, and changing UserData stop/starts the running instance.
+`up.sh` publishes the first-boot seed itself (`seed.py`), not staged by hand:
+- `canopy/cloud-runner/runner-seed` — a JSON manifest: `{format, parts, sha256, sha, committed_at}`. The `sha`/`committed_at` are the seed's provenance, which the box stamps into `/opt/canopy-runner/build-info.json` so its first auto-update check can answer.
+- `canopy/cloud-runner/runner-seed-part-<i>` — `cloud_runner.py` as gzip+base64, in ≤60 000-char slices. Written before the manifest; the box concatenates, decodes, and refuses bytes whose sha256 does not match the manifest (a box booting mid-publish fails its start and systemd retries).
+
+Why parts: Secrets Manager caps a value at 65 536 bytes, and on 2026-10-04 the
+single-value seed (`runner-code`, 91 KB encoded) made every `up.sh` fail on
+`PutSecretValue`. **The legacy `canopy/cloud-runner/runner-code` + `runner-code-sha`
+are no longer written** but are left exactly as they were: stacks created before
+the change (the live `canopy-cloud-runner`, as of 2026-10-04) have the old
+`canopy-fetch-env` baked into their UserData and read them. See "Migrating the live
+stack" below. `--purge-secrets` removes both formats.
 
 Stage them with `./secrets.sh {canopy|claude|op} <file|->`. `wire.sh` reads the
 Claude token from Secrets Manager and `POST`s it into the freshly-paired runner's credential
@@ -397,20 +450,64 @@ per assigned agent and prints pass/fail.
 
 ## Tear down (it's billed hourly)
 ```bash
-./down.sh                    # delete the stack (keeps the secrets for next time)
-./down.sh --purge-secrets    # also delete the secrets
+./down.sh [--name X]                 # delete the stack + SSH key, retire the runner row
+./down.sh [--name X] --keep-runner   # recycle: leave the row for wire.sh to swap from
+./down.sh [--name X] --purge-secrets # also delete the shared secrets — refused while any
+                                     # other canopy-cloud-runner* stack still reads them
 ```
-The runner row itself is retired the next time `wire.sh` stands up a replacement,
-not by `down.sh` — while the stack is down, the only ongoing cost is the Secrets
-Manager secrets (~$0.40/secret/mo) and the 1Password items.
+Retiring the row deletes its assignment rows, source rules and workspace-order
+entries server-side (`POST /api/harness/runners/{id}/retire`); `down.sh` then reads
+every agent's list and rules back to confirm none still name it.
 
 ## Config (CloudFormation parameters)
-Override with `EXTRA_PARAMS='Key=Val Key=Val' ./up.sh`:
+Flags: `--name` (→ `RunnerName`), `--standby` (→ `RunnerProjects=''`, `RunnerSessions=0`),
+`--volume-size` (→ `VolumeSize`, default **40** GiB — 20 filled up), `--instance-type`.
+Anything else: `EXTRA_PARAMS='Key=Val Key=Val' ./up.sh`:
 `InstanceType` (t3.medium), `CanopyBaseUrl`, `RunnerProjects`, `RunnerAgents`,
 `AgentSlugs` (`ace,ada,echo,eva,hal` — which agents `bootstrap_agents.sh`
 provisions; distinct from `RunnerAgents`, which is which agents this runner may
-CLAIM turns for), `RunnerWorkspace` (dimagi), `RunnerName`. `SshCidr` is set to
-your IP automatically.
+CLAIM turns for), `RunnerWorkspace` (dimagi), `RunnerName`, `VolumeSize`. `SshCidr` is
+set to your IP automatically. Parameters not passed fall back to their defaults on
+EVERY update — that is why an update goes through a change set (next section).
+
+### Updates are reviewed: up.sh will not bounce a running box by accident
+On an existing stack `up.sh` creates a change set first. If it touches the
+`Instance` — a UserData change is a stop/start, a `VolumeSize`/AMI change is a
+**replacement** (a new instance and a new runner row) — it prints the change, deletes
+the change set and exits, unless you pass `--allow-instance-change`. Any template
+edit since the stack was created changes UserData, so this is the normal state of
+the live stack, not an edge case.
+
+## Disk
+The 20 GB root of `cloud-ec2-1` hit 100% on 2026-10-04 (every plugin version ever
+installed — 33 canopy, 24 ace, ~9 GB — plus npm/uv caches). Now:
+- `VolumeSize` defaults to 40 GiB;
+- bootstrap step 4b (`prune_caches.py`, every service start and daily self-refresh)
+  keeps each plugin's installed version(s) plus the newest two others and deletes
+  the rest (nothing at all if `installed_plugins.json` is unreadable), cleans npm's
+  cache past 500 MB, and runs `uv cache prune`;
+- the heartbeat health carries a **`disk`** check — warn ≥ 80%, fail ≥ 90% — so the
+  runner page says so before turns start failing on writes.
+
+## Migrating the live stack (`canopy-cloud-runner`, created 2026-09-05)
+The live box keeps working untouched: its baked-in `canopy-fetch-env` reads the
+legacy `runner-code` seed only when `cloud_runner.py` is missing (it never is — the
+auto-updater owns the file), and it picks up the new runner code, the `disk` check
+and the cache pruning through the normal deploy → auto-update → restart path.
+What it does NOT get without action: the 40 GB volume and the new seed format.
+Either, when convenient:
+- **Blue/green (recommended)** — `./up.sh --allow-instance-change && ./wire.sh --drill`.
+  The volume change makes CloudFormation REPLACE the instance: it boots the new one
+  (fresh cloud-init, new seed format, 40 GB), then terminates the old. `wire.sh`
+  finds the new never-heartbeated `cloud-ec2-1`, retires the old row and swaps every
+  agent row, rule and workspace order onto it, then drills. Expect a few minutes in
+  which cloud work queues.
+- **Grow in place, no new runner row** — `aws ec2 modify-volume --volume-id <vol> --size 40`,
+  then on the box `sudo growpart /dev/nvme0n1 1 && sudo resize2fs /dev/nvme0n1p1`.
+  The stack's template stays the old one; the next `up.sh` will still show (and
+  refuse) the instance change until you take the blue/green path.
+
+
 
 ## Updating the runner code — it updates itself
 
@@ -446,7 +543,7 @@ Watch it: `journalctl -u canopy-runner-update -f`. Ask without changing anything
 `canopy-runner-update --check` → `current|stale|busy|unknown`.
 
 ### Secrets Manager is now a first-boot seed
-`canopy-fetch-env` installs the `runner-code` secret only when there is no
+`canopy-fetch-env` installs the seed only when there is no
 `cloud_runner.py` on disk. Past that the updater owns the file — re-fetching the
 secret on every start would silently revert every update at the next restart. So
 **`./up.sh` no longer ships runner code to a running box.** Two deliberate
@@ -457,20 +554,22 @@ sudo -u ubuntu canopy-runner-update --ref my-branch  # run a branch, deliberatel
 sudo -u ubuntu canopy-runner-update --from-secret    # go back to the published bytes
 ```
 
-`up.sh` still publishes the secret (it is what a FRESH instance boots from) and now
-also passes `RunnerCodeSha`/`RunnerCodeCommittedAt` so the seed is stamped. If it
-warns that it could not resolve the sha, fix that before deploying: an unstamped
-box answers `unknown` forever, which looks exactly like a box that is up to date.
+`up.sh` still publishes the seed (it is what a FRESH instance boots from), stamped
+in its manifest with the same path-scoped sha the deploy computes (`cloud_runner.py`,
+`bootstrap_agents.sh`, `update_runner.sh` — a test pins the lists equal). It refuses
+to publish when it cannot resolve that sha, or when those files have uncommitted
+changes (`--allow-dirty` overrides): an unstamped box answers `unknown` forever,
+which looks exactly like a box that is up to date.
 
 ### The cloud-init gap (still real for everything else)
 **CloudFormation applies a UserData change to an existing instance as a stop/start
 — it does NOT re-run cloud-init**, which only runs `write_files`/`runcmd` on an
 instance's *first* boot. So the units, `canopy-fetch-env`, and the
 `canopy-runner-update` shim are frozen on a running box. Changing any of them means
-recycling the stack:
+a new instance — the blue/green path above, or a recycle:
 
 ```bash
-./down.sh                      # keeps the secrets (no --purge-secrets)
+./down.sh --keep-runner        # keep the row (and its routes) for wire.sh to copy
 ./up.sh && ./wire.sh --drill   # fresh instance, fresh cloud-init; re-wire it
 ```
 `bootstrap_agents.sh` and `update_runner.sh` itself don't have this gap — both are
@@ -511,5 +610,5 @@ running would either suppress a real update or trigger a needless one.
   rotated token is picked up without a redeploy.
 - **Runner identity:** the runner pairs on first boot and caches its id in
   `~/.canopy-cloud-runner.json`; a restart reuses the same runner row. A stack
-  recycle (`down.sh && up.sh`) is a fresh instance, so it pairs a NEW row —
-  `wire.sh` is what finds it and retires the old one.
+  recycle (`down.sh --keep-runner && up.sh`) is a fresh instance, so it pairs a NEW
+  row — `wire.sh` is what finds it and retires the old one.
