@@ -238,12 +238,19 @@ def read_recent_messages(path: Path, limit: int = 8) -> list[dict]:
         if kind == "assistant":
             text = _assistant_text(content)
             if text:
-                msgs.append({"role": "assistant", "text": text[:MAX_MSG_CHARS]})
+                msgs.append({"role": "assistant", "text": text})
         elif kind == "user":
             text = _user_text(content)
             if text and not _is_system_noise(text):
-                msgs.append({"role": "user", "text": text[:MAX_MSG_CHARS]})
-    return msgs[-limit:]
+                msgs.append({"role": "user", "text": text})
+    msgs = msgs[-limit:]
+    # Older messages are context and stay capped, so a report stays small. The
+    # NEWEST is left whole: when a turn ends it is the agent's reply, which the
+    # supervisor feed renders in full — capping it cut off the end of every long
+    # answer. TAIL_BYTES still bounds it.
+    for m in msgs[:-1]:
+        m["text"] = m["text"][:MAX_MSG_CHARS]
+    return msgs
 
 
 # Timestamped record kinds that are NOT the agent doing something. Both were

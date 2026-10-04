@@ -126,10 +126,6 @@ def opening_of(session) -> str:
     return text if len(text) <= OPENING_CHARS else text[: OPENING_CHARS - 1].rstrip() + "…"
 
 
-#: How much of the agent's last reply the supervisor feed carries. Enough to
-#: read a turn's summary in place; the chat is one tap away for the rest.
-LAST_REPLY_CHARS = 2400
-
 _SPOKEN_ROLES = (Message.USER, Message.ASSISTANT)
 
 
@@ -148,19 +144,19 @@ def with_last_reply(sessions):
     )
 
 
-def _clip_reply(text: str) -> str:
-    text = (text or "").strip()
-    return text if len(text) <= LAST_REPLY_CHARS else text[: LAST_REPLY_CHARS - 1].rstrip() + "…"
-
-
 def last_reply_from(rows) -> tuple[str, bool]:
     """(the agent's last reply, did the agent have the last word) from
-    chronological (role, text) pairs. Tool and system rows are not speech."""
+    chronological (role, text) pairs. Tool and system rows are not speech.
+
+    The reply is WHOLE, never trimmed: the feed renders it in place, and a cap
+    here (it was 2400 chars) cut off the end of every long answer with no way to
+    expand past it. The list sends it only when it is the person's turn
+    (api._out), which is what bounds the payload."""
     spoken = [(r, t) for r, t in rows if r in _SPOKEN_ROLES and (t or "").strip()]
     if not spoken:
         return "", False
     reply = next((t for r, t in reversed(spoken) if r == Message.ASSISTANT), "")
-    return _clip_reply(reply), spoken[-1][0] == Message.ASSISTANT
+    return reply.strip(), spoken[-1][0] == Message.ASSISTANT
 
 
 def last_reply_of(session, binding) -> tuple[str, bool]:
@@ -177,7 +173,7 @@ def last_reply_of(session, binding) -> tuple[str, bool]:
     speaker = getattr(session, "_last_speaker", None)
     if speaker is None:
         return "", False
-    return _clip_reply(getattr(session, "_last_reply", None) or ""), speaker == Message.ASSISTANT
+    return (getattr(session, "_last_reply", None) or "").strip(), speaker == Message.ASSISTANT
 
 
 def all_messages(session: Session):
