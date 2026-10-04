@@ -227,3 +227,12 @@ def test_the_watch_rearm_ignores_rows_served_without_a_topic(monkeypatch, tmp_pa
                           gmail_watch_topic="")
     main._maybe_rearm_watches(cfg, FakeClient())
     assert armed == [], "ace's row has no topic, and echo is not readable here"
+
+
+
+def test_the_fleet_clients_are_tried_before_a_client_named_after_the_agent():
+    """canopy and canopy-web are one app (canopy-web's "Connect Google mailbox"
+    button mints under the second); a legacy client named after the agent comes after."""
+    from canopy_runner.mailbox_probe import _client_order
+    assert _client_order({"echo", "canopy-web", "zz"}, "echo") == ["canopy-web", "echo", "zz"]
+    assert _client_order({"canopy", "canopy-web", "echo"}, "echo") == ["canopy", "canopy-web", "echo"]

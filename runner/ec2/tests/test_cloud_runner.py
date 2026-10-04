@@ -1892,8 +1892,9 @@ def test_the_mailbox_is_the_instances_from_canopy_not_the_repos(cloud_runner, tm
 
     assert boxes == {
         "ace": {"account": "ace@dimagi-ai.com", "client": "canopy"},
-        # No client declared: the agent's own slug, as bootstrap names it.
-        "hal": {"account": "hal@dimagi-ai.com", "client": "hal"},
+        # No client declared: the fleet's shared client, as bootstrap now names
+        # it — never a client named after the agent, which exists for nobody.
+        "hal": {"account": "hal@dimagi-ai.com", "client": "canopy"},
     }, ("a second instance with no mailbox of its own must NOT inherit the repo's, "
         "and an agent with no clone yet has nothing to read with")
 
@@ -1993,8 +1994,9 @@ def test_candidate_clients_declared_then_gogs_map_then_credential_files(cloud_ru
               credentials=("ace", "canopy", "echo"))
     assert cloud_runner._candidate_gog_clients("echo@dimagi-ai.com", "canopy") == [
         "canopy", "echo", "ace"], "declared first, gog's own map second, then every credential file, deduped"
-    assert cloud_runner._candidate_gog_clients("x@y.z", "") == ["ace", "canopy", "echo"], \
-        "an empty declaration must not become a candidate (an empty --client points gog at the wrong app silently)"
+    assert cloud_runner._candidate_gog_clients("x@y.z", "") == ["canopy", "ace", "echo"], \
+        "an empty declaration must not become a candidate (an empty --client points gog at the wrong app " \
+        "silently); the fleet client the box holds comes first"
 
 
 def test_the_reader_presents_the_client_whose_token_authenticates(cloud_runner, tmp_path, monkeypatch):
@@ -2143,3 +2145,25 @@ def test_the_heartbeat_reports_the_mailboxes_the_probe_could_read(cloud_runner, 
         "echo": {"account": "echo@dimagi-ai.com", "client": "canopy"},
     }, probe)
     assert cloud_runner._heartbeat_body([])["mailboxes_readable"] == ["hal@dimagi-ai.com"]
+
+
+
+def test_a_browser_minted_mailbox_is_read_under_canopy_web(cloud_runner, tmp_path, monkeypatch):
+    """2026-10-04: canopy-web's "Connect Google mailbox" button can only mint under
+    `canopy-web`, while every agent declares `canopy`. Both are the fleet's one app,
+    so the reader tries the other fleet client next — before gog's map or any
+    per-agent client — and uses it."""
+    _gog_home(tmp_path, monkeypatch, credentials=("canopy", "canopy-web", "echo"))
+    monkeypatch.setattr(cloud_runner, "_log", lambda m: None)
+    probed = []
+
+    def probe(account, client):
+        probed.append(client)
+        if client != "canopy-web":
+            raise RuntimeError(f"No auth for gmail {account}.")
+
+    cloud_runner._GOG_CLIENT_LIVE.clear()
+    out = cloud_runner._resolve_mailbox_clients(
+        {"ace": {"account": "ace@dimagi-ai.com", "client": "canopy"}}, probe)
+    assert out == {"ace": {"account": "ace@dimagi-ai.com", "client": "canopy-web"}}
+    assert probed == ["canopy", "canopy-web"]

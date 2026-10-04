@@ -119,3 +119,28 @@ def test_bootstrap_starts_from_the_client_the_turns_present():
     assert "GOG_CLIENT[" not in src and "declare -A GOG_CLIENT=" not in src, "no per-agent client table"
     for fn in ("bootstrap_one_agent", "step2_gog_config"):
         assert 'turn_client_for "$slug"' in _fn(fn), fn
+
+
+def _bash(body: str) -> subprocess.CompletedProcess:
+    lines = SCRIPT.read_text().splitlines()
+    fleet = "\n".join(l for l in lines if l.startswith(("FLEET_GOG_CLIENT=", "FLEET_GOG_CLIENTS=", "is_fleet_client()")))
+    return subprocess.run(["bash", "-c", f"set -euo pipefail\n{fleet}\n{body}"],
+                          capture_output=True, text=True, timeout=60)
+
+
+def test_canopy_and_canopy_web_are_the_fleet_clients():
+    """One app, two ways in: a laptop's gog login (`canopy`) and canopy-web's
+    "Connect Google mailbox" button (`canopy-web`) — 2026-10-04."""
+    for c in ("canopy", "canopy-web"):
+        assert _bash(f"is_fleet_client {c}").returncode == 0, c
+    for c in ("echo", "ace", "canopy-webx", ""):
+        assert _bash(f'is_fleet_client "{c}"').returncode != 0, c
+
+
+def test_readiness_accepts_either_fleet_client():
+    """A box whose live login is under the OTHER fleet client than the one an
+    agent's turns declare must report the agent ready, naming the client used."""
+    fn = _fn("verify_turn_client")
+    assert 'is_fleet_client "$tclient" && is_fleet_client "$used"' in fn
+    assert 'mark TURN_CLIENT "$slug" "$used"' in fn
+    assert "live_fleet_client" in _fn("refresh_gmail_token")

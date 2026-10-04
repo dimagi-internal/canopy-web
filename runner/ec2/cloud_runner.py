@@ -2984,7 +2984,9 @@ def _agent_mailboxes() -> dict:
         if declared and declared.lower() != account.lower():
             _log(f"inbox {slug}: its repo names {declared}, but this instance's mailbox in "
                  f"canopy-web is {account} — polling {account}")
-        client = (data.get("gog_client") or "").strip() or slug
+        # No declaration means the fleet's shared client, never one named after
+        # the agent — that exists for nobody (2026-10-04).
+        client = (data.get("gog_client") or "").strip() or FLEET_GOG_CLIENTS[0]
         boxes[slug] = {"account": account, "client": client}
     return boxes
 
@@ -3022,6 +3024,11 @@ def _gog_config_dir() -> pathlib.Path:
     return pathlib.Path(base) / "gogcli"
 
 
+#: The fleet's two Google OAuth clients — one app, two ways to sign in, either of
+#: which serves every agent (canopy agent_email.FLEET_CLIENTS, the same order).
+FLEET_GOG_CLIENTS = ("canopy", "canopy-web")
+
+
 def _candidate_gog_clients(account: str, declared: str) -> list:
     """Every client this box could present for `account`, most likely first.
 
@@ -3031,8 +3038,12 @@ def _candidate_gog_clients(account: str, declared: str) -> list:
     a client and only that client can use it — so the list is a search order,
     not an answer. `_resolve_mailbox_clients` asks the token.
     """
-    order = [declared]
     cfg_dir = _gog_config_dir()
+    # The fleet clients right behind the declaration — those this box holds the
+    # credentials for: `canopy` (a laptop's gog login) and `canopy-web` (canopy-web's
+    # "Connect Google mailbox" button) are one app, and either serves the agent.
+    order = [declared, *(c for c in FLEET_GOG_CLIENTS
+                         if (cfg_dir / f"credentials-{c}.json").is_file())]
     try:
         data = json.loads((cfg_dir / "config.json").read_text())
         order.append(((data.get("account_clients") or {}).get(account) or ""))

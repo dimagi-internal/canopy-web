@@ -106,9 +106,15 @@ def token_pairs(*, runner=subprocess.run) -> tuple[set[tuple[str, str]] | None, 
     return pairs, ""
 
 
+#: Interchangeable with PREFERRED_CLIENT: canopy-web's "Connect Google mailbox"
+#: button mints under it (a Web client — the only kind a browser sign-in can use).
+FLEET_CLIENTS = (PREFERRED_CLIENT, "canopy-web")
+
+
 def _client_order(clients: set[str], slug: str) -> list[str]:
-    """Search order for the clients holding one mailbox's token."""
-    head = [c for c in (PREFERRED_CLIENT, slug) if c in clients]
+    """Search order for the clients holding one mailbox's token: the fleet's two
+    clients first, then a legacy client named after the agent, then the rest."""
+    head = [c for c in (*FLEET_CLIENTS, slug) if c in clients]
     return head + sorted(c for c in clients if c not in head)
 
 
