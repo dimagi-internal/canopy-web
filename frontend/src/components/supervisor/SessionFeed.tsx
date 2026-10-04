@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type JSX, type KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { Button, Textarea } from 'canopy-ui/ui'
-import { archiveSession, listSessions, sendMessage, type ChatSession } from '@/api/chat'
+import { closeSession, listSessions, sendMessage, type ChatSession } from '@/api/chat'
 import type { AgentOut } from '@/api/agents'
 import { Markdown } from '@/components/Markdown'
 import { relativeTime } from '@/components/activity/turnLog'
+import { closeIntent, closeResultMessage } from '@/components/chat/closeAction'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, sourceKey } from './feedRules'
@@ -15,8 +16,8 @@ const POLL_MS = 20_000
  * The supervisor's main screen: every session that finished a turn (or is
  * blocked on a dialog) and is waiting for your next prompt — what the agent
  * said, rendered, with a reply box right under it. Answer in place, open the
- * chat for the full transcript, or Close it (archive; reversible from
- * Sessions → Show archived).
+ * chat for the full transcript, or Close it — the same close as the chat page
+ * and the session list (ends its emdash task).
  */
 export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Element {
   const [sessions, setSessions] = useState<ChatSession[] | null>(null)
@@ -203,15 +204,33 @@ function FeedCard({
     }
   }
 
+  // A real close, not an archive. Archiving only flips the row's status, and a
+  // runner session's emdash task is still open — the runner's next report
+  // (~10s) un-archives anything it reports open (harness/services.py), so the
+  // card came straight back. /close deletes the task; the report then retires it.
   const done = async () => {
     if (busy) return
+    const intent = closeIntent(s)
+    if (intent.kind === 'blocked') {
+      setErr(intent.why)
+      return
+    }
+    if (intent.confirm && !window.confirm(`${s.title?.trim() || 'This chat'} is still working. Close it anyway?`)) {
+      return
+    }
     setBusy('done')
     setErr(null)
     try {
-      await archiveSession(s.id)
+      const result = await closeSession(s.id)
+      const message = closeResultMessage(result, s)
+      if (message) {
+        setErr(message)
+        setBusy(null)
+        return
+      }
       onHandled(s)
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Could not archive')
+      setErr(e instanceof Error ? e.message : 'Could not close this session')
       setBusy(null)
     }
   }
@@ -323,7 +342,7 @@ function FeedCard({
               type="button"
               onClick={() => void done()}
               disabled={busy !== null}
-              title="Archive this session — it leaves the feed; Sessions → Show archived brings it back"
+              title="Close this session — ends its emdash task and removes it from the feed"
               className="inline-flex min-h-8 items-center rounded-md border border-border bg-background px-2.5 text-[12px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
               data-testid={`feed-done-${s.id}`}
             >

@@ -6,11 +6,11 @@ import type { ChatSession } from '@/api/chat'
 
 const listSessions = vi.fn()
 const sendMessage = vi.fn()
-const archiveSession = vi.fn()
+const closeSession = vi.fn()
 vi.mock('@/api/chat', () => ({
   listSessions: (...a: unknown[]) => listSessions(...a),
   sendMessage: (...a: unknown[]) => sendMessage(...a),
-  archiveSession: (...a: unknown[]) => archiveSession(...a),
+  closeSession: (...a: unknown[]) => closeSession(...a),
 }))
 
 import { SessionFeed } from './SessionFeed'
@@ -73,14 +73,26 @@ describe('SessionFeed', () => {
     expect(sendMessage).toHaveBeenCalledWith('a', 'ship it', 'client-1')
   })
 
-  it('Close archives the session and drops the card', async () => {
-    listSessions.mockResolvedValue([s('a')])
-    archiveSession.mockResolvedValue({})
+  // Close must END the session, not archive it: an archived runner session is
+  // un-archived by the runner's next report while its emdash task is still open,
+  // so the card came straight back.
+  it('Close closes the session (not archive) and drops the card', async () => {
+    listSessions.mockResolvedValue([s('a', { status: 'active' })])
+    closeSession.mockResolvedValue({ ok: true, closing: true, reason: '' })
     renderFeed()
     fireEvent.click(await screen.findByTestId('feed-done-a'))
     await waitFor(() => expect(screen.queryByTestId('feed-card-a')).toBeNull())
-    expect(archiveSession).toHaveBeenCalledWith('a')
+    expect(closeSession).toHaveBeenCalledWith('a')
     expect(await screen.findByTestId('feed-empty')).toBeTruthy()
+  })
+
+  it('a refused close keeps the card and says why', async () => {
+    listSessions.mockResolvedValue([s('a', { status: 'active' })])
+    closeSession.mockResolvedValue({ ok: false, closing: false, reason: 'unavailable' })
+    renderFeed()
+    fireEvent.click(await screen.findByTestId('feed-done-a'))
+    expect(await screen.findByText('Could not close — jj-mbp is online')).toBeTruthy()
+    expect(screen.getByTestId('feed-card-a')).toBeTruthy()
   })
 
   it('a failed send keeps the card and the draft, and says why', async () => {
