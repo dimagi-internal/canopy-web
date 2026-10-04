@@ -37,6 +37,7 @@ RUNNER_NAME="$DEFAULT_RUNNER_NAME"
 AGENTS=""     # comma-separated slug allowlist; empty = every agent with assignments
 DRILL=0
 STANDBY=0
+CRED_FROM=""  # runner name|id whose Claude logins to copy (see step 2)
 DISCOVER_MINUTES=15   # cloud-init (node, claude, aws, gh, op) takes 4-6 min before the first pair
 BOOTSTRAP_MINUTES=40  # first bootstrap clones + provisions every registered agent
 AWS_PROFILE_="${AWS_PROFILE:-labs}"
@@ -57,6 +58,10 @@ usage: ./wire.sh [options]
                          box you want to prove (with --drill) without routing work to it.
   --drill                wait for the box's first bootstrap, fire a readiness drill, poll to
                          completion, print the grid; exits non-zero unless every drill passes
+  --credential-from <runner>
+                         copy the Claude logins (primary, fallback, API key) from this
+                         runner (name or id). Default: the same-name predecessor, else the
+                         live box (cloud-ec2-1), else Secrets Manager's bootstrap token
   --discover-minutes <n> how long to wait for the fresh box to pair (default 15)
   -h, --help             this
 USAGE
@@ -68,6 +73,7 @@ while [[ $# -gt 0 ]]; do
     --base-url) BASE_URL="${2%/}"; shift 2 ;;
     --runner-name|--name) RUNNER_NAME="$2"; shift 2 ;;
     --standby) STANDBY=1; shift ;;
+    --credential-from) CRED_FROM="$2"; shift 2 ;;
     --discover-minutes) DISCOVER_MINUTES="$2"; shift 2 ;;
     --agents) AGENTS="$2"; shift 2 ;;
     --shared-vault) echo "   (--shared-vault is ignored: wire.sh no longer reads a shared GitHub token)"; shift 2 ;;
@@ -209,15 +215,78 @@ fi
 echo "==> runner: $RUNNER_ID"
 
 # ── Step 2: credential bundle ────────────────────────────────────────────────────
+# WHERE the Claude logins come from, in order:
+#   1. --credential-from <runner name|id>
+#   2. the predecessor this box replaces (a same-name runner)
+#   3. the live box (cloud-ec2-1), if this is a different, second box
+#   4. Secrets Manager canopy/cloud-runner/claude-oauth-token (the bootstrap token)
+# The fleet's CURRENT logins are maintained on the runner page (/supervisor →
+# Runners → Claude login, primary + fallback), not in Secrets Manager. Found on
+# 2026-10-04: the Secrets Manager token (set 2026-07-21) had hit its weekly cap,
+# so a box staged from it failed every drill, while cloud-ec2-1 ran on two
+# newer logins set in the UI. Copying the whole bundle (both logins, the API key,
+# their labels) server-to-server keeps the new box on what actually works; the
+# values pass through this process only, never a file outside $TMP or the screen.
 echo ">> staging credential bundle"
-CLAUDE_TOKEN=$(aws --profile "$AWS_PROFILE_" --region "$AWS_REGION_" \
-  secretsmanager get-secret-value --secret-id canopy/cloud-runner/claude-oauth-token \
-  --query SecretString --output text)
-CLAUDE_TOKEN="$CLAUDE_TOKEN" python3 -c "
+api GET /api/harness/runners/ > "$TMP/runners-cred.json"
+CRED_SRC=$(FROM="$CRED_FROM" NAME="$RUNNER_NAME" NEW="$RUNNER_ID" DEFAULT_NAME="$DEFAULT_RUNNER_NAME" \
+  python3 - "$TMP/runners-cred.json" <<'PY'
+import json, os, sys
+rows = [r for r in json.load(open(sys.argv[1])) if r.get("kind") == "cloud"
+        and r.get("status") != "retired" and r["id"] != os.environ["NEW"]]
+want = os.environ["FROM"]
+def pick(match):
+    # Most recently heartbeating first: a live box's logins over a dead one's.
+    hits = sorted((r for r in rows if match(r)), key=lambda r: r.get("last_heartbeat_at") or "", reverse=True)
+    return hits[0]["id"] + " " + hits[0]["name"] if hits else ""
+if want:
+    print(pick(lambda r: r["id"] == want or r["name"] == want) or "MISSING")
+else:
+    print(pick(lambda r: r["name"] == os.environ["NAME"])
+          or pick(lambda r: r["name"] == os.environ["DEFAULT_NAME"]))
+PY
+)
+if [[ "$CRED_SRC" == "MISSING" ]]; then
+  echo "!! --credential-from '$CRED_FROM': no such (non-retired, cloud) runner" >&2
+  exit 1
+fi
+STAGED_FROM=""
+if [[ -n "$CRED_SRC" ]]; then
+  SRC_ID="${CRED_SRC%% *}"
+  api GET "/api/harness/runners/${SRC_ID}/credential" > "$TMP/src-cred.json"
+  api GET "/api/harness/runners/${SRC_ID}/credential/status" > "$TMP/src-status.json"
+  if python3 - "$TMP/src-cred.json" "$TMP/src-status.json" "$TMP/cred.json" <<'PY'
+import json, os, sys
+os.umask(0o077)
+cred, status = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
+if not isinstance(cred, dict) or not cred.get("claude_token"):
+    sys.exit(1)
+out = {k: cred[k] for k in ("claude_token", "claude_token_secondary", "claude_api_key") if cred.get(k)}
+for k in ("claude_token_label", "claude_token_secondary_label"):
+    if status.get(k):
+        out[k] = status[k]
+json.dump(out, open(sys.argv[3], "w"))
+PY
+  then
+    STAGED_FROM="runner ${CRED_SRC#* } ($SRC_ID)"
+  else
+    echo "   WARN: could not read a Claude login from ${CRED_SRC#* } — falling back to Secrets Manager"
+  fi
+fi
+if [[ -z "$STAGED_FROM" ]]; then
+  CLAUDE_TOKEN=$(aws --profile "$AWS_PROFILE_" --region "$AWS_REGION_" \
+    secretsmanager get-secret-value --secret-id canopy/cloud-runner/claude-oauth-token \
+    --query SecretString --output text)
+  CLAUDE_TOKEN="$CLAUDE_TOKEN" python3 -c "
 import json, os
+os.umask(0o077)
 json.dump({'claude_token': os.environ['CLAUDE_TOKEN']}, open('$TMP/cred.json', 'w'))
 "
+  STAGED_FROM="Secrets Manager canopy/cloud-runner/claude-oauth-token"
+fi
+echo "   from: $STAGED_FROM"
 api POST "/api/harness/runners/${RUNNER_ID}/credential" "$TMP/cred.json" | python3 -m json.tool
+rm -f "$TMP/cred.json" "$TMP/src-cred.json"
 echo "==> credential staged"
 
 # ── the drill (step 5), defined here so --standby can reach it too ──────────────
@@ -269,9 +338,12 @@ print(f'   started {len(rows)} drill(s)')
   echo ">> polling for completion (up to $((POLL_TICKS * 5 / 60)) min for $DRILL_COUNT drill(s))"
   for _ in $(seq 1 "$POLL_TICKS"); do
     api GET "/api/harness/runners/${RUNNER_ID}/drills" > "$TMP/drills.json"
+    # Only the drills THIS run started: the list also holds every earlier drill
+    # of this runner, and an old PASS must not stand in for one still running.
     PENDING=$(python3 -c "
 import json
-rows = json.load(open('$TMP/drills.json'))
+started = {r['agent_slug'] for r in json.load(open('$TMP/drill-result.json'))}
+rows = [r for r in json.load(open('$TMP/drills.json')) if r['agent_slug'] in started]
 print(sum(1 for r in rows if r['outcome'] == 'pending'))
 ")
     [[ "$PENDING" == "0" ]] && break
@@ -280,7 +352,8 @@ print(sum(1 for r in rows if r['outcome'] == 'pending'))
   echo ">> drill grid:"
   python3 -c "
 import json, sys
-rows = json.load(open('$TMP/drills.json'))
+started = {r['agent_slug'] for r in json.load(open('$TMP/drill-result.json'))}
+rows = [r for r in json.load(open('$TMP/drills.json')) if r['agent_slug'] in started]
 for r in sorted(rows, key=lambda r: r['agent_slug']):
     mark = {'pass': 'PASS', 'fail': 'FAIL', 'pending': 'PENDING (timed out waiting)'}[r['outcome']]
     print(f\"   {r['agent_slug']:10s} {mark:28s} {r['summary'][:80]}\")

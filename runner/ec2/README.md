@@ -70,6 +70,13 @@ retires the runner row — only a row that has STOPPED heartbeating, so a same-n
 replacement that is still alive is never touched — then checks no agent's list or
 rules still name it. Secrets stay (they are shared by every runner stack).
 
+**Which Claude logins a new box gets.** `wire.sh` copies the whole credential bundle
+(primary + fallback login, API key, their labels) from a live runner — `--credential-from
+<name|id>`, else the same-name predecessor, else `cloud-ec2-1` — and only falls back to
+Secrets Manager's `claude-oauth-token` when there is none. The fleet's current logins are
+kept on the runner page, not in Secrets Manager: on 2026-10-04 that secret (from July)
+was at its weekly usage cap, and a box staged from it failed every drill.
+
 `wire.sh --runner-id <uuid>` skips discovery; `wire.sh --agents ace,echo` narrows which
 agents' lists a (non-standby) wire swaps. `wire.sh` waits up to 15 min for the box to
 pair (`--discover-minutes`) and, with `--drill`, up to 40 min for its first bootstrap
@@ -89,7 +96,8 @@ every box. `up.sh`/`wire.sh` check each before writing anything and print the fi
 |---|---|---|
 | AWS SSO session for `labs` | `up.sh`, `down.sh` | `aws sso login --profile labs` |
 | `canopy/cloud-runner/canopy-pat` exists **and authenticates** | `up.sh` | mint a canopy-web PAT, `./secrets.sh canopy <file>` |
-| `canopy/cloud-runner/claude-oauth-token` | `up.sh` | `claude setup-token` as the subscription account (a human login), `./secrets.sh claude <file>` |
+| `canopy/cloud-runner/claude-oauth-token` (fallback only) | `up.sh` | `claude setup-token` as the subscription account (a human login), `./secrets.sh claude <file>` |
+| a live Claude login on some cloud runner (what new boxes copy) | `wire.sh` (prints its source) | `/supervisor` → Runners → the box → Claude login (a human `claude setup-token` per subscription) |
 | `canopy/cloud-runner/gog-keyring-password` | `up.sh` | any strong password, `./secrets.sh gog <file>` |
 | operator token `~/.claude/canopy/workbench-token` | `wire.sh`, `down.sh` | `/canopy:canopy-web-pat-mint` |
 | per agent: its vault + service-account key | `wire.sh` (refuses in `--standby`) | agent Settings → Credentials, or Ada's `bin/ada-vault-provision --slug <slug>` |
