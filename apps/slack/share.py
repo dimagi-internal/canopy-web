@@ -144,22 +144,48 @@ def _agent_identity(user):
     return Agent.objects.filter(user=user).first()
 
 
-def _byline(installation: SlackInstallation, user) -> tuple[str, object]:
+def _asker(session: Session | None, caller):
+    """The person whose live turn in this session the agent is answering, or None.
+
+    Only a turn still in flight counts: the share happens INSIDE the turn that
+    asked for it, and a finished turn's person did not ask for this post. A
+    turn the agent started itself (a schedule) has the agent as its initiator,
+    which is not a person to credit.
+    """
+    if session is None:
+        return None
+    from apps.harness.models import Turn
+
+    turn = (Turn.objects.filter(chat_session=session, initiator_user__isnull=False,
+                                status__in=(Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN))
+            .exclude(initiator_user=caller).select_related("initiator_user")
+            .order_by("-created_at").first())
+    return turn.initiator_user if turn is not None else None
+
+
+def _byline(installation: SlackInstallation, user, session: Session | None = None) -> tuple[str, object]:
     """Who the post names as the sharer, and the agent the caller is (or None).
 
-    A person is @-mentioned, so must be linked. An agent calling as itself — a
-    scheduled watch posting a finding, where no person started the turn — has
+    A person is @-mentioned, so must be linked. An agent calling as itself has
     no Slack account to link (`hal@dimagi-ai.com` is not a Slack user), so it is
-    named in bold instead and the post goes out under its persona. "" means
-    neither: a person Slack does not know, which is refused.
+    named in bold and the post goes out under its persona. When a person's turn
+    is what the agent is answering, they are credited beside it — never AS the
+    sharer, because they did not write the post. A scheduled watch has no such
+    person and posts under the agent's name alone. "" means neither: a person
+    Slack does not know, which is refused.
     """
     slack_user = _slack_user(installation, user)
     if slack_user:
         return f"<@{slack_user}>", None
     agent = _agent_identity(user)
-    if agent is not None:
-        return f"*{agent.name or agent.slug}*", agent
-    return "", None
+    if agent is None:
+        return "", None
+    byline = f"*{agent.name or agent.slug}*"
+    asker = _asker(session, user)
+    asker_slack = _slack_user(installation, asker) if asker is not None else ""
+    if asker_slack:
+        byline += f" (for <@{asker_slack}>)"
+    return byline, agent
 
 
 def _update_text(byline: str, summary: str) -> str:
@@ -252,7 +278,7 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
                 f"`{session.agent.slug}` isn't turned on for Slack, so a thread can't talk to it. "
                 "Its owner can turn it on, or share a broadcast instead."))
 
-    byline, caller_agent = _byline(installation, user)
+    byline, caller_agent = _byline(installation, user, session)
     if not byline:
         return refuse(NOT_LINKED, (
             "Your canopy account isn't linked to a Slack user here. Mention @canopy once in Slack "
@@ -311,7 +337,7 @@ def _post_update(user, session: Session, summary: str) -> ShareResult:
                 "session": str(session.pk)}, ok=False)
         return ShareResult(status, message, session=session)
 
-    byline, caller_agent = _byline(installation, user)
+    byline, caller_agent = _byline(installation, user, session)
     if not byline:
         return refuse(NOT_LINKED, (
             "Your canopy account isn't linked to a Slack user here. Mention @canopy once in Slack "
