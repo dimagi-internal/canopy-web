@@ -88,6 +88,14 @@ fail() { printf '[bootstrap-agents] FAIL: %s\n' "$*" >&2; }
 # under `ace` and `canopy-web`, and `/ace:turn` asked for `canopy`. Both halves
 # were internally consistent. Nothing compared them.
 FLEET_GOG_CLIENT="${FLEET_GOG_CLIENT:-canopy}"
+# The fleet's two Google OAuth clients: one app in one GCP project, two ways to
+# sign in. `canopy` is a Desktop client (gog's loopback login on a laptop);
+# `canopy-web` is a Web client — the only kind Google lets run a browser redirect,
+# so the one canopy-web's "Connect Google mailbox" button mints under. A token
+# under either serves an agent's turns (canopy agent_email.FLEET_CLIENTS), so a
+# mailbox signed in from either door is READY (2026-10-04).
+FLEET_GOG_CLIENTS="canopy canopy-web"
+is_fleet_client() { [[ " $FLEET_GOG_CLIENTS " == *" $1 "* ]]; }
 
 # What this agent's turns will ask for. Prefer the agent's own declaration when
 # the repo is on the box; fall back to the fleet client, which is what all five
@@ -879,17 +887,40 @@ run_agent_provisioner() {  # <slug> <clone>; caller scopes OP_SERVICE_ACCOUNT_TO
 # credentials-only pass runs EXACTLY this, rather than a second copy that can
 # drift from it — the drift between two implementations of one rule is the
 # original sin behind most of this file's history.
+# The first fleet client OTHER than <declared> under which <account> can read its
+# inbox right now — printed, and exit 0 — or exit 1. Only clients whose
+# credentials file is already on the box are tried; a token under one that is
+# not is the import path's business (it fetches that client's credentials).
+live_fleet_client() {  # <account> <declared>
+  local account="$1" declared="$2" c
+  for c in $FLEET_GOG_CLIENTS; do
+    [[ "$c" == "$declared" ]] && continue
+    [[ -f "$(gog_config_dir)/credentials-${c}.json" ]] || continue
+    if gog gmail search --account "$account" --client "$c" in:inbox --max 1 >/dev/null 2>&1; then
+      printf '%s\n' "$c"; return 0
+    fi
+  done
+  return 1
+}
+
 refresh_gmail_token() {  # <slug> <account> <client> <vault> <shared-vault> <shared-token> <agent-key>
   local slug="$1" account="$2" client="$3" vault="$4" shared_vault="$5" shared_token="$6" agent_token="${7:-}"
   # Idempotent, and preserves an existing array. Present so this function works
   # in isolation: READING ARR[$slug] on an undeclared name has the same
   # arithmetic-subscript hazard as writing it.
   declare -gA CLIENT_CREDS_OK MAILBOX_OK GOG_CLIENT_USED BOOTSTRAP_DETAIL TURN_CLIENT TURN_READY ENV_OK
+  local alt=""
   if ! command -v gog >/dev/null 2>&1; then
     warn "$slug: gog unavailable — skipping gmail token import"
   elif gog gmail search --account "$account" --client "$client" in:inbox --max 1 >/dev/null 2>&1; then
     mark MAILBOX_OK "$slug" 1; mark GOG_CLIENT_USED "$slug" "$client"
     ok "$slug: gmail token already live (account=$account client=$client)"
+  elif is_fleet_client "$client" && alt="$(live_fleet_client "$account" "$client")"; then
+    # A login under the OTHER fleet client is just as good — canopy and
+    # canopy-web are one app. Say which, and point gog's map at it.
+    mark MAILBOX_OK "$slug" 1; mark GOG_CLIENT_USED "$slug" "$alt"
+    upsert_account_client "$account" "$alt"
+    ok "$slug: gmail token live under the fleet client $alt (declared $client — either serves)"
   else
     log "$slug: gmail token not live — taking the NEWEST of the vault and canopy-web"
     local tokfile; tokfile="$(mktemp)"
@@ -1022,6 +1053,16 @@ verify_turn_client() {  # <slug> <account>
   if [[ "${MAILBOX_OK[$slug]:-0}" == "1" && "${GOG_CLIENT_USED[$slug]:-}" == "$tclient" ]]; then
     mark TURN_READY "$slug" 1
     ok "$slug: turns can read the mailbox (client=$tclient)"
+    return 0
+  fi
+  # A fleet client declared, another fleet client live: turns resolve to the one
+  # this box holds (canopy agent_email.reconcile_client), so they are ready, and
+  # TURN_CLIENT says which they will present.
+  local used="${GOG_CLIENT_USED[$slug]:-}"
+  if [[ "${MAILBOX_OK[$slug]:-0}" == "1" ]] && is_fleet_client "$tclient" && is_fleet_client "$used"; then
+    mark TURN_CLIENT "$slug" "$used"
+    mark TURN_READY "$slug" 1
+    ok "$slug: turns can read the mailbox (declared $tclient, served by fleet client $used)"
     return 0
   fi
 
