@@ -14,9 +14,12 @@ export function needsNextPrompt(s: ChatSession): boolean {
 }
 
 /**
- * The supervisor feed: sessions waiting on the person, newest first, with
- * blocked-on-a-dialog ahead of merely finished (a dialog holds the agent
- * mid-turn; a finished one can wait).
+ * The supervisor feed: sessions waiting on the person, OLDEST first — a queue.
+ * Newest-first meant the top kept refilling and the bottom of the feed was
+ * never reached, so the least recently touched session waited longest. Now the
+ * one that has waited longest is at the top and new arrivals join the bottom.
+ * Blocked-on-a-dialog gets no jump: a session that becomes blocked would leap
+ * to the top and break the queue; the card's "needs an answer" badge marks it.
  *
  * Sessions whose runner is paused or offline are held back and COUNTED, not
  * shown: a reply to one queues until that box returns, so it does not belong
@@ -30,9 +33,7 @@ export function feedSessions(sessions: readonly ChatSession[]): {
   const waiting = sessions.filter(needsNextPrompt)
   const { live, parked } = partitionByRunnerReachability(waiting)
   const feed = [...live].sort(
-    (a, b) =>
-      Number(Boolean(b.waiting_on_you)) - Number(Boolean(a.waiting_on_you)) ||
-      Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at),
+    (a, b) => Date.parse(a.last_activity_at) - Date.parse(b.last_activity_at),
   )
   return { feed, parked: parked.length }
 }

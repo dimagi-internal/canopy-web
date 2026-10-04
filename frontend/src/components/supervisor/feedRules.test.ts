@@ -35,14 +35,14 @@ describe('needsNextPrompt', () => {
 })
 
 describe('feedSessions', () => {
-  it('puts dialogs first, then newest first', () => {
+  it('is a queue: oldest first, dialogs included, new arrivals last', () => {
     const { feed } = feedSessions([
       s('old', { agent_spoke_last: true, last_activity_at: '2026-10-01T00:00:00Z' }),
       s('new', { agent_spoke_last: true, last_activity_at: '2026-10-03T00:00:00Z' }),
-      s('dialog', { waiting_on_you: true, last_activity_at: '2026-09-01T00:00:00Z' }),
+      s('dialog', { waiting_on_you: true, last_activity_at: '2026-10-04T00:00:00Z' }),
       s('busy', { agent_spoke_last: true, running: true }),
     ])
-    expect(feed.map((x) => x.id)).toEqual(['dialog', 'new', 'old'])
+    expect(feed.map((x) => x.id)).toEqual(['old', 'new', 'dialog'])
   })
 
   it('holds back sessions on an offline runner, and counts them', () => {

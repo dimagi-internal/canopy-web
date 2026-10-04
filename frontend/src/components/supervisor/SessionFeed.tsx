@@ -7,7 +7,6 @@ import { Markdown } from '@/components/Markdown'
 import { relativeTime } from '@/components/activity/turnLog'
 import { CLOSE_POLL_MS, closeIntent, closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
-import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { NewChatMenu } from '@/components/chat/NewChatMenu'
 import { CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, ranOnItsOwn, sourceKey } from './feedRules'
 
@@ -221,10 +220,9 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
           <FeedCard
             key={s.id}
             session={s}
-            label={
-              sessionTargetLabel(agentName(s.agent_slug), s.project ?? '') +
-              (multiWorkspace ? ` · ${s.workspace}` : '')
-            }
+            source={sourceLabel(s)}
+            sourceKind={s.agent_slug ? 'agent' : 'project'}
+            workspace={multiWorkspace ? s.workspace : null}
             age={relativeTime(s.last_activity_at, now)}
             compact={compact}
             closing={s.id in closing}
@@ -250,7 +248,9 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
 
 function FeedCard({
   session: s,
-  label,
+  source,
+  sourceKind,
+  workspace,
   age,
   compact,
   closing,
@@ -260,7 +260,11 @@ function FeedCard({
   onClosed,
 }: {
   session: ChatSession
-  label: string
+  /** The agent's name, or for an agentless chat its project. */
+  source: string
+  sourceKind: 'agent' | 'project'
+  /** Named only when the feed spans several workspaces. */
+  workspace: string | null
   age: string
   compact: boolean
   /** A close was relayed to the runner and it has not confirmed yet. */
@@ -341,29 +345,41 @@ function FeedCard({
       className="rounded-lg border border-border bg-card"
       data-testid={`feed-card-${s.id}`}
     >
-      <header className="flex items-start justify-between gap-3 px-3 pt-3">
-        <div className="min-w-0">
-          <Link
-            to={chatHref}
-            className="block truncate text-sm font-semibold text-foreground hover:underline"
-            title={s.title?.trim() || undefined}
-          >
-            {sessionDisplayTitle(s.title) || 'Untitled chat'}
-          </Link>
-          <div className="truncate text-[12px] text-muted-foreground">
-            {label}
-            {s.runner_name ? ` · ${s.runner_name}` : ''} · {age}
+      {/* Which agent (or project) this is matters as much as the title — a
+          feed spans the whole fleet — so it leads the card, on one compact
+          line with the status, rather than trailing in grey under the title. */}
+      <header className="px-3 pt-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground">
+            <span
+              className={`shrink-0 truncate rounded px-1.5 py-0.5 text-[12px] font-semibold ${
+                sourceKind === 'agent' ? 'bg-primary/10 text-primary' : 'bg-muted text-foreground'
+              }`}
+              data-testid={`feed-source-${s.id}`}
+            >
+              {source}
+            </span>
+            <span className="truncate">
+              {[workspace, s.runner_name, age].filter(Boolean).join(' · ')}
+            </span>
           </div>
+          {s.waiting_on_you ? (
+            <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium text-warning">
+              needs an answer
+            </span>
+          ) : (
+            <span className="shrink-0 rounded bg-success/15 px-1.5 py-0.5 text-[11px] font-medium text-success">
+              turn done
+            </span>
+          )}
         </div>
-        {s.waiting_on_you ? (
-          <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium text-warning">
-            needs an answer
-          </span>
-        ) : (
-          <span className="shrink-0 rounded bg-success/15 px-1.5 py-0.5 text-[11px] font-medium text-success">
-            turn done
-          </span>
-        )}
+        <Link
+          to={chatHref}
+          className="mt-1 block truncate text-sm font-semibold text-foreground hover:underline"
+          title={s.title?.trim() || undefined}
+        >
+          {sessionDisplayTitle(s.title) || 'Untitled chat'}
+        </Link>
       </header>
 
       <div className="px-3 pt-2">
