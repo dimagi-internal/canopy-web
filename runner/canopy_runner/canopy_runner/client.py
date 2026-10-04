@@ -186,6 +186,9 @@ class Client:
         # between "may be given a caller's turn" and "may not" beat to beat.
         from . import caller
         body["profiles"] = caller.profiles_supported() if profiles is None else profiles
+        # What this CODE reads in a caller envelope — canopy-web withholds caller
+        # turns from a runner that does not say it reads `profile: "confined"`.
+        body["envelope"] = caller.ENVELOPE_VERSION
         _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
         return payload or {}
 

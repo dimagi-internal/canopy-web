@@ -78,13 +78,13 @@ def test_an_ex_member_owner_cannot_reach_the_agents_credentials(life):
     assert res.status_code == 404
 
 
-def test_an_ex_member_owner_messaging_the_agent_is_a_caller(life):
+def test_an_ex_member_owner_messaging_the_agent_is_a_contact(life):
     from apps.harness import caller_context as cc
 
     agent, leaver = life["agent"], life["leaver"]
     assert cc.relationship_for_user(leaver, agent) == cc.OWNER
     WorkspaceMembership.objects.filter(workspace=life["ws"], user=leaver).delete()
-    assert cc.relationship_for_user(leaver, agent) == cc.CALLER
+    assert cc.relationship_for_user(leaver, agent) == cc.CONTACT
 
 
 def test_an_ex_member_owners_github_token_is_not_lent(life):

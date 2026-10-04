@@ -1,5 +1,10 @@
 """The caller envelope: who asked for a turn, and what canopy knows about them.
 
+Its vocabulary — `relationship` (owner | admin | member | contact | system),
+`profile` (full | confined), `granted_by`, `turn_mode`, `ship_grant` — is defined
+in `docs/architecture/access.md`; the decision behind `profile` and `granted_by`
+is `apps/agents/access.decide`.
+
 Phase 1b of `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-
 and-access-design.md` (§5). Phase 1a RECORDED the initiator on every turn; this
 DELIVERS it, so the agent answering an email knows who it is answering and how
@@ -28,7 +33,12 @@ from apps.contacts.models import Contact
 from . import initiator as who
 
 #: Bump when a field's MEANING changes; adding a field does not need it.
-VERSION = 1
+#: 2 (2026-10-04): `relationship` "caller" is now "contact", `profile`
+#: "restricted" is now "confined" — one word per meaning, the same words the
+#: roster and the docs use. Readers accept both (`normalize_relationship`,
+#: `normalize_profile`), since an envelope written by an older canopy-web may
+#: still sit on a box.
+VERSION = 2
 
 #: User assurances that establish the person, not just a claim about them.
 #: `dmarc` is a member resolved from a DMARC-aligned email (harness
@@ -39,8 +49,28 @@ VERSION = 1
 _VERIFIED_USER = frozenset({who.SESSION, who.PAT, who.DELEGATED, who.SLACK_LINKED, who.SLACK_EMAIL,
                             who.APPROVAL, Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED})
 
-#: Relationships, strongest first. `admin` arrives with `Agent.admins` (§3).
-OWNER, ADMIN, MEMBER, CALLER, SYSTEM = "owner", "admin", "member", "caller", "system"
+#: Relationships, strongest first — the agent roles of docs/architecture/access.md.
+#: `contact` is anyone who is not a member of the agent's workspace (an emailer,
+#: a widget visitor, a canopy user from another tenant, someone unidentified).
+OWNER, ADMIN, MEMBER, CONTACT, SYSTEM = "owner", "admin", "member", "contact", "system"
+#: `profile` values: the agent's whole profile, or one capability of its interface.
+FULL_PROFILE, CONFINED_PROFILE = "full", "confined"
+
+#: Envelope values from VERSION 1, and what they are called now.
+_LEGACY_RELATIONSHIP = {"caller": CONTACT}
+_LEGACY_PROFILE = {"restricted": CONFINED_PROFILE}
+
+
+def normalize_relationship(value) -> str:
+    """A `relationship` as VERSION 2 spells it (`caller` -> `contact`)."""
+    v = str(value or "")
+    return _LEGACY_RELATIONSHIP.get(v, v)
+
+
+def normalize_profile(value) -> str:
+    """A `profile` as VERSION 2 spells it (`restricted` -> `confined`)."""
+    v = str(value or "")
+    return _LEGACY_PROFILE.get(v, v)
 
 
 def _agent_of(turn):
@@ -68,13 +98,13 @@ def _verified(turn) -> bool:
 
 
 def relationship(turn, agent) -> str:
-    """Owner, admin, member, caller or system — what this asker IS to the agent."""
+    """Owner, admin, member, contact or system — what this asker IS to the agent."""
     kind = turn.initiator_kind
     if kind in (who.SYSTEM, who.AGENT):
         return SYSTEM
     user = turn.initiator_user if kind == who.USER else None
     if user is None:
-        return CALLER
+        return CONTACT
     if agent is None:
         return _relationship_without_agent(turn, user)
     return relationship_for_user(user, agent)
@@ -84,14 +114,14 @@ def _relationship_without_agent(turn, user) -> str:
     """What someone is to a turn with NO agent — a repo chat, a project turn.
 
     There is no agent to own, so the question is whose conversation and whose
-    machine it is. It used to fall through to CALLER, so the owner of a repo
+    machine it is. It used to fall through to a CALLER (now `contact`), so the owner of a repo
     chat on their own laptop was told, in the "who is asking" note on every
     message, that they did not hold the agent's authority and must not push or
     deploy (2026-09-27, on Jonathan's own canopy-web session).
 
     OWNER: the runner's owner doing the work (it is their box and
     their Claude login), or the session's owner by the session ACL. MEMBER:
-    anyone else the session ACL lets write. Everyone else stays a CALLER.
+    anyone else the session ACL lets write. Everyone else is a CONTACT.
     """
     runner = getattr(turn, "claimed_by", None)
     if runner is not None and getattr(runner, "owner_id", None) == user.pk:
@@ -99,31 +129,31 @@ def _relationship_without_agent(turn, user) -> str:
     # An agent's OWN login (`Agent.user`, #983) working on a box its OWNER paired is
     # that agent acting where its owner's authority already runs — the dispatch shape
     # (an agent session asked by its owner to start work on the owner's runner, calling
-    # canopy with the agent's PAT). It fell through to CALLER and froze push/merge in
+    # canopy with the agent's PAT). It fell through to CALLER (now contact) and froze push/merge in
     # exactly the sessions the owner asked for (canopy-web#1011). Same answer
     # `relationship_for_user` gives the agent's own login; still only its own, and
-    # only on its owner's box — anywhere else it stays a CALLER.
+    # only on its owner's box — anywhere else it stays a CONTACT.
     agent_self = getattr(user, "agent_identity", None)
     owner = getattr(runner, "owner_id", None) if runner is not None else None
     if agent_self is not None and owner is not None and agent_self.owner_id == owner:
         return SYSTEM
     session = getattr(turn, "chat_session", None)
     if session is None:
-        return CALLER
+        return CONTACT
     from apps.canopy_sessions import access
     from apps.canopy_sessions.models import SessionParticipant
 
     role = access.role_for(user, session)
     if role == SessionParticipant.OWNER:
         return OWNER
-    return MEMBER if access.can_write(user, session) else CALLER
+    return MEMBER if access.can_write(user, session) else CONTACT
 
 
 def relationship_for_user(user, agent) -> str:
     """What a canopy USER is to the agent, with no turn in hand (e.g. listing
     the MCP tools they may call)."""
     if agent is None or not getattr(user, "is_authenticated", False):
-        return CALLER
+        return CONTACT
     from apps.workspaces import services as wsvc
 
     # Owner only while still in the tenant: an owner removed from the workspace
@@ -141,7 +171,7 @@ def relationship_for_user(user, agent) -> str:
     is_admin = getattr(agent, "is_admin", None)
     if callable(is_admin) and is_admin(user):
         return ADMIN
-    return MEMBER if wsvc.is_member(user, agent.workspace_id) else CALLER
+    return MEMBER if wsvc.is_member(user, agent.workspace_id) else CONTACT
 
 
 def _contact(contact) -> dict | None:
@@ -187,9 +217,10 @@ def build(turn) -> dict:
         # agent's FULL profile: its owner, an admin, canopy itself, or a
         # member of an agent that has published no interface. Otherwise the runner and the agent's
         # guard confine the session to exactly this.
-        "profile": "restricted" if turn.capability else "full",
-        # WHY: owner | admin | system | full:<rule> | capability:<name> |
-        # no-interface (a member, with nothing published) | refused.
+        "profile": CONFINED_PROFILE if turn.capability else FULL_PROFILE,
+        # WHY: owner | admin | system | editor (a workspace editor: full, manual
+        # only) | session:<role> | full:<rule> | capability:<name> | refused |
+        # no-interface (a turn with no agent).
         # `full:contact@dimagi.com:verified` is canopy granting domain-wide access —
         # what `canopy caller tier` reads instead of an allowlist in the repo.
         "granted_by": _granted_by(turn, agent),

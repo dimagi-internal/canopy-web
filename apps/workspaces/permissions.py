@@ -1,5 +1,8 @@
 """What each workspace role may DO — the one table, and the only door to it.
 
+The roles and capabilities are defined, beside the agent roles they are often
+confused with, in `docs/architecture/access.md`.
+
 `services` answers "what is this person's role here?" (`membership`,
 `member_role`), and `models.WorkspaceMembership.ROLE_RANK` orders the roles.
 This module answers the question every gate actually asks: **may this person
@@ -38,7 +41,10 @@ CONTENT_WRITE = "content.write"
 
 #: Reshape an agent and direct its work: edit it, its skills, schedules, tasks
 #: and routing; run turns; raise asks that dispatch work. NOT its keys — those
-#: are the agent's admins' (`Agent.is_admin`).
+#: are the agent's admins' (`Agent.is_admin`) — and not `auto`: a turn an editor
+#: who is not an agent admin starts always runs manual, and setting `auto` on a
+#: dispatch, a routing rule or the agent's switch is an admin's (the editor tier,
+#: docs/architecture/access.md).
 AGENT_WORK = "agent.work"
 
 #: Type into a runner-discovered emdash session (someone's live box).
@@ -67,6 +73,8 @@ INTEGRATIONS = "integrations"
 #: Delete the workspace, nest or detach it, the shared vault, the Slack app
 #: itself (config token, install, declare-an-agent), agents' credentials by
 #: virtue of being every agent's admin, and transferring an agent's ownership.
+#: A workspace ADMIN holds none of this: running a workspace is not holding its
+#: agents' keys.
 OWN = "own"
 
 MINIMUM_ROLE: dict[str, str] = {

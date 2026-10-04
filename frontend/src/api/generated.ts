@@ -2154,7 +2154,8 @@ export interface paths {
          * @description Flip the agent's runtime autonomy posture — the board-side switch the
          *     fleet turn procedure reads at preflight (agent-core/turn.md § Turn mode).
          *     A human decision made from the board; the agent-repo upsert (POST /) cannot
-         *     touch this field.
+         *     touch this field. `manual` from any editor; `auto` from the agent's owner or
+         *     an admin — it is the last rung of the routing ladder ("Everything else").
          */
         readonly patch: operations["set_turn_mode"];
         readonly trace?: never;
@@ -9603,6 +9604,16 @@ export interface components {
             readonly capabilities: readonly string[];
             /** Full Rule */
             readonly full_rule?: string | null;
+            /**
+             * Manual Only
+             * @default false
+             */
+            readonly manual_only: boolean;
+            /**
+             * May Request Auto
+             * @default false
+             */
+            readonly may_request_auto: boolean;
         };
         /** AgentOutsiderRuleOut */
         readonly AgentOutsiderRuleOut: {
@@ -12325,8 +12336,9 @@ export interface components {
          * AgentEdgeOut
          * @description What `source` gets when it sends `target` work with its own login.
          *     `access`: full | confined (to `capabilities`) | none. `basis`: owner |
-         *     workspace-owner | admin | full-rule | no-interface | capabilities |
-         *     nothing-offered | not-member | no-login. `can_grant` / `can_revoke`: whether
+         *     workspace-owner | admin | full-rule | editor (full, manual only) |
+         *     no-interface (refused: nothing published) | capabilities | nothing-offered |
+         *     not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
          *     THIS caller may make (or unmake) the source's login an admin of the target.
          */
         readonly AgentEdgeOut: {
@@ -13252,6 +13264,11 @@ export interface components {
              * @default 0
              */
             readonly profiles: number;
+            /**
+             * Envelope
+             * @default 0
+             */
+            readonly envelope: number;
             /** Projects */
             readonly projects?: readonly string[] | null;
             readonly health?: components["schemas"]["RunnerHealthIn"] | null;

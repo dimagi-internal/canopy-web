@@ -38,7 +38,10 @@ def w():
     ed = User.objects.create_user("ed", "ed@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=op)
     M.objects.create(user=op, workspace=ws, role=M.EDITOR)
-    M.objects.create(user=ed, workspace=ws, role=M.EDITOR)
+    # `ed` is the member these tests confine — a VIEWER: a workspace editor is in
+    # the editor tier (whole agent, manual only; docs/architecture/access.md) and
+    # is never confined by an interface.
+    M.objects.create(user=ed, workspace=ws, role=M.VIEWER)
     agent = Agent.objects.create(slug="ace", name="Ace", workspace=ws, owner=op)
     return {"op": op, "ed": ed, "ws": ws, "agent": agent}
 
@@ -106,11 +109,11 @@ def test_without_an_interface_a_contact_is_refused(w):
     # stranger on Slack or email drove the whole agent (Hal, via Slack, that day).
     t = _email(w["agent"], "e1")
     assert t.status == Turn.CANCELLED
-    assert "offers nothing" in t.result_note
+    assert "published no interface" in t.result_note
     assert caller_context.build(t)["granted_by"] == "refused"
 
 
-def test_without_an_interface_a_member_still_gets_the_whole_agent(w):
+def test_without_an_interface_an_editor_gets_the_whole_agent_manual(w):
     from apps.workspaces import services as wsvc
 
     member = User.objects.create_user(username="m", email="m@dimagi.com")
@@ -118,7 +121,17 @@ def test_without_an_interface_a_member_still_gets_the_whole_agent(w):
     t, _ = services.enqueue_turn(agent=w["agent"], origin=Turn.ORIGIN_API, idempotency_key="m1",
                                 prompt="x", initiator=who.for_user(member, via="api", assurance="pat"))
     assert t.status == Turn.QUEUED and t.capability == FULL
-    assert caller_context.build(t)["granted_by"] == "no-interface"
+    env = caller_context.build(t)
+    assert env["granted_by"] == "editor" and env["relationship"] == "member"
+    assert env["turn_mode"]["mode"] == "manual"
+
+
+def test_without_an_interface_a_viewer_is_refused(w):
+    # 2026-10-04: no published interface = admins and editors only.
+    t = _as_user(w["agent"], w["ed"], "v1")
+    assert t.status == Turn.CANCELLED
+    assert "published no interface" in t.result_note
+    assert caller_context.build(t)["granted_by"] == "refused"
 
 
 def test_an_agents_own_login_is_the_agent_itself(w):
@@ -153,7 +166,7 @@ def test_a_verified_emailer_gets_ask_and_its_profile(w):
     t = _email(w["agent"], "e1", headers=DMARC)
     assert t.capability == ASK and t.status == Turn.QUEUED
     env = caller_context.build(t)
-    assert env["profile"] == "restricted"
+    assert env["profile"] == "confined"
     assert env["capability"]["entry"] == "/ace:ask --thread {thread_id}"
     assert env["capability"]["bash"] == ["canopy email read --repo . {thread_id}"]
 
@@ -161,7 +174,7 @@ def test_a_verified_emailer_gets_ask_and_its_profile(w):
 def test_an_unverified_emailer_is_refused_when_ask_needs_verified(w):
     _publish(w["agent"])
     t = _email(w["agent"], "e1")
-    assert t.status == Turn.CANCELLED and "offers nothing to this caller" in t.result_note
+    assert t.status == Turn.CANCELLED and "offers nothing to you" in t.result_note
     assert t.capability == FULL        # never ran, so never had a profile
 
 
@@ -208,7 +221,7 @@ def test_unpublishing_a_capability_denies_everything_to_turns_already_queued(w):
     w["agent"].interface = {}
     w["agent"].save(update_fields=["interface"])
     env = caller_context.build(t)
-    assert env["profile"] == "restricted"
+    assert env["profile"] == "confined"
     assert env["capability"]["tools"] == [] and env["capability"]["bash"] == []
 
 
@@ -293,11 +306,11 @@ def test_the_same_runner_still_claims_full_turns(w, claimable):
 
 def test_a_runner_reporting_profiles_claims_it(w, claimable):
     c, rid = claimable
-    _beat(c, rid, profiles=3)
+    _beat(c, rid, profiles=3, envelope=2)
     _email(w["agent"], "e1", headers=DMARC)
     r = c.post(f"/api/harness/runners/{rid}/claim")
     assert r.status_code == 200
-    assert r.json()["caller_context"]["profile"] == "restricted"
+    assert r.json()["caller_context"]["profile"] == "confined"
 
 
 def test_a_pin_is_not_a_way_past_it(w, claimable):
@@ -317,9 +330,26 @@ def test_a_runner_whose_guard_predates_write_paths_is_not_given_one(w, claimable
     assert c.post(f"/api/harness/runners/{rid}/claim").status_code == 204
 
 
-def test_a_downgraded_runner_stops_claiming_on_its_next_beat(w, claimable):
+def test_a_runner_whose_code_reads_only_restricted_never_claims_a_callers_turn(w, claimable):
+    # Envelope VERSION 2 says `profile: confined`; runner code from before it tests
+    # `== "restricted"` and would run the turn in the FULL profile. Such a box
+    # reports no `envelope`, so it gets no caller turn until it updates.
     c, rid = claimable
     _beat(c, rid, profiles=3)
+    _email(w["agent"], "e1", headers=DMARC)
+    assert c.post(f"/api/harness/runners/{rid}/claim").status_code == 204
+
+
+def test_envelope_cannot_be_declared_by_hand(w, claimable):
+    c, rid = claimable
+    r = c.patch(f"/api/harness/runners/{rid}", {"capabilities": {"agents": ["ace"], "envelope": 2}},
+                content_type="application/json")
+    assert r.status_code == 422
+
+
+def test_a_downgraded_runner_stops_claiming_on_its_next_beat(w, claimable):
+    c, rid = claimable
+    _beat(c, rid, profiles=3, envelope=2)
     _beat(c, rid)                                        # rolled back to an old build
     _email(w["agent"], "e1", headers=DMARC)
     assert c.post(f"/api/harness/runners/{rid}/claim").status_code == 204
@@ -433,7 +463,7 @@ def test_the_page_cannot_widen_what_the_capability_grants(w):
     _publish(w["agent"], PAGED)
     t = _on_page(w["agent"], w["ed"], "p8", "labs-marketplace://orgs")
     profile = caller_context.build(t)
-    assert profile["profile"] == "restricted"
+    assert profile["profile"] == "confined"
     assert profile["capability"]["tools"] == ["Skill", "mcp__*connect_labs__marketplace_*"]
     assert profile["capability"]["bash"] == []
 
@@ -507,7 +537,7 @@ def test_a_session_a_member_started_themselves_grants_nothing(w):
 
     _publish(w["agent"])
     other = User.objects.create_user("o2", "o2@dimagi.com", "pw")
-    M.objects.create(user=other, workspace=w["ws"], role=M.EDITOR)
+    M.objects.create(user=other, workspace=w["ws"], role=M.VIEWER)
     session = Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=other, title="t")
     SessionParticipant.objects.create(session=session, user=w["ed"], role=SessionParticipant.EDITOR)
     assert _in_session(session, other, "s4").capability == ASK

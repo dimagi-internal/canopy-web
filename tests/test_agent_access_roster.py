@@ -61,10 +61,20 @@ def test_every_member_listed_with_role_and_reason(world):
     assert [m["agent_role"] for m in r.json()["members"]][:3] == ["owner", "admin", "admin"]
 
 
-def test_no_interface_means_everyone_has_full_access(world):
+def test_no_interface_means_admins_and_editors_only(world):
+    # 2026-10-04 (docs/architecture/access.md): with nothing published, the
+    # agent's admins and the workspace's editors reach it — editors manual only —
+    # and a viewer reaches nothing.
     body = _get(world["ed"]).json()
+    rows = _by_email(body)
     assert body["interface_published"] is False
-    assert {r["access"] for r in body["members"]} == {"full"}
+    assert rows["ed@dimagi.com"]["access"] == "full"
+    assert rows["ed@dimagi.com"]["manual_only"] is True
+    assert rows["ed@dimagi.com"]["may_request_auto"] is False
+    assert rows["vw@partner.org"]["access"] == "none"
+    assert rows["adm@dimagi.com"]["access"] == "full"
+    assert rows["adm@dimagi.com"]["manual_only"] is False
+    assert rows["adm@dimagi.com"]["may_request_auto"] is True
     assert body["outsiders"] == []
 
 

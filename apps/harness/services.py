@@ -173,28 +173,30 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     """Decide which profile a new turn runs in, inside the transaction that
     creates it — so no runner can claim it before the decision is recorded.
 
-    FULL for its owner, admins and canopy's own turns, and for a workspace
-    member of an agent with no published interface (anyone else is refused). A caller gets the capability their class is
-    offered. A caller offered nothing is refused: the turn is written already
-    CANCELLED with the reason, for the same reasons a blocked sender's is (the
-    idempotency key holds, an old runner sees a 201, and the refusal is
-    visible in the turn log).
+    THE rule, `apps.agents.access.decide` (docs/architecture/access.md): FULL
+    for its owner, admins, canopy's own turns and a workspace editor (whose turn
+    then runs manual — `turn_mode.editor_cap`); a viewer or a contact gets the
+    capability their class is offered, or a `full:` rule's whole profile. Anyone
+    offered nothing is refused: the turn is written already CANCELLED with the
+    reason and what they CAN do, for the same reasons a blocked sender's is (the
+    idempotency key holds, an old runner sees a 201, and the refusal is visible
+    in the turn log). Every door that makes an agent work — the harness API, a
+    chat send, Slack, email — comes through here.
     """
-    from apps.agents import interface
+    from apps.agents import access
 
     agent = turn.agent if turn.agent_id else (
         turn.chat_session.agent if turn.chat_session_id and turn.chat_session.agent_id else None)
     if agent is None:
         return
-    cap = interface.capability_for(turn, agent, requested)
-    if cap == interface.FULL:
+    decision = access.decide_for_turn(turn, agent, requested)
+    cap = decision.stamp
+    if cap == "":
         return
     if cap is None:
         turn.status = Turn.CANCELLED
         turn.finished_at = timezone.now()
-        what = f"'{requested}'" if requested else "nothing"
-        turn.result_note = (f"not run: {agent.slug} offers {what} to this caller "
-                            "(see its declared interface)")
+        turn.result_note = f"not run: {decision.reason or agent.slug + ' does not take work from you'}"
         turn.save(update_fields=["status", "finished_at", "result_note"])
         return
     turn.capability = cap
@@ -395,6 +397,7 @@ def heartbeat(
     code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
     projects: list[str] | None = None, profiles: int = 0,
     health: dict | None = None, mailboxes_readable: list[str] | None = None,
+    envelope: int = 0,
 ) -> Runner:
     """`profiles` is the profile-enforcement version the runner REPORTS it can
     honour (see `profile_q`). Written on every beat, and 0 from a runner that
@@ -454,6 +457,13 @@ def heartbeat(
         fields += ["mailboxes_readable", "mailboxes_checked_at"]
     if int(runner.capabilities.get("profiles") or 0) != int(profiles or 0):
         runner.capabilities = {**runner.capabilities, "profiles": int(profiles or 0)}
+        if "capabilities" not in fields:
+            fields.append("capabilities")
+    # The caller-envelope version the runner's CODE reads (`envelope`), beside the
+    # guard version it reports as `profiles`: same contract — written every beat,
+    # absent = 0, and part of `profile_q`.
+    if int(runner.capabilities.get("envelope") or 0) != int(envelope or 0):
+        runner.capabilities = {**runner.capabilities, "envelope": int(envelope or 0)}
         if "capabilities" not in fields:
             fields.append("capabilities")
     runner.save(update_fields=fields)
@@ -1057,6 +1067,12 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
 #: fail closed, rather than trusting a guard that lets a caller overwrite the script
 #: its bash allowlist runs.
 PROFILES_VERSION = 3
+#: The caller-envelope version a runner's code must REPORT (`envelope`) to be
+#: given a restricted turn. 2 (2026-10-04) = it reads `profile: "confined"` (the
+#: envelope's VERSION 2 word for what was "restricted"). A runner on older code
+#: tests `profile == "restricted"` and would run a confined turn in the FULL
+#: profile, so it gets no caller turns until it updates — fail closed.
+ENVELOPE_VERSION = 2
 
 
 def profile_q(runner) -> Q:
@@ -1069,7 +1085,8 @@ def profile_q(runner) -> Q:
     cloud runner today) never sees one. Deliberately NOT bypassable by a pin:
     a pin is a placement, never a way past a security property.
     """
-    if int(runner.capabilities.get("profiles") or 0) >= PROFILES_VERSION:
+    if (int(runner.capabilities.get("profiles") or 0) >= PROFILES_VERSION
+            and int(runner.capabilities.get("envelope") or 0) >= ENVELOPE_VERSION):
         return Q()
     return Q(capability="")
 

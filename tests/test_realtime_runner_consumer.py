@@ -552,7 +552,8 @@ async def test_a_confined_turn_claimed_over_ws_carries_its_confinement():
 
     @database_sync_to_async
     def _enqueue_confined():
-        runner.capabilities = {**runner.capabilities, "profiles": services.PROFILES_VERSION}
+        runner.capabilities = {**runner.capabilities, "profiles": services.PROFILES_VERSION,
+                               "envelope": services.ENVELOPE_VERSION}
         runner.save(update_fields=["capabilities"])
         return Turn.objects.create(agent=agent, origin=Turn.ORIGIN_EMAIL, prompt="p",
                                    idempotency_key="confined-1", capability="ask")
@@ -563,7 +564,7 @@ async def test_a_confined_turn_claimed_over_ws_carries_its_confinement():
     await comm.send_json_to({"action": "claim"})
     claimed = (await comm.receive_json_from(timeout=2))["turn"]
     assert claimed is not None and claimed["id"] == str(turn.id)
-    assert claimed["caller_context"]["profile"] == "restricted"
+    assert claimed["caller_context"]["profile"] == "confined"
     assert claimed["mcp_token"].startswith("cct_")
     await comm.disconnect()
 

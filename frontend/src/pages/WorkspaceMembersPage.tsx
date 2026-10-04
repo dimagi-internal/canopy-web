@@ -31,6 +31,25 @@ function inviteLink(token: string): string {
   return `${window.location.origin}${base}/invite/${token}`
 }
 
+// What each workspace role means, said plainly (docs/architecture/access.md).
+// Workspace roles are not agent roles: a workspace ADMIN runs the workspace but
+// holds no agent's keys; a workspace OWNER is every agent's admin.
+const ROLE_HELP: { role: string; text: string }[] = [
+  { role: 'Viewer', text: 'Reads the workspace and talks to agents through what each agent offers members.' },
+  {
+    role: 'Editor',
+    text: 'Creates and changes content, edits agents and sends them work — those turns always run manual, so anything outbound waits for an agent admin.',
+  },
+  {
+    role: 'Admin',
+    text: 'Runs the workspace: every log, members below admin, the integrations. Holds no agent keys — not an admin of any agent unless made one.',
+  },
+  {
+    role: 'Owner',
+    text: "Holds the keys: the shared vault, the Slack app, connected sites, deleting the workspace — and is every agent's admin.",
+  },
+]
+
 export function WorkspaceMembersPage(): JSX.Element | null {
   const { workspace: slug } = useParams()
   const navigate = useNavigate()
@@ -307,6 +326,18 @@ export function WorkspaceMembersPage(): JSX.Element | null {
             </TableBody>
           </Table>
         )}
+      </div>
+
+      <div className="rounded-lg border border-border bg-card p-5" data-testid="workspace-role-help">
+        <h2 className="mb-2 text-sm font-semibold text-foreground">What each role can do</h2>
+        <dl className="m-0 grid gap-1 text-[12px] text-foreground-secondary sm:grid-cols-[6rem_1fr]">
+          {ROLE_HELP.map((r) => (
+            <div key={r.role} className="contents">
+              <dt className="font-medium text-foreground">{r.role}</dt>
+              <dd className="m-0">{r.text}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
 
       {canManage && (

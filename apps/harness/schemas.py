@@ -331,6 +331,10 @@ class HeartbeatIn(Schema):
     # given a CALLER's turn, confined to a capability (services.profile_q).
     # Absent (an older runner) means 0: never.
     profiles: int = 0
+    # The caller-envelope version the runner's code reads: 2 = it understands
+    # `profile: "confined"`. Absent (older code) means 0, and such a box gets no
+    # caller turns (services.profile_q, ENVELOPE_VERSION).
+    envelope: int = 0
     # The repos this runner can actually drive, OBSERVED (emdash's own projects
     # table on a laptop; the configured list on a cloud box) rather than typed by
     # a human at pairing — which drifted silently and only ever toward "cannot

@@ -200,8 +200,13 @@ def invoke(user_id, agent_slug: str, capability: str, arguments: dict) -> tuple[
     # can be unpublished (or the caller removed) between list and call. The same
     # answer for "no such agent" and "not offered to you", so a caller learns
     # nothing about agents outside their reach.
-    if user is None or agent is None or capability not in offered_to(user, agent):
-        raise InvocationError(f"{agent_slug}{SEPARATOR}{capability} is not available to you")
+    offered = offered_to(user, agent) if user is not None and agent is not None else []
+    if capability not in offered:
+        # What the caller CAN use, when there is anything — `offered_to` is empty
+        # for anyone outside the agent's workspace, so this says nothing new to them.
+        alt = (f"; you may use: {', '.join(agent_slug + SEPARATOR + n for n in offered)}"
+               if offered else "")
+        raise InvocationError(f"{agent_slug}{SEPARATOR}{capability} is not available to you{alt}")
     try:
         check_write_limit(user.pk)
     except RateLimitError as exc:

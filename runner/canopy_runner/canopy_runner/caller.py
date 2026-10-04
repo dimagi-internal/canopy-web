@@ -191,6 +191,15 @@ _MARKER = re.compile(r"^PROFILE_ENFORCEMENT_VERSION\s*=\s*(\d+)", re.M)
 _supported_cache: tuple[float, int] | None = None
 
 
+#: The caller-envelope version this runner's code reads, reported on every beat
+#: (`envelope`). 2 = it understands `profile: "confined"` (canopy-web's word for
+#: what envelope VERSION 1 called "restricted"); canopy-web gives caller turns
+#: only to a runner reporting it (harness `ENVELOPE_VERSION`).
+ENVELOPE_VERSION = 2
+CONFINED_PROFILES = session_naming.CONFINED_PROFILES
+is_confined = session_naming.is_confined
+
+
 class ProfileError(RuntimeError):
     """A caller's turn cannot be confined, so it must not run."""
 
@@ -198,10 +207,10 @@ class ProfileError(RuntimeError):
 def capability(turn: dict) -> dict | None:
     """The capability profile when this is a caller's turn, else None (full profile)."""
     env = turn.get("caller_context") or {}
-    if env.get("profile") != "restricted":
+    if not is_confined(env):
         return None
     cap = env.get("capability")
-    # A restricted envelope with no capability is still restricted: deny-all.
+    # A confined envelope with no capability is still confined: deny-all.
     return cap if isinstance(cap, dict) else {"name": "none", "tools": [], "bash": [],
                                                "read_paths": [], "write_paths": [], "entry": None}
 

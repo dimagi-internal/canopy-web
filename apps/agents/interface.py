@@ -1,10 +1,15 @@
 """An agent's DECLARED INTERFACE: what it offers people who are not its admins.
 
+Every term here (`full:`, `capabilities:`, `callers:`, the caller classes,
+`full` / `confined` / `none`) is defined in `docs/architecture/access.md`, with
+the decision table; THE rule that applies it is `apps/agents/access.decide`.
+
 Phase 4 of `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-
-and-access-design.md` (§4). An agent has two relationships (§3): its owner and
-admins reach its full working session; everyone else — a workspace member, an
-emailer, a widget visitor — is a CALLER, and reaches only what the agent
-declares here. It is LIVE STATE held by canopy-web (see "Stored on canopy-web"
+and-access-design.md` (§4). An agent's owner and admins reach its full working
+session; so does a workspace editor, whose turns run manual. Everyone else — a
+viewer member, a contact (an emailer, a widget visitor) — reaches only what the
+agent declares here: `full` through a `full:` rule, `confined` to a capability,
+or `none`. It is LIVE STATE held by canopy-web (see "Stored on canopy-web"
 below) — never a file in the agent's repo — and canopy enforces it.
 
 **Allowlist by construction.** Restricting a fully-powered agent per caller —
@@ -70,15 +75,16 @@ granted. The page's `backing_tool` tells the agent where to read the rows on
 screen; it is not a filter (until 2026-09-29 it was).
 
 **Default deny.** An agent that has published no interface is reachable by its
-workspace's members (in its full profile, as before) and by nobody else: a
-contact or an unidentified caller is refused. Until 2026-09-26 it ran EVERY
-turn full, which made the enforcement below opt-in — and on that day Hal, with
-no interface, pushed and deployed code for a colleague on Slack who was not a
-member of its workspace. Publishing an interface is how an agent lets anyone
-outside in. A capability with no `pages` is never selected by a page, so an
-existing interface behaves exactly as it did.
+admins and its workspace's editors (full profile, manual only) and by nobody
+else: a viewer member, a contact or an unidentified caller is refused (viewers
+since 2026-10-04). Until 2026-09-26 it ran EVERY turn full, which made the
+enforcement below opt-in — and on that day Hal, with no interface, pushed and
+deployed code for a colleague on Slack who was not a member of its workspace.
+Publishing an interface is how an agent lets anyone else in. A capability with
+no `pages` is never selected by a page, so an existing interface behaves
+exactly as it did.
 
-Caller classes: `member` (a workspace member who is not an admin), `contact`
+Caller classes: `member` (a workspace member who is not an agent admin), `contact`
 (someone canopy knows who is not a member), `unknown` (nobody established who).
 `@domain.tld` narrows one to addresses at exactly that domain; `:verified`
 additionally requires THIS message to be verified — for a contact, mail that is
@@ -387,9 +393,12 @@ def published(iface: dict) -> bool:
     return bool(iface.get("capabilities") or iface.get("full"))
 
 
-#: Who reaches an agent that has published NO interface: the people canopy
-#: already knows by login and their workspace let in, and canopy itself.
-_TRUSTED_WITHOUT_INTERFACE = frozenset({"owner", "admin", "system", "member"})
+#: Who reaches an agent that has published NO interface: its admins and canopy
+#: itself. A workspace EDITOR still does — through the editor tier of
+#: `apps/agents/access.decide` (full profile, manual only), not through this set
+#: — and a viewer member or a contact is refused (2026-10-04; members used to be
+#: let in wholesale). See docs/architecture/access.md.
+_TRUSTED_WITHOUT_INTERFACE = frozenset({"owner", "admin", "system"})
 
 
 def session_writer(turn, agent) -> str | None:
@@ -429,81 +438,57 @@ def session_writer(turn, agent) -> str | None:
 def capability_for(turn, agent, requested: str | None = None) -> str | None:
     """Which profile this turn runs in: FULL, a capability name, or None (refused).
 
-    FULL for its owner, admins, and canopy's own turns. With NO published
-    interface, workspace members get FULL too and everyone else — a contact, a
-    stranger — is refused: default deny (2026-09-26). It used to be FULL for
-    everyone, so an agent reachable from Slack or email with no interface ran
-    a colleague-of-nobody's ask with its whole profile, and the enforcement
-    layer only existed for the one agent that had opted in. A
-    caller gets the capability they asked for — `requested`, e.g. a tool called
-    over MCP — or `ask` by default (every free-form channel), if their class is
-    listed for it; otherwise they are refused (`callers_default: none`).
+    A thin face over THE rule, `apps.agents.access.decide` — see
+    docs/architecture/access.md for the tiers. In short: FULL for its owner,
+    admins, canopy's own turns, a `full:` rule, a writer in an admin's own
+    session, and a workspace editor (whose turns then run manual); a viewer or
+    a contact gets the capability they asked for — `requested`, e.g. a tool
+    called over MCP — or the page's/site's door, or `ask`, if their class is
+    listed for it; otherwise they are refused (`callers_default: none`). With
+    NO published interface, only admins and editors get in.
     """
-    from apps.harness.caller_context import ADMIN, OWNER, SYSTEM, relationship
+    from . import access
 
-    iface = getattr(agent, "interface", None) or {}
-    rel = relationship(turn, agent)
-    if not published(iface):
-        return FULL if rel in _TRUSTED_WITHOUT_INTERFACE else None
-    if rel in (OWNER, ADMIN, SYSTEM):
-        return FULL
-    if session_writer(turn, agent):
-        return FULL
-    classes = caller_classes(turn, rel)
-    if full_rule(classes, iface):
-        return FULL
-    name = (requested or _page_capability(turn, iface, classes)
-            or _site_capability(turn, iface, classes) or ASK)
-    cap = iface["capabilities"].get(name)
-    if cap and classes & set(cap.get("callers") or []):
-        return name
-    return None
+    return access.decide_for_turn(turn, agent, requested).stamp
 
 
 def granted_by(turn, agent) -> str:
     """WHY this turn has the access it has, for the envelope: `owner`, `admin`,
-    `system`, `full:<rule>`, `capability:<name>`, `no-interface` or `refused`."""
-    from apps.harness.caller_context import ADMIN, OWNER, SYSTEM, relationship
+    `system`, `editor`, `session:<role>`, `full:<rule>`, `capability:<name>` or
+    `refused`."""
+    from . import access
 
-    iface = getattr(agent, "interface", None) or {}
-    rel = relationship(turn, agent)
-    if not published(iface):
-        return "no-interface" if rel in _TRUSTED_WITHOUT_INTERFACE else "refused"
-    if rel in (OWNER, ADMIN, SYSTEM):
-        return rel
-    role = session_writer(turn, agent)
-    if role:
-        return f"session:{role}"
-    rule = full_rule(caller_classes(turn, rel), iface)
-    if rule:
-        return f"full:{rule}"
-    return f"capability:{turn.capability}" if turn.capability else "refused"
+    d = access.decide_for_turn(turn, agent)
+    if d.access == access.CONFINED:
+        # The capability the turn was STAMPED with at enqueue (a requested door
+        # may differ from the free-form one `decide` falls back to).
+        return f"capability:{turn.capability or d.capability}"
+    return d.basis
 
 
 def offered_to(user, agent) -> list[str]:
     """The capabilities `user` may invoke on `agent` directly — the MCP tool list.
 
-    Everything, for the owner and admins (their turns run FULL anyway). For a
-    workspace member, the capabilities listing `member` or `member:verified`:
-    a request authenticated by a canopy session or token IS verified, so the
-    two are the same for someone calling as themselves. Nothing for anyone
-    who is not a member of the agent's workspace — this surface is for people
-    canopy already knows by login; outsiders arrive by email or widget.
+    Everything for anyone whose turns run in the whole agent anyway: the owner,
+    admins, a workspace editor, a member lifted by a `full:` rule. For any other
+    workspace member, the capabilities listing `member` or `member:verified`: a
+    request authenticated by a canopy session or token IS verified, so the two
+    are the same for someone calling as themselves. Nothing for anyone who is
+    not a member of the agent's workspace — this surface is for people canopy
+    already knows by login; outsiders arrive by email or widget.
     """
     caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
     if not caps or not getattr(user, "is_authenticated", False):
         return []
-    from apps.harness.caller_context import ADMIN, MEMBER, OWNER, relationship_for_user
+    from . import access
 
-    rel = relationship_for_user(user, agent)
-    if rel in (OWNER, ADMIN):
-        return sorted(caps)
-    if rel != MEMBER:
+    d = access.decide(agent, user, verified=True)
+    if d.role not in (access.OWNER, access.ADMIN, access.MEMBER):
         return []
+    if d.access == access.FULL:
+        return sorted(caps)
     # Calling as themselves over an authenticated token IS verified.
     classes = _expand("member", getattr(user, "email", "") or "", True)
-    if full_rule(classes, agent.interface or {}):
-        return sorted(caps)
     return sorted(n for n, c in caps.items() if classes & set(c.get("callers") or []))
 
 

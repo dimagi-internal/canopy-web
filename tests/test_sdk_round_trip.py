@@ -305,7 +305,7 @@ def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host,
         rn = Runner.objects.create(name=name, workspace=site["ws"], kind=Runner.CLOUD,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                    owner=site["owner"], host=name,
-                                   capabilities={"sessions": True, "profiles": PROFILES_VERSION})
+                                   capabilities={"sessions": True, "profiles": PROFILES_VERSION, "envelope": 2})
         RunnerAssignment.objects.create(agent=site["agent"], runner=rn, rank=rank)
         return rn
 

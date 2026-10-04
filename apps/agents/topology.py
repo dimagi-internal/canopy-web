@@ -12,9 +12,10 @@ Hal's admin list and the workspace's members side by side — and the answer
 for Ada was "the `ask` capability", which needs an email thread, so every
 direct Ada→Hal dispatch failed for a week while each screen looked fine.
 
-Every cell is decided by the predicates a real turn is (`access._member_access`,
-`Agent.is_admin`), for a request made signed in with a token — verified by
-construction. A board card someone approves is a different path (it runs as
+Every cell is decided by THE rule a real turn is (`access.decide`, see
+docs/architecture/access.md), for a request made signed in with a token —
+verified by construction. A login that is a workspace EDITOR of B reaches B
+whole but only in manual mode (basis `editor`); making it an admin lifts that. A board card someone approves is a different path (it runs as
 canopy itself, `SYSTEM`) and is not what this shows.
 
 Making A's login an admin of B is the one-click fix, and it is TRANSITIVE: anyone
@@ -33,9 +34,10 @@ from . import access
 from . import interface as iface_mod
 from .models import Agent, AgentAdmin
 
-#: Why an edge has the access it has.
-OWNER, WS_OWNER, ADMIN, FULL_RULE, NO_INTERFACE, CAPABILITIES, NOTHING, NOT_MEMBER, NO_LOGIN = (
-    "owner", "workspace-owner", "admin", "full-rule", "no-interface", "capabilities",
+#: Why an edge has the access it has. `editor`: full, but manual only.
+#: `no-interface`: a viewer, refused because the target published no interface.
+OWNER, WS_OWNER, ADMIN, FULL_RULE, EDITOR, NO_INTERFACE, CAPABILITIES, NOTHING, NOT_MEMBER, NO_LOGIN = (
+    "owner", "workspace-owner", "admin", "full-rule", "editor", "no-interface", "capabilities",
     "nothing-offered", "not-member", "no-login",
 )
 
@@ -62,13 +64,19 @@ def _edge(src: Agent, dst: Agent, admin_ids: set[int], viewer) -> dict:
     elif explicit:
         out.update(access="full", basis=ADMIN, can_revoke=may_manage)
     else:
-        level, caps, rule = access._member_access(login.email or "", dst.interface or {})
-        if level == "full":
-            out.update(access="full", basis=FULL_RULE if rule else NO_INTERFACE, full_rule=rule)
-        elif level == "confined":
+        d = access.decide(dst, login, verified=True)
+        iface = dst.interface or {}
+        if d.access == access.FULL and d.basis.startswith("full:"):
+            out.update(access="full", basis=FULL_RULE, full_rule=d.basis.split(":", 1)[1])
+        elif d.access == access.FULL:
+            out.update(access="full", basis=EDITOR)
+        elif d.access == access.CONFINED:
+            caps = sorted(n for n, c in (iface.get("capabilities") or {}).items()
+                          if iface_mod._expand("member", login.email or "", True)
+                          & set(c.get("callers") or []))
             out.update(access="confined", basis=CAPABILITIES, capabilities=caps)
         else:
-            out["basis"] = NOTHING
+            out["basis"] = NOTHING if iface_mod.published(iface) else NO_INTERFACE
         out["can_grant"] = may_manage
     return out
 

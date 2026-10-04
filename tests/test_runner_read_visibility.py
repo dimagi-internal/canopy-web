@@ -159,19 +159,21 @@ def test_a_null_workspace_runner_is_visible_only_to_whoever_paired_it(owner, tea
     assert legacy.workspace_id is None  # the row really is untenanted
 
 
-def test_a_member_can_pin_a_turn_to_a_runner_they_did_not_pair(teammate, workspace, runner):
-    """The pin arm asks 'can the caller SEE this runner?' — its own comment says
-    so ("a runner the caller cannot see must 422 as unknown, never be attachable
-    because its UUID was guessed"). It confers nothing new: any member can already
-    enqueue a turn this runner will claim, and the claim path re-checks the tenant.
-    """
+def test_an_editor_pins_only_to_a_runner_they_administer(teammate, workspace, runner):
+    """Seeing a runner is not enough to pin an agent's work to it (2026-10-04,
+    docs/architecture/access.md): the agent's admins may pin any box that can hold
+    it, anyone else only a box they administer. The pin stays a READ question for
+    whether the id is known at all (an invisible id still 422s as unknown)."""
+    from apps.harness.models import RunnerAdmin
+
     Agent.objects.create(slug="echo", name="Echo", workspace=workspace)
-    resp = _client(teammate).post(
-        "/api/harness/turns/",
-        {"agent_slug": "echo", "origin": "api", "idempotency_key": "pin-1",
-         "prompt": "/echo:turn", "runner_id": str(runner.id)},
-        content_type="application/json",
-    )
+    body = {"agent_slug": "echo", "origin": "api", "idempotency_key": "pin-1",
+            "prompt": "/echo:turn", "runner_id": str(runner.id)}
+    resp = _client(teammate).post("/api/harness/turns/", body, content_type="application/json")
+    assert resp.status_code == 403, resp.content
+    assert "administers that runner" in resp.json()["title"]
+    RunnerAdmin.objects.create(runner=runner, user=teammate)
+    resp = _client(teammate).post("/api/harness/turns/", body, content_type="application/json")
     assert resp.status_code == 201, resp.content
 
 
