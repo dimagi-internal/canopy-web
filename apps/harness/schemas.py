@@ -514,6 +514,13 @@ class TurnIn(Schema):
     # `drill` origin: a drill is an api turn that names its runner, identified by
     # its RunnerDrill row rather than by a magic origin value.
     runner_id: uuid.UUID | None = None
+    # Ask for the MODE this agent turn runs in, above every routing rule and the
+    # agent's own switch (apps/harness/turn_mode.py). `manual` is open to anyone
+    # who may enqueue — lowering autonomy is always safe. `auto` only from the
+    # agent's owner or an admin (workspace owners included), signed in or on a
+    # PAT; anyone else gets a 403. Refused on a project turn and on email, which a
+    # runner posts on a stranger's behalf. Omit to let the rules decide.
+    turn_mode: Literal["auto", "manual"] | None = None
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
@@ -558,6 +565,13 @@ class TurnOut(Schema):
     # manual | auto, decided at claim (apps/harness/turn_mode.py); "" until then.
     turn_mode: str = ""
     turn_mode_basis: str = ""
+    # What the dispatcher ASKED for (TurnIn.turn_mode) and who, "" / null if
+    # nothing. `turn_mode` above is what the claim actually decided.
+    requested_turn_mode: str = ""
+    requested_turn_mode_by_email: str | None = None
+    # The runner this turn is PINNED to (TurnIn.runner_id), if any — only it may claim.
+    pinned_runner_id: uuid.UUID | None = None
+    pinned_runner_name: str | None = None
     session_id: str
     result_note: str
     # True when `prompt`, `origin_ref` and `result_note` were blanked because
@@ -608,6 +622,14 @@ class TurnOut(Schema):
     @staticmethod
     def resolve_enqueued_by_email(obj) -> str | None:
         return obj.enqueued_by.email if obj.enqueued_by_id else None
+
+    @staticmethod
+    def resolve_requested_turn_mode_by_email(obj) -> str | None:
+        return obj.requested_turn_mode_by.email if obj.requested_turn_mode_by_id else None
+
+    @staticmethod
+    def resolve_pinned_runner_name(obj) -> str | None:
+        return obj.pinned_runner.name if obj.pinned_runner_id else None
 
     @staticmethod
     def resolve_initiator(obj) -> dict:

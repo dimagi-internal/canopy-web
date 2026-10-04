@@ -22,6 +22,16 @@ rule is always honoured — lowering autonomy is safe from anyone.
 An anyone-rule (`actor=""`) makes no claim about who sent it, so it needs no
 verification: `email → auto` means what the agent-wide switch already means.
 
+**A dispatch may ask for a mode, and that request is the top rung.** An admin
+who sends an agent work names the posture for THAT turn (`TurnIn.turn_mode`,
+stamped as `Turn.requested_turn_mode`), above every rule and the agent's own
+switch — the rules are standing policy about a channel, the request is a
+decision about this one piece of work. Same philosophy as the rules: `manual`
+is honoured from anyone who may enqueue; `auto` only from the agent's owner or
+an admin (`Agent.is_admin`, which counts workspace owners), and that is checked
+twice — at enqueue (403) and again here, at every claim, so an admin revoked
+while the turn sat queued gets manual, with the basis saying why.
+
 Pure given the loaded rows, like `services.assignment_rows_for` — callable from
 the claim path (which has them) and from the envelope (which loads them).
 """
@@ -64,6 +74,25 @@ def resolve(*, agent, origin: str, actor: str, verified: bool, priorities: dict)
     return Resolved(mode, "agent")
 
 
+def requested(turn, agent) -> Resolved | None:
+    """The dispatcher's requested mode for an agent turn, or None if it asked for none."""
+    mode = getattr(turn, "requested_turn_mode", "") or ""
+    if mode not in MODES or agent is None or not turn.agent_id:
+        return None
+    user = turn.requested_turn_mode_by if turn.requested_turn_mode_by_id else None
+    if user is None:
+        who_ = "a deleted user"
+        if mode == AUTO:
+            return Resolved(MANUAL, f"dispatch by {who_}: auto withheld, requester gone")
+        return Resolved(MANUAL, f"dispatch by {who_}")
+    from .caller_context import relationship_for_user
+
+    label = f"dispatch by {user.email} ({relationship_for_user(user, agent)})"
+    if mode == AUTO and not agent.is_admin(user):
+        return Resolved(MANUAL, f"{label}: auto withheld, not an admin of {agent.slug}")
+    return Resolved(mode, label)
+
+
 def _agent_of(turn):
     if turn.agent_id:
         return turn.agent
@@ -85,6 +114,9 @@ def for_turn(turn, priorities: dict | None = None, *, fresh: bool = False) -> Re
     agent = _agent_of(turn)
     if agent is None:
         return None
+    asked = requested(turn, agent)
+    if asked is not None:
+        return asked
     if priorities is None:
         from .services import load_assignment_rows
 

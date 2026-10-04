@@ -522,6 +522,17 @@ class Turn(models.Model):
     # withheld rule ("rule email/beth@x.org: auto withheld, message not verified").
     turn_mode = models.CharField(max_length=8, blank=True, default="")
     turn_mode_basis = models.CharField(max_length=320, blank=True, default="")
+    # A mode ASKED FOR at enqueue by whoever dispatched the turn (`TurnIn.turn_mode`),
+    # and who asked. The top rung of `turn_mode.for_turn` — above every routing
+    # rule and the agent's own switch — and read again on every claim, so it
+    # survives a lease expiry. "" = no request; the ladder decides as before.
+    # `auto` is accepted only from the agent's owner/admin on a verified
+    # credential, and re-checked at claim (an admin revoked meanwhile gets manual).
+    requested_turn_mode = models.CharField(max_length=8, blank=True, default="")
+    requested_turn_mode_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="turn_modes_requested",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     # ---- the report half (was apps.agents.AgentTurn, merged here 2026-08-11) ----
