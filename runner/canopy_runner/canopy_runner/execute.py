@@ -182,9 +182,12 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
 
     # Who is asking, for the plugin's UserPromptSubmit hook — BEFORE the text lands.
     caller.write_pending(task, turn, envelope)
+    if _already_typed(client, turn_id, task):
+        caller.clear_pending(task)
+        return f"failed:{turn_id}"
     verifier = _open_verifier(agent, task, cfg)
     try:
-        res = cdp_control.open_and_send(task, work_prompt, port=cfg.cdp_port)
+        res = cdp_control.open_and_send(task, work_prompt, port=cfg.cdp_port, project=agent)
     except cdp_control.CDPError as exc:
         caller.clear_pending(task)
         if state == "unknown" and "TASK_NOT_FOUND" in str(exc):
@@ -234,7 +237,8 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
             return f"deferred:{turn_id}"
         # CLEAR & send: kill the leaked text, then send into the same session.
         try:
-            cdp_control.open_and_send(task, work_prompt, clear_first=True, port=cfg.cdp_port)
+            cdp_control.open_and_send(task, work_prompt, clear_first=True, port=cfg.cdp_port,
+                                      project=agent)
         except cdp_control.CDPError as exc:
             caller.clear_pending(task)
             logger.error("collision clear-and-send failed on '%s': %s", task, str(exc)[:200])
@@ -246,9 +250,10 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
 
     # `sent` means the keystrokes went out, not that the session took them. Never
     # retype here: a message that lands late would then arrive twice.
+    _TYPED_TURNS[turn_id] = time.monotonic()
     if _undelivered(client, turn_id, task, verifier, work_prompt):
         caller.clear_pending(task)
-        client.fail_turn(turn_id, _not_received_note(task))
+        _fail_typed(client, turn_id, task)
         return f"failed:{turn_id}"
 
     # Delivered — either the empty-line fast path, or a cleared-then-sent collision.
@@ -280,12 +285,57 @@ def _open_verifier(target: str, task: str, cfg):
 
 def _not_received_note(task: str) -> str:
     """What the HUMAN reads (relayed into Slack / the chat UI as the failure) when
-    the keystrokes went out but the session never took them."""
+    the keystrokes went out but the transcript never showed them arriving.
+
+    It must NOT say "not delivered" or "send it again". The keystrokes DID go out;
+    all the runner knows is that it could not see them land. It used to assert a
+    loss and ask for a resend, and on turn 22662f53 (2026-10-04) the message had in
+    fact arrived — in a same-named session of another project — four times. A false
+    "lost" costs a duplicate; so say what is known and send the human to look."""
     return (
-        f"Your message was not delivered: it was typed into the emdash session \"{task}\" "
-        f"but the session never received it. Nothing was sent to the agent — please send "
-        f"your message again."
+        f"Couldn't confirm your message was delivered. It was typed into the emdash "
+        f"session \"{task}\", but it hasn't shown up in that session's transcript, so it "
+        f"may or may not have arrived. Check the session before sending it again, so it "
+        f"doesn't land twice."
     )
+
+
+# turn id -> when its message was typed into a live session. A turn whose keystrokes
+# went out is NEVER typed again, whatever the server does with it: a requeue, a
+# lease-expiry reclaim, or an older server that requeues a failure with no session
+# key. Turn 22662f53 (2026-10-04) was typed four times because each unconfirmed send
+# failed sessionless, the server requeued it as a "non-attempt", and this runner
+# claimed and retyped it. In memory is enough — those re-claims come within seconds.
+_TYPED_TURNS: dict[str, float] = {}
+TYPED_TURN_TTL = 6 * 3600.0
+
+
+def _already_typed(client, turn_id: str, task: str) -> bool:
+    """True — and the turn is finished FAILED without typing — when this runner has
+    already typed this turn's message once."""
+    now = time.monotonic()
+    for key, when in list(_TYPED_TURNS.items()):
+        if now - when > TYPED_TURN_TTL:
+            del _TYPED_TURNS[key]
+    if turn_id not in _TYPED_TURNS:
+        return False
+    logger.warning("turn=%s was already typed into '%s' once — NOT retyping it", turn_id, task)
+    _post_events_best_effort(client, turn_id, [{"kind": "status",
+        "payload": {"status": "not_retyped", "task": task}}])
+    _fail_typed(client, turn_id, task)
+    return True
+
+
+def _fail_typed(client, turn_id: str, task: str) -> None:
+    """Fail a turn whose message WAS typed into `task`, naming the session.
+
+    The session key is the load-bearing part. The server treats a failed turn with
+    no session key as proof nothing reached an agent and requeues it
+    (services.finish_turn, MAX_SESSIONLESS_RETRIES) — true for a send that never
+    happened, false here: the keystrokes went out. Reporting the session makes the
+    failure terminal, so the message is typed at most once."""
+    client.finish(turn_id, note=_not_received_note(task), status="failed",
+                  emdash_task_id=task)
 
 
 def _undelivered(client, turn_id: str, task: str, verifier, prompt: str) -> bool:
@@ -563,11 +613,14 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         caller.write_pending(task, turn, envelope)
         # Before delivery, so the agent's first `canopy secret` cannot race it.
         chat_key.write(turn, task=task)
+        if _already_typed(client, turn_id, task):
+            caller.clear_pending(task)
+            return f"failed:{turn_id}"
         verifier = _open_verifier(target, task, cfg)
         if verifier is not None:
             pre_send = (verifier.path, verifier.offset)
         try:
-            res = cdp_control.open_and_send(task, prompt, port=cfg.cdp_port)
+            res = cdp_control.open_and_send(task, prompt, port=cfg.cdp_port, project=target)
         except Exception as exc:  # noqa: BLE001 — any send failure ends the turn
             caller.clear_pending(task)
             logger.error("chat reuse send failed turn=%s task=%s: %s", turn_id, task, exc)
@@ -587,7 +640,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             logger.info("chat collision on '%s' (turn=%s): unsent text in prompt %r — "
                         "human chose %r", task, turn_id, _preview(line), choice)
             if choice == dialog.CLEAR:
-                cdp_control.open_and_send(task, prompt, clear_first=True, port=cfg.cdp_port)
+                cdp_control.open_and_send(task, prompt, clear_first=True, port=cfg.cdp_port,
+                                          project=target)
             elif choice == dialog.CANCEL:
                 # Deliver nothing and let the turn be retried, rather than finishing
                 # a turn whose message never arrived.
@@ -604,9 +658,10 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         # `sent` is "the keystrokes went out". Confirm the session took them, or the
         # turn sits RUNNING with no reply and nobody is told (turn ffaa56ce,
         # 2026-10-02). Never retype: a late landing would arrive twice.
+        _TYPED_TURNS[turn_id] = time.monotonic()
         if _undelivered(client, turn_id, task, verifier, prompt):
             caller.clear_pending(task)
-            client.fail_turn(turn_id, _not_received_note(task))
+            _fail_typed(client, turn_id, task)
             return f"failed:{turn_id}"
         logger.info("chat turn=%s reused emdash task=%s (agent=%s)", turn_id, task, target)
     else:
@@ -663,7 +718,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     else:
         reader.seek_end()  # byte-equivalent of the old start_index snapshot, without re-reading
     chat_bridge.IN_FLIGHT[turn_id] = chat_bridge.LiveBridge(
-        turn_id=turn_id, task=task, reader=reader,
+        turn_id=turn_id, task=task, reader=reader, project=target,
     )
     logger.info("chat turn=%s bridging from task=%s (agent=%s)", turn_id, task, target)
     return f"chat:{turn_id}:{task}"

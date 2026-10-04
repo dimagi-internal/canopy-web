@@ -68,7 +68,7 @@ def _turn(**kw):
 def test_reuse_sends_into_existing_session(monkeypatch):
     sent = {}
     monkeypatch.setattr(cdp_control, "open_and_send",
-                        lambda task, text, port=9222: sent.update(task=task, text=text) or {"ok": True})
+                        lambda task, text, port=9222, project="": sent.update(task=task, text=text) or {"ok": True})
     monkeypatch.setattr(cdp_control, "create_task",
                         lambda *a, **k: pytest.fail("must NOT create when reusing"))
     client = FakeClient({"reuse": True, "emdash_task_id": "shaky-baths-listen", "summary": ""})
@@ -100,7 +100,7 @@ def test_dom_not_found_never_duplicates_a_task_sqlite_says_is_live(monkeypatch):
     """THE eva org-research bug (2026-07-15). The sidebar virtualizes, so a live task
     scrolled out of view reports TASK_NOT_FOUND. Trusting that spawned a cold duplicate
     and orphaned the real session's context. sqlite outranks the DOM: fail, don't fork."""
-    def not_found(task, text, port=9222):
+    def not_found(task, text, port=9222, project=""):
         raise cdp_control.CDPError('TASK_NOT_FOUND: no task "eva-org-research-790c-0715-1352"')
     monkeypatch.setattr(cdp_control, "open_and_send", not_found)
     monkeypatch.setattr(cdp_control, "create_task",
@@ -116,7 +116,7 @@ def test_unreadable_db_degrades_to_the_dom_verdict(monkeypatch):
     """No truth available (db missing/misconfigured) — don't wedge every turn; fall back
     to the legacy CDP verdict, which is no worse than the pre-sqlite behaviour."""
     monkeypatch.setattr(emdash, "task_state", lambda db, name: "unknown")
-    def not_found(task, text, port=9222):
+    def not_found(task, text, port=9222, project=""):
         raise cdp_control.CDPError('TASK_NOT_FOUND: no task "x"')
     monkeypatch.setattr(cdp_control, "open_and_send", not_found)
     monkeypatch.setattr(cdp_control, "create_task",
@@ -129,7 +129,7 @@ def test_unreadable_db_degrades_to_the_dom_verdict(monkeypatch):
 def test_transient_reuse_send_failure_never_duplicates(monkeypatch):
     """The bug that spawned two Hal sessions: a send glitch on an EXISTING task must
     fail the turn, NOT create a duplicate + re-point the link."""
-    def glitch(task, text, port=9222):
+    def glitch(task, text, port=9222, project=""):
         raise cdp_control.CDPError("locator.click: Timeout 30000ms exceeded")  # not TASK_NOT_FOUND
     monkeypatch.setattr(cdp_control, "open_and_send", glitch)
     monkeypatch.setattr(cdp_control, "create_task",
@@ -146,7 +146,7 @@ def _collision_then(second_action="sent-cleared"):
     returns `second_action`. Records the calls so a test can assert the second was a clear."""
     calls = []
 
-    def send(task, text, clear_first=False, port=9222):
+    def send(task, text, clear_first=False, port=9222, project=""):
         calls.append({"task": task, "text": text, "clear_first": clear_first})
         if not clear_first and len(calls) == 1:
             return {"ok": True, "action": "collision", "task": task,
@@ -250,7 +250,7 @@ def test_reused_turn_survives_a_dead_post_events(monkeypatch):
     """Same guarantee on the reuse tail — the prompt has already been delivered
     into a live session by the time this event is posted."""
     monkeypatch.setattr(cdp_control, "open_and_send",
-                        lambda task, text, port=9222: {"ok": True})
+                        lambda task, text, port=9222, project="": {"ok": True})
     client = FakeClient({"reuse": True, "emdash_task_id": "etask-A", "summary": ""})
 
     def dead(turn_id, events):
