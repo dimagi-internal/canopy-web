@@ -192,7 +192,8 @@ def drain_closes(cfg: Config, client: Client) -> None:
         if not session_key:
             continue
         try:
-            close_mod.close_session(session_key, cdp_port=cfg.cdp_port)
+            close_mod.close_session(session_key, project=c.get("project") or "",
+                                    cdp_port=cfg.cdp_port, emdash_db=cfg.emdash_db)
             logger.info("closed %s from the poll tick", session_key)
         except Exception:  # noqa: BLE001
             # Left set: the server clears it when the task stops being reported,
@@ -227,7 +228,9 @@ def drain_menu_answers(cfg: Config, client: Client) -> None:
         outcome, screen = hooks.answer_menu(session_key, a.get("option"),
                                             selections=a.get("selections"),
                                             texts=a.get("texts"),
-                                            cdp_port=cfg.cdp_port)
+                                            cdp_port=cfg.cdp_port,
+                                            project=a.get("project") or "",
+                                            emdash_db=cfg.emdash_db)
         hooks.note_answer_outcome(session_key, outcome, screen)
         try:
             client.post_menu_answer_result(cfg.runner_id, a.get("session_id") or "",

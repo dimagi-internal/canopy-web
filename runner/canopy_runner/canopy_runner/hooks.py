@@ -253,11 +253,18 @@ def hook_task_name(cwd: str) -> str:
 
 
 
-def read_hook_menu_from(cdp, task: str, *, cdp_port: int = 9222):
+def _scope(project: str) -> dict:
+    """`project=` for a CDP call when known. Task names are unique per project
+    only, so every keystroke and read is aimed by (project, task) when it can be.
+    Omitted when empty so a stand-in CDP without the parameter still works."""
+    return {"project": project} if project else {}
+
+
+def read_hook_menu_from(cdp, task: str, *, cdp_port: int = 9222, project: str = ""):
     """The dialog on `task`'s screen as a plain dict, or None."""
     if not task:
         return None
-    found = menu.find_menu(cdp.read_terminal(task, port=cdp_port))
+    found = menu.find_menu(cdp.read_terminal(task, port=cdp_port, **_scope(project)))
     if found is None:
         return None
     return _menu_dict(found, source="screen")
@@ -275,6 +282,7 @@ UNMODELLED = "unmodelled"        # a tabbed ask we could not match to its questi
 WRONG_PANE = "wrong_pane"        # a shell tab is selected; keys would run in it
 UNREACHABLE = "unreachable"      # CDP/emdash could not be driven at all
 NO_SESSION = "no_session"        # the emdash task is gone — nothing to press a key in
+AMBIGUOUS = "ambiguous_session"  # can't tell which project's same-named task it is
 
 # Human-readable, and shown on the phone beside the menu that did not move. Kept
 # here rather than in the client so all three surfaces say the same thing.
@@ -288,6 +296,8 @@ ANSWER_NOTES = {
     UNREACHABLE: "Could not reach emdash on this runner to press the key.",
     NO_SESSION: "That session is no longer open in emdash, so there is nothing left to "
                 "answer.",
+    AMBIGUOUS: "More than one agent has a session with this name in emdash, and this "
+               "runner could not tell which one you meant — answer it in emdash.",
 }
 
 
@@ -324,7 +334,7 @@ def _menu_dict(found, *, source: str) -> dict:
     return transcript_core.stamp_observed(payload)
 
 
-def held_questions(session_key: str) -> list[dict]:
+def held_questions(session_key: str, project: str = "") -> list[dict]:
     """The declared questions of the ask this session is blocked on.
 
     The SCREEN cannot supply these: it draws one tab at a time, so the questions
@@ -337,7 +347,8 @@ def held_questions(session_key: str) -> list[dict]:
         return []
     try:
         for (_project, task), held in listener._pending_menus.items():
-            if task == session_key and isinstance(held, dict):
+            if task == session_key and (not project or _project == project) \
+                    and isinstance(held, dict):
                 questions = held.get("questions")
                 return questions if isinstance(questions, list) else []
     except Exception:  # noqa: BLE001 — never cost the wake listener its socket
@@ -346,7 +357,7 @@ def held_questions(session_key: str) -> list[dict]:
 
 
 def _drive_selections(cdp, session_key, current, questions, selections, cdp_port,
-                      texts=None):
+                      texts=None, project=""):
     """Walk a tabbed / multi-select dialog to a complete, submitted answer.
 
     One step per screen read (see `menu.plan_step`): press, re-read, decide
@@ -377,9 +388,9 @@ def _drive_selections(cdp, session_key, current, questions, selections, cdp_port
             # dialog we were told about.
             return (ANSWERED, None) if current.is_review else (UNMODELLED, _menu_dict(current, source="screen"))
         if keys:
-            cdp.send_keys(session_key, keys, port=cdp_port)
+            cdp.send_keys(session_key, keys, port=cdp_port, **_scope(project))
         current = menu.find_menu_settled(
-            lambda: cdp.read_terminal(session_key, port=cdp_port))
+            lambda: cdp.read_terminal(session_key, port=cdp_port, **_scope(project)))
         if current is None:
             # The dialog is gone, which for this path means it was submitted.
             return ANSWERED, None
@@ -389,7 +400,7 @@ def _drive_selections(cdp, session_key, current, questions, selections, cdp_port
 
 
 def answer_menu_with(cdp, session_key: str, option, *, selections=None, texts=None,
-                     cdp_port: int = 9222):
+                     cdp_port: int = 9222, project: str = ""):
     """Press a human's answer into `session_key`'s terminal.
 
     Returns `(outcome, screen)` — the verdict, and what the terminal ACTUALLY
@@ -411,7 +422,7 @@ def answer_menu_with(cdp, session_key: str, option, *, selections=None, texts=No
     # dropping a human's tap because the footer had not painted yet is a bug
     # they experience as "the button did nothing".
     current = menu.find_menu_settled(
-        lambda: cdp.read_terminal(session_key, port=cdp_port))
+        lambda: cdp.read_terminal(session_key, port=cdp_port, **_scope(project)))
     if current is None:
         logger.info("menu answer for %s ignored — no dialog on screen now", session_key)
         return NO_DIALOG, None
@@ -421,7 +432,7 @@ def answer_menu_with(cdp, session_key: str, option, *, selections=None, texts=No
     # the number key toggles a checkbox and the dialog waits on an explicit
     # Submit, so the single-key recipe below changes state and answers nothing.
     if selections is not None:
-        questions = held_questions(session_key)
+        questions = held_questions(session_key, project)
         if not questions:
             # Nothing declared to map onto — safe only when the screen itself is
             # the whole ask, which is exactly the one-question case.
@@ -432,7 +443,8 @@ def answer_menu_with(cdp, session_key: str, option, *, selections=None, texts=No
             questions = [{"index": 0, "question": current.question,
                           "multi_select": current.is_multi_select}]
         outcome, screen = _drive_selections(
-            cdp, session_key, current, questions, selections, cdp_port, texts)
+            cdp, session_key, current, questions, selections, cdp_port, texts,
+            project=project)
         logger.info("answered the dialog on %s with %s (%s)", session_key,
                     selections, outcome)
         return outcome, screen
@@ -442,7 +454,7 @@ def answer_menu_with(cdp, session_key: str, option, *, selections=None, texts=No
         logger.warning("menu answer %r for %s is not on the dialog now showing (%d options)",
                        number, session_key, len(current.options))
         return NOT_ON_MENU, _menu_dict(current, source="screen")
-    cdp.send_keys(session_key, menu.answer_keys(number), port=cdp_port)
+    cdp.send_keys(session_key, menu.answer_keys(number), port=cdp_port, **_scope(project))
     logger.info("answered the dialog on %s with %s", session_key,
                 "Esc" if number is None else f"option {number}")
     return ANSWERED, None
@@ -455,7 +467,9 @@ def read_hook_menu(cwd: str, *, cdp_port: int):
     human but never what it is asking, and emdash owns the session, so the
     question and its options exist only on the terminal.
     """
-    return read_hook_menu_from(cdp_control, hook_task_name(cwd), cdp_port=cdp_port)
+    parsed = transcript_core.parse_emdash_worktree(cwd, home=Path.home()) if cwd else None
+    return read_hook_menu_from(cdp_control, hook_task_name(cwd), cdp_port=cdp_port,
+                               project=parsed[0] if parsed else "")
 
 
 _answer_locks: dict[str, threading.Lock] = {}
@@ -485,18 +499,38 @@ def _answer_lock(session_key: str) -> threading.Lock:
 
 
 def answer_menu(session_key: str, option, *, selections=None, texts=None,
-                cdp_port: int = 9222):
+                cdp_port: int = 9222, project: str = "", emdash_db: str | None = None):
     """`answer_menu_with` bound to real CDP, with transport failures classified.
+
+    Aimed by (project, task): `project` comes from the server and is checked
+    against emdash; with none, it is derived only when the task name is held by
+    exactly one project. Otherwise the answer is REFUSED (AMBIGUOUS) — a key
+    pressed in another agent's same-named session lands in its prompt.
 
     Never raises: this runs on the wake-listener thread, which also carries wake
     and cancel, and losing that socket over one keystroke would cost the runner
     its liveness.
     """
+    from . import session_target
+
+    try:
+        target = session_target.resolve(emdash_db, session_key, project)
+    except Exception:  # noqa: BLE001
+        logger.debug("could not resolve the project for %s", session_key, exc_info=True)
+        target = session_target.Target("", session_target.UNKNOWN)
+    if target.reason == session_target.ABSENT:
+        logger.info("menu answer for %s: no live task by that name under %r",
+                    session_key, project or "any project")
+        return NO_SESSION, None
+    if not target.ok:
+        logger.warning("menu answer for %s REFUSED (%s): cannot tell which project's "
+                       "session it is", session_key, target.reason)
+        return AMBIGUOUS, None
     try:
         with _answer_lock(session_key):
             return answer_menu_with(cdp_control, session_key, option,
                                     selections=selections, texts=texts,
-                                    cdp_port=cdp_port)
+                                    cdp_port=cdp_port, project=target.project)
     except Exception as exc:  # noqa: BLE001
         # NOT_A_CLAUDE_PANE is the one refusal a human can act on themselves, and
         # it is the one that actually bit: with a shell tab selected, every tap on

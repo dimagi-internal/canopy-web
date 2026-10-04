@@ -1260,6 +1260,9 @@ class DrillReportIn(Schema):
 class MenuAnswerOut(Schema):
     session_id: str
     session_key: str
+    #: The emdash project owning `session_key` — task names are unique per
+    #: project only, so the runner aims the keystroke by (project, task).
+    project: str = ""
     answer_id: str
     option: int | None = None
     #: One list of chosen option numbers per declared question. A runner that
@@ -1290,6 +1293,9 @@ class MenuAnswerResultIn(Schema):
 class CloseOut(Schema):
     session_id: str
     session_key: str
+    #: The emdash project owning `session_key`. The runner REFUSES a delete it
+    #: cannot place in exactly one project rather than delete by name alone.
+    project: str = ""
 
 
 class CloseSyncOut(Schema):

@@ -18,7 +18,7 @@
 //   interrupt {task}                  -> {ok, task} opens the task (same lookup as open-send)
 //                                           and presses Escape — Claude Code's TUI treats
 //                                           this as "stop the running turn" (see runner.cancel).
-//   close-task {task}                 -> {ok, action:"deleted"|"absent"} DELETES the task
+//   close-task {task, project}        -> {ok, action:"deleted"|"absent"} DELETES the task
 //                                        from emdash (delete is the designed close behaviour).
 //                                        Verifies it is gone before reporting success; "absent"
 //                                        means it already was.
@@ -210,8 +210,9 @@ const sidebarLabels = () => page.evaluate(() => [...document.querySelectorAll('b
 // Find `task` under `project`'s section of the (virtualized) sidebar and click THAT
 // row — never merely the first row with the same label. See sidebar_section.mjs for
 // why (turn 22662f53: eva's message typed into ada's same-named session).
-// Returns {found, clicked}.
-const openInProject = async (task, project) => {
+// Returns {found, clicked}. `action` is what is done to the row once found:
+// 'click' opens it; 'contextmenu' raises its menu (close-task's delete).
+const openInProject = async (task, project, action = 'click') => {
   if (!await scrollToFind(`New task for ${project}`)) return { found: false };
   await page.waitForTimeout(160);
   let carried = false;
@@ -220,7 +221,7 @@ const openInProject = async (task, project) => {
     const labels = (await sidebarLabels()).filter(isSidebarLabel);
     const pick = pickInSection(labels, project, task, carried);
     if (pick.state === 'found') {
-      const clicked = await page.evaluate(({ index, want }) => {
+      const clicked = await page.evaluate(({ index, want, action }) => {
         const rows = [...document.querySelectorAll('button')].filter(b => {
           const l = b.getAttribute('aria-label') || '';
           return l.startsWith('New task for ') || l.startsWith('Open task ');
@@ -229,9 +230,11 @@ const openInProject = async (task, project) => {
         // Re-check the label: the list may have re-rendered between the two reads.
         if (!btn || btn.getAttribute('aria-label') !== want) return false;
         btn.scrollIntoView({ block: 'center' });
-        btn.click();
+        if (action === 'contextmenu') btn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+        else if (action === 'click') btn.click();
+        // 'none': located only — the post-delete check must not touch the row.
         return true;
-      }, { index: pick.index, want: `Open task ${task}` });
+      }, { index: pick.index, want: `Open task ${task}`, action });
       return { found: true, clicked };
     }
     if (pick.state !== 'more') return { found: false };   // ended, or header lost
@@ -541,17 +544,26 @@ try {
     // "Delete task", body: `"<task>" will be permanently deleted. This action
     // cannot be undone.`) with two buttons: "Cancel" and "Delete⌘⏎" — clicking the
     // latter deletes it immediately (verified live: task vanished from the sidebar).
-    const { task } = args;
-    const found = await scrollToFind(`Open task ${task}`);
-    if (!found) { out({ ok: true, action: 'absent' }); }
-    else {
-      const opened = await page.evaluate((t) => {
+    // With `project`, the row is found AND acted on inside that project's sidebar
+    // section — two agents can each own a task with this name, and a delete aimed
+    // by label alone removes whichever is listed first (sidebar_section.mjs). The
+    // runner always passes it (close.close_session refuses rather than omit it).
+    const { task, project } = args;
+    let found, opened;
+    if (project) {
+      ({ found, clicked: opened } = await openInProject(task, project, 'contextmenu'));
+    } else {
+      found = await scrollToFind(`Open task ${task}`);
+      opened = found && await page.evaluate((t) => {
         const btn = [...document.querySelectorAll('button')]
           .find(x => x.getAttribute('aria-label') === `Open task ${t}`);
         if (!btn) return false;
         btn.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
         return true;
       }, task);
+    }
+    if (!found) { out({ ok: true, action: 'absent' }); }
+    else {
       if (!opened) fail(`could not reach the controls for task "${task}"`);
       await page.waitForTimeout(400);
 
@@ -576,7 +588,9 @@ try {
 
       // VERIFY. The whole design rests on this: the server wrote nothing, so a
       // close we merely attempted must not be reported as done.
-      const gone = !(await scrollToFind(`Open task ${task}`));
+      const gone = project
+        ? !(await openInProject(task, project, 'none')).found
+        : !(await scrollToFind(`Open task ${task}`));
       if (!gone) fail(`task "${task}" is still in the sidebar after the delete`);
       out({ ok: true, action: 'deleted' });
     }

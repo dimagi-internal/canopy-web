@@ -1465,7 +1465,8 @@ def list_closes(request: HttpRequest, runner_id: uuid.UUID):
         .exclude(session_key="")
     )
     return {"closes": [
-        {"session_id": str(b.session_id), "session_key": b.session_key}
+        {"session_id": str(b.session_id), "session_key": b.session_key,
+         "project": b.session.emdash_project}
         for b in bindings
     ]}
 
@@ -1494,6 +1495,7 @@ def list_menu_answers(request: HttpRequest, runner_id: uuid.UUID):
     )
     return {"answers": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
+         "project": b.session.emdash_project,
          "answer_id": (b.pending_answer or {}).get("id") or "",
          "option": (b.pending_answer or {}).get("option"),
          "selections": (b.pending_answer or {}).get("selections"),

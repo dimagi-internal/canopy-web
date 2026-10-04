@@ -264,6 +264,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             "type": "menu_answer",
             "session_id": message.get("session_id"),
             "session_key": message.get("session_key"),
+            "project": message.get("project"),
             "option": message.get("option"),
             "selections": message.get("selections"),
             "texts": message.get("texts"),
@@ -280,6 +281,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             "type": "close_session",
             "session_id": message.get("session_id"),
             "session_key": message.get("session_key"),
+            "project": message.get("project"),
         })
 
     async def receive_json(self, content, **kwargs):

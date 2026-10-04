@@ -337,6 +337,36 @@ def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
     return out
 
 
+def task_projects(db_path: str, name: str) -> list[str] | None:
+    """READ-ONLY: every project holding a LIVE (unarchived, undeleted) task named
+    `name`, sorted — or None when emdash cannot answer (no DB, a read failure).
+
+    emdash task names are unique per PROJECT, not per emdash: ada and eva can each
+    have an "editing". Anything that drives a session by name has to know which
+    one, and this is how a caller that was only handed the name finds out whether
+    the name alone is enough (exactly one) or would be a guess (several). None is
+    deliberately not [] — "I could not look" must never read as "there is none".
+    """
+    if not name or not Path(db_path).exists():
+        return None
+    try:
+        with _db(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT p.name AS project
+                FROM tasks t
+                JOIN projects p ON p.id = t.project_id
+                WHERE t.name = ? AND t.archived_at IS NULL"""
+                + _not_deleted(conn, "tasks", "t") + _not_deleted(conn, "projects", "p") + """
+                ORDER BY p.name
+                """,
+                (name,),
+            ).fetchall()
+    except sqlite3.Error:
+        return None
+    return [r["project"] for r in rows if r["project"]]
+
+
 def list_projects(db_path: str) -> list[str]:
     """READ-ONLY: the NAMES of every project emdash holds — the repos this box can
     actually drive.

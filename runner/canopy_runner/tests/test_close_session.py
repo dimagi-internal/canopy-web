@@ -24,8 +24,8 @@ def _cfg(monkeypatch):
 def test_a_close_queues_the_task_for_the_closing_signal(monkeypatch):
     sessions._PENDING_CLOSED.clear()
     monkeypatch.setattr(close.cdp_control, "close_task",
-                        lambda t, port=9222: {"ok": True, "action": "deleted"})
-    assert close.close_session("ddd") == "deleted"
+                        lambda t, port=9222, project="": {"ok": True, "action": "deleted"})
+    assert close.close_session("ddd", project="hal") == "deleted"
     assert sessions._PENDING_CLOSED == {"ddd"}
 
 
@@ -34,8 +34,8 @@ def test_an_already_absent_task_still_queues_the_signal(monkeypatch):
     between the phone rendering the list and the tap landing."""
     sessions._PENDING_CLOSED.clear()
     monkeypatch.setattr(close.cdp_control, "close_task",
-                        lambda t, port=9222: {"ok": True, "action": "absent"})
-    assert close.close_session("gone") == "absent"
+                        lambda t, port=9222, project="": {"ok": True, "action": "absent"})
+    assert close.close_session("gone", project="hal") == "absent"
     assert sessions._PENDING_CLOSED == {"gone"}
 
 
@@ -45,12 +45,12 @@ def test_a_failed_delete_queues_nothing(monkeypatch):
     only way to get it wrong."""
     sessions._PENDING_CLOSED.clear()
 
-    def boom(task, port=9222):
+    def boom(task, port=9222, project=""):
         raise close.cdp_control.CDPError("no delete control")
 
     monkeypatch.setattr(close.cdp_control, "close_task", boom)
     try:
-        close.close_session("ddd")
+        close.close_session("ddd", project="hal")
     except close.cdp_control.CDPError:
         pass
     else:

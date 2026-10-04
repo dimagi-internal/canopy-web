@@ -237,7 +237,7 @@ def open_and_send(task: str, text: str, *, clear_first: bool = False, port: int 
     return _run("open-send", args)
 
 
-def read_terminal(task: str, *, port: int = 9222) -> str:
+def read_terminal(task: str, *, port: int = 9222, project: str = "") -> str:
     """The task's rendered terminal, as text.
 
     This is how canopy sees a dialog that exists only on screen. A hook can say
@@ -249,17 +249,23 @@ def read_terminal(task: str, *, port: int = 9222) -> str:
     stream would need re-rendering (Claude Code draws spaces as ESC[nC, so
     stripping ANSI welds words together).
     """
-    return _run("read-term", {"task": task, "port": port}).get("text") or ""
+    args = {"task": task, "port": port}
+    if project:
+        args["project"] = project   # task names are unique per project only
+    return _run("read-term", args).get("text") or ""
 
 
-def send_keys(task: str, keys: list[str], *, port: int = 9222) -> dict:
+def send_keys(task: str, keys: list[str], *, port: int = 9222, project: str = "") -> dict:
     """Press `keys` in the task's terminal, one at a time.
 
     One at a time, not as inserted text: a menu answer must be exactly "3" then
     Enter. Inserting a string would type the digit into the PROMPT of a session
     that turned out not to be showing a menu.
     """
-    return _run("send-keys", {"task": task, "keys": keys, "port": port})
+    args = {"task": task, "keys": keys, "port": port}
+    if project:
+        args["project"] = project   # task names are unique per project only
+    return _run("send-keys", args)
 
 
 def interrupt(task: str, *, port: int = 9222, project: str = "") -> dict:
@@ -293,7 +299,7 @@ def interrupt(task: str, *, port: int = 9222, project: str = "") -> dict:
     return _run("interrupt", args)
 
 
-def close_task(task: str, *, port: int = 9222) -> dict:
+def close_task(task: str, *, port: int = 9222, project: str = "") -> dict:
     """DELETE `task` from emdash (the designed close behaviour). Returns {"action": "deleted"} or {"action": "absent"}.
 
     emdash's context menu offers both delete and archive; delete is the chosen close
@@ -310,4 +316,10 @@ def close_task(task: str, *, port: int = 9222) -> dict:
     is load-bearing: the server writes nothing when it relays a close, so a close we
     only attempted must never be reported as done.
     """
-    return _run("close-task", {"task": task, "port": port})
+    args = {"task": task, "port": port}
+    if project:
+        # Deletes the row under THIS project only. Callers must pass it: by name
+        # alone the sidecar deletes the first same-named task in the sidebar,
+        # which may be another agent's session (see close.close_session).
+        args["project"] = project
+    return _run("close-task", args)

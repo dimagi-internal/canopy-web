@@ -483,7 +483,8 @@ def _blocking_dialog_note(cfg, client, runner_id: str, turn: dict, task: str, ex
     try:
         # The hook path's serializer, deliberately: a menu must reach the phone
         # in ONE shape whichever path found it, or the client grows two readers.
-        menu = hooks.read_hook_menu_from(cdp_control, task, cdp_port=cfg.cdp_port)
+        menu = hooks.read_hook_menu_from(cdp_control, task, cdp_port=cfg.cdp_port,
+                                         project=_target(turn))
     except Exception:  # noqa: BLE001
         logger.debug("could not read the dialog on %s", task, exc_info=True)
         return plain
