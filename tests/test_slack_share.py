@@ -197,6 +197,27 @@ def test_an_agent_calling_as_itself_posts_under_its_own_name(slack, installation
     assert post["text"].startswith("*Hal* shared")
 
 
+@pytest.fixture
+def hal_bot(ws, hal):
+    bot = a_user("hal@dimagi-ai.com")
+    wsvc.ensure_member(ws, bot, WorkspaceMembership.EDITOR)
+    hal.user = bot
+    hal.save(update_fields=["user"])
+    return bot
+
+
+@pytest.mark.parametrize("status, credited", [(Turn.RUNNING, True), (Turn.DONE, False)])
+def test_the_person_whose_turn_the_agent_is_answering_is_credited_not_named_as_sharer(
+        slack, linked, alice, hal_bot, hal_session, status, credited):
+    Turn.objects.create(chat_session=hal_session, prompt="post the finding to #dev",
+                        origin=Turn.ORIGIN_CANOPY_WEB_CHAT, status=status, initiator_user=alice)
+    slack.lookup = {"alice@dimagi.com": ALICE}
+    assert _share(hal_bot, session=hal_session).status == share.SHARED
+    text = slack.said("chat.postMessage")[0]["text"]
+    assert text.startswith("*Hal* ")   # the agent posted it, whoever asked
+    assert (f"(for <@{ALICE}>)" in text) is credited
+
+
 def test_a_user_is_linked_by_email_when_slack_knows_them(slack, installation, alice):
     slack.lookup = {"alice@dimagi.com": ALICE}
     assert _share(alice).status == share.SHARED
