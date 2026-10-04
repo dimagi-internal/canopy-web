@@ -83,7 +83,11 @@ def cancel_chat_bridge(cfg: Config, client: Client, bridge) -> None:
     from . import cdp_control
 
     try:
-        res = cdp_control.interrupt(bridge.task, port=cfg.cdp_port) or {}
+        # Aimed by (project, task) when the bridge knows its project: task names are
+        # unique per project only (cdp_control.interrupt).
+        project = getattr(bridge, "project", "")
+        scope = {"project": project} if project else {}
+        res = cdp_control.interrupt(bridge.task, port=cfg.cdp_port, **scope) or {}
         # A sidecar older than this code returns no `action`. Unverified, NOT success:
         # runner and sidecar update separately, so that version will be live here.
         action = res.get("action") or "unreadable"

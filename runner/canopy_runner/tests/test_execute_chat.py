@@ -109,7 +109,7 @@ def _collision(monkeypatch, choice):
     """A chat reuse where the prompt already holds the human's unsent text."""
     calls = {"sends": []}
 
-    def fake_open_and_send(task, text, clear_first=False, port=9222):
+    def fake_open_and_send(task, text, clear_first=False, port=9222, project=""):
         calls["sends"].append({"task": task, "text": text, "clear_first": clear_first})
         if clear_first:
             return {"ok": True, "action": "sent-cleared", "task": task}
@@ -158,7 +158,7 @@ class _ReuseClient(_FakeClient):
 
 def _bounce_off_a_dialog(monkeypatch, screen):
     """A reuse send that fails COMPOSER_NOT_VISIBLE, with `screen` on the terminal."""
-    def _no_composer(task, text, clear_first=False, port=9222):
+    def _no_composer(task, text, clear_first=False, port=9222, project=""):
         raise execute.cdp_control.CDPError(
             'COMPOSER_NOT_VISIBLE: no input line in the rendered frame for '
             f'task "{task}" (mid-redraw, a menu is up, or a stale frame) '
@@ -249,13 +249,17 @@ def _fresh_collision_answers():
     execute._COLLISION_ANSWERS.clear()
 
 
-def _requeued_into_collision(monkeypatch, choice, lines):
+def _requeued_into_collision(monkeypatch, choice, lines, *, distinct_turns=False):
     """Run one chat turn per `lines` entry into a prompt holding that unsent line —
-    the shape of a deferred turn the server requeues and this runner re-claims."""
+    the shape of a deferred turn the server requeues and this runner re-claims.
+
+    `distinct_turns` gives each run its own turn id: a turn whose message was SENT
+    (Clear & send) is never typed again under the same id (execute._TYPED_TURNS), so
+    "asked again on the next send" is a question about the next message."""
     asked = []
     lines = list(lines)
 
-    def fake_open_and_send(task, text, clear_first=False, port=9222):
+    def fake_open_and_send(task, text, clear_first=False, port=9222, project=""):
         if clear_first:
             return {"ok": True, "action": "sent-cleared", "task": task}
         return {"ok": True, "action": "collision", "task": task, "line": lines[0]}
@@ -271,7 +275,10 @@ def _requeued_into_collision(monkeypatch, choice, lines):
     results = []
     while lines:
         client = _ReuseClient()
-        results.append((execute.execute_chat_turn(cfg, client, "runner1", _turn()), client))
+        turn = _turn()
+        if distinct_turns:
+            turn["id"] = f"t{len(results) + 1}"
+        results.append((execute.execute_chat_turn(cfg, client, "runner1", turn), client))
         lines.pop(0)
     return asked, results
 
@@ -300,7 +307,7 @@ def test_changed_text_is_a_new_question(monkeypatch, _fresh_collision_answers):
 def test_clear_is_never_reused_without_asking(monkeypatch, _fresh_collision_answers):
     """Clear deletes the human's text; each deletion needs its own yes."""
     asked, _ = _requeued_into_collision(
-        monkeypatch, execute.dialog.CLEAR, ["half typed"] * 2
+        monkeypatch, execute.dialog.CLEAR, ["half typed"] * 2, distinct_turns=True
     )
     assert asked == ["half typed", "half typed"]
 

@@ -74,6 +74,17 @@ def test_interrupt_ok(monkeypatch):
     assert cdp_control.interrupt("T")["task"] == "T"
 
 
+def test_open_send_passes_the_project_so_a_same_named_task_is_not_mistaken(monkeypatch):
+    """Task names are unique per emdash PROJECT only (turn 22662f53: eva's message
+    went into ada's "editing"). The project must reach the sidecar."""
+    calls = []
+    monkeypatch.setattr(cdp_control, "_run", lambda cmd, args, **k: calls.append((cmd, args)) or {})
+    cdp_control.open_and_send("editing", "hi", project="eva")
+    cdp_control.interrupt("editing", project="eva")
+    assert calls[0] == ("open-send", {"port": 9222, "task": "editing", "text": "hi", "project": "eva"})
+    assert calls[1] == ("interrupt", {"task": "editing", "port": 9222, "project": "eva"})
+
+
 def test_sidecar_error_raises_cdperror(monkeypatch):
     monkeypatch.setattr(cdp_control.subprocess, "run",
                         _fake_run(json.dumps({"ok": False, "error": 'no existing task "X"'})))

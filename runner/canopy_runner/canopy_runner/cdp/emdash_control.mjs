@@ -6,6 +6,10 @@
 //   list                              -> {ok, tasks:[names], projects:[names]}
 //   create {project, prompt}          -> {ok, action:"created"}    (new session)
 //   open-send {task, text}            -> {ok, action:"sent", task} (REUSE existing)
+//                                        Every task lookup (open-send, interrupt, read-term,
+//                                        send-keys) also takes `project`: task names are only
+//                                        unique per project, so with it the row is looked up
+//                                        under that project's sidebar section (sidebar_section.mjs).
 //                                        -> {ok, action:"collision", line} if the prompt
 //                                           already holds UNSENT text (human was typing when
 //                                           emdash switched tasks) — does NOT clobber it.
@@ -23,6 +27,7 @@
 // All output is a single JSON line on stdout. Occlusion-proof: uses JS-dispatched
 // clicks so it works while emdash is backgrounded (no foreground focus needed).
 import { chromium } from 'playwright-core';
+import { isSidebarLabel, pickInSection } from './sidebar_section.mjs';
 
 
 // WHICH terminal is "the" terminal. Injected as source into page.evaluate calls
@@ -160,13 +165,14 @@ if (!page) fail('no emdash renderer page found over CDP');
 // scroller (.overflow-y-auto) top→bottom, letting rows render, until `label` appears.
 // Both create ("New task for X") and open-send ("Open task X") need this; open-send
 // not having it is what made live sessions look deleted and get duplicated.
+const scrollBy = (val) => page.evaluate((v) => {
+  const sc = [...document.querySelectorAll('.overflow-y-auto')].sort((a, b) => b.scrollHeight - a.scrollHeight)[0];
+  if (!sc) return 0;
+  if (v === 'top') sc.scrollTop = 0; else sc.scrollTop += v;
+  return sc.scrollTop;
+}, val);
+
 const scrollToFind = async (label) => {
-  const scrollBy = (val) => page.evaluate((v) => {
-    const sc = [...document.querySelectorAll('.overflow-y-auto')].sort((a, b) => b.scrollHeight - a.scrollHeight)[0];
-    if (!sc) return 0;
-    if (v === 'top') sc.scrollTop = 0; else sc.scrollTop += v;
-    return sc.scrollTop;
-  }, val);
   const find = () => page.evaluate((l) => {
     const btn = [...document.querySelectorAll('button')].find(x => x.getAttribute('aria-label') === l);
     if (btn) { btn.scrollIntoView({ block: 'center' }); return true; }
@@ -195,15 +201,66 @@ const clickLabel = (label) => page.evaluate((l) => {
 // interrupt (which just needs the terminal focused so Escape lands in the right pane).
 // Fails (via `fail`, which exits the process) on any step that can't be completed —
 // callers never see a partial/ambiguous state.
-const openTask = async (task) => {
-  const found = await scrollToFind(`Open task ${task}`);
-  // TASK_NOT_FOUND is a claim about the WHOLE sidebar, only trustworthy now that we
-  // scan all of it. Even so the caller cross-checks it against emdash's sqlite before
-  // creating anything, and any LATER failure here means the task exists but the
-  // interaction glitched — the caller must NOT create a duplicate.
-  if (!found) fail(`TASK_NOT_FOUND: no task "${task}" in this emdash (archived, or another macOS account)`);
-  if (!await clickLabel(`Open task ${task}`)) {
-    fail(`could not click task "${task}" after locating it in the sidebar`);
+// The sidebar labels this lookup reasons about, in DOM order. Read and clicked by
+// the SAME filter, so an index from one evaluate names the same row in the next.
+const sidebarLabels = () => page.evaluate(() => [...document.querySelectorAll('button')]
+  .map(b => b.getAttribute('aria-label') || '')
+  .filter(l => l.startsWith('New task for ') || l.startsWith('Open task ')));
+
+// Find `task` under `project`'s section of the (virtualized) sidebar and click THAT
+// row — never merely the first row with the same label. See sidebar_section.mjs for
+// why (turn 22662f53: eva's message typed into ada's same-named session).
+// Returns {found, clicked}.
+const openInProject = async (task, project) => {
+  if (!await scrollToFind(`New task for ${project}`)) return { found: false };
+  await page.waitForTimeout(160);
+  let carried = false;
+  let lastTop = -1;
+  for (let i = 0; i < 40; i++) {
+    const labels = (await sidebarLabels()).filter(isSidebarLabel);
+    const pick = pickInSection(labels, project, task, carried);
+    if (pick.state === 'found') {
+      const clicked = await page.evaluate(({ index, want }) => {
+        const rows = [...document.querySelectorAll('button')].filter(b => {
+          const l = b.getAttribute('aria-label') || '';
+          return l.startsWith('New task for ') || l.startsWith('Open task ');
+        });
+        const btn = rows[index];
+        // Re-check the label: the list may have re-rendered between the two reads.
+        if (!btn || btn.getAttribute('aria-label') !== want) return false;
+        btn.scrollIntoView({ block: 'center' });
+        btn.click();
+        return true;
+      }, { index: pick.index, want: `Open task ${task}` });
+      return { found: true, clicked };
+    }
+    if (pick.state !== 'more') return { found: false };   // ended, or header lost
+    carried = true;
+    const top = await scrollBy(280);
+    await page.waitForTimeout(160);
+    if (top === lastTop) return { found: false };          // bottom of the sidebar
+    lastTop = top;
+  }
+  return { found: false };
+};
+
+const openTask = async (task, project) => {
+  if (project) {
+    const { found, clicked } = await openInProject(task, project);
+    if (!found) fail(`TASK_NOT_FOUND: no task "${task}" under project "${project}" in this emdash (archived, or another macOS account)`);
+    if (!clicked) fail(`could not click task "${task}" (project "${project}") after locating it in the sidebar`);
+  } else {
+    // No project: the old first-match lookup. Only safe while the name is unique
+    // across projects — every runner caller that knows the project passes it.
+    const found = await scrollToFind(`Open task ${task}`);
+    // TASK_NOT_FOUND is a claim about the WHOLE sidebar, only trustworthy now that we
+    // scan all of it. Even so the caller cross-checks it against emdash's sqlite before
+    // creating anything, and any LATER failure here means the task exists but the
+    // interaction glitched — the caller must NOT create a duplicate.
+    if (!found) fail(`TASK_NOT_FOUND: no task "${task}" in this emdash (archived, or another macOS account)`);
+    if (!await clickLabel(`Open task ${task}`)) {
+      fail(`could not click task "${task}" after locating it in the sidebar`);
+    }
   }
   await page.waitForTimeout(1200);
   // Focus the ACTIVE terminal's input. xterm's real input is an off-screen
@@ -320,8 +377,8 @@ try {
     // so with dozens of tasks the target is usually absent from the DOM despite being
     // live (observed 2026-07-15: eva's org-research session, present in emdash's DB,
     // reported TASK_NOT_FOUND and duplicated).
-    const { task, text, clearFirst } = args;
-    await openTask(task);
+    const { task, text, clearFirst, project } = args;
+    await openTask(task, project);
 
     // Read whatever is ALREADY sitting in the composer. Non-empty means the human
     // was typing when emdash switched to this task and their keystrokes leaked in —
@@ -432,8 +489,8 @@ try {
     //   idle         = nothing was running to interrupt (a stop that raced the reply)
     //   still-running = pressed twice, the status line is still there
     //   unreadable   = could not see the frame; we make NO claim either way
-    const { task } = args;
-    await openTask(task);
+    const { task, project } = args;
+    await openTask(task, project);
     const running = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
       const term = activeTerm();
       const rows = term && term.querySelector('.xterm-rows');
@@ -533,8 +590,8 @@ try {
     // renderer, so it has already resolved the TUI's cursor-movement escapes into
     // real cells. Parsing the raw stream instead welds words together, because
     // Claude Code draws spaces as ESC[nC.
-    const { task } = args;
-    await openTask(task);
+    const { task, project } = args;
+    await openTask(task, project);
     const text = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
       const term = activeTerm();
       const rows = term && term.querySelector('.xterm-rows');
@@ -548,8 +605,8 @@ try {
     // Answer a dialog. Keys are sent one at a time so a menu answer is exactly
     // "3" then Enter, never a pasted string — insertText would put the digit in
     // the prompt of a session that is NOT showing a menu.
-    const { task, keys } = args;
-    await openTask(task);
+    const { task, keys, project } = args;
+    await openTask(task, project);
     // A task can hold several terminals — a Claude pane plus shell tabs the human
     // opened — and only the SELECTED one is rendered at full size. With a shell
     // tab selected, every answer to a real dialog died here (labs, 2026-08-01:

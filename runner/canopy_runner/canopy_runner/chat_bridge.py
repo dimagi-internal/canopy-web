@@ -140,6 +140,9 @@ class LiveBridge:
     # state for the same reason everything else here is: `cancel_chat_bridge` retries
     # the Escape across ticks rather than finishing on the first unconfirmed press.
     cancel_attempts: int = 0
+    # The emdash project that owns `task`. Task names are unique per project only,
+    # so the stop's Escape must be aimed by (project, task) — see cdp_control.interrupt.
+    project: str = ""
 
     def step(self, new_records: list[dict], raw_lines: list[str] | None = None,
              blocked: bool = False) -> None:

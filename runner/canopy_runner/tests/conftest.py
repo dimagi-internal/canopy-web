@@ -43,3 +43,14 @@ def _no_real_mailbox_probe():
     mailbox_probe._state["next_at"] = float("inf")
     yield
     mailbox_probe.reset()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_typed_turns():
+    """execute._TYPED_TURNS remembers, per process, every turn whose message was
+    typed — so a re-claimed turn is never typed twice. Tests reuse turn ids ("t1"),
+    so each starts with an empty memory."""
+    from canopy_runner import execute
+    execute._TYPED_TURNS.clear()
+    yield
+    execute._TYPED_TURNS.clear()

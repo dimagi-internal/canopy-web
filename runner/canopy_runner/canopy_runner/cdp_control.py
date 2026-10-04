@@ -209,7 +209,8 @@ def create_task(project: str, prompt: str, *, task_name: str = "", port: int = 9
     return _run("create", args)
 
 
-def open_and_send(task: str, text: str, *, clear_first: bool = False, port: int = 9222) -> dict:
+def open_and_send(task: str, text: str, *, clear_first: bool = False, port: int = 9222,
+                  project: str = "") -> dict:
     """REUSE: open an existing task and deliver `text` into its live terminal.
 
     Returns the sidecar dict — normally ``{"action": "sent"}``. If the prompt already
@@ -222,10 +223,17 @@ def open_and_send(task: str, text: str, *, clear_first: bool = False, port: int 
     Raises CDPError if the task isn't present (caller falls back to create+rehydrate),
     or with ``COMPOSER_NOT_VISIBLE`` if the rendered frame shows no input line
     (mid-redraw, a menu is up, or a stale frame) — the sidecar refuses a blind send
-    it can't verify; the caller fails the turn for retry rather than duplicating."""
+    it can't verify; the caller fails the turn for retry rather than duplicating.
+
+    `project` scopes the lookup to that emdash project's sidebar section. Pass it
+    whenever it is known: task names are unique per project only, and without it
+    the sidecar opens the FIRST row with that name — which typed eva's chat message
+    into ada's same-named session four times (turn 22662f53, 2026-10-04)."""
     args = {"port": port, "task": task, "text": text}
     if clear_first:
         args["clearFirst"] = True
+    if project:
+        args["project"] = project
     return _run("open-send", args)
 
 
@@ -254,7 +262,7 @@ def send_keys(task: str, keys: list[str], *, port: int = 9222) -> dict:
     return _run("send-keys", {"task": task, "keys": keys, "port": port})
 
 
-def interrupt(task: str, *, port: int = 9222) -> dict:
+def interrupt(task: str, *, port: int = 9222, project: str = "") -> dict:
     """Press Escape in the task's emdash session and VERIFY it stopped.
 
     Opens `task` the same way `open_and_send` does (no text is inserted), then sends
@@ -275,8 +283,14 @@ def interrupt(task: str, *, port: int = 9222) -> dict:
 
     An older sidecar returns no ``action`` at all; callers must treat a missing key
     as ``unreadable`` (unverified), never as success — a runner and its sidecar are
-    updated separately, so the un-verifying version WILL be live under this code."""
-    return _run("interrupt", {"task": task, "port": port})
+    updated separately, so the un-verifying version WILL be live under this code.
+
+    `project` scopes the lookup exactly as in `open_and_send` — an Escape pressed in
+    a same-named session of another project would stop the wrong agent."""
+    args = {"task": task, "port": port}
+    if project:
+        args["project"] = project
+    return _run("interrupt", args)
 
 
 def close_task(task: str, *, port: int = 9222) -> dict:

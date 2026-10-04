@@ -73,6 +73,7 @@ def test_silence_is_missing():
 class _Client:
     def __init__(self):
         self.events, self.failed, self.finished = [], None, None
+        self.finished_status, self.finished_task = None, None
 
     def resolve_session(self, *a, **k):
         return {"reuse": True, "emdash_task_id": "c-hal-thread"}
@@ -87,7 +88,13 @@ class _Client:
         self.events.extend(evs)
 
     def finish(self, turn_id, note="", status="done", emdash_task_id=""):
-        self.finished = note
+        # A FAILED finish is recorded as `failed` too, so assertions read the same
+        # whichever call the runner used; `finished_task` is what stops a requeue.
+        self.finished_status, self.finished_task = status, emdash_task_id
+        if status == "failed":
+            self.failed = note
+        else:
+            self.finished = note
 
     def fail_turn(self, turn_id, note):
         self.failed = note
@@ -126,7 +133,10 @@ def test_a_chat_send_that_never_lands_fails_the_turn_and_says_so(monkeypatch, tr
     out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
 
     assert out == "failed:t1"
-    assert client.failed and "not delivered" in client.failed and "send your message again" in client.failed
+    # It cannot know the message was lost — only that it could not see it land.
+    assert client.failed and "Couldn't confirm" in client.failed
+    assert "not delivered" not in client.failed
+    assert "send your message again" not in client.failed
     assert any(e["payload"].get("status") == "undelivered" for e in client.events)
     assert "t1" not in chat_bridge.IN_FLIGHT        # no bridge waiting on a reply that can't come
 
@@ -177,5 +187,137 @@ def test_an_agent_turn_send_that_never_lands_fails_instead_of_reporting_reused(m
                                 "prompt": "/hal:turn --thread x"})
 
     assert out == "failed:t2"
-    assert client.failed and "not delivered" in client.failed
+    assert client.failed and "Couldn't confirm" in client.failed
     assert client.finished is None
+
+
+# ── turn 22662f53 (2026-10-04): two sessions named "editing" ───────────────
+#
+# eva's chat sent "No can leave it.  Are wee good to close out?" to eva's emdash
+# session "editing". ada ALSO had a session named "editing", listed above eva's in
+# the sidebar, and the sidecar opened the FIRST row with that label — so the text
+# went into ada's session. The verifier, correctly, watched EVA's transcript, saw
+# nothing, and failed the turn with no session key; the server requeued it as a
+# non-attempt; the runner typed it again. Four times in ada's session, zero in
+# eva's, and the human was told it was never delivered.
+
+FIXTURE = Path(__file__).parent / "fixtures" / "t52_prompt_landed.jsonl"
+T52_PROMPT = "No can leave it.  Are wee good to close out?"
+
+
+def _landed_records():
+    return [json.loads(ln) for ln in FIXTURE.read_text().splitlines() if ln.strip()]
+
+
+def test_the_real_landed_record_matches_the_message():
+    """The matcher was NOT the fault: the record Claude Code wrote for this exact
+    message (double space and all) confirms. What failed was WHICH session was
+    typed into, relative to the transcript being watched."""
+    assert delivery.classify(_landed_records(), T52_PROMPT) == delivery.CONFIRMED
+
+
+@pytest.fixture
+def two_editing_sessions(tmp_path, monkeypatch):
+    """ada and eva each own an emdash task called "editing", each with its own
+    transcript. Resolution is per (project, task), as in production."""
+    paths = {}
+    for project in ("ada", "eva"):
+        p = tmp_path / f"{project}-editing.jsonl"
+        p.write_text(json.dumps({"type": "assistant", "message": {
+            "content": f"{project} earlier reply", "stop_reason": "end_turn"}}) + "\n")
+        paths[project] = p
+    monkeypatch.setattr(execute, "_resolve_transcript_path",
+                        lambda target, task, **k: paths.get(target))
+    monkeypatch.setattr(execute, "_wait_for_transcript",
+                        lambda target, task, **k: paths.get(target))
+    return paths
+
+
+def _sidebar_send(paths, typed):
+    """The sidecar's lookup, faithfully: with a project it opens that project's row;
+    without one it opens the FIRST row with the label — ada's, which sits above
+    eva's. Whatever it opens receives the records Claude Code really wrote."""
+    sidebar_order = ["ada", "eva"]
+
+    def send(task, text, clear_first=False, port=9222, project=""):
+        opened = project if project else sidebar_order[0]
+        typed.append(opened)
+        with open(paths[opened], "a") as f:
+            for rec in _landed_records():
+                f.write(json.dumps(rec) + "\n")
+        return {"ok": True, "action": "sent", "task": task}
+    return send
+
+
+def _eva_turn():
+    return {"id": "22662f53", "agent_slug": "eva", "project": "", "workspace_slug": "dimagi",
+            "prompt": T52_PROMPT,
+            "origin_ref": {"chat_session_id": "d8ef09c5", "thread_key": "emdash:editing"}}
+
+
+class _EvaClient(_Client):
+    def resolve_session(self, *a, **k):
+        return {"reuse": True, "emdash_task_id": "editing"}
+
+
+def test_a_send_to_a_same_named_session_reaches_the_turns_own_project(
+        monkeypatch, two_editing_sessions):
+    typed = []
+    monkeypatch.setattr(cdp_control, "open_and_send", _sidebar_send(two_editing_sessions, typed))
+    client = _EvaClient()
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _eva_turn())
+
+    assert typed == ["eva"], "the message must go to eva's 'editing', not ada's"
+    assert out.startswith("chat:22662f53")
+    assert client.failed is None
+    assert T52_PROMPT not in two_editing_sessions["ada"].read_text()
+
+
+def test_an_unconfirmed_send_is_failed_with_its_session_so_it_is_never_requeued(
+        monkeypatch, transcript):
+    """The server requeues a FAILED turn that reports no session key, as proof that
+    nothing reached an agent. Here the keystrokes DID go out — so the failure must
+    name the session, which makes it terminal."""
+    monkeypatch.setattr(cdp_control, "open_and_send", lambda *a, **k: {"ok": True, "action": "sent"})
+    client = _Client()
+
+    execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert client.finished_status == "failed"
+    assert client.finished_task == "c-hal-thread"
+
+
+def test_a_reclaimed_turn_is_never_typed_twice(monkeypatch, transcript):
+    """Even if the turn comes back (an older server's requeue, a lease reclaim), its
+    message is typed at most once by this runner."""
+    sends = []
+    monkeypatch.setattr(cdp_control, "open_and_send",
+                        lambda *a, **k: sends.append(a) or {"ok": True, "action": "sent"})
+
+    first, again = _Client(), _Client()
+    execute.execute_chat_turn(_cfg(), first, "r-1", _chat_turn())
+    out = execute.execute_chat_turn(_cfg(), again, "r-1", _chat_turn())
+
+    assert len(sends) == 1
+    assert out == "failed:t1"
+    assert again.finished_status == "failed" and again.finished_task == "c-hal-thread"
+    assert "Couldn't confirm" in again.failed
+    assert any(e["payload"].get("status") == "not_retyped" for e in again.events)
+
+
+def test_an_agent_turn_is_also_aimed_by_project(monkeypatch, two_editing_sessions):
+    typed = []
+    monkeypatch.setattr(cdp_control, "open_and_send", _sidebar_send(two_editing_sessions, typed))
+    monkeypatch.setattr(cdp_control, "create_task", lambda *a, **k: pytest.fail("never duplicate"))
+
+    class _C(_Client):
+        def resolve_session(self, *a, **k):
+            return {"reuse": True, "emdash_task_id": "editing", "summary": ""}
+    client = _C()
+
+    execute.execute_turn(_cfg(), client, "r-1",
+                         {"id": "t3", "agent_slug": "eva", "origin_ref": {"thread_id": "x"},
+                          "prompt": T52_PROMPT})
+
+    assert typed == ["eva"]
