@@ -6,6 +6,13 @@ describe('declaresMailbox', () => {
     expect(declaresMailbox([{ name: 'gog-token' }, { name: 'nova-api-key' }])).toBe(true)
     expect(declaresMailbox([{ name: 'nova-api-key' }])).toBe(false)
   })
+
+  it('offers it to an agent with a mailbox address even when it declares nothing', () => {
+    // ada/echo/eva/hal: no runtime.yaml (declared: 0), but every one has a mailbox.
+    expect(declaresMailbox([], 'ada@dimagi-ai.com')).toBe(true)
+    expect(declaresMailbox([], '')).toBe(false)
+    expect(declaresMailbox([], null)).toBe(false)
+  })
 })
 
 describe('mintOutcome', () => {

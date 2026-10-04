@@ -219,14 +219,14 @@ echo "==> runner: $RUNNER_ID"
 #   1. --credential-from <runner name|id>
 #   2. the predecessor this box replaces (a same-name runner)
 #   3. the live box (cloud-ec2-1), if this is a different, second box
-#   4. Secrets Manager canopy/cloud-runner/claude-oauth-token (the bootstrap token)
-# The fleet's CURRENT logins are maintained on the runner page (/supervisor →
-# Runners → Claude login, primary + fallback), not in Secrets Manager. Found on
-# 2026-10-04: the Secrets Manager token (set 2026-07-21) had hit its weekly cap,
-# so a box staged from it failed every drill, while cloud-ec2-1 ran on two
-# newer logins set in the UI. Copying the whole bundle (both logins, the API key,
-# their labels) server-to-server keeps the new box on what actually works; the
-# values pass through this process only, never a file outside $TMP or the screen.
+#   4. Secrets Manager canopy/cloud-runner/claude-oauth-token — the BUILD FALLBACK
+# By design the fleet's logins live on the runner page (/supervisor → Runners →
+# Claude login, primary + fallback), and a new box inherits them from a live one:
+# copying the whole bundle (both logins, the API key, their labels) server-to-server
+# keeps it on what the fleet actually runs on. Step 4 exists only for a fleet with
+# no live cloud runner to copy from; that secret is rarely touched, so it being old
+# or at its usage cap is expected — the box runs on whatever the runner page sets.
+# The values pass through this process only, never a file outside $TMP or the screen.
 echo ">> staging credential bundle"
 api GET /api/harness/runners/ > "$TMP/runners-cred.json"
 CRED_SRC=$(FROM="$CRED_FROM" NAME="$RUNNER_NAME" NEW="$RUNNER_ID" DEFAULT_NAME="$DEFAULT_RUNNER_NAME" \

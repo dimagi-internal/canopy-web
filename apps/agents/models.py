@@ -275,13 +275,14 @@ class AgentBootstrapReport(models.Model):
     #: guess from what is configured.
     mailbox_ok = models.BooleanField(default=False)
     #: Which gog client the box ended up using. A browser mint binds the token
-    #: to `canopy-web` while the repo pins `canopy`, and knowing which one is
-    #: live is most of the diagnosis.
+    #: to `canopy-web`, a laptop `gog login` to `canopy`; either serves a fleet
+    #: agent's turns (2026-10-04), so this says which door the token came through.
     gog_client = models.CharField(max_length=120, blank=True, default="")
     #: The client the agent's TURNS will actually present — what
-    #: `config/agent.json.gog_client` declares, which for the whole fleet is the
-    #: shared `canopy` app. Distinct from `gog_client` above on purpose: that
-    #: one is whichever client the box's token happened to be minted under.
+    #: `config/agent.json.gog_client` declares (`canopy` fleet-wide), or — when a
+    #: token under the OTHER fleet client serves it — the client turns will
+    #: actually resolve to (canopy `reconcile_client`). Distinct from `gog_client`
+    #: above: that one is whichever client the box's token was minted under.
     turn_client = models.CharField(max_length=120, blank=True, default="")
     #: Did the agent's secrets materialize (`op inject` of its `.env.tpl`)?
     #: Null = the box did not say. False means the box kept whatever `.env` it
@@ -304,6 +305,9 @@ class AgentBootstrapReport(models.Model):
     #: the readiness report said the mailbox was live the whole time.
     #:
     #: A check that passes under a client the consumer never uses is not a check.
+    #: (Since 2026-10-04 turns accept EITHER fleet client, so a `canopy-web` token
+    #: for a `canopy` declaration is turn-ready; this now fails only when no fleet
+    #: client can read the mailbox, or the token is under a non-fleet client.)
     turn_ready = models.BooleanField(null=True, blank=True, default=None)
     #: One line, from the box. The reason, when there is one.
     detail = models.TextField(blank=True, default="")

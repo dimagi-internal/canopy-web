@@ -6,8 +6,8 @@ export type CredRow = components['schemas']['AgentCredentialStatusOut']
 //
 // WHAT THIS SCREEN IS NOT. It is not "is this agent provisioned". canopy-web
 // cannot see 1Password, and by design it does not hold most of an agent's
-// secrets — the vault does, reached on the box with the runner's 1Password
-// service-account token (RunnerCredential.op_sa_token, set on the Runners tab).
+// secrets — the vault does, reached on the box with THIS agent's own vault key
+// (`Agent.op_sa_token_enc`, set in the Vault section of its Credentials).
 //
 // A first draft measured `selfContained` — "every declared secret is stored
 // here" — and rendered it as the success state. That rewards copying all 45 of
@@ -41,20 +41,26 @@ export interface CredentialSections {
   fromVault: CredRow[]
 }
 
-export function sections(rows: readonly CredRow[]): CredentialSections {
+/** `implied` names refs the agent needs without declaring them — today only
+ *  `gog-token` for an agent that HAS a mailbox. "Connect Google mailbox" stores
+ *  that slot for an agent with no runtime.yaml (ada/echo/eva/hal), and calling
+ *  the result an orphan "worth removing" would invite someone to delete the one
+ *  working mailbox token. */
+export function sections(rows: readonly CredRow[], implied: readonly string[] = []): CredentialSections {
   const byName = (a: CredRow, b: CredRow) => a.name.localeCompare(b.name)
+  const declared = (r: CredRow) => r.declared || implied.includes(r.name)
   return {
-    orphans: rows.filter((r) => !r.declared).sort(byName),
-    storedHere: rows.filter((r) => r.declared && r.set).sort(byName),
-    fromVault: rows.filter((r) => r.declared && !r.set).sort(byName),
+    orphans: rows.filter((r) => !declared(r)).sort(byName),
+    storedHere: rows.filter((r) => declared(r) && r.set).sort(byName),
+    fromVault: rows.filter((r) => declared(r) && !r.set).sort(byName),
   }
 }
 
 /** One line saying whether anything is wanted from the reader.
  *  Deliberately not a count of what canopy-web holds: "stores 0 of 45" is a fact
  *  about the store, and the reader wants a fact about their afternoon. */
-export function headline(rows: readonly CredRow[]): string {
-  const s = sections(rows)
+export function headline(rows: readonly CredRow[], implied: readonly string[] = []): string {
+  const s = sections(rows, implied)
   if (s.orphans.length > 0) {
     return `${s.orphans.length} stored secret(s) nothing declares any more — worth removing.`
   }

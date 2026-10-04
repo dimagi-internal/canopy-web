@@ -40,8 +40,9 @@ ok()   { printf '[bootstrap-agents] OK: %s\n' "$*"; }
 warn() { printf '[bootstrap-agents] WARN: %s\n' "$*" >&2; }
 fail() { printf '[bootstrap-agents] FAIL: %s\n' "$*" >&2; }
 
-# gogcli's own account -> OAuth-client map: ace and echo keep dedicated clients;
-# ada/eva/hal share the fleet's `canopy` app. See docs/architecture/shared-gog-gdrive.md.
+# HISTORY (the per-agent client table this note described was removed 2026-10-04 —
+# every agent now uses the fleet clients `canopy` / `canopy-web`). Kept because the
+# lesson still holds. See canopy docs/architecture/shared-gog-gdrive.md.
 #
 # DO NOT "fix" this by reading each agent's config/agent.json `gog_client`. That was
 # tried on 2026-09-05 (PR #661) and reverted the same day, because the inference is
@@ -294,11 +295,12 @@ except Exception:
 # token was minted for, so this file is what makes a token usable rather than
 # merely present. Which vault holds it depends on the client, not on the agent:
 #
-#   canopy      the shared fleet DESKTOP client (loopback redirect; ada/eva/hal)
+#   canopy      the shared fleet DESKTOP client (gog's loopback login on a laptop)
 #   canopy-web  canopy-web's WEB client — the only kind Google lets run a browser
 #               redirect, and therefore the only one the "Connect Google mailbox"
 #               button can mint with. Tokens from that button declare it.
-#   <other>     an agent with its own client (echo) keeps it in its own vault.
+#   <other>     a legacy per-agent client (none in use since 2026-10-04), read
+#               from the agent's own vault.
 #
 # Never fails the bootstrap: a missing client file means gmail won't authorize,
 # which the warning says, and every other part of the agent still provisions.
@@ -1075,8 +1077,8 @@ verify_turn_client() {  # <slug> <account>
     # Loud, and it names BOTH clients: "the mailbox is fine" and "turns are dead"
     # are simultaneously true here, and a warning that omits either one reads as
     # a contradiction rather than a diagnosis.
-    warn "$slug: TURNS CANNOT READ THE MAILBOX — account=$account needs a token under client '$tclient' (config/agent.json), but the live token is under '${GOG_CLIENT_USED[$slug]:-none}'. Mint one for '$tclient' and store it as this agent's gog-token: $(printf '%s' "$terr" | head -1)"
-    mark BOOTSTRAP_DETAIL "$slug" "${BOOTSTRAP_DETAIL[$slug]:+${BOOTSTRAP_DETAIL[$slug]}; }turns need client '$tclient', live token is '${GOG_CLIENT_USED[$slug]:-none}'"
+    warn "$slug: TURNS CANNOT READ THE MAILBOX — account=$account needs a token under client '$tclient' (config/agent.json), but the live token is under '${GOG_CLIENT_USED[$slug]:-none}'. No fleet client (canopy/canopy-web) can read it either — re-mint: the agent's Settings → Credentials → Connect Google mailbox, or gog login --client canopy on a laptop: $(printf '%s' "$terr" | head -1)"
+    mark BOOTSTRAP_DETAIL "$slug" "${BOOTSTRAP_DETAIL[$slug]:+${BOOTSTRAP_DETAIL[$slug]}; }turns need client '$tclient' (or either fleet client), live token is '${GOG_CLIENT_USED[$slug]:-none}' — re-mint via Connect Google mailbox"
   fi
 }
 

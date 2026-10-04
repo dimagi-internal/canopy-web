@@ -9,7 +9,7 @@ import {
 } from '@/api/agents'
 import { headline, sections } from '@/pages/agents/agentCredentials'
 import { relativeAge } from '@/lib/relativeAge'
-import { declaresMailbox, mintOutcome } from '@/pages/agents/googleMint'
+import { declaresMailbox, GOG_TOKEN_REF, mintOutcome } from '@/pages/agents/googleMint'
 import { AgentGitHubSection } from '@/pages/agents/AgentGitHubSection'
 import { AgentVaultSection } from '@/pages/agents/AgentVaultSection'
 import { WorkbenchSkeleton } from 'canopy-ui'
@@ -28,7 +28,7 @@ import { WorkbenchSkeleton } from 'canopy-ui'
 // Overview (it used to be its own rail entry, which is why people could not
 // find settings that sat one click away from each other).
 
-export function AgentCredentialsPanel({ agent }: { agent: { slug: string; workspace?: string | null } }) {
+export function AgentCredentialsPanel({ agent }: { agent: { slug: string; workspace?: string | null; email?: string | null } }) {
   const [rows, setRows] = useState<AgentCredentialStatusOut[] | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -101,7 +101,9 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
     return <WorkbenchSkeleton />
   }
 
-  const sec = sections(rows)
+  // An agent with a mailbox needs `gog-token` whether or not a runtime.yaml says so.
+  const implied = agent.email?.trim() ? [GOG_TOKEN_REF] : []
+  const sec = sections(rows, implied)
 
   // One row, used for anything this page actually manages. The vault-resolved
   // refs get the same control once expanded — a value CAN be stored here to
@@ -191,6 +193,35 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
       <AgentVaultSection slug={agent.slug} workspace={agent.workspace} />
       <AgentGitHubSection slug={agent.slug} />
 
+      {/* Above the declaration-dependent half too, for the same reason as the
+          vault: an agent with a mailbox and no runtime.yaml (ada/echo/eva/hal)
+          needs this button exactly as much as ace does. A browser sign-in mints
+          under the fleet's `canopy-web` client, which every agent's turns accept
+          (canopy agent_email.FLEET_CLIENTS) — there is no "wrong client" here. */}
+      {declaresMailbox(rows, agent.email) && (
+        <section className="mb-5" data-testid="needs-you">
+          <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Needs a person
+          </h3>
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
+            <div className="text-[13px] text-foreground">
+              Google mailbox
+              <span className="ml-2 text-[12px] text-muted-foreground">
+                a token can only be minted by signing in — nothing else here can do it for you
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void connectMailbox()}
+              disabled={busy}
+              className="ml-auto min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
+            >
+              Connect Google mailbox
+            </button>
+          </div>
+        </section>
+      )}
+
       {rows.length === 0 ? (
         // Zero refs is UNDECLARED, not provisioned — the state every agent is in
         // before someone writes a runtime.yaml. Saying "ready" would assert that
@@ -206,32 +237,9 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
         <>
           {/* The lede: whether this screen wants anything from the reader. */}
           <p className="mb-4 text-[13px] text-muted-foreground" data-testid="agent-credentials-summary">
-            {headline(rows)}
+            {headline(rows, implied)}
           </p>
 
-          {declaresMailbox(rows) && (
-            <section className="mb-5" data-testid="needs-you">
-              <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Needs a person
-              </h3>
-              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
-                <div className="text-[13px] text-foreground">
-                  Google mailbox
-                  <span className="ml-2 text-[12px] text-muted-foreground">
-                    a token can only be minted by signing in — nothing else here can do it for you
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void connectMailbox()}
-                  disabled={busy}
-                  className="ml-auto min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
-                >
-                  Connect Google mailbox
-                </button>
-              </div>
-            </section>
-          )}
 
           {sec.orphans.length > 0 && (
             // The only thing on this page that is actually WRONG: a live secret
@@ -269,7 +277,7 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
               {showVault && (
                 <>
                   <p className="mt-2 text-[12px] text-muted-foreground">
-                    The runner reads these with its 1Password service-account token. Storing one here
+                    The runner reads these with this agent’s own vault key (the Vault section above). Storing one here
                     would override the vault for this agent — useful for a value the vault does not
                     have, and a second copy to keep in step otherwise.
                   </p>

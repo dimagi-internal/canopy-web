@@ -72,6 +72,28 @@ describe('AgentCredentialsPanel', () => {
     expect(screen.getByTestId('agent-credentials-summary')).toBeTruthy()
   })
 
+  it('offers "Connect Google mailbox" to an agent with a mailbox that declares nothing', async () => {
+    // ada/echo/eva/hal on 2026-10-04: declared 0, mailbox set — and no button,
+    // so re-minting their mailbox needed a terminal and a 1Password write.
+    getAgentCredentialStatus.mockResolvedValue([])
+    getAgentVault.mockResolvedValue({ vault: 'Agent-Ada', key_set: true, declared: 0, locatable: 0 })
+    render(
+      <MemoryRouter>
+        <AgentCredentialsPanel agent={{ ...AGENT, email: 'echo@dimagi-ai.com' }} />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('Connect Google mailbox')).toBeTruthy())
+    expect(screen.getByTestId('agent-credentials-undeclared')).toBeTruthy()
+  })
+
+  it('offers no mailbox button to an agent with neither a mailbox nor a gog-token', async () => {
+    getAgentCredentialStatus.mockResolvedValue([])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 0, locatable: 0 })
+    show()
+    await waitFor(() => expect(screen.getByTestId('agent-credentials-undeclared')).toBeTruthy())
+    expect(screen.queryByText('Connect Google mailbox')).toBeNull()
+  })
+
   it('points at the workspace shared vault, which is the other level', async () => {
     getAgentCredentialStatus.mockResolvedValue([])
     getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 0, locatable: 0 })

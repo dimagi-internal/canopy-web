@@ -65,3 +65,16 @@ it('never frames a vault-resolved ref as a deficit', () => {
   const text = headline(['a', 'b', 'c'].map((name) => row({ name })))
   expect(text).not.toMatch(/missing|blocker|cannot run|incomplete|not ready/i)
 })
+
+describe('sections — a mailbox implies gog-token', () => {
+  it('does not call a minted gog-token an orphan for an agent with a mailbox', () => {
+    // ada after "Connect Google mailbox": stored, never declared (no runtime.yaml).
+    const rows = [{ name: 'gog-token', declared: false, set: true, source: 'canopy-web',
+                    updated_at: null, updated_by_email: null }] as never
+    expect(sections(rows).orphans).toHaveLength(1)
+    const s = sections(rows, ['gog-token'])
+    expect(s.orphans).toHaveLength(0)
+    expect(s.storedHere.map((r) => r.name)).toEqual(['gog-token'])
+    expect(headline(rows, ['gog-token'])).not.toMatch(/worth removing/)
+  })
+})
