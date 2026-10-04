@@ -1,5 +1,9 @@
 """Which MODE a turn runs in — the other half of a routing rule.
 
+`manual` / `auto`, the ladder below, and who may ask for which are defined in
+`docs/architecture/access.md`; the person-side half (who may request `auto`,
+whose turns are always manual) is `apps/agents/access.decide`.
+
 A routing rule (`RunnerAssignment` with a non-empty `source`) already answers
 "which box runs this person's work on this channel". Spec 2026-09-23 lets the
 same rule answer "and may the agent act on it without asking first":
@@ -31,6 +35,14 @@ is honoured from anyone who may enqueue; `auto` only from the agent's owner or
 an admin (`Agent.is_admin`, which counts workspace owners), and that is checked
 twice — at enqueue (403) and again here, at every claim, so an admin revoked
 while the turn sat queued gets manual, with the basis saying why.
+
+**A workspace editor's turns are always manual** (owner decision, 2026-10-04).
+An editor who is not an agent admin may reshape the agent and send it work, so
+their turn runs in its full profile — but never in `auto`: whatever a rule or the
+agent's switch says, the turn is manual and its basis says why, because acting
+outbound unreviewed is for the agent's owner and admins. Decided at every claim
+(`access.decide_for_turn`), so promoting the editor to admin while the turn is
+queued takes effect, as does a demotion.
 
 Pure given the loaded rows, like `services.assignment_rows_for` — callable from
 the claim path (which has them) and from the envelope (which loads them).
@@ -93,6 +105,19 @@ def requested(turn, agent) -> Resolved | None:
     return Resolved(mode, label)
 
 
+def editor_cap(turn, agent) -> Resolved | None:
+    """MANUAL for a turn started by a workspace editor who is not an agent admin
+    (the editor tier of docs/architecture/access.md), else None."""
+    if getattr(turn, "initiator_user_id", None) is None:
+        return None
+    from apps.agents import access
+
+    if not access.decide_for_turn(turn, agent).manual_only:
+        return None
+    email = turn.initiator_user.email if turn.initiator_user is not None else "a member"
+    return Resolved(MANUAL, f"editor {email}: manual — outbound needs an admin of {agent.slug}")
+
+
 def _agent_of(turn):
     if turn.agent_id:
         return turn.agent
@@ -117,6 +142,9 @@ def for_turn(turn, priorities: dict | None = None, *, fresh: bool = False) -> Re
     asked = requested(turn, agent)
     if asked is not None:
         return asked
+    capped = editor_cap(turn, agent)
+    if capped is not None:
+        return capped
     if priorities is None:
         from .services import load_assignment_rows
 

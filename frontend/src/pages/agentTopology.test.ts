@@ -24,7 +24,11 @@ describe('explainEdge', () => {
 
 describe('grantable', () => {
   it('skips edges already full and ones the viewer cannot grant', () => {
-    const list = [edge({}), edge({ access: 'full', basis: 'no-interface' }), edge({ can_grant: false })]
+    const list = [edge({}), edge({ access: 'full', basis: 'admin' }), edge({ can_grant: false })]
     expect(grantable(list)).toHaveLength(1)
+  })
+
+  it('offers a grant on an editor edge: full, but manual until it is an admin', () => {
+    expect(grantable([edge({ access: 'full', basis: 'editor' })])).toHaveLength(1)
   })
 })

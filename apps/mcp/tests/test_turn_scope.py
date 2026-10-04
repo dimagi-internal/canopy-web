@@ -88,7 +88,8 @@ def test_a_members_session_runs_as_the_member(w):
     from apps.harness import initiator as who
 
     mem = User.objects.create_user("mem", "mem@else.org", "pw")
-    M.objects.create(user=mem, workspace=w["ws"], role=M.EDITOR)
+    # A viewer: an editor reaches the whole agent (editor tier) and is not confined.
+    M.objects.create(user=mem, workspace=w["ws"], role=M.VIEWER)
     t, _ = services.enqueue_turn(agent=w["agent"], origin=Turn.ORIGIN_API, idempotency_key="m",
                                  initiator=who.for_user(mem, via="chat", assurance=who.SESSION))
     assert t.capability == "ask"
@@ -147,7 +148,7 @@ def test_the_claim_hands_the_token_to_the_claiming_runner_only(w):
                                            "capabilities": {"agents": ["ace"], "sessions": True}},
                  content_type="application/json").json()["id"]
     c.post(f"/api/harness/runners/{rid}/heartbeat", {"active_turn_ids": [], "degraded": False,
-                                                    "note": "", "profiles": 3},
+                                                    "note": "", "profiles": 3, "envelope": 2},
            content_type="application/json")
     RunnerAssignment.objects.create(agent=w["agent"], runner_id=rid, rank=0)
     t, _ = services.enqueue_turn(agent=w["agent"], origin=Turn.ORIGIN_EMAIL, idempotency_key="nothread",

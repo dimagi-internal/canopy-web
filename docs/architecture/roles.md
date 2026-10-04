@@ -1,13 +1,18 @@
 # Roles — who can do what, and what actually enforces it
 
-There are five roles. Each contains the one below it.
+> Every term here — workspace roles, agent roles (`owner` / `admin` / `member` /
+> `contact` / `system`), access (`full` / `confined` / `none`), the interface,
+> turn mode — is defined once, with THE rule that decides an agent turn, in
+> [`access.md`](access.md). This page is about enforcement.
 
-| Role | Enforced as | Can |
+There are five tiers. Each contains the one below it.
+
+| Tier | Enforced as | Can |
 |---|---|---|
-| **Viewer** | *no account* — a link you were sent | Read what was shared: a storyboard, a narrative, a walkthrough, a session transcript, the public explainer. |
-| **User** | workspace member, `viewer` | Interact with an agent: chat, answer a blocked question, decide an item, read the board. Read the turns you started. Cannot change what an agent *is*, or anything else. |
-| **Author / executor** | workspace member, `editor` | Create and edit agents, run turns, edit schedules, assign runners, **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
-| **Administrator** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **below admin**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection). Holds no keys. |
+| **Link reader** | *no account* — a link you were sent | Read what was shared: a storyboard, a narrative, a walkthrough, a session transcript, the public explainer. |
+| **Viewer** | workspace member, `viewer` | Interact with an agent through what its published interface offers members (none published → nothing): chat, answer a blocked question, decide an item, read the board. Read the turns you started. Cannot change what an agent *is*, or anything else. |
+| **Editor** | workspace member, `editor` | Create and edit agents, run turns (the agent's whole profile, **always `manual`** unless you are its admin), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
+| **Admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **below admin**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection). Holds no keys. |
 | **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace. |
 
 The membership roles are a total order — `WorkspaceMembership.ROLE_RANK`
@@ -136,14 +141,17 @@ recur and the routes that deliberately sit off the ladder.
 - `_get_agent_or_404` — membership. Interaction and reads. A non-member gets 404, never 403,
   so the API never confirms an agent exists to someone who cannot see it.
 - `_agent_for_write` — `AGENT_WORK` (editor and above). Reshaping: upsert, runner assignment,
-  runner rules, turn mode, syncs, turns, work products, skills, task create/patch.
+  runner rules, turn mode, syncs, turns, work products, skills, task create/patch. Setting
+  `auto` — on a routing rule, an actor route or the agent's switch — additionally needs
+  `Agent.is_admin` (`_refuse_auto_unless_admin`, 2026-10-04).
 - `_agent_for_admin` — `Agent.is_admin`: the agent's owner, a workspace owner, or an explicit
   `AgentAdmin`, each a CURRENT member. Credentials, the vault pointer, the interface, the
   Google mailbox mint, moving the agent to another workspace.
 
 **A box holds an agent only if its owner is one of the agent's admins** (or the agent's own
 login) — `agents.services.runner_may_hold_agent`. Claiming an agent turn, resolving its
-credentials, the per-turn GitHub token, pinning a turn to a box, and every routing write
+credentials, the per-turn GitHub token, pinning a turn to a box (which also needs the pinner
+to be an agent admin or that runner's admin — `access.may_pin_runner`), and every routing write
 (runner list, source rules, actor routes) all ask it. Before 2026-10-02 an editor paired a
 box, listed it (disabled) on an agent and read every secret, both vault keys and the owner's
 GitHub token through `/credentials/resolve`; an assignment row was the whole trust boundary,

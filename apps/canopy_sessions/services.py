@@ -1210,7 +1210,7 @@ def _eligible_runner(session: Session, runner_id):
     return runner
 
 
-def _resolve_placement(session: Session, placement: str | None):
+def _resolve_placement(session: Session, placement: str | None, user=None):
     """Directed-placement pin for a NEW turn about to be enqueued. `placement`
     wins when given explicitly; otherwise an unbound session's stashed
     `requested_runner_id` (set at directed-new-chat creation) pins the first
@@ -1227,6 +1227,16 @@ def _resolve_placement(session: Session, placement: str | None):
         pinned = _placeable_runner(session, placement)
         if pinned is None:
             raise _placement_refused(session, placement, "unknown runner for placement")
+        if session.agent_id and getattr(user, "is_authenticated", False):
+            from apps.agents.access import may_pin_runner
+
+            # A chat with an agent pinned to a box is the same act as a pinned
+            # dispatch: the agent's admins may pin any box that can hold it,
+            # anyone else only a box they administer (docs/architecture/access.md).
+            if not may_pin_runner(user, session.agent, pinned):
+                raise ValueError(
+                    f"running {session.agent.slug} on {pinned.name} is for the agent's owner "
+                    "or admins, or for someone who administers that runner")
         return pinned
     if not getattr(session, "runner_binding", None):
         rid = (session.metadata or {}).get("requested_runner_id")
@@ -1541,7 +1551,7 @@ def send_message(
         # session id, which is what record_session then stores.
         binding = getattr(session, "runner_binding", None)
         thread_key = binding.thread_key if (binding and binding.thread_key) else str(session.id)
-        pinned = _resolve_placement(session, placement)
+        pinned = _resolve_placement(session, placement, user)
         ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
         if client_id:
             # The one place a send's client nonce survives as itself: the
@@ -1802,7 +1812,7 @@ def _send_transcript_sourced_message(
     # old index fallback would collapse DISTINCT no-nonce sends onto one turn —
     # fall back to a fresh nonce instead (same dedupe strength as before: only a
     # real client_id makes a retry idempotent).
-    pinned = _resolve_placement(session, placement)
+    pinned = _resolve_placement(session, placement, user)
     ref = _merge_origin_ref(origin_ref, thread_key=thread_key, session=session)
     if client_id:
         ref["client_id"] = client_id   # see send_message: the key suffix may be a nonce

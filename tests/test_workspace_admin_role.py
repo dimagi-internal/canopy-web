@@ -138,9 +138,14 @@ def test_an_admin_does_not_hold_agents_keys(adm):
 
 
 def test_an_admin_does_editor_work(adm):
-    r = _c(adm[M.ADMIN]).patch("/api/agents/admbot/turn-mode", {"turn_mode": "auto"},
+    r = _c(adm[M.ADMIN]).patch("/api/agents/admbot/turn-mode", {"turn_mode": "manual"},
                                content_type="application/json")
     assert r.status_code == 200, r.content
+    # …and only editor work: `auto` is the agent's admins' (a workspace admin
+    # holds no agent keys — docs/architecture/access.md).
+    r = _c(adm[M.ADMIN]).patch("/api/agents/admbot/turn-mode", {"turn_mode": "auto"},
+                               content_type="application/json")
+    assert r.status_code == 403, r.content
 
 
 # --- integrations -----------------------------------------------------------------

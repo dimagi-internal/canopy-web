@@ -384,6 +384,12 @@ class AgentAccessRowOut(StrictModel):
     capabilities: list[str] = []
     # The `full:` interface rule that lifted a member to full access, if one did.
     full_rule: str | None = None
+    # The editor tier (docs/architecture/access.md): a workspace editor who is
+    # not an agent admin reaches the whole agent, but every turn they start runs
+    # manual — outbound needs an admin.
+    manual_only: bool = False
+    # May ask for turn_mode=auto on a dispatch: the agent's owner and admins.
+    may_request_auto: bool = False
 
 
 class AgentOutsiderRuleOut(StrictModel):
@@ -396,7 +402,8 @@ class AgentAccessOut(StrictModel):
     members: list[AgentAccessRowOut]
     # Rules reaching people outside the workspace (contacts, unidentified).
     outsiders: list[AgentOutsiderRuleOut]
-    # False = no interface: every caller, member or not, gets the whole agent.
+    # False = no interface: only the agent's admins and workspace editors reach
+    # it (editors manual only); viewers and everyone outside get nothing.
     interface_published: bool
     slack_enabled: bool
 

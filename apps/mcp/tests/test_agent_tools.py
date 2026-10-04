@@ -50,7 +50,7 @@ def w():
     out = User.objects.create_user("out", "out@else.org", "pw")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=op)
     M.objects.create(user=op, workspace=ws, role=M.EDITOR)
-    M.objects.create(user=mem, workspace=ws, role=M.EDITOR)
+    M.objects.create(user=mem, workspace=ws, role=M.VIEWER)  # an editor reaches the whole agent (editor tier)
     Workspace.objects.create(slug="other", display_name="Other", created_by=out)
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=op,
                                interface=parse(IFACE))

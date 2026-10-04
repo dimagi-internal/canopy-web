@@ -119,18 +119,28 @@ def _thread_key(turn: dict, target: str) -> str:
     return restricted_key(turn, explicit or f"{target}:{turn.get('id') or ''}")
 
 
+#: `profile` values that mean "confined to a capability" — the current word
+#: (canopy-web envelope VERSION 2) and the one an older canopy-web still sends.
+CONFINED_PROFILES = frozenset({"confined", "restricted"})
+
+
+def is_confined(env) -> bool:
+    """Whether a caller envelope confines its turn to a capability."""
+    return isinstance(env, dict) and env.get("profile") in CONFINED_PROFILES
+
+
 def restricted_key(turn: dict, key: str) -> str:
     """A caller's turn continues a DIFFERENT session from an admin's on the same
     thread: `<key>#<capability>`. Shared by both `_thread_key`s so they agree."""
     env = turn.get("caller_context") or {}
-    if env.get("profile") != "restricted":
+    if not is_confined(env):
         return key
     cap = (env.get("capability") or {}).get("name") or "none"
     return f"{key}#{cap}"
 
 
 def is_restricted(turn: dict) -> bool:
-    return (turn.get("caller_context") or {}).get("profile") == "restricted"
+    return is_confined(turn.get("caller_context") or {})
 
 
 def _from_slash_command(prompt: str, target: str) -> str:

@@ -18,7 +18,8 @@ const { AgentAccessRoster } = await import('./AgentAccessRoster')
 
 const row = (o: Partial<AgentAccessOut['members'][number]>): AgentAccessOut['members'][number] => ({
   user_id: 1, email: 'x@dimagi.com', name: 'x@dimagi.com', workspace_role: 'editor', agent_role: 'member',
-  basis: 'Workspace member', granted_at: null, access: 'full', capabilities: [], full_rule: null, ...o,
+  basis: 'Workspace member', granted_at: null, access: 'full', capabilities: [], full_rule: null, manual_only: false,
+  may_request_auto: false, ...o,
 })
 
 const ACCESS: AgentAccessOut = {
@@ -29,6 +30,7 @@ const ACCESS: AgentAccessOut = {
     row({ user_id: 4, email: 'ed@dimagi.com', full_rule: 'member@dimagi.com:verified' }),
     row({ user_id: 5, email: 'vw@partner.org', workspace_role: 'viewer', access: 'confined', capabilities: ['ask'] }),
     row({ user_id: 6, email: 'no@partner.org', workspace_role: 'viewer', access: 'none' }),
+    row({ user_id: 7, email: 'ed2@dimagi.com', manual_only: true }),
   ],
   outsiders: [{ caller: 'contact', access: 'confined', capability: 'ask' }],
   interface_published: true,
@@ -47,11 +49,13 @@ describe('AgentAccessRoster', () => {
   it('shows every person with role, reason and what they reach', async () => {
     getAgentAccess.mockResolvedValue(ACCESS)
     render(<AgentAccessRoster agentSlug="ace" canManage={false} />)
-    expect(await screen.findAllByTestId('agent-access-row')).toHaveLength(6)
+    expect(await screen.findAllByTestId('agent-access-row')).toHaveLength(7)
     expect(within(rowFor('boss@dimagi.com')).getByText('Admin')).toBeTruthy()
     expect(within(rowFor('boss@dimagi.com')).getByText('Owns the workspace')).toBeTruthy()
     expect(within(rowFor('vw@partner.org')).getByText('Only: ask')).toBeTruthy()
     expect(within(rowFor('no@partner.org')).getByText('No access')).toBeTruthy()
+    // the editor tier: the whole agent, but never in auto
+    expect(within(rowFor('ed2@dimagi.com')).getByText('Whole agent, manual only')).toBeTruthy()
     expect(screen.getByText(/only ask/)).toBeTruthy()
     // the role is plain text, never a dropdown, for someone who may not manage admins
     expect(screen.queryAllByRole('combobox')).toHaveLength(0)
@@ -99,6 +103,6 @@ describe('AgentAccessRoster', () => {
   it('says plainly when no caller rules are published', async () => {
     getAgentAccess.mockResolvedValue({ ...ACCESS, interface_published: false, outsiders: [] })
     render(<AgentAccessRoster agentSlug="ace" canManage={false} />)
-    expect(await screen.findByText(/only workspace members can reach this agent/)).toBeTruthy()
+    expect(await screen.findByText(/only this agent's admins and the workspace's editors can reach/)).toBeTruthy()
   })
 })

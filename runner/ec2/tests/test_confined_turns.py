@@ -17,7 +17,7 @@ TID = "3f2b8c1e-0000-4000-8000-000000000002"
 def _turn(**kw):
     d = {"id": TID, "agent_slug": "ace", "prompt": "/ace:turn --thread 18c9", "mcp_token": "cct_x",
          "origin_ref": {"thread_id": "18c9"},
-         "caller_context": {"profile": "restricted", "capability": CAP,
+         "caller_context": {"profile": "confined", "capability": CAP,
                             "conversation": {"thread_id": "18c9"}}}
     d.update(kw)
     return d
@@ -57,7 +57,7 @@ def test_a_confined_turn_runs_with_its_profile_and_entry(cr):
     ex = calls["exec"]
     assert ex["prompt"].startswith("/ace:ask --thread 18c9 --caller ")
     caller_path = ex["prompt"].split("--caller ", 1)[1]
-    assert json.loads(open(caller_path).read())["profile"] == "restricted"
+    assert json.loads(open(caller_path).read())["profile"] == "confined"
     assert calls["profile_doc"]["caller_path"] == caller_path
     assert ex["resume"] is None                              # never resumes
     assert ex["profile"].endswith(f"cloud-{TID}.json")
@@ -228,3 +228,15 @@ def test_without_the_module_the_turn_still_runs_confined_by_the_hook(cr, monkeyp
     monkeypatch.setattr(builtins, "__import__", no_runner)
     mod._run_turn("r-1", _turn())
     assert calls["exec"]["profile"].endswith(f"cloud-{TID}.json")
+
+
+@pytest.mark.parametrize("word", ["confined", "restricted"])
+def test_both_envelope_words_confine(cloud_runner, word):
+    # Envelope VERSION 2 says "confined"; an older canopy-web said "restricted".
+    t = _turn(caller_context={"profile": word, "capability": CAP, "conversation": {}})
+    assert cloud_runner._capability(t) == CAP
+    assert cloud_runner._capability({**t, "caller_context": {"profile": "full"}}) is None
+
+
+def test_the_heartbeat_reports_the_envelope_version(cloud_runner):
+    assert cloud_runner.ENVELOPE_VERSION == 2

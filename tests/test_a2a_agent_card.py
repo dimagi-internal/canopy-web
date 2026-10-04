@@ -68,7 +68,7 @@ def w():
     stranger = User.objects.create_user("str", "str@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=op)
     M.objects.create(user=op, workspace=ws, role=M.OWNER)
-    M.objects.create(user=mem, workspace=ws, role=M.EDITOR)
+    M.objects.create(user=mem, workspace=ws, role=M.VIEWER)  # an editor sees every skill (editor tier)
     M.objects.create(user=admin, workspace=ws, role=M.EDITOR)
     ace = Agent.objects.create(slug="ace", name="ACE", description="Runs Connect opportunities.",
                                email="ace@dimagi-ai.com", workspace=ws, owner=op,

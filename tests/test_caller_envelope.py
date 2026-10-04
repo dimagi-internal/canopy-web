@@ -64,7 +64,7 @@ def test_a_verified_email_contact_carries_their_profile(ctx):
     assert env["agent"] == "ace"
     assert env["who"]["kind"] == who.CONTACT
     assert env["verified"] is True
-    assert env["relationship"] == caller_context.CALLER
+    assert env["relationship"] == caller_context.CONTACT
     assert env["contact"]["notes"] == "Program lead at LLO Foo."
     assert env["contact"]["attributes"] == {"org": "LLO Foo", "connect_opp": 42}
     assert env["contact"]["this_message_grade"] == Contact.AUTH_DMARC
@@ -107,7 +107,7 @@ def test_the_owner_is_the_owner_and_a_member_is_a_member(ctx):
     mem = User.objects.create_user("bo", "bo@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=mem, workspace=ws, role=WorkspaceMembership.EDITOR)
     stranger = User.objects.create_user("zz", "zz@else.org", "pw")
-    for user, want in ((owner, "owner"), (mem, "member"), (stranger, "caller")):
+    for user, want in ((owner, "owner"), (mem, "member"), (stranger, "contact")):
         t, _ = services.enqueue_turn(
             agent=agent, origin=Turn.ORIGIN_API, idempotency_key=f"m-{user.pk}",
             initiator=who.for_user(user, via="chat", assurance=who.SESSION))
@@ -458,7 +458,7 @@ def test_someone_elses_repo_chat_on_someone_elses_box_is_not_theirs(ctx):
     stranger = User.objects.create_user("x", "x@example.org", "pw")
     box = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, owner=owner)
     env = caller_context.build(_repo_turn(ws, stranger, creator=owner, runner=box))
-    assert env["relationship"] == caller_context.CALLER
+    assert env["relationship"] == caller_context.CONTACT
 
 
 # --- an agent's own login dispatching onto its owner's runner (canopy-web#1011) ------
@@ -488,7 +488,7 @@ def test_an_agents_own_login_on_its_owners_runner_is_the_agent_itself(ctx):
     assert env["relationship"] == caller_context.SYSTEM
 
 
-def test_an_agents_login_on_someone_elses_runner_stays_a_caller(ctx):
+def test_an_agents_login_on_someone_elses_runner_stays_a_contact(ctx):
     # The #983 guard, restated for the no-agent path: an agent's login is the agent
     # only where its OWNER's authority already runs.
     from apps.harness.models import Runner
@@ -499,10 +499,10 @@ def test_an_agents_login_on_someone_elses_runner_stays_a_caller(ctx):
     other = User.objects.create_user("x", "x@example.org", "pw")
     box = Runner.objects.create(name="x-mbp", kind=Runner.EMDASH, owner=other)
     env = caller_context.build(_dispatched_turn(agent.user, box))
-    assert env["relationship"] == caller_context.CALLER
+    assert env["relationship"] == caller_context.CONTACT
 
 
-def test_a_plain_user_on_the_owners_runner_is_still_a_caller(ctx):
+def test_a_plain_user_on_the_owners_runner_is_still_a_contact(ctx):
     # Only an agent login is lifted — the owner's box does not vouch for strangers.
     from apps.harness.models import Runner
 
@@ -510,7 +510,7 @@ def test_a_plain_user_on_the_owners_runner_is_still_a_caller(ctx):
     stranger = User.objects.create_user("y", "y@example.org", "pw")
     box = Runner.objects.create(name="jj-mbp", kind=Runner.EMDASH, owner=owner)
     env = caller_context.build(_dispatched_turn(stranger, box))
-    assert env["relationship"] == caller_context.CALLER
+    assert env["relationship"] == caller_context.CONTACT
 
 
 # --- the repo-internal ship grant (owner decision, 2026-10-03) -----------------------
@@ -636,3 +636,17 @@ def test_a_target_with_no_repo_gets_no_grant(fleet):
 def test_an_ordinary_email_turn_has_no_grant(ctx):
     _o, _ws, agent = ctx
     assert caller_context.build(_email(agent, headers=HDRS))["ship_grant"] is None
+
+
+# --- envelope VERSION 2: one word per meaning (2026-10-04) ----------------------------
+
+def test_version_2_renames_and_readers_accept_both():
+    # `caller` -> `contact`, `restricted` -> `confined`; an envelope from an older
+    # canopy-web may still sit on a box, so the normalizers read either.
+    assert caller_context.VERSION == 2
+    assert caller_context.normalize_relationship("caller") == "contact"
+    assert caller_context.normalize_relationship("contact") == "contact"
+    assert caller_context.normalize_relationship("owner") == "owner"
+    assert caller_context.normalize_profile("restricted") == "confined"
+    assert caller_context.normalize_profile("confined") == "confined"
+    assert caller_context.normalize_profile("full") == "full"

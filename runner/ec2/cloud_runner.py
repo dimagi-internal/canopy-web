@@ -370,6 +370,9 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
         "health": health_report(),
         # Whether canopy may give this box a CALLER's turn (see `_confine`).
         "profiles": profiles_supported(),
+        # The caller-envelope version this code reads (2 = `profile: "confined"`);
+        # canopy-web gives caller turns only to a box that reports it.
+        "envelope": ENVELOPE_VERSION,
     }
     # Omitted until the first inbox probe: absent is "unknown", [] is "none".
     readable = mailboxes_readable()
@@ -3662,13 +3665,20 @@ CLOUD_PROFILES_VERSION = 2
 MIN_GUARD_VERSION = 3
 
 
+#: The caller-envelope version this code reads, reported on every beat.
+ENVELOPE_VERSION = 2
+#: `profile` values meaning "confined to a capability": the current word and the
+#: one an envelope from an older canopy-web carries.
+CONFINED_PROFILES = frozenset({"confined", "restricted"})
+
+
 class ConfineError(RuntimeError):
     pass
 
 
 def _capability(turn: dict) -> dict | None:
     env = turn.get("caller_context") or {}
-    if env.get("profile") != "restricted":
+    if env.get("profile") not in CONFINED_PROFILES:
         return None
     cap = env.get("capability")
     return cap if isinstance(cap, dict) else {"name": "none", "tools": [], "bash": [],

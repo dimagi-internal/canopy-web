@@ -166,6 +166,22 @@ def _refuse_runners_that_cannot_hold(agent, runners) -> None:
         )
 
 
+def _refuse_auto_unless_admin(request: HttpRequest, agent, what: str) -> None:
+    """`auto` lets the agent act outbound without review, so SETTING it — on a
+    routing rule, an actor route or the agent's own switch — is for the agent's
+    owner and admins (docs/architecture/access.md). A workspace editor may still
+    route the agent's work and set `manual`; lowering autonomy is safe from
+    anyone. Before 2026-10-04 an editor could write `turn_mode: auto` on a rule,
+    which ran every matching turn auto — around the dispatch gate (#1102) that
+    keeps `auto` from them."""
+    if not agent.is_admin(request.user):
+        raise HttpError(
+            403,
+            f"{what} with turn_mode=auto is for {agent.slug}'s owner or admins; you may set "
+            "it with turn_mode manual or '' (defer), or ask its owner to make you an admin",
+        )
+
+
 def _agent_for_admin(request: HttpRequest, slug: str):
     """An agent whose SECRETS the caller may change: its owner or an admin.
 
@@ -567,8 +583,11 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
     """Flip the agent's runtime autonomy posture — the board-side switch the
     fleet turn procedure reads at preflight (agent-core/turn.md § Turn mode).
     A human decision made from the board; the agent-repo upsert (POST /) cannot
-    touch this field."""
+    touch this field. `manual` from any editor; `auto` from the agent's owner or
+    an admin — it is the last rung of the routing ladder ("Everything else")."""
     agent = _agent_for_write(request, slug)
+    if payload.turn_mode == "auto" and agent.turn_mode != "auto":
+        _refuse_auto_unless_admin(request, agent, "setting the agent's turn mode")
     agent.turn_mode = payload.turn_mode
     agent.save(update_fields=["turn_mode", "updated_at"])
     return _detail(request, agent)
@@ -814,6 +833,12 @@ def replace_agent_runner_rules(
             raise HttpError(422, f"not an email address: {r.actor!r}")
         actors.append(actor)
 
+    # `auto` on a rule is the agent's admins' to set (docs/architecture/access.md).
+    # Asked before the runners are, so an editor is told the actual reason.
+    for r, actor in zip(payload.rules, actors):
+        if r.turn_mode == "auto":
+            _refuse_auto_unless_admin(request, agent, f"a routing rule ({r.source}/{actor or 'anyone'})")
+
     # One rule per (source, actor) — several actors MAY share a source, which is
     # the whole feature. Caught here rather than left to the DB constraint so the
     # caller gets a named reason instead of an IntegrityError 500.
@@ -949,6 +974,8 @@ def set_agent_actor_route(
 
     agent = _agent_for_write(request, slug)
     actor = _actor_or_422(actor)
+    if payload.turn_mode == "auto":
+        _refuse_auto_unless_admin(request, agent, f"routing {actor}'s work")
 
     sources = list(dict.fromkeys(payload.sources or _actor_sources()))
     dead = [s for s in sources if s not in _actor_sources()]

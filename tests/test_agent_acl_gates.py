@@ -123,10 +123,19 @@ def test_editor_refused_on_delete_credential(acl):
 
 def test_editor_succeeds_on_representative_editor_endpoint(acl):
     acl["client"].force_login(acl["editor"])
-    res = _patch_turn_mode(acl["client"])
+    res = acl["client"].patch("/api/agents/aclbot/turn-mode", {"turn_mode": "manual"},
+                              content_type="application/json")
     assert res.status_code == 200, res.content
     acl["agent"].refresh_from_db()
-    assert acl["agent"].turn_mode == "auto"
+    assert acl["agent"].turn_mode == "manual"
+
+
+def test_editor_refused_auto_on_the_agents_switch(acl):
+    # `auto` is the last rung of the routing ladder: an agent admin's to set
+    # (docs/architecture/access.md). An editor may set manual.
+    acl["client"].force_login(acl["editor"])
+    res = _patch_turn_mode(acl["client"])
+    assert res.status_code == 403, res.content
 
 
 # --- viewer: still succeeds on the interaction tier ----------------------------

@@ -520,7 +520,8 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
         # pairing it can confine a caller's session would be believed until its
         # first beat. Dropped here rather than refused, so an old pairing script
         # that copies a whole capabilities dict still pairs.
-        capabilities={k: v for k, v in payload.capabilities.items() if k != "profiles"},
+        capabilities={k: v for k, v in payload.capabilities.items()
+                      if k not in ("profiles", "envelope")},
         host=payload.host,
         owner=request.user,
         workspace_id=ws_slug,
@@ -899,14 +900,15 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             "routable, open it as a project in emdash on that runner (or set "
             "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
         )
-    if "profiles" in payload.capabilities:
-        # Reported, like `projects` — and here it is a SECURITY property: a hand
-        # edit claiming a runner can confine a caller's session would route
-        # restricted turns to a box that runs them in the full profile.
-        raise HttpError(422, "`profiles` is reported by the runner on every heartbeat, "
-                             "not set by hand.")
+    for key in ("profiles", "envelope"):
+        if key in payload.capabilities:
+            # Reported, like `projects` — and here it is a SECURITY property: a hand
+            # edit claiming a runner can confine a caller's session would route
+            # confined turns to a box that runs them in the full profile.
+            raise HttpError(422, f"`{key}` is reported by the runner on every heartbeat, "
+                                 "not set by hand.")
     caps = dict(payload.capabilities)
-    for key in ("projects", "profiles"):
+    for key in ("projects", "profiles", "envelope"):
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]
     runner.capabilities = caps
@@ -1082,6 +1084,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         code_committed_at=payload.code_committed_at,
         projects=payload.projects,
         profiles=payload.profiles,
+        envelope=payload.envelope,
         health=payload.health.model_dump() if payload.health is not None else None,
         mailboxes_readable=payload.mailboxes_readable,
     )
@@ -1641,9 +1644,23 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
                     f"runner {pinned.name} cannot run {agent.slug}: its owner must "
                     "be the agent's owner, a workspace owner, or one of its admins",
                 )
+            from apps.agents import access
+
+            # Pinning places the agent's work on one box: the agent's admins may
+            # pin any box that can hold it, anyone else only a box they administer
+            # (docs/architecture/access.md).
+            if not access.may_pin_runner(request.user, agent, pinned):
+                raise HttpError(
+                    403,
+                    f"pinning {agent.slug}'s turn to runner {pinned.name} is for the agent's "
+                    "owner or admins, or for someone who administers that runner; dispatch "
+                    "without a runner and the agent's routing places it",
+                )
 
     initiator = (None if payload.origin == Turn.ORIGIN_EMAIL
                  else who.for_request(request, via=payload.origin))
+    if agent is not None and initiator is not None:
+        _check_access(request, payload, agent, initiator)
     _check_requested_turn_mode(request, payload, agent, initiator)
 
     turn, created = services.enqueue_turn(
@@ -1698,12 +1715,32 @@ def _check_requested_turn_mode(request, payload: TurnIn, agent, initiator) -> No
     if not verified:
         raise HttpError(
             403, "turn_mode=auto needs a signed-in session or your own personal access token")
-    if not agent.is_admin(request.user):
+    from apps.agents import access
+
+    if not access.decide(agent, request.user, verified=verified,
+                         origin=payload.origin).may_request_auto:
         raise HttpError(
             403,
             f"turn_mode=auto is for {agent.slug}'s owner or admins; you may request "
-            "turn_mode=manual, or ask its owner to make you an admin",
+            "turn_mode=manual (or none — a workspace editor's turns run manual anyway), "
+            "or ask its owner to make you an admin",
         )
+
+
+def _check_access(request, payload: TurnIn, agent, initiator) -> None:
+    """Refuse at enqueue a turn the runner would refuse, saying what the caller
+    CAN do — THE rule (`apps.agents.access.decide`), asked of the requester.
+
+    The editor gate above already ran, so a person reaching this is a workspace
+    editor or above and is refused only by a future tightening; it is asked here
+    anyway so this door can never disagree with the others."""
+    from apps.agents import access
+
+    user = request.user if getattr(request.user, "is_authenticated", False) else None
+    d = access.decide(agent, user, verified=initiator.kind == who.USER
+                      and initiator.assurance in _TURN_MODE_VERIFIED, origin=payload.origin)
+    if d.access == access.NONE:
+        raise HttpError(403, d.reason or f"{agent.slug} does not take work from you")
 
 
 @router.get("/turns/", response=list[TurnOut])

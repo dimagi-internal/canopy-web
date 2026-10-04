@@ -257,8 +257,9 @@ class AgentTopologyAgentOut(StrictModel):
 class AgentEdgeOut(StrictModel):
     """What `source` gets when it sends `target` work with its own login.
     `access`: full | confined (to `capabilities`) | none. `basis`: owner |
-    workspace-owner | admin | full-rule | no-interface | capabilities |
-    nothing-offered | not-member | no-login. `can_grant` / `can_revoke`: whether
+    workspace-owner | admin | full-rule | editor (full, manual only) |
+    no-interface (refused: nothing published) | capabilities | nothing-offered |
+    not-member | no-login. Terms: docs/architecture/access.md. `can_grant` / `can_revoke`: whether
     THIS caller may make (or unmake) the source's login an admin of the target."""
 
     source: str

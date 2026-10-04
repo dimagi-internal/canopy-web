@@ -15,7 +15,7 @@ def _restricted(**kw):
     d = {"id": "3f2b8c1e-0000-4000-8000-000000000001", "agent_slug": "ace",
          "origin_ref": {"thread_id": "18c9abc", "subject": "payments?"},
          "prompt": "/ace:turn --thread 18c9abc", "mcp_token": "cct_test",
-         "caller_context": {"profile": "restricted", "capability": CAP,
+         "caller_context": {"profile": "confined", "capability": CAP,
                             "conversation": {"thread_id": "18c9abc"}}}
     d.update(kw)
     return d
@@ -172,3 +172,20 @@ def test_every_heartbeat_reports_it(monkeypatch):
     monkeypatch.setattr(c, "_call", lambda method, path, body: sent.update(body) or (200, {}))
     c.heartbeat("r-1", [])
     assert sent["profiles"] == 1
+
+
+@pytest.mark.parametrize("word", ["confined", "restricted"])
+def test_both_envelope_words_confine(word):
+    # canopy-web envelope VERSION 2 says "confined"; an older canopy-web said
+    # "restricted". Either must confine — reading only one would run the other in
+    # the agent's FULL profile.
+    t = _restricted(caller_context={"profile": word, "capability": CAP,
+                                    "conversation": {"thread_id": "18c9abc"}})
+    assert caller.capability(t) == CAP
+    assert session_naming.is_restricted(t)
+    assert execute._thread_key(t) == "18c9abc#ask"
+    assert caller.capability({**t, "caller_context": {"profile": "full"}}) is None
+
+
+def test_the_runner_reports_the_envelope_version_it_reads():
+    assert caller.ENVELOPE_VERSION == 2

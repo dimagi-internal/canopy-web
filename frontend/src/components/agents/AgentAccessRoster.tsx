@@ -35,6 +35,8 @@ const ROLE_LABEL: Record<AgentAccessRowOut['agent_role'], string> = {
 }
 
 function accessText(r: AgentAccessRowOut): string {
+  // The editor tier (docs/architecture/access.md): the whole agent, every turn manual.
+  if (r.access === 'full' && r.manual_only) return 'Whole agent, manual only'
   if (r.access === 'full') return 'Whole agent'
   if (r.access === 'none') return 'No access'
   return `Only: ${r.capabilities.join(', ')}`
@@ -101,7 +103,13 @@ export function AgentAccessRoster({ agentSlug, canManage }: { agentSlug: string;
               <span
                 key="reach"
                 className={`text-[12px] ${r.access === 'none' ? 'text-warning' : 'text-foreground-secondary'}`}
-                title={r.full_rule ? `Whole agent through the caller rule ${r.full_rule}` : undefined}
+                title={
+                  r.full_rule
+                    ? `Whole agent through the caller rule ${r.full_rule}`
+                    : r.manual_only
+                      ? 'A workspace editor: may change this agent and send it work, but every turn runs manual — outbound needs an admin'
+                      : undefined
+                }
               >
                 {accessText(r)}
               </span>,
@@ -113,7 +121,10 @@ export function AgentAccessRoster({ agentSlug, canManage }: { agentSlug: string;
       <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] text-foreground-secondary">
         <span className="font-medium text-foreground">Outside the workspace: </span>
         {!data.interface_published ? (
-          <>no one — no caller rules are published, so only workspace members can reach this agent.</>
+          <>
+            no one — no caller rules are published, so only this agent's admins and the workspace's editors can reach
+            it (viewers cannot).
+          </>
         ) : data.outsiders.length === 0 ? (
           <>no one — the published caller rules name only workspace members.</>
         ) : (
@@ -130,8 +141,9 @@ export function AgentAccessRoster({ agentSlug, canManage }: { agentSlug: string;
       </div>
 
       <p className="m-0 text-[11px] text-muted-foreground">
-        Owners and admins can change the agent and hold its keys. "Can reach" is what someone gets when signed in to
-        canopy; a message by unverified email may reach less.
+        Owners and admins hold the agent's keys and may run it in auto. Workspace editors can change it and send it
+        work, but their turns always run manual. A workspace admin runs the workspace, not its agents. "Can reach" is
+        what someone gets when signed in to canopy; a message by unverified email may reach less.
       </p>
       {error && (
         <p role="alert" className="m-0 text-[12px] text-destructive">
