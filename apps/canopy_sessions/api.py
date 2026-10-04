@@ -100,7 +100,12 @@ def _runner_status(runner) -> str | None:
 
 def _out(session: Session, *, reply: bool = False) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
+    waiting_on_you = serializers.pending_menu(session) is not None
     last_reply, agent_spoke_last = services.last_reply_of(session, binding) if reply else ("", False)
+    # The reply is whole (untrimmed), so carry it only where the feed renders it:
+    # sessions where it is the person's turn. That is what bounds the payload.
+    if not (agent_spoke_last or waiting_on_you):
+        last_reply = ""
     runner = binding.runner if (binding and binding.runner_id) else None
     # The name a human recognises for a runner-bound session is the emdash
     # task (what they see in emdash), not a thread_key hash a fallback title
@@ -151,7 +156,7 @@ def _out(session: Session, *, reply: bool = False) -> dict:
         # dialog would pay for N sets of options to render one badge each. It
         # answers the thing the list could not: a waiting agent and an idle one
         # look identical, which is why spark read as "the session stopped".
-        "waiting_on_you": serializers.pending_menu(session) is not None,
+        "waiting_on_you": waiting_on_you,
         # Is a requested full-history ship still outstanding? EXACT, where the
         # client previously had to guess: it slept a flat 1200 ms and read once,
         # which on labs was 13 s early (rows landed at t+14.6s), so the button

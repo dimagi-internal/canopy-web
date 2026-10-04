@@ -80,7 +80,9 @@ def test_once_the_person_has_replied_it_is_no_longer_their_turn(world):
     )
     row = _row(world, s)
     assert row["agent_spoke_last"] is False
-    assert row["last_reply"] == "Fixed. Ship it?"
+    # Not your turn, so not in the feed — and the reply is sent whole now, so the
+    # list carries it only for sessions the feed will actually render.
+    assert row["last_reply"] == ""
 
 
 def test_the_reply_is_opt_in(world):
@@ -115,7 +117,11 @@ def test_a_runner_session_reads_the_reported_tail(world):
     assert row["agent_spoke_last"] is True
 
 
-def test_a_long_reply_is_trimmed():
-    text, _ = services.last_reply_from([("user", "q"), ("assistant", "word " * 2000)])
-    assert len(text) <= services.LAST_REPLY_CHARS
-    assert text.endswith("…")
+def test_a_long_reply_arrives_whole(world):
+    """The feed used to get the first 2400 characters, so "Show more" on a long
+    answer still stopped mid-sentence."""
+    long = "## Summary\n\n" + "word " * 3000 + "\n\nThe last line."
+    s = _web_session(world, (Message.USER, "q"), (Message.ASSISTANT, long))
+    row = _row(world, s)
+    assert row["last_reply"] == long.strip()
+    assert row["last_reply"].endswith("The last line.")

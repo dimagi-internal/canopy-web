@@ -116,11 +116,18 @@ def test_read_recent_messages_skips_sidechain(tmp_path):
     assert [m["text"] for m in msgs] == ["main ask", "main reply"]
 
 
-def test_text_truncated_to_max(tmp_path):
+def test_older_messages_are_truncated_but_the_newest_is_whole(tmp_path):
+    """The newest message is the reply the supervisor feed renders when a turn
+    ends; cutting it at MAX_MSG_CHARS cut off the end of every long answer. The
+    older ones are context, and stay capped so a report stays small."""
     f = tmp_path / "x.jsonl"
-    f.write_text(json.dumps({"type": "user", "message": {"content": "z" * 5000}}), "utf-8")
+    f.write_text("\n".join([
+        json.dumps({"type": "user", "message": {"content": "z" * 5000}}),
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "y" * 9000}]}}),
+    ]), "utf-8")
     msgs = transcript.read_recent_messages(f, limit=8)
     assert len(msgs[0]["text"]) == transcript.MAX_MSG_CHARS
+    assert len(msgs[1]["text"]) == 9000
 
 
 def test_read_recent_messages_skips_wrong_shape_message_field(tmp_path):

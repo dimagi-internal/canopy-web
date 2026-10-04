@@ -189,8 +189,9 @@ class SessionOut(Schema):
     notify_every_completion: bool = False
     # The supervisor feed's two fields, filled only when the list is asked for
     # them (`?reply=true`) — every other list caller would pay for text it never
-    # shows. The agent's most recent reply (trimmed to LAST_REPLY_CHARS), and
-    # whether the agent had the last word, i.e. it is the person's turn.
+    # shows. The agent's most recent reply, WHOLE — sent only when it is the
+    # person's turn (agent spoke last, or a dialog is waiting), which is all the
+    # feed renders — and whether the agent had the last word.
     last_reply: str = ""
     agent_spoke_last: bool = False
     # What this conversation's host requires of the runner it runs on (e.g.
