@@ -190,6 +190,7 @@ from apps.agents.api import router as agents_router  # noqa: E402
 from apps.agents.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.oauth_api import router as agent_google_router  # noqa: E402
 from apps.agent_runs.api import router as agent_runs_router  # noqa: E402
+from apps.agent_runs.documents import router as agent_run_docs_router  # noqa: E402
 from apps.workspaces.api import router as workspaces_router  # noqa: E402
 from apps.timeline.api import router as timeline_router  # noqa: E402
 from apps.system.api import router as system_router  # noqa: E402
@@ -243,6 +244,7 @@ api.add_router("/agents", agents_router)
 # self-enforces (apps/agents/a2a_api.py).
 api.add_router("/a2a", a2a_router)
 api.add_router("/agents", agent_runs_router)  # unified run lifecycle under the agents namespace
+api.add_router("/agent-runs", agent_run_docs_router)  # run documents (DDD runs), cross-agent
 api.add_router("/agents", agent_google_router)  # start the Google mailbox mint
 # The mint's callback is NOT agent-scoped: Google requires every redirect URI
 # to be registered exactly, so one fixed path serves the whole fleet and the

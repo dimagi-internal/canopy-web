@@ -223,6 +223,33 @@ def _title_from_review(r: ReviewRequest) -> str | None:
     return None
 
 
+def _run_record(run_id: str, workspace_slugs: set[str] | None) -> dict | None:
+    """The run's ``AgentRun`` document, if the caller may see its agent.
+
+    A run's artifacts are tenanted by THEIR workspace; its record by its owning
+    agent's. The record shows only to members of the agent's workspace.
+    """
+    from apps.agent_runs.models import AgentRun  # noqa: PLC0415
+
+    qs = AgentRun.objects.select_related("agent", "project").filter(ext_id=run_id)
+    if workspace_slugs is not None:
+        qs = qs.filter(agent__workspace_id__in=workspace_slugs)
+    run = qs.first()
+    if run is None:
+        return None
+    return {
+        "agent_slug": run.agent.slug,
+        "project_ext_id": run.project.ext_id if run.project_id else None,
+        "project_name": run.project.name if run.project_id else None,
+        "kind": run.kind,
+        "status": run.status or "running",
+        "current_step": run.current_step,
+        "summary": run.summary or {},
+        "holder": run.holder,
+        "holder_at": run.holder_at,
+    }
+
+
 def _phase_label(r: ReviewRequest) -> str:
     return f"{r.gate} · {r.status}"
 
@@ -249,7 +276,8 @@ def build_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | No
     revs = list(
         _scope(ReviewRequest.objects.filter(run_id=run_id), workspace_slugs)
     )  # -created_at default
-    if not wts and not revs:
+    record = _run_record(run_id, workspace_slugs)
+    if not wts and not revs and record is None:
         return None
 
     video = _pick(
@@ -294,6 +322,15 @@ def build_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | No
 
     narrative_payload = _narrative_payload(narrative_review)
     phase = _phase_label(revs[0]) if revs else None
+    if record is not None:
+        # The runner's own account of the run beats a guess from its latest review.
+        it = (record["summary"] or {}).get("iteration")
+        phase = (
+            f"{(record['summary'] or {}).get('phase') or 'running'}"
+            + (f" · iteration {it}" if it is not None else "")
+            if record["status"] == "running"
+            else record["status"]
+        )
 
     # Links: union across the run's walkthroughs, de-duped on (url, kind),
     # oldest-first for a stable order.
@@ -337,6 +374,7 @@ def build_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | No
         "created_at": created_at,
         "latest_at": latest_at,
         "phase": phase,
+        "record": record,
         "video": _artifact_payload(video),
         "slides": _artifact_payload(slides),
         "documentation": _artifact_payload(documentation),

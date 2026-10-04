@@ -3073,6 +3073,84 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agent-runs/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List run documents across agents
+         * @description Newest first, across every agent the caller can see. ``active=true`` =
+         *     still running — what a runner resumes. ``repo_slug`` filters by the run's
+         *     project's repo.
+         */
+        readonly get: operations["list_run_docs"];
+        readonly put?: never;
+        /** Start (or adopt) a run document */
+        readonly post: operations["create_run_doc"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agent-runs/projects/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Agent projects across agents
+         * @description Every visible agent's projects (optionally touching ``repo_slug``) — the
+         *     choices a runner offers when a narrative is not yet bound to a project.
+         */
+        readonly get: operations["list_agent_projects"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agent-runs/{ext_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** A run document with its state */
+        readonly get: operations["get_run_doc"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agent-runs/{ext_id}/state/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Write a run document's state */
+        readonly put: operations["put_run_doc_state"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/google/authorize": {
         readonly parameters: {
             readonly query?: never;
@@ -8603,6 +8681,7 @@ export interface components {
             readonly latest_at?: string | null;
             /** Phase */
             readonly phase?: string | null;
+            readonly record?: components["schemas"]["RunRecordOut"] | null;
             readonly video?: components["schemas"]["RunArtifactOut"] | null;
             readonly slides?: components["schemas"]["RunArtifactOut"] | null;
             readonly documentation?: components["schemas"]["RunArtifactOut"] | null;
@@ -8617,6 +8696,42 @@ export interface components {
              * @default []
              */
             readonly all_artifacts: readonly components["schemas"]["RunArtifactRefOut"][];
+        };
+        /**
+         * RunRecordOut
+         * @description The run's own record (an ``AgentRun`` run document) — what the runner says
+         *     about the run, instead of a phase guessed from its latest review.
+         */
+        readonly RunRecordOut: {
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Project Ext Id */
+            readonly project_ext_id?: string | null;
+            /** Project Name */
+            readonly project_name?: string | null;
+            /** Kind */
+            readonly kind: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Current Step
+             * @default
+             */
+            readonly current_step: string;
+            /**
+             * Summary
+             * @default {}
+             */
+            readonly summary: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Holder
+             * @default
+             */
+            readonly holder: string;
+            /** Holder At */
+            readonly holder_at?: string | null;
         };
         /**
          * RunReleaseOut
@@ -11613,6 +11728,190 @@ export interface components {
             readonly edits?: {
                 readonly [key: string]: unknown;
             };
+        };
+        /** RunDocOut */
+        readonly RunDocOut: {
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Id */
+            readonly id: string;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            readonly project?: components["schemas"]["RunDocProjectOut"] | null;
+            /** Kind */
+            readonly kind: string;
+            /** Subject */
+            readonly subject: string;
+            /** Label */
+            readonly label: string;
+            /** Status */
+            readonly status: string;
+            /** Current Step */
+            readonly current_step: string;
+            /** Summary */
+            readonly summary: {
+                readonly [key: string]: unknown;
+            };
+            /** State Version */
+            readonly state_version: number;
+            /** Holder */
+            readonly holder: string;
+            /** Holder At */
+            readonly holder_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Completed At */
+            readonly completed_at?: string | null;
+        };
+        /** RunDocProjectOut */
+        readonly RunDocProjectOut: {
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Name */
+            readonly name: string;
+            /** Repo Slug */
+            readonly repo_slug: string;
+            /** Status */
+            readonly status: string;
+        };
+        /** RunDocDetailOut */
+        readonly RunDocDetailOut: {
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Id */
+            readonly id: string;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            readonly project?: components["schemas"]["RunDocProjectOut"] | null;
+            /** Kind */
+            readonly kind: string;
+            /** Subject */
+            readonly subject: string;
+            /** Label */
+            readonly label: string;
+            /** Status */
+            readonly status: string;
+            /** Current Step */
+            readonly current_step: string;
+            /** Summary */
+            readonly summary: {
+                readonly [key: string]: unknown;
+            };
+            /** State Version */
+            readonly state_version: number;
+            /** Holder */
+            readonly holder: string;
+            /** Holder At */
+            readonly holder_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Completed At */
+            readonly completed_at?: string | null;
+            /** State */
+            readonly state: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** RunDocCreateIn */
+        readonly RunDocCreateIn: {
+            /** Agent */
+            readonly agent: string;
+            /** Project */
+            readonly project?: string | null;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Subject
+             * @default
+             */
+            readonly subject: string;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /** Ext Id */
+            readonly ext_id?: string | null;
+            /**
+             * Min Seq
+             * @default 1
+             */
+            readonly min_seq: number;
+            /**
+             * Status
+             * @default running
+             */
+            readonly status: string;
+            /** Summary */
+            readonly summary?: {
+                readonly [key: string]: unknown;
+            };
+            /** State */
+            readonly state?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Holder
+             * @default
+             */
+            readonly holder: string;
+            /**
+             * Session Link
+             * @default
+             */
+            readonly session_link: string;
+        };
+        /** AgentProjectRefOut */
+        readonly AgentProjectRefOut: {
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Name */
+            readonly name: string;
+            /** Outcome */
+            readonly outcome: string;
+            /** Repo Slug */
+            readonly repo_slug: string;
+            /** Status */
+            readonly status: string;
+        };
+        /** RunDocStateIn */
+        readonly RunDocStateIn: {
+            /** State */
+            readonly state: {
+                readonly [key: string]: unknown;
+            };
+            /** Base Version */
+            readonly base_version?: number | null;
+            /**
+             * Force
+             * @default false
+             */
+            readonly force: boolean;
+            /** Status */
+            readonly status?: string | null;
+            /** Current Step */
+            readonly current_step?: string | null;
+            /** Iteration */
+            readonly iteration?: number | null;
+            /** Score */
+            readonly score?: number | null;
+            /** Summary */
+            readonly summary?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Holder
+             * @default
+             */
+            readonly holder: string;
         };
         /**
          * GoogleMintStartOut
@@ -19316,6 +19615,128 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunSummary"];
+                };
+            };
+        };
+    };
+    readonly list_run_docs: {
+        readonly parameters: {
+            readonly query?: {
+                readonly kind?: string | null;
+                readonly subject?: string | null;
+                readonly agent?: string | null;
+                readonly repo_slug?: string | null;
+                readonly active?: boolean | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunDocOut"][];
+                };
+            };
+        };
+    };
+    readonly create_run_doc: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunDocCreateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunDocDetailOut"];
+                };
+            };
+        };
+    };
+    readonly list_agent_projects: {
+        readonly parameters: {
+            readonly query?: {
+                readonly repo_slug?: string | null;
+                readonly status?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentProjectRefOut"][];
+                };
+            };
+        };
+    };
+    readonly get_run_doc: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly ext_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunDocDetailOut"];
+                };
+            };
+        };
+    };
+    readonly put_run_doc_state: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly ext_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunDocStateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunDocDetailOut"];
                 };
             };
         };
