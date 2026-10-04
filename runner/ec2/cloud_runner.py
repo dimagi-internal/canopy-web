@@ -956,6 +956,13 @@ RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", "cli").strip().lower()
 # Generous — real turns run for many minutes — because this is a wedge guard,
 # not a policy.
 ACP_TURN_TIMEOUT_SECONDS = float(os.environ.get("ACP_TURN_TIMEOUT_SECONDS", "5400"))
+# Starting (or resuming) the ACP session — Claude Code booting with the agent's
+# plugins + MCP servers — is NOT the turn. canopy_acp defaults it to 120s, and
+# eva's environment sometimes takes 112-125s (one slow MCP server at startup), so
+# a fresh box's first eva drill timed out while ada's took ~2s (2026-10-04,
+# cloud-ec2-test). Generous by default; override per box via runner.env.
+ACP_SESSION_START_TIMEOUT_SECONDS = float(
+    os.environ.get("ACP_SESSION_START_TIMEOUT_SECONDS", "300"))
 
 _ACP_CORE: object = False  # False = not yet attempted
 
@@ -1111,7 +1118,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         if resume_session_id and _resume_target_exists(workdir, resume_session_id):
             state["replaying"] = True
             try:
-                agent.load_session(resume_session_id)
+                agent.load_session(resume_session_id, timeout=ACP_SESSION_START_TIMEOUT_SECONDS)
                 session_id = resume_session_id
             except Exception as exc:  # noqa: BLE001
                 _log(f"turn {turn_id[:8]}: session/load failed ({exc}); starting fresh")
@@ -1122,7 +1129,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                 # the last one's.
                 reducer.reset_stream_state()
         if not session_id:
-            session_id = agent.new_session()
+            session_id = agent.new_session(timeout=ACP_SESSION_START_TIMEOUT_SECONDS)
         _announce_session(turn_id, session_id)
         _log(f"exec: acp (turn {turn_id[:8]}) in {workdir} session={session_id[:8]}")
 
