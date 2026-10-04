@@ -159,3 +159,37 @@ def dismiss_insights(*, workspace_slugs: set[str], ids: list[int]) -> list[int]:
             ).filter(pk__in=found):
                 insight.delete()
     return found
+
+
+# ---------------------------------------------------------------------------
+# Project runs
+# ---------------------------------------------------------------------------
+
+def _taken_run_ids(prefix: str) -> set[str]:
+    """Every run_id with ``prefix`` canopy-web already knows — runs here, AND the
+    walkthroughs/reviews uploaded by runs minted on a runner's disk before runs
+    lived here. Minting past only the first set would hand out an id whose
+    artifacts already exist, and the package page would merge two runs."""
+    from apps.reviews.models import ReviewRequest  # noqa: PLC0415
+    from apps.walkthroughs.models import Walkthrough  # noqa: PLC0415
+
+    from .models import ProjectRun  # noqa: PLC0415
+
+    ids: set[str] = set(ProjectRun.objects.filter(run_id__startswith=prefix).values_list("run_id", flat=True))
+    ids |= set(Walkthrough.objects.filter(run_id__startswith=prefix).values_list("run_id", flat=True))
+    ids |= set(ReviewRequest.objects.filter(run_id__startswith=prefix).values_list("run_id", flat=True))
+    return {i for i in ids if i}
+
+
+def next_run_id(subject: str, *, today=None) -> str:
+    """``<subject>-YYYY-MM-DD-NNN``, one past the highest NNN anywhere for that day."""
+    import datetime as _dt  # noqa: PLC0415
+
+    day = (today or _dt.datetime.now(_dt.UTC).date()).strftime("%Y-%m-%d")
+    prefix = f"{subject or 'run'}-{day}-"
+    nums = []
+    for rid in _taken_run_ids(prefix):
+        tail = rid[len(prefix):]
+        if tail.isdigit():
+            nums.append(int(tail))
+    return f"{prefix}{(max(nums) + 1) if nums else 1:03d}"

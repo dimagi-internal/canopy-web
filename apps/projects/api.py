@@ -19,7 +19,7 @@ from apps.api.errors import (
 )
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
 
-from .models import Project, ProjectAction, ProjectContext
+from .models import Project, ProjectAction, ProjectContext, ProjectRun
 from .schemas import (
     BatchActionsIn,
     BatchContextIn,
@@ -40,6 +40,10 @@ from .schemas import (
     ProjectDetailOut,
     ProjectListOut,
     ProjectPatchIn,
+    ProjectRunCreateIn,
+    ProjectRunDetailOut,
+    ProjectRunOut,
+    ProjectRunStateIn,
     ProjectSlugOut,
 )
 
@@ -481,15 +485,30 @@ def delete_project(
     response=list[ProjectContextEntryOut],
     summary="List context entries",
 )
-def list_context(request: HttpRequest, slug: str) -> list[ProjectContextEntryOut]:
+def list_context(
+    request: HttpRequest,
+    slug: str,
+    scope: str | None = None,
+    context_type: str | None = None,
+    limit: int | None = None,
+) -> list[ProjectContextEntryOut]:
+    """Newest first. ``scope`` narrows to one workflow's entries ("ddd"); pass
+    ``scope=""`` for project-wide ones only. ``context_type`` narrows by type."""
     project = _get_project_or_404_ninja(request, slug)
     contexts = project.contexts.order_by("-created_at")
+    if scope is not None:
+        contexts = contexts.filter(scope=scope)
+    if context_type:
+        contexts = contexts.filter(context_type=context_type)
+    if limit:
+        contexts = contexts[: clamp_limit(limit, cap=1000)]
     return [
         ProjectContextEntryOut(
             id=ctx.pk,
             context_type=ctx.context_type,
             content=ctx.content,
             source=ctx.source,
+            scope=ctx.scope,
             created_at=ctx.created_at,
         )
         for ctx in contexts
@@ -513,12 +532,14 @@ def create_context(
         context_type=payload.context_type,
         content=payload.content,
         source=payload.source,
+        scope=payload.scope,
     )
     return Status(201, ProjectContextEntryOut(
         id=ctx.pk,
         context_type=ctx.context_type,
         content=ctx.content,
         source=ctx.source,
+        scope=ctx.scope,
         created_at=ctx.created_at,
     ))
 
@@ -528,10 +549,15 @@ def create_context(
     response=ProjectContextLatestOut,
     summary="Latest context per type",
 )
-def get_context_latest(request: HttpRequest, slug: str) -> ProjectContextLatestOut:
+def get_context_latest(
+    request: HttpRequest, slug: str, scope: str | None = None
+) -> ProjectContextLatestOut:
     project = _get_project_or_404_ninja(request, slug)
     result: dict[str, ProjectContextOut] = {}
-    for ctx in project.contexts.order_by("-created_at"):
+    qs = project.contexts.order_by("-created_at")
+    if scope is not None:
+        qs = qs.filter(scope=scope)
+    for ctx in qs:
         if ctx.context_type not in result:
             result[ctx.context_type] = ProjectContextOut(
                 content=ctx.content,
@@ -746,3 +772,174 @@ def dismiss_insight(request: HttpRequest, pk: int) -> InsightDismissOut:
         )
     insight.delete()
     return InsightDismissOut(dismissed=pk)
+
+
+# ---------------------------------------------------------------------------
+# Project runs — one run of a kind of work on a project (DDD is the first kind)
+# ---------------------------------------------------------------------------
+
+
+def _run_out(run: ProjectRun, *, detail: bool = False):
+    data = {
+        "run_id": run.run_id,
+        "project_slug": run.project.slug,
+        "kind": run.kind,
+        "subject": run.subject,
+        "title": run.title,
+        "status": run.status,
+        "phase": run.phase,
+        "iteration": run.iteration,
+        "summary": run.summary or {},
+        "state_version": run.state_version,
+        "holder": run.holder,
+        "holder_at": run.holder_at,
+        "created_by_email": run.created_by.email if run.created_by_id else None,
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+        "completed_at": run.completed_at,
+    }
+    if detail:
+        return ProjectRunDetailOut(**data, state=run.state or {})
+    return ProjectRunOut(**data)
+
+
+def _get_run_or_404(project: Project, run_id: str) -> ProjectRun:
+    run = ProjectRun.objects.select_related("project", "created_by").filter(
+        project=project, run_id=run_id
+    ).first()
+    if run is None:
+        raise ProblemError(
+            404, "Run not found", type_=TYPE_NOT_FOUND,
+            detail=f"No run '{run_id}' on project '{project.slug}'.",
+        )
+    return run
+
+
+def _stamp_terminal(run: ProjectRun) -> None:
+    from django.utils import timezone  # noqa: PLC0415
+
+    if run.status != ProjectRun.RUNNING and run.completed_at is None:
+        run.completed_at = timezone.now()
+    elif run.status == ProjectRun.RUNNING:
+        run.completed_at = None
+
+
+@router.get("/{slug}/runs/", response=list[ProjectRunOut], summary="List project runs")
+def list_project_runs(
+    request: HttpRequest,
+    slug: str,
+    kind: str | None = None,
+    subject: str | None = None,
+    active: bool | None = None,
+    limit: int = 50,
+) -> list[ProjectRunOut]:
+    """Newest first. ``active=true`` = status "running" (what a runner resumes)."""
+    project = _get_project_or_404_ninja(request, slug)
+    qs = ProjectRun.objects.select_related("project", "created_by").filter(project=project)
+    if kind:
+        qs = qs.filter(kind=kind)
+    if subject:
+        qs = qs.filter(subject=subject)
+    if active is True:
+        qs = qs.filter(status=ProjectRun.RUNNING)
+    elif active is False:
+        qs = qs.exclude(status=ProjectRun.RUNNING)
+    return [_run_out(r) for r in qs.order_by("-updated_at")[: clamp_limit(limit, cap=500)]]
+
+
+@router.post("/{slug}/runs/", response={201: ProjectRunDetailOut}, summary="Start (or adopt) a project run")
+def create_project_run(request: HttpRequest, slug: str, payload: ProjectRunCreateIn) -> Status:
+    """The server mints ``<subject>-YYYY-MM-DD-NNN`` past every id it already
+    knows (runs, walkthroughs, reviews), so two runners can never mint the same
+    run. Pass ``run_id`` to adopt a run minted elsewhere (409 if it exists)."""
+    from django.utils import timezone  # noqa: PLC0415
+
+    project = _get_project_for_write(request, slug)
+    for _attempt in range(5):
+        run_id = payload.run_id or services.next_run_id(payload.subject)
+        try:
+            with transaction.atomic():
+                run = ProjectRun(
+                    project=project,
+                    kind=payload.kind,
+                    run_id=run_id,
+                    subject=payload.subject,
+                    title=payload.title,
+                    status=payload.status or ProjectRun.RUNNING,
+                    phase=payload.phase,
+                    iteration=payload.iteration,
+                    summary=payload.summary,
+                    state=payload.state,
+                    state_version=1 if payload.state else 0,
+                    holder=payload.holder,
+                    holder_at=timezone.now() if payload.holder else None,
+                    created_by=request.user if request.user.is_authenticated else None,
+                )
+                _stamp_terminal(run)
+                run.save()
+        except IntegrityError:
+            if payload.run_id:
+                raise ProblemError(
+                    409, "Run already exists", type_=TYPE_CONFLICT,
+                    detail=f"A run with id '{payload.run_id}' already exists.",
+                )
+            continue  # raced another minter for the same NNN — mint again
+        return Status(201, _run_out(run, detail=True))
+    raise ProblemError(
+        409, "Could not mint a run id", type_=TYPE_CONFLICT,
+        detail="five concurrent mints collided; retry",
+    )
+
+
+@router.get("/{slug}/runs/{run_id}/", response=ProjectRunDetailOut, summary="Get a project run with its state")
+def get_project_run(request: HttpRequest, slug: str, run_id: str) -> ProjectRunDetailOut:
+    project = _get_project_or_404_ninja(request, slug)
+    return _run_out(_get_run_or_404(project, run_id), detail=True)
+
+
+@router.put("/{slug}/runs/{run_id}/state/", response=ProjectRunDetailOut, summary="Write a project run's state")
+def put_project_run_state(
+    request: HttpRequest, slug: str, run_id: str, payload: ProjectRunStateIn
+) -> ProjectRunDetailOut:
+    """Optimistic concurrency: ``base_version`` must equal the stored
+    ``state_version`` (else 409 — another runner advanced the run), unless
+    ``force``. Each accepted write bumps ``state_version`` by one."""
+    from django.utils import timezone  # noqa: PLC0415
+
+    project = _get_project_for_write(request, slug)
+    with transaction.atomic():
+        run = (
+            ProjectRun.objects.select_for_update()
+            .select_related("project", "created_by")
+            .filter(project=project, run_id=run_id)
+            .first()
+        )
+        if run is None:
+            raise ProblemError(
+                404, "Run not found", type_=TYPE_NOT_FOUND,
+                detail=f"No run '{run_id}' on project '{project.slug}'.",
+            )
+        if (
+            not payload.force
+            and payload.base_version is not None
+            and payload.base_version != run.state_version
+        ):
+            raise ProblemError(
+                409, "Run state changed", type_=TYPE_CONFLICT,
+                detail=(
+                    f"run '{run_id}' is at state_version {run.state_version} "
+                    f"(last written by {run.holder or 'unknown'}), not {payload.base_version}"
+                ),
+            )
+        run.state = payload.state
+        run.state_version += 1
+        for field in ("status", "phase", "iteration", "title", "summary"):
+            value = getattr(payload, field)
+            if value is not None:
+                setattr(run, field, value)
+        if payload.holder:
+            run.holder = payload.holder
+            run.holder_at = timezone.now()
+        _stamp_terminal(run)
+        run.save()
+    return _run_out(run, detail=True)

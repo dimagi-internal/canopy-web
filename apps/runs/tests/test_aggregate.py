@@ -317,3 +317,51 @@ def test_run_child_review_attaches_to_an_existing_narrative():
     narratives = {n["slug"]: n for n in aggregate.list_narratives()}
     assert set(narratives) == {"microplans"}
     assert narratives["microplans"]["run_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# build_run — the run's own record (apps.projects.ProjectRun)
+# ---------------------------------------------------------------------------
+
+
+def _record(rid, ws, **kw):
+    from apps.projects.models import Project, ProjectRun
+
+    project = Project.objects.create(name="connect-labs", slug="connect-labs", workspace=ws)
+    return ProjectRun.objects.create(project=project, kind="ddd", run_id=rid, subject="supply", **kw)
+
+
+def test_build_run_phase_comes_from_the_run_record_not_the_latest_review():
+    from .factories import make_workspace
+
+    u = make_user()
+    rid = "supply-2026-10-04-001"
+    make_walkthrough(u, kind="html", run_id=rid, role="deck", title="iter3 deck")
+    _record(rid, make_workspace("wsrec"), phase="judged", iteration=3, summary={"objective": "product"})
+
+    run = aggregate.build_run(rid)
+    assert run["phase"] == "judged · iteration 3"
+    assert run["record"]["summary"] == {"objective": "product"}
+
+    from apps.projects.models import ProjectRun
+
+    ProjectRun.objects.filter(run_id=rid).update(status="converged_clean")
+    assert aggregate.build_run(rid)["phase"] == "converged_clean"
+
+
+def test_build_run_hides_the_record_from_a_workspace_outside_the_project():
+    from .factories import make_workspace
+
+    u = make_user()
+    rid = "supply-2026-10-04-002"
+    wt = make_walkthrough(u, kind="html", run_id=rid, role="deck", title="deck")
+    _record(rid, make_workspace("other-ws"), phase="judged")
+    run = aggregate.build_run(rid, workspace_slugs={wt.workspace_id})
+    assert run["record"] is None
+
+
+def test_a_run_with_only_a_record_still_has_a_package():
+    from .factories import make_workspace
+
+    _record("supply-2026-10-04-003", make_workspace("wsrec3"), phase="render")
+    assert aggregate.build_run("supply-2026-10-04-003")["phase"] == "render · iteration 0"

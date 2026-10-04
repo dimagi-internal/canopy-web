@@ -10,7 +10,7 @@ from apps.common.schemas import StrictModel
 
 ProjectVisibility = Literal["public", "private"]
 ProjectStatus = Literal["active", "stale", "archived"]
-ProjectContextType = Literal["current_work", "next_step", "summary", "note", "insight"]
+ProjectContextType = Literal["current_work", "next_step", "summary", "note", "insight", "learning"]
 ActionStatus = Literal["started", "completed", "failed"]
 
 SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
@@ -35,6 +35,7 @@ class ProjectContextEntryOut(StrictModel):
     context_type: ProjectContextType
     content: str
     source: str
+    scope: str = ""
     created_at: dt.datetime
 
 
@@ -42,6 +43,8 @@ class ProjectContextCreateIn(StrictModel):
     context_type: ProjectContextType
     content: str = Field(min_length=1)
     source: str = Field(min_length=1, max_length=100)
+    # "" = the project as a whole; a workflow name ("ddd") scopes it to that work.
+    scope: str = Field(default="", max_length=40, pattern=r"^$|^[a-z0-9][a-z0-9_-]*$")
 
 
 class ProjectActionLatestOut(StrictModel):
@@ -187,3 +190,63 @@ class InsightsDismissIn(StrictModel):
 
 class InsightsDismissOut(StrictModel):
     dismissed: list[int]
+
+
+# ---------------------------------------------------------------------------
+# Project runs — one run of a kind of work on a project (DDD first)
+# ---------------------------------------------------------------------------
+
+RUN_KIND_PATTERN = r"^[a-z0-9][a-z0-9_-]*$"
+
+
+class ProjectRunCreateIn(StrictModel):
+    kind: str = Field(min_length=1, max_length=40, pattern=RUN_KIND_PATTERN)
+    subject: str = Field(default="", max_length=200, pattern=r"^$|^[a-z0-9][a-z0-9-]*$")
+    title: str = Field(default="", max_length=300)
+    # Adopt a run that already exists elsewhere (e.g. one minted locally before
+    # runs lived here). Omit to have the server mint ``<subject>-YYYY-MM-DD-NNN``.
+    run_id: str | None = Field(default=None, max_length=255, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    status: str = Field(default="running", max_length=40)
+    phase: str = Field(default="", max_length=40)
+    iteration: int = 0
+    summary: dict = Field(default_factory=dict)
+    state: dict = Field(default_factory=dict)
+    holder: str = Field(default="", max_length=200)
+
+
+class ProjectRunStateIn(StrictModel):
+    state: dict
+    # The state_version the writer last read. A mismatch is a 409 — another
+    # runner advanced the run since — unless ``force`` (an explicit overrule).
+    base_version: int | None = None
+    force: bool = False
+    status: str | None = Field(default=None, max_length=40)
+    phase: str | None = Field(default=None, max_length=40)
+    iteration: int | None = None
+    title: str | None = Field(default=None, max_length=300)
+    summary: dict | None = None
+    holder: str = Field(default="", max_length=200)
+
+
+class ProjectRunOut(StrictModel):
+    """A run without its state document — what lists return."""
+    run_id: str
+    project_slug: str
+    kind: str
+    subject: str
+    title: str
+    status: str
+    phase: str
+    iteration: int
+    summary: dict
+    state_version: int
+    holder: str
+    holder_at: dt.datetime | None = None
+    created_by_email: str | None = None
+    created_at: dt.datetime
+    updated_at: dt.datetime
+    completed_at: dt.datetime | None = None
+
+
+class ProjectRunDetailOut(ProjectRunOut):
+    state: dict

@@ -90,6 +90,7 @@ export const projectsApi = {
           | "insight",
         content: input.content,
         source: input.source,
+        scope: "",
       },
     });
     if (error) throw new Error("Failed to create context entry");

@@ -223,6 +223,32 @@ def _title_from_review(r: ReviewRequest) -> str | None:
     return None
 
 
+def _run_record(run_id: str, workspace_slugs: set[str] | None) -> dict | None:
+    """The run's ``ProjectRun`` row, if the caller may see its project.
+
+    A run's artifacts are tenanted by THEIR workspace; its record by its
+    project's. The record shows only to members of the project's workspace.
+    """
+    from apps.projects.models import ProjectRun  # noqa: PLC0415
+
+    qs = ProjectRun.objects.select_related("project").filter(run_id=run_id)
+    if workspace_slugs is not None:
+        qs = qs.filter(project__workspace_id__in=workspace_slugs)
+    run = qs.first()
+    if run is None:
+        return None
+    return {
+        "project_slug": run.project.slug,
+        "kind": run.kind,
+        "status": run.status,
+        "phase": run.phase,
+        "iteration": run.iteration,
+        "summary": run.summary or {},
+        "holder": run.holder,
+        "updated_at": run.updated_at,
+    }
+
+
 def _phase_label(r: ReviewRequest) -> str:
     return f"{r.gate} · {r.status}"
 
@@ -249,7 +275,8 @@ def build_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | No
     revs = list(
         _scope(ReviewRequest.objects.filter(run_id=run_id), workspace_slugs)
     )  # -created_at default
-    if not wts and not revs:
+    record = _run_record(run_id, workspace_slugs)
+    if not wts and not revs and record is None:
         return None
 
     video = _pick(
@@ -294,6 +321,13 @@ def build_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | No
 
     narrative_payload = _narrative_payload(narrative_review)
     phase = _phase_label(revs[0]) if revs else None
+    if record is not None:
+        # The runner's own account of the run beats a guess from its latest review.
+        phase = (
+            f"{record['phase'] or 'running'} · iteration {record['iteration']}"
+            if record["status"] == "running"
+            else record["status"]
+        )
 
     # Links: union across the run's walkthroughs, de-duped on (url, kind),
     # oldest-first for a stable order.
@@ -337,6 +371,7 @@ def build_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | No
         "created_at": created_at,
         "latest_at": latest_at,
         "phase": phase,
+        "record": record,
         "video": _artifact_payload(video),
         "slides": _artifact_payload(slides),
         "documentation": _artifact_payload(documentation),

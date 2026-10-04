@@ -145,7 +145,11 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List context entries */
+        /**
+         * List context entries
+         * @description Newest first. ``scope`` narrows to one workflow's entries ("ddd"); pass
+         *     ``scope=""`` for project-wide ones only. ``context_type`` narrows by type.
+         */
         readonly get: operations["list_context"];
         readonly put?: never;
         /**
@@ -207,6 +211,71 @@ export interface paths {
         /** Latest action per skill */
         readonly get: operations["get_actions_summary"];
         readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/projects/{slug}/runs/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List project runs
+         * @description Newest first. ``active=true`` = status "running" (what a runner resumes).
+         */
+        readonly get: operations["list_project_runs"];
+        readonly put?: never;
+        /**
+         * Start (or adopt) a project run
+         * @description The server mints ``<subject>-YYYY-MM-DD-NNN`` past every id it already
+         *     knows (runs, walkthroughs, reviews), so two runners can never mint the same
+         *     run. Pass ``run_id`` to adopt a run minted elsewhere (409 if it exists).
+         */
+        readonly post: operations["create_project_run"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/projects/{slug}/runs/{run_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get a project run with its state */
+        readonly get: operations["get_project_run"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/projects/{slug}/runs/{run_id}/state/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Write a project run's state
+         * @description Optimistic concurrency: ``base_version`` must equal the stored
+         *     ``state_version`` (else 409 — another runner advanced the run), unless
+         *     ``force``. Each accepted write bumps ``state_version`` by one.
+         */
+        readonly put: operations["put_project_run_state"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -6250,11 +6319,16 @@ export interface components {
              * Context Type
              * @enum {string}
              */
-            readonly context_type: "current_work" | "next_step" | "summary" | "note" | "insight";
+            readonly context_type: "current_work" | "next_step" | "summary" | "note" | "insight" | "learning";
             /** Content */
             readonly content: string;
             /** Source */
             readonly source: string;
+            /**
+             * Scope
+             * @default
+             */
+            readonly scope: string;
         };
         /**
          * BatchActionsIn
@@ -6322,11 +6396,16 @@ export interface components {
              * Context Type
              * @enum {string}
              */
-            readonly context_type: "current_work" | "next_step" | "summary" | "note" | "insight";
+            readonly context_type: "current_work" | "next_step" | "summary" | "note" | "insight" | "learning";
             /** Content */
             readonly content: string;
             /** Source */
             readonly source: string;
+            /**
+             * Scope
+             * @default
+             */
+            readonly scope: string;
             /**
              * Created At
              * Format: date-time
@@ -6392,6 +6471,175 @@ export interface components {
             readonly started_at: string;
             /** Completed At */
             readonly completed_at?: string | null;
+        };
+        /**
+         * ProjectRunOut
+         * @description A run without its state document — what lists return.
+         */
+        readonly ProjectRunOut: {
+            /** Run Id */
+            readonly run_id: string;
+            /** Project Slug */
+            readonly project_slug: string;
+            /** Kind */
+            readonly kind: string;
+            /** Subject */
+            readonly subject: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: string;
+            /** Phase */
+            readonly phase: string;
+            /** Iteration */
+            readonly iteration: number;
+            /** Summary */
+            readonly summary: {
+                readonly [key: string]: unknown;
+            };
+            /** State Version */
+            readonly state_version: number;
+            /** Holder */
+            readonly holder: string;
+            /** Holder At */
+            readonly holder_at?: string | null;
+            /** Created By Email */
+            readonly created_by_email?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /** Completed At */
+            readonly completed_at?: string | null;
+        };
+        /** ProjectRunDetailOut */
+        readonly ProjectRunDetailOut: {
+            /** Run Id */
+            readonly run_id: string;
+            /** Project Slug */
+            readonly project_slug: string;
+            /** Kind */
+            readonly kind: string;
+            /** Subject */
+            readonly subject: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: string;
+            /** Phase */
+            readonly phase: string;
+            /** Iteration */
+            readonly iteration: number;
+            /** Summary */
+            readonly summary: {
+                readonly [key: string]: unknown;
+            };
+            /** State Version */
+            readonly state_version: number;
+            /** Holder */
+            readonly holder: string;
+            /** Holder At */
+            readonly holder_at?: string | null;
+            /** Created By Email */
+            readonly created_by_email?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /** Completed At */
+            readonly completed_at?: string | null;
+            /** State */
+            readonly state: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** ProjectRunCreateIn */
+        readonly ProjectRunCreateIn: {
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Subject
+             * @default
+             */
+            readonly subject: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+            /** Run Id */
+            readonly run_id?: string | null;
+            /**
+             * Status
+             * @default running
+             */
+            readonly status: string;
+            /**
+             * Phase
+             * @default
+             */
+            readonly phase: string;
+            /**
+             * Iteration
+             * @default 0
+             */
+            readonly iteration: number;
+            /** Summary */
+            readonly summary?: {
+                readonly [key: string]: unknown;
+            };
+            /** State */
+            readonly state?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Holder
+             * @default
+             */
+            readonly holder: string;
+        };
+        /** ProjectRunStateIn */
+        readonly ProjectRunStateIn: {
+            /** State */
+            readonly state: {
+                readonly [key: string]: unknown;
+            };
+            /** Base Version */
+            readonly base_version?: number | null;
+            /**
+             * Force
+             * @default false
+             */
+            readonly force: boolean;
+            /** Status */
+            readonly status?: string | null;
+            /** Phase */
+            readonly phase?: string | null;
+            /** Iteration */
+            readonly iteration?: number | null;
+            /** Title */
+            readonly title?: string | null;
+            /** Summary */
+            readonly summary?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Holder
+             * @default
+             */
+            readonly holder: string;
         };
         /** OriginIssueOut */
         readonly OriginIssueOut: {
@@ -8603,6 +8851,7 @@ export interface components {
             readonly latest_at?: string | null;
             /** Phase */
             readonly phase?: string | null;
+            readonly record?: components["schemas"]["RunRecordOut"] | null;
             readonly video?: components["schemas"]["RunArtifactOut"] | null;
             readonly slides?: components["schemas"]["RunArtifactOut"] | null;
             readonly documentation?: components["schemas"]["RunArtifactOut"] | null;
@@ -8617,6 +8866,43 @@ export interface components {
              * @default []
              */
             readonly all_artifacts: readonly components["schemas"]["RunArtifactRefOut"][];
+        };
+        /**
+         * RunRecordOut
+         * @description The run's own record (``apps.projects.ProjectRun``) — what the runner
+         *     says about the run, instead of a phase guessed from its latest review.
+         */
+        readonly RunRecordOut: {
+            /** Project Slug */
+            readonly project_slug: string;
+            /** Kind */
+            readonly kind: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Phase
+             * @default
+             */
+            readonly phase: string;
+            /**
+             * Iteration
+             * @default 0
+             */
+            readonly iteration: number;
+            /**
+             * Summary
+             * @default {}
+             */
+            readonly summary: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Holder
+             * @default
+             */
+            readonly holder: string;
+            /** Updated At */
+            readonly updated_at?: string | null;
         };
         /**
          * RunReleaseOut
@@ -14926,7 +15212,11 @@ export interface operations {
     };
     readonly list_context: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly scope?: string | null;
+                readonly context_type?: string | null;
+                readonly limit?: number | null;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
@@ -14974,7 +15264,9 @@ export interface operations {
     };
     readonly get_context_latest: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly scope?: string | null;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
@@ -15062,6 +15354,109 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["ProjectActionSummaryOut"][];
+                };
+            };
+        };
+    };
+    readonly list_project_runs: {
+        readonly parameters: {
+            readonly query?: {
+                readonly kind?: string | null;
+                readonly subject?: string | null;
+                readonly active?: boolean | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ProjectRunOut"][];
+                };
+            };
+        };
+    };
+    readonly create_project_run: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectRunCreateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectRunDetailOut"];
+                };
+            };
+        };
+    };
+    readonly get_project_run: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly run_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectRunDetailOut"];
+                };
+            };
+        };
+    };
+    readonly put_project_run_state: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly run_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectRunStateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectRunDetailOut"];
                 };
             };
         };
