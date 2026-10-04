@@ -6,8 +6,9 @@ admin rows, runner admin rows, chat participant rows, the GitHub token they
 lent an agent, the agents they owned, and their own box's place on those
 agents' runner lists. Most of those legs re-check membership at read time, so
 the leftovers were dormant rather than live. But dormant is the problem:
-`dimagi` is self-join, so a removed person clicks Join, lands as an editor,
-and every one of those grants wakes up again. Removal you can undo yourself
+`dimagi` auto-approves access requests (as editor, for now), so a removed
+person asks again, lands as an editor, and every one of those grants wakes up
+again. Removal you can undo yourself
 is not removal.
 
 So a departure is swept here, in one list, rather than by a receiver per app:

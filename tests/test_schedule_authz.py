@@ -32,19 +32,19 @@ def founder():
 
 @pytest.fixture()
 def victim_ws(founder):
-    # self_join_domains=[] keeps this workspace reachable only by an explicit
+    # access_request_domains=[] keeps this workspace reachable only by an explicit
     # membership row — there is no more auto-join to silently make the
     # attacker (both users below are @dimagi.com) a member, which would make
     # the test pass while testing nothing.
     return Workspace.objects.create(
-        slug="dimagi", display_name="Dimagi", self_join_domains=[], created_by=founder
+        slug="dimagi", display_name="Dimagi", access_request_domains=[], created_by=founder
     )
 
 
 @pytest.fixture()
 def attacker_ws(founder):
     return Workspace.objects.create(
-        slug="evilcorp", display_name="Evil Corp", self_join_domains=[], created_by=founder
+        slug="evilcorp", display_name="Evil Corp", access_request_domains=[], created_by=founder
     )
 
 

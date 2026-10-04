@@ -131,8 +131,9 @@ TRANSCRIPT_APPEND_MAX_BYTES = 1 * 1024 * 1024
 def _agent_or_404(request: HttpRequest, slug: str) -> Agent:
     """Resolve an agent, gated by workspace membership. A non-member gets the
     same 404 as a missing agent (no existence leak). A domain user who has not
-    explicitly joined the agent's workspace (`POST /api/workspaces/{slug}/join`)
-    is a non-member and gets exactly that 404 — there is no more auto-join.
+    been let into the agent's workspace (an invite, or an approved access
+    request) is a non-member and gets exactly that 404 — nothing joins
+    automatically.
 
     Harness-local twin of agents.api._get_agent_or_404 — deliberately duplicated
     rather than imported: api modules must not depend on each other, and the

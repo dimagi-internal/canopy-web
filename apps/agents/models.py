@@ -171,7 +171,7 @@ class Agent(models.Model):
         already make themselves any agent's owner (`transfer_owner`), so
         excluding them would be theatre, and a row seeded once would miss every
         owner added later. The explicit grant is for everyone else — above all
-        instead of `editor`, which self-join hands to anyone who clicks "join".
+        instead of `editor`, which an auto-approved access request can hand out.
 
         Fails closed: an anonymous user, an agent with no workspace, or anyone
         who is not a CURRENT member — an explicit grant's holder, and the owner

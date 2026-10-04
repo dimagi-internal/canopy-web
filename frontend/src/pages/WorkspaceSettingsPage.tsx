@@ -33,6 +33,7 @@ export interface SettingsSection {
  *  it is the section every workspace has something to say about. */
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   { segment: 'members', label: 'Members' },
+  { segment: 'access-requests', label: 'Access requests' },
   { segment: 'slack', label: 'Slack' },
   { segment: 'inbound', label: 'Inbound email' },
   { segment: 'connected-apps', label: 'Connected sites' },

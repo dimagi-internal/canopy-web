@@ -135,8 +135,22 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/settings/members',
     title: 'Members',
     audience: 'Any workspace member (owner-only actions)',
-    what: 'Admin surface for who is in the workspace: the member list with roles, and pending invites — each invite is a copy-linkable `/invite/:token` URL (canopy sends no email itself).',
+    what: 'Admin surface for who is in the workspace: the member list with roles, and pending invites — each invite is emailed and is also a copy-linkable `/invite/:token` URL. An invite grants the role chosen when it was sent (viewer unless you pick otherwise).',
     actions: ['Invite someone by email', 'Change a member\'s role', 'Remove a member', 'Revoke a pending invite'],
+  },
+  {
+    path: '/w/:workspace/settings/access-requests',
+    title: 'Access requests',
+    audience: 'Workspace admins and owners',
+    what: "People asking to be invited: anyone signed in with an address at one of the workspace's request domains can ask from the welcome screen, and every admin and owner is emailed a link to the request. Owners set whether requests are approved automatically (and at which role, viewer or editor) or each waits for a person.",
+    actions: ['Review a request', 'Turn auto-approve on or off (owners)'],
+  },
+  {
+    path: '/w/:workspace/settings/access-requests/:requestId',
+    title: 'Access request',
+    audience: 'Workspace admins and owners (the link in the notification email)',
+    what: 'One request: who asked, their address and domain, their note, and when. Approve at a role you may grant (viewer by default) or deny with an optional reason — they are emailed either way. A decided request is read-only; if it was approved, their current role can be changed or they can be removed.',
+    actions: ['Approve at a role', 'Deny with a reason', "Change an approved person's role", 'Remove them'],
   },
   {
     path: '/w/:workspace/settings/connected-apps',

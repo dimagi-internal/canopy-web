@@ -75,7 +75,7 @@ class Workspace(models.Model):
     # an OWNER of an ancestor is an owner of every descendant, and no other
     # ACCESS flows down (the one config that does is the shared vault — see
     # `shared_vault_source`; it grants no person anything). A parent's editors and viewers get no access to a child: the
-    # org workspace is self-join for the whole email domain, so inheriting
+    # org workspace takes access requests from the whole email domain, so inheriting
     # editor would hand every employee every division's agents, which is the
     # exact isolation a division workspace exists to provide. Resolution lives
     # in `services.membership` (the sole authorizer), not here.
@@ -111,12 +111,30 @@ class Workspace(models.Model):
                   "needs, e.g. Canopy-Shared. Blank falls back to the box default.",
     )
     shared_op_sa_token_enc = models.TextField(blank=True, default="")
-    self_join_domains = models.JSONField(
+    # Who may REQUEST an invitation (owner decision, 2026-10-04): a person whose
+    # login email is at one of these domains sees this workspace in
+    # `GET /api/workspaces/requestable` and may `POST .../access-requests`.
+    # Nothing here grants membership — an admin or owner approves the request
+    # (or, while `auto_approve_role` is set, it is approved at that role).
+    # Server-only: never client input (see WorkspaceCreateIn). Was
+    # `self_join_domains` ("may join") until workspaces/0012.
+    access_request_domains = models.JSONField(
         default=list,
         blank=True,
-        help_text="Email domains (lowercased, no leading '@') whose users may JOIN "
-        "this workspace themselves, by explicit action. Not automatic — see "
-        "POST /api/workspaces/{slug}/join.",
+        help_text="Email domains (lowercased, no leading '@') whose users may REQUEST "
+        "an invitation to this workspace. A request grants nothing until approved.",
+    )
+    # Approve every access request the moment it is made, at THIS role. Blank =
+    # off: a person approves each one. A per-workspace setting rather than code
+    # so turning it off or lowering it is a settings change (a workspace owner,
+    # `PUT /api/workspaces/{slug}/access-settings`). Capped at editor — an
+    # automatic grant never makes an admin or owner. Off everywhere by
+    # default; `dimagi` was set to editor by workspaces/0012 while it
+    # bootstraps (Jonathan, 2026-10-04). An auto-approved request is still a
+    # normal request record, and every admin and owner is still told.
+    AUTO_APPROVE_CHOICES = [("", "Off"), ("viewer", "Viewer"), ("editor", "Editor")]
+    auto_approve_role = models.CharField(
+        max_length=16, blank=True, default="", choices=AUTO_APPROVE_CHOICES,
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -281,7 +299,9 @@ class WorkspaceInvite(models.Model):
     role = models.CharField(
         max_length=16,
         choices=WorkspaceMembership.ROLE_CHOICES,
-        default=WorkspaceMembership.EDITOR,
+        # The role the inviting admin chose; accepting grants exactly it (never
+        # lower than a role already held). Viewer unless they chose otherwise.
+        default=WorkspaceMembership.VIEWER,
     )
     token = models.CharField(max_length=64, unique=True, default=generate_invite_token)
     invited_by = models.ForeignKey(
@@ -317,3 +337,64 @@ class WorkspaceInvite(models.Model):
         if self.accepted_at is not None or self.revoked_at is not None:
             return False
         return self.expires_at > timezone.now()
+
+
+class WorkspaceAccessRequest(models.Model):
+    """Someone asking to be invited into a workspace.
+
+    The only way in besides an invite: a person whose login email is at one of
+    the workspace's `access_request_domains` asks; every admin and owner is
+    notified; an admin or owner approves at a role (no higher than their own
+    may grant) or denies. Approval is what creates the membership
+    (`services.approve_access_request`). With the workspace's
+    `auto_approve_role` set, the request is approved at creation at that role,
+    `auto=True`, `decided_by=None`. See docs/architecture/access.md.
+    """
+
+    PENDING, APPROVED, DENIED = "pending", "approved", "denied"
+    STATUS_CHOICES = [(PENDING, "Pending"), (APPROVED, "Approved"), (DENIED, "Denied")]
+
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="access_requests"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="workspace_access_requests",
+    )
+    note = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=PENDING)
+    # The role an approval granted. Blank while pending or denied.
+    role = models.CharField(
+        max_length=16, choices=WorkspaceMembership.ROLE_CHOICES, blank=True, default="",
+    )
+    auto = models.BooleanField(default=False)
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    # Optional words from whoever denied it, passed on to the requester.
+    decision_reason = models.TextField(blank=True, default="")
+    # What happened when the admins were told — {"emailed": [...], "failed":
+    # [...], "pushed": n, "not_configured": bool}. Kept so a failed notification
+    # is visible on the request itself, not only in a log line.
+    notify_result = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["workspace", "status", "-created_at"], name="ws_access_req_status_idx")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "user"],
+                condition=models.Q(status="pending"),
+                name="uniq_ws_access_request_open",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Access request {self.user_id} -> {self.workspace_id} ({self.status})"

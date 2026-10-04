@@ -46,7 +46,7 @@ export async function listGitHubInstallations(): Promise<GitHubInstallationOut[]
   }
   // The `--immutable` codegen types an array response as a deeply-readonly
   // object that is not even iterable, so it cannot be spread or mapped. Cast
-  // through `unknown`, the idiom already used by `listJoinableWorkspaces` in
+  // through `unknown`, the idiom already used by `listRequestableWorkspaces` in
   // api/workspaces.ts, rather than inventing a second approach here.
   return res.data as unknown as GitHubInstallationOut[]
 }

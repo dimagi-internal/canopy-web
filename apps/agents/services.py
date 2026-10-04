@@ -1026,8 +1026,8 @@ def caller_runs_agent(user, agent) -> bool:
     # still PAIR it. Disabling governs automatic routing, not trust.
     #
     # AND the owner must be one of the agent's admins (`runner_may_hold_agent`).
-    # An assignment row alone is written by the EDITOR tier, which self-join
-    # hands out — so without this, an editor paired a box, added it to the list
+    # An assignment row alone is written by the EDITOR tier, which an
+    # auto-approved access request hands out — so without this, an editor paired a box, added it to the list
     # (disabled, at the bottom) and read every secret, both vault keys and the
     # owner's GitHub token through `/credentials/resolve`.
     if not agent.is_admin(user):

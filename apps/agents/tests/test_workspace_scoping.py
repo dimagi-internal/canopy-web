@@ -88,7 +88,7 @@ def _make_ws(slug, owner, self_join=()):
     from apps.workspaces.models import Workspace
     return Workspace.objects.create(
         slug=slug, display_name=slug.title(), created_by=owner,
-        self_join_domains=list(self_join),
+        access_request_domains=list(self_join),
     )
 
 

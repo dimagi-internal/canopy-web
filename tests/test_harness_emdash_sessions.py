@@ -168,7 +168,7 @@ def test_list_no_longer_auto_joins_a_domain_matching_user_with_no_membership_row
     A @dimagi.com user who has never explicitly joined `dimagi` (via
     `POST /api/workspaces/dimagi/join`) has NO WorkspaceMembership row, and
     must see an EMPTY list — not the workspace's sessions — even though the
-    workspace's `self_join_domains` would let them join. This rewrites what
+    workspace's `access_request_domains` would let them join. This rewrites what
     `test_list_auto_joins_a_domain_matching_user_with_no_membership_row` used
     to assert (that merely sharing the domain silently granted the list)."""
     from django.test import Client
@@ -176,8 +176,8 @@ def test_list_no_longer_auto_joins_a_domain_matching_user_with_no_membership_row
 
     owner = _user("owner")
     ws = _ws("dimagi", owner)
-    ws.self_join_domains = ["dimagi.com"]
-    ws.save(update_fields=["self_join_domains"])
+    ws.access_request_domains = ["dimagi.com"]
+    ws.save(update_fields=["access_request_domains"])
     runner = _runner(owner, ws)
     replace_reported_sessions(runner, ws, [_reported("cloud-runner")])
 

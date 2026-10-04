@@ -225,7 +225,7 @@ def test_runner_claims_for_agents_in_any_workspace_its_runner_owner_belongs_to(o
     so claiming for it is no escalation.
     """
     sibling = Workspace.objects.create(
-        slug="connect", display_name="Connect", created_by=owner, self_join_domains=[]
+        slug="connect", display_name="Connect", created_by=owner, access_request_domains=[]
     )
     WorkspaceMembership.objects.create(
         user=owner, workspace=sibling, role=WorkspaceMembership.OWNER

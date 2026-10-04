@@ -8,7 +8,8 @@ The 2026-10-02 ACL audit, second pass. Two shapes of the same mistake:
   when they messaged the agent, kept lending it their GitHub token and kept
   being pushed about it. Their AgentAdmin / RunnerAdmin / SessionParticipant
   rows and their box on the tenant's agents stayed behind dormant — and `dimagi`
-  is self-join, so one click on Join woke every one of them up.
+  takes access requests from the whole domain (auto-approved while it bootstraps),
+  so one request woke every one of them up.
 - **A listing that read the workspace's own rows** and so never saw the owners
   of a parent workspace, who own it too: the members page, an agent's roster,
   push recipients, the last-owner guard.
@@ -48,7 +49,7 @@ def _runner(user, name, ws=WS) -> Runner:
 
 @pytest.fixture
 def life():
-    ws = a_workspace(WS, self_join_domains=["dimagi.com"])
+    ws = a_workspace(WS, access_request_domains=["dimagi.com"])
     owner = a_member(ws, email="life-owner@dimagi.com", role=M.OWNER)
     leaver = a_member(ws, email="life-leaver@dimagi.com", role=M.EDITOR)
     agent = Agent.objects.create(slug="lifebot", name="Life", workspace=ws, owner=leaver)
@@ -134,15 +135,19 @@ def test_removal_sweeps_every_grant_the_membership_carried(life):
 
 
 def test_rejoining_does_not_revive_anything(life):
-    """The reason for the sweep: `dimagi`-style self-join lets a removed person
-    walk straight back in as an editor."""
+    """The reason for the sweep: a `dimagi`-style auto-approved access request
+    lets a removed person walk straight back in as an editor."""
     ws, leaver = life["ws"], life["leaver"]
+    ws.auto_approve_role = M.EDITOR
+    ws.save(update_fields=["auto_approve_role"])
     other = Agent.objects.create(slug="lifebot2", name="Life 2", workspace=ws)
     AgentAdmin.objects.create(agent=other, user=leaver)
     _remove(life)
 
-    res = _client(leaver).post(f"/api/workspaces/{WS}/join")
-    assert res.status_code == 200, res.content
+    res = _client(leaver).post(f"/api/workspaces/{WS}/access-requests", data="{}",
+                               content_type="application/json")
+    assert res.status_code == 201, res.content
+    assert res.json()["status"] == "approved"
     assert wsvc.member_role(leaver, WS) == M.EDITOR
     life["agent"].refresh_from_db()
     assert not life["agent"].is_admin(leaver)

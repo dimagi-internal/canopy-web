@@ -35,6 +35,40 @@ outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.m
 `agent.work`, `session.drive`, `events.write`, `logs.read`, `members.manage`,
 `integrations`, `own`.
 
+## Getting into a workspace
+
+Owner decision of 2026-10-04: nothing automatic, except that people at the org's
+domain may **request an invitation**. A person becomes a member in exactly three ways,
+and only `services._grant` (the first two) and workspace creation write a
+`WorkspaceMembership`:
+
+* **An invite.** An **admin** or **owner** invites an email address at a role they
+  may grant (`permissions.may_manage_member`; **viewer** unless they choose
+  otherwise). Canopy emails the `/invite/:token` link; accepting grants that role
+  (never lowering one already held).
+* **An approved access request.** A person whose login email's domain is in the
+  workspace's **`access_request_domains`** may ask (`POST
+  /api/workspaces/{slug}/access-requests`, with an optional note) — the first-run
+  screen offers "Request an invitation to <workspace>". Every **admin** and
+  **owner** — owners of a parent workspace included — is emailed (and pushed) a
+  deep link to the request's page,
+  `/w/:workspace/settings/access-requests/:id`, where one of them **approves** at
+  **viewer**, **editor** or **admin** (no higher than they may grant) or
+  **denies**, with an optional reason. The requester is emailed the outcome. A
+  notification failure never fails the request: it is stored on the request and
+  written to the event log (`source=workspaces.access`, `warn`).
+* **Creating a workspace** makes you its **owner**.
+
+**Auto-approve** (`Workspace.auto_approve_role`, owner-set at
+`PUT /api/workspaces/{slug}/access-settings`): blank is off, and every request
+waits for a person. Set to **viewer** or **editor** (never above), a request is
+approved the moment it is made — still an ordinary request record (`status:
+approved`, `auto: true`, `decided_by: null`), and every admin and owner is still
+emailed the link, from which they can change the person's role or remove them.
+`dimagi` is set to **editor** for now while it bootstraps (`workspaces/0012`);
+every other workspace is off. Turning it off or lowering it is a settings
+change. The domains themselves are server-set, never client input.
+
 ## Agent roles
 
 What a person IS to one agent (`Decision.role`, the envelope's `relationship`):

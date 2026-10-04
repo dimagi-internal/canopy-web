@@ -286,7 +286,7 @@ describe('WorkspaceMembersPage', () => {
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'newperson@example.com' } })
     fireEvent.click(screen.getByRole('button', { name: /^send invite$/i }))
 
-    await waitFor(() => expect(createInvite).toHaveBeenCalledWith('acme', 'newperson@example.com', 'editor'))
+    await waitFor(() => expect(createInvite).toHaveBeenCalledWith('acme', 'newperson@example.com', 'viewer')) // invites default to viewer
 
     expect(await screen.findByText(/brandnew-token/)).toBeTruthy()
     expect(screen.getByRole('button', { name: /copy link/i })).toBeTruthy()

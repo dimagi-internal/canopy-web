@@ -6,7 +6,10 @@ import { problemMessage } from './problem'
 import type { components } from './generated'
 
 export type WorkspaceOut = components['schemas']['WorkspaceOut']
-export type JoinableWorkspaceOut = components['schemas']['JoinableWorkspaceOut']
+export type RequestableWorkspaceOut = components['schemas']['RequestableWorkspaceOut']
+export type AccessRequestOut = components['schemas']['AccessRequestOut']
+export type ApprovableRole = components['schemas']['AccessRequestApproveIn']['role']
+export type AutoApproveRole = components['schemas']['AccessSettingsIn']['auto_approve_role']
 export type MemberOut = components['schemas']['MemberOut']
 export type InviteOut = components['schemas']['InviteOut']
 export type InviteRole = components['schemas']['InviteCreateIn']['role']
@@ -53,25 +56,85 @@ export async function listWorkspaces(): Promise<WorkspaceOut[]> {
   return (data as unknown as WorkspaceOut[]) ?? []
 }
 
-// The self-join surface (replaces the old implicit auto-join). `joinable`
-// is a capability list — only workspaces this caller may actually join —
-// so it's always safe to render as-is, no client-side filtering needed.
-export async function listJoinableWorkspaces(): Promise<JoinableWorkspaceOut[]> {
-  const { data } = await apiV2.GET('/api/workspaces/joinable')
-  return (data as unknown as JoinableWorkspaceOut[]) ?? []
+// --- access requests ("request an invitation") ------------------------------
+// The way into a workspace besides an invite (docs/architecture/access.md):
+// someone whose login email is at one of the workspace's
+// `access_request_domains` asks; an admin or owner approves at a role, or
+// denies. With the workspace's `auto_approve_role` set the request comes back
+// already `approved` at that role.
+
+// A capability list — only workspaces this caller may ask to join — so it is
+// always safe to render as-is.
+export async function listRequestableWorkspaces(): Promise<RequestableWorkspaceOut[]> {
+  const { data } = await apiV2.GET('/api/workspaces/requestable')
+  return Array.from((data as unknown as RequestableWorkspaceOut[]) ?? [])
 }
 
-// Idempotent: calling this on an already-joined workspace just returns the
-// caller's existing role (see apps.workspaces.services.join_workspace) — the
-// server never elevates on a repeat call. A 404 means either the slug
-// doesn't exist or the caller's domain doesn't match `self_join_domains`;
-// the two are indistinguishable by design (no tenant-enumeration oracle).
-export async function joinWorkspace(slug: string): Promise<WorkspaceOut> {
-  const res = await apiV2.POST('/api/workspaces/{slug}/join', {
+// Idempotent while pending. 404 = no such workspace OR your domain is not on
+// its list (indistinguishable by design); 409 = already a member.
+export async function requestWorkspaceAccess(slug: string, note: string): Promise<AccessRequestOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/access-requests', {
+    params: { path: { slug } },
+    body: { note },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Could not send the request'))
+  }
+  return res.data as unknown as AccessRequestOut
+}
+
+export async function listAccessRequests(slug: string): Promise<AccessRequestOut[]> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/access-requests', {
     params: { path: { slug } },
   })
   if (!res.response.ok) {
-    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to join workspace'))
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load access requests'))
+  }
+  return Array.from(res.data as unknown as AccessRequestOut[])
+}
+
+export async function getAccessRequest(slug: string, requestId: number): Promise<AccessRequestOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/access-requests/{request_id}', {
+    params: { path: { slug, request_id: requestId } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load the request'))
+  }
+  return res.data as unknown as AccessRequestOut
+}
+
+export async function approveAccessRequest(
+  slug: string, requestId: number, role: ApprovableRole,
+): Promise<AccessRequestOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/access-requests/{request_id}/approve', {
+    params: { path: { slug, request_id: requestId } },
+    body: { role },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to approve'))
+  }
+  return res.data as unknown as AccessRequestOut
+}
+
+export async function denyAccessRequest(slug: string, requestId: number, reason: string): Promise<AccessRequestOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/access-requests/{request_id}/deny', {
+    params: { path: { slug, request_id: requestId } },
+    body: { reason },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to deny'))
+  }
+  return res.data as unknown as AccessRequestOut
+}
+
+/** Owner-only. "" turns auto-approval off. */
+export async function setAccessSettings(slug: string, autoApproveRole: AutoApproveRole): Promise<WorkspaceOut> {
+  const res = await apiV2.PUT('/api/workspaces/{slug}/access-settings', {
+    params: { path: { slug } },
+    body: { auto_approve_role: autoApproveRole },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to save'))
   }
   return res.data as unknown as WorkspaceOut
 }

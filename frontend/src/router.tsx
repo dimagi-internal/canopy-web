@@ -26,6 +26,8 @@ import { WorkspaceRunnersPage } from './pages/WorkspaceRunnersPage'
 import { WorkspaceAgentAccessPage } from './pages/WorkspaceAgentAccessPage'
 import { TopologyMapPage } from './pages/topology/TopologyMapPage'
 import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
+import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage'
+import { AccessRequestPage } from './pages/AccessRequestPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
 import { SlackSettingsPage } from '@/pages/SlackSettingsPage'
@@ -234,6 +236,10 @@ export const routeTable: RouteObject[] = [
         children: [
           { index: true, element: <Navigate to="members" replace /> },
           { path: 'members', element: <WorkspaceMembersPage /> },
+          // People asking to be invited. `:requestId` is the page the admins'
+          // notification email links to (services.access_request_link).
+          { path: 'access-requests', element: <WorkspaceAccessRequestsPage /> },
+          { path: 'access-requests/:requestId', element: <AccessRequestPage /> },
           { path: 'slack', element: <SlackSettingsPage /> },
           { path: 'inbound', element: <InboundPushPage /> },
           { path: 'connected-apps', element: <ConnectedAppsPage /> },
