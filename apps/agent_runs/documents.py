@@ -229,6 +229,19 @@ def _mirror_iteration(run: AgentRun, iteration: int | None, score: float | None)
     run.current_step = f"iter-{iteration}"
 
 
+def _locked(pk):
+    """The run row, locked for update — WITHOUT ``select_related``.
+
+    ``project`` is a nullable FK, so joining it is a LEFT OUTER JOIN, and
+    Postgres refuses ``FOR UPDATE`` on the nullable side of an outer join (every
+    state write 500'd in production, 2026-10-04). The test DB is SQLite, which
+    ignores ``FOR UPDATE`` entirely, so only the SQL shape can catch this:
+    ``test_documents.test_the_state_lock_never_outer_joins``. Relations load
+    lazily after the lock.
+    """
+    return AgentRun.objects.select_for_update().filter(pk=pk)
+
+
 def _stamp_terminal(run: AgentRun) -> None:
     if (run.status or RUNNING) != RUNNING:
         run.completed_at = run.completed_at or timezone.now()
@@ -337,7 +350,7 @@ def put_run_doc_state(request: HttpRequest, ext_id: str, payload: RunDocStateIn)
     run = _doc_or_404(request, ext_id)
     _agent_for_write(request, run.agent.slug)
     with transaction.atomic():
-        run = AgentRun.objects.select_for_update().select_related("agent", "project").get(pk=run.pk)
+        run = _locked(run.pk).get()
         if not payload.force and payload.base_version is not None and payload.base_version != run.state_version:
             raise HttpError(
                 409,
