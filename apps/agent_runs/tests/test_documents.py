@@ -212,3 +212,13 @@ def test_package_phase_comes_from_the_run_document(ws, hal, sophie):
     AgentRun.objects.filter(pk=run.pk).update(status="converged_clean")
     assert aggregate.build_run(run.ext_id)["phase"] == "converged_clean"
     assert aggregate.build_run(run.ext_id, workspace_slugs={"elsewhere"}) is None
+
+
+def test_the_state_lock_never_outer_joins():
+    """Postgres rejects FOR UPDATE on the nullable side of an outer join, and
+    ``project`` is nullable. SQLite (the test DB) ignores FOR UPDATE, so assert
+    the SQL shape instead — this 500'd every state write in production."""
+    from apps.agent_runs.documents import _locked
+
+    sql = str(_locked(1).query).upper()
+    assert "OUTER JOIN" not in sql and "JOIN" not in sql
