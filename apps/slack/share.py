@@ -137,12 +137,37 @@ def _slack_user(installation: SlackInstallation, user) -> str:
     return slack_id if link.user_id == user.pk else ""
 
 
-def _update_text(slack_user: str, summary: str) -> str:
-    return f"*Update* from <@{slack_user}>:\n\n{relay.to_mrkdwn(summary.strip())}"
+def _agent_identity(user):
+    """The agent this canopy user IS (`Agent.user`), or None for a person."""
+    from apps.agents.models import Agent
+
+    return Agent.objects.filter(user=user).first()
 
 
-def _text(slack_user: str, summary: str, session: Session | None, mode: str) -> str:
-    head = f"<@{slack_user}> shared what they're working on"
+def _byline(installation: SlackInstallation, user) -> tuple[str, object]:
+    """Who the post names as the sharer, and the agent the caller is (or None).
+
+    A person is @-mentioned, so must be linked. An agent calling as itself — a
+    scheduled watch posting a finding, where no person started the turn — has
+    no Slack account to link (`hal@dimagi-ai.com` is not a Slack user), so it is
+    named in bold instead and the post goes out under its persona. "" means
+    neither: a person Slack does not know, which is refused.
+    """
+    slack_user = _slack_user(installation, user)
+    if slack_user:
+        return f"<@{slack_user}>", None
+    agent = _agent_identity(user)
+    if agent is not None:
+        return f"*{agent.name or agent.slug}*", agent
+    return "", None
+
+
+def _update_text(byline: str, summary: str) -> str:
+    return f"*Update* from {byline}:\n\n{relay.to_mrkdwn(summary.strip())}"
+
+
+def _text(byline: str, summary: str, session: Session | None, mode: str) -> str:
+    head = f"{byline} shared what they're working on"
     if session is not None:
         target = f"`{session.agent.slug}`" if session.agent_id else (f"`{session.project}`" if session.project else "")
         if target:
@@ -227,16 +252,16 @@ def share_session(user, *, channel: str, summary: str, mode: str = BROADCAST,
                 f"`{session.agent.slug}` isn't turned on for Slack, so a thread can't talk to it. "
                 "Its owner can turn it on, or share a broadcast instead."))
 
-    slack_user = _slack_user(installation, user)
-    if not slack_user:
+    byline, caller_agent = _byline(installation, user)
+    if not byline:
         return refuse(NOT_LINKED, (
             "Your canopy account isn't linked to a Slack user here. Mention @canopy once in Slack "
             "to link it, then share again."))
 
-    agent = session.agent if session is not None and session.agent_id else None
+    agent = session.agent if session is not None and session.agent_id else caller_agent
     try:
         body = client.post_message_body(installation.bot_token, channel=channel,
-                                        text=_text(slack_user, summary, session, mode),
+                                        text=_text(byline, summary, session, mode),
                                         persona=relay.persona(agent))
     except client.SlackApiError as e:
         if e.error in _CANNOT_POST_THERE:
@@ -286,15 +311,15 @@ def _post_update(user, session: Session, summary: str) -> ShareResult:
                 "session": str(session.pk)}, ok=False)
         return ShareResult(status, message, session=session)
 
-    slack_user = _slack_user(installation, user)
-    if not slack_user:
+    byline, caller_agent = _byline(installation, user)
+    if not byline:
         return refuse(NOT_LINKED, (
             "Your canopy account isn't linked to a Slack user here. Mention @canopy once in Slack "
             "to link it, then share again."))
-    agent = session.agent if session.agent_id else None
+    agent = session.agent if session.agent_id else caller_agent
     try:
         ts = ""
-        for chunk in relay.split(_update_text(slack_user, summary)):
+        for chunk in relay.split(_update_text(byline, summary)):
             ts = client.post_message(installation.bot_token, channel=channel_id, text=chunk,
                                      thread_ts=thread_ts, persona=relay.persona(agent))
     except client.SlackApiError as e:

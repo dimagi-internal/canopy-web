@@ -184,6 +184,19 @@ def test_an_unlinked_user_is_refused(slack, installation, ws):
     assert _share(carol).status == share.NOT_LINKED
 
 
+def test_an_agent_calling_as_itself_posts_under_its_own_name(slack, installation, ws, hal):
+    # A scheduled watch has no person behind it, and the agent's login is not a Slack user.
+    bot = a_user("hal@dimagi-ai.com")
+    wsvc.ensure_member(ws, bot, WorkspaceMembership.EDITOR)
+    hal.user = bot
+    hal.save(update_fields=["user"])
+    slack.fail["users.lookupByEmail"] = "users_not_found"
+    assert _share(bot).status == share.SHARED
+    post = slack.said("chat.postMessage")[0]
+    assert post["username"] == "Hal"
+    assert post["text"].startswith("*Hal* shared")
+
+
 def test_a_user_is_linked_by_email_when_slack_knows_them(slack, installation, alice):
     slack.lookup = {"alice@dimagi.com": ALICE}
     assert _share(alice).status == share.SHARED
