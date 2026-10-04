@@ -126,13 +126,6 @@ export function listSessions(
   return request<ChatSession[]>(sessionsPath(state, opts));
 }
 
-/** Archive a session — reversible (`/unarchive`), and never touches emdash. */
-export function archiveSession(id: string): Promise<ChatSession> {
-  return request<ChatSession>(`/api/canopy-sessions/${encodeURIComponent(id)}/archive`, {
-    method: "POST",
-  });
-}
-
 /** One backward page of transcript, for "Load earlier" scroll-back. */
 export function listMessages(
   id: string,

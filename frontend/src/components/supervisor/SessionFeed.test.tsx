@@ -27,6 +27,7 @@ const s = (id: string, fields: Partial<ChatSession> = {}): ChatSession =>
     agent_spoke_last: true,
     last_reply: `**Reply** from ${id}`,
     last_activity_at: '2026-10-03T10:00:00Z',
+    status: 'active',
     runner_online: true,
     runner_status: 'online',
     runner_name: 'jj-mbp',
@@ -76,13 +77,20 @@ describe('SessionFeed', () => {
   // Close must END the session, not archive it: an archived runner session is
   // un-archived by the runner's next report while its emdash task is still open,
   // so the card came straight back.
-  it('Close closes the session (not archive) and drops the card', async () => {
-    listSessions.mockResolvedValue([s('a', { status: 'active' })])
+  it('Close closes the session, stays marked until emdash confirms, then leaves', async () => {
+    // Still listed after the relay (the runner has not reported yet), then gone —
+    // the runner deleted the emdash task.
+    listSessions
+      .mockResolvedValueOnce([s('a', { status: 'active' })])
+      .mockResolvedValueOnce([s('a', { status: 'active' })])
+      .mockResolvedValue([])
     closeSession.mockResolvedValue({ ok: true, closing: true, reason: '' })
     renderFeed()
     fireEvent.click(await screen.findByTestId('feed-done-a'))
-    await waitFor(() => expect(screen.queryByTestId('feed-card-a')).toBeNull())
     expect(closeSession).toHaveBeenCalledWith('a')
+    // Not hidden on faith: it stays, marked, until the runner confirms.
+    expect((await screen.findByTestId('feed-done-a')).textContent).toBe('Closing in emdash…')
+    await waitFor(() => expect(screen.queryByTestId('feed-card-a')).toBeNull(), { timeout: 5000 })
     expect(await screen.findByTestId('feed-empty')).toBeTruthy()
   })
 
