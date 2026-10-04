@@ -23,7 +23,6 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.canopy_sessions import services
 from apps.canopy_sessions.models import Message, Session
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
