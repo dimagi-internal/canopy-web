@@ -23,6 +23,7 @@ from apps.workspaces.models import Workspace
 
 from . import initiator as who
 from . import services
+from . import turn_mode as turn_modes
 from .models import AgentSchedule, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder
 from .schedule_services import serialize_schedule
 from .schemas import (
@@ -1641,6 +1642,10 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
                     "be the agent's owner, a workspace owner, or one of its admins",
                 )
 
+    initiator = (None if payload.origin == Turn.ORIGIN_EMAIL
+                 else who.for_request(request, via=payload.origin))
+    _check_requested_turn_mode(request, payload, agent, initiator)
+
     turn, created = services.enqueue_turn(
         agent=agent,
         project=payload.project,
@@ -1656,10 +1661,49 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         # runner posts on a stranger's behalf — enqueue_turn names that sender
         # itself. Passing the caller for email would record the runner's owner as
         # the person who wrote in.
-        initiator=(None if payload.origin == Turn.ORIGIN_EMAIL
-                   else who.for_request(request, via=payload.origin)),
+        initiator=initiator,
+        requested_turn_mode=payload.turn_mode or "",
+        requested_turn_mode_by=request.user if payload.turn_mode else None,
     )
     return Status(201 if created else 200, turn)
+
+
+#: Credentials that establish the person on THIS request — a signed-in browser
+#: or their own token (an MCP OAuth token is one). Not a widget's delegated
+#: token: an embedding host vouching for its visitor must not unlock `auto`.
+_TURN_MODE_VERIFIED = frozenset({who.SESSION, who.PAT})
+
+
+def _check_requested_turn_mode(request, payload: TurnIn, agent, initiator) -> None:
+    """Who may ask for a turn's mode (TurnIn.turn_mode). Raises 422/403, else returns.
+
+    Mirrors apps/harness/turn_mode.py: `manual` from anyone who may enqueue the
+    turn at all (the editor gate above already ran), `auto` only from the agent's
+    owner or an admin — `Agent.is_admin`, which counts workspace owners — on a
+    verified credential. The claim re-checks the admin leg (`turn_mode.requested`).
+    """
+    mode = payload.turn_mode
+    if not mode:
+        return
+    if agent is None:
+        raise HttpError(422, "turn_mode applies only to an agent turn (agent_slug), not a project")
+    if payload.origin == Turn.ORIGIN_EMAIL:
+        # A runner posts email on a stranger's behalf; the caller here is the
+        # runner's owner, not the person whose message the turn answers.
+        raise HttpError(422, "turn_mode cannot be requested on an email turn")
+    if mode == turn_modes.MANUAL:
+        return
+    verified = (initiator is not None and initiator.kind == who.USER
+                and initiator.assurance in _TURN_MODE_VERIFIED)
+    if not verified:
+        raise HttpError(
+            403, "turn_mode=auto needs a signed-in session or your own personal access token")
+    if not agent.is_admin(request.user):
+        raise HttpError(
+            403,
+            f"turn_mode=auto is for {agent.slug}'s owner or admins; you may request "
+            "turn_mode=manual, or ask its owner to make you an admin",
+        )
 
 
 @router.get("/turns/", response=list[TurnOut])
@@ -1673,6 +1717,7 @@ def list_turns(
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
     qs = Turn.objects.select_related(
         "agent", "claimed_by", "initiator_user", "initiator_contact",
+        "pinned_runner", "requested_turn_mode_by",
         # A chat turn's session and its agent are read per row by TurnOut.
         "chat_session", "chat_session__agent",
     ).order_by("-created_at")

@@ -8139,6 +8139,17 @@ export interface components {
              * @default
              */
             readonly turn_mode_basis: string;
+            /**
+             * Requested Turn Mode
+             * @default
+             */
+            readonly requested_turn_mode: string;
+            /** Requested Turn Mode By Email */
+            readonly requested_turn_mode_by_email?: string | null;
+            /** Pinned Runner Id */
+            readonly pinned_runner_id?: string | null;
+            /** Pinned Runner Name */
+            readonly pinned_runner_name?: string | null;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
@@ -13310,6 +13321,17 @@ export interface components {
              * @default
              */
             readonly turn_mode_basis: string;
+            /**
+             * Requested Turn Mode
+             * @default
+             */
+            readonly requested_turn_mode: string;
+            /** Requested Turn Mode By Email */
+            readonly requested_turn_mode_by_email?: string | null;
+            /** Pinned Runner Id */
+            readonly pinned_runner_id?: string | null;
+            /** Pinned Runner Name */
+            readonly pinned_runner_name?: string | null;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
@@ -13754,6 +13776,8 @@ export interface components {
             readonly routing: "prefer_local" | "local_only" | "any";
             /** Runner Id */
             readonly runner_id?: string | null;
+            /** Turn Mode */
+            readonly turn_mode?: ("auto" | "manual") | null;
         };
         /** EmdashSessionOut */
         readonly EmdashSessionOut: {

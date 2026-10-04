@@ -216,6 +216,8 @@ def enqueue_turn(
     pinned_runner=None,
     initiator=None,
     capability: str | None = None,
+    requested_turn_mode: str = "",
+    requested_turn_mode_by=None,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -348,6 +350,14 @@ def enqueue_turn(
                 routing=routing,
                 enqueued_by=enqueued_by if getattr(enqueued_by, "is_authenticated", False) else None,
                 pinned_runner=pinned_runner,
+                # Authorized by the caller (the API view); only meaningful on an
+                # agent turn, which is the only kind the view lets carry one.
+                requested_turn_mode=requested_turn_mode if agent is not None else "",
+                requested_turn_mode_by=(
+                    requested_turn_mode_by
+                    if agent is not None and requested_turn_mode
+                    and getattr(requested_turn_mode_by, "is_authenticated", False)
+                    else None),
             )
             _apply_capability(turn, capability)
     except IntegrityError:
@@ -1486,7 +1496,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                     claimed_at=now,
                     lease_expires_at=now + dt.timedelta(seconds=lease_seconds),
                     turn_mode=mode.mode if mode else "",
-                    turn_mode_basis=mode.basis if mode else "",
+                    turn_mode_basis=mode.basis[:320] if mode else "",
                 )
         except IntegrityError:
             continue  # another runner claimed for this agent between our check and update
