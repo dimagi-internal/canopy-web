@@ -91,7 +91,7 @@ def _workspace(slug):
     owner = _user(f"owner-{slug}@{slug}.example")
     ws, _ = Workspace.objects.get_or_create(
         slug=slug,
-        defaults={"display_name": slug, "created_by": owner, "self_join_domains": []},  # no self-join domain
+        defaults={"display_name": slug, "created_by": owner, "access_request_domains": []},  # no self-join domain
     )
     return ws
 

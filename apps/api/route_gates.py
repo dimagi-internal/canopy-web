@@ -35,7 +35,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``anonymous`` — no auth at all (``auth=None``) and no token.
 * ``token-link`` — anonymous allowed with a share/capability token (``?t=``),
   else member.
-* ``authenticated`` — any signed-in user, not tenant-scoped (``/me``, joinable).
+* ``authenticated`` — any signed-in user, not tenant-scoped (``/me``, requestable).
 * ``self`` — signed in, and touches only the caller's OWN rows (PATs, push
   subscriptions, presence preference, shared transcripts).
 * ``member`` — workspace membership (``permissions.READ``): a viewer passes.
@@ -441,8 +441,13 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_workspaces": ("authenticated",),  # the caller's own memberships
     "get_workspace": ("member",),
     "set_workspace_parent": ("own",),  # own both ends
-    "list_joinable_workspaces": ("authenticated",),
-    "join_workspace": ("authenticated",),  # self_join_domains match, same 404 otherwise
+    "list_requestable_workspaces": ("authenticated",),  # capability list: access_request_domains match
+    "request_workspace_access": ("authenticated",),  # access_request_domains match, same 404 otherwise; joins nothing unless auto_approve_role
+    "list_access_requests": ("members.manage",),
+    "get_access_request": ("members.manage",),
+    "approve_access_request": ("members.manage",),  # + may_manage_member on the granted role
+    "deny_access_request": ("members.manage",),
+    "set_access_settings": ("own",),
     "delete_workspace": ("own",),
     "list_members": ("member",),
     "remove_member": ("members.manage",),  # + may_manage_member

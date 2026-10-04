@@ -35,7 +35,7 @@ def test_backfill_scopes_existing_agent_and_members(settings):
     `backfill` WRITES `Workspace.objects.get_or_create(..., defaults={
     "auto_join_domains": domains})` — the migration is immutable, so it still
     spells that pre-rename kwarg (workspaces/0008 renamed the field to
-    `self_join_domains` well after this migration was written). That's safe
+    `access_request_domains` well after this migration was written). That's safe
     in every real run: agents/0007 sorts BEFORE workspaces/0008 in Django's
     actual migration plan (verified empirically), so the historical schema
     this function runs against there still has the old name. Substituting
@@ -59,7 +59,7 @@ def test_backfill_scopes_existing_agent_and_members(settings):
         def get_or_create(self, defaults=None, **kwargs):
             defaults = dict(defaults or {})
             if "auto_join_domains" in defaults:
-                defaults["self_join_domains"] = defaults.pop("auto_join_domains")
+                defaults["access_request_domains"] = defaults.pop("auto_join_domains")
             return self._manager.get_or_create(defaults=defaults, **kwargs)
 
     class _WorkspaceProxy:

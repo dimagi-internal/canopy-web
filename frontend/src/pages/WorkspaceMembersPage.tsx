@@ -345,7 +345,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
           <h2 className="mb-3 text-sm font-semibold text-foreground">Invite someone</h2>
           <AddPersonForm
             options={roleOptions(grantable)}
-            defaultRole="editor"
+            defaultRole="viewer"
             onAdd={(email, role) => handleCreateInvite(email, role as InviteRole)}
             submitLabel="Send invite"
             busyLabel="Sending…"

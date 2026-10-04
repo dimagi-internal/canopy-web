@@ -41,7 +41,7 @@ def _workspace(slug, owner, *, self_join=("dimagi.com",)):
         slug=slug,
         display_name=slug.title(),
         created_by=owner,
-        self_join_domains=list(self_join),
+        access_request_domains=list(self_join),
     )
     WorkspaceMembership.objects.get_or_create(
         workspace=ws, user=owner, defaults={"role": WorkspaceMembership.OWNER}
@@ -89,7 +89,7 @@ def test_domain_teammate_no_longer_auto_joins_gets_empty_list():
     that test asserted auto-join behaviour that no longer exists. A
     same-domain teammate who has never explicitly joined
     (`POST /api/workspaces/dimagi/join`) is a non-member like any other,
-    even though `dimagi`'s `self_join_domains` would let them join."""
+    even though `dimagi`'s `access_request_domains` would let them join."""
     jj = _user("jj@dimagi.com", is_superuser=True)
     ws = _workspace("dimagi", jj)
     w = _make(jj, ws, title="Mine")

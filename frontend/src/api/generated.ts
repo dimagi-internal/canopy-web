@@ -3472,7 +3472,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/workspaces/joinable": {
+    readonly "/api/workspaces/requestable": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -3480,13 +3480,13 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * Workspaces I may join
+         * Workspaces I may request an invitation to
          * @description A capability list, not a directory: only workspaces whose
-         *     `self_join_domains` matches the caller's own email domain, and only ones
-         *     they are not already a member of. Never enumerate anything else — see
-         *     `services.joinable_workspaces`.
+         *     `access_request_domains` include the caller's login-email domain and that
+         *     they are not already in, each with their own open request if any. Joins
+         *     nothing — see `services.requestable_workspaces`.
          */
-        readonly get: operations["list_joinable_workspaces"];
+        readonly get: operations["list_requestable_workspaces"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3495,7 +3495,54 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/workspaces/{slug}/join": {
+    readonly "/api/workspaces/{slug}/access-requests": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List access requests (admin or owner)
+         * @description Newest first; `status` narrows to pending / approved / denied.
+         */
+        readonly get: operations["list_access_requests"];
+        readonly put?: never;
+        /**
+         * Request an invitation to a workspace
+         * @description Ask this workspace's admins to let you in, with an optional note. Every
+         *     admin and owner is emailed a link to the request. With the workspace's
+         *     `auto_approve_role` set you are in at once at that role (`status:
+         *     approved`); otherwise the request is `pending` until an admin decides.
+         *     Idempotent while pending (200 with the open request). A workspace that
+         *     does not exist and one whose domains do not include yours are the SAME
+         *     404, so this cannot probe tenants; 409 if you are already a member.
+         */
+        readonly post: operations["request_workspace_access"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/access-requests/{request_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** One access request (admin or owner) */
+        readonly get: operations["get_access_request"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/access-requests/{request_id}/approve": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -3505,18 +3552,56 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Join a self-serve workspace
-         * @description Explicit, auditable self-join — the replacement for the old implicit
-         *     auto-join. Re-checks the domain match server-side on every call (never
-         *     trusts the slug the client offers); a slug that doesn't exist and a slug
-         *     whose `self_join_domains` doesn't match the caller return the SAME 404,
-         *     so this endpoint (deliberately callable by any signed-in non-member)
-         *     can't be used to probe which workspaces exist or which domains they
-         *     trust. Idempotent: uses `ensure_member` (create-only), so calling this a
-         *     second time — or calling it as an existing member — never changes an
-         *     existing role. See `services.join_workspace`.
+         * Approve an access request at a role (admin or owner)
+         * @description Creates the membership at `role` (default viewer) and emails the
+         *     requester. You may grant only a role below your own unless you are an
+         *     owner (`permissions.may_manage_member`) — 403 otherwise. 409 if the
+         *     request was already decided.
          */
-        readonly post: operations["join_workspace"];
+        readonly post: operations["approve_access_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/access-requests/{request_id}/deny": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Deny an access request (admin or owner)
+         * @description Grants nothing; emails the requester, with `reason` if given. 409 if the
+         *     request was already decided.
+         */
+        readonly post: operations["deny_access_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/access-settings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set how access requests are approved (owner-only)
+         * @description `auto_approve_role`: "" (off — a person approves each request),
+         *     "viewer" or "editor". Owner-only: it decides who gets in without anyone
+         *     looking. Takes effect on the next request; nobody already in changes.
+         */
+        readonly put: operations["set_access_settings"];
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -12262,8 +12347,13 @@ export interface components {
             readonly slug: string;
             /** Display Name */
             readonly display_name: string;
-            /** Self Join Domains */
-            readonly self_join_domains: readonly string[];
+            /** Access Request Domains */
+            readonly access_request_domains: readonly string[];
+            /**
+             * Auto Approve Role
+             * @default
+             */
+            readonly auto_approve_role: string;
             /** Role */
             readonly role: string;
             /**
@@ -12297,18 +12387,103 @@ export interface components {
             readonly parent?: string | null;
         };
         /**
-         * JoinableWorkspaceOut
-         * @description One workspace the caller may join by explicit action — a capability
-         *     list, not a directory. `domain` is the entry of `self_join_domains` that
-         *     matched, so the UI can say why ("your dimagi.com address is allowed").
+         * RequestableWorkspaceOut
+         * @description One workspace the caller may request an invitation to — a capability
+         *     list, not a directory. `domain` is the entry of `access_request_domains`
+         *     that matched, so the UI can say why. `pending_request_id` is set when the
+         *     caller already has an open request there.
          */
-        readonly JoinableWorkspaceOut: {
+        readonly RequestableWorkspaceOut: {
             /** Slug */
             readonly slug: string;
             /** Display Name */
             readonly display_name: string;
             /** Domain */
             readonly domain: string;
+            /** Pending Request Id */
+            readonly pending_request_id?: number | null;
+        };
+        /** AccessRequestOut */
+        readonly AccessRequestOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace */
+            readonly workspace: string;
+            /** Workspace Display Name */
+            readonly workspace_display_name: string;
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Name */
+            readonly name: string;
+            /** Note */
+            readonly note: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pending" | "approved" | "denied";
+            /** Role */
+            readonly role: string;
+            /** Auto */
+            readonly auto: boolean;
+            /** Decided By Email */
+            readonly decided_by_email?: string | null;
+            /** Decided At */
+            readonly decided_at?: string | null;
+            /**
+             * Decision Reason
+             * @default
+             */
+            readonly decision_reason: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Current Role */
+            readonly current_role?: string | null;
+            /** Notify Result */
+            readonly notify_result?: {
+                readonly [key: string]: unknown;
+            } | null;
+        };
+        /** AccessRequestIn */
+        readonly AccessRequestIn: {
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
+        /** AccessRequestApproveIn */
+        readonly AccessRequestApproveIn: {
+            /**
+             * Role
+             * @default viewer
+             * @enum {string}
+             */
+            readonly role: "viewer" | "editor" | "admin";
+        };
+        /** AccessRequestDenyIn */
+        readonly AccessRequestDenyIn: {
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+        };
+        /**
+         * AccessSettingsIn
+         * @description Owner-only. `auto_approve_role` "" turns auto-approval off.
+         */
+        readonly AccessSettingsIn: {
+            /**
+             * Auto Approve Role
+             * @enum {string}
+             */
+            readonly auto_approve_role: "" | "viewer" | "editor";
         };
         /** MemberOut */
         readonly MemberOut: {
@@ -12374,7 +12549,7 @@ export interface components {
             readonly email: string;
             /**
              * Role
-             * @default editor
+             * @default viewer
              * @enum {string}
              */
             readonly role: "owner" | "admin" | "editor" | "viewer";
@@ -20237,7 +20412,7 @@ export interface operations {
             };
         };
     };
-    readonly list_joinable_workspaces: {
+    readonly list_requestable_workspaces: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20252,12 +20427,36 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["JoinableWorkspaceOut"][];
+                    readonly "application/json": readonly components["schemas"]["RequestableWorkspaceOut"][];
                 };
             };
         };
     };
-    readonly join_workspace: {
+    readonly list_access_requests: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AccessRequestOut"][];
+                };
+            };
+        };
+    };
+    readonly request_workspace_access: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -20266,7 +20465,123 @@ export interface operations {
             };
             readonly cookie?: never;
         };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AccessRequestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessRequestOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessRequestOut"];
+                };
+            };
+        };
+    };
+    readonly get_access_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
         readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessRequestOut"];
+                };
+            };
+        };
+    };
+    readonly approve_access_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AccessRequestApproveIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessRequestOut"];
+                };
+            };
+        };
+    };
+    readonly deny_access_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AccessRequestDenyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccessRequestOut"];
+                };
+            };
+        };
+    };
+    readonly set_access_settings: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AccessSettingsIn"];
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {

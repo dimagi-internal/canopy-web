@@ -34,7 +34,7 @@ WS_SLUG = "acl-gate-ws"
 
 @pytest.fixture
 def acl(client):
-    ws = a_workspace(WS_SLUG)  # named slug -> no self_join_domains (see testing.py)
+    ws = a_workspace(WS_SLUG)  # named slug -> no access_request_domains (see testing.py)
     agent = Agent.objects.create(slug="aclbot", name="ACL Bot", workspace=ws, turn_mode="manual")
     owner = a_member(ws, email="acl-owner@dimagi.com", role=WorkspaceMembership.OWNER)
     editor = a_member(ws, email="acl-editor@dimagi.com", role=WorkspaceMembership.EDITOR)

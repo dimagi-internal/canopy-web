@@ -29,7 +29,7 @@ def _make_user(username="alice", email="alice@dimagi.com"):
     user = User.objects.create_user(username=username, email=email, password="pw")
     # Explicit membership replaces the implicit auto-join these tests used to
     # rely on (2026-09-12: auto-join is gone — see
-    # apps.workspaces.services.join_workspace). Sharing `self_join_domains`
+    # apps.workspaces.services.join_workspace). Sharing `access_request_domains`
     # with the "dimagi" workspace is no longer enough on its own; every test
     # user here needs a real WorkspaceMembership row to act on its agents.
     ws = Workspace.objects.filter(slug="dimagi").first()
@@ -55,7 +55,7 @@ def workspace():
     # apps.agent_runs.api._get_agent_or_404 now fails CLOSED on an unhomed
     # agent (an agent.workspace_id IS NULL used to short-circuit the tenant
     # check to "allow" — see the fix's commit for the full story), so the
-    # `agent` fixture below must be homed like a real agent. `self_join_domains`
+    # `agent` fixture below must be homed like a real agent. `access_request_domains`
     # is set for realism (this mirrors the real "dimagi" default workspace),
     # but membership itself is granted explicitly by `_make_user` below —
     # auto-join is gone, so sharing a domain alone would no longer be enough.
@@ -64,7 +64,7 @@ def workspace():
     )
     return Workspace.objects.create(
         slug="dimagi", display_name="Dimagi", created_by=bootstrap,
-        self_join_domains=["dimagi.com"],
+        access_request_domains=["dimagi.com"],
     )
 
 

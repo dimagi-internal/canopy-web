@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { useAuth } from '@/auth/AuthProvider'
-import { createWorkspace, joinWorkspace, listJoinableWorkspaces, type JoinableWorkspaceOut } from '@/api/workspaces'
+import {
+  createWorkspace,
+  listRequestableWorkspaces,
+  requestWorkspaceAccess,
+  type RequestableWorkspaceOut,
+} from '@/api/workspaces'
 import { firstRunState, shouldOfferCreateForm } from './firstRun'
 
 /**
@@ -22,9 +27,13 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [joinable, setJoinable] = useState<JoinableWorkspaceOut[]>([])
-  const [joiningSlug, setJoiningSlug] = useState<string | null>(null)
-  const [joinError, setJoinError] = useState('')
+  const [requestable, setRequestable] = useState<RequestableWorkspaceOut[]>([])
+  const [notes, setNotes] = useState<Record<string, string>>({})
+  const [sendingSlug, setSendingSlug] = useState<string | null>(null)
+  // Slugs whose request is waiting on an admin — from the server's
+  // `pending_request_id`, or set when a request we just sent came back pending.
+  const [pendingSlugs, setPendingSlugs] = useState<Set<string>>(new Set())
+  const [requestError, setRequestError] = useState('')
 
   // AuthProvider resolves `useAuth()` before any route mounts (it gates on
   // `status === 'loading'` itself), so `user` is always the real MeOut here —
@@ -39,28 +48,25 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
     canCreate,
   })
 
-  // Joining is a THIRD option alongside create/needs-invite, not a
-  // replacement for either. Fetched here (not lazily on demand) because a
-  // stranded user with no workspace is exactly the audience this list exists
-  // for; `listJoinableWorkspaces` is itself a capability list (it never
-  // returns a workspace the caller cannot join, so it cannot become a tenant
-  // directory), which is what makes rendering it unconditionally safe.
-  //
-  // It is fetched in the `ready` state too — i.e. for someone who ALREADY
-  // belongs somewhere — and that is not incidental. Auto-join used to put a
-  // multi-workspace user into every workspace their domain matched; removing it
-  // left them with no in-app way to join a second one at all, which is a lost
-  // capability rather than missing polish. `/new-workspace` is where they land
-  // looking for one, so the joinable list belongs beside the create form.
+  // Requesting an invitation is a THIRD option alongside create/needs-invite,
+  // not a replacement for either. Fetched here (not lazily) because a stranded
+  // user with no workspace is exactly who this list is for; it is itself a
+  // capability list (it never names a workspace the caller may not ask to
+  // join), which is what makes rendering it unconditionally safe. Fetched in
+  // the `ready` state too, so someone already in one workspace can ask into
+  // another from /new-workspace. Nothing here joins anyone: an admin approves
+  // (or, where the workspace auto-approves, the request comes back approved).
   useEffect(() => {
     if (state === 'loading') return
     let cancelled = false
-    listJoinableWorkspaces()
+    listRequestableWorkspaces()
       .then((rows) => {
-        if (!cancelled) setJoinable(rows)
+        if (cancelled) return
+        setRequestable(rows)
+        setPendingSlugs(new Set(rows.filter((r) => r.pending_request_id != null).map((r) => r.slug)))
       })
       .catch(() => {
-        // Best-effort: the join section just stays empty on failure — the
+        // Best-effort: the request section just stays empty on failure — the
         // create/needs-invite path below is still fully usable.
       })
     return () => {
@@ -75,19 +81,23 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
   // server's call either way.
   const offerForm = shouldOfferCreateForm({ state, canCreate, alwaysOfferForm })
 
-  async function handleJoin(ws: JoinableWorkspaceOut) {
-    setJoiningSlug(ws.slug)
-    setJoinError('')
+  async function handleRequest(ws: RequestableWorkspaceOut) {
+    setSendingSlug(ws.slug)
+    setRequestError('')
     try {
-      const joined = await joinWorkspace(ws.slug)
-      // Same reason as submit() below: WorkspaceProvider's membership list
-      // never invalidates itself, so the brand-new membership needs an
-      // explicit refresh before the redirect lands somewhere that resolves.
-      await refresh()
-      navigate(`/w/${joined.slug}`)
+      const req = await requestWorkspaceAccess(ws.slug, (notes[ws.slug] ?? '').trim())
+      if (req.status === 'approved') {
+        // Auto-approved: they are in. WorkspaceProvider's membership list never
+        // invalidates itself, so refresh before the redirect resolves.
+        await refresh()
+        navigate(`/w/${ws.slug}`)
+        return
+      }
+      setPendingSlugs((prev) => new Set(prev).add(ws.slug))
     } catch (e) {
-      setJoinError(e instanceof Error ? e.message : 'Could not join the workspace.')
-      setJoiningSlug(null)
+      setRequestError(e instanceof Error ? e.message : 'Could not send the request.')
+    } finally {
+      setSendingSlug(null)
     }
   }
 
@@ -125,8 +135,8 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
         {alreadyAMember ? (
           <>
             Workspaces keep separate teams&apos; projects, agents and demos apart.{' '}
-            {joinable.length > 0
-              ? 'Create another below, or join one your address is already allowed into.'
+            {requestable.length > 0
+              ? 'Create another below, or ask to be invited into one your address can request.'
               : 'Create another below.'}
           </>
         ) : (
@@ -138,34 +148,57 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
         )}
       </p>
 
-      {joinable.length > 0 ? (
+      {requestable.length > 0 ? (
         <div className="mt-8 space-y-3">
           <h2 className="text-sm font-semibold text-foreground">
-            {alreadyAMember ? 'Or join an existing one' : 'Join a workspace'}
+            {alreadyAMember ? 'Or request an invitation' : 'Request an invitation'}
           </h2>
-          {joinError ? <p className="text-[13px] text-destructive">{joinError}</p> : null}
+          {requestError ? <p className="text-[13px] text-destructive">{requestError}</p> : null}
           <ul className="space-y-2">
-            {joinable.map((ws) => (
-              <li
-                key={ws.slug}
-                className="flex items-center justify-between rounded-lg border border-border bg-card p-3"
-              >
-                <div>
-                  <p className="text-[13px] font-medium text-foreground">{ws.display_name}</p>
-                  <p className="text-[12px] text-muted-foreground">
-                    Your {ws.domain} address is allowed to join.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={joiningSlug === ws.slug}
-                  onClick={() => handleJoin(ws)}
-                  className="shrink-0 rounded bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                >
-                  {joiningSlug === ws.slug ? 'Joining…' : 'Join'}
-                </button>
-              </li>
-            ))}
+            {requestable.map((ws) => {
+              const pending = pendingSlugs.has(ws.slug)
+              return (
+                <li key={ws.slug} className="rounded-lg border border-border bg-card p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[13px] font-medium text-foreground">{ws.display_name}</p>
+                      <p className="text-[12px] text-muted-foreground">
+                        Your {ws.domain} address can request an invitation.
+                      </p>
+                    </div>
+                    {pending ? (
+                      <span className="shrink-0 rounded bg-muted px-2 py-1 text-[12px] text-foreground-secondary">
+                        Requested
+                      </span>
+                    ) : null}
+                  </div>
+                  {pending ? (
+                    <p className="mt-2 text-[12px] text-foreground-secondary">
+                      Requested — an admin will review it. You&apos;ll get an email when they decide.
+                    </p>
+                  ) : (
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <input
+                        aria-label={`Note to the admins of ${ws.display_name} (optional)`}
+                        value={notes[ws.slug] ?? ''}
+                        onChange={(e) => setNotes((prev) => ({ ...prev, [ws.slug]: e.target.value }))}
+                        maxLength={1000}
+                        placeholder="Optional note to the admins — who you are, what you need"
+                        className="min-w-0 flex-1 rounded border border-input bg-input px-2 py-1.5 text-[13px] text-foreground"
+                      />
+                      <button
+                        type="button"
+                        disabled={sendingSlug === ws.slug}
+                        onClick={() => void handleRequest(ws)}
+                        className="shrink-0 rounded bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                      >
+                        {sendingSlug === ws.slug ? 'Sending…' : `Request an invitation to ${ws.display_name}`}
+                      </button>
+                    </div>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         </div>
       ) : null}
@@ -218,9 +251,9 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
         <div className="mt-8 rounded-lg border border-border bg-card p-4">
           <h2 className="text-sm font-semibold text-foreground">You need an invite</h2>
           <p className="mt-2 text-[13px] leading-relaxed text-foreground-secondary">
-            Your account can join a workspace but cannot create one. Ask a workspace owner
-            to invite you — they can do it from their workspace&apos;s Members page — and open
-            the /invite/… link they send you.
+            Your account can join a workspace but cannot create one. Ask a workspace admin
+            or owner to invite you — they can do it from their workspace&apos;s Members page — and
+            open the /invite/… link they send you.
           </p>
         </div>
       )}

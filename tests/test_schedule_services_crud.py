@@ -25,7 +25,7 @@ def owner():
 @pytest.fixture()
 def ws(owner):
     w = Workspace.objects.create(
-        slug="dimagi", display_name="Dimagi", created_by=owner, self_join_domains=[]
+        slug="dimagi", display_name="Dimagi", created_by=owner, access_request_domains=[]
     )
     wsvc.ensure_member(w, owner, WorkspaceMembership.OWNER)
     return w

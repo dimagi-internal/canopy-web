@@ -142,7 +142,10 @@ def test_the_migration_links_each_existing_installation_to_its_workspace():
     from django.db import connection
     from django.db.migrations.executor import MigrationExecutor
 
-    before, after = [("slack", "0010_agent_declared")], [("slack", "0011_workspace_links")]
+    # workspaces/0012 renamed a Workspace column; hold workspaces at the schema
+    # these historical models describe.
+    before = [("slack", "0010_agent_declared"), ("workspaces", "0011_admin_role")]
+    after = [("slack", "0011_workspace_links")]
     executor = MigrationExecutor(connection)
     executor.migrate(before)
     old = executor.loader.project_state(before).apps

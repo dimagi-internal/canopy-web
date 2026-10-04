@@ -13,8 +13,8 @@ const listWorkspaces = vi.fn<() => Promise<WorkspaceOut[]>>()
 // zero-workspace case this file pins) fetches the self-join capability list
 // on mount — an unmocked call throws inside the effect and fails the test
 // with an unhandled rejection even though the assertions themselves pass.
-const listJoinableWorkspaces = vi.fn().mockResolvedValue([])
-vi.mock('@/api/workspaces', () => ({ listWorkspaces, listJoinableWorkspaces }))
+const listRequestableWorkspaces = vi.fn().mockResolvedValue([])
+vi.mock('@/api/workspaces', () => ({ listWorkspaces, listRequestableWorkspaces }))
 
 const { RootRedirect, TenantRedirect } = await import('./router')
 const { AuthContext } = await import('@/auth/AuthProvider')

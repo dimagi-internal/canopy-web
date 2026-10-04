@@ -134,12 +134,12 @@ def test_falls_back_to_the_sole_workspace_when_no_agent_is_homed():
 def test_falls_back_to_the_default_workspace_when_there_is_no_evidence(settings):
     """Step 3: several workspaces, not one homed agent. Falls to the same
     target 0007 picked for every agent in this deployment's history — creating
-    it exactly as 0007 does, including the domain seed (now `self_join_domains`).
+    it exactly as 0007 does, including the domain seed (now `access_request_domains`).
 
     Unlike every other case in this file, this branch of `_resolve_target`
     WRITES — `Workspace.objects.create(auto_join_domains=...)` — and the
     migration is immutable, so it still spells that kwarg the pre-rename way
-    (workspaces/0008 renamed the field to `self_join_domains` well after
+    (workspaces/0008 renamed the field to `access_request_domains` well after
     agents/0013 was written). That's safe in every real run: agents/0013
     sorts BEFORE workspaces/0008 in Django's actual migration plan (verified
     empirically — 0013 depends only on workspaces/0001), so the historical
@@ -166,7 +166,7 @@ def test_falls_back_to_the_default_workspace_when_there_is_no_evidence(settings)
 
         def create(self, **kwargs):
             if "auto_join_domains" in kwargs:
-                kwargs["self_join_domains"] = kwargs.pop("auto_join_domains")
+                kwargs["access_request_domains"] = kwargs.pop("auto_join_domains")
             return self._manager.create(**kwargs)
 
     class _WorkspaceProxy:
@@ -181,7 +181,7 @@ def test_falls_back_to_the_default_workspace_when_there_is_no_evidence(settings)
     assert _mod._resolve_target(_CompatApps()) == "dimagi"
     created = Workspace.objects.get(slug="dimagi")
     assert created.created_by_id == owner.pk
-    assert created.self_join_domains == ["dimagi.com"]
+    assert created.access_request_domains == ["dimagi.com"]
 
 
 def test_prefers_an_existing_default_workspace_over_creating_one():

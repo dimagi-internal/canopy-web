@@ -3,7 +3,9 @@
 Membership-scoped: a workspace is visible only to its members; a non-member
 gets 404 (no existence leak). Creating a workspace makes the creator its owner.
 Admins and owners manage members + invites (`_require` + `permissions`); invites are accepted
-by token, only by the addressed email.
+by token, only by the addressed email. People whose login email is at one of a
+workspace's `access_request_domains` may REQUEST an invitation; an admin or owner
+approves or denies it (docs/architecture/access.md, "Getting into a workspace").
 """
 from __future__ import annotations
 
@@ -15,12 +17,17 @@ from apps.workspaces import permissions as perms
 from apps.api.auth import session_auth
 
 from . import services
-from .models import Workspace, WorkspaceInvite, WorkspaceMembership
+from .models import Workspace, WorkspaceAccessRequest, WorkspaceInvite, WorkspaceMembership
 from .schemas import (
+    AccessRequestApproveIn,
+    AccessRequestDenyIn,
+    AccessRequestIn,
+    AccessRequestOut,
+    AccessSettingsIn,
     InviteCreateIn,
     InviteOut,
     InvitePreviewOut,
-    JoinableWorkspaceOut,
+    RequestableWorkspaceOut,
     MemberOut,
     MemberRoleUpdateIn,
     RunnerOrderIn,
@@ -73,7 +80,8 @@ def _out(ws: Workspace, role: str, *, inherited: bool = False) -> WorkspaceOut:
     return WorkspaceOut(
         slug=ws.slug,
         display_name=ws.display_name,
-        self_join_domains=ws.self_join_domains,
+        access_request_domains=ws.access_request_domains,
+        auto_approve_role=ws.auto_approve_role,
         role=role,
         created_at=ws.created_at,
         parent=ws.parent_id,
@@ -162,8 +170,9 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
         display_name=payload.display_name,
         parent_id=payload.parent or None,
         created_by=request.user,
-        # self_join_domains is deliberately NOT settable from the request —
-        # see WorkspaceCreateIn. Only `ensure_default_workspace()` sets it.
+        # access_request_domains is deliberately NOT settable from the
+        # request — see WorkspaceCreateIn. Only `ensure_default_workspace()`
+        # and migrations set it; auto-approval starts off.
     )
     WorkspaceMembership.objects.create(
         workspace=ws, user=request.user, role=WorkspaceMembership.OWNER
@@ -236,34 +245,143 @@ def set_workspace_parent(request: HttpRequest, slug: str, payload: WorkspacePare
     return _m_out(mine)
 
 
-@router.get("/joinable", response=list[JoinableWorkspaceOut], summary="Workspaces I may join",)
-def list_joinable_workspaces(request: HttpRequest) -> list[JoinableWorkspaceOut]:
+# ---- access requests ("request an invitation") ----
+_ACCESS_ERROR = {
+    "not_found": (404, None),
+    "already_member": (409, "you are already a member of this workspace"),
+    "not_pending": (409, "this request has already been decided"),
+    "invalid_role": (422, "a request can be approved as viewer, editor or admin"),
+}
+
+
+def _access_error(exc: "services.AccessRequestError", slug: str) -> HttpError:
+    status, message = _ACCESS_ERROR[exc.code]
+    return HttpError(status, message or f"workspace '{slug}' not found")
+
+
+def _access_request_out(req: WorkspaceAccessRequest, *, admin_view: bool) -> AccessRequestOut:
+    user = req.user
+    return AccessRequestOut(
+        id=req.pk,
+        workspace=req.workspace_id,
+        workspace_display_name=req.workspace.display_name,
+        user_id=req.user_id,
+        email=user.email or "",
+        name=(user.get_full_name() or "").strip(),
+        note=req.note,
+        status=req.status,
+        role=req.role,
+        auto=req.auto,
+        decided_by_email=(req.decided_by.email or None) if req.decided_by_id else None,
+        decided_at=req.decided_at,
+        decision_reason=req.decision_reason,
+        created_at=req.created_at,
+        current_role=services.member_role(user, req.workspace_id),
+        notify_result=req.notify_result if admin_view else None,
+    )
+
+
+def _access_request_or_404(m: WorkspaceMembership, request_id: int) -> WorkspaceAccessRequest:
+    req = (WorkspaceAccessRequest.objects.select_related("workspace", "user", "decided_by")
+           .filter(workspace=m.workspace, pk=request_id).first())
+    if req is None:
+        raise HttpError(404, "access request not found")
+    return req
+
+
+@router.get("/requestable", response=list[RequestableWorkspaceOut],
+            summary="Workspaces I may request an invitation to")
+def list_requestable_workspaces(request: HttpRequest) -> list[RequestableWorkspaceOut]:
     """A capability list, not a directory: only workspaces whose
-    `self_join_domains` matches the caller's own email domain, and only ones
-    they are not already a member of. Never enumerate anything else — see
-    `services.joinable_workspaces`."""
+    `access_request_domains` include the caller's login-email domain and that
+    they are not already in, each with their own open request if any. Joins
+    nothing — see `services.requestable_workspaces`."""
     return [
-        JoinableWorkspaceOut(slug=ws.slug, display_name=ws.display_name, domain=domain)
-        for ws, domain in services.joinable_workspaces(request.user)
+        RequestableWorkspaceOut(slug=ws.slug, display_name=ws.display_name, domain=domain,
+                                pending_request_id=pending.pk if pending else None)
+        for ws, domain, pending in services.requestable_workspaces(request.user)
     ]
 
 
-@router.post("/{slug}/join", response=WorkspaceOut, summary="Join a self-serve workspace",)
-def join_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
-    """Explicit, auditable self-join — the replacement for the old implicit
-    auto-join. Re-checks the domain match server-side on every call (never
-    trusts the slug the client offers); a slug that doesn't exist and a slug
-    whose `self_join_domains` doesn't match the caller return the SAME 404,
-    so this endpoint (deliberately callable by any signed-in non-member)
-    can't be used to probe which workspaces exist or which domains they
-    trust. Idempotent: uses `ensure_member` (create-only), so calling this a
-    second time — or calling it as an existing member — never changes an
-    existing role. See `services.join_workspace`."""
+@router.post("/{slug}/access-requests", response={200: AccessRequestOut, 201: AccessRequestOut},
+             summary="Request an invitation to a workspace")
+def request_workspace_access(request: HttpRequest, slug: str, payload: AccessRequestIn) -> Status:
+    """Ask this workspace's admins to let you in, with an optional note. Every
+    admin and owner is emailed a link to the request. With the workspace's
+    `auto_approve_role` set you are in at once at that role (`status:
+    approved`); otherwise the request is `pending` until an admin decides.
+    Idempotent while pending (200 with the open request). A workspace that
+    does not exist and one whose domains do not include yours are the SAME
+    404, so this cannot probe tenants; 409 if you are already a member."""
     try:
-        ws = services.join_workspace(request.user, slug)
-    except services.JoinError:
-        raise HttpError(404, f"workspace '{slug}' not found") from None
-    m = _membership_or_404(request.user, ws.slug)
+        req, created = services.request_access(request.user, slug, payload.note)
+    except services.AccessRequestError as exc:
+        raise _access_error(exc, slug) from None
+    return Status(201 if created else 200, _access_request_out(req, admin_view=False))
+
+
+@router.get("/{slug}/access-requests", response=list[AccessRequestOut],
+            summary="List access requests (admin or owner)")
+def list_access_requests(request: HttpRequest, slug: str, status: str | None = None) -> list[AccessRequestOut]:
+    """Newest first; `status` narrows to pending / approved / denied."""
+    m = _require(request.user, slug, perms.MEMBERS_MANAGE)
+    qs = (WorkspaceAccessRequest.objects.filter(workspace=m.workspace)
+          .select_related("workspace", "user", "decided_by").order_by("-created_at"))
+    if status:
+        qs = qs.filter(status=status)
+    return [_access_request_out(r, admin_view=True) for r in qs[:500]]
+
+
+@router.get("/{slug}/access-requests/{request_id}", response=AccessRequestOut,
+            summary="One access request (admin or owner)")
+def get_access_request(request: HttpRequest, slug: str, request_id: int) -> AccessRequestOut:
+    m = _require(request.user, slug, perms.MEMBERS_MANAGE)
+    return _access_request_out(_access_request_or_404(m, request_id), admin_view=True)
+
+
+@router.post("/{slug}/access-requests/{request_id}/approve", response=AccessRequestOut,
+             summary="Approve an access request at a role (admin or owner)")
+def approve_access_request(request: HttpRequest, slug: str, request_id: int,
+                           payload: AccessRequestApproveIn) -> AccessRequestOut:
+    """Creates the membership at `role` (default viewer) and emails the
+    requester. You may grant only a role below your own unless you are an
+    owner (`permissions.may_manage_member`) — 403 otherwise. 409 if the
+    request was already decided."""
+    m = _require(request.user, slug, perms.MEMBERS_MANAGE)
+    _require_may_manage(m, None, payload.role)
+    req = _access_request_or_404(m, request_id)
+    try:
+        req = services.approve_access_request(request=req, by=request.user, role=payload.role)
+    except services.AccessRequestError as exc:
+        raise _access_error(exc, slug) from None
+    return _access_request_out(req, admin_view=True)
+
+
+@router.post("/{slug}/access-requests/{request_id}/deny", response=AccessRequestOut,
+             summary="Deny an access request (admin or owner)")
+def deny_access_request(request: HttpRequest, slug: str, request_id: int,
+                        payload: AccessRequestDenyIn) -> AccessRequestOut:
+    """Grants nothing; emails the requester, with `reason` if given. 409 if the
+    request was already decided."""
+    m = _require(request.user, slug, perms.MEMBERS_MANAGE)
+    req = _access_request_or_404(m, request_id)
+    try:
+        req = services.deny_access_request(request=req, by=request.user, reason=payload.reason)
+    except services.AccessRequestError as exc:
+        raise _access_error(exc, slug) from None
+    return _access_request_out(req, admin_view=True)
+
+
+@router.put("/{slug}/access-settings", response=WorkspaceOut,
+            summary="Set how access requests are approved (owner-only)")
+def set_access_settings(request: HttpRequest, slug: str, payload: AccessSettingsIn) -> WorkspaceOut:
+    """`auto_approve_role`: "" (off — a person approves each request),
+    "viewer" or "editor". Owner-only: it decides who gets in without anyone
+    looking. Takes effect on the next request; nobody already in changes."""
+    m = _require(request.user, slug, perms.OWN)
+    ws = m.workspace
+    ws.auto_approve_role = payload.auto_approve_role
+    ws.save(update_fields=["auto_approve_role", "updated_at"])
     return _m_out(m)
 
 

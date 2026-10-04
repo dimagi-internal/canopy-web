@@ -82,54 +82,60 @@ entry could be deleted with CI still green.
 
 ## How you get into a workspace
 
-Four ways, and the fourth is the only one you do not do yourself:
+Three ways (the full account, in the access glossary's words, is
+`docs/architecture/access.md` → "Getting into a workspace"):
 
-- **An invite.** An owner creates one at `/w/:workspace/settings/members`; you open the
-  `/invite/:token` link. Canopy sends no email — the link is copied and sent by a human.
-- **Self-join.** If a workspace lists your email domain in `self_join_domains`, you may
-  join it yourself: `GET /api/workspaces/joinable` tells you which, `POST
-  /api/workspaces/{slug}/join` does it. You land as `editor`. The first-run screen offers
-  this when you belong to nothing yet.
+- **An invite.** An admin or owner creates one at `/w/:workspace/settings/members`, at a
+  role they choose (viewer unless they pick otherwise, never above what they may grant);
+  canopy emails the `/invite/:token` link and accepting grants exactly that role (never
+  lowering one you already hold).
+- **An approved access request.** If a workspace lists your login email's domain in
+  `access_request_domains`, you may ask to be invited: `GET /api/workspaces/requestable`
+  tells you which, `POST /api/workspaces/{slug}/access-requests` asks. Every admin and
+  owner (owners of a parent workspace included) is emailed a link to the request's page,
+  where one of them approves at a role they may grant, or denies; you are emailed either
+  way. A workspace owner may set `auto_approve_role` (viewer or editor) to approve every
+  request on the spot — `dimagi` is set to editor while it bootstraps; every other
+  workspace is off. Auto-approved requests are ordinary request records and still email
+  every admin and owner, who can change the role or remove the person.
 - **Creating one.** Subject to `services.can_create_workspace`: an *invite-admitted* user
   holding no membership may not create a workspace, because otherwise invite-admission
   becomes transitively delegable — create a workspace, mint invites, and each new invitee
   clears the login gate too. `/api/me/` reports `can_create_workspace` so the UI never
   offers a button that 403s.
-- **App-credential provisioning — GONE (2026-09-22).** An `AppCredential` used to carry a
-  `provision_workspace`/`provision_role`, and exchanging a token on it enrolled the resolved
-  user there. The whole door went with `/api/auth/token-exchange`: a connected site now
-  vouches for a visitor with a *signed assertion*, and canopy resolves them to an account
-  they already have or to a **contact** — which is not a membership and grants nothing
-  (`apps/contacts/`). **No machine door into a workspace remains.** Existing rows keep
-  `WorkspaceMembership.provisioned_by_app` as provenance of how they were created; nothing
-  writes it any more.
 
-`tests/test_no_implicit_enrolment.py` asserts these four are the only callers of
-`ensure_member` outside the workspaces app, so a fifth cannot appear quietly.
+Gone: **app-credential provisioning** (2026-09-22 — a connected site's visitor is now a
+**contact**, not a member; `WorkspaceMembership.provisioned_by_app` stays as provenance),
+and **self-join** (2026-10-04 — `GET /joinable` + `POST /{slug}/join` made you an editor on
+a domain match with nobody asked; owner decision: "nothing automatic on dimagi.com except
+that they should be able to request an invitation").
+
+`apps/workspaces/tests/test_access_requests.py` asserts the only code that can create a
+`WorkspaceMembership` is `services._grant` (invite acceptance + request approval),
+`services.ensure_member` (the default-workspace bootstrap) and workspace creation, so a
+fourth door cannot appear quietly; `tests/test_no_implicit_enrolment.py` pins the same for
+`ensure_member` callers.
 
 **There is no automatic join.** Until 2026-09-12 there was: `auto_join_workspaces` added you
 as `editor` to every workspace matching your email domain, and it ran *as a side effect of a
 visibility check* — so merely looking at an agent silently granted write membership of a
-tenant. That is why a "viewer" turned out to be an editor. It was removed across 31 call
-sites in 19 files; the domain list survives, renamed to `self_join_domains`, and now means
-"may join" rather than "is joined".
+tenant. It was replaced by self-join (an explicit click), and that in turn by access
+requests: the domain list survives, renamed `access_request_domains` (`workspaces/0012`),
+and now means "may ask" rather than "may join".
 
 Nor is creating a row a way in — but it **was**, and that mattered more than auto-join did.
 Five create endpoints (projects, shareouts, walkthroughs, reviews, issues) each held their own
 copy of `ws = pinned or ensure_default_workspace(); ensure_member(ws, request.user)`. On the
 flat `/api/…` mount nothing is pinned, so `ws` was the org default *whoever was calling*, and
-`ensure_member` made them an **editor** of it as a side effect of the write. That was strictly
-broader than self-join, which at least requires a matching email domain: an **invite-admitted**
-user — the one deliberately kept off the domain allowlist, who correctly gets `[]` from
-`/joinable` and 404 from `POST /join` — became an editor of `dimagi` by posting one shareout,
-and from there passed every `editor` gate on the fleet. All five now resolve through
-`wsvc.creation_workspace`, which only ever returns a tenant the caller is already in and
-refuses with 422 when there is none.
+`ensure_member` made them an **editor** of it as a side effect of the write. An
+**invite-admitted** user — the one deliberately kept off the domain allowlist — became an
+editor of `dimagi` by posting one shareout, and from there passed every `editor` gate on the
+fleet. All five now resolve through `wsvc.creation_workspace`, which only ever returns a
+tenant the caller is already in and refuses with 422 when there is none.
 
-Self-join cannot be used to escalate: it goes through `ensure_member`, which is create-only,
-so an existing `viewer` who calls `join` stays a `viewer`. A workspace whose domains do not
-match, and a workspace that does not exist, return the **same 404** — a 403 on the first
-would let any signed-in user enumerate tenants and learn which domains they trust.
+A request cannot be used to probe tenants: a workspace whose domains do not match yours and
+a workspace that does not exist return the **same 404**. Approval is upgrade-only, like an
+invite, so it never demotes an existing member.
 
 ## What enforces the membership tiers
 

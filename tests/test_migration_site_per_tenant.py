@@ -9,7 +9,10 @@ lost — ace-web's three domains were typed by hand and exist in no file.
 import pytest
 
 BEFORE = [("tokens", "0020_site_outlives_its_registrant"),
-          ("contacts", "0006_one_person_across_tenants")]
+          ("contacts", "0006_one_person_across_tenants"),
+          # workspaces/0012 renamed a Workspace column; hold workspaces at the
+          # schema these historical models describe.
+          ("workspaces", "0011_admin_role")]
 AFTER = [("tokens", "0021_site_belongs_to_one_tenant"),
          ("contacts", "0007_person_keyed_on_signer")]
 

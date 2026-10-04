@@ -10,7 +10,9 @@ def test_the_purge_keeps_owners_slack_and_real_shares():
     from django.db import connection
     from django.db.migrations.executor import MigrationExecutor
 
-    before = [("canopy_sessions", "0029_binding_missed_reports")]
+    # workspaces/0012 renamed a Workspace column; hold workspaces at the schema
+    # these historical models describe.
+    before = [("canopy_sessions", "0029_binding_missed_reports"), ("workspaces", "0011_admin_role")]
     after = [("canopy_sessions", "0030_purge_auto_join_participants")]
     executor = MigrationExecutor(connection)
     executor.migrate(before)

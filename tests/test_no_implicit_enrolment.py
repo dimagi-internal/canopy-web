@@ -9,12 +9,11 @@ On the flat mount `workspace_slug` is `None`, so `ws` resolved to the org
 default (`dimagi`) *regardless of who was calling*, and `ensure_member` then
 made them an EDITOR of it as a side effect of the write.
 
-This was strictly BROADER than the self-join feature it sat beside.
-`join_workspace` requires the caller's email domain to be in the workspace's
-`self_join_domains`; these required nothing at all. So the user this most
-affects is the one the design deliberately keeps OUT of the domain allowlist:
-an invite-admitted outside collaborator correctly gets `[]` from
-`/api/workspaces/joinable` and a 404 from `POST /{slug}/join`, and could then
+This was strictly BROADER than the self-join feature it sat beside (since
+replaced by access requests), which at least required the caller's email
+domain to match; these required nothing at all. So the user this most affects
+is the one the design deliberately keeps OUT of the domain allowlist: an
+invite-admitted outside collaborator, who could
 become an editor of `dimagi` by posting a single shareout — and from there pass
 every `editor` gate on the agent fleet, including running turns.
 
@@ -241,8 +240,8 @@ def test_ensure_member_is_no_longer_called_from_any_create_path():
         # explicit human action or configured server-side by an owner; none can
         # be reached as a side effect of writing a row. See
         # docs/architecture/roles.md, "How you get into a workspace".
-        "apps/workspaces/services.py",      # ensure_member itself + join_workspace
-        "apps/workspaces/api.py",           # invite acceptance / explicit self-join
+        "apps/workspaces/services.py",      # ensure_member itself (default-workspace bootstrap)
+        "apps/workspaces/api.py",           # workspace creation (creator = owner)
         "apps/workspaces/testing.py",       # fixtures
         # App-credential token exchange. Legitimate because the workspace comes
         # ONLY from the credential's server-side row (`provision_workspace`),

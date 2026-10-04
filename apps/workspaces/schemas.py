@@ -31,23 +31,24 @@ class WorkspaceCreateIn(StrictModel):
     # parent's owners ownership of it, so this is an administrative act on the
     # parent, not on the new tenant.
     parent: str | None = Field(default=None, max_length=64, pattern=SLUG_PATTERN)
-    # Deliberately no `self_join_domains` here: it is never client input.
-    # `self_join_domains` grants standing DOMAIN-WIDE self-join eligibility
-    # (every user of that domain may `POST /join` and become editor), so
-    # letting a caller set it on their own workspace would let an attacker
-    # declare an arbitrary allowlisted domain (e.g. "dimagi.com") and
-    # silently recruit every teammate of that domain into their workspace.
-    # Only `ensure_default_workspace()` may set it, straight from
-    # `AUTH_ALLOWED_EMAIL_DOMAIN` server-side. `StrictModel`'s `extra="forbid"`
-    # means a request that still sends this field is rejected (422), not
-    # silently ignored — see the F1 security finding on the invite-aware
-    # login gate.
+    # Deliberately no `access_request_domains` here: it is never client input.
+    # It lets every user of a domain ask this workspace's admins for an
+    # invitation (and, with `auto_approve_role` set, be let straight in), so a
+    # caller setting it on their own workspace could declare "dimagi.com" and
+    # solicit every Dimagi employee. Only `ensure_default_workspace()` (from
+    # `AUTH_ALLOWED_EMAIL_DOMAIN`) and migrations set it. `StrictModel`'s
+    # `extra="forbid"` rejects a request that still sends it (422) — see the
+    # F1 security finding on the invite-aware login gate.
 
 
 class WorkspaceOut(StrictModel):
     slug: str
     display_name: str
-    self_join_domains: list[str]
+    # Login-email domains whose people may REQUEST an invitation (server-set).
+    access_request_domains: list[str]
+    # "" = off: a person approves every request. Else the role a request is
+    # approved at automatically (viewer or editor).
+    auto_approve_role: str = ""
     role: str  # the requesting user's role in this workspace
     created_at: dt.datetime
     # The workspace directly above this one, or None for a root.
@@ -63,14 +64,64 @@ class WorkspaceParentIn(StrictModel):
     parent: str | None = Field(default=None, max_length=64, pattern=SLUG_PATTERN)
 
 
-class JoinableWorkspaceOut(StrictModel):
-    """One workspace the caller may join by explicit action — a capability
-    list, not a directory. `domain` is the entry of `self_join_domains` that
-    matched, so the UI can say why ("your dimagi.com address is allowed")."""
+class RequestableWorkspaceOut(StrictModel):
+    """One workspace the caller may request an invitation to — a capability
+    list, not a directory. `domain` is the entry of `access_request_domains`
+    that matched, so the UI can say why. `pending_request_id` is set when the
+    caller already has an open request there."""
 
     slug: str
     display_name: str
     domain: str
+    pending_request_id: int | None = None
+
+
+AccessRequestStatus = Literal["pending", "approved", "denied"]
+#: What an approval may grant. Owner is handed over on the Members list.
+ApprovableRole = Literal["viewer", "editor", "admin"]
+AutoApproveRole = Literal["", "viewer", "editor"]
+
+
+class AccessRequestIn(StrictModel):
+    note: str = Field(default="", max_length=1000)
+
+
+class AccessRequestOut(StrictModel):
+    id: int
+    workspace: str
+    workspace_display_name: str
+    user_id: int
+    email: str
+    name: str
+    note: str
+    status: AccessRequestStatus
+    # The role an approval granted ("" while pending or denied).
+    role: str
+    auto: bool
+    decided_by_email: str | None = None
+    decided_at: dt.datetime | None = None
+    decision_reason: str = ""
+    created_at: dt.datetime
+    # The requester's role in the workspace NOW (None = not a member), so an
+    # approved request's page can offer "change role" / "remove". Only filled
+    # for admins' views.
+    current_role: str | None = None
+    # What happened when the admins were told — only on admins' views.
+    notify_result: dict | None = None
+
+
+class AccessRequestApproveIn(StrictModel):
+    role: ApprovableRole = "viewer"
+
+
+class AccessRequestDenyIn(StrictModel):
+    reason: str = Field(default="", max_length=1000)
+
+
+class AccessSettingsIn(StrictModel):
+    """Owner-only. `auto_approve_role` "" turns auto-approval off."""
+
+    auto_approve_role: AutoApproveRole
 
 
 class MemberOut(StrictModel):
@@ -93,7 +144,8 @@ class InviteCreateIn(StrictModel):
     # `email_admitted_outside_domain` — an owner shouldn't be able to store
     # e.g. a garbage or wildcard-shaped value there.
     email: EmailStr = Field(max_length=200)
-    role: Role = "editor"
+    # What accepting grants. Viewer unless the inviting admin picks otherwise.
+    role: Role = "viewer"
 
 
 InviteEmailStatus = Literal["sent", "throttled", "not_configured", "failed"]

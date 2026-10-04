@@ -3156,8 +3156,8 @@ def list_visible_sessions(user) -> list[SessionView]:
     The last two overlap by design: a runner that stops heartbeating also stops
     reporting, so the strictest of the two wins and a dead box's rows go quiet fast.
 
-    A domain-matching teammate who has not clicked "join" on the workspace
-    (`POST /api/workspaces/{slug}/join`) has no WorkspaceMembership row, so
+    A domain-matching teammate who has not been let into the workspace (an
+    invite, or an approved access request) has no WorkspaceMembership row, so
     `user_workspace_slugs(user)` returns empty and their workspace's sessions
     are correctly invisible to them — no more silent auto-join here either.
     """

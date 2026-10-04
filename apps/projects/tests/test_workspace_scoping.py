@@ -122,7 +122,7 @@ def _workspace(slug):
     from apps.workspaces.models import Workspace
     owner = _user(f"owner-{slug}@{slug}.example")
     ws, _ = Workspace.objects.get_or_create(
-        slug=slug, defaults={"display_name": slug, "created_by": owner, "self_join_domains": []}
+        slug=slug, defaults={"display_name": slug, "created_by": owner, "access_request_domains": []}
     )
     return ws
 

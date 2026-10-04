@@ -116,8 +116,9 @@ def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
 def _get_agent_or_404(request: HttpRequest, slug: str):
     """Resolve an agent, gated by workspace membership. A non-member gets the
     same 404 as a missing agent (no existence leak). A domain user who has not
-    explicitly joined the agent's workspace (`POST /api/workspaces/{slug}/join`)
-    is a non-member and gets exactly that 404 — there is no more auto-join."""
+    been let into the agent's workspace (an invite, or an approved access
+    request) is a non-member and gets exactly that 404 — nothing joins
+    automatically."""
     agent = services.get_agent(slug)
     if agent is None:
         raise HttpError(404, f"agent '{slug}' not found")

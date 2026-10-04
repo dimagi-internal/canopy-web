@@ -26,7 +26,7 @@ URL = "/api/agent-runs/"
 
 @pytest.fixture
 def ws():
-    return a_workspace("labs-ws", self_join_domains=[])
+    return a_workspace("labs-ws", access_request_domains=[])
 
 
 def _user(ws, role=WorkspaceMembership.EDITOR, username="alice"):
@@ -182,7 +182,7 @@ class TestAccess:
     def test_other_tenant_sees_nothing(self, ws, hal, sophie):
         editor = _client(_user(ws))
         run = _post(editor, URL, {"agent": "hal", "kind": "ddd", "subject": "s"}).json()
-        other = a_workspace("other", self_join_domains=[])
+        other = a_workspace("other", access_request_domains=[])
         outsider = _client(_user(other, username="eve"))
         assert outsider.get(f"{URL}{run['ext_id']}/").status_code == 404
         assert outsider.get(URL).json() == []

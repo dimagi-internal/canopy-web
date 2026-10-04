@@ -34,7 +34,7 @@ WS = "turn-acl-ws"
 
 @pytest.fixture
 def fleet():
-    ws = a_workspace(WS)  # named slug -> no self_join_domains
+    ws = a_workspace(WS)  # named slug -> no access_request_domains
     agent = Agent.objects.create(slug="runbot", name="Run Bot", workspace=ws)
     editor = a_member(ws, email="turn-editor@dimagi.com", role=WorkspaceMembership.EDITOR)
     viewer = a_member(ws, email="turn-viewer@dimagi.com", role=WorkspaceMembership.VIEWER)

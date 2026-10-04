@@ -265,7 +265,7 @@ def test_preview_rejects_a_bad_cron_without_saving_anything(client, agent):
 # The fixtures above home their agent in the DEFAULT workspace, where jj is a
 # real OWNER member (see the `agent` fixture's comment above) — fine for
 # exercising CRUD, useless for exercising the gate. These tests give the
-# agent a REAL workspace with `self_join_domains=[]` (there is no more
+# agent a REAL workspace with `access_request_domains=[]` (there is no more
 # auto-join to worry about here, but an empty list keeps this workspace
 # unreachable by anything but an explicit membership row regardless) so the
 # membership check is the only thing standing between the caller and the
@@ -276,7 +276,7 @@ def test_preview_rejects_a_bad_cron_without_saving_anything(client, agent):
 def scoped_workspace():
     owner = User.objects.create_user("acme-owner", "acme-owner@dimagi.com", "pw")
     return Workspace.objects.create(
-        slug="acme", display_name="Acme", created_by=owner, self_join_domains=[]
+        slug="acme", display_name="Acme", created_by=owner, access_request_domains=[]
     )
 
 
