@@ -73,7 +73,9 @@ describe('SessionFeed', () => {
     expect(screen.queryByTestId('feed-card-answered')).toBeNull()
     // The reply is rendered as markdown, not shown raw.
     expect(screen.getByText('Reply').tagName).toBe('STRONG')
-    expect(screen.getByText(/with Hal · jj-mbp/)).toBeTruthy()
+    // The agent leads the card, ahead of the title, with the runner beside it.
+    expect(screen.getByTestId('feed-source-done').textContent).toBe('Hal')
+    expect(screen.getByText(/^jj-mbp ·/)).toBeTruthy()
   })
 
   it('sends the next prompt in place and drops the card', async () => {
@@ -153,7 +155,7 @@ describe('SessionFeed', () => {
     const chips = await screen.findByTestId('feed-chips')
     expect(chips.textContent).toContain('All 4')
     expect(chips.textContent).toContain('Hal 2')
-    expect(screen.getAllByText(/· connect/).length).toBe(1)
+    expect(screen.getAllByText(/^connect(?: ·|$)/).length).toBe(1)
     fireEvent.click(screen.getByRole('button', { name: /^Hal/ }))
     expect(screen.queryByTestId('feed-card-a1')).toBeNull()
     expect(screen.getByTestId('feed-card-h1')).toBeTruthy()
