@@ -1172,9 +1172,27 @@ def record_bootstrap_report(agent, *, runner_name, client_creds_ok, mailbox_ok,
 
 
 def bootstrap_reports(agent) -> list:
-    """Every box's view of this agent, newest first."""
-    from apps.agents.models import AgentBootstrapReport
+    """Every LIVE box's view of this agent, newest first.
 
+    A retired runner's last report is left out. Rows key on the box's NAME (see
+    `AgentBootstrapReport.runner_name`), so retiring a runner never touched them,
+    and a box retired on 2026-10-04 (cloud-ec2-test) went on answering "can this
+    agent run" for echo/eva/ada — a frozen all-green row from a machine that no
+    longer exists, read as a second healthy box by anyone counting rows. A row is
+    hidden only when EVERY runner of that name is retired: a report from a name
+    with no runner row at all (a laptop that reports before it pairs) still shows,
+    and unretiring the runner brings its row back, because nothing is deleted.
+    """
+    from apps.agents.models import AgentBootstrapReport
+    from apps.harness.models import Runner
+
+    retired = set(
+        Runner.objects.filter(status=Runner.RETIRED).values_list("name", flat=True)
+    ) - set(
+        Runner.objects.exclude(status=Runner.RETIRED).values_list("name", flat=True)
+    )
     return list(
-        AgentBootstrapReport.objects.filter(agent=agent).order_by("-reported_at")
+        AgentBootstrapReport.objects.filter(agent=agent)
+        .exclude(runner_name__in=retired)
+        .order_by("-reported_at")
     )

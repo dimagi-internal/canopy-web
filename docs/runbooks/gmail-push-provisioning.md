@@ -43,13 +43,19 @@ pair.** A workspace holding mailboxes whose clients live in different projects
 needs a topic each, which the per-workspace `watch_topic` cannot express. Making
 `watch_topic` per-mailbox is the real fix and is not built.
 
-**So prefer moving the mailbox onto the shared client over adding a topic.** As of
-2026-07-31 all five agents share the `canopy` client in `canopy-494811`, which is
-the only reason one topic per workspace suffices — `echo` and `ace` were moved off
+**So prefer moving the mailbox onto the shared app over adding a topic.** Every
+agent's mailbox uses the fleet's one Google app in `canopy-494811` — two
+interchangeable clients, `canopy` (a laptop's `gog login`) and `canopy-web`
+(canopy-web's "Connect Google mailbox" button) — which is the only reason one topic
+per workspace suffices — `echo` and `ace` were moved off
 clients in the retired `openclaw-assistant-20260224`, a project nobody here can
 reach, so there was no topic to create for them.
 
-Realigning one agent (what `echo` and `ace` went through on 2026-07-31):
+Re-granting a mailbox today is simplest in the browser: the agent's Settings →
+Credentials → **Connect Google mailbox** (stores the token in canopy-web; boxes import
+the newer of it and the vault copy on their next bootstrap, and the runner discovers
+which client holds it — no `runner.json` edit). The terminal path below is what `echo`
+and `ace` went through on 2026-07-31 and still works:
 
 ```bash
 # 1. Re-grant. HUMAN STEP — the consent cannot be automated: the password is

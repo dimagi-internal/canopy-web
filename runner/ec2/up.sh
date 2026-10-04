@@ -83,7 +83,7 @@ echo ">> account"
 # The secrets every box reads at boot. They are SHARED by every runner stack —
 # a second box reuses the live box's — so a missing one is a one-time human step.
 for pair in "canopy/cloud-runner/canopy-pat|./secrets.sh canopy <file>   (a canopy-web PAT for the user the runner pairs as)" \
-            "canopy/cloud-runner/claude-oauth-token|./secrets.sh claude <file>   (\`claude setup-token\` as the subscription account — a HUMAN step)" \
+            "canopy/cloud-runner/claude-oauth-token|./secrets.sh claude <file>   (the build FALLBACK — only read when no live runner has logins for wire.sh to copy; must exist, may be old)" \
             "canopy/cloud-runner/gog-keyring-password|./secrets.sh gog <file>   (any strong password; without it no agent has Gmail)"; do
   s="${pair%%|*}"; fix="${pair#*|}"
   "${AWS[@]}" secretsmanager describe-secret --secret-id "$s" >/dev/null 2>&1 \

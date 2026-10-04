@@ -404,19 +404,19 @@ freshly armed watch fires its own notification, so **arming IS the end-to-end te
 no mail needs sending, and no agent burns a turn on a probe.
 
 **The fix for a mailbox in the wrong project is to move the mailbox, not the topic.**
-`echo` and `ace` were realigned onto the shared `canopy` client on 2026-07-31; their
-old clients lived in the retired `openclaw-assistant-20260224`, which nobody here can
-reach, so there was no topic to create. All five mailboxes now share one client, which
-is why one topic per workspace is currently sufficient. That realignment is a real
-OAuth re-grant and **the consent cannot be automated** — the password is accepted and
-Google then demands SMS verification of the browser — so it is a human step: `gog auth
-add <email> --client canopy --force-consent --services docs,drive,forms,gmail,sheets`,
-run in the macOS account whose runner is unpaused, since gog tokens live in the
-per-user keychain. Order matters: new token → repoint `runner.json`'s
-`mailboxes.<agent>.client` → **restart the runner** (`Config.load` runs once at
-startup) → only then delete the old credentials. Deleting first takes that agent's
-mail down. Expect one transient `401` from the token endpoint on the first arm after
-the switch; it self-corrects within seconds.
+`echo` and `ace` were realigned off clients in the retired `openclaw-assistant-20260224`
+on 2026-07-31. Every mailbox now uses the fleet's ONE Google app in `canopy-494811`,
+which has two interchangeable clients — `canopy` (Desktop: a laptop's `gog login`) and
+`canopy-web` (Web: canopy-web's **Connect Google mailbox** button on the agent's Settings →
+Credentials) — so one topic per workspace is sufficient. Re-granting a mailbox is a human
+OAuth consent through either door (Google may demand SMS verification of the browser):
+the button stores the token in canopy-web and boxes import it on their next bootstrap
+(newest `created_at` wins against the vault copy); a terminal `gog login <email> --client
+canopy --services gmail,drive,docs,sheets,forms,appscript` runs in the macOS account whose
+runner is unpaused, since gog tokens live in the per-user keychain. No `runner.json` edit:
+the runner DISCOVERS which client holds each mailbox (`mailbox_probe`, canopy-web#1087,
+trying `canopy` then `canopy-web`). Expect one transient `401` from the token endpoint on
+the first arm after a switch; it self-corrects within seconds.
 
 **Known limit, now latent rather than live:** `watch_topic` is per-*workspace* while
 the real constraint is per-*client project*. Nothing hits it today because the fleet

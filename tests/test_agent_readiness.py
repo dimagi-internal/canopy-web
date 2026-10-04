@@ -258,3 +258,44 @@ def test_a_real_observation_still_flips_it(fleet):
     services.record_bootstrap_report(
         agent, runner_name="cloud-ec2-1", client_creds_ok=True, mailbox_ok=True, env_ok=True)
     assert fleet["client"].get("/api/agents/ace/readiness").json()[0]["env_ok"] is True
+
+
+def test_a_retired_runners_report_is_left_out(fleet):
+    """2026-10-04: cloud-ec2-test was retired, and its last all-green report kept
+    answering "can this agent run" for echo/eva/ada — a frozen row from a box that
+    no longer exists. Retiring the runner hides it; nothing is deleted, so
+    unretiring brings it back."""
+    _post(fleet["user"], {**DEAD, "mailbox_ok": True, "client_creds_ok": True, "detail": ""})
+    test_box = Runner.objects.create(
+        name="cloud-ec2-test", kind=Runner.CLOUD, owner=fleet["user"], status=Runner.ONLINE,
+        last_heartbeat_at=timezone.now(), capabilities={},
+    )
+    RunnerAssignment.objects.create(agent=fleet["agent"], runner=test_box, rank=1)
+    _post(fleet["user"], {**DEAD, "runner_name": "cloud-ec2-test", "mailbox_ok": True})
+
+    def names():
+        return {r["runner_name"] for r in fleet["client"].get("/api/agents/ace/readiness").json()}
+
+    assert names() == {"cloud-ec2-1", "cloud-ec2-test"}
+    assert fleet["client"].post(f"/api/harness/runners/{test_box.pk}/retire").status_code == 200
+    assert names() == {"cloud-ec2-1"}
+    assert fleet["client"].post(f"/api/harness/runners/{test_box.pk}/unretire").status_code == 200
+    assert names() == {"cloud-ec2-1", "cloud-ec2-test"}
+
+
+def test_a_name_reused_by_a_live_runner_still_reports(fleet):
+    """Names are not unique. A retired box whose name a live one now carries (a
+    rebuilt cloud runner) must not hide the live box's report."""
+    Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, owner=fleet["user"],
+                          status=Runner.RETIRED, capabilities={})
+    _post(fleet["user"], DEAD)
+    rows = fleet["client"].get("/api/agents/ace/readiness").json()
+    assert [r["runner_name"] for r in rows] == ["cloud-ec2-1"]
+
+
+def test_a_report_from_an_unpaired_name_still_shows(fleet):
+    """Only RETIRED names are hidden — a report from a name with no runner row at
+    all is still an observation someone should see."""
+    _post(fleet["user"], {**DEAD, "runner_name": "jj-mbp-cdp"})
+    rows = fleet["client"].get("/api/agents/ace/readiness").json()
+    assert [r["runner_name"] for r in rows] == ["jj-mbp-cdp"]

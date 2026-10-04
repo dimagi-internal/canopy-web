@@ -92,9 +92,14 @@ Parameters:
     Type: String
     Default: canopy/cloud-runner/claude-oauth-token
     Description: >
-      Secrets Manager id holding a dedicated claude setup-token (the long-lived,
-      non-rotating CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`). Dedicated to
-      this runner so it never rotation-conflicts with ace-web's OAuth session.
+      Secrets Manager id of the Claude BUILD FALLBACK: a long-lived
+      `claude setup-token` (CLAUDE_CODE_OAUTH_TOKEN), never ace-web's rotating OAuth
+      session. Intentionally rarely used. A box's working Claude logins are its
+      credential bundle on canopy-web (the runner page: primary + fallback login,
+      API key), which `wire.sh` copies from a live runner and which replaces this
+      value the moment the box stages it. This secret is read only when no live
+      runner has logins to copy, so it being old or at its usage cap is expected,
+      not a defect.
   CanopyTokenSecret:
     Type: String
     Default: canopy/cloud-runner/canopy-pat
