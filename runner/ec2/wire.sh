@@ -13,19 +13,32 @@
 #   4. for every agent that already has an assignment list: replace the
 #      predecessor's row with the new runner id (preserving rank + enabled),
 #      or append the new runner at the tail if the predecessor wasn't in it
-#   5. --drill: fire a readiness drill on the new runner and poll to
-#      completion, printing the pass/fail grid
+#   5. --drill: wait for the box's first bootstrap, fire a readiness drill on
+#      the new runner and poll to completion, printing the pass/fail grid
+#      (exit 0 only when every drill PASSed)
+#
+# --standby replaces steps 3-4 with ONE additive change: the runner is appended
+# as a DISABLED row to the --agents given, and nothing else is touched — no
+# predecessor retired, no rule or workspace order edited. A disabled row never
+# claims routed work, but it IS drillable (drill-before-enable), which is the
+# point: prove a second box end to end without moving any traffic onto it.
+# `down.sh --name <same>` retires the runner, which deletes those rows again.
 #
 # Pure curl + python3 — no deps, matching up.sh/down.sh/secrets.sh's house style.
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck source=_lib.sh
+source ./_lib.sh
 
 BASE_URL="https://labs.connect.dimagi.com/canopy"
 TOKEN_FILE="$HOME/.claude/canopy/workbench-token"
 RUNNER_ID=""
-RUNNER_NAME="cloud-ec2-1"
+RUNNER_NAME="$DEFAULT_RUNNER_NAME"
 AGENTS=""     # comma-separated slug allowlist; empty = every agent with assignments
 DRILL=0
+STANDBY=0
+DISCOVER_MINUTES=15   # cloud-init (node, claude, aws, gh, op) takes 4-6 min before the first pair
+BOOTSTRAP_MINUTES=40  # first bootstrap clones + provisions every registered agent
 AWS_PROFILE_="${AWS_PROFILE:-labs}"
 AWS_REGION_="${AWS_REGION:-us-east-1}"
 
@@ -35,10 +48,16 @@ usage: ./wire.sh [options]
 
   --runner-id <uuid>     skip discovery; wire this specific runner id
   --base-url <url>       canopy-web base URL (default https://labs.connect.dimagi.com/canopy)
-  --runner-name <name>   Runner.name to match when discovering / retiring (default cloud-ec2-1)
+  --name <name>          Runner.name to match when discovering / retiring (default cloud-ec2-1;
+                         --runner-name is the same flag)
   --agents <a,b,c>       only touch these agents' assignment lists (default: every
                          agent that currently has ANY runner assignment)
-  --drill                fire a readiness drill on the new runner, poll to completion, print the grid
+  --standby              add the runner as a DISABLED row to --agents (required) and touch
+                         nothing else: no retire, no swap, no rule/order edit. For a second
+                         box you want to prove (with --drill) without routing work to it.
+  --drill                wait for the box's first bootstrap, fire a readiness drill, poll to
+                         completion, print the grid; exits non-zero unless every drill passes
+  --discover-minutes <n> how long to wait for the fresh box to pair (default 15)
   -h, --help             this
 USAGE
 }
@@ -47,7 +66,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --runner-id) RUNNER_ID="$2"; shift 2 ;;
     --base-url) BASE_URL="${2%/}"; shift 2 ;;
-    --runner-name) RUNNER_NAME="$2"; shift 2 ;;
+    --runner-name|--name) RUNNER_NAME="$2"; shift 2 ;;
+    --standby) STANDBY=1; shift ;;
+    --discover-minutes) DISCOVER_MINUTES="$2"; shift 2 ;;
     --agents) AGENTS="$2"; shift 2 ;;
     --shared-vault) echo "   (--shared-vault is ignored: wire.sh no longer reads a shared GitHub token)"; shift 2 ;;
     --drill) DRILL=1; shift ;;
@@ -55,6 +76,12 @@ while [[ $# -gt 0 ]]; do
     *) echo "unknown arg: $1" >&2; usage; exit 1 ;;
   esac
 done
+
+runner_name_ok "$RUNNER_NAME" || { echo "!! invalid runner name '$RUNNER_NAME'" >&2; exit 1; }
+if [[ "$STANDBY" == "1" && -z "$AGENTS" ]]; then
+  echo "!! --standby needs --agents <a,b>: it only ever touches the agents you name" >&2
+  exit 1
+fi
 
 [[ -f "$TOKEN_FILE" ]] || {
   echo "!! no bearer token at $TOKEN_FILE — mint one first: /canopy:canopy-web-pat-mint" >&2
@@ -79,10 +106,82 @@ api() {
 
 echo ">> $BASE_URL"
 
+# ── Preflight: what each named agent needs before a box can run it ──────────────
+# All of these are ONE-TIME human steps, so they are checked here, before the box
+# is touched, with the fix named — not discovered as a failed drill ten minutes in.
+#   - the agent's own 1Password vault + service-account key (Settings → Credentials)
+#   - its GitHub delegation (the owner's token lent to it; Settings → Credentials → GitHub)
+#   - its workspace's shared vault (/w/<ws>/settings/secrets)
+# In --standby mode an agent that FOLLOWS its workspace's runner order is refused:
+# giving it a row of its own — even a disabled one — makes it stop following,
+# leaving it with no enabled runner at all. Drill it by adding the box to the
+# workspace order instead, or give the agent an explicit order first.
+preflight_agent() {  # <slug> -> 0 ok, 1 refused (message printed)
+  local slug="$1"
+  api GET "/api/agents/${slug}/" > "$TMP/agent-${slug}.json"
+  api GET "/api/agents/${slug}/vault" > "$TMP/vault-${slug}.json"
+  api GET "/api/agents/${slug}/github" > "$TMP/github-${slug}.json"
+  api GET "/api/agents/${slug}/default-order" > "$TMP/order-of-${slug}.json"
+  local ws
+  ws=$(python3 -c "import json;print((json.load(open('$TMP/agent-${slug}.json')) or {}).get('workspace') or '')" 2>/dev/null || true)
+  [[ -n "$ws" ]] && api GET "/api/workspaces/${ws}/shared-vault" > "$TMP/shared-${slug}.json"
+  SLUG="$slug" WS="$ws" STANDBY="$STANDBY" BASE="$BASE_URL" TMPD="$TMP" python3 - <<'PY'
+import json, os, sys
+slug, ws, tmp, base = os.environ["SLUG"], os.environ["WS"], os.environ["TMPD"], os.environ["BASE"]
+def load(name):
+    try:
+        return json.load(open(f"{tmp}/{name}-{slug}.json"))
+    except Exception:
+        return {}
+problems = []
+agent = load("agent")
+if not isinstance(agent, dict) or not agent.get("slug"):
+    print(f"   {slug}: !! no such agent visible to this token")
+    sys.exit(1)
+vault = load("vault")
+if not vault.get("vault") or not vault.get("key_set"):
+    problems.append(f"no agent vault/key registered — {base}/w/{ws}/agents/{slug}/settings (Credentials), "
+                    f"or Ada's bin/ada-vault-provision --slug {slug}")
+gh = load("github")
+if not gh.get("set"):
+    problems.append(f"no GitHub delegation — the owner sets it at {base}/w/{ws}/agents/{slug}/settings (Credentials → GitHub)")
+shared = load("shared")
+if ws and not shared.get("key_set"):
+    problems.append(f"workspace {ws} has no shared vault key — {base}/w/{ws}/settings/secrets")
+order = load("order-of")
+if os.environ["STANDBY"] == "1" and order.get("own") is False:
+    problems.append(f"follows workspace {order.get('workspace') or ws}'s runner order — a standby row would "
+                    "replace that order with ONE disabled runner and strand it. Not touching it.")
+for p in problems:
+    print(f"   {slug}: !! {p}")
+if not problems:
+    print(f"   {slug}: ok (vault {vault.get('vault')}, GitHub as {gh.get('login')}, "
+          f"{'own runner order' if order.get('own') else 'follows ' + str(order.get('workspace'))})")
+sys.exit(1 if problems else 0)
+PY
+}
+
+if [[ -n "$AGENTS" ]]; then
+  echo ">> preflight: $AGENTS"
+  PRE_FAIL=0
+  IFS=',' read -ra _PRE <<<"$AGENTS"
+  for slug in "${_PRE[@]}"; do
+    [[ -n "$slug" ]] || continue
+    preflight_agent "$slug" || PRE_FAIL=1
+  done
+  if [[ "$PRE_FAIL" == "1" ]]; then
+    if [[ "$STANDBY" == "1" ]]; then
+      echo "!! preflight failed — fix the above (each is a one-time step) and re-run. Nothing was changed." >&2
+      exit 1
+    fi
+    echo "   WARN: preflight problems above; wiring anyway (those agents' drills will fail)"
+  fi
+fi
+
 # ── Step 1: discover (or accept) the fresh runner ───────────────────────────────
 if [[ -z "$RUNNER_ID" ]]; then
-  echo ">> waiting for a fresh '$RUNNER_NAME' cloud runner (paired, not yet online)…"
-  for _ in $(seq 1 60); do
+  echo ">> waiting up to ${DISCOVER_MINUTES} min for a fresh '$RUNNER_NAME' cloud runner (paired, not yet online)…"
+  for _ in $(seq 1 $(( DISCOVER_MINUTES * 12 ))); do
     api GET /api/harness/runners/ > "$TMP/runners.json"
     RUNNER_ID=$(python3 -c "
 import json
@@ -94,7 +193,7 @@ rows = json.load(open('$TMP/runners.json'))
 # left by down.sh carries a real (stale) timestamp, and since GET orders by
 # last_heartbeat_at desc nulls_last it would otherwise sort AHEAD of the new
 # box and get picked by mistake. Filter on the never-heartbeated signal, not
-# status, to survive the standard down.sh && up.sh && wire.sh recycle.
+# status, to survive the standard down.sh --keep-runner && up.sh && wire.sh recycle.
 for r in rows:
     if r['kind'] == 'cloud' and r['name'] == '$RUNNER_NAME' and not r.get('last_heartbeat_at'):
         print(r['id']); break
@@ -103,7 +202,7 @@ for r in rows:
     sleep 5
   done
   [[ -n "$RUNNER_ID" ]] || {
-    echo "!! timed out (5 min) waiting for a fresh cloud runner named '$RUNNER_NAME' — is up.sh running / cloud-init done?" >&2
+    echo "!! timed out (${DISCOVER_MINUTES} min) waiting for a fresh cloud runner named '$RUNNER_NAME' — is up.sh done? cloud-init log: ssh ... 'sudo tail -50 /var/log/cloud-init-output.log'" >&2
     exit 1
   }
 fi
@@ -120,6 +219,120 @@ json.dump({'claude_token': os.environ['CLAUDE_TOKEN']}, open('$TMP/cred.json', '
 "
 api POST "/api/harness/runners/${RUNNER_ID}/credential" "$TMP/cred.json" | python3 -m json.tool
 echo "==> credential staged"
+
+# ── the drill (step 5), defined here so --standby can reach it too ──────────────
+wait_for_bootstrap() {
+  # A drill fired before the box's first bootstrap sits queued behind it, and the
+  # poll budget below (per drill) then times out on a box that is merely busy
+  # cloning. Wait for the box to REPORT a finished bootstrap first.
+  echo ">> waiting up to ${BOOTSTRAP_MINUTES} min for the runner's first bootstrap to finish…"
+  for _ in $(seq 1 $(( BOOTSTRAP_MINUTES * 6 ))); do
+    # There is no single-runner GET; the list is the read.
+    api GET "/api/harness/runners/" > "$TMP/runner.json" 2>/dev/null || true
+    STATE=$(python3 -c "
+import json
+try:
+    rows = json.load(open('$TMP/runner.json'))
+    r = next((x for x in rows if x.get('id') == '$RUNNER_ID'), {})
+except Exception:
+    r = {}
+b = r.get('health_bootstrapped_at') or 0
+print('done' if b else (r.get('status') or 'unknown'))
+")
+    if [[ "$STATE" == "done" ]]; then
+      echo "   bootstrapped"
+      return 0
+    fi
+    sleep 10
+  done
+  echo "   WARN: no finished bootstrap reported after ${BOOTSTRAP_MINUTES} min (status: $STATE) — drilling anyway"
+}
+
+run_drill() {  # <body-json-file>
+  wait_for_bootstrap
+  echo ">> firing readiness drill on $RUNNER_ID"
+  api POST "/api/harness/runners/${RUNNER_ID}/drill" "$1" > "$TMP/drill-result.json"
+  python3 -c "
+import json
+rows = json.load(open('$TMP/drill-result.json'))
+if isinstance(rows, dict) and rows.get('detail'):
+    raise SystemExit('drill start failed: ' + rows['detail'])
+print(f'   started {len(rows)} drill(s)')
+"
+  # Drills run SERIALLY on the box (one claude -p at a time, ~75-90s each), so a
+  # full 5-agent wave needs ~7-8 min. The old 5-min budget timed the LAST agent out
+  # every time — reporting a PENDING that looked like a hang but was just the poll
+  # giving up early. Budget per drill started, with a floor, rather than a flat cap.
+  DRILL_COUNT=$(python3 -c "import json;print(len(json.load(open('$TMP/drill-result.json'))))")
+  POLL_TICKS=$(( DRILL_COUNT * 36 ))   # 36 ticks x 5s = 3 min per drill
+  [[ "$POLL_TICKS" -lt 60 ]] && POLL_TICKS=60
+  echo ">> polling for completion (up to $((POLL_TICKS * 5 / 60)) min for $DRILL_COUNT drill(s))"
+  for _ in $(seq 1 "$POLL_TICKS"); do
+    api GET "/api/harness/runners/${RUNNER_ID}/drills" > "$TMP/drills.json"
+    PENDING=$(python3 -c "
+import json
+rows = json.load(open('$TMP/drills.json'))
+print(sum(1 for r in rows if r['outcome'] == 'pending'))
+")
+    [[ "$PENDING" == "0" ]] && break
+    sleep 5
+  done
+  echo ">> drill grid:"
+  python3 -c "
+import json, sys
+rows = json.load(open('$TMP/drills.json'))
+for r in sorted(rows, key=lambda r: r['agent_slug']):
+    mark = {'pass': 'PASS', 'fail': 'FAIL', 'pending': 'PENDING (timed out waiting)'}[r['outcome']]
+    print(f\"   {r['agent_slug']:10s} {mark:28s} {r['summary'][:80]}\")
+sys.exit(0 if rows and all(r['outcome'] == 'pass' for r in rows) else 2)
+"
+}
+
+# ── --standby: one additive change, then (optionally) the drill ─────────────────
+if [[ "$STANDBY" == "1" ]]; then
+  echo ">> standby: adding $RUNNER_ID as a DISABLED row for: $AGENTS (nothing else is touched)"
+  IFS=',' read -ra SB_SLUGS <<<"$AGENTS"
+  for slug in "${SB_SLUGS[@]}"; do
+    [[ -n "$slug" ]] || continue
+    api GET "/api/agents/${slug}/runners" > "$TMP/rows-${slug}.json"
+    SB_ACTION=$(python3 -c "
+import json
+rows = json.load(open('$TMP/rows-${slug}.json'))
+if not isinstance(rows, list):
+    raise SystemExit('cannot read ${slug} runners: ' + json.dumps(rows)[:200])
+new_id = '$RUNNER_ID'
+out = [{'runner_id': r['runner_id'], 'enabled': r['enabled']} for r in rows]
+if any(r['runner_id'] == new_id for r in rows):
+    print('present')
+else:
+    out.append({'runner_id': new_id, 'enabled': False})
+    json.dump({'runners': out}, open('$TMP/put-${slug}.json', 'w'))
+    print('appended')
+")
+    if [[ "$SB_ACTION" == "appended" ]]; then
+      api PUT "/api/agents/${slug}/runners" "$TMP/put-${slug}.json" > "$TMP/put-out-${slug}.json"
+      python3 -c "
+import json, sys
+rows = json.load(open('$TMP/put-out-${slug}.json'))
+if not isinstance(rows, list):
+    sys.exit('${slug}: PUT refused: ' + json.dumps(rows)[:300])
+"
+    fi
+    echo "   $slug: $SB_ACTION (disabled)"
+  done
+  if [[ "$DRILL" == "1" ]]; then
+    python3 -c "
+import json
+json.dump({'agents': [s for s in '$AGENTS'.split(',') if s]}, open('$TMP/drill.json', 'w'))
+"
+    run_drill "$TMP/drill.json" || {
+      echo "==> standby-wired: $RUNNER_ID (drill did not fully pass) — tear down with ./down.sh --name $RUNNER_NAME"
+      exit 2
+    }
+  fi
+  echo "==> standby-wired: $RUNNER_ID ($RUNNER_NAME) — tear down with ./down.sh --name $RUNNER_NAME"
+  exit 0
+fi
 
 # ── Step 3: retire predecessors ──────────────────────────────────────────────────
 #
@@ -308,42 +521,8 @@ done
 
 # ── Step 5: optional drill wave ──────────────────────────────────────────────────
 if [[ "$DRILL" == "1" ]]; then
-  echo ">> firing readiness drill on $RUNNER_ID"
   echo '{}' > "$TMP/drill.json"
-  api POST "/api/harness/runners/${RUNNER_ID}/drill" "$TMP/drill.json" > "$TMP/drill-result.json"
-  python3 -c "
-import json
-rows = json.load(open('$TMP/drill-result.json'))
-if isinstance(rows, dict) and rows.get('detail'):
-    raise SystemExit('drill start failed: ' + rows['detail'])
-print(f'   started {len(rows)} drill(s)')
-"
-  # Drills run SERIALLY on the box (one claude -p at a time, ~75-90s each), so a
-  # full 5-agent wave needs ~7-8 min. The old 5-min budget timed the LAST agent out
-  # every time — reporting a PENDING that looked like a hang but was just the poll
-  # giving up early. Budget per drill started, with a floor, rather than a flat cap.
-  DRILL_COUNT=$(python3 -c "import json;print(len(json.load(open('$TMP/drill-result.json'))))")
-  POLL_TICKS=$(( DRILL_COUNT * 36 ))   # 36 ticks x 5s = 3 min per drill
-  [[ "$POLL_TICKS" -lt 60 ]] && POLL_TICKS=60
-  echo ">> polling for completion (up to $((POLL_TICKS * 5 / 60)) min for $DRILL_COUNT drill(s))"
-  for _ in $(seq 1 "$POLL_TICKS"); do
-    api GET "/api/harness/runners/${RUNNER_ID}/drills" > "$TMP/drills.json"
-    PENDING=$(python3 -c "
-import json
-rows = json.load(open('$TMP/drills.json'))
-print(sum(1 for r in rows if r['outcome'] == 'pending'))
-")
-    [[ "$PENDING" == "0" ]] && break
-    sleep 5
-  done
-  echo ">> drill grid:"
-  python3 -c "
-import json
-rows = json.load(open('$TMP/drills.json'))
-for r in sorted(rows, key=lambda r: r['agent_slug']):
-    mark = {'pass': 'PASS', 'fail': 'FAIL', 'pending': 'PENDING (timed out waiting)'}[r['outcome']]
-    print(f\"   {r['agent_slug']:10s} {mark:28s} {r['summary'][:80]}\")
-"
+  run_drill "$TMP/drill.json" || { echo "==> wired: $RUNNER_ID (drill did not fully pass)"; exit 2; }
 fi
 
 echo "==> wired: $RUNNER_ID"

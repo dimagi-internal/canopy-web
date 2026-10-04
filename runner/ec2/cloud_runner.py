@@ -431,6 +431,36 @@ def _credential_check() -> None:
         _set_check("claude.credentials", "ok", f"{n} credentials in the fallback chain")
 
 
+#: Root-volume thresholds (percent used). cloud-ec2-1 reached 100% on 2026-10-04 —
+#: a plugin cache holding every version it ever installed — and nothing said so
+#: until turns started failing on writes. Overridable for a box with odd mounts.
+DISK_WARN_PCT = float(os.environ.get("DISK_WARN_PCT", "80"))
+DISK_FAIL_PCT = float(os.environ.get("DISK_FAIL_PCT", "90"))
+DISK_PATH = os.environ.get("DISK_PATH", "/")
+
+
+def _disk_check() -> None:
+    """How full the root volume is. One statvfs, so cheap enough for every beat —
+    and a disk filling up is exactly the thing that should not wait ten minutes."""
+    try:
+        du = shutil.disk_usage(DISK_PATH)
+    except OSError as exc:
+        _set_check("disk", "warn", f"could not read usage of {DISK_PATH}: {exc}")
+        return
+    pct = 100.0 * du.used / du.total if du.total else 0.0
+    gib = 1024 ** 3
+    detail = (f"{DISK_PATH} {pct:.0f}% used ({du.used / gib:.1f} of {du.total / gib:.1f} GiB, "
+              f"{du.free / gib:.1f} GiB free)")
+    if pct >= DISK_FAIL_PCT:
+        _set_check("disk", "fail", detail + ": turns will start failing on writes. "
+                   "Refresh this runner (bootstrap prunes the plugin/npm/uv caches) "
+                   "or grow the volume (VolumeSize)")
+    elif pct >= DISK_WARN_PCT:
+        _set_check("disk", "warn", detail + ": refresh this runner to prune caches")
+    else:
+        _set_check("disk", "ok", detail)
+
+
 def _version_of(cmd: list[str]) -> str:
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
@@ -478,6 +508,7 @@ def health_report() -> dict:
     global _HEALTH_SLOW_AT
     try:
         _credential_check()
+        _disk_check()
         if _BOOTSTRAPPED_AT:
             # Before bootstrap the packages are not exposed yet; reporting them
             # as failed would be a false alarm on every start.
