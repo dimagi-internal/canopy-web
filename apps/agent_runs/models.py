@@ -42,6 +42,30 @@ class AgentRun(models.Model):
         help_text="The run this was forked from, if any.",
     )
     session_link = models.URLField(max_length=500, blank=True, default="", help_text="Link to the originating Claude/agent session.")
+
+    # ---- run documents: a run of a KIND of work on an agent's PROJECT ----------
+    # The generic record a specific workflow specializes. DDD is the first kind:
+    # its state (iteration, findings, progress, gate decisions) used to live only
+    # on the disk of the runner that started it, so no other machine could resume
+    # it and two machines could mint the same run id. All optional — a plain
+    # lifecycle run (ACE's) leaves them empty. See apps/agent_runs/documents.py.
+    project = models.ForeignKey(
+        "agents.AgentProject", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="runs", help_text="The agent project this run is work on.",
+    )
+    kind = models.CharField(max_length=40, blank=True, default="", db_index=True, help_text='e.g. "ddd".')
+    ext_id = models.CharField(
+        max_length=255, unique=True, null=True, blank=True,
+        help_text="The workflow's own run id (DDD: <narrative>-YYYY-MM-DD-NNN). Globally unique: "
+        "walkthroughs and reviews join to the run by this string.",
+    )
+    subject = models.CharField(max_length=200, blank=True, default="", help_text="DDD: the narrative slug.")
+    summary = models.JSONField(default=dict, blank=True, help_text="Small kind-defined digest for lists.")
+    state = models.JSONField(default=dict, blank=True, help_text="The kind's full run-state document.")
+    state_version = models.PositiveIntegerField(default=0)
+    holder = models.CharField(max_length=200, blank=True, default="", help_text="Runner (user@host) that last wrote.")
+    holder_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
@@ -50,6 +74,7 @@ class AgentRun(models.Model):
         indexes = [
             models.Index(fields=["agent", "-created_at"]),
             models.Index(fields=["forked_from"]),
+            models.Index(fields=["kind", "subject"]),
         ]
 
     def __str__(self) -> str:

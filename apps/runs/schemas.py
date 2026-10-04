@@ -106,12 +106,28 @@ class RunNarrativeOut(StrictModel):
     why_brief: dict[str, Any] | None = None
 
 
+class RunRecordOut(StrictModel):
+    """The run's own record (an ``AgentRun`` run document) — what the runner says
+    about the run, instead of a phase guessed from its latest review."""
+
+    agent_slug: str
+    project_ext_id: str | None = None
+    project_name: str | None = None
+    kind: str
+    status: str
+    current_step: str = ""
+    summary: dict[str, Any] = {}
+    holder: str = ""
+    holder_at: dt.datetime | None = None
+
+
 class RunPackageOut(StrictModel):
     run_id: str
     narrative_slug: str
     created_at: dt.datetime | None = None
     latest_at: dt.datetime | None = None
     phase: str | None = None
+    record: RunRecordOut | None = None
     video: RunArtifactOut | None = None
     # First-class, single-valued run outputs. `slides` is the canopy:walkthrough
     # HTML slideshow (role=deck); `documentation` is the feature docs page
