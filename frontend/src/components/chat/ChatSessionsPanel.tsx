@@ -1,36 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { Plus } from 'lucide-react'
-import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from 'canopy-ui/ui'
-import { closeSession, createSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
-import { getAgentDefaultOrder, getAgentRunners, listAgents, type AgentOut, type AgentRunnerOut } from '@/api/agents'
-import { listRunners, type RunnerOut } from '@/api/harness'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
+import { closeSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
+import { listAgents, type AgentOut } from '@/api/agents'
 import { projectsApi, type ProjectSlug } from '@/api/projects'
 import { relativeTime } from '@/components/activity/turnLog'
 import { sessionTargetLabel } from './sessionTargetLabel'
 import { sessionDisplayTitle } from './sessionDisplayTitle'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
 import { closeIntent, closeResultMessage, settleClosing } from './closeAction'
-import {
-  onlineSessionCapableRunners,
-  parkedReason,
-  parkedSummary,
-  partitionByRunnerReachability,
-} from './runnerEligibility'
-
-// The "Run on" picker's pending target — set when the user picks an agent or
-// project from the New chat menu, before they've confirmed a runner + Start.
-type PendingTarget =
-  | { kind: 'agent'; agent: AgentOut }
-  | { kind: 'project'; project: ProjectSlug }
+import { parkedReason, parkedSummary, partitionByRunnerReachability } from './runnerEligibility'
+import { NewChatMenu } from './NewChatMenu'
 
 /** An independent on/off filter — deliberately shaped unlike the sort segments
  *  beside it, so the row does not read as four options where you pick one. */
@@ -78,7 +57,6 @@ export function ChatSessionsPanel({
   agents?: AgentOut[]
   heading?: string
 }) {
-  const navigate = useNavigate()
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [agents, setAgents] = useState<AgentOut[]>(agentsProp ?? [])
   const [projects, setProjects] = useState<ProjectSlug[]>([])
@@ -92,19 +70,11 @@ export function ChatSessionsPanel({
   // conversation is still there. This toggle is how you get to it.
   const [showOffline, setShowOffline] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
   const [closingId, setClosingId] = useState<string | null>(null)
   // Closes relayed to a runner and not yet confirmed: session id -> when.
   const [pendingClose, setPendingClose] = useState<Record<string, number>>({})
   const [closeError, setCloseError] = useState<string | null>(null)
 
-  // "Run on" picker state: a target (agent or project) picked from the New
-  // chat menu, its eligible runners, and the current selection ('' = Auto).
-  const [pending, setPending] = useState<PendingTarget | null>(null)
-  const [agentRunnerOptions, setAgentRunnerOptions] = useState<AgentRunnerOut[]>([])
-  const [fleetRunners, setFleetRunners] = useState<RunnerOut[] | null>(null)
-  const [runnersLoading, setRunnersLoading] = useState(false)
-  const [selectedRunnerId, setSelectedRunnerId] = useState('')
 
   useEffect(() => {
     if (agentsProp) setAgents(agentsProp)
@@ -208,100 +178,6 @@ export function ChatSessionsPanel({
     return () => window.clearInterval(tick)
   }, [waitingOnCloses, showArchived])
 
-  const startChat = useCallback(
-    (agent: AgentOut, runnerId?: string) => {
-      setCreating(true)
-      createSession({ agentSlug: agent.slug, workspace: agent.workspace ?? undefined, runnerId })
-        .then((s) => navigate(`/w/${s.workspace}/chat/${s.id}`))
-        .catch((err: unknown) => {
-          setError(err instanceof Error ? err.message : 'could not start chat')
-          setCreating(false)
-        })
-    },
-    [navigate],
-  )
-
-  const startProjectChat = useCallback(
-    (project: ProjectSlug, runnerId?: string) => {
-      setCreating(true)
-      createSession({ project: project.slug, workspace: project.workspace ?? undefined, runnerId })
-        .then((s) => navigate(`/w/${s.workspace}/chat/${s.id}`))
-        .catch((err: unknown) => {
-          setError(err instanceof Error ? err.message : 'could not start chat')
-          setCreating(false)
-        })
-    },
-    [navigate],
-  )
-
-  // Reset the "Run on" step, e.g. when the New chat menu closes.
-  const resetPending = useCallback(() => {
-    setPending(null)
-    setSelectedRunnerId('')
-  }, [])
-
-  // pickAgent is an event handler, not an effect, so there's no cleanup
-  // function to cancel a stale in-flight fetch — a ref tracking the
-  // currently-picked slug lets a late response check whether it's still
-  // wanted before applying, so rapidly switching agents can't have a slower
-  // earlier response overwrite a newer pick's runner options.
-  const pickedAgentSlugRef = useRef<string | null>(null)
-
-  const pickAgent = useCallback((agent: AgentOut) => {
-    setSelectedRunnerId('')
-    setPending({ kind: 'agent', agent })
-    setRunnersLoading(true)
-    pickedAgentSlugRef.current = agent.slug
-    // AgentRunnerOut does NOT carry `capabilities` — this list is just the
-    // agent's assigned runners, so it may still list a runner that isn't
-    // sessions-capable. The server is the actual gate: picking one here 422s
-    // the send/place call (canopy_sessions.services._placeable_runner rejects
-    // a non-session-capable runner) rather than pinning a turn no runner can
-    // ever claim.
-    // Its own runners, or — when it has none — the workspace default order it
-    // follows (2026-10-03). Reading only its own left "Auto" as the sole choice
-    // for every agent that follows a default.
-    const workspace = agent.workspace ?? undefined
-    getAgentDefaultOrder(agent.slug, workspace)
-      .then((d) => (d.own ? getAgentRunners(agent.slug, workspace) : Array.from(d.runners ?? [])))
-      .then((options) => {
-        if (pickedAgentSlugRef.current === agent.slug) setAgentRunnerOptions(options)
-      })
-      .catch(() => {
-        if (pickedAgentSlugRef.current === agent.slug) setAgentRunnerOptions([])
-      })
-      .finally(() => {
-        if (pickedAgentSlugRef.current === agent.slug) setRunnersLoading(false)
-      })
-  }, [])
-
-  const pickProject = useCallback(
-    (project: ProjectSlug) => {
-      setSelectedRunnerId('')
-      setPending({ kind: 'project', project })
-      if (fleetRunners !== null) return
-      setRunnersLoading(true)
-      listRunners()
-        .then(setFleetRunners)
-        .catch(() => setFleetRunners([]))
-        .finally(() => setRunnersLoading(false))
-    },
-    [fleetRunners],
-  )
-
-  const confirmStart = useCallback(() => {
-    if (!pending) return
-    const runnerId = selectedRunnerId || undefined
-    if (pending.kind === 'agent') startChat(pending.agent, runnerId)
-    else startProjectChat(pending.project, runnerId)
-  }, [pending, selectedRunnerId, startChat, startProjectChat])
-
-  // Project chats route through the fleet-wide runner list, filtered to
-  // online + sessions-capable (only those can execute a chat turn at all).
-  const projectRunnerOptions = useMemo(
-    () => onlineSessionCapableRunners(fleetRunners ?? []),
-    [fleetRunners],
-  )
 
   const now = new Date()
 
@@ -331,89 +207,7 @@ export function ChatSessionsPanel({
             </span>
           )}
         </h2>
-        <DropdownMenu onOpenChange={(open: boolean) => { if (!open) resetPending() }}>
-          <DropdownMenuTrigger
-            render={<Button size="sm" disabled={creating || (agents.length === 0 && projects.length === 0)} />}
-          >
-            <Plus className="mr-1 h-4 w-4" />
-            New chat
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
-            {!pending ? (
-              <>
-                <DropdownMenuLabel>New chat with…</DropdownMenuLabel>
-                {agents.length === 0 && projects.length === 0 && <DropdownMenuItem disabled>No agents available</DropdownMenuItem>}
-                {agents.map((a) => (
-                  <DropdownMenuItem
-                    key={`${a.workspace}/${a.slug}`}
-                    closeOnClick={false}
-                    onClick={() => pickAgent(a)}
-                  >
-                    {a.name}
-                    {a.workspace ? <span className="ml-2 text-xs text-muted-foreground">{a.workspace}</span> : null}
-                  </DropdownMenuItem>
-                ))}
-                {projects.length > 0 && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel>Projects</DropdownMenuLabel>
-                    {projects.map((p) => (
-                      <DropdownMenuItem
-                        key={`${p.workspace}/${p.slug}`}
-                        closeOnClick={false}
-                        onClick={() => pickProject(p)}
-                      >
-                        {p.name}
-                        {p.workspace ? <span className="ml-2 text-xs text-muted-foreground">{p.workspace}</span> : null}
-                      </DropdownMenuItem>
-                    ))}
-                  </>
-                )}
-              </>
-            ) : (
-              <div className="flex flex-col gap-2 px-2 py-1.5" data-testid="run-on-picker">
-                <div className="text-sm text-foreground">
-                  {pending.kind === 'agent' ? pending.agent.name : pending.project.name}
-                </div>
-                <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-                  Run on
-                  <select
-                    value={selectedRunnerId}
-                    onChange={(e) => setSelectedRunnerId(e.target.value)}
-                    disabled={runnersLoading}
-                    className="rounded-md border border-input bg-input px-1.5 py-1 text-[12px] text-foreground"
-                    data-testid="run-on-select"
-                  >
-                    <option value="">Auto</option>
-                    {pending.kind === 'agent'
-                      ? agentRunnerOptions.map((r) => (
-                          <option key={r.runner_id} value={r.runner_id}>
-                            {r.online ? '●' : '○'} {r.runner_name}
-                          </option>
-                        ))
-                      : projectRunnerOptions.map((r) => (
-                          <option key={r.id} value={r.id}>
-                            ● {r.name}
-                          </option>
-                        ))}
-                  </select>
-                </label>
-                <div className="flex items-center gap-2">
-                  <Button size="sm" disabled={creating} onClick={confirmStart}>
-                    Start chat
-                  </Button>
-                  <button
-                    type="button"
-                    onClick={resetPending}
-                    className="text-[11px] text-muted-foreground hover:text-foreground"
-                  >
-                    Back
-                  </button>
-                </div>
-              </div>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <NewChatMenu agents={agents} projects={projects} onError={setError} />
       </div>
 
       {/* `parked.length` opens the toolbar too: with one session, and that one

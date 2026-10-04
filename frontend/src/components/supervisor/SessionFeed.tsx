@@ -8,9 +8,20 @@ import { relativeTime } from '@/components/activity/turnLog'
 import { CLOSE_POLL_MS, closeIntent, closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
-import { CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, sourceKey } from './feedRules'
+import { NewChatMenu } from '@/components/chat/NewChatMenu'
+import { CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, ranOnItsOwn, sourceKey } from './feedRules'
 
 const POLL_MS = 20_000
+// Per-viewer and best-effort: storage can be missing or throw (private window).
+const SHOW_AUTO_KEY = 'canopy.supervisor.feed.showAuto'
+
+function readShowAuto(): boolean {
+  try {
+    return window.localStorage.getItem(SHOW_AUTO_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 
 /**
  * The supervisor's main screen: every session that finished a turn (or is
@@ -37,6 +48,17 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
   // the delete failed.
   const [closing, setClosing] = useState<Record<string, number>>({})
   const [stuck, setStuck] = useState<Set<string>>(() => new Set())
+  // Sessions an agent drove on its own (auto mode) are held back unless shown.
+  const [showAuto, setShowAuto] = useState(readShowAuto)
+  const [newChatError, setNewChatError] = useState<string | null>(null)
+  const toggleAuto = useCallback(() => {
+    setShowAuto((v) => {
+      try {
+        window.localStorage.setItem(SHOW_AUTO_KEY, v ? '0' : '1')
+      } catch { /* the toggle still works for this visit */ }
+      return !v
+    })
+  }, [])
 
   const reload = useCallback(() => {
     listSessions('active', { reply: true })
@@ -123,7 +145,9 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
   }
 
   const { feed, parked } = feedSessions(sessions)
-  const pending = feed.filter((s) => handled.get(s.id) !== s.last_activity_at)
+  const unhandled = feed.filter((s) => handled.get(s.id) !== s.last_activity_at)
+  const autoCount = unhandled.filter(ranOnItsOwn).length
+  const pending = showAuto ? unhandled : unhandled.filter((s) => !ranOnItsOwn(s))
   const sources = feedSources(pending)
   const showChips = pending.length >= CHIPS_AT && sources.length > 1
   // A filter whose source has emptied out falls back to All rather than
@@ -139,6 +163,29 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
 
   return (
     <div className="flex flex-col gap-3" data-testid="session-feed">
+      <div className="flex items-center justify-between gap-2">
+        {autoCount > 0 || showAuto ? (
+          <label
+            className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 text-[12px] sm:min-h-0 ${
+              showAuto ? 'text-foreground' : 'text-muted-foreground hover:text-foreground-secondary'
+            }`}
+            title="Sessions an agent ran on its own, in auto mode — from a schedule, an email, Slack or a dispatch"
+          >
+            <input
+              type="checkbox"
+              checked={showAuto}
+              onChange={toggleAuto}
+              data-testid="feed-show-auto"
+              className="h-3.5 w-3.5 accent-primary"
+            />
+            Show auto sessions{autoCount > 0 ? ` (${autoCount})` : ''}
+          </label>
+        ) : (
+          <span />
+        )}
+        <NewChatMenu agents={agents ?? []} onError={setNewChatError} />
+      </div>
+      {newChatError && <p className="text-[12px] text-destructive">{newChatError}</p>}
       {showChips && (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by agent" data-testid="feed-chips">
           {[{ key: null, label: 'All', count: pending.length }, ...sources.map((x) => ({
@@ -165,6 +212,8 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
           <p className="text-sm font-medium text-foreground">You're all caught up</p>
           <p className="mt-1 text-[12px] text-muted-foreground">
             When a session finishes a turn and needs your next prompt, it shows up here.
+            {!showAuto && autoCount > 0 &&
+              ` ${autoCount} session${autoCount === 1 ? '' : 's'} an agent ran on its own ${autoCount === 1 ? 'is' : 'are'} hidden.`}
           </p>
         </div>
       ) : (

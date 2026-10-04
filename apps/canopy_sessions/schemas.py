@@ -194,6 +194,11 @@ class SessionOut(Schema):
     # feed renders — and whether the agent had the last word.
     last_reply: str = ""
     agent_spoke_last: bool = False
+    # The mode (`manual` / `auto`) and origin of the newest claimed turn that drove
+    # this session — also feed-only (`?reply=true`), "" otherwise or when no turn
+    # has been claimed. Lets the feed hold back work an agent did on its own.
+    turn_mode: str = ""
+    turn_origin: str = ""
     # What this conversation's host requires of the runner it runs on (e.g.
     # `zdr`), so placement offers only runners whose `flags` include every one.
     # A malformed stored value comes back as an entry no runner can declare.

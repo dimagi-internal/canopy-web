@@ -171,6 +171,8 @@ def _out(session: Session, *, reply: bool = False) -> dict:
         "runner_requirements": sorted(rr.requirements_of_session(session)),
         "last_reply": last_reply,
         "agent_spoke_last": agent_spoke_last,
+        "turn_mode": getattr(session, "_turn_mode", None) or "",
+        "turn_origin": getattr(session, "_turn_origin", None) or "",
     }
 
 
@@ -359,7 +361,7 @@ def list_sessions(
         rows = rows.filter(Q(status=Session.ARCHIVED) | unseen)
 
     if reply:
-        rows = services.with_last_reply(rows)
+        rows = services.with_driving_turn(services.with_last_reply(rows))
     out = [_out(s, reply=reply) for s in rows]
     # Waiting first, then running, then genuinely-most-recent. Sorting by
     # created_at made a dead repo and a live one interleave arbitrarily (both

@@ -9423,6 +9423,16 @@ export interface components {
              */
             readonly agent_spoke_last: boolean;
             /**
+             * Turn Mode
+             * @default
+             */
+            readonly turn_mode: string;
+            /**
+             * Turn Origin
+             * @default
+             */
+            readonly turn_origin: string;
+            /**
              * Runner Requirements
              * @default []
              */
@@ -14588,6 +14598,16 @@ export interface components {
              * @default false
              */
             readonly agent_spoke_last: boolean;
+            /**
+             * Turn Mode
+             * @default
+             */
+            readonly turn_mode: string;
+            /**
+             * Turn Origin
+             * @default
+             */
+            readonly turn_origin: string;
             /**
              * Runner Requirements
              * @default []
