@@ -144,6 +144,36 @@ def with_last_reply(sessions):
     )
 
 
+def with_driving_turn(sessions):
+    """`sessions` annotated with `_turn_mode` / `_turn_origin`: the mode and origin
+    of the newest claimed turn that drove each one — the supervisor feed's "did
+    the agent do this on its own?".
+
+    A turn drives a session two ways: a chat send carries the session itself
+    (`chat_session`), and an agent turn the runner opened a session for carries
+    that session's key (`Turn.session_key`, the same value as the binding's) —
+    which is how a scheduled or email turn's session is found, since it was never
+    a chat. Unclaimed turns have no mode yet ("" until claim), so they say nothing.
+    """
+    from django.db.models import Q
+
+    driving = (
+        Turn.objects.filter(
+            Q(chat_session=OuterRef("pk"))
+            | (
+                Q(agent=OuterRef("agent"), session_key=OuterRef("runner_binding__session_key"))
+                & ~Q(session_key="")
+            )
+        )
+        .exclude(turn_mode="")
+        .order_by("-created_at")
+    )
+    return sessions.annotate(
+        _turn_mode=Subquery(driving.values("turn_mode")[:1]),
+        _turn_origin=Subquery(driving.values("origin")[:1]),
+    )
+
+
 def last_reply_from(rows) -> tuple[str, bool]:
     """(the agent's last reply, did the agent have the last word) from
     chronological (role, text) pairs. Tool and system rows are not speech.

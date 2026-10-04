@@ -13,6 +13,9 @@ vi.mock('@/api/chat', () => ({
   closeSession: (...a: unknown[]) => closeSession(...a),
 }))
 
+// The New chat menu loads projects on mount; nothing here exercises it.
+vi.mock('@/api/projects', () => ({ projectsApi: { listSlugs: () => Promise.resolve([]) } }))
+
 import { SessionFeed } from './SessionFeed'
 
 const s = (id: string, fields: Partial<ChatSession> = {}): ChatSession =>
@@ -41,8 +44,18 @@ const renderFeed = () =>
     </MemoryRouter>,
   )
 
+// jsdom here exposes a `localStorage` whose methods are missing (see
+// NoteComposer.test.tsx), so a plain map stands in, fresh for every test.
+let store: Map<string, string>
+
 beforeEach(() => {
   vi.stubGlobal('crypto', { randomUUID: () => 'client-1' })
+  store = new Map()
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+  })
 })
 
 afterEach(() => {
@@ -150,5 +163,38 @@ describe('SessionFeed', () => {
     listSessions.mockResolvedValue([s('a'), s('dead', { runner_online: false, runner_status: 'stale' })])
     renderFeed()
     expect((await screen.findByTestId('feed-parked')).textContent).toContain('1 more')
+  })
+
+  it('offers New chat right on the feed', async () => {
+    listSessions.mockResolvedValue([])
+    renderFeed()
+    expect(await screen.findByTestId('feed-empty')).toBeTruthy()
+    expect(screen.getByTestId('new-chat').textContent).toContain('New chat')
+  })
+
+  it('holds back sessions an agent ran on its own until you show them', async () => {
+    listSessions.mockResolvedValue([
+      s('chat', { turn_mode: 'auto', turn_origin: 'canopy_web_chat' }),
+      s('cron', { turn_mode: 'auto', turn_origin: 'canopy_scheduler' }),
+      s('mail', { turn_mode: 'manual', turn_origin: 'email' }),
+    ])
+    renderFeed()
+    // A chat you are having stays even when its turn ran auto.
+    expect(await screen.findByTestId('feed-card-chat')).toBeTruthy()
+    expect(screen.getByTestId('feed-card-mail')).toBeTruthy()
+    expect(screen.queryByTestId('feed-card-cron')).toBeNull()
+    expect(screen.getByText('Show auto sessions (1)')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('feed-show-auto'))
+    expect(screen.getByTestId('feed-card-cron')).toBeTruthy()
+    // Remembered for this viewer.
+    expect(store.get('canopy.supervisor.feed.showAuto')).toBe('1')
+  })
+
+  it('says when the only sessions waiting are hidden auto ones', async () => {
+    listSessions.mockResolvedValue([s('cron', { turn_mode: 'auto', turn_origin: 'email' })])
+    renderFeed()
+    expect(await screen.findByTestId('feed-empty')).toBeTruthy()
+    expect(screen.getByText(/1 session an agent ran on its own is hidden/)).toBeTruthy()
   })
 })

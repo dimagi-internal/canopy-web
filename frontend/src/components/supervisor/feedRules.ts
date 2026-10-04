@@ -62,3 +62,15 @@ export function feedSources(feed: readonly ChatSession[]): { key: string; count:
   }
   return [...by.values()].sort((a, b) => b.count - a.count)
 }
+
+/**
+ * Did an agent drive this session on its own — its newest turn ran in `auto`
+ * mode, and came from somewhere other than a person's chat (a schedule, an
+ * email, Slack, a dispatch)? The feed holds these back unless asked: an auto
+ * turn already acted without waiting for anyone, so it is not asking for your
+ * next prompt the way a conversation is. A chat you are having stays, whatever
+ * the agent's switch says.
+ */
+export function ranOnItsOwn(s: ChatSession): boolean {
+  return s.turn_mode === 'auto' && s.turn_origin !== 'canopy_web_chat'
+}

@@ -124,3 +124,49 @@ def test_a_long_reply_arrives_whole(world):
     row = _row(world, s)
     assert row["last_reply"] == long.strip()
     assert row["last_reply"].endswith("The last line.")
+
+
+def test_a_session_an_agent_drove_on_its_own_says_so(world):
+    """The feed holds back work an agent did unattended. A scheduled turn's session
+    is found through `Turn.session_key` (it was never a chat), and its claimed mode
+    rides the list beside the reply."""
+    import uuid
+
+    from apps.harness.models import Turn
+
+    runner = Runner.objects.create(
+        name="jj-mbp", kind=Runner.EMDASH, host="jj-mac", owner=world["me"], workspace=world["ws"],
+        status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+    )
+    world["client"].post(
+        f"/api/harness/runners/{runner.id}/sessions",
+        {"sessions": [{
+            "emdash_task": "hal-daily", "project": "hal",
+            "recent_messages": [{"role": "assistant", "text": "Daily sweep done."}],
+        }]},
+        content_type="application/json",
+    )
+    Turn.objects.create(
+        agent=world["hal"], origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key=uuid.uuid4().hex,
+        session_key="hal-daily", turn_mode="auto",
+    )
+    rows = world["client"].get("/api/canopy-sessions/?reply=true").json()
+    [row] = [r for r in rows if r["session_key"] == "hal-daily"]
+    assert (row["turn_mode"], row["turn_origin"]) == ("auto", "canopy_scheduler")
+
+
+def test_a_chat_carries_the_mode_of_its_newest_claimed_send(world):
+    import uuid
+
+    from apps.harness.models import Turn
+
+    s = _web_session(world, (Message.USER, "hi"), (Message.ASSISTANT, "hello"))
+    Turn.objects.create(chat_session=s, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+                        idempotency_key=uuid.uuid4().hex, turn_mode="manual")
+    # Queued, so not yet decided — it must not blank out the mode that was.
+    Turn.objects.create(chat_session=s, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+                        idempotency_key=uuid.uuid4().hex)
+    row = _row(world, s)
+    assert (row["turn_mode"], row["turn_origin"]) == ("manual", "canopy_web_chat")
+    # Feed-only, like the reply.
+    assert _row(world, s, query="")["turn_mode"] == ""
