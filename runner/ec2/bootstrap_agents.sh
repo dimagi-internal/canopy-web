@@ -62,7 +62,18 @@ fail() { printf '[bootstrap-agents] FAIL: %s\n' "$*" >&2; }
 # The real invariant, if this is ever automated: pick the client whose token
 # AUTHENTICATES (bootstrap already probes with `gog gmail search`), not the one
 # some file names.
-declare -A GOG_CLIENT=( [ace]=ace [ada]=canopy [echo]=echo [eva]=canopy [hal]=canopy )
+#
+# 2026-10-04: that convergence happened and this table was never updated. Echo's
+# vault token was re-minted under `canopy` on 2026-09-28, but the table still
+# said `echo`, so bootstrap found the OLD token (under ACE's own Google app)
+# still authenticating, called the mailbox live, and never imported the vault's
+# `canopy` token — Echo's readiness read "turns need client 'canopy', live token
+# is 'echo'" while the token its turns needed sat in its vault. And an agent
+# missing from the table (jarvis, muse, fizzy) defaulted to a client named after
+# itself, which exists for nobody. So bootstrap now starts from the client the
+# agent's TURNS present (`turn_client_for`): if a token under it authenticates
+# the agent is ready; if not, it imports the newest token as before, and that
+# token's own declared client is still honoured. The table is gone.
 
 # The client an agent's TURNS present, which is NOT necessarily the one whose
 # token is live. `/ace:turn` and every sibling read `config/agent.json.gog_client`
@@ -264,7 +275,9 @@ except Exception:
     pass
 ' 2>/dev/null || true)"
   fi
-  printf '%s\n' "${declared:-${GOG_CLIENT[$slug]:-$slug}}"
+  # No client named in the token: the fleet's shared client, never the agent's
+  # own declaration (the token is the fact; the declaration is intent — 2026-09-05).
+  printf '%s\n' "${declared:-$FLEET_GOG_CLIENT}"
 }
 
 # Materialize a gog OAuth client's id+secret to ~/.config/gogcli/credentials-<client>.json.
@@ -672,7 +685,8 @@ step2_gog_config() {
   local slugs=(); IFS=',' read -ra slugs <<<"$AGENT_SLUGS"
   local pairs=()
   for slug in "${slugs[@]}"; do
-    local client="${GOG_CLIENT[$slug]:-$slug}" mailbox
+    local client; client="$(turn_client_for "$slug")"
+    local mailbox
     mailbox="$(agent_mailbox "$slug")"
     [[ -n "$mailbox" ]] || continue   # no mailbox recorded for this instance
     pairs+=("${mailbox}=${client}")
@@ -1075,7 +1089,7 @@ inject_agent_env() {  # <slug> <agent-clone> <agent-vault> <agent-key>
 bootstrap_one_agent() {
   local slug="$1"
   local dest="$AGENT_ROOT/$slug"
-  local client="${GOG_CLIENT[$slug]:-$slug}"
+  local client; client="$(turn_client_for "$slug")"
   # WHERE this agent's secrets live and WHICH key reads them — from canopy-web,
   # the custodian of both, and from nowhere else. Two levels, each with its own
   # key, and neither substitutes for the other:
