@@ -3861,6 +3861,14 @@ def profiles_supported(plugin_root: pathlib.Path | None = None) -> int:
     return int(m.group(1)) if ok else 0
 
 
+#: Every turn this runner executes is ONE-SHOT: when the model ends its turn the
+#: session closes (ACP `agent.close()`, or `claude -p` exits), so a background task's
+#: completion notification has nobody to wake. canopy's one_shot_turn_guard hook
+#: (canopy #755) blocks background Bash/subagents/waits when this is set — stated
+#: explicitly here rather than inferred from an unrelated variable.
+ONE_SHOT_TURN_ENV = {"CANOPY_ONE_SHOT_TURN": "1"}
+
+
 def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
@@ -3869,7 +3877,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # own git pull needs it), its caller envelope and, for a chat, that
         # chat's key.
         per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
-                    **_chat_key_env(turn)}
+                    **_chat_key_env(turn), **ONE_SHOT_TURN_ENV}
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(_turn_agent_slug(turn)))
