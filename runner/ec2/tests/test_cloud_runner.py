@@ -2167,3 +2167,10 @@ def test_a_browser_minted_mailbox_is_read_under_canopy_web(cloud_runner, tmp_pat
         {"ace": {"account": "ace@dimagi-ai.com", "client": "canopy"}}, probe)
     assert out == {"ace": {"account": "ace@dimagi-ai.com", "client": "canopy-web"}}
     assert probed == ["canopy", "canopy-web"]
+
+
+def test_every_turn_is_marked_one_shot(cloud_runner):
+    """canopy's one_shot_turn_guard keys on this; a cloud turn can't be resumed."""
+    assert cloud_runner.ONE_SHOT_TURN_ENV == {"CANOPY_ONE_SHOT_TURN": "1"}
+    import inspect
+    assert "ONE_SHOT_TURN_ENV" in inspect.getsource(cloud_runner._run_turn)
