@@ -38,16 +38,14 @@ from django.utils import timezone
 # un-retires its sessions with no repair step.
 SESSION_LIVE_WINDOW = dt.timedelta(minutes=3)
 
-# How long a session held by a box that posts NO wholesale reports (the cloud runner)
-# stays listed after its last message. There is no sighting to poll there: the cloud
-# runner records a session once, when its turn starts, so `live_seen_at` is a
-# creation stamp. Measured against SESSION_LIVE_WINDOW it retired every cloud turn's
-# session 3 minutes after it began — a manual-mode ACE turn on cloud-ec2-1 finished
-# with a reply drafted for approval, and Supervisor never showed it (canopy-web#1087,
-# 2026-10-03). The signal that does exist is the transcript the runner streams in, so
-# that is what this window measures; it is long because what it protects is a draft
-# that waits on a human. An explicit archive still ends one at any time.
-CLOUD_SESSION_LIVE_WINDOW = dt.timedelta(days=3)
+# A box that posts NO wholesale reports (the cloud runner) has no open-task set to
+# observe: it runs each turn as one Claude process that EXITS when the turn ends. So
+# there, "open on the runner" means exactly "a turn on this session is queued or
+# running" — and when the last one finishes the session is closed, the cloud
+# equivalent of a laptop task being closed. It used to stay listed for 3 days after
+# it last spoke (CLOUD_SESSION_LIVE_WINDOW, #1087/#1155) so a drafted reply could be
+# picked back up later; there is no such thing (Jonathan, 2026-10-05, #1140). A
+# reply to a closed session still works — it queues a turn, which opens it again.
 
 
 def stale_cutoff(now=None):
@@ -70,8 +68,9 @@ def unseen_q() -> Q:
     But staleness needs an OBSERVER, and that is what origin was standing in for badly.
     Two things have to be true before absence means anything: a runner holds this
     session, and that runner is one that posts wholesale reports. An unbound web chat
-    fails the first (no runner yet); a cloud-held chat fails the second. Neither can be
-    retired by observation, only by an explicit archive.
+    fails the first (no runner yet) and is retired only by an explicit archive. A
+    cloud-held chat fails the second, so it has its own observation: whether a turn
+    on it is in flight.
 
     Being wrong in the archiving direction is cheap and self-healing — the rule is
     derived on every read, so one report brings a session back — but it is not free:
@@ -88,22 +87,28 @@ def unseen_q() -> Q:
     # absence — of a sighting or of a binding entirely — is staleness with no further
     # qualification. Narrowing this leg would resurrect the 47 zombies of 2026-07-25.
     #
-    # Except on the cloud runner, which records a session per agent turn and never
-    # reports it again, so there quiet means the TRANSCRIPT stopped, for
-    # CLOUD_SESSION_LIVE_WINDOW. Gated on the runner's KIND, not on its never having
-    # reported: a laptop that went quiet before `sessions_reported_at` existed has no
-    # stamp either, and its sessions are exactly the zombies this leg retires. A
-    # session with no binding, or whose binding lost its runner, keeps the rule above.
+    # Except on the cloud runner, which records a session per turn and never reports
+    # it again: there, the session is open exactly while a turn on it is in flight
+    # (see the module note above `stale_cutoff`). Gated on the runner's KIND, not on
+    # its never having reported: a laptop that went quiet before
+    # `sessions_reported_at` existed has no stamp either, and its sessions are
+    # exactly the zombies this leg retires. A session with no binding, or whose
+    # binding lost its runner, keeps the rule above.
     unobserved = Q(runner_binding__runner__kind="cloud") & Q(
         runner_binding__runner__sessions_reported_at__isnull=True
     )
-    cutoff = timezone.now() - CLOUD_SESSION_LIVE_WINDOW
-    talked_recently = Exists(
-        apps.get_model("canopy_sessions", "Message").objects.filter(
-            session=OuterRef("pk"), created_at__gte=cutoff
+    Turn = apps.get_model("harness", "Turn")
+    in_flight = Exists(
+        Turn.objects.filter(status__in=Turn.NON_TERMINAL).filter(
+            # A chat reply names its session; a dispatched turn's session was
+            # recorded under the Claude session id the turn carries.
+            Q(chat_session=OuterRef("pk"))
+            | (Q(session_key=OuterRef("runner_binding__session_key"))
+               & Q(claimed_by=OuterRef("runner_binding__runner"))
+               & ~Q(session_key=""))
         )
     )
-    cloud_quiet = Q(runner_binding__live_seen_at__lt=cutoff) & ~Q(talked_recently)
+    cloud_quiet = ~Q(in_flight)
     runner_unseen = Q(origin="runner") & (
         (~unobserved & quiet) | (unobserved & cloud_quiet)
     )
@@ -111,17 +116,14 @@ def unseen_q() -> Q:
     # NEW, and gated on an OBSERVER existing. A sent web chat is held and reported
     # like any other, so its going quiet means the same thing — but ONLY on a box that
     # actually posts wholesale reports. The cloud runner does not (it record-sessions
-    # once per turn and has no open-task set to report, a cloud chat being always
-    # resumable), so there `live_seen_at` is a creation stamp and its age is not
-    # evidence. Ungated, this archived every live cloud chat 3 minutes after its last
-    # turn. `sessions_reported_at` is that gate; see Runner for why it is `isnull`
+    # once per turn and has no open-task set to report), so there `live_seen_at` is a
+    # creation stamp and its age is not evidence. Ungated, this archived a cloud chat
+    # 3 minutes after its turn STARTED, mid-run. `sessions_reported_at` is that gate; see Runner for why it is `isnull`
     # rather than a freshness window.
     #
-    # And held by the cloud runner, the same transcript rule the runner leg uses:
-    # a web chat the cloud box ran is resumable for CLOUD_SESSION_LIVE_WINDOW after
-    # it last spoke, and then it is over. Without this leg it had no end at all —
-    # labs listed a hal chat as active 67 days after its last word, bound to a
-    # cloud runner that had since been retired (2026-10-05).
+    # And held by the cloud runner, the same rule the runner leg uses: open while a
+    # turn on it is in flight, closed when the last one ends. (Before #1155 it had no
+    # end at all — labs listed a hal chat 67 days after its last word.)
     web_unseen = (
         ~Q(origin="runner")
         & Q(runner_binding__isnull=False)
