@@ -285,9 +285,8 @@ def notify_elsewhere(session, texts) -> bool:
     turns = Turn.objects.filter(chat_session=session)
     if turns.filter(status__in=list(Turn.NON_TERMINAL - {Turn.QUEUED})).exists():
         return False
-    recent = {" ".join((p or "").split()) for p in turns.order_by("-created_at")
-              .values_list("prompt", flat=True)[:20]}
-    if all(" ".join(t.split()) in recent for t in texts):
+    recent = {_norm(p) for p in turns.order_by("-created_at").values_list("prompt", flat=True)[:20]}
+    if all(_asked(t) in recent for t in texts):
         return False
     now = time.time()
     with transaction.atomic():
@@ -368,6 +367,20 @@ def _norm(text: str) -> str:
     return " ".join((text or "").split())
 
 
+#: The note the runner appends to a prompt that carries attachments
+#: (`canopy_runner.execute.prompt_with_attachments`). The transcript records what
+#: was TYPED, so the person's message comes back with it attached — and, as
+#: stored, without the line break before it.
+_ATTACHMENT_NOTE = re.compile(r"The user attached the following files?\. Read (?:it|them) with the Read tool.*\Z",
+                              re.S)
+
+
+def _asked(text: str) -> str:
+    """A human message as the ask it was: whitespace-normalised, with the runner's
+    attachment note removed, so it matches the turn prompt it was typed from."""
+    return _norm(_ATTACHMENT_NOTE.sub("", text or ""))
+
+
 def on_transcript(session, rows) -> None:
     """A runner streamed transcript text for a session; keep its Slack thread in step.
 
@@ -433,7 +446,7 @@ def relay_after_turn(session, replies) -> int:
     # (2026-10-02: the owner added a screenshot mid-turn, and every word after the
     # turn yielded — the merge, the deploy, the summary — was held back as private.)
     during_turn = last.finished_at is not None and latest_human.created_at <= last.finished_at
-    if not during_turn and _norm(latest_human.plaintext) not in asks:
+    if not during_turn and _asked(latest_human.plaintext) not in asks:
         return 0
     bridged = {_norm(str((p or {}).get("text") or "")) for p in
                TurnEvent.objects.filter(turn=last, kind="assistant").values_list("payload", flat=True)}
