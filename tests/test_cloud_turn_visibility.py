@@ -182,3 +182,41 @@ def test_a_members_private_chat_turn_stays_hidden_from_other_members():
     hal = _member(ws, "hal")
     ids = {t["id"] for t in _client(hal).get("/api/harness/turns/").json()}
     assert str(turn.id) not in ids
+
+
+def _web_chat_on(runner, user, agent, title, *, seen_ago, said_ago=None):
+    """A chat started in the app (origin=web) whose turns a runner ran."""
+    from apps.canopy_sessions.models import Session
+
+    session = Session.objects.create(workspace=agent.workspace, agent=agent, created_by=user,
+                                     title=title, origin=Session.ORIGIN_WEB)
+    RunnerBinding.objects.create(session=session, runner=runner, session_key=title,
+                                 live_seen_at=timezone.now() - seen_ago)
+    if said_ago is not None:
+        m = Message.objects.create(session=session, turn_index=1, role=Message.ASSISTANT,
+                                   plaintext="ok", content={})
+        Message.objects.filter(pk=m.pk).update(created_at=timezone.now() - said_ago)
+    return session
+
+
+def test_a_web_chat_the_cloud_ran_ends_after_its_window():
+    """Labs, 2026-10-05: a hal web chat, quiet for 67 days on a since-retired cloud
+    runner, was still listed as active — web chats on the cloud had no end."""
+    user, ws, agent = _ctx()
+    cloud = _runner(ws, user, "cloud-ec2-1", reports=False, kind=Runner.CLOUD)
+    old = CLOUD_SESSION_LIVE_WINDOW + dt.timedelta(hours=1)
+    _web_chat_on(cloud, user, agent, "old web chat", seen_ago=old, said_ago=old)
+    assert "old web chat" not in _active(user)
+    assert "old web chat" in _active(user, state="archived")
+
+
+def test_a_web_chat_the_cloud_ran_stays_while_resumable():
+    user, ws, agent = _ctx()
+    cloud = _runner(ws, user, "cloud-ec2-1", reports=False, kind=Runner.CLOUD)
+    _web_chat_on(cloud, user, agent, "recent web chat", seen_ago=dt.timedelta(hours=5),
+                 said_ago=dt.timedelta(hours=5))
+    # Started long ago but spoke recently: the transcript, not the stamp, decides.
+    _web_chat_on(cloud, user, agent, "long but lively", seen_ago=dt.timedelta(days=30),
+                 said_ago=dt.timedelta(hours=1))
+    rows = _active(user)
+    assert "recent web chat" in rows and "long but lively" in rows

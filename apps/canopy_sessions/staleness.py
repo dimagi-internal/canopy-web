@@ -116,11 +116,19 @@ def unseen_q() -> Q:
     # evidence. Ungated, this archived every live cloud chat 3 minutes after its last
     # turn. `sessions_reported_at` is that gate; see Runner for why it is `isnull`
     # rather than a freshness window.
+    #
+    # And held by the cloud runner, the same transcript rule the runner leg uses:
+    # a web chat the cloud box ran is resumable for CLOUD_SESSION_LIVE_WINDOW after
+    # it last spoke, and then it is over. Without this leg it had no end at all —
+    # labs listed a hal chat as active 67 days after its last word, bound to a
+    # cloud runner that had since been retired (2026-10-05).
     web_unseen = (
         ~Q(origin="runner")
         & Q(runner_binding__isnull=False)
-        & Q(runner_binding__runner__sessions_reported_at__isnull=False)
-        & quiet
+        & (
+            (Q(runner_binding__runner__sessions_reported_at__isnull=False) & quiet)
+            | (unobserved & cloud_quiet)
+        )
     )
 
     return runner_unseen | web_unseen

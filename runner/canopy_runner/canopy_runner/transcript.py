@@ -318,8 +318,8 @@ def newest_record_time(path: Path) -> str | None:
 SUBAGENT_DIRNAME = "subagents"
 
 
-def activity_mtime(path: Path | None) -> float:
-    """Newest mtime across a session's transcript AND its subagents' transcripts.
+def activity_bytes(path: Path | None) -> int:
+    """Total bytes across a session's transcript AND its subagents' transcripts.
 
     A subagent does not write to the session transcript. Its turns go to
     `<transcript-stem>/subagents/agent-*.jsonl`, so the parent file can sit
@@ -328,33 +328,37 @@ def activity_mtime(path: Path | None) -> float:
     something" from the parent file alone is blind for exactly that window, which
     is the window we care about.
 
-    mtime rather than record timestamps, because every comparison this feeds is
-    against an EARLIER READING OF ITSELF on this same box — never against another
-    clock — so the cheap stat is both sufficient and immune to a transcript whose
-    newest record is unparseable. 0.0 means "nothing to see" (no path, unreadable
-    dir) and sorts as oldest, so an unreadable session simply never claims to be
+    BYTES, not mtime. A transcript only ever grows by appending, so new bytes
+    are new work, and nothing else is. Its mtime moves without any new record
+    (measured 2026-10-05: `lost-message`'s file stamped 18:21:42 with its newest
+    record at 17:18:04 and its size unchanged, and `slack-new` the same at 18:04),
+    and an mtime-based dissent read each of those touches as the session still
+    working, so an idle session wore the running badge for minutes at a time.
+    Every comparison this feeds is against an earlier reading of itself on this
+    box, so the cheap stat is sufficient. 0 means "nothing to see" (no path,
+    unreadable) and so never grows, so an unreadable session never claims to be
     writing.
     """
     if path is None:
-        return 0.0
-    newest = 0.0
+        return 0
+    total = 0
     try:
-        newest = path.stat().st_mtime
+        total = path.stat().st_size
     except OSError:
         pass
     try:
         entries = os.scandir(path.with_suffix("") / SUBAGENT_DIRNAME)
     except OSError:
-        return newest  # no subagents dir is the common case, not a problem
+        return total  # no subagents dir is the common case, not a problem
     with entries:
         for entry in entries:
             if not entry.name.endswith(".jsonl"):
                 continue
             try:
-                newest = max(newest, entry.stat().st_mtime)
+                total += entry.stat().st_size
             except OSError:
                 continue
-    return newest
+    return total
 
 
 def session_tail(
@@ -364,12 +368,14 @@ def session_tail(
     limit: int = 8,
     home: Path | None = None,
     claude_home: Path | None = None,
+    emdash_db: str | None = None,
 ) -> tuple[list[dict], str]:
     """(messages, reason). reason == "" on success. NEVER raises — see module docstring."""
     home = home or Path.home()
     claude_home = claude_home or (home / ".claude" / "projects")
     try:
-        path = resolve_transcript(repo, task, home=home, claude_home=claude_home)
+        path = resolve_transcript(repo, task, home=home, claude_home=claude_home,
+                                  emdash_db=emdash_db)
     except Exception:  # noqa: BLE001 — a fragile-half failure must not crash the tick
         logger.debug("transcript resolve failed for %s/%s", repo, task, exc_info=True)
         return [], "resolve-error"
@@ -388,6 +394,7 @@ def attach_recent_tail(
     limit: int = 8,
     home: Path | None = None,
     claude_home: Path | None = None,
+    emdash_db: str | None = None,
 ) -> None:
     """Fill recent_messages on the first `count` sessions (the most-recently-active,
     since emdash.list_open_sessions returns newest-first) — the ones the phone shows
@@ -412,9 +419,13 @@ def attach_recent_tail(
     claude_home = claude_home or (home / ".claude" / "projects")
     for s in sessions[:count]:
         try:
+            # emdash_db: without it, a task whose worktree is not named after it
+            # (`slack-new` in `emdash-slack-jpxzv`) resolves to nothing, and its
+            # tail AND its last-activity time silently freeze at whatever emdash's
+            # UI last recorded (2026-10-05: "12:04" on a session working at 17:14).
             path = resolve_transcript(
                 s.get("project", ""), s.get("emdash_task", ""),
-                home=home, claude_home=claude_home,
+                home=home, claude_home=claude_home, emdash_db=emdash_db,
             )
         except Exception:  # noqa: BLE001 — a fragile-half failure must not crash the tick
             path = None
@@ -471,6 +482,7 @@ def pending_question_for(
     *,
     home: Path | None = None,
     claude_home: Path | None = None,
+    emdash_db: str | None = None,
 ) -> dict | None:
     """The unanswered dialog on this session, or None. NEVER raises.
 
@@ -481,7 +493,8 @@ def pending_question_for(
     home = home or Path.home()
     claude_home = claude_home or (home / ".claude" / "projects")
     try:
-        path = resolve_transcript(repo or "", task or "", home=home, claude_home=claude_home)
+        path = resolve_transcript(repo or "", task or "", home=home, claude_home=claude_home,
+                                  emdash_db=emdash_db)
         if path is None:
             return None
         return _pending_question(_tail_records(path, QUESTION_TAIL_BYTES))
@@ -496,6 +509,7 @@ def attach_pending_questions(
     home: Path | None = None,
     claude_home: Path | None = None,
     hook_menu_for=None,
+    emdash_db: str | None = None,
 ) -> None:
     """Fill `question` on EVERY reported session, in place. Best-effort.
 
@@ -513,7 +527,7 @@ def attach_pending_questions(
     for s in sessions:
         project, task = s.get("project", ""), s.get("emdash_task", "")
         question = pending_question_for(
-            project, task, home=home, claude_home=claude_home,
+            project, task, home=home, claude_home=claude_home, emdash_db=emdash_db,
         )
         # The transcript is the WEAKER source here and has to be, because Claude
         # Code writes the ask's record only once it is answered — so it reports
