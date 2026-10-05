@@ -185,17 +185,21 @@ def test_saving_an_empty_list_makes_an_agent_follow_again(tree):
     assert RunnerAssignment.objects.filter(pk=rule.pk).exists()  # rules untouched
 
 
-def test_only_a_workspace_owner_sets_the_order(tree):
-    """It routes agents in every division below too, and only ownership flows
-    down the tree."""
+def test_an_admin_sets_the_order_and_an_editor_does_not(tree):
+    """It routes agents in every division below too, so it is an admin's call
+    (`runners.route`), not an editor's."""
     jj, dimagi, _connect, (jj_box, _hal_box, _cloud) = tree
     editor = _user("ed")
     WorkspaceMembership.objects.create(workspace=dimagi, user=editor, role=WorkspaceMembership.EDITOR)
+    admin = _user("ad")
+    WorkspaceMembership.objects.create(workspace=dimagi, user=admin, role=WorkspaceMembership.ADMIN)
     c = Client()
     c.force_login(editor)
     body = {"runners": [{"runner_id": str(jj_box.pk)}]}
     assert c.put("/api/workspaces/dimagi/runner-order", body, content_type="application/json").status_code in (403, 404)
     assert not WorkspaceRunnerOrder.objects.exists()
+    c.force_login(admin)
+    assert c.put("/api/workspaces/dimagi/runner-order", body, content_type="application/json").status_code == 200
     c.force_login(jj)
     assert c.put("/api/workspaces/dimagi/runner-order", body, content_type="application/json").status_code == 200
 

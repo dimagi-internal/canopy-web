@@ -649,21 +649,22 @@ def get_runner_order(request: HttpRequest, slug: str) -> list[RunnerOrderRowOut]
 @router.put("/{slug}/runner-order", response=list[RunnerOrderRowOut],
             summary="Replace the workspace's default runner order")
 def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) -> list[RunnerOrderRowOut]:
-    """Wholesale replace (index = rank). Workspace owners only: the order routes
-    agents in every workspace below this one too, and ownership is the only role
-    that flows down the tree. Every runner must be able to SERVE this workspace —
+    """Wholesale replace (index = rank). Workspace admins and owners
+    (`runners.route`): the order routes agents in every workspace below this one
+    too. Every runner must be able to SERVE this workspace —
     its owner a member (`runner_tenant_slugs`) — or the order would name a box the
     claim path refuses anyway; such a runner is a 422, as is an unknown or retired
     one."""
     # Maintainer note: was `agent.work` while the order routed only this
     # workspace's repo turns; an agent following it may live in a division where
-    # an editor here holds no role at all.
+    # an editor here holds no role at all. Then `own`; lowered to admin
+    # (2026-10-05) — the runners it names must already serve this workspace.
     from django.db import transaction
 
     from apps.harness.models import Runner, WorkspaceRunnerOrder
     from apps.harness.services import runner_tenant_slugs
 
-    m = _require(request.user, slug, perms.OWN)
+    m = _require(request.user, slug, perms.RUNNERS_ROUTE)
     ids = [row.runner_id for row in payload.runners]
     if len(ids) != len(set(ids)):
         raise HttpError(422, "duplicate runner id in list")

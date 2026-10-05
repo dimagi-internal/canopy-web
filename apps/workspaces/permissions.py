@@ -68,6 +68,12 @@ MEMBERS_MANAGE = "members.manage"
 #: sites (create, edit, test, read health), Slack history and sync.
 INTEGRATIONS = "integrations"
 
+#: The workspace's default runner order: which box takes repo turns, and every
+#: agent here (and in workspaces below) that has no order of its own. Routing
+#: work to boxes the workspace can already use — not a key (owner decision
+#: 2026-10-05).
+RUNNERS_ROUTE = "runners.route"
+
 # --- owner: the keys --------------------------------------------------------------
 
 #: Delete the workspace, nest or detach it, the shared vault, the Slack app
@@ -86,6 +92,7 @@ MINIMUM_ROLE: dict[str, str] = {
     LOGS_READ: _M.ADMIN,
     MEMBERS_MANAGE: _M.ADMIN,
     INTEGRATIONS: _M.ADMIN,
+    RUNNERS_ROUTE: _M.ADMIN,
     OWN: _M.OWNER,
 }
 
