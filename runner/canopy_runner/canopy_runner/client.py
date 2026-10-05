@@ -189,6 +189,9 @@ class Client:
         # What this CODE reads in a caller envelope — canopy-web withholds caller
         # turns from a runner that does not say it reads `profile: "confined"`.
         body["envelope"] = caller.ENVELOPE_VERSION
+        # Delivers a follow-up into a running chat turn (canopy-web#1153).
+        from .chat_bridge import MIDTURN_VERSION
+        body["midturn"] = MIDTURN_VERSION
         _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
         return payload or {}
 

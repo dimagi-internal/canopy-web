@@ -108,6 +108,63 @@ def hands_back_to_human(rec: dict) -> bool:
 IDLE_TICKS = 180          # ~15 min of a completely silent transcript
 MAX_TICKS = 2880          # ~4 h total, so a wedged bridge can't hold a session forever
 
+#: Reported on the heartbeat as `midturn`: this code delivers a follow-up INTO a
+#: running chat turn (`Rider`, canopy-web#1153). canopy-web hands a rider only to
+#: a runner reporting it — older code would bridge the same reply twice.
+MIDTURN_VERSION = 1
+
+#: What Claude Code's background-task notices look like when they pass through
+#: its prompt queue. They are the agent's own plumbing, never a person's message,
+#: so they must not count as a rider arriving.
+_TASK_NOTICE = "<task-notification"
+
+
+def _norm(s: str) -> str:
+    return " ".join((s or "").split())
+
+
+def received_prompt(rec: dict) -> str | None:
+    """The text of a person's message that Claude Code has just HANDED TO THE
+    MODEL, or None if `rec` is not that.
+
+    Typed into a busy session, a message is queued (`queue-operation` enqueue)
+    and then taken one of two ways, both measured in this repo's own sessions
+    (2026-10-05, the #1147 incident transcript): mid-turn it is `remove`d from
+    the queue and injected as a `queued_command` attachment the model reads at
+    its next step; once the turn has ended it is `dequeue`d and arrives as an
+    ordinary `user` prompt. The enqueue itself is NOT receipt — the model has
+    not seen it yet. Neither is the `remove`: it always precedes the
+    attachment, so counting both would receive one message twice."""
+    kind = rec.get("type")
+    text = None
+    if kind == "attachment":
+        att = rec.get("attachment") or {}
+        if att.get("type") == "queued_command" and isinstance(att.get("prompt"), str):
+            text = att["prompt"]
+    elif kind == "user" and not rec.get("isMeta"):
+        msg = rec.get("message")
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list) and not any(
+                isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            text = "\n".join(b.get("text", "") for b in content
+                             if isinstance(b, dict) and b.get("type") == "text")
+    if text is None or text.lstrip().startswith(_TASK_NOTICE):
+        return None
+    return text
+
+
+@dataclass
+class Rider:
+    """A follow-up typed into this bridge's session while its turn was running
+    (canopy-web#1153). Its reply is part of this turn's reply, so the turn must
+    not end until the model has actually RECEIVED it."""
+
+    turn_id: str
+    probe: str
+    received: bool = False
+
 
 @dataclass
 class LiveBridge:
@@ -143,6 +200,36 @@ class LiveBridge:
     # The emdash project that owns `task`. Task names are unique per project only,
     # so the stop's Escape must be aimed by (project, task) — see cdp_control.interrupt.
     project: str = ""
+    # Follow-ups delivered into this turn (`add_rider`), in delivery order.
+    riders: list[Rider] = field(default_factory=list)
+
+    def add_rider(self, turn_id: str, prompt: str) -> None:
+        """A follow-up was typed into this session mid-turn. The turn now runs
+        until the model has received it AND handed the floor back after that.
+
+        Re-opens a turn whose `end_turn` was already read but which is still
+        flushing text: the follow-up's reply has not started yet."""
+        from .delivery import probe_of
+
+        self.riders.append(Rider(turn_id=turn_id, probe=probe_of(prompt)))
+        if self.done_reason == "end_turn":
+            self.done_reason = ""
+
+    @property
+    def awaiting_riders(self) -> bool:
+        return any(not r.received for r in self.riders)
+
+    def _note_received(self, text: str) -> None:
+        """Match a received prompt to a waiting rider: by its words first; failing
+        that, the oldest waiting one — Claude Code may rewrite what was typed
+        (a collapsed paste, an attachment path), and a rider that can never be
+        matched would hold the turn open to the idle backstop."""
+        waiting = [r for r in self.riders if not r.received]
+        if not waiting:
+            return
+        norm = _norm(text)
+        match = next((r for r in waiting if r.probe and r.probe in norm), None)
+        (match or waiting[0]).received = True
 
     def step(self, new_records: list[dict], raw_lines: list[str] | None = None,
              blocked: bool = False) -> None:
@@ -170,12 +257,20 @@ class LiveBridge:
         texts = new_assistant_texts(new_records, 0)
         self.pending.extend(texts)
         self.collected.extend(texts)
-        if any(hands_back_to_human(r) for r in new_records):
-            self.done_reason = "end_turn"
-        elif self.idle_ticks >= IDLE_TICKS and not blocked:
-            self.done_reason = "idle"
-        elif self.ticks >= MAX_TICKS:
-            self.done_reason = "max_ticks"
+        # In ORDER: a hand-back only ends the turn once every rider has been
+        # received — one taken after this `end_turn` gets its own reply, which
+        # ends with its own hand-back.
+        for rec in new_records:
+            text = received_prompt(rec) if self.riders else None
+            if text is not None:
+                self._note_received(text)
+            if hands_back_to_human(rec) and not self.awaiting_riders:
+                self.done_reason = "end_turn"
+        if self.done_reason != "end_turn":
+            if self.idle_ticks >= IDLE_TICKS and not blocked:
+                self.done_reason = "idle"
+            elif self.ticks >= MAX_TICKS:
+                self.done_reason = "max_ticks"
 
     @property
     def finished(self) -> bool:
@@ -192,6 +287,7 @@ class LiveBridge:
     @property
     def note(self) -> str:
         chars = len("\n\n".join(self.collected))
+        rode = f"; {len(self.riders)} follow-up(s) delivered mid-turn" if self.riders else ""
         if self.done_reason == "end_turn":
-            return f"chat reply bridged ({chars} chars)"
-        return f"chat reply bridged ({chars} chars; ended on {self.done_reason})"
+            return f"chat reply bridged ({chars} chars{rode})"
+        return f"chat reply bridged ({chars} chars; ended on {self.done_reason}{rode})"

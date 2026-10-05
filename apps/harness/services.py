@@ -397,7 +397,7 @@ def heartbeat(
     code_version: str = "", code_sha: str = "", code_committed_at: int = 0,
     projects: list[str] | None = None, profiles: int = 0,
     health: dict | None = None, mailboxes_readable: list[str] | None = None,
-    envelope: int = 0,
+    envelope: int = 0, midturn: int = 0,
 ) -> Runner:
     """`profiles` is the profile-enforcement version the runner REPORTS it can
     honour (see `profile_q`). Written on every beat, and 0 from a runner that
@@ -466,6 +466,14 @@ def heartbeat(
         runner.capabilities = {**runner.capabilities, "envelope": int(envelope or 0)}
         if "capabilities" not in fields:
             fields.append("capabilities")
+    # Whether this runner's CODE delivers a follow-up into a running turn
+    # (`rides_turn`, canopy-web#1153). Reported, same contract as `envelope`:
+    # an older runner would claim a rider as an ordinary chat turn and bridge
+    # the same reply twice, so it must never be handed one.
+    if int(runner.capabilities.get("midturn") or 0) != int(midturn or 0):
+        runner.capabilities = {**runner.capabilities, "midturn": int(midturn or 0)}
+        if "capabilities" not in fields:
+            fields.append("capabilities")
     runner.save(update_fields=fields)
     # The update nudge: this is the one moment both shas are in hand — the
     # deploy moved the expectation, the beat just reported what's installed.
@@ -486,6 +494,13 @@ def heartbeat(
     if active_turn_ids:
         Turn.objects.filter(
             pk__in=active_turn_ids,
+            claimed_by=runner,
+            status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
+        ).update(lease_expires_at=now + dt.timedelta(seconds=DEFAULT_LEASE_SECONDS))
+        # A rider lives exactly as long as the turn it rode into: renewed with
+        # it, so it can only be swept when that turn is.
+        Turn.objects.filter(
+            rides_turn_id__in=active_turn_ids,
             claimed_by=runner,
             status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
         ).update(lease_expires_at=now + dt.timedelta(seconds=DEFAULT_LEASE_SECONDS))
@@ -910,7 +925,59 @@ def busy_session_ids():
     evaluate `id IN (…, NULL)` -> NULL -> get wrongly excluded whenever any
     agent turn is running.
     """
-    return Turn.objects.filter(status__in=EXECUTING, chat_session__isnull=False).values("chat_session_id")
+    return Turn.objects.filter(status__in=EXECUTING, chat_session__isnull=False,
+                               rides_turn__isnull=True).values("chat_session_id")
+
+
+def delivers_midturn(runner: Runner | None) -> bool:
+    """This runner's code types a follow-up into a running turn (reported on its
+    heartbeat as `midturn`). The cloud runner does not, and keeps queueing."""
+    return runner is not None and bool(int(runner.capabilities.get("midturn") or 0))
+
+
+def _dialog_up(session_id) -> bool:
+    """A parsed dialog (one with options) is on this session's screen. Claude
+    Code draws it where the composer would be, so a follow-up typed now bounces
+    — it waits for the dialog to be answered, as a person's typing would. An
+    option-less notification marker does not count: nothing was parsed to
+    produce it (the composer's own rule, `menuBlocksComposer`)."""
+    from apps.canopy_sessions.models import RunnerBinding
+
+    menu = (RunnerBinding.objects.filter(session_id=session_id)
+            .values_list("pending_question", flat=True).first())
+    return bool(isinstance(menu, dict) and menu.get("options"))
+
+
+def may_ride(turn: Turn, holder: Turn) -> bool:
+    """Can queued `turn` be delivered INTO `holder`, its conversation's running
+    turn, instead of waiting for it to end (canopy-web#1153)?
+
+    The one rule both `claim_next_turn` and `blocking_turn` ask, so "queued
+    behind" and "not claimable" still cannot disagree. Only full-profile turns
+    on both sides: a confined turn runs in its own `cx-` session, so it has no
+    business in the owner's, and the owner's has none in a caller's.
+    """
+    return (turn.chat_session_id is not None
+            and holder.chat_session_id == turn.chat_session_id
+            and holder.status in (Turn.CLAIMED, Turn.RUNNING)
+            and holder.rides_turn_id is None
+            and not turn.capability and not holder.capability
+            and turn.pinned_runner_id in (None, holder.claimed_by_id)
+            and holder.claimed_by_id is not None
+            and delivers_midturn(holder.claimed_by)
+            and not _dialog_up(turn.chat_session_id))
+
+
+def ridable_sessions(runner: Runner) -> dict:
+    """{chat_session_id: running turn id} for conversations this runner is
+    running now and can deliver a follow-up into."""
+    if not delivers_midturn(runner):
+        return {}
+    held = Turn.objects.filter(
+        status__in=[Turn.CLAIMED, Turn.RUNNING], claimed_by=runner, chat_session__isnull=False,
+        rides_turn__isnull=True, capability="",
+    ).values_list("chat_session_id", "pk")
+    return {sid: pk for sid, pk in held if not _dialog_up(sid)}
 
 
 def blocking_turn(turn: Turn) -> Turn | None:
@@ -927,9 +994,12 @@ def blocking_turn(turn: Turn) -> Turn | None:
         return None
     executing = Turn.objects.filter(status__in=EXECUTING).select_related("claimed_by")
     if turn.chat_session_id:
-        held = executing.filter(chat_session_id=turn.chat_session_id).first()
+        held = executing.filter(chat_session_id=turn.chat_session_id,
+                                rides_turn__isnull=True).first()
         if held is not None:
-            return held
+            # Not blocked when it can be delivered into the running turn: the
+            # runner holding it will claim it on its next tick.
+            return None if may_ride(turn, held) else held
     if turn.agent_id:
         return executing.filter(agent_id=turn.agent_id).first()
     return None
@@ -1429,7 +1499,10 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # status line's "queued behind the current turn" is this exclusion, not a
     # second guess at it.
     busy_agents = busy_agent_ids()
-    busy_sessions = busy_session_ids()
+    # A conversation this runner is running is not "busy" to it when it can
+    # deliver the follow-up into that turn (`may_ride`, canopy-web#1153).
+    ridable = ridable_sessions(runner)
+    busy_sessions = busy_session_ids().exclude(chat_session_id__in=list(ridable))
     # Tenant boundary. capabilities is a caller-supplied routing hint declared at
     # pairing and never validated (b4f5ead, Critical); the workspace is the actual
     # gate, and the two INTERSECT — one never substitutes for the other.
@@ -1553,6 +1626,9 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         from . import turn_mode as modes
 
         mode = modes.for_turn(turn, priorities, fresh=True)
+        rides = ridable.get(turn.chat_session_id) if turn.chat_session_id else None
+        if rides is not None and turn.capability:
+            continue  # a confined turn never rides into the owner's session
         try:
             # Own atomic block per attempt: an IntegrityError from the
             # one_executing_turn_per_agent index (concurrent claim for the
@@ -1565,6 +1641,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                     lease_expires_at=now + dt.timedelta(seconds=lease_seconds),
                     turn_mode=mode.mode if mode else "",
                     turn_mode_basis=mode.basis[:320] if mode else "",
+                    rides_turn_id=rides,
                 )
         except IntegrityError:
             continue  # another runner claimed for this agent between our check and update
@@ -1573,6 +1650,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             append_events(turn, [{"kind": "status", "payload": {
                 "status": Turn.CLAIMED, "runner": runner.name,
                 **_routing_basis(turn, runner, priorities),
+                **({"rides_turn": str(rides)} if rides else {}),
             }}])
             return turn
     return None
@@ -1970,6 +2048,9 @@ def finish_turn(
         )
         turn.refresh_from_db()
         if requeued:
+            # Its riders were typed into a session it never reached; they do
+            # not requeue with it (that would type them a second time).
+            _finish_riders(turn, Turn.FAILED)
             append_events(turn, [{"kind": "status", "payload": {
                 "status": Turn.QUEUED,
                 "requeued_after": Turn.FAILED,
@@ -2024,6 +2105,7 @@ def finish_turn(
     if not updated:
         return turn
     append_events(turn, [{"kind": "status", "payload": {"status": status, "result_note": result_note}}])
+    _finish_riders(turn)
     if stop_ignored:
         # SAY IT WHERE THE PERSON WHO PRESSED STOP IS LOOKING. A `status` event
         # carries no client-visible frame (stream_map.turn_event_to_frames), so the
@@ -2091,6 +2173,24 @@ def finish_turn(
     return turn
 
 
+def _finish_riders(turn: Turn, status: str | None = None) -> None:
+    """The follow-ups delivered into `turn` end when it does, the same way.
+
+    They were typed into its session, so they have no life of their own: the
+    agent answered them in this turn's reply, or the turn's failure/stop took
+    them with it. A direct update rather than `finish_turn`, whose sessionless
+    requeue would re-type a message that was already delivered."""
+    status = status or turn.status
+    now = timezone.now()
+    for rider in Turn.objects.filter(rides_turn=turn, status__in=EXECUTING):
+        note = f"delivered into the running turn {str(turn.pk)[:8]} — {status}"
+        if Turn.objects.filter(pk=rider.pk, status__in=EXECUTING).update(
+                status=status, finished_at=now, result_note=note):
+            rider.status = status
+            append_events(rider, [{"kind": "status", "payload": {
+                "status": status, "result_note": note, "rode": str(turn.pk)}}])
+
+
 def cancel_queued_turn(turn: Turn) -> Turn | None:
     """Best-effort un-queue: mark a still-QUEUED turn CANCELLED. Cancel is
     'un-queue', not 'kill' — a CLAIMED/RUNNING turn is owned by its runner's
@@ -2138,6 +2238,14 @@ def cancel_turn(turn: Turn) -> Turn | None:
         # Lost the race: the turn is no longer QUEUED (claimed out from under
         # us, or already terminal). Fall through to the freshly-refreshed
         # status below rather than the stale one we started with.
+    if turn.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN) and turn.rides_turn_id:
+        # A rider is a message inside the running turn's session, so stopping it
+        # IS stopping that turn — the runner interrupts the session, and the
+        # rider ends with it (`_finish_riders`).
+        holder = turn.rides_turn
+        if holder is not None and holder.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN):
+            cancel_turn(holder)
+            return turn
     if turn.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN):
         append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
         if turn.claimed_by_id:
