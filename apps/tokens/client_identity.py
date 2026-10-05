@@ -117,7 +117,12 @@ def thumbprint(jwk: dict) -> str:
 
 
 def public_base() -> str:
-    return (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+    """canopy's protocol identity: CANOPY_IDENTITY_BASE_URL, else the public base.
+
+    Not simply the address people visit — connected sites pin canopy's
+    client_id, so it stays put when that address moves (see base.py)."""
+    explicit = (getattr(settings, "CANOPY_IDENTITY_BASE_URL", "") or "").strip()
+    return (explicit or getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
 
 
 def client_id() -> str:

@@ -14,8 +14,21 @@ URLs Django GENERATES (redirects, reverse(), static). Mirrors what ace-web's
 nginx does, but keeps canopy's single-container model.
 
 No-op when ``prefix`` is empty (i.e. every non-labs environment).
+
+Since canopy moved to the root of canopy.dimagi.com (2026-10-05) the prefix is
+LEGACY: ``FORCE_SCRIPT_NAME`` is unset, so Django generates root URLs, and only
+the old address (labs.connect.dimagi.com/canopy) arrives prefixed. A stripped
+scope is therefore marked with ``SCOPE_KEY`` so
+``apps.common.legacy_prefix.LegacyPrefixMiddleware`` can tell the two apart —
+re-adding the prefix to URLs generated for an old-address caller, and sending
+browsers on to the new one. Deliberately NOT ``root_path``: Starlette's mounts
+and Channels' URLRouter both read ``root_path`` and expect ``path`` to start
+with it, which a stripped path no longer does.
 """
 from __future__ import annotations
+
+#: Set on a scope whose path arrived under the prefix; its value is the prefix.
+SCOPE_KEY = "canopy.legacy_prefix"
 
 
 class StripScriptName:
@@ -30,6 +43,7 @@ class StripScriptName:
                 stripped = path[len(self.prefix):] or "/"
                 scope = dict(scope)
                 scope["path"] = stripped
+                scope[SCOPE_KEY] = self.prefix
                 if scope.get("raw_path") is not None:
                     # preserve any query string already split out of raw_path
                     scope["raw_path"] = stripped.encode("utf-8")

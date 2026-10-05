@@ -76,7 +76,11 @@ def audience() -> str:
     # refused with `wrong_audience`. `CANOPY_PUBLIC_BASE_URL` is the setting
     # that actually holds it.
     explicit = (getattr(settings, "EMBED_ASSERTION_AUDIENCE", "") or "").strip()
-    return explicit or (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+    # The identity base, not the visited address: a site signs for the audience
+    # it was configured with, and that does not move when canopy's address does.
+    from .client_identity import public_base
+
+    return explicit or public_base()
 
 
 def _unverified_issuer(token: str) -> str:

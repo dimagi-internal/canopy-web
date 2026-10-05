@@ -315,6 +315,30 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
 
+  # canopy.dimagi.com is canopy's own host, served at its root (2026-10-05): the
+  # whole host comes here. Priority 10 puts it ahead of every path rule on the
+  # shared listener — /ace/* (20) and /umami (40) carry no host condition, so a
+  # later priority would hand canopy.dimagi.com/ace/… to ace-web. The labs rules
+  # below (28, 30) stay: the old address keeps serving machine traffic and
+  # redirects browsers here (apps/common/legacy_prefix.py). The certificate for
+  # the name is on the listener and the DNS record in Cloudflare (not in this
+  # repo; set up 2026-10-05).
+  #
+  # APPLIED WITH ADMIN CREDENTIALS, like WellKnownListenerRule below — the deploy
+  # role cannot write listener rules.
+  HostListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListenerArn
+      Priority: 10
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values: ["canopy.dimagi.com"]
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
   # canopy's OAuth discovery documents live at the HOST ROOT, not under /canopy:
   # RFC 8414 §3.1 and RFC 9728 §3.1 insert the well-known segment between host
   # and path, so issuer https://labs.connect.dimagi.com/canopy is described at
@@ -375,8 +399,12 @@ Resources:
             - ContainerPort: !Ref ContainerPort
           Environment:
             - { Name: DJANGO_SETTINGS_MODULE, Value: config.settings.connectlabs }
-            - { Name: FORCE_SCRIPT_NAME, Value: /canopy }
-            - { Name: ALLOWED_HOSTS, Value: labs.connect.dimagi.com }
+            # Served at the ROOT of canopy.dimagi.com (HostListenerRule). The
+            # old address, labs.connect.dimagi.com/canopy, arrives with this
+            # prefix; it is stripped on the way in and never generated. Do NOT
+            # set FORCE_SCRIPT_NAME — that would put /canopy back on every URL.
+            - { Name: CANOPY_STRIP_PREFIX, Value: /canopy }
+            - { Name: ALLOWED_HOSTS, Value: "canopy.dimagi.com,labs.connect.dimagi.com" }
             # OAuth login allowlist (comma-separated). This Environment block is
             # the SINGLE source of truth for the container's non-secret env: every
             # deploy re-asserts it onto the live task def via render_taskdef.py, so
