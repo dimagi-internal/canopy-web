@@ -441,6 +441,33 @@ try {
     const PLACEHOLDER = /^(Try |Ask |\/ for |\? for )/i;
     const isEmpty = (s) => !s || PLACEHOLDER.test(s);
 
+    // Type `body` and submit it. Claude Code reads a burst of input that contains
+    // a newline as a PASTE, and an Enter arriving inside that same burst becomes
+    // part of the paste — a newline in the composer, not a submit. insertText and
+    // an immediate Enter are exactly that burst, so a multi-line message (a Slack
+    // reply carrying an attachment note, a web chat with a screenshot path) sat
+    // typed-but-unsent in the composer and the turn failed as undelivered
+    // (turn fe0a0280, 2026-10-05). Reproduced against `claude` on a raw pty: text
+    // then Enter in one write never submits; any gap of 50ms or more always does.
+    // So: pause before Enter, then LOOK — if the composer still holds the message,
+    // the Enter was swallowed and pressing it again cannot send it twice.
+    const PASTE_SETTLE_MS = 500;
+    const submit = async (body) => {
+      await page.keyboard.insertText(body);   // atomic commit, not char-by-char
+      if (/\n/.test(body)) await page.waitForTimeout(PASTE_SETTLE_MS);
+      await page.keyboard.press('Enter');
+      if (!/\n/.test(body)) return;
+      // Only ever called on a composer that was empty (or just cleared), so
+      // anything typed in it now is this message — matched by emptiness, not by
+      // text, because claude collapses a long paste to "[Pasted text #1 +N lines]".
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await page.waitForTimeout(PASTE_SETTLE_MS);
+        const after = await readComposer();
+        if (!after.found || isEmpty(after.typed)) return;
+        await page.keyboard.press('Enter');
+      }
+    };
+
     if (clearFirst) {
       // The human chose "Clear & send": deterministically empty the input, then send.
       // Ctrl+U (kill-to-start) as a fast path, then backspace the MEASURED content and
@@ -457,15 +484,13 @@ try {
         await page.keyboard.press('End');
         for (let k = 0; k < n; k++) await page.keyboard.press('Backspace');
       }
-      await page.keyboard.insertText(text);
-      await page.keyboard.press('Enter');
+      await submit(text);
       out({ ok: true, action: 'sent-cleared', task });
     } else if (!isEmpty(composer.typed)) {
       // Don't touch it — hand the collision back to the runner to ask the human.
       out({ ok: true, action: 'collision', task, line: composer.typed });
     } else {
-      await page.keyboard.insertText(text);   // atomic commit, not char-by-char
-      await page.keyboard.press('Enter');
+      await submit(text);
       out({ ok: true, action: 'sent', task });
     }
 
