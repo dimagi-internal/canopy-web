@@ -2,6 +2,14 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.6.1 — 2026-10-05
+
+`protected_resource_metadata` no longer adds the grant's tool scopes to
+`scopes_supported`. An interactive MCP client registers for exactly that list,
+so on a host whose registration accepts only its sign-in scopes, every new
+sign-in failed (canopy-web#1157; connect-labs worked around it in #2220). The
+RFC 8414 document still lists them, and that is where canopy reads them.
+
 ## 0.6.0 — 2026-09-30
 
 A host can require runner flags of its visitors' conversations. Minor: new
