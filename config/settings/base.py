@@ -107,6 +107,7 @@ INSTALLED_APPS = [
     "apps.inbound",
     "apps.slack",
     "apps.contacts",
+    "apps.retention",
     # The canopy SDK's Django half (app label `canopy_host`): the single-use jti
     # table and the delegated-token table canopy-web uses as a HOST of its own
     # MCP (apps/tokens/self_host.py). Its own tables, never `tokens`' —
@@ -530,6 +531,14 @@ CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="http://localhost
 # The `provider` of every A2A Agent Card this deployment serves (apps/agents/agent_card.py).
 CANOPY_A2A_PROVIDER_ORGANIZATION = env("CANOPY_A2A_PROVIDER_ORGANIZATION", default="Dimagi")
 CANOPY_A2A_PROVIDER_URL = env("CANOPY_A2A_PROVIDER_URL", default="https://www.dimagi.com")
+
+# --- Content retention (apps/retention) ---
+# OFF. When true, the runner heartbeat purges chat, turn and shared-transcript
+# content past its RetentionRule's keep_days, at most hourly. Off means nothing
+# is purged automatically; `manage.py retention_sweep` still dry-runs, and
+# `--apply` still purges on purpose. No rules also means nothing is purged.
+# See docs/superpowers/specs/2026-10-05-content-retention-design.md.
+CANOPY_RETENTION_ENFORCE = env.bool("CANOPY_RETENTION_ENFORCE", default=False)
 
 # --- Outbound email (apps/common/email.py) ---
 # OFF unless CANOPY_EMAIL_ENABLED is set: sending needs a verified SES identity

@@ -506,6 +506,11 @@ def heartbeat(
         session_secrets.purge_expired(now)
     except Exception:  # noqa: BLE001
         logger.exception("secrets: purging expired session secrets failed")
+    # Same clock again: content past its retention rule. A no-op unless
+    # CANOPY_RETENTION_ENFORCE is on, at most hourly, and never raises.
+    from apps.retention import services as retention_services
+
+    retention_services.maybe_sweep(now)
     return runner
 
 
