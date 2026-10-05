@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import emdash, hooks, transcript
@@ -92,11 +93,20 @@ def session_changed(cfg: Config, sessions: list[dict]) -> bool:
     return changed
 
 
-# Per-task engine-flag watch: {emdash_task: (flag_value, baseline_mtime | None)}.
-# `None` for the baseline means "settling" — see `annotate_engine_staleness`.
-_ENGINE_FLAG: dict[str, "tuple[str, float | None]"] = {}
+@dataclass
+class _Watch:
+    """One task's engine-flag watch — see `annotate_engine_staleness`."""
 
-# How long after its last write a session that has ALREADY proved its engine flag
+    flag: str
+    path: str
+    baseline: int | None = None   # transcript bytes once settled; None = settling
+    last_bytes: int = 0
+    grew_at: float | None = None  # when THIS runner last saw the bytes grow
+
+
+_ENGINE_FLAG: dict[str, _Watch] = {}
+
+# How long after it last grew a session that has ALREADY proved its engine flag
 # wrong keeps claiming to be running.
 #
 # This is a de-latch, not a liveness heuristic: without it, a session that woke up
@@ -136,7 +146,8 @@ def annotate_engine_staleness(
     "working", so this only ever looks at flags that already claim the session stopped.
 
     The discriminator is not recency — a real turn end is recent too — but writes that
-    land AFTER the flag went non-working. The baseline is snapshotted one tick LATER
+    land AFTER the flag went non-working, measured as transcript BYTES (a touch that
+    moves the mtime is not a write; see `transcript.activity_bytes`). The baseline is snapshotted one tick LATER
     than the flag change, so the turn's own closing write is inside the baseline rather
     than mistaken for new work.
 
@@ -163,16 +174,23 @@ def annotate_engine_staleness(
             )
         except Exception:  # noqa: BLE001 — a fragile half must not cost us the report
             path = None
-        wrote_at = transcript.activity_mtime(path)
-        watched = _ENGINE_FLAG.get(task)
-        if watched is None or watched[0] != status:
-            _ENGINE_FLAG[task] = (status, None)  # new flag value: settle one tick
+        size = transcript.activity_bytes(path)
+        now = now_fn()
+        w = _ENGINE_FLAG.get(task)
+        if w is None or w.flag != status or w.path != str(path):
+            # New flag value (or a different transcript): settle one tick.
+            _ENGINE_FLAG[task] = _Watch(flag=status, path=str(path), last_bytes=size)
             continue
-        baseline = watched[1]
-        if baseline is None:
-            _ENGINE_FLAG[task] = (status, wrote_at)  # settled — this is the mark
+        if w.baseline is None:
+            w.baseline = w.last_bytes = size  # settled — this is the mark
             continue
-        if wrote_at > baseline and now_fn() - wrote_at <= STILL_WRITING_SECONDS:
+        # Growth is timed by THIS runner's clock when it sees it, never by the
+        # file's mtime: the mtime moves without a single new record (see
+        # transcript.activity_bytes), and that is what kept idle sessions badged.
+        if size > w.last_bytes:
+            w.grew_at = now
+        w.last_bytes = size
+        if size > w.baseline and w.grew_at is not None and now - w.grew_at <= STILL_WRITING_SECONDS:
             s["agent_status_stale"] = True
     for task in list(_ENGINE_FLAG):  # forget sessions that are gone
         if task not in live:
@@ -269,7 +287,8 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
     closing = set(_PENDING_CLOSED)
     try:
         transcript.attach_recent_tail(
-            sessions, count=cfg.session_tail_count, limit=cfg.session_tail_limit
+            sessions, count=cfg.session_tail_count, limit=cfg.session_tail_limit,
+            emdash_db=cfg.emdash_db,
         )
         # The blocked-agent dialog, for EVERY reported session — the signal that
         # makes "the session stopped" answerable from a phone. Uncapped on
@@ -282,7 +301,7 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         # guess — the same property the server's liveness rule rests on.
         hooks.prune_menus(s.get("emdash_task") for s in sessions)
         transcript.attach_pending_questions(
-            sessions, hook_menu_for=hooks.pending_hook_menu
+            sessions, hook_menu_for=hooks.pending_hook_menu, emdash_db=cfg.emdash_db,
         )
         # Complete = not cut off by the limit. Only a complete report lets the
         # server read a task's absence as "closed" (emdash deletes closed tasks).

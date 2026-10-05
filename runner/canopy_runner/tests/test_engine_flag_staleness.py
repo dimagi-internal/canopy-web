@@ -19,8 +19,15 @@ class _Cfg:
 
 
 def _touch(path, when):
+    """A real write: append a record (the only way a transcript changes)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("x")
+    with path.open("a") as f:
+        f.write("{}\n")
+    os.utime(path, (when, when))
+
+
+def _bump_mtime(path, when):
+    """What was actually happening on 2026-10-05: the mtime moves, the file does not."""
     os.utime(path, (when, when))
 
 
@@ -102,7 +109,7 @@ def test_dissent_de_latches_once_the_writing_stops(tmp_path, monkeypatch):
     _run([s2], now=999_600.0)
     assert s2["agent_status_stale"] is True
     s3 = _session("completed")
-    _run([s3], now=999_500.0 + sessions_mod.STILL_WRITING_SECONDS + 1)
+    _run([s3], now=999_600.0 + sessions_mod.STILL_WRITING_SECONDS + 1)
     assert "agent_status_stale" not in s3
 
 
@@ -152,12 +159,45 @@ def test_a_vanished_session_drops_its_watch(tmp_path, monkeypatch):
     assert sessions_mod._ENGINE_FLAG == {}
 
 
-def test_activity_mtime_takes_the_newest_of_parent_and_subagents(tmp_path):
+def test_activity_bytes_sums_parent_and_subagents(tmp_path):
     parent = tmp_path / "sess.jsonl"
     _touch(parent, 500.0)
-    assert transcript.activity_mtime(parent) == 500.0
+    assert transcript.activity_bytes(parent) == 3
     _touch(tmp_path / "sess" / "subagents" / "agent-1.jsonl", 900.0)
     _touch(tmp_path / "sess" / "subagents" / "agent-2.jsonl", 700.0)
-    assert transcript.activity_mtime(parent) == 900.0
-    assert transcript.activity_mtime(None) == 0.0
-    assert transcript.activity_mtime(tmp_path / "nope.jsonl") == 0.0
+    assert transcript.activity_bytes(parent) == 9
+    assert transcript.activity_bytes(None) == 0
+    assert transcript.activity_bytes(tmp_path / "nope.jsonl") == 0
+
+
+def test_an_mtime_bump_without_new_records_is_not_writing(tmp_path, monkeypatch):
+    """The 2026-10-05 false badge: `lost-message` was idle (emdash: awaiting-input,
+    newest record 17:18) but its file's mtime moved to 18:21 with the size
+    unchanged, and the runner reported it running."""
+    sessions_mod._ENGINE_FLAG.clear()
+    parent = tmp_path / "sess.jsonl"
+    _touch(parent, 999_000.0)
+    _resolve_to(monkeypatch, parent)
+    s = _session("awaiting-input")
+    _run([s])                                  # settle
+    _run([s])                                  # baseline
+    _bump_mtime(parent, 999_990.0)
+    s2 = _session("awaiting-input")
+    _run([s2])
+    assert "agent_status_stale" not in s2
+
+
+def test_a_new_transcript_resettles_rather_than_comparing_across_files(tmp_path, monkeypatch):
+    sessions_mod._ENGINE_FLAG.clear()
+    old, new = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    for when in (1.0, 2.0, 3.0):
+        _touch(old, when)
+    _resolve_to(monkeypatch, old)
+    s = _session("completed")
+    _run([s])
+    _run([s])
+    _touch(new, 4.0)
+    _resolve_to(monkeypatch, new)
+    s2 = _session("completed")
+    _run([s2])
+    assert "agent_status_stale" not in s2
