@@ -497,9 +497,13 @@ def handle_message(inbound: Inbound) -> Outcome:
     principal, refusal = resolve_principal(installation, inbound.slack_user_id, agent.workspace_id)
     if refusal is not None:
         return refusal
-    if not prompt and not inbound.files:
+    # Brought into a thread that already has a conversation in it: the thread
+    # is the ask, so a bare `@canopy hal` there means "pick this up".
+    joining = bool(inbound.thread_ts) and not inbound.is_dm and not Session.objects.filter(
+        agent=agent, **{f"metadata__{SLACK_THREAD_KEY}": key}).exists()
+    if not prompt and not inbound.files and not joining:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
-    title = prompt
+    title = prompt or "Slack thread"
     minutes, ask = None, prompt
     if window.has_flag(prompt):
         # The agent's tenant decides, not the Slack's: a Slack can serve several.
@@ -520,6 +524,11 @@ def handle_message(inbound: Inbound) -> Outcome:
         title = f"Slack: last {minutes} min" + (f" — {ask}" if ask else "")
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
                                       title=title)
+    if created and minutes is None and inbound.thread_ts and not inbound.is_dm:
+        # Mentioned partway into a thread: the agent starts with the thread so
+        # far, not just the line that named it. Only on creation — from here on
+        # every message in the thread reaches the session as it is posted.
+        prompt = _with_thread(installation, principal, agent, inbound, prompt)
     return _send(session, created, agent, principal, prompt, inbound, named=named)
 
 
@@ -572,6 +581,56 @@ def _with_window(installation: SlackInstallation, principal: Principal, agent: A
     _record_window(agent, principal, inbound, minutes, window.count(lines))
     material = window.render(installation.bot_token, lines, channel_id=inbound.channel_id, minutes=minutes)
     return f"{material}\n\n{ask or window.DEFAULT_ASK}", None
+
+
+def _with_thread(installation: SlackInstallation, principal: Principal, agent: Agent,
+                 inbound: Inbound, ask: str) -> str:
+    """The ask, with the thread it was made in in front of it (`window.fetch_thread`).
+
+    Unlike `--history`, this reads nothing the sender is not already looking at:
+    the one thread they just posted in, so it needs no flag, no workspace policy
+    and no membership. A thread canopy cannot read does not lose the ask — it is
+    sent bare, with a line saying the earlier messages could not be read.
+    """
+    try:
+        lines, omitted = window.fetch_thread(installation.bot_token, channel_id=inbound.channel_id,
+                                             thread_ts=inbound.thread_ts, skip_ts=inbound.ts)
+    except client.SlackApiError as e:
+        _record_thread_read(agent, principal, inbound, 0, error=e.error)
+        note = (f"(You were mentioned partway into a Slack thread, but canopy couldn't read the "
+                f"earlier messages: {e.error}.)")
+        return f"{note}\n\n{ask or window.DEFAULT_ASK}"
+    n = window.count(lines)
+    _record_thread_read(agent, principal, inbound, n)
+    if not n:
+        return ask or window.DEFAULT_ASK
+    material = window.render_thread(installation.bot_token, lines, channel_id=inbound.channel_id,
+                                    thread_ts=inbound.thread_ts, omitted=omitted)
+    return f"{material}\n\n{ask or window.DEFAULT_ASK}"
+
+
+def _record_thread_read(agent: Agent, principal: Principal, inbound: Inbound, n: int,
+                        *, error: str = "") -> None:
+    """Every thread read leaves a row, like a window read (`_record_window`)."""
+    from apps.events import services as events_services
+    from apps.events.models import Event
+
+    who = principal.user.email if principal.user is not None else f"contact {inbound.slack_user_id}"
+    try:
+        events_services.record([{
+            "source": "slack",
+            "kind": "slack.thread_read" if not error else "slack.thread_read_failed",
+            "level": Event.INFO if not error else Event.WARN,
+            "key": f"thread:{inbound.channel_id}:{inbound.ts}",
+            "summary": (f"{who} brought {agent.slug} into a thread in <#{inbound.channel_id}>: "
+                        + (f"could not read it ({error})" if error else f"{n} earlier message(s)"))[:500],
+            "payload": {"team": inbound.team_id, "channel": inbound.channel_id, "ts": inbound.ts,
+                        "thread_ts": inbound.thread_ts,
+                        "user": principal.user.pk if principal.user is not None else None,
+                        "agent": agent.slug, "messages": n, "error": error},
+        }], workspace=agent.workspace)
+    except Exception:  # noqa: BLE001 — bookkeeping must not fail the ask
+        logger.exception("could not record a Slack thread read")
 
 
 def _record_window(agent: Agent, principal: Principal, inbound: Inbound, minutes: int, n: int,
