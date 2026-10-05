@@ -14,3 +14,12 @@ class ProjectsConfig(AppConfig):
         # connected receiver rather than the function, so this line cannot be
         # removed silently.
         from . import signals  # noqa: F401  (page-invalidation receiver)
+
+        # projects (product) registers into agents (framework) rather than the
+        # other way around — ARCHITECTURE.md's one-way arrow forbids
+        # apps.agents importing apps.projects.
+        from apps.agents import delegations
+
+        from .identity import resolve_default_identity_agent_slug
+
+        delegations.register_project_identity_resolver(resolve_default_identity_agent_slug)

@@ -34,6 +34,17 @@ class Project(models.Model):
         help_text="The tenant that owns this project. Nullable for migration "
         "safety; the API always assigns one (default workspace when unspecified).",
     )
+    default_identity_agent = models.ForeignKey(
+        "agents.Agent",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="default_identity_projects",
+        help_text="Fallback GitHub identity for a project turn with no agent of "
+        "its own (apps.agents.delegations.turn_agent) — lends this agent's "
+        "owner's delegated token and git identity. Unset keeps the turn's "
+        "existing refusal: no shared fallback.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
