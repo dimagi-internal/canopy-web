@@ -437,6 +437,46 @@ async def test_ws_heartbeat_survives_a_malformed_committed_at():
     await comm.disconnect()
 
 
+# --- heartbeat confinement capabilities --------------------------------------
+# `services.heartbeat` writes `profiles`/`envelope` on every beat, absent = 0. This
+# path used to drop them, so on 2026-10-05 cloud-ec2-1 flipped between 2/3 (its
+# REST beats) and 0/0 (this one, every 20s) — and at 0/0 `profile_q` refuses it
+# every caller's turn.
+async def test_ws_heartbeat_records_confinement_capabilities():
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    for _ in range(2):
+        await comm.send_json_to({"action": "heartbeat", "active_turn_ids": [],
+                                 "profiles": 3, "envelope": 2})
+        assert (await comm.receive_json_from(timeout=2))["type"] == "heartbeat.ack"
+
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.capabilities["profiles"] == 3
+    assert fresh.capabilities["envelope"] == 2
+    assert fresh.capabilities["agents"] == ["echo"]
+    await comm.disconnect()
+
+
+async def test_ws_heartbeat_without_confinement_capabilities_reports_zero():
+    # Same contract as REST: a runner that does not send them cannot confine, so
+    # an old beat must downgrade a stored claim rather than inherit it.
+    user, _ws, _a, runner = await database_sync_to_async(_setup)()
+    runner.capabilities = {**runner.capabilities, "profiles": 3, "envelope": 2}
+    await database_sync_to_async(runner.save)()
+    comm = await _connect(runner.id, user)
+    await comm.connect()
+    await comm.send_json_to({"action": "heartbeat", "active_turn_ids": [],
+                             "profiles": "garbage"})
+    assert (await comm.receive_json_from(timeout=2))["type"] == "heartbeat.ack"
+
+    fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
+    assert fresh.status == Runner.ONLINE
+    assert fresh.capabilities["profiles"] == 0
+    assert fresh.capabilities["envelope"] == 0
+    await comm.disconnect()
+
+
 # --- the menu_answer relay must carry EVERY field it is published with ------
 #
 # REGRESSION, 2026-08-12. `runner_menu_answer` relays field by field, and two

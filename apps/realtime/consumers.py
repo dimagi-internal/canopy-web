@@ -374,6 +374,16 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             # cost the runner its timestamp, never its heartbeat — losing the beat
             # would take it offline and stop it claiming.
             committed_at = 0
+        # `profiles`/`envelope` are written every beat with absent = 0, so dropping
+        # them here reset a confining box to 0/0 every 20s — and at 0/0 `profile_q`
+        # refuses it every caller's turn (cloud-ec2-1, 2026-10-05). Same rule as
+        # the timestamp: garbage costs the capability, never the beat.
+        caps = {}
+        for key in ("profiles", "envelope"):
+            try:
+                caps[key] = int(frame.get(key) or 0)
+            except (TypeError, ValueError):
+                caps[key] = 0
         runner = Runner.objects.filter(pk=self._runner_pk).first()
         if runner is None:
             return False
@@ -385,6 +395,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             code_sha=str(frame.get("code_sha") or ""),
             code_committed_at=committed_at,
             health=_valid_health(frame.get("health")),
+            **caps,
         )
         return runner.refresh_pending()
 
