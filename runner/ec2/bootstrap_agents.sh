@@ -849,9 +849,29 @@ install_required_plugins() {
   done <<<"$specs"
 }
 
+# Turns run IN the clone, and a directory-source plugin runs from it, so the
+# clone needs its own node deps. An agent's setup script installs them into the
+# plugin root IT resolves, which on a fresh box is the plugin cache, not the
+# clone: cloud-ec2-2 (2026-10-05) came up with ace's doctor BROKEN on a missing
+# tsx, and cloud-ec2-1 only passed because something had installed them by hand.
+# `npm ci` when there is a lockfile, so the clone stays clean for `pull --ff-only`.
+ensure_clone_node_deps() {  # <slug> <clone>
+  local slug="$1" dest="$2"
+  [[ -f "$dest/package.json" && ! -d "$dest/node_modules" ]] || return 0
+  command -v npm >/dev/null 2>&1 || { warn "$slug: npm not on PATH — no node deps in $dest"; return 0; }
+  local verb=install
+  [[ -f "$dest/package-lock.json" ]] && verb=ci
+  if (cd "$dest" && timeout 600 npm "$verb" --silent >/dev/null 2>&1); then
+    ok "$slug: npm $verb in the clone"
+  else
+    warn "$slug: npm $verb in $dest failed — the agent's node tooling will not run"
+  fi
+}
+
 run_agent_provisioner() {  # <slug> <clone>; caller scopes OP_SERVICE_ACCOUNT_TOKEN
   local slug="$1" dest="$2"
   local setup="$dest/bin/${slug}-setup"
+  ensure_clone_node_deps "$slug" "$dest"
   [[ -x "$setup" || -f "$setup" ]] || return 0
 
   # The agent's own installer knows what it needs (service-account key documents,
