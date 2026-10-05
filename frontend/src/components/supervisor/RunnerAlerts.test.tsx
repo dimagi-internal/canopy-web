@@ -115,6 +115,19 @@ describe('RunnerAlerts', () => {
   })
 })
 
+describe('RunnerAlerts — a colleague\'s runner (can_manage: false)', () => {
+  it('renders nothing — no banner, no dead Retire button that would 404', () => {
+    const { container } = render(
+      <RunnerAlerts
+        runners={[runner('theirs', { code_branch: 'feat-x', status: 'stale', can_manage: false })]}
+        retiringId={null}
+        onRetire={() => {}}
+      />,
+    )
+    expect(container.innerHTML).toBe('')
+  })
+})
+
 describe('RunnerAlerts — a runner AHEAD of the deploy', () => {
   // The false alarm this exists to kill: a box installed from main between a
   // runner change landing and the deploy that ships it is the MOST current in the

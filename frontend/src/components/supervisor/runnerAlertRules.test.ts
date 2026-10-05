@@ -154,6 +154,34 @@ describe('runnerAlerts — direction (a sha is a name, not a position)', () => {
   })
 })
 
+describe('runnerAlerts — ownership (a colleague\'s runner)', () => {
+  // A runner sharing this workspace but owned by someone else (`can_manage:
+  // false` — a colleague's paired box, e.g. Sarvesh's) is not this viewer's to
+  // fix: the Retire button this banner offers 404s server-side for a runner
+  // you don't own, and the rest of the banner is just noise about a box its
+  // own owner already sees in THEIR feed.
+  it('stays silent for a branch/outdated runner you cannot manage', () => {
+    expect(
+      runnerAlerts([runner('theirs', { code_branch: 'feat-x', can_manage: false })]),
+    ).toEqual([])
+    expect(
+      runnerAlerts([
+        runner('theirs', { code_sha: OLD, expected_code_sha: SHIPPED, can_manage: false }),
+      ]),
+    ).toEqual([])
+  })
+
+  it('still alerts when can_manage is omitted — every fixture this module shipped with before the field existed', () => {
+    expect(runnerAlerts([runner('r', { code_branch: 'feat-x' })])).toHaveLength(1)
+  })
+
+  it('alerts normally once can_manage is explicitly true', () => {
+    expect(
+      runnerAlerts([runner('mine', { code_branch: 'feat-x', can_manage: true })]),
+    ).toHaveLength(1)
+  })
+})
+
 describe('runnerAlerts — shared', () => {
   it('raises ONE banner per runner: a wrong branch outranks being out of date', () => {
     // A source runner on a branch will almost always also look "outdated"

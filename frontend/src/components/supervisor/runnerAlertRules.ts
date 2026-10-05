@@ -67,6 +67,14 @@ export function runnerAlerts(
 ): RunnerAlert[] {
   const alerts: RunnerAlert[] = []
   for (const runner of runners ?? []) {
+    // Someone else's runner (`can_manage: false`, e.g. a colleague's paired
+    // box sharing this workspace) is not yours to fix: the one button this
+    // banner offers is Retire, which 404s server-side for a runner you don't
+    // own (`_runner_or_404` is ownership-gated), and the rest is just noise
+    // about a box its own owner already sees in their feed. `!== false`
+    // (not `=== true`) so fixtures that omit the field — every row this
+    // module shipped with before `can_manage` existed — still alert.
+    if (runner.can_manage === false) continue
     const silent = silentFor(runner, now)
     // Dark is expected, not an incident — and everything below would describe
     // code this box is NOT currently executing.
