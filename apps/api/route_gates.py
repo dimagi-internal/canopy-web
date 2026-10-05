@@ -203,7 +203,7 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/harness/api.py: runner-fired schedules + drills
     "sync_schedules": ("runner",),
     "fire_schedule_route": ("runner",),
-    "start_runner_drill": ("runner",),
+    "start_runner_drill": ("runner-admin", "agent-admin"),  # agent admin of each drilled agent unless runner owner
     "list_runner_drills": ("runner-admin", "logs.read"),
     "report_drill": ("signed-link", "runner"),  # ?t= link, the drilled agent's own login, or the owner
     # --- apps/harness/api_schedules.py

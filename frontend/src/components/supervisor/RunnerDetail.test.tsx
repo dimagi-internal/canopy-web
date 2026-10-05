@@ -84,11 +84,21 @@ describe('RunnerDetail', () => {
     expect(screen.getByTestId('runner-drills')).toBeTruthy()
   })
 
-  it('hides owner-only controls on a runner the caller did not pair', () => {
-    render(<RunnerDetail runner={runner({ can_manage: false })} agents={agents} onBack={() => {}} />)
-    // Drilling POSTs as the runner's owner; the drill LIST is owner-gated too, so
-    // rendering the panel would only produce a 404 error message.
+  it('hides the readiness check from a member who neither paired nor administers it', () => {
+    render(
+      <RunnerDetail runner={runner({ can_manage: false, can_administer: false })} agents={agents} onBack={() => {}} />,
+    )
+    // Starting and listing drills are runner-admin routes; rendering the panel
+    // would only produce a 404 error message.
     expect(screen.queryByTestId('runner-drills')).toBeNull()
+  })
+
+  it('offers the readiness check to a runner admin who did not pair it', () => {
+    // Owner decision 2026-10-04: readiness checks are a runner-ADMIN feature.
+    render(
+      <RunnerDetail runner={runner({ can_manage: false, can_administer: true })} agents={agents} onBack={() => {}} />,
+    )
+    expect(screen.getByTestId('runner-drills')).toBeTruthy()
   })
 
   it('shows the credentials block to an administrator who did not pair it', () => {
@@ -103,7 +113,6 @@ describe('RunnerDetail', () => {
       />,
     )
     expect(screen.getByTestId('runner-credentials')).toBeTruthy()
-    expect(screen.queryByTestId('runner-drills')).toBeNull()
   })
 
   it('withholds credentials from a member with no grant', () => {

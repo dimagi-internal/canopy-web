@@ -271,10 +271,12 @@ def _runner_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
     """Resolve a runner this caller may ADMINISTER — a wider tier than acting AS
     it, and deliberately not the same predicate.
 
-    Reached from the operator-facing routes only: setting credentials, and the
-    browser sign-in. Everything that speaks FOR the runner — heartbeat, claim,
-    drills, the runner's own credential fetch and its half of a mint — keeps
-    `_runner_or_404`, because those act with the owner's memberships.
+    Reached from the operator-facing routes only: setting credentials, the
+    browser sign-in, and STARTING a readiness drill (owner decision 2026-10-04:
+    "let admins of a runner also run readiness checks"). Everything that speaks
+    FOR the runner — heartbeat, claim, executing a drill's turns, the runner's
+    own credential fetch and its half of a mint — keeps `_runner_or_404`,
+    because those act with the owner's memberships.
 
     Starts from what the caller can SEE (the tenant), then requires the explicit
     grant on top. Both legs matter: the tenant leg stops a grant in one workspace
@@ -2141,12 +2143,21 @@ def fire_schedule_route(
 
 @router.post("/runners/{runner_id}/drill", response=list[RunnerDrillOut])
 def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: DrillIn):
-    """Fan out a readiness drill (owner-gated). Default: every agent assigned to
-    this runner; body.agents narrows by slug. Deliberately includes DISABLED
-    assignment rows too — drill-before-enable is the intended workflow (prove a
-    standby actually works before flipping it live), so a disabled row must
-    stay drillable even though it can never claim routed traffic."""
-    runner = _runner_or_404(request, runner_id)
+    """Fan out a readiness drill. Runner side: the runner's owner or a
+    `RunnerAdmin` (`_runner_admin_or_404`) — starting a drill only QUEUES pinned
+    turns; the box still claims and runs them as itself, so administering it is
+    enough. Agent side: someone other than the owner must also be an ADMIN of
+    every agent drilled (`Agent.is_admin`) — a drill turn runs as `system`, in
+    the agent's routing mode, so an editor-tier caller (always `manual`,
+    docs/architecture/access.md row 4) must not get one started on their behalf.
+
+    Default: every assigned agent the caller may drill; body.agents narrows by
+    slug, and naming one the caller may not drill is a 403 saying which.
+    Deliberately includes DISABLED assignment rows too — drill-before-enable is
+    the intended workflow (prove a standby actually works before flipping it
+    live), so a disabled row must stay drillable even though it can never claim
+    routed traffic."""
+    runner = _runner_admin_or_404(request, runner_id)
     # No enabled=True filter here on purpose — see the docstring above.
     # An agent following a workspace order that lists this runner counts too.
     assigned = Agent.objects.filter(
@@ -2155,17 +2166,31 @@ def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: Dril
     # `is not None` (not truthy) so an explicit [] narrows to "drill nothing" and
     # hits the 422 below, rather than being treated the same as "drill everyone".
     agents = list(assigned.filter(slug__in=payload.agents) if payload.agents is not None else assigned)
+    # The owner is not re-asked here: their box can only CLAIM an agent's turn
+    # when they are that agent's admin (`runner_may_hold_agent`), so the claim
+    # gate already holds for them, and this route's owner behaviour is unchanged.
+    if runner.owner_id != request.user.id:
+        refused = [a.slug for a in agents if not a.is_admin(request.user)]
+        if refused and payload.agents is not None:
+            raise HttpError(
+                403,
+                f"not an admin of {', '.join(sorted(refused))} — a readiness drill on an agent "
+                "needs its admin (or the runner's owner)",
+            )
+        agents = [a for a in agents if a.slug not in refused]
     if not agents:
-        raise HttpError(422, "no assigned agents to drill — assign this runner to an agent first")
-    return services.start_drill(runner, agents)
+        raise HttpError(422, "no assigned agents to drill — assign this runner to an agent first"
+                             " (a runner admin drills only agents they administer)")
+    return services.start_drill(runner, agents, started_by=request.user)
 
 
 @router.get("/runners/{runner_id}/drills", response=list[RunnerDrillOut])
 def list_runner_drills(request: HttpRequest, runner_id: uuid.UUID):
     # Readiness results are a log about the box: its owner and the admins it
-    # granted read them, and so does a workspace admin of the runner's tenant
-    # (`permissions.LOGS_READ`). It used to be the owner alone, so nobody
-    # operating the fleet could see why a box was failing its drills.
+    # granted read them (the same tier that STARTS drills), and so does a
+    # workspace admin of the runner's tenant (`permissions.LOGS_READ`). It used
+    # to be the owner alone, so nobody operating the fleet could see why a box
+    # was failing its drills. A plain member/viewer gets the no-leak 404.
     runner = (Runner.objects.exclude(status=Runner.RETIRED)
               .filter(_runner_read_q(request)).filter(pk=runner_id).first())
     if runner is None or not (
