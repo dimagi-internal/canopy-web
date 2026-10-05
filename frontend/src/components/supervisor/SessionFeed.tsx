@@ -8,7 +8,7 @@ import { relativeTime } from '@/components/activity/turnLog'
 import { CLOSE_POLL_MS, closeIntent, closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { NewChatMenu } from '@/components/chat/NewChatMenu'
-import { CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, ranOnItsOwn, sourceKey } from './feedRules'
+import { CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, sourceKey } from './feedRules'
 
 const POLL_MS = 20_000
 // Per-viewer and best-effort: storage can be missing or throw (private window).
@@ -143,10 +143,8 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
     )
   }
 
-  const { feed, parked } = feedSessions(sessions)
-  const unhandled = feed.filter((s) => handled.get(s.id) !== s.last_activity_at)
-  const autoCount = unhandled.filter(ranOnItsOwn).length
-  const pending = showAuto ? unhandled : unhandled.filter((s) => !ranOnItsOwn(s))
+  const unhandled = sessions.filter((s) => handled.get(s.id) !== s.last_activity_at)
+  const { feed: pending, parked, auto: autoCount } = feedSessions(unhandled, { showAuto })
   const sources = feedSources(pending)
   const showChips = pending.length >= CHIPS_AT && sources.length > 1
   // A filter whose source has emptied out falls back to All rather than

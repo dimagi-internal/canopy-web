@@ -199,6 +199,12 @@ class SessionOut(Schema):
     # has been claimed. Lets the feed hold back work an agent did on its own.
     turn_mode: str = ""
     turn_origin: str = ""
+    # Is this session on the CALLER's supervisor feed — feed-only (`?reply=true`).
+    # "waiting" = it is; "not_yours" / "parked" / "auto" = waiting, but held back
+    # (someone else's runner, a paused/offline runner, an agent's own run); "" =
+    # not waiting on anybody. The same rule decides who is pushed about a session
+    # (canopy_sessions.feed), so the feed and the phone cannot disagree.
+    feed_status: str = ""
     # What this conversation's host requires of the runner it runs on (e.g.
     # `zdr`), so placement offers only runners whose `flags` include every one.
     # A malformed stored value comes back as an entry no runner can declare.

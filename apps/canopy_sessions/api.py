@@ -27,6 +27,7 @@ from apps.workspaces import services as wsvc
 from . import (
     access,
     attachment_storage,
+    feed,
     page_actions,
     page_state,
     secrets,
@@ -98,7 +99,7 @@ def _runner_status(runner) -> str | None:
     return None if runner is None else runner.live_status
 
 
-def _out(session: Session, *, reply: bool = False) -> dict:
+def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     waiting_on_you = serializers.pending_menu(session) is not None
     last_reply, agent_spoke_last = services.last_reply_of(session, binding) if reply else ("", False)
@@ -107,6 +108,19 @@ def _out(session: Session, *, reply: bool = False) -> dict:
     if not (agent_spoke_last or waiting_on_you):
         last_reply = ""
     runner = binding.runner if (binding and binding.runner_id) else None
+    running = services.is_session_running(binding)
+    turn_mode = getattr(session, "_turn_mode", None) or ""
+    turn_origin = getattr(session, "_turn_origin", None) or ""
+    # The supervisor feed's verdict for THIS caller — the one rule, which the
+    # pushes ask too (canopy_sessions.feed). Only when the feed asked (`reply`).
+    feed_status = (
+        feed.status(
+            viewer, session, waiting_on_you=waiting_on_you, agent_spoke_last=agent_spoke_last,
+            running=running, turn_mode=turn_mode, turn_origin=turn_origin,
+        )
+        if reply and viewer is not None
+        else ""
+    )
     # The name a human recognises for a runner-bound session is the emdash
     # task (what they see in emdash), not a thread_key hash a fallback title
     # may have captured. Web chats keep their own title. Web-origin sessions
@@ -142,7 +156,7 @@ def _out(session: Session, *, reply: bool = False) -> dict:
         "last_activity_at": services.last_activity_at(session, binding),
         # --- liveness (Plan 4): one shape, computed from the binding ---
         "origin": session.origin,
-        "running": services.is_session_running(binding),
+        "running": running,
         "runner_name": runner.name if runner else None,
         "runner_location": runner.location if runner else None,
         # See SessionOut.runner_online: an embedder's delegated user cannot list
@@ -171,8 +185,9 @@ def _out(session: Session, *, reply: bool = False) -> dict:
         "runner_requirements": sorted(rr.requirements_of_session(session)),
         "last_reply": last_reply,
         "agent_spoke_last": agent_spoke_last,
-        "turn_mode": getattr(session, "_turn_mode", None) or "",
-        "turn_origin": getattr(session, "_turn_origin", None) or "",
+        "turn_mode": turn_mode,
+        "turn_origin": turn_origin,
+        "feed_status": feed_status,
     }
 
 
@@ -362,7 +377,7 @@ def list_sessions(
 
     if reply:
         rows = services.with_driving_turn(services.with_last_reply(rows))
-    out = [_out(s, reply=reply) for s in rows]
+    out = [_out(s, reply=reply, viewer=request.user) for s in rows]
     # Waiting first, then running, then genuinely-most-recent. Sorting by
     # created_at made a dead repo and a live one interleave arbitrarily (both
     # "created" in the same report sweep); last_activity_at is the real signal.
