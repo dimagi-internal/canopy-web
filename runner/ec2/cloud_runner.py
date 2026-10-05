@@ -59,6 +59,7 @@ bootstrap_agents.sh (see runner/ec2/README.md), not this file directly.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import fcntl
@@ -1782,6 +1783,8 @@ def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path,
     * a worktree with no local changes → moved to origin/main, so a week-old
       conversation still runs the agent's current skills and rails;
     * a worktree with local changes → left alone: the agent is mid-work there;
+    * a worktree on a BRANCH → left alone too: a clean tree there can still hold
+      unpushed commits, and detaching it would pull the agent off its own work;
     * a plain directory → left alone: a session from before this existed, whose
       `--resume` target lives under exactly this path.
 
@@ -1795,7 +1798,7 @@ def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path,
                                    capture_output=True, text=True, timeout=30).stdout.strip()
         except Exception:  # noqa: BLE001
             return
-        if dirty:
+        if dirty or _git_quiet("-C", str(path), "symbolic-ref", "-q", "HEAD"):
             return
         _git_quiet("-C", str(clone), "fetch", "--quiet", "origin", env=env)
         _git_quiet("-C", str(path), "checkout", "--quiet", "--detach", "origin/main")
@@ -1808,6 +1811,125 @@ def _ensure_session_worktree(clone: pathlib.Path, path: pathlib.Path,
             return
     _log(f"warn: could not create a worktree of {clone} at {path}; using a plain directory")
     path.mkdir(parents=True, exist_ok=True)
+
+
+# ── per-turn worktrees of any repo (#1131) ───────────────────────────────────
+# On 2026-10-05 four turns shared /opt/canopy-web: a stranded commit, a shared
+# stash, branches moving under each other. Nothing gave a turn its own checkout of
+# a repo that is not its agent's, so each one found the box's shared clone with
+# `find /`. Now every such checkout is a worktree of ONE shared clone per repo,
+# keyed by the conversation (or the turn), like the emdash worktree a laptop gives.
+
+#: Where a repo name is fetched from. `{repo}` is the bare name (canopy-web).
+REPO_URL_TEMPLATE = os.environ.get("REPO_URL_TEMPLATE",
+                                   "https://github.com/dimagi-internal/{repo}.git")
+_REPO_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+
+
+def _repos_root() -> pathlib.Path:
+    return pathlib.Path(WORK_DIR) / "repos"
+
+
+def _repo_clone(repo: str, env: dict | None = None) -> pathlib.Path:
+    """The shared bare clone every worktree of `repo` hangs off, created on first
+    use and fetched on every call. Locked with flock, not a thread lock: the
+    `canopy-repo-worktree` helper runs in a turn's own process."""
+    if not _REPO_NAME.match(repo) or repo.endswith(".git") or ".." in repo:
+        raise ValueError(f"not a repo name: {repo!r}")
+    clones = _repos_root() / ".clones"
+    clones.mkdir(parents=True, exist_ok=True)
+    clone = clones / f"{repo}.git"
+    with open(clones / f"{repo}.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not clone.exists():
+            url = REPO_URL_TEMPLATE.format(repo=repo)
+            if not _git_quiet("clone", "--quiet", "--bare", url, str(clone), timeout=600, env=env):
+                shutil.rmtree(clone, ignore_errors=True)
+                raise RuntimeError(f"could not clone {url}")
+            # A bare clone maps branches onto refs/heads; worktrees want origin/main.
+            _git_quiet("-C", str(clone), "config", "remote.origin.fetch",
+                       "+refs/heads/*:refs/remotes/origin/*")
+        _git_quiet("-C", str(clone), "fetch", "--quiet", "--prune", "origin", env=env)
+    return clone
+
+
+def repo_worktree(repo: str, key: str, env: dict | None = None) -> pathlib.Path:
+    """`repo`'s worktree for one conversation or turn: WORK_DIR/repos/<repo>/<key>.
+    Same refresh rules as a session's worktree (see `_ensure_session_worktree`):
+    created at origin/main, brought forward only when clean and detached."""
+    path = _repos_root() / repo / _safe_session_dirname(key)
+    _ensure_session_worktree(_repo_clone(repo, env=env), path, env=env)
+    return path
+
+
+def _repo_worktree_key(turn: dict, turn_id: str) -> str:
+    """A conversation keeps one checkout across its turns; anything else gets its own."""
+    return _chat_session_id(turn) or turn_id[:8]
+
+
+def _repo_worktree_env(turn: dict, turn_id: str) -> dict:
+    """What `canopy-repo-worktree` reads to know whose checkout to hand out."""
+    return {"CANOPY_REPO_WORKTREE_KEY": _repo_worktree_key(turn, turn_id)}
+
+
+def _repo_worktree_cli(argv: list[str]) -> int:
+    """`canopy-repo-worktree <repo>` — print this turn's own worktree of <repo>."""
+    if len(argv) != 1:
+        print("usage: canopy-repo-worktree <repo>   (e.g. canopy-web)", file=sys.stderr)
+        return 2
+    key = os.environ.get("CANOPY_REPO_WORKTREE_KEY", "")
+    if not key:
+        print("canopy-repo-worktree: CANOPY_REPO_WORKTREE_KEY is not set — "
+              "only a turn the cloud runner started can ask for a worktree", file=sys.stderr)
+        return 2
+    try:
+        # stdout is the answer (`cd "$(canopy-repo-worktree x)"`): logs go to stderr.
+        with contextlib.redirect_stdout(sys.stderr):
+            path = repo_worktree(argv[0], key, env=dict(os.environ))
+        print(path)
+    except (ValueError, RuntimeError) as exc:
+        print(f"canopy-repo-worktree: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _install_repo_worktree_shim(bindir: pathlib.Path | None = None) -> pathlib.Path:
+    """Put `canopy-repo-worktree` on every turn's PATH (~/.local/bin is first on
+    the unit's PATH, as for gog). It runs THIS file, so it ships with it."""
+    bindir = bindir or pathlib.Path.home() / ".local" / "bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    shim = bindir / "canopy-repo-worktree"
+    shim.write_text("#!/bin/sh\n"
+                    "# Installed by cloud_runner.py: this turn's own worktree of a repo.\n"
+                    f'exec "{sys.executable}" "{pathlib.Path(__file__).resolve()}" '
+                    'repo-worktree "$@"\n')
+    shim.chmod(0o755)
+    return shim
+
+
+_SHARED_CLONE_HOOK = """#!/bin/sh
+# Installed by cloud_runner.py (#1131). This clone is the box's own: the
+# auto-updater reads origin/main from it, and every turn can see it.
+repo=$(basename "$(git config --get remote.origin.url)" .git)
+echo "This is the cloud box's SHARED $repo clone; turns must not commit here." >&2
+echo "Work in your own worktree instead:" >&2
+echo "    cd \\"\\$(canopy-repo-worktree $repo)\\"" >&2
+exit 1
+"""
+
+
+def _guard_shared_clone(repo_dir: pathlib.Path) -> None:
+    """Refuse commits in a clone turns can find but must not work in. Its hooks
+    are its own: worktrees come from WORK_DIR/repos/.clones, never from here."""
+    hooks = repo_dir / ".git" / "hooks"
+    if not hooks.is_dir():
+        return
+    try:
+        hook = hooks / "pre-commit"
+        hook.write_text(_SHARED_CLONE_HOOK)
+        hook.chmod(0o755)
+    except OSError as exc:
+        _log(f"warn: could not guard {repo_dir}: {exc}")
 
 
 def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path:
@@ -1838,11 +1960,17 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     turn's GitHub identity, since this box holds none of its own."""
     session_id = _chat_session_id(turn)
     slug = _turn_agent_slug(turn)
+    # A PROJECT turn (a repo, no agent) works in its own worktree of that repo, at
+    # the same path it always had — an empty scratch dir until #1131, which is why
+    # such turns went looking for /opt/canopy-web.
+    project = "" if slug else (turn.get("project") or "")
     if session_id:
         path = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
         clone = pathlib.Path(AGENT_ROOT) / slug if slug else None
         if clone is not None and (clone / ".git").exists():
             _ensure_session_worktree(clone, path, env=env)
+        elif project:
+            _project_worktree(project, path, env)
         return path
     if slug:
         agent_dir = pathlib.Path(AGENT_ROOT) / slug
@@ -1855,7 +1983,19 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
             except Exception as exc:
                 _log(f"warn: git pull in {agent_dir} failed (using clone as-is): {exc}")
             return agent_dir
-    return pathlib.Path(WORK_DIR) / turn_id[:8]
+    path = pathlib.Path(WORK_DIR) / turn_id[:8]
+    if project:
+        _project_worktree(project, path, env)
+    return path
+
+
+def _project_worktree(project: str, path: pathlib.Path, env: dict | None) -> None:
+    """Best-effort, like the agent clone's pull: a repo that cannot be fetched
+    leaves the plain directory every project turn got before."""
+    try:
+        _ensure_session_worktree(_repo_clone(project, env=env), path, env=env)
+    except (ValueError, RuntimeError, OSError) as exc:
+        _log(f"warn: no worktree of {project!r} at {path} ({exc}); using a plain directory")
 
 
 def sync_runner_src() -> bool:
@@ -2077,6 +2217,8 @@ def bootstrap_agent_fleet() -> None:
     try:
         _run_bootstrap()
         _github_readiness()
+        _install_repo_worktree_shim()
+        _guard_shared_clone(pathlib.Path(CANOPY_WEB_REPO_DIR))
     finally:
         # Stamped however it went: this is "a bootstrap was ATTEMPTED at", which
         # is what discharges a refresh request. The checks say how it went.
@@ -3950,6 +4092,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")
         confined = _capability(turn) is not None
+        if not confined:
+            # A caller's confined turn gets no repo checkouts; everyone else may ask.
+            _TURN_ENV.extra.update(_repo_worktree_env(turn, turn_id))
         if confined:
             # Never resume, never be resumed: an email thread can hold a staff turn
             # (full) and a partner's (confined) on ONE canopy Session, and resuming
@@ -4373,6 +4518,8 @@ def _handle_stop(*_a):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["repo-worktree"]:
+        sys.exit(_repo_worktree_cli(sys.argv[2:]))
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
     main()

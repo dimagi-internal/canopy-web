@@ -196,7 +196,20 @@ turns, and on 2026-09-22 one left it on a local branch: the next start's
 the box read online + ready for six hours. `RUNNER_SRC_DIR` belongs to the runner
 alone and is RESET to origin/main on every start (never merged into), and a clone
 that cannot sync is still loaded as it was. `/opt/canopy-web` stays for the
-auto-updater, which only ever `git show`s from it.
+auto-updater, which only ever `git show`s from it, and its `pre-commit` hook
+refuses commits there (#1131).
+
+**Where turns work on a repo.** Every checkout a turn works in is its own
+worktree of one shared bare clone per repo (`$WORK_DIR/repos/.clones/<repo>.git`),
+keyed by the conversation, or by the turn when there is none:
+
+- a project turn (a repo, no agent) starts IN its worktree of that repo;
+- any other turn runs `cd "$(canopy-repo-worktree <repo>)"`, the helper
+  bootstrap installs in `~/.local/bin`, to get its own checkout of a repo that
+  is not its agent's.
+
+A clean worktree on a detached HEAD is brought forward to origin/main on its next
+use; one with local changes, or on a branch, is left alone.
 
 ## Bootstrap (agent-fleet provisioning)
 
