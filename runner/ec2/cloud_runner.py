@@ -1706,12 +1706,14 @@ def _requested_by_from(turn: dict) -> str:
 def _github_turn_env(runner_id: str, turn: dict) -> dict:
     """This turn's GitHub identity, from canopy-web — or none.
 
-    canopy-web decides WHOSE (the turn's agent owner, for that agent); this only
-    names the turn. A refusal (no delegation, expired) is logged, emitted on the
-    turn so its viewer can see why a push will fail, and the turn still runs:
-    most turns never touch GitHub, and failing them all would be worse."""
+    canopy-web decides WHOSE (the turn's agent owner, for that agent, or a
+    project turn's configured fallback — this box doesn't know which); this
+    only names the turn. A refusal (no delegation, expired, no fallback
+    configured) is logged, emitted on the turn so its viewer can see why a
+    push will fail, and the turn still runs: most turns never touch GitHub,
+    and failing them all would be worse."""
     requested_by = _requested_by_from(turn)
-    if not _turn_agent_slug(turn):
+    if not _turn_agent_slug(turn) and not turn.get("project"):
         return {"CANOPY_REQUESTED_BY": requested_by}
     turn_id = str(turn["id"])
     status, body = _api("POST", f"/runners/{runner_id}/turns/{turn_id}/github-token")

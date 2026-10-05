@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from collections.abc import Callable
 from urllib.parse import urlencode
 
 import requests
@@ -329,14 +330,40 @@ def readiness(agent: Agent) -> tuple[str, str]:
 
 # ---- handing it to a turn ----------------------------------------------------
 
+#: Resolves a project turn's slug (`Turn.project`) to a fallback agent slug, or
+#: "" for none. `apps.agents` is FRAMEWORK and `apps.projects` is PRODUCT
+#: (ARCHITECTURE.md) — the one-way arrow means this module can't import
+#: `Project` to read its `default_identity_agent`. Instead `apps.projects`
+#: registers itself here from `AppConfig.ready()`, the inversion
+#: ARCHITECTURE.md already names as the preferred fix for this shape of seam.
+#: None until projects' app config has run.
+_project_identity_resolver: Callable[[str], str] | None = None
+
+
+def register_project_identity_resolver(fn: Callable[[str], str]) -> None:
+    """Called once, from the product project app's own AppConfig.ready(). Last
+    registration wins — there is only ever the one caller."""
+    global _project_identity_resolver
+    _project_identity_resolver = fn
+
+
 def turn_agent(turn) -> Agent | None:
     """The agent a turn runs AS: its own for an agent turn, the session's for a
-    chat with an agent, none for a repo chat or a project turn. The same
-    decision the runner makes in `_turn_agent_slug`, made here from the rows."""
+    chat with an agent, a project turn's configured fallback if it has one,
+    else none (a repo chat, or a project with no default set). The same
+    decision the runner makes in `_turn_agent_slug`, made here from the rows —
+    except the project fallback, which the runner cannot make: it would need
+    to know the project's configured agent, and only canopy-web does."""
     if turn.agent_id:
         return turn.agent
     cs = getattr(turn, "chat_session", None)
-    return cs.agent if cs is not None and cs.agent_id else None
+    if cs is not None and cs.agent_id:
+        return cs.agent
+    if turn.project and _project_identity_resolver is not None:
+        slug = _project_identity_resolver(turn.project)
+        if slug:
+            return Agent.objects.filter(slug=slug).first()
+    return None
 
 
 def requested_by(turn) -> str:

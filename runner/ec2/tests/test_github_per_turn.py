@@ -23,6 +23,8 @@ TOKENS = {
                   "git_email": "1+olive@users.noreply.github.com", "requested_by": "Andrea <a@x.org>"},
     "hal-turn": {"token": "tok-nina", "github_login": "nina", "git_name": "Nina",
                  "git_email": "2+nina@users.noreply.github.com", "requested_by": ""},
+    "project-turn": {"token": "tok-labs", "github_login": "hal-bot", "git_name": "Hal",
+                     "git_email": "3+hal-bot@users.noreply.github.com", "requested_by": ""},
 }
 
 
@@ -97,6 +99,32 @@ def test_a_refused_turn_runs_with_no_github_identity_at_all(cr, monkeypatch):
     env = _env_for(cr, {"id": "no-delegation", "agent_slug": "ada"})
     assert "GH_TOKEN" not in env and "GITHUB_TOKEN" not in env
     assert "GIT_CONFIG_COUNT" not in env
+
+
+def test_a_project_turn_with_no_agent_slug_still_asks_canopy_web_for_a_token(cr):
+    """A project-dispatch turn carries `project`, never `agent_slug` — this box
+    cannot know whether that project has a configured fallback identity, so it
+    must still ask rather than short-circuiting the way a bare repo chat does."""
+    env = _env_for(cr, {"id": "project-turn", "agent_slug": "", "project": "canopy-web"})
+    assert env["GH_TOKEN"] == env["GITHUB_TOKEN"] == "tok-labs"
+    assert env["GIT_AUTHOR_NAME"] == env["GIT_COMMITTER_NAME"] == "Hal"
+
+
+def test_a_project_turn_whose_project_has_no_default_identity_gets_none(cr, monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "shared-pat")
+    env = _env_for(cr, {"id": "undefaulted-project-turn", "agent_slug": "", "project": "scout"})
+    assert "GH_TOKEN" not in env and "GITHUB_TOKEN" not in env
+
+
+def test_a_turn_with_neither_agent_slug_nor_project_never_calls_the_endpoint(cr, monkeypatch):
+    """The short-circuit still holds for whatever carries neither — a plain
+    session turn with no agent and no project. Calling out for nothing would
+    just be a wasted round trip canopy-web can only ever refuse."""
+    calls = []
+    real_api = cr._api
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (calls.append(a[1]), real_api(*a, **k))[1])
+    _env_for(cr, {"id": "session-turn", "agent_slug": "", "project": ""})
+    assert not any("github-token" in path for path in calls)
 
 
 def test_the_git_helper_answers_with_the_turns_token(cr, tmp_path):
