@@ -592,6 +592,15 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     client.start(turn_id)
 
     task = plan.get("emdash_task_id") if plan.get("reuse") else None
+    # A follow-up claimed to ride this conversation's RUNNING turn
+    # (canopy-web#1153): type it into that turn's live session — Claude Code
+    # takes it mid-turn or right after, as it does anything a person types — and
+    # let that turn's bridge carry the reply. No bridge here (the session went
+    # away between the claim and now) means an ordinary send.
+    host = chat_bridge.IN_FLIGHT.get(str(turn.get("rides_turn_id") or "")) \
+        if turn.get("rides_turn_id") else None
+    if host is not None:
+        task = host.task
     pre_send = None  # (transcript path, byte offset) taken just before a reuse send
     if task and emdash.task_state(cfg.emdash_db, task) in ("absent", "archived"):
         task = None  # the linked emdash session is gone — create a fresh one
@@ -664,6 +673,13 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             caller.clear_pending(task)
             _fail_typed(client, turn_id, task)
             return f"failed:{turn_id}"
+        if host is not None:
+            host.add_rider(turn_id, prompt)
+            logger.info("chat turn=%s delivered mid-turn into turn=%s (task=%s, agent=%s)",
+                        turn_id, host.turn_id, task, target)
+            _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
+                "status": "delivered_midturn", "task": task, "rides_turn": host.turn_id}}])
+            return f"rode:{turn_id}:{task}"
         logger.info("chat turn=%s reused emdash task=%s (agent=%s)", turn_id, task, target)
     else:
         name = _task_name(target, turn)

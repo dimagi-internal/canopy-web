@@ -124,3 +124,100 @@ def test_bridge_hard_tick_cap_releases_a_wedged_session():
 def _ix(record, block=0):
     return chat_bridge.compose_index(record, block)
 
+
+
+# -- a follow-up delivered INTO the running turn (canopy-web#1153) -------------
+#
+# Record shapes are the ones Claude Code wrote in the #1147 incident session
+# (2026-10-05): typed while busy -> `queue-operation` enqueue; taken mid-turn ->
+# `remove` + a `queued_command` attachment; taken after the turn -> `dequeue` +
+# an ordinary user prompt.
+
+def _enqueue(text):
+    return {"type": "queue-operation", "operation": "enqueue", "content": text}
+
+
+def _remove(text):
+    return {"type": "queue-operation", "operation": "remove", "content": text}
+
+
+def _dequeue():
+    return {"type": "queue-operation", "operation": "dequeue"}
+
+
+def _injected(text):
+    return {"type": "attachment", "attachment": {"type": "queued_command", "prompt": text}}
+
+
+def test_a_follow_up_taken_mid_turn_ends_with_the_same_hand_back():
+    b = _bridge([[_tool()],
+                 [_enqueue("skip the PR checks"), _remove("skip the PR checks"),
+                  _injected("skip the PR checks"), _asst("ok, skipping them", stop="end_turn")]])
+    b.step(b.reader.read_new())
+    b.add_rider("t2", "skip the PR checks")
+    b.step(b.reader.read_new())
+    assert b.riders[0].received
+    assert b.done_reason == "end_turn"
+    assert "1 follow-up(s) delivered mid-turn" in b.note
+
+
+def test_a_hand_back_before_the_follow_up_is_taken_does_not_end_the_turn():
+    """The agent finished its own turn first; Claude Code then dequeues the
+    follow-up as a new prompt. Ending at the first hand-back would finish the
+    follow-up's turn before its reply exists."""
+    b = _bridge()
+    b.add_rider("t2", "and the other deck")
+    b.step([_enqueue("and the other deck"), _asst("slide done", stop="end_turn")])
+    assert not b.done_reason, "held open: the follow-up has not reached the model"
+    b.step([_dequeue(), _user("and the other deck"), _tool()])
+    assert b.riders[0].received and not b.done_reason
+    b.step([_asst("other deck done", stop="end_turn")])
+    assert b.done_reason == "end_turn"
+    assert b.collected == ["slide done", "other deck done"]
+
+
+def test_a_follow_up_only_queued_is_not_yet_received():
+    b = _bridge()
+    b.add_rider("t2", "stop")
+    b.step([_enqueue("stop"), _remove("stop")])
+    assert not b.riders[0].received, "an enqueue/remove is not the model reading it"
+
+
+def test_a_background_task_notice_is_not_a_follow_up():
+    b = _bridge()
+    b.add_rider("t2", "a real follow-up")
+    b.step([_injected("<task-notification>\n<task-id>x</task-id>"),
+            _asst("noted", stop="end_turn")])
+    assert not b.riders[0].received and not b.done_reason
+
+
+def test_a_rewritten_follow_up_still_counts_so_it_cannot_wedge_the_turn():
+    """Claude Code may rewrite what was typed (a collapsed paste); the oldest
+    waiting follow-up takes it rather than holding the turn to the idle backstop."""
+    b = _bridge()
+    b.add_rider("t2", "look at /tmp/screenshot.png please")
+    b.step([_injected("[Image #1] please"), _asst("seen", stop="end_turn")])
+    assert b.riders[0].received and b.done_reason == "end_turn"
+
+
+def test_two_follow_ups_are_matched_by_their_words():
+    b = _bridge()
+    b.add_rider("t2", "first thing")
+    b.add_rider("t3", "second thing")
+    b.step([_injected("second thing"), _asst("on it", stop="end_turn")])
+    assert [r.received for r in b.riders] == [False, True]
+    assert not b.done_reason
+    b.step([_dequeue(), _user("first thing"), _asst("both done", stop="end_turn")])
+    assert b.done_reason == "end_turn"
+
+
+def test_a_follow_up_reopens_a_turn_still_flushing_its_reply():
+    b = _bridge()
+    b.step([_asst("done", stop="end_turn")])
+    assert b.done_reason == "end_turn"
+    b.add_rider("t2", "one more thing")
+    assert not b.done_reason
+
+
+def test_the_runner_reports_it_delivers_mid_turn():
+    assert chat_bridge.MIDTURN_VERSION >= 1

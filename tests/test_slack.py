@@ -1325,6 +1325,34 @@ def test_a_follow_up_sent_mid_turn_says_it_is_queued_behind_then_moves(
     assert "working on this on *jj-mbp*" in line()
 
 
+def test_a_follow_up_mid_turn_is_delivered_into_the_running_turn(
+        slack, linked, hal, alice, django_capture_on_commit_callbacks):
+    """canopy-web#1153: on a runner that delivers mid-turn the follow-up is not
+    queued behind at all — it is claimed into the running turn, says it is being
+    worked on, and finishes when that turn does."""
+    runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
+    runner.capabilities = {**runner.capabilities, "midturn": 1}
+    runner.save(update_fields=["capabilities"])
+    mention("hal first", ts="1700000000.000100")
+    with django_capture_on_commit_callbacks(execute=True):
+        first = harness_services.claim_next_turn(runner)
+    with django_capture_on_commit_callbacks(execute=True):
+        mention("and a follow-up", ts="1700000050.000100", thread_ts="1700000000.000100")
+    follow_up = Turn.objects.get(status=Turn.QUEUED)
+
+    def line():
+        return SlackTurnPost.objects.get(turn=follow_up).rendered
+
+    assert "is picking this up on *jj-mbp*" in line()
+    with django_capture_on_commit_callbacks(execute=True):
+        assert harness_services.claim_next_turn(runner) == follow_up
+    assert "working on this on *jj-mbp*" in line()
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_services.finish_turn(first, status=Turn.DONE)
+    follow_up.refresh_from_db()
+    assert follow_up.status == Turn.DONE and follow_up.rides_turn_id == first.pk
+
+
 def test_queued_behind_renders_for_the_session_and_for_the_agent(slack, linked, hal):
     from types import SimpleNamespace
 

@@ -379,7 +379,7 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         # refuses it every caller's turn (cloud-ec2-1, 2026-10-05). Same rule as
         # the timestamp: garbage costs the capability, never the beat.
         caps = {}
-        for key in ("profiles", "envelope"):
+        for key in ("profiles", "envelope", "midturn"):
             try:
                 caps[key] = int(frame.get(key) or 0)
             except (TypeError, ValueError):

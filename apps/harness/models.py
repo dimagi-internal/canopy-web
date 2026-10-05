@@ -500,6 +500,15 @@ class Turn(models.Model):
     # the agent's guard confine the session to it. Decided once, at enqueue,
     # from the initiator — see `apps/agents/interface.py::capability_for`.
     capability = models.CharField(max_length=48, blank=True, default="")
+    # A follow-up DELIVERED INTO a conversation's running turn rather than queued
+    # behind it (canopy-web#1153): the runner holding that turn typed it into the
+    # live session, where Claude Code takes it mid-turn or right after, as it
+    # would anything a person typed. It executes beside the turn it rides — the
+    # only exception to one_executing_turn_per_session — renews its lease with it
+    # and finishes with it (`services.claim_next_turn`, `finish_turn`).
+    rides_turn = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="riders",
+    )
     initiator_kind = models.CharField(max_length=16, blank=True, default="")
     initiator_via = models.CharField(max_length=64, blank=True, default="")
     initiator_assurance = models.CharField(max_length=32, blank=True, default="")
@@ -632,10 +641,13 @@ class Turn(models.Model):
             # A session serializes its own execution — one running turn per
             # conversation. Session turns have agent=NULL so they do not
             # participate in one_executing_turn_per_agent; NULLs never compare
-            # equal, so agent/project turns do not participate here.
+            # equal, so agent/project turns do not participate here. A RIDER
+            # (`rides_turn`) is exempt: it executes inside the running turn's
+            # session, not as a second one.
             models.UniqueConstraint(
                 fields=["chat_session"],
-                condition=models.Q(status__in=["claimed", "running", "needs_human"]),
+                condition=models.Q(status__in=["claimed", "running", "needs_human"],
+                                   rides_turn__isnull=True),
                 name="one_executing_turn_per_session",
             ),
             models.CheckConstraint(

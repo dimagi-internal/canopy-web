@@ -524,7 +524,7 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
         # first beat. Dropped here rather than refused, so an old pairing script
         # that copies a whole capabilities dict still pairs.
         capabilities={k: v for k, v in payload.capabilities.items()
-                      if k not in ("profiles", "envelope")},
+                      if k not in ("profiles", "envelope", "midturn")},
         host=payload.host,
         owner=request.user,
         workspace_id=ws_slug,
@@ -903,7 +903,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             "routable, open it as a project in emdash on that runner (or set "
             "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
         )
-    for key in ("profiles", "envelope"):
+    for key in ("profiles", "envelope", "midturn"):
         if key in payload.capabilities:
             # Reported, like `projects` — and here it is a SECURITY property: a hand
             # edit claiming a runner can confine a caller's session would route
@@ -911,7 +911,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             raise HttpError(422, f"`{key}` is reported by the runner on every heartbeat, "
                                  "not set by hand.")
     caps = dict(payload.capabilities)
-    for key in ("projects", "profiles", "envelope"):
+    for key in ("projects", "profiles", "envelope", "midturn"):
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]
     runner.capabilities = caps
@@ -1088,6 +1088,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         projects=payload.projects,
         profiles=payload.profiles,
         envelope=payload.envelope,
+        midturn=payload.midturn,
         health=payload.health.model_dump() if payload.health is not None else None,
         mailboxes_readable=payload.mailboxes_readable,
     )

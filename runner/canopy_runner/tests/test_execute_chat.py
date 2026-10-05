@@ -332,3 +332,39 @@ def test_the_undelivered_note_tells_the_person_what_to_do(
     assert "unsent text" in note            # WHY it could not be delivered
     assert "send your message again" in note  # WHAT to do about it
     assert "deferred" not in note           # not runner jargon
+
+
+# -- a follow-up delivered into the running turn (canopy-web#1153) ------------
+
+def test_a_rider_is_typed_into_the_running_turns_session_and_rides_its_bridge(monkeypatch):
+    host = chat_bridge.LiveBridge(turn_id="h1", task="ace-chat-1", reader=None, project="ace")
+    chat_bridge.IN_FLIGHT["h1"] = host
+    sent = []
+    monkeypatch.setattr(execute.cdp_control, "open_and_send",
+                        lambda task, prompt, **k: sent.append((task, prompt)) or {"action": "sent"})
+    monkeypatch.setattr(execute.cdp_control, "create_task",
+                        lambda *a, **k: pytest.fail("a rider must never open a new session"))
+    monkeypatch.setattr(execute, "_open_verifier", lambda *a, **k: None)
+    monkeypatch.setattr(execute.chat_key, "write", lambda *a, **k: None)
+    turn = {**_turn(), "id": "t2", "prompt": "skip the PR checks", "rides_turn_id": "h1"}
+
+    res = execute.execute_chat_turn(types.SimpleNamespace(cdp_port=9222, emdash_db="/nonexistent"),
+                                    _FakeClient(), "runner1", turn)
+
+    assert res == "rode:t2:ace-chat-1"
+    assert sent == [("ace-chat-1", "skip the PR checks")]
+    assert [r.turn_id for r in host.riders] == ["t2"]
+    assert set(chat_bridge.IN_FLIGHT) == {"h1"}, "no second bridge: the reply would post twice"
+
+
+def test_a_rider_whose_turn_already_ended_is_sent_like_any_chat_turn(monkeypatch, tmp_path):
+    transcript = tmp_path / "sess.jsonl"
+    transcript.write_text("")
+    monkeypatch.setattr(execute.cdp_control, "create_task", lambda *a, **k: {"task": "echo-1234"})
+    monkeypatch.setattr(execute, "_wait_for_transcript", lambda *a, **k: transcript)
+    turn = {**_turn(), "rides_turn_id": "gone"}
+
+    res = execute.execute_chat_turn(types.SimpleNamespace(cdp_port=9222, emdash_db="/nonexistent"),
+                                    _FakeClient(), "runner1", turn)
+
+    assert res.startswith("chat:t1:") and "t1" in chat_bridge.IN_FLIGHT

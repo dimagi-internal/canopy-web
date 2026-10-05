@@ -335,6 +335,10 @@ class HeartbeatIn(Schema):
     # `profile: "confined"`. Absent (older code) means 0, and such a box gets no
     # caller turns (services.profile_q, ENVELOPE_VERSION).
     envelope: int = 0
+    # 1 = this runner's code delivers a follow-up INTO a conversation's running
+    # turn (`Turn.rides_turn`, canopy-web#1153). Absent (older code) means 0:
+    # it is never handed one, because it would bridge the same reply twice.
+    midturn: int = 0
     # The repos this runner can actually drive, OBSERVED (emdash's own projects
     # table on a laptop; the configured list on a cloud box) rather than typed by
     # a human at pairing — which drifted silently and only ever toward "cannot
@@ -576,6 +580,10 @@ class TurnOut(Schema):
     # The runner this turn is PINNED to (TurnIn.runner_id), if any — only it may claim.
     pinned_runner_id: uuid.UUID | None = None
     pinned_runner_name: str | None = None
+    # Set when this turn was claimed to be DELIVERED INTO its conversation's
+    # running turn (that turn's id) rather than run on its own: the runner types
+    # it into the live session and it finishes when that turn does.
+    rides_turn_id: uuid.UUID | None = None
     session_id: str
     result_note: str
     # True when `prompt`, `origin_ref` and `result_note` were blanked because

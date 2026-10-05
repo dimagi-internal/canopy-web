@@ -8441,6 +8441,8 @@ export interface components {
             readonly pinned_runner_id?: string | null;
             /** Pinned Runner Name */
             readonly pinned_runner_name?: string | null;
+            /** Rides Turn Id */
+            readonly rides_turn_id?: string | null;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
@@ -14036,6 +14038,11 @@ export interface components {
              * @default 0
              */
             readonly envelope: number;
+            /**
+             * Midturn
+             * @default 0
+             */
+            readonly midturn: number;
             /** Projects */
             readonly projects?: readonly string[] | null;
             readonly health?: components["schemas"]["RunnerHealthIn"] | null;
@@ -14116,6 +14123,8 @@ export interface components {
             readonly pinned_runner_id?: string | null;
             /** Pinned Runner Name */
             readonly pinned_runner_name?: string | null;
+            /** Rides Turn Id */
+            readonly rides_turn_id?: string | null;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
