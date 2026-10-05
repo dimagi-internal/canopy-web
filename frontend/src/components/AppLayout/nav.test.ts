@@ -26,7 +26,7 @@ describe('NAV_GROUPS', () => {
       [
         'Activity', 'Agents', 'Chats', 'DDD', 'Guide', 'Insights',
         'Projects', 'Schedule', 'Settings', 'Shareouts', 'Storyboards',
-        'Supervisor', 'System', 'Timeline', 'Walkthroughs',
+        'System', 'Timeline', 'Walkthroughs',
       ].sort(),
     )
   })
@@ -54,7 +54,7 @@ describe('resolveNavGroups', () => {
   it('leaves global items on their absolute path', () => {
     const fleet = resolveNavGroups(authed).find((g) => g.label === 'Fleet')!
     expect(fleet.items.map((i) => i.href)).toEqual([
-      '/supervisor', '/w/connect/agents', '/activity', '/schedules',
+      '/w/connect/agents', '/activity', '/schedules',
     ])
   })
 
@@ -62,7 +62,7 @@ describe('resolveNavGroups', () => {
     const groups = resolveNavGroups({ isAuthed: true, active: null })
     const hrefs = groups.flatMap((g) => g.items.map((i) => i.href))
     expect(hrefs.some((h) => h.includes('/w//'))).toBe(false)
-    expect(hrefs).toEqual(['/insights', '/supervisor', '/activity', '/schedules', '/system', '/guide'])
+    expect(hrefs).toEqual(['/insights', '/activity', '/schedules', '/system', '/guide'])
   })
 
   it('drops a group whose items are all tenant-scoped while the workspace is unknown', () => {
@@ -123,7 +123,7 @@ describe('isNavGroupActive', () => {
 
   it('marks exactly one group for any given route', () => {
     for (const pathname of [
-      '/w/connect', '/w/connect/chat', '/insights', '/supervisor',
+      '/w/connect', '/w/connect/chat', '/insights',
       '/w/connect/agents', '/activity', '/schedules', '/w/connect/ddd',
       '/w/connect/walkthroughs', '/w/connect/storyboards', '/w/connect/shareouts', '/w/connect/timeline',
       '/w/connect/settings', '/w/connect/settings/slack', '/system',
@@ -134,7 +134,10 @@ describe('isNavGroupActive', () => {
   })
 
   it('marks no group on a route the nav does not own', () => {
-    expect(groups.some((g) => isNavGroupActive(g, '/settings'))).toBe(false)
+    // Both are personal: they live in the account menu, not the nav.
+    for (const pathname of ['/settings', '/supervisor']) {
+      expect(groups.some((g) => isNavGroupActive(g, pathname)), pathname).toBe(false)
+    }
   })
 
   it('does not light Demos up on the public storyboard page', () => {

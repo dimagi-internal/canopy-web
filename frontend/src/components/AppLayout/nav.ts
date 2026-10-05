@@ -45,9 +45,10 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     // The agents, and what they are doing / will do / have done.
+    // Supervisor is not here: it is YOUR inbox across every workspace you are
+    // in (and the phone app's start page), so it lives in the account menu.
     label: 'Fleet',
     items: [
-      { path: '/supervisor', label: 'Supervisor', tenant: false },
       { path: 'agents', label: 'Agents', tenant: true },
       { path: '/activity', label: 'Activity', tenant: false },
       { path: '/schedules', label: 'Schedule', tenant: false },
