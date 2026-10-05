@@ -75,9 +75,6 @@ export function MessageList({
     <div className="flex flex-col">
       {toolPairCount > TOOLBAR_THRESHOLD && (
         <div className="sticky top-0 z-10 flex items-center justify-end gap-2 border-b border-border bg-background/80 px-4 py-1.5 backdrop-blur">
-          <span className="text-xs text-muted-foreground">
-            {toolPairCount} tool calls
-          </span>
           <Button
             variant={bulkState === "all" ? "secondary" : "ghost"}
             size="xs"
