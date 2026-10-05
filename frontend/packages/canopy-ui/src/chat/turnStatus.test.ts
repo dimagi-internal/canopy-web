@@ -72,6 +72,16 @@ describe("pendingLabel", () => {
     expect(pendingLabel({ status: status({ state: "working" }) })).toBe("Thinking on jj-mbp…");
   });
 
+  it("says a follow-up is queued behind the turn ahead, not being picked up (#1147)", () => {
+    const s = status({ state: "queued_behind", behind: "session", claimed_by: null });
+    expect(agentHasFloor({ status: s })).toBe(true);
+    expect(pendingLabel({ status: s })).toBe("Queued behind the previous message on jj-mbp…");
+    expect(pendingLabel({ status: { ...s, behind: "agent" } })).toBe(
+      "Queued behind the agent's current turn on jj-mbp…",
+    );
+    expect(turnNotice(s)).toBeNull();
+  });
+
   it("names a pinned runner as a decision, not a queue position", () => {
     const s = status({ state: "picking_up", pinned: true, runners: ["cloud-1"] });
     expect(pendingLabel({ status: s })).toBe("Sent to cloud-1…");

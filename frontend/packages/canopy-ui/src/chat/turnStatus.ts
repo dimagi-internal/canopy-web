@@ -41,8 +41,8 @@ export function agentHasFloor({
   if (activity === "blocked") return false;
   if (status) {
     if (status.settled || status.stuck) return false;
-    // `picking_up` and `working` are the two live states, and both mean a
-    // reply is genuinely coming.
+    // `picking_up`, `queued_behind` and `working` are the live states, and
+    // each means a reply is genuinely coming.
     return true;
   }
   return Boolean(awaitingReply) || activity === "working";
@@ -64,6 +64,13 @@ export function pendingLabel({
 }): string {
   if (status?.state === "working") {
     return status.claimed_by ? `Thinking on ${status.claimed_by}…` : "Thinking…";
+  }
+  if (status?.state === "queued_behind") {
+    // A live runner will take it, but only once the turn ahead ends — saying
+    // "picking this up" made a follow-up sent mid-turn look lost (#1147).
+    const [first] = status.runners;
+    const ahead = status.behind === "session" ? "the previous message" : "the agent's current turn";
+    return first ? `Queued behind ${ahead} on ${first}…` : `Queued behind ${ahead}…`;
   }
   if (status?.state === "picking_up") {
     const [first] = status.runners;
