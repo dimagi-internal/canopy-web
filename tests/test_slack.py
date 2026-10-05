@@ -1823,6 +1823,24 @@ def test_flipping_the_switch_adds_and_removes_the_command(slack, hal, managed, o
     assert on["command_detail"] == "Added /hal to Slack." and "/hal" in _commands(slack)
 
 
+def test_the_commands_say_how_to_include_channel_history(slack, hal, managed):
+    """`--history <minutes>` worked in a slash command and no command said so."""
+    cmds = _commands(slack)
+    assert "--history" in cmds["/hal"]["usage_hint"] and "--history" in cmds["/canopy"]["usage_hint"]
+
+
+def test_a_managed_command_whose_wording_changed_is_updated_in_place(slack, hal, ws, managed, owner_client):
+    """Reconcile used to only add and remove, so a command created before its
+    hint changed kept the old wording forever."""
+    for cmd in slack.manifest["features"]["slash_commands"]:
+        if cmd["command"] == "/hal":
+            cmd["usage_hint"] = "<ask>"
+    resp = owner_client.post(f"/api/slack-config/{ws.slug}/sync").json()
+    assert "--history" in _commands(slack)["/hal"]["usage_hint"]
+    assert resp.get("updated") == ["/hal"]
+    assert _commands(slack)["/standup"]["url"] == "https://elsewhere.example/standup"   # not ours: untouched
+
+
 def test_a_command_canopy_does_not_own_is_never_removed(slack, ws, managed, owner_client):
     # `/hal` exists but points somewhere else: not canopy's to remove.
     Agent.objects.create(slug="hal", name="Hal", workspace=ws, slack_enabled=False)

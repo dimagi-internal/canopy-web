@@ -57,6 +57,7 @@ class SlackSyncOut(StrictModel):
     status: str
     detail: str = ""
     added: list[str] = []
+    updated: list[str] = []
     removed: list[str] = []
     unfit: list[str] = []
     #: Bot scopes newly put on the app — they take effect only on a re-install.
