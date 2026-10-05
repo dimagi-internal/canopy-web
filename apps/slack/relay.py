@@ -260,9 +260,10 @@ ELSEWHERE_AT = "slack_elsewhere_at"
 
 def notify_elsewhere(session, texts) -> bool:
     """Someone typed straight into this Slack-born conversation's session on its
-    box (emdash), bypassing every canopy surface. That is not a Turn, so neither
-    the reply relay nor a status line will ever see it, and the thread would
-    silently fall behind. Say so, once per window, with the way to follow along.
+    box (emdash), bypassing every canopy surface. The agent's replies still reach
+    the thread (`relay_after_turn`), but the words they answer do not — so say,
+    once per window, that the conversation is also happening there, with the
+    way to follow along.
 
     A message a TURN delivered also lands in the transcript as the human's
     words; those are recognised (a turn is executing, or the text is a recent
@@ -300,8 +301,8 @@ def notify_elsewhere(session, texts) -> bool:
     installation, channel, thread_ts = dest
     binding = getattr(locked, "runner_binding", None)
     where = f" on *{binding.runner.name}*" if binding is not None and binding.runner_id else ""
-    text = (f":eyes: This conversation is carrying on directly in the agent's session{where}, "
-            "outside Slack — what's said there won't show up in this thread.")
+    text = (f":eyes: Someone is talking to the agent directly in its session{where}. Its replies "
+            "will keep appearing here; what's typed there won't.")
     if locked.created_by_id:
         text += f" <{session_url(locked)}|Follow along in canopy>"
     try:
@@ -385,8 +386,8 @@ def on_transcript(session, rows) -> None:
     """A runner streamed transcript text for a session; keep its Slack thread in step.
 
     `rows` is [(index, kind, text)] in order. Human rows may be someone typing
-    into the session directly (announced, not mirrored); agent rows may be text
-    written after the turn closed (relayed, when it is still answering the thread).
+    into the session directly (announced, not mirrored); agent rows written
+    outside a turn are relayed (see `relay_after_turn`).
     """
     if session_destination(session) is None:
         return
@@ -399,22 +400,26 @@ def on_transcript(session, rows) -> None:
 
 
 def relay_after_turn(session, replies) -> int:
-    """Post agent text written outside any turn, when it is still answering an
-    ask the thread knows about. Returns posts made.
+    """Post agent text written outside any turn into the session's Slack thread.
+    Returns posts made.
 
-    The case this is for: emdash ends a turn the moment the agent yields to
+    Two cases, one rule. emdash ends a turn the moment the agent yields to
     background work, so the ledger relay posts what was written up to then and
-    nothing after — the actual result of waiting on CI, a merge or a deploy
-    reached canopy-web and never the thread that asked for it.
+    nothing after — the result of waiting on CI, a merge or a deploy. And
+    someone may type straight into the session on its box (emdash); that is not
+    a Turn, so nothing else would ever carry the reply. A conversation that
+    lives in a Slack thread keeps the thread in step either way: the agent's
+    replies are posted, whoever asked and wherever (owner decision, 2026-10-05).
+    What was TYPED in emdash is not posted — `notify_elsewhere` says once that
+    the conversation is also happening there.
 
-    Three guards, each against a specific wrong post:
+    Guards, each against a specific wrong post:
 
     * **a turn is executing** -> skip; the ledger relay owns that reply, and
       posting both would say everything twice.
-    * **the latest human message is not an ask the thread saw** (a turn's
-      prompt — Slack's own, or one announced by a status line) -> skip; the
-      conversation moved into emdash, which `notify_elsewhere` says instead of
-      mirroring a private exchange into a channel.
+    * **the latest human message predates the bind** -> skip; a session SHARED
+      into a thread keeps its earlier life to itself, including the share
+      command's own "Shared to #dev." reply.
     * **the text was already bridged** into the last turn's ledger -> skip.
     """
     from apps.canopy_sessions.models import Message
@@ -429,10 +434,6 @@ def relay_after_turn(session, replies) -> int:
     turns = Turn.objects.filter(chat_session=session)
     if turns.filter(status__in=list(Turn.NON_TERMINAL - {Turn.QUEUED})).exists():
         return 0
-    last = turns.order_by("-created_at").first()
-    if last is None or predates_bind(last):
-        return 0
-    asks = {_norm(p) for p in turns.order_by("-created_at").values_list("prompt", flat=True)[:20]}
     latest_human = next(
         (m for m in Message.objects.filter(session=session, role=Message.USER)
          .order_by("-turn_index")[:10] if not is_system_noise(m.plaintext or "")),
@@ -440,16 +441,13 @@ def relay_after_turn(session, replies) -> int:
     )
     if latest_human is None:
         return 0
-    # Typed into emdash WHILE the Slack turn was still running is part of that
-    # turn — its replies were already relayed from the ledger — not the
-    # conversation leaving Slack. Only something typed after the turn closed is.
-    # (2026-10-02: the owner added a screenshot mid-turn, and every word after the
-    # turn yielded — the merge, the deploy, the summary — was held back as private.)
-    during_turn = last.finished_at is not None and latest_human.created_at <= last.finished_at
-    if not during_turn and _asked(latest_human.plaintext) not in asks:
+    bound_at = (session.metadata or {}).get(BOUND_AT)
+    if bound_at and latest_human.created_at.timestamp() < float(bound_at):
         return 0
+    last = turns.order_by("-created_at").first()
     bridged = {_norm(str((p or {}).get("text") or "")) for p in
-               TurnEvent.objects.filter(turn=last, kind="assistant").values_list("payload", flat=True)}
+               TurnEvent.objects.filter(turn=last, kind="assistant").values_list("payload", flat=True)} \
+        if last is not None else set()
 
     installation, channel, thread_ts = dest
     agent = session.agent if session.agent_id else None
