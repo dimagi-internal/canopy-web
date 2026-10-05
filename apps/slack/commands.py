@@ -93,13 +93,18 @@ def command_name(slug: str) -> str | None:
     return name if len(name) <= _MAX_COMMAND else None
 
 
+#: Slack shows a command's usage hint as you type it — the one place someone
+#: learns that `--history` exists without having been told (`window.py`).
+HISTORY_HINT = "[--history <minutes> to include recent channel messages] "
+
+
 def desired_commands(installation: SlackInstallation) -> tuple[dict[str, dict], list[str]]:
     """({name: command}, [slugs that cannot be a command]) for every tenant this Slack serves."""
     from .services import enabled_agents
 
     url = _commands_url()
     want = {BASE_COMMAND: {"command": BASE_COMMAND, "url": url, "description": "Ask a canopy agent",
-                           "usage_hint": "<agent> <ask> | agents | link", "should_escape": False}}
+                           "usage_hint": f"<agent> {HISTORY_HINT}<ask> | agents | link", "should_escape": False}}
     unfit = []
     for agent in enabled_agents(installation):
         name = command_name(agent.slug)
@@ -107,7 +112,7 @@ def desired_commands(installation: SlackInstallation) -> tuple[dict[str, dict], 
             unfit.append(agent.slug)
             continue
         want[name] = {"command": name, "url": url, "description": f"Ask {agent.name or agent.slug}"[:100],
-                      "usage_hint": "<ask>", "should_escape": False}
+                      "usage_hint": f"{HISTORY_HINT}<ask>", "should_escape": False}
     return want, unfit
 
 
@@ -130,13 +135,17 @@ def reconcile(installation: SlackInstallation) -> dict:
         features = manifest.setdefault("features", {})
         current = list(features.get("slash_commands") or [])
 
-        kept, removed = [], []
+        kept, removed, updated = [], [], []
         for cmd in current:
             name = str(cmd.get("command") or "").lower()
             managed = name in ours and cmd.get("url") == url
             if managed and name not in want:
                 removed.append(name)
                 continue
+            if managed and any(cmd.get(k) != want[name][k] for k in ("description", "usage_hint")):
+                # Ours and still wanted, but worded as it was when created.
+                cmd = {**cmd, **want[name]}
+                updated.append(name)
             kept.append(cmd)
         present = {str(c.get("command") or "").lower() for c in kept}
         added = [name for name in want if name not in present]
@@ -153,14 +162,14 @@ def reconcile(installation: SlackInstallation) -> dict:
         scopes_added = [s for s in BOT_SCOPES if s not in bot and s != AGENT_SCOPE]
         if scopes_added:
             scopes["bot"] = sorted({*bot, *scopes_added})
-        if added or removed or scopes_added:
+        if added or removed or updated or scopes_added:
             features["slash_commands"] = kept
             client.call("apps.manifest.update", token=token,
                         data={"app_id": installation.app_id, "manifest": json.dumps(manifest)})
         installation.commands_synced_at = timezone.now()
         installation.commands_sync_error = ""
         installation.save(update_fields=["commands_synced_at", "commands_sync_error"])
-        return {"added": sorted(added), "removed": sorted(removed), "unfit": unfit,
+        return {"added": sorted(added), "removed": sorted(removed), "updated": sorted(updated), "unfit": unfit,
                 "scopes_added": scopes_added}
     except NotConfigured:
         raise

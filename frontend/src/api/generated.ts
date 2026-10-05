@@ -7748,6 +7748,11 @@ export interface components {
              */
             readonly added: readonly string[];
             /**
+             * Updated
+             * @default []
+             */
+            readonly updated: readonly string[];
+            /**
              * Removed
              * @default []
              */

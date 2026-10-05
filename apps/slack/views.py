@@ -219,7 +219,9 @@ def commands(request: HttpRequest) -> HttpResponse:
         return _ephemeral(f"Link your canopy account: {services.link_url(team_id, slack_user_id)}")
     if word in ("", "help", "agents"):
         return _ephemeral(services.agent_list(installation)
-                          + " `/canopy cloud` sends anything of yours stuck behind an offline"
+                          + " Add `--history <minutes>` before your ask to give the agent this"
+                          " channel's recent messages, e.g. `/canopy hal --history 30 pick this up`."
+                          " `/canopy cloud` sends anything of yours stuck behind an offline"
                           " runner to a cloud runner (runner admins only).")
     if word == services.CLOUD_WORD:
         return _ephemeral(services.route_mine_to_cloud(installation, slack_user_id).message)
@@ -236,7 +238,8 @@ def commands(request: HttpRequest) -> HttpResponse:
     ask = text.split(" ", 1)[1].strip() if " " in text else ""
     if not ask:
         usage = f"/{agent.slug}" if command == agent.slug else f"/canopy {agent.slug}"
-        return _ephemeral(f"What would you like `{agent.slug}` to do? `{usage} <ask>`")
+        return _ephemeral(f"What would you like `{agent.slug}` to do? `{usage} <ask>` — or"
+                          f" `{usage} --history 30 <ask>` to include the channel's last 30 minutes.")
     anchor = f"<@{slack_user_id}> asked *{agent.slug}*: {ask}"
     try:
         root_ts = client.post_message(installation.bot_token, channel=channel_id, text=anchor)

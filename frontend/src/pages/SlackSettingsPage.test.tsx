@@ -51,13 +51,16 @@ describe('SlackSettingsPage', () => {
 
 describe('syncSummary', () => {
   it('reads like a sentence', () => {
-    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], removed: [], unfit: [], scopes_added: [] }))
+    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [], scopes_added: [] }))
       .toBe('Slash commands already match.')
-    expect(slack.syncSummary({ status: 'not_configured', detail: 'no token', added: [], removed: [], unfit: [], scopes_added: [] }))
+    expect(slack.syncSummary({ status: 'not_configured', detail: 'no token', added: [], updated: [], removed: [], unfit: [], scopes_added: [] }))
       .toBe('no token')
-    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], removed: [], unfit: [],
+    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [],
       scopes_added: ['files:read'] }))
       .toBe('Added the files:read permission — reconnect Slack to grant it.')
+    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: ['/hal'], removed: [],
+      unfit: [], scopes_added: [] }))
+      .toBe('Updated /hal.')
   })
 })
 
