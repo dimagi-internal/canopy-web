@@ -52,6 +52,31 @@ def _commands_url() -> str:
     return public_url("/api/slack/commands")
 
 
+def _former_commands_urls() -> set[str]:
+    """Command URLs this deployment wrote under an address it has since left.
+
+    canopy moved from labs.connect.dimagi.com/canopy to canopy.dimagi.com
+    (2026-10-05); the old address is still canopy's identity base and still
+    serves /api/. Without this a sync no longer recognised the commands it had
+    created — `managed` compares URLs — so it could neither move them to the new
+    address nor remove one whose agent was switched off.
+    """
+    from apps.tokens.client_identity import public_base
+
+    former = f"{public_base()}/api/slack/commands"
+    return {former} - {_commands_url()}
+
+
+def _oauth_redirect_url() -> str:
+    from django.urls import get_script_prefix, reverse
+
+    from .services import public_url
+
+    # The path reverse() gives, without any script prefix: public_url already
+    # names the address it is served at.
+    return public_url(reverse("slack_oauth_callback").removeprefix(get_script_prefix().rstrip("/")))
+
+
 def _store(installation: SlackInstallation, body: dict) -> None:
     installation.config_token_enc = encrypt_secret(str(body["token"]))
     installation.config_refresh_enc = encrypt_secret(str(body["refresh_token"]))
@@ -126,6 +151,7 @@ def reconcile(installation: SlackInstallation) -> dict:
         manifest = client.call("apps.manifest.export", token=token,
                                data={"app_id": installation.app_id})["manifest"]
         url = _commands_url()
+        former = _former_commands_urls()
         want, unfit = desired_commands(installation)
         # Every tenant this Slack serves, not one: the app and its commands are
         # shared, and a sync run for tenant B that only knew B's agents would
@@ -138,12 +164,13 @@ def reconcile(installation: SlackInstallation) -> dict:
         kept, removed, updated = [], [], []
         for cmd in current:
             name = str(cmd.get("command") or "").lower()
-            managed = name in ours and cmd.get("url") == url
+            managed = name in ours and cmd.get("url") in {url} | former
             if managed and name not in want:
                 removed.append(name)
                 continue
-            if managed and any(cmd.get(k) != want[name][k] for k in ("description", "usage_hint")):
-                # Ours and still wanted, but worded as it was when created.
+            if managed and any(cmd.get(k) != want[name][k] for k in ("description", "usage_hint", "url")):
+                # Ours and still wanted, but worded as it was when created — or
+                # pointing at the address canopy has moved away from.
                 cmd = {**cmd, **want[name]}
                 updated.append(name)
             kept.append(cmd)
@@ -162,7 +189,15 @@ def reconcile(installation: SlackInstallation) -> dict:
         scopes_added = [s for s in BOT_SCOPES if s not in bot and s != AGENT_SCOPE]
         if scopes_added:
             scopes["bot"] = sorted({*bot, *scopes_added})
-        if added or removed or updated or scopes_added:
+        # Slack compares the install's redirect_uri exactly, and it is built from
+        # the address the person is on — so when canopy's address moves, the
+        # new callback has to be on the app or connecting Slack fails.
+        oauth = manifest.setdefault("oauth_config", {})
+        redirects = list(oauth.get("redirect_urls") or [])
+        redirect_added = _oauth_redirect_url() not in redirects
+        if redirect_added:
+            oauth["redirect_urls"] = redirects + [_oauth_redirect_url()]
+        if added or removed or updated or scopes_added or redirect_added:
             features["slash_commands"] = kept
             client.call("apps.manifest.update", token=token,
                         data={"app_id": installation.app_id, "manifest": json.dumps(manifest)})

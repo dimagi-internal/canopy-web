@@ -1876,6 +1876,30 @@ def test_a_managed_command_whose_wording_changed_is_updated_in_place(slack, hal,
     assert _commands(slack)["/standup"]["url"] == "https://elsewhere.example/standup"   # not ours: untouched
 
 
+def test_moving_canopys_address_moves_its_commands_and_its_install_callback(
+        slack, hal, ws, managed, owner_client, settings):
+    """canopy moved from labs.connect.dimagi.com/canopy to canopy.dimagi.com. A
+    sync compared command URLs to decide which were its own, so after the move
+    it disowned every command it had created: never moved, never removed."""
+    old, new = "https://labs.test/canopy", "https://canopy.test"
+    for cmd in slack.manifest["features"]["slash_commands"]:
+        if cmd["command"] in ("/canopy", "/hal"):
+            cmd["url"] = f"{old}/api/slack/commands"
+    settings.CANOPY_PUBLIC_BASE_URL, settings.CANOPY_IDENTITY_BASE_URL = new, old
+
+    resp = owner_client.post(f"/api/slack-config/{ws.slug}/sync").json()
+
+    cmds = _commands(slack)
+    assert cmds["/hal"]["url"] == cmds["/canopy"]["url"] == f"{new}/api/slack/commands"
+    assert set(resp["updated"]) == {"/canopy", "/hal"}
+    assert cmds["/standup"]["url"] == "https://elsewhere.example/standup"     # not ours: untouched
+    assert f"{new}/auth/slack/callback/" in slack.manifest["oauth_config"]["redirect_urls"]
+
+    # And a command on the old address is still canopy's to remove.
+    owner_client.patch("/api/agents/hal/slack", {"slack_enabled": False}, content_type="application/json")
+    assert "/hal" not in _commands(slack)
+
+
 def test_a_command_canopy_does_not_own_is_never_removed(slack, ws, managed, owner_client):
     # `/hal` exists but points somewhere else: not canopy's to remove.
     Agent.objects.create(slug="hal", name="Hal", workspace=ws, slack_enabled=False)
