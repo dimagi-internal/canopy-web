@@ -323,3 +323,21 @@ def test_no_refusal_carries_a_credential(world):
     token = world.id_jag(aud="https://canopy.example")
     r = refused(world, assertion=token)
     assert token not in r.description and token not in str(r.body())
+
+
+# --- discovery ----------------------------------------------------------------------
+
+
+def test_the_protected_resource_document_keeps_the_hosts_own_scopes(world):
+    """An interactive client registers for the PRM's scopes_supported, so the grant
+    must not add its tool scopes there (canopy-web#1157). The RFC 8414 document
+    still lists them."""
+    from canopy_sdk.host import authorization_server_metadata, protected_resource_metadata
+
+    prm = protected_resource_metadata(world.config, {"resource": RESOURCE, "scopes_supported": ["mcp"]})
+    assert prm["scopes_supported"] == ["mcp"]
+    assert prm["dpop_signing_alg_values_supported"] == list(contract.GRANT_ALGORITHMS)
+    assert "scopes_supported" not in protected_resource_metadata(world.config, {"resource": RESOURCE})
+
+    asm = authorization_server_metadata(world.config, {"issuer": ISSUER, "scopes_supported": ["mcp"]})
+    assert set(world.config.scope_tools) <= set(asm["scopes_supported"])
