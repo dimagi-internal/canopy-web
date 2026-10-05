@@ -3438,7 +3438,55 @@ def _record_session_resume(runner_id: str, turn: dict, cli_session_id: str) -> N
 # WS SAFETY: workers always emit and finish over REST (`_api`), never over the
 # shared WebSocket — `_ws_request` is not safe to call from several threads on
 # one socket, the same constraint `_start_lease_renewal` already documents.
-MAX_CONCURRENT_TURNS = int(os.environ.get("MAX_CONCURRENT_TURNS", "4") or "4")
+#
+# MEMORY is the real ceiling, not the turn count. A turn is Claude Code plus its
+# ACP adapter (600-700 MB measured) plus whatever the agent runs — a test suite,
+# an npm build. On 2026-10-05 cloud-ec2-1 (t3.medium: 3.8 GB, no swap) ran out
+# of memory twice with a flat cap of 4, and each kernel OOM kill took every
+# in-flight turn down with it. So the default cap is derived from the box's RAM,
+# and a claim is skipped while available memory is below a floor.
+#: Memory one turn is budgeted at, for deriving the default cap.
+TURN_MEMORY_BUDGET_KB = int(os.environ.get("TURN_MEMORY_BUDGET_KB", str(1536 * 1024)))
+#: Don't START a turn below this much MemAvailable — the turns already running
+#: need it more than a new one does.
+CLAIM_MIN_AVAILABLE_KB = int(os.environ.get("CLAIM_MIN_AVAILABLE_KB", str(1024 * 1024)))
+
+
+def _read_meminfo() -> str:
+    try:
+        return pathlib.Path("/proc/meminfo").read_text()
+    except OSError:
+        return ""
+
+
+def _meminfo_kb(meminfo: str, key: str) -> int | None:
+    for line in meminfo.splitlines():
+        if line.startswith(f"{key}:"):
+            try:
+                return int(line.split()[1])
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
+def _default_max_concurrent(meminfo: str) -> int:
+    """One turn per TURN_MEMORY_BUDGET_KB of RAM, at least 1; 4 (the old flat
+    default) when the box's memory can't be read."""
+    total = _meminfo_kb(meminfo, "MemTotal")
+    if not total:
+        return 4
+    return max(1, total // TURN_MEMORY_BUDGET_KB)
+
+
+def _memory_headroom_ok() -> bool:
+    """Enough MemAvailable to start another turn. Unknown never blocks — the cap
+    still applies, and a box that can't read /proc must keep working."""
+    avail = _meminfo_kb(_read_meminfo(), "MemAvailable")
+    return avail is None or avail >= CLAIM_MIN_AVAILABLE_KB
+
+
+MAX_CONCURRENT_TURNS = int(os.environ.get("MAX_CONCURRENT_TURNS", "")
+                           or _default_max_concurrent(_read_meminfo()))
 
 _TURNS_LOCK = threading.Lock()
 _IN_FLIGHT: dict[str, object] = {}
@@ -4030,7 +4078,7 @@ def run_over_rest(runner_id: str) -> None:
         _drain_mint(runner_id)
         _maybe_reread_credentials()
         _drain_inbox(runner_id)
-        if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS:
+        if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS or not _memory_headroom_ok():
             time.sleep(POLL_SECONDS)
             continue
         status, turn = _api("POST", f"/runners/{runner_id}/claim")
@@ -4143,6 +4191,8 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
     """
     if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS:
         return False
+    if not _memory_headroom_ok():
+        return False  # the poll tick retries; the queued turn waits, nothing is lost
     res = _ws_request(ws, {"action": "claim"}, "claim.result")
     turn = res.get("turn") if res else None
     if not turn:

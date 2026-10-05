@@ -378,10 +378,19 @@ Resources:
                 ExecStart=/usr/bin/python3 /opt/canopy-runner/cloud_runner.py
                 Restart=on-failure
                 RestartSec=10
+                # One OOM-killed CHILD (a turn's claude or ACP adapter) must fail
+                # that turn only. systemd's default, OOMPolicy=stop, stopped the
+                # whole unit instead — every in-flight turn lost, twice on
+                # 2026-10-05 (04:02 and 12:02 on cloud-ec2-1).
+                OOMPolicy=continue
                 User=ubuntu
                 [Install]
                 WantedBy=multi-user.target
           runcmd:
+            # Swap, so a memory spike slows a turn down instead of the kernel
+            # killing one. A t3.medium has 3.8 GB and ships with none; 4 GB here
+            # absorbs a test suite or build running beside two agent turns.
+            - [ sh, -c, "[ -f /swapfile ] || { fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && echo '/swapfile none swap sw 0 0' >> /etc/fstab; }" ]
             # /opt is root:root 0755 by default — pre-create the two directories
             # cloud_runner.py's bootstrap_agent_fleet() writes into (as `ubuntu`,
             # the service user) so it never needs root just to mkdir. Harmless to
