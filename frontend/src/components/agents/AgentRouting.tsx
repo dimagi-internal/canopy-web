@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react'
 import {
   getAgentRunnerRules,
-  putAgentRunnerRules,
+  saveAgentRunnerRules,
   type AgentRunnerRuleOut,
   type RoutableSource,
   type RuleTurnMode,
@@ -204,14 +204,22 @@ export function AgentRouting({
     )
     setError(null)
     try {
-      const saved = await putAgentRunnerRules(agentSlug, next, workspace)
+      // One rule at a time: only what this edit changed is sent (#1143).
+      const saved = await saveAgentRunnerRules(agentSlug, prev, next, workspace)
       if (seqRef.current !== mySeq) return
       apply(saved)
       onSaved?.()
     } catch (e: unknown) {
       if (seqRef.current !== mySeq) return
-      apply(prev)
       setError(e instanceof Error ? e.message : 'Failed to save')
+      // Rules save one by one, so a failure can land part-way: show what the
+      // server now holds rather than assuming nothing was written.
+      try {
+        const now = await getAgentRunnerRules(agentSlug, workspace)
+        if (seqRef.current === mySeq) apply(now)
+      } catch {
+        if (seqRef.current === mySeq) apply(prev)
+      }
     }
   }
 

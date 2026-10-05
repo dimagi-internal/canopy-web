@@ -20,10 +20,10 @@ const listRunners = vi.fn<() => Promise<RunnerOut[]>>()
 // Empty rules: these tests are about the default order, and a rule-less agent
 // is the state they all describe.
 const getAgentRunnerRules = vi.fn(async () => [])
-const putAgentRunnerRules = vi.fn(async () => [])
+const saveAgentRunnerRules = vi.fn(async () => [])
 
 vi.mock('@/api/agents', () => ({
-  getAgentRunners, putAgentRunners, getAgentRunnerRules, putAgentRunnerRules,
+  getAgentRunners, putAgentRunners, getAgentRunnerRules, saveAgentRunnerRules,
 }))
 vi.mock('@/api/harness', () => ({ listRunners }))
 

@@ -2287,6 +2287,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/runner-rules/{source}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set one routing rule (a source, optionally one person's)
+         * @description Route `source` turns — only `actor`'s, when given — to these runners, in
+         *     preference order. Replaces that ONE rule and touches no other. Runners the
+         *     rule already names are kept as they are; a runner it ADDS must be one you
+         *     administer. `strict`: only these runners may take the work. Returns every rule.
+         */
+        readonly put: operations["set_agent_runner_rule"];
+        readonly post?: never;
+        /**
+         * Remove one routing rule
+         * @description Remove the rule for `source` (and `actor`, when given). That work goes back
+         *     to the next rule down and the agent's default order. Idempotent.
+         */
+        readonly delete: operations["delete_agent_runner_rule"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/actor-routes": {
         readonly parameters: {
             readonly query?: never;
@@ -10123,6 +10151,27 @@ export interface components {
         readonly AgentRunnerRulesIn: {
             /** Rules */
             readonly rules?: readonly components["schemas"]["AgentRunnerRuleIn"][];
+        };
+        /**
+         * AgentRunnerRuleBodyIn
+         * @description ONE rule, addressed by the URL (source, and `?actor=` for one person's):
+         *     the runners in preference order, whether only they may take the work, and
+         *     the turn mode. See PUT /agents/{slug}/runner-rules/{source}.
+         */
+        readonly AgentRunnerRuleBodyIn: {
+            /** Runners */
+            readonly runners?: readonly components["schemas"]["AgentRunnerRowIn"][];
+            /**
+             * Strict
+             * @default false
+             */
+            readonly strict: boolean;
+            /**
+             * Turn Mode
+             * @default
+             * @enum {string}
+             */
+            readonly turn_mode: "" | "manual" | "auto";
         };
         /**
          * AgentActorRouteOut
@@ -18637,6 +18686,58 @@ export interface operations {
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentRunnerRuleOut"][];
                 };
+            };
+        };
+    };
+    readonly set_agent_runner_rule: {
+        readonly parameters: {
+            readonly query?: {
+                readonly actor?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly source: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentRunnerRuleBodyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentRunnerRuleOut"][];
+                };
+            };
+        };
+    };
+    readonly delete_agent_runner_rule: {
+        readonly parameters: {
+            readonly query?: {
+                readonly actor?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly source: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
