@@ -1157,8 +1157,17 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         return ok, final_text, session_id
     except Exception as exc:  # noqa: BLE001 — a turn must fail, never crash the runner
         flush()
-        _log(f"turn {turn_id[:8]}: ACP executor failed: {exc}")
-        return False, f"runner error (acp): {exc}", (agent.session_id if agent else "")
+        # Why the adapter went away, when it did — without this a crash, an OOM
+        # kill and a clean exit all read "connection closed" and nobody can tell
+        # them apart afterwards. Best-effort: older canopy_acp has no exit_report.
+        why = ""
+        try:
+            why = agent.exit_report() if agent is not None else ""
+        except Exception:  # noqa: BLE001
+            pass
+        detail = f"{exc} ({why})" if why else f"{exc}"
+        _log(f"turn {turn_id[:8]}: ACP executor failed: {detail}")
+        return False, f"runner error (acp): {detail}", (agent.session_id if agent else "")
     finally:
         # Unregister BEFORE close: a stop/cancel that arrives in the gap would
         # otherwise reach a closed connection and raise inside the WS thread.
@@ -3601,9 +3610,16 @@ def _sync_session_streams(runner_id: str) -> None:
             if path is None:
                 continue  # not spawned yet, or a different box owns it
             transcript_id = path.stem  # the CLI session uuid — the conversation's identity
-            if st["reader"] is not None and st.get("transcript_id") != transcript_id:
-                st["reader"], st["count"] = None, 0  # session replaced under us
+            # Re-attach on a new PATH, not only a new stem: a chat reply adopts an
+            # agent turn's transcript into its own cwd (_adopt_resume_transcript)
+            # under the SAME session id, then appends to that copy. Keyed on the
+            # stem, the tailer stayed on the abandoned copy and the viewer saw
+            # nothing until the turn-end ship.
+            if st["reader"] is not None and (st.get("transcript_id") != transcript_id
+                                             or st.get("path") != str(path)):
+                st["reader"], st["count"] = None, 0  # session replaced or moved under us
             st["transcript_id"] = transcript_id
+            st["path"] = str(path)
             if st["reader"] is None:
                 reader = ct.TailReader(str(path))
                 records = reader.read_new()

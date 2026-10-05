@@ -308,3 +308,47 @@ def test_a_resuming_turn_adopts_before_it_runs(run, monkeypatch, tmp_path):
     mod._run_turn("r-1", chat)
     assert adopted == [("cli-1", "echo")]
     assert ("run", "cli-1") in timeline
+
+
+def test_a_dropped_acp_connection_carries_the_adapters_exit(cloud_runner, monkeypatch, tmp_path):
+    """The failure note names how the adapter died, so a dropped connection is
+    diagnosable from the Turns page instead of needing the box's journal."""
+
+    class _Dropped:
+        def result(self, timeout=None):
+            raise RuntimeError("ACP connection closed before a reply arrived")
+
+    class Agent:
+        session_id = "acp-2"
+
+        def __init__(self, cwd, env, on_update):
+            pass
+
+        def start(self):
+            pass
+
+        def new_session(self, timeout=None):
+            return self.session_id
+
+        def prompt(self, _p):
+            return _Dropped()
+
+        def exit_report(self):
+            return "adapter killed by signal 9; no stderr"
+
+        def cancel(self):
+            pass
+
+        def close(self):
+            pass
+
+    class Core:
+        AcpAgent = Agent
+        UpdateReducer = _Reducer
+
+    monkeypatch.setattr(cloud_runner, "_acp_core", lambda: Core)
+    monkeypatch.setattr(cloud_runner, "_agent_env", lambda slug: {})
+    ok, note, sid = cloud_runner.run_acp("/hal:turn", "t-drop", lambda e: None, cwd=tmp_path)
+    assert (ok, sid) == (False, "acp-2")
+    assert note == ("runner error (acp): ACP connection closed before a reply arrived "
+                    "(adapter killed by signal 9; no stderr)")

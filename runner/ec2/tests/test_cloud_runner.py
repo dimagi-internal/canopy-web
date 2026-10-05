@@ -1613,6 +1613,33 @@ def test_failed_post_drops_the_reader_so_the_next_tick_recatches(cloud_runner, m
     assert cloud_runner._STREAM_READERS["s"]["count"] == 0
 
 
+def test_stream_sync_follows_an_adopted_transcript_to_its_new_file(cloud_runner, monkeypatch):
+    """An agent turn writes its transcript under the agent's clone; a chat reply
+    into that session copies it into the chat's own cwd (_adopt_resume_transcript)
+    and from then on appends THERE. Same CLI session id, so the same stem — the
+    tailer must notice the PATH moved, or it keeps reading the abandoned copy and
+    the viewer sees nothing until the turn-end ship (2026-10-05: hal's reply ran
+    16 minutes on cloud-ec2-1 with a frozen session view)."""
+    clone_copy = pathlib.Path("/home/u/.claude/projects/-opt-agents-hal/k.jsonl")
+    chat_copy = pathlib.Path("/home/u/.claude/projects/-tmp-sessions-s/k.jsonl")
+    core = _FakeCore()
+    core.TRANSCRIPT = clone_copy
+
+    def api(method, path, body=None):
+        if method == "GET" and path.endswith("/streams"):
+            return 200, {"streams": [{"session_id": "s", "session_key": "k",
+                                      "project": "hal", "last_index": None}]}
+        return 200, {"count": len((body or {}).get("events") or [])}
+
+    _wire(cloud_runner, monkeypatch, core, api)
+    cloud_runner._sync_session_streams("r")
+    assert cloud_runner._STREAM_READERS["s"]["reader"].path == str(clone_copy)
+
+    core.TRANSCRIPT = chat_copy  # the reply adopted it into its own cwd
+    cloud_runner._sync_session_streams("r")
+    assert cloud_runner._STREAM_READERS["s"]["reader"].path == str(chat_copy)
+
+
 def test_stream_sync_skips_an_unresolvable_transcript(cloud_runner, monkeypatch):
     # Turn not spawned yet, or another box owns it — retry next tick, never crash.
     core = _FakeCore(resolvable=False)
