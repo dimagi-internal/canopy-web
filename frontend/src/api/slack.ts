@@ -64,6 +64,7 @@ export function syncSummary(r: SlackSyncOut): string {
   if (r.status !== 'synced') return r.detail || 'Not synced.'
   const parts = [
     r.added.length ? `Added ${r.added.join(', ')}` : '',
+    r.updated?.length ? `Updated ${r.updated.join(', ')}` : '',   // absent from a pre-#1154 server
     r.removed.length ? `Removed ${r.removed.join(', ')}` : '',
     r.unfit.length ? `Too long for a Slack command: ${r.unfit.join(', ')}` : '',
     r.scopes_added.length
