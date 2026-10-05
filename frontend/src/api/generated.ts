@@ -9560,6 +9560,11 @@ export interface components {
              */
             readonly turn_origin: string;
             /**
+             * Feed Status
+             * @default
+             */
+            readonly feed_status: string;
+            /**
              * Runner Requirements
              * @default []
              */
@@ -14896,6 +14901,11 @@ export interface components {
              * @default
              */
             readonly turn_origin: string;
+            /**
+             * Feed Status
+             * @default
+             */
+            readonly feed_status: string;
             /**
              * Runner Requirements
              * @default []

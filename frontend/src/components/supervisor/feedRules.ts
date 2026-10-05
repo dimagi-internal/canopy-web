@@ -1,17 +1,4 @@
 import type { ChatSession } from '@/api/chat'
-import { partitionByRunnerReachability } from '@/components/chat/runnerEligibility'
-
-/**
- * Is this session waiting for the person's next prompt?
- *
- * Two ways to be: blocked on a dialog (`waiting_on_you`), or finished — the
- * agent had the last word and is no longer working. A RUNNING session whose
- * last row is the agent's is mid-turn, not done; it joins the feed when the
- * turn ends.
- */
-export function needsNextPrompt(s: ChatSession): boolean {
-  return Boolean(s.waiting_on_you) || (Boolean(s.agent_spoke_last) && !s.running)
-}
 
 /**
  * The supervisor feed: sessions waiting on the person, OLDEST first — a queue.
@@ -21,21 +8,36 @@ export function needsNextPrompt(s: ChatSession): boolean {
  * Blocked-on-a-dialog gets no jump: a session that becomes blocked would leap
  * to the top and break the queue; the card's "needs an answer" badge marks it.
  *
- * Sessions whose runner is paused or offline are held back and COUNTED, not
- * shown: a reply to one queues until that box returns, so it does not belong
- * in a list of things you can move forward right now — but the feed says how
- * many it is withholding rather than quietly dropping them.
+ * WHICH sessions is not decided here. The server stamps each row with its
+ * `feed_status` for the caller (`apps/canopy_sessions/feed.py`), and the same
+ * rule decides who is pushed about a session — so the feed and the phone cannot
+ * disagree. This only sorts and counts:
+ *   - `waiting` is on the feed;
+ *   - `auto` (an agent's own run) is held back unless `showAuto`, and counted;
+ *   - `parked` (paused/offline runner) is held back and COUNTED, not shown —
+ *     a reply would queue until that box returns;
+ *   - `not_yours` (someone else's runner) is not yours to answer, so it is
+ *     neither shown nor counted: its owner has it on their own feed.
  */
-export function feedSessions(sessions: readonly ChatSession[]): {
+export function feedSessions(
+  sessions: readonly ChatSession[],
+  { showAuto = false }: { showAuto?: boolean } = {},
+): {
   feed: ChatSession[]
   parked: number
+  auto: number
 } {
-  const waiting = sessions.filter(needsNextPrompt)
-  const { live, parked } = partitionByRunnerReachability(waiting)
-  const feed = [...live].sort(
+  const shown = sessions.filter(
+    (s) => s.feed_status === 'waiting' || (showAuto && s.feed_status === 'auto'),
+  )
+  const feed = [...shown].sort(
     (a, b) => Date.parse(a.last_activity_at) - Date.parse(b.last_activity_at),
   )
-  return { feed, parked: parked.length }
+  return {
+    feed,
+    parked: sessions.filter((s) => s.feed_status === 'parked').length,
+    auto: sessions.filter((s) => s.feed_status === 'auto').length,
+  }
 }
 
 // The feed is per PERSON, across every workspace they are in — so it has to stay
@@ -62,16 +64,4 @@ export function feedSources(feed: readonly ChatSession[]): { key: string; count:
     else by.set(k, { key: k, count: 1, sample: s })
   }
   return [...by.values()].sort((a, b) => b.count - a.count)
-}
-
-/**
- * Did an agent drive this session on its own — its newest turn ran in `auto`
- * mode, and came from somewhere other than a person's chat (a schedule, an
- * email, Slack, a dispatch)? The feed holds these back unless asked: an auto
- * turn already acted without waiting for anyone, so it is not asking for your
- * next prompt the way a conversation is. A chat you are having stays, whatever
- * the agent's switch says.
- */
-export function ranOnItsOwn(s: ChatSession): boolean {
-  return s.turn_mode === 'auto' && s.turn_origin !== 'canopy_web_chat'
 }

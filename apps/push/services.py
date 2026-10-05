@@ -1,8 +1,11 @@
 """Push policy. The only place that decides WHETHER to push.
 
-The trigger problem: the fleet's waiting set is a COUNT (open items per agent),
-not a single event, so nothing naturally emits "the fleet needs you now". We
-snapshot each agent's open-item count and push only when it goes UP.
+You are pushed about what lands on your supervisor FEED, and only that
+(Jonathan, 2026-10-05): a session asking you something, or a session that
+finished and is waiting for your next prompt — each sent only to someone the
+feed rule (`canopy_sessions.feed`) puts it in front of. Inbox items (open asks,
+tasks parked on a person) are not on the feed and no longer push; their count
+is still snapshotted per agent, because the live Inbox badge reads it.
 """
 from __future__ import annotations
 
@@ -102,40 +105,22 @@ def send_to_user(user, title: str, body: str, url: str, count: int | None = None
     return sent
 
 
-def refresh_agent_waiting(agent: Agent) -> int:
-    """Recompute this agent's waiting_count, push if it went UP, store it.
+def refresh_agent_waiting(agent: Agent) -> None:
+    """Recompute and store this agent's waiting_count — the Inbox badge's source.
 
-    Returns the number of pushes sent. The snapshot advances even when nobody is
-    subscribed — otherwise the first push after subscribing would fire for items
-    that were already sitting there.
+    Saving the snapshot is what moves the badge live (`realtime.signals`
+    fans a `supervisor.waiting` frame out on it). It does NOT push: Inbox items
+    are not on the supervisor feed, and you are pushed only about the feed.
     """
     # Everything on this agent that needs a human — `agents.services.waiting_q`,
-    # the one definition (open asks + live tasks parked on a person). This read
-    # items until 2026-09-19, which is why the fleet's ~24 tasks waiting on
-    # somebody notified nobody: they were never items.
+    # the one definition (open asks + live tasks parked on a person).
     from apps.agents.services import waiting_q
 
     count = AgentTask.objects.filter(waiting_q(), agent=agent).count()
     snap, created = AgentWaitingSnapshot.objects.get_or_create(agent=agent)
-    previous = 0 if created else snap.waiting_count
-    if count != previous:
+    if created or count != snap.waiting_count:
         snap.waiting_count = count
         snap.save(update_fields=["waiting_count", "updated_at"])
-    if count <= previous:
-        return 0  # cleared or unchanged — silence
-    delta = count - previous
-    return sum(
-        send_to_user(
-            user,
-            title=f"{agent.name} needs you",
-            body=f"{delta} new item{'s' if delta != 1 else ''} · {count} waiting",
-            # The Inbox screen, not the bare /supervisor: that is the session
-            # feed now, and this push is about items.
-            url="/supervisor?tab=inbox",
-            count=count,
-        )
-        for user in agent_audience(agent)
-    )
 
 
 def agent_audience(agent) -> list:
@@ -181,7 +166,7 @@ def _flush() -> None:
         try:
             refresh_agent_waiting(agent)
         except Exception:  # noqa: BLE001
-            # A push must never break the request that triggered it.
+            # The badge refresh must never break the request that triggered it.
             logger.exception("push: refresh failed for agent=%s", agent.slug)
 
 
@@ -204,11 +189,8 @@ def mark_dirty(agent_id: int) -> None:
 
 # --- A blocked agent asking a question ---------------------------------------
 #
-# A SECOND producer, deliberately not routed through the item snapshot above.
-#
-# The snapshot exists because the waiting set is a COUNT with no natural event.
-# This is the opposite shape: an agent going from "working" to "waiting on a
-# human" is a discrete edge, observed once, and the notification can carry the
+# Deliberately not routed through the item snapshot above. An agent going from
+# "working" to "waiting on a human" is a discrete edge, observed once, and the notification can carry the
 # actual question rather than a tally. It is also not an `Item` and must not
 # become one — `Item`'s decisions are implement/skip/defer and `implement`
 # dispatches a Turn, whereas answering a dialog is a KEYSTROKE into a live
@@ -235,7 +217,7 @@ def can_open(user, session) -> bool:
     return can_read(user, session)
 
 
-def _question_audience(session):
+def _question_audience(session, *, turn_mode: str, turn_origin: str):
     """Who should be told this session is waiting, or None.
 
     In order: whoever started the chat; the agent's owner; the human who PAIRED
@@ -243,12 +225,18 @@ def _question_audience(session):
     runner-discovered session (what `spark` was) has no creator and no agent,
     so without the last leg the case that motivated this would notify nobody.
 
-    The first of those who can actually OPEN the session (`can_open`) — a
-    notification is a link, and one to a chat you cannot read is a dead end.
+    The first of those for whom the session is ON THEIR FEED — they can open it
+    (`can_open`; a notification is a link, and one to a chat you cannot read is a
+    dead end) and the feed rule does not hold it back (`canopy_sessions.feed`).
+    So a session on a colleague's runner skips a workspace owner and reaches the
+    colleague, and an agent's own auto run reaches nobody: you are alerted for
+    what lands on your feed, and only that (Jonathan, 2026-10-05).
 
     Fails closed on None, the same way `runner.owner` gates tenancy: with
     nobody identifiable, we stay silent rather than broadcast a workspace.
     """
+    from apps.canopy_sessions import feed
+
     agent = getattr(session, "agent", None)
     binding = getattr(session, "runner_binding", None)
     runner = getattr(binding, "runner", None) if binding is not None else None
@@ -258,7 +246,11 @@ def _question_audience(session):
         getattr(runner, "owner", None) if runner is not None else None,
     )
     for user in candidates:
-        if user is not None and can_open(user, session):
+        if (
+            user is not None
+            and can_open(user, session)
+            and not feed.held(user, session, turn_mode=turn_mode, turn_origin=turn_origin)
+        ):
             return user
     return None
 
@@ -295,7 +287,10 @@ def notify_session_question(session, menu: dict) -> int:
     """
     if not menu:
         return 0
-    user = _question_audience(session)
+    from apps.canopy_sessions import feed
+
+    turn_mode, turn_origin = feed.driving_turn(session)
+    user = _question_audience(session, turn_mode=turn_mode, turn_origin=turn_origin)
     if user is None:
         return 0
     question = str(menu.get("question") or "").strip() or "a question"
@@ -341,13 +336,21 @@ _OPEN = (Turn.QUEUED, Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
 def _finish_audience(turn: Turn):
     """Who asked for this turn; else whoever a question on this session would go to.
 
-    Only someone who can open the chat — the push links there (`can_open`).
+    Only someone the finished session is on the feed for — the same test as
+    `_question_audience`, judged by THIS turn, which is the one that drove it.
     """
+    from apps.canopy_sessions import feed
+
     session = turn.chat_session
+    mode, origin = turn.turn_mode, turn.origin
     for user in (turn.initiator_user, turn.enqueued_by):
-        if user is not None and can_open(user, session):
+        if (
+            user is not None
+            and can_open(user, session)
+            and not feed.held(user, session, turn_mode=mode, turn_origin=origin)
+        ):
             return user
-    return _question_audience(session)
+    return _question_audience(session, turn_mode=mode, turn_origin=origin)
 
 
 def _finish_body(session: Session, turn: Turn) -> str:

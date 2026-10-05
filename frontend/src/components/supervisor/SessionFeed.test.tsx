@@ -34,6 +34,7 @@ const s = (id: string, fields: Partial<ChatSession> = {}): ChatSession =>
     runner_online: true,
     runner_status: 'online',
     runner_name: 'jj-mbp',
+    feed_status: 'waiting',
     ...fields,
   }) as unknown as ChatSession
 
@@ -65,7 +66,7 @@ afterEach(() => {
 
 describe('SessionFeed', () => {
   it('asks the list for replies, and shows only sessions waiting on you', async () => {
-    listSessions.mockResolvedValue([s('done'), s('busy', { running: true }), s('answered', { agent_spoke_last: false })])
+    listSessions.mockResolvedValue([s('done'), s('busy', { running: true, feed_status: '' }), s('answered', { agent_spoke_last: false, feed_status: '' })])
     renderFeed()
     expect(await screen.findByTestId('feed-card-done')).toBeTruthy()
     expect(listSessions).toHaveBeenCalledWith('active', { reply: true })
@@ -162,7 +163,7 @@ describe('SessionFeed', () => {
   })
 
   it('counts what it holds back on offline runners', async () => {
-    listSessions.mockResolvedValue([s('a'), s('dead', { runner_online: false, runner_status: 'stale' })])
+    listSessions.mockResolvedValue([s('a'), s('dead', { runner_online: false, runner_status: 'stale', feed_status: 'parked' })])
     renderFeed()
     expect((await screen.findByTestId('feed-parked')).textContent).toContain('1 more')
   })
@@ -177,7 +178,7 @@ describe('SessionFeed', () => {
   it('holds back sessions an agent ran on its own until you show them', async () => {
     listSessions.mockResolvedValue([
       s('chat', { turn_mode: 'auto', turn_origin: 'canopy_web_chat' }),
-      s('cron', { turn_mode: 'auto', turn_origin: 'canopy_scheduler' }),
+      s('cron', { turn_mode: 'auto', turn_origin: 'canopy_scheduler', feed_status: 'auto' }),
       s('mail', { turn_mode: 'manual', turn_origin: 'email' }),
     ])
     renderFeed()
@@ -194,7 +195,7 @@ describe('SessionFeed', () => {
   })
 
   it('says when the only sessions waiting are hidden auto ones', async () => {
-    listSessions.mockResolvedValue([s('cron', { turn_mode: 'auto', turn_origin: 'email' })])
+    listSessions.mockResolvedValue([s('cron', { turn_mode: 'auto', turn_origin: 'email', feed_status: 'auto' })])
     renderFeed()
     expect(await screen.findByTestId('feed-empty')).toBeTruthy()
     expect(screen.getByText(/1 session an agent ran on its own is hidden/)).toBeTruthy()

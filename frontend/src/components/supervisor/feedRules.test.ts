@@ -1,57 +1,47 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatSession } from '@/api/chat'
-import { feedSessions, feedSources, needsNextPrompt } from './feedRules'
+import { feedSessions, feedSources } from './feedRules'
 
 const s = (id: string, fields: Partial<ChatSession> = {}): ChatSession =>
   ({
     id,
     title: id,
-    running: false,
-    waiting_on_you: false,
-    agent_spoke_last: false,
+    feed_status: 'waiting',
     last_reply: '',
     last_activity_at: '2026-10-03T10:00:00Z',
-    runner_online: null,
-    runner_status: null,
     ...fields,
   }) as unknown as ChatSession
 
-describe('needsNextPrompt', () => {
-  it('a finished turn — the agent spoke last and stopped — is your turn', () => {
-    expect(needsNextPrompt(s('a', { agent_spoke_last: true }))).toBe(true)
-  })
-
-  it('a running session is mid-turn, even when its last row is the agent', () => {
-    expect(needsNextPrompt(s('a', { agent_spoke_last: true, running: true }))).toBe(false)
-  })
-
-  it('a session you already replied to is not waiting on you', () => {
-    expect(needsNextPrompt(s('a', { agent_spoke_last: false }))).toBe(false)
-  })
-
-  it('a session blocked on a dialog is waiting on you, running or not', () => {
-    expect(needsNextPrompt(s('a', { waiting_on_you: true, running: true }))).toBe(true)
-  })
-})
-
+// WHICH sessions are on the feed is the server's call (apps/canopy_sessions/feed.py,
+// pinned in tests/test_supervisor_feed.py); this only sorts and counts its verdict.
 describe('feedSessions', () => {
-  it('is a queue: oldest first, dialogs included, new arrivals last', () => {
+  it('is a queue of the waiting ones: oldest first, new arrivals last', () => {
     const { feed } = feedSessions([
-      s('old', { agent_spoke_last: true, last_activity_at: '2026-10-01T00:00:00Z' }),
-      s('new', { agent_spoke_last: true, last_activity_at: '2026-10-03T00:00:00Z' }),
-      s('dialog', { waiting_on_you: true, last_activity_at: '2026-10-04T00:00:00Z' }),
-      s('busy', { agent_spoke_last: true, running: true }),
+      s('old', { last_activity_at: '2026-10-01T00:00:00Z' }),
+      s('new', { last_activity_at: '2026-10-03T00:00:00Z' }),
+      s('dialog', { last_activity_at: '2026-10-04T00:00:00Z' }),
+      s('busy', { feed_status: '' }),
     ])
     expect(feed.map((x) => x.id)).toEqual(['old', 'new', 'dialog'])
   })
 
-  it('holds back sessions on an offline runner, and counts them', () => {
-    const { feed, parked } = feedSessions([
-      s('live', { agent_spoke_last: true, runner_online: true }),
-      s('dead', { agent_spoke_last: true, runner_online: false, runner_status: 'stale' }),
-    ])
+  it('holds back parked sessions and counts them', () => {
+    const { feed, parked } = feedSessions([s('live'), s('dead', { feed_status: 'parked' })])
     expect(feed.map((x) => x.id)).toEqual(['live'])
     expect(parked).toBe(1)
+  })
+
+  it("drops someone else's runner sessions without counting them", () => {
+    const { feed, parked, auto } = feedSessions([s('mine'), s('sarvesh', { feed_status: 'not_yours' })])
+    expect(feed.map((x) => x.id)).toEqual(['mine'])
+    expect([parked, auto]).toEqual([0, 0])
+  })
+
+  it("holds an agent's own runs back unless asked, and counts them", () => {
+    const rows = [s('chat'), s('cron', { feed_status: 'auto' })]
+    expect(feedSessions(rows).feed.map((x) => x.id)).toEqual(['chat'])
+    expect(feedSessions(rows).auto).toBe(1)
+    expect(feedSessions(rows, { showAuto: true }).feed.map((x) => x.id)).toEqual(['chat', 'cron'])
   })
 })
 
