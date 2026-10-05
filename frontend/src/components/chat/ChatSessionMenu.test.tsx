@@ -65,3 +65,45 @@ describe('ChatSessionMenu — Others see while you type', () => {
     expect(screen.queryByRole('menuitemradio')).toBeNull()
   })
 })
+
+describe('ChatSessionMenu — Load earlier / Load full session', () => {
+  it('hides both when there is nothing to offer', async () => {
+    render(<ChatSessionMenu {...baseProps()} />)
+    await openMenu()
+    expect(screen.queryByTestId('menu-load-earlier')).toBeNull()
+    expect(screen.queryByTestId('menu-load-full')).toBeNull()
+  })
+
+  it('shows Load earlier and calls through on click', async () => {
+    const onLoadEarlier = vi.fn()
+    render(<ChatSessionMenu {...baseProps({ showLoadEarlier: true, onLoadEarlier })} />)
+    await openMenu()
+    fireEvent.click(screen.getByTestId('menu-load-earlier'))
+    expect(onLoadEarlier).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables Load earlier and relabels it while loading', async () => {
+    render(<ChatSessionMenu {...baseProps({ showLoadEarlier: true, loadingEarlier: true })} />)
+    await openMenu()
+    const item = screen.getByTestId('menu-load-earlier')
+    expect(item.textContent).toBe('Loading…')
+    expect(item.getAttribute('data-disabled')).not.toBeNull()
+  })
+
+  it('shows Load full session and calls through on click', async () => {
+    const onLoadFull = vi.fn()
+    render(<ChatSessionMenu {...baseProps({ showLoadFull: true, onLoadFull })} />)
+    await openMenu()
+    fireEvent.click(screen.getByTestId('menu-load-full'))
+    expect(onLoadFull).toHaveBeenCalledTimes(1)
+  })
+
+  it('can show both at once, above Close', async () => {
+    render(
+      <ChatSessionMenu {...baseProps({ showLoadEarlier: true, showLoadFull: true })} />,
+    )
+    await openMenu()
+    expect(screen.getByTestId('menu-load-earlier')).toBeTruthy()
+    expect(screen.getByTestId('menu-load-full')).toBeTruthy()
+  })
+})
