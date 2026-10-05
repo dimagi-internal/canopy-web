@@ -1,7 +1,7 @@
 name: Deploy to Labs (AWS)
 
 # Deploys canopy-web to the shared labs platform at
-# https://labs.connect.dimagi.com/canopy/ (AWS ECS Fargate, account 858923557655).
+# https://canopy.dimagi.com/ (AWS ECS Fargate, account 858923557655).
 # Manual-only: trigger via "Run workflow" on the Actions tab. Main-only.
 #
 # canopy-web is ONE container — the Dockerfile builds the SPA (stage 1) and Django
@@ -173,12 +173,12 @@ jobs:
           file: Dockerfile
           push: true
           provenance: false
-          # canopy-web serves under the /canopy path prefix on the shared ALB.
-          # These MUST be passed or the SPA builds with base "/" (assets 404 at
-          # /assets/… instead of /canopy/assets/…) and reads the wrong CSRF
-          # cookie (writes 403). Mirrors config/settings/connectlabs.py.
+          # canopy-web is served at the root of canopy.dimagi.com, so the SPA
+          # builds with base "/". The CSRF cookie name MUST still be passed or
+          # the SPA reads the wrong cookie (writes 403). Mirrors
+          # config/settings/connectlabs.py.
           build-args: |
-            VITE_BASE_PATH=/canopy/
+            VITE_BASE_PATH=/
             VITE_CSRF_COOKIE_NAME=csrftoken_canopy
             RUNNER_CODE_SHA=${{ steps.runner_sha.outputs.sha }}
             RUNNER_CODE_COMMITTED_AT=${{ steps.runner_sha.outputs.committed_at }}
@@ -499,5 +499,5 @@ jobs:
             echo "| Task definition | \`${{ steps.register-task.outputs.task-def-arn }}\` |"
             echo "| Migrations | \`${{ inputs.skip_migrations == true && 'SKIPPED (emergency)' || 'ran automatically' }}\` |"
             echo "| Service | \`${{ env.ECS_SERVICE }}\` |"
-            echo "| URL | https://labs.connect.dimagi.com/canopy/ |"
+            echo "| URL | https://canopy.dimagi.com/ |"
           } >> "$GITHUB_STEP_SUMMARY"

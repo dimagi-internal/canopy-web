@@ -2,7 +2,7 @@
 Starlette (MCP at /api/mcp) + Django routers see unprefixed paths."""
 import pytest
 
-from config.asgi_prefix import StripScriptName
+from config.asgi_prefix import SCOPE_KEY, StripScriptName
 
 
 class _Recorder:
@@ -54,3 +54,21 @@ async def test_strips_on_websocket_too():
 async def test_empty_prefix_is_noop():
     mw = StripScriptName(_Recorder(), "")
     assert await _call(mw, "/canopy/api/me") == "/canopy/api/me"
+
+
+@pytest.mark.asyncio
+async def test_a_stripped_scope_is_marked_and_an_unstripped_one_is_not():
+    # apps/common/legacy_prefix.py tells the old address from the new one by
+    # this mark — and it must not be root_path, which Starlette and Channels
+    # both expect `path` to start with.
+    seen = {}
+
+    async def app(scope, receive, send):
+        seen["mark"] = scope.get(SCOPE_KEY)
+        seen["root"] = scope.get("root_path")
+
+    mw = StripScriptName(app, "/canopy")
+    await mw({"type": "http", "path": "/canopy/api/me", "raw_path": b"/canopy/api/me"}, None, None)
+    assert seen == {"mark": "/canopy", "root": None}
+    await mw({"type": "http", "path": "/api/me", "raw_path": b"/api/me"}, None, None)
+    assert seen["mark"] is None

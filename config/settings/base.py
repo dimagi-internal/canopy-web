@@ -118,6 +118,9 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     # First, so its clock covers every other middleware too.
     "apps.common.request_timing.SlowRequestLogMiddleware",
+    # Before anything that builds a URL: a request on the OLD address
+    # (labs.connect.dimagi.com/canopy) is redirected or gets its prefix back.
+    "apps.common.legacy_prefix.LegacyPrefixMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -527,6 +530,13 @@ SLACK_HISTORY_SCAN_CEILING = env.int("SLACK_HISTORY_SCAN_CEILING", default=1000)
 # it from when services.py builds a callback URL for a drilled agent to POST back to
 # (a shell prompt, not an HTTP view). connectlabs.py overrides to the labs URL.
 CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="http://localhost:8000")
+# canopy's identity in the OAuth/assertion protocols — its CIMD client_id
+# ({base}/oauth/client.json), the issuer of its own host half and MCP login, and
+# the default audience a site's visitor assertion must name. Empty = the public
+# base. Separate because connected sites PIN these (ace-web's CANOPY_CLIENT_ID,
+# its assertion audience), so they cannot move when the address people visit
+# does: labs keeps the old address here until each site is re-pointed.
+CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="")
 
 # The `provider` of every A2A Agent Card this deployment serves (apps/agents/agent_card.py).
 CANOPY_A2A_PROVIDER_ORGANIZATION = env("CANOPY_A2A_PROVIDER_ORGANIZATION", default="Dimagi")
