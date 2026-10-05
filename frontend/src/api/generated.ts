@@ -5216,11 +5216,20 @@ export interface paths {
         readonly put?: never;
         /**
          * Start Runner Drill
-         * @description Fan out a readiness drill (owner-gated). Default: every agent assigned to
-         *     this runner; body.agents narrows by slug. Deliberately includes DISABLED
-         *     assignment rows too — drill-before-enable is the intended workflow (prove a
-         *     standby actually works before flipping it live), so a disabled row must
-         *     stay drillable even though it can never claim routed traffic.
+         * @description Fan out a readiness drill. Runner side: the runner's owner or a
+         *     `RunnerAdmin` (`_runner_admin_or_404`) — starting a drill only QUEUES pinned
+         *     turns; the box still claims and runs them as itself, so administering it is
+         *     enough. Agent side: someone other than the owner must also be an ADMIN of
+         *     every agent drilled (`Agent.is_admin`) — a drill turn runs as `system`, in
+         *     the agent's routing mode, so an editor-tier caller (always `manual`,
+         *     docs/architecture/access.md row 4) must not get one started on their behalf.
+         *
+         *     Default: every assigned agent the caller may drill; body.agents narrows by
+         *     slug, and naming one the caller may not drill is a 403 saying which.
+         *     Deliberately includes DISABLED assignment rows too — drill-before-enable is
+         *     the intended workflow (prove a standby actually works before flipping it
+         *     live), so a disabled row must stay drillable even though it can never claim
+         *     routed traffic.
          */
         readonly post: operations["start_runner_drill"];
         readonly delete?: never;

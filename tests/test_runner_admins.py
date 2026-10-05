@@ -115,15 +115,96 @@ def test_an_ungranted_member_still_gets_nothing(runner, runner_owner, agent_iden
 # ── what a grant does NOT buy ──────────────────────────────────────────────
 
 def test_an_administrator_cannot_speak_as_the_runner(runner, runner_owner, agent_identity):
-    """Administration is not impersonation. STARTING a drill POSTs AS the box and
-    derives a tenant from `owner`, so it stays with the owner — but READING
-    the results is a log about the box, which its administrators read."""
+    """Administration is not impersonation: an administrator may not read the
+    box's actual secret values, which only the runner fetches. (Starting and
+    reading drills IS administration since 2026-10-04 — see the drill tests
+    below.)"""
     _post(client_for(runner_owner), f"{base(runner)}/admins", {"email": "ace@dimagi-ai.com"})
     c = client_for(agent_identity)
-    assert c.get(f"{base(runner)}/drills").status_code == 200
-    assert c.post(f"{base(runner)}/drill", data={}, content_type="application/json").status_code == 404
-    # …nor read the box's actual secret values, which only the runner fetches.
     assert c.get(f"{base(runner)}/credential").status_code == 404
+
+
+# ── readiness drills: a runner-ADMIN feature (owner decision 2026-10-04) ────
+
+@pytest.fixture()
+def drilled_agent(runner, workspace):
+    from apps.agents.models import Agent
+    from apps.harness.models import RunnerAssignment
+
+    agent = Agent.objects.create(slug="eva", name="Eva", workspace=workspace)
+    RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
+    return agent
+
+
+def _make_agent_admin(agent, user):
+    from apps.agents.models import AgentAdmin
+
+    AgentAdmin.objects.create(agent=agent, user=user)
+
+
+def _drill(c, runner, body=None):
+    return _post(c, f"{base(runner)}/drill", body)
+
+
+def test_a_runner_admin_who_admins_the_agent_can_start_and_list_drills(
+    runner, runner_owner, agent_identity, drilled_agent
+):
+    from apps.harness.models import Turn
+
+    _post(client_for(runner_owner), f"{base(runner)}/admins", {"email": "ace@dimagi-ai.com"})
+    _make_agent_admin(drilled_agent, agent_identity)
+    c = client_for(agent_identity)
+    r = _drill(c, runner)
+    assert r.status_code == 200, r.content
+    assert [d["agent_slug"] for d in r.json()] == ["eva"]
+    listed = c.get(f"{base(runner)}/drills")
+    assert listed.status_code == 200 and len(listed.json()) == 1
+    # The turn is still canopy's (system), pinned to the box, and accountable
+    # to the admin who started it — so they can read what they started.
+    turn = Turn.objects.get()
+    assert turn.pinned_runner_id == runner.id
+    assert turn.initiator_user_id == agent_identity.id
+
+
+def test_a_runner_admin_drills_only_the_agents_they_administer(
+    runner, runner_owner, agent_identity, drilled_agent
+):
+    """Agent side: a runner admin who is only an EDITOR of the agent may not
+    drill it — a drill runs as `system` in the agent's routing mode, which would
+    lift the editor tier's always-`manual` rule."""
+    _post(client_for(runner_owner), f"{base(runner)}/admins", {"email": "ace@dimagi-ai.com"})
+    c = client_for(agent_identity)
+    # Named explicitly: refused, saying which.
+    r = _drill(c, runner, {"agents": ["eva"]})
+    assert r.status_code == 403 and b"eva" in r.content
+    # Defaulted: nothing they may drill → 422, and nothing was queued.
+    assert _drill(c, runner).status_code == 422
+    from apps.harness.models import Turn
+
+    assert not Turn.objects.exists()
+
+
+def test_a_plain_member_cannot_start_or_list_drills(runner, bystander, drilled_agent):
+    """No grant → the same no-leak 404 as every runner-admin route, even for an
+    agent admin of the drilled agent."""
+    _make_agent_admin(drilled_agent, bystander)
+    c = client_for(bystander)
+    assert _drill(c, runner).status_code == 404
+    assert c.get(f"{base(runner)}/drills").status_code == 404
+
+
+def test_a_viewer_cannot_start_or_list_drills(runner, workspace, drilled_agent):
+    viewer = User.objects.create_user("v", "v@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=viewer, workspace=workspace,
+                                       role=WorkspaceMembership.VIEWER)
+    c = client_for(viewer)
+    assert _drill(c, runner).status_code == 404
+    assert c.get(f"{base(runner)}/drills").status_code == 404
+
+
+def test_the_owner_still_drills_every_assigned_agent(runner, runner_owner, drilled_agent):
+    r = _drill(client_for(runner_owner), runner)
+    assert r.status_code == 200 and len(r.json()) == 1
 
 
 def test_an_administrator_cannot_mint_more_administrators(runner, runner_owner, agent_identity):

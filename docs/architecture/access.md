@@ -137,6 +137,21 @@ Asked in this order; the first row that matches decides.
   OR a runner admin**, consistent with actor routes, which already required the
   runner admin.
 
+## Runner roles
+
+A runner has its own two-step ladder, separate from both of the above. Being a
+workspace member never makes you either (the `dimagi` workspace auto-joins a
+whole email domain).
+
+| Runner role | Who | May |
+|---|---|---|
+| **runner admin** | the runner's owner, or a `RunnerAdmin` grant (`can_administer_runner`) | Set its credentials and browser sign-in, declare its flags (ZDR), read its admin list, **start readiness drills and read their results** (owner decision 2026-10-04). A drill on an agent also needs that agent's **admin** (`Agent.is_admin`) unless the caller is the runner's owner — a drill turn runs as `system` in the agent's routing mode, so letting an editor start one would lift the editor tier's always-`manual` rule; the owner's box can only claim it when the owner is the agent's admin anyway (`runner_may_hold_agent`). |
+| **runner owner** | `Runner.owner` — whoever paired it | Everything above, plus everything that speaks FOR the box with the owner's memberships: heartbeat, claim, executing turns (drill turns included), pause, retire, capabilities, granting and revoking runner admins. |
+
+Anyone else — a member, viewer or contact — gets the runner-admin routes' **404**,
+never a 403, so a runner's existence does not leak. A workspace admin of the
+runner's tenant may also READ its drill results (`logs.read`), but not start one.
+
 **Where it is asked.** `harness.services.enqueue_turn` (`_apply_capability`) for
 every door — `POST /api/harness/turns/`, a canopy-web chat send, Slack intake and
 email intake (after the existing sender triage: a blocked contact never reaches

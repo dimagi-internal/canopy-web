@@ -3683,16 +3683,21 @@ def drill_report_token_ok(drill: RunnerDrill, token: str) -> bool:
     return body == {"d": drill.pk, "s": drill.started_at.isoformat()}
 
 
-def _drill_initiator(runner):
+def _drill_initiator(runner, started_by=None):
     from . import initiator as who
-    return who.system(via="drill", accountable=runner.owner)
+    return who.system(via="drill", accountable=started_by or runner.owner)
 
 
-def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
+def start_drill(runner: Runner, agents: list, *, started_by=None) -> list[RunnerDrill]:
     """Fan a readiness drill out over `agents`: reset each (runner, agent)
     RunnerDrill to pending and enqueue one hard-pinned, read-only doctor turn
     per agent. Drills queue behind real executing turns (the one-executing-turn
-    constraint) — they never interrupt live work."""
+    constraint) — they never interrupt live work.
+
+    `started_by` is the person who asked (the runner's owner or one of its
+    admins); it is recorded as the turn's accountable person, so they can read
+    the drill turn they started. The caller has already checked who may drill
+    which agent (`api.start_runner_drill`)."""
     drills: list[RunnerDrill] = []
     for agent in agents:
         drill, _ = RunnerDrill.objects.update_or_create(
@@ -3713,9 +3718,9 @@ def start_drill(runner: Runner, agents: list) -> list[RunnerDrill]:
             prompt=DRILL_PROMPT.format(agent_slug=agent.slug, report_url=report_url,
                                        github_check=_drill_github_check(agent)),
             pinned_runner=runner,
-            # A readiness drill is canopy checking a box; the runner's owner is
-            # the person it is being run for.
-            initiator=_drill_initiator(runner),
+            # A readiness drill is canopy checking a box; whoever started it
+            # (the runner's owner by default) is the person it is run for.
+            initiator=_drill_initiator(runner, started_by),
         )
         drill.turn = turn
         drill.save(update_fields=["turn"])

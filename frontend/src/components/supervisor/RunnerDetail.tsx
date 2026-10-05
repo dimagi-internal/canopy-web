@@ -327,18 +327,19 @@ export function RunnerDetail({
         {sessionsErr && <p className="text-[12px] text-destructive" data-testid="runner-sessions-error">{sessionsErr}</p>}
       </div>
 
-      {/* Owner-only surface. The fleet list is workspace-scoped since
-          _runner_read_q, so this view can open a runner the caller did not pair;
-          drilling POSTs AS that runner and even the drill list is owner-gated, so
-          rendering the panel would produce a 404 rather than a control. Say whose
+      {/* Owner- and admin-only surface. The fleet list is workspace-scoped since
+          _runner_read_q, so this view can open a runner the caller neither paired
+          nor administers; rendering these panels for them would produce a 404
+          rather than a control. Say whose
           box it is instead — "nothing here" is indistinguishable from a broken
           page, and naming the owner makes "ask them to declare it" a next step. */}
       {/* TWO tiers, and they gate different routes — which is the whole reason
           they are separate flags. Administering a box (its credentials, its
-          browser sign-in) resolves through _runner_admin_or_404; speaking AS it
-          (drilling, which POSTs as the runner) stays with the owner. Gating
-          both on can_manage meant the identity a box RUNS AS could not sign it
-          back in, because someone else had run the pairing command. */}
+          browser sign-in, starting a readiness check) resolves through
+          _runner_admin_or_404; speaking AS it (pause, retire, heartbeat, claim)
+          stays with the owner. Gating both on can_manage meant the identity a
+          box RUNS AS could not sign it back in, because someone else had run
+          the pairing command. */}
       {runner.can_administer && runner.kind === 'cloud' && (
         <RunnerCredentials runnerId={runner.id} />
       )}
@@ -353,12 +354,16 @@ export function RunnerDetail({
         />
       )}
       {runner.can_administer && onChanged && <RunnerFlags runner={runner} onChange={onChanged} />}
-      {runner.can_manage && <RunnerDrills runnerId={runner.id} />}
+      {/* Readiness checks are runner-ADMIN (owner decision 2026-10-04): the
+          owner, or anyone they granted administration. A non-owner admin drills
+          only the agents they also administer — the server says which. */}
+      {(runner.can_administer || runner.can_manage) && <RunnerDrills runnerId={runner.id} />}
       {!runner.can_manage && (
         <p className="text-[12px] text-muted-foreground" data-testid="runner-detail-readonly">
           {runner.can_administer
-            ? `You can sign this box in, set its credentials and declare what it runs with (ZDR).
-               Checking its readiness belongs to its owner, ${runner.owner_email ?? 'someone else'}.`
+            ? `You can sign this box in, set its credentials, declare what it runs with (ZDR)
+               and check its readiness for the agents you administer. Pausing or retiring it
+               belongs to its owner, ${runner.owner_email ?? 'someone else'}.`
             : `Read-only — this runner is owned by ${runner.owner_email ?? 'someone else'},
                who can check its readiness or grant you administration; they or a runner admin
                can change what it declares.`}

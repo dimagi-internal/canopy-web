@@ -1,6 +1,7 @@
-// Readiness-drill API client — a runner-owner-gated fan-out of pinned doctor
-// turns per agent, so a runner's owner can confirm it can actually claim work
-// for the agents assigned to it before relying on it. Separate from ./harness
+// Readiness-drill API client — a runner-admin-gated fan-out of pinned doctor
+// turns per agent (the owner, or a RunnerAdmin who also administers the agent),
+// so a runner's operators can confirm it can actually claim work for the agents
+// assigned to it before relying on it. Separate from ./harness
 // (the runner registry) to keep the drill surface distinct and easy to find.
 import { apiV2 } from './client.v2'
 import type { components } from './generated'
