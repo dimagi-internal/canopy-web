@@ -2201,3 +2201,38 @@ def test_every_turn_is_marked_one_shot(cloud_runner):
     assert cloud_runner.ONE_SHOT_TURN_ENV == {"CANOPY_ONE_SHOT_TURN": "1"}
     import inspect
     assert "ONE_SHOT_TURN_ENV" in inspect.getsource(cloud_runner._run_turn)
+
+
+# ── memory headroom (2026-10-05: two global OOM storms on cloud-ec2-1) ───────
+# A t3.medium has 3.8 GB and no swap; one turn's ACP adapter alone reached
+# 600-700 MB. Four concurrent turns plus a test suite exhausted the box twice in
+# a day, and every OOM kill took the whole runner down with it.
+
+_MEMINFO = "MemTotal:        3923968 kB\nMemFree:          666624 kB\nMemAvailable:    {avail} kB\n"
+
+
+def test_the_default_cap_follows_the_boxs_memory(cloud_runner):
+    assert cloud_runner._default_max_concurrent(_MEMINFO.format(avail=2_000_000)) == 2
+    eight_gb = "MemTotal:        8000000 kB\nMemAvailable:    6000000 kB\n"
+    assert cloud_runner._default_max_concurrent(eight_gb) == 5
+    tiny = "MemTotal:        1000000 kB\nMemAvailable:     500000 kB\n"
+    assert cloud_runner._default_max_concurrent(tiny) == 1
+    assert cloud_runner._default_max_concurrent("") == 4  # unreadable: the old default
+
+
+def test_no_claim_while_memory_is_short(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "_read_meminfo", lambda: _MEMINFO.format(avail=600_000))
+    assert cloud_runner._memory_headroom_ok() is False
+    monkeypatch.setattr(cloud_runner, "_read_meminfo", lambda: _MEMINFO.format(avail=2_000_000))
+    assert cloud_runner._memory_headroom_ok() is True
+    monkeypatch.setattr(cloud_runner, "_read_meminfo", lambda: "")
+    assert cloud_runner._memory_headroom_ok() is True  # unknown never blocks
+
+
+def test_the_ws_claim_is_skipped_without_headroom(cloud_runner, monkeypatch):
+    _reset_turns(cloud_runner)
+    monkeypatch.setattr(cloud_runner, "_memory_headroom_ok", lambda: False)
+    sent = []
+    monkeypatch.setattr(cloud_runner, "_ws_request", lambda *a, **k: sent.append(a) or {})
+    assert cloud_runner._claim_and_run_once(object(), "r1") is False
+    assert sent == [], "claimed a turn with no memory to run it in"
