@@ -19,6 +19,7 @@ must never cost an agent a turn.
 """
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import os
@@ -34,6 +35,8 @@ logger = logging.getLogger("canopy_acp.client")
 # block on gets this rather than nothing.
 METHOD_NOT_FOUND = -32601
 INTERNAL_ERROR = -32603
+#: How many adapter stderr lines AcpAgent keeps for `exit_report`.
+STDERR_TAIL_LINES = 50
 
 
 class PermissionDecision:
@@ -352,6 +355,9 @@ class AcpAgent:
         self._permission_policy = permission_policy
         self._confine_fs = confine_fs
         self.session_id = ""
+        # The adapter's last words. Kept in memory, not only logged at DEBUG, so a
+        # connection that drops mid-turn can say WHY (exit_report).
+        self._stderr_tail: collections.deque[str] = collections.deque(maxlen=STDERR_TAIL_LINES)
 
     def start(self) -> dict:
         """Spawn and `initialize`. Returns the agent's initialize result."""
@@ -377,9 +383,24 @@ class AcpAgent:
     def _drain_stderr(self) -> None:
         try:
             for line in self.proc.stderr:
+                self._stderr_tail.append(line.rstrip())
                 logger.debug("acp stderr: %s", line.rstrip())
         except Exception:  # noqa: BLE001
             pass
+
+    def exit_report(self, wait: float = 2) -> str:
+        """Why the adapter is gone: its exit status and the tail of its stderr,
+        or "" while it is still running. A negative code is the signal that
+        killed it (-9 is SIGKILL, which is what the kernel OOM killer sends)."""
+        if self.proc is None:
+            return ""
+        try:
+            code = self.proc.wait(timeout=wait)
+        except subprocess.TimeoutExpired:
+            return ""
+        how = f"killed by signal {-code}" if code < 0 else f"exit code {code}"
+        tail = " | ".join(list(self._stderr_tail)[-5:])
+        return f"adapter {how}" + (f"; last stderr: {tail}" if tail else "; no stderr")
 
     def new_session(self, timeout: float = 120) -> str:
         result = self.conn.request(

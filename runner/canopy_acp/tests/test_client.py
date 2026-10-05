@@ -235,3 +235,34 @@ def _wait(predicate, timeout=2.0):
             return
         time.sleep(0.01)
     raise AssertionError("condition not met within timeout")
+
+
+def test_a_dead_adapter_says_why(tmp_path):
+    """The adapter dying mid-turn surfaced only as "ACP connection closed before a
+    reply arrived": its stderr went to a DEBUG log and its exit status nowhere, so
+    an OOM kill, a crash and a clean exit all read the same (2026-10-05, a hal
+    turn on cloud-ec2-1 that nobody could diagnose afterwards)."""
+    import sys
+
+    from canopy_acp.client import AcpAgent
+
+    agent = AcpAgent(cwd=tmp_path, argv=[
+        sys.executable, "-c",
+        "import sys; sys.stderr.write('FATAL heap out of memory\\n'); sys.stderr.flush(); sys.exit(134)",
+    ])
+    with pytest.raises(RuntimeError):
+        agent.start()
+    report = agent.exit_report(wait=5)
+    assert "exit code 134" in report
+    assert "FATAL heap out of memory" in report
+    agent.close()
+
+
+def test_a_running_adapter_reports_no_exit(tmp_path):
+    import sys
+
+    from canopy_acp.client import AcpAgent
+
+    agent = AcpAgent(cwd=tmp_path, argv=[sys.executable, "-c", "import time; time.sleep(30)"])
+    agent.proc = None
+    assert agent.exit_report() == ""
