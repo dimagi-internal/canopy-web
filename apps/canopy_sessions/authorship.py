@@ -36,6 +36,20 @@ _MARKER = re.compile(
 )
 
 
+#: The note the runner appends to a prompt that carries attachments
+#: (`canopy_runner.execute.prompt_with_attachments`). A transcript records what
+#: was TYPED, so a person's message comes back with it attached — and, from the
+#: laptop runner, without the line break before it. Anything comparing a
+#: transcript row with the Turn.prompt it was sent from must drop it first.
+_ATTACHMENT_NOTE = re.compile(
+    r"The user attached the following files?\. Read (?:it|them) with the Read tool.*\Z", re.S)
+
+
+def without_attachment_note(text: str) -> str:
+    """`text` with the runner's trailing attachment note removed."""
+    return _ATTACHMENT_NOTE.sub("", text or "")
+
+
 def _unescape(name: str) -> str:
     return re.sub(r"\\(.)", r"\1", name)
 

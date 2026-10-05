@@ -217,6 +217,21 @@ def test_a_multiline_prompt_matches_a_row_with_the_newline_dropped():
     assert msg.source_turn_id == turn.pk
 
 
+def test_a_prompt_sent_with_an_attachment_matches_its_row():
+    """The runner appends "The user attached the following file…" to the prompt
+    it types, so the row is the prompt plus that note (2026-10-05: the message
+    with a screenshot was the only one in its session with no author)."""
+    session = _session()
+    alice, turn = _sent(session, username="alice_att", text="is the screenshot getting to you?")
+    _claim(turn)
+    chat.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": (
+        "is the screenshot getting to you?The user attached the following file. Read it with the "
+        "Read tool before replying:- /Users/x/.canopy/attachments/abc/image.png")}])
+    msg = Message.objects.get(session=session)
+    assert msg.author == {"name": alice.email, "user_id": alice.id}
+    assert msg.source_turn_id == turn.pk
+
+
 def test_a_multiline_prompt_also_matches_a_row_with_a_space_in_its_place():
     session = _session()
     alice, turn = _sent(session, username="alice8", text="line one\nline two")
