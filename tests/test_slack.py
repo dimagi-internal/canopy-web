@@ -1692,6 +1692,24 @@ def test_something_typed_in_emdash_during_the_slack_turn_does_not_hold_back_the_
     assert [p["text"] for p in slack.said("chat.postMessage")] == ["Merged and deployed."]
 
 
+def test_a_reply_to_a_slack_message_with_an_attachment_reaches_the_thread(
+        bound, slack, django_capture_on_commit_callbacks):
+    """2026-10-05: the runner appends "The user attached the following file…" to
+    the prompt it types, so the transcript's copy of the person's message is no
+    longer the turn's prompt — and every reply after the turn closed was held
+    back as if the conversation had moved into emdash. Seen exactly as stored:
+    the newline before the note is gone too."""
+    session, runner, runner_owner = _yielded(bound, django_capture_on_commit_callbacks)
+    slack.calls.clear()
+    _stream(runner, runner_owner, session, [
+        {"seq": 3, "index": 3000, "kind": "user", "payload": {
+            "text": "run itThe user attached the following file. Read it with the Read tool "
+                    "before replying:- /Users/x/.canopy/attachments/abc/image.png"}},
+        {"seq": 4, "index": 4000, "kind": "assistant", "payload": {"text": "Yes, I can see the map."}},
+    ], django_capture_on_commit_callbacks)
+    assert [p["text"] for p in slack.said("chat.postMessage")] == ["Yes, I can see the map."]
+
+
 def test_nothing_is_relayed_this_way_while_a_turn_is_running(bound, slack, django_capture_on_commit_callbacks):
     session, runner, runner_owner = _yielded(bound, django_capture_on_commit_callbacks)
     Turn.objects.filter(chat_session=session).update(status=Turn.RUNNING)
