@@ -139,6 +139,14 @@ class Session(models.Model):
     #: runner heartbeat — there is no scheduler, and a timer in a web process
     #: would die with the request.
     finish_push_due_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    #: Retention (apps/retention): no Message with a `turn_index` below this may
+    #: be written. The rows are a cache of a transcript on the runner's disk, and
+    #: the runner re-ships them (backfill, reset, reconnect overlap), so deleting
+    #: expired rows without a floor would undo itself the next time anyone opened
+    #: the chat. Only ever rises; `persist_transcript_rows` enforces it.
+    retention_floor_index = models.PositiveIntegerField(default=0)
+    #: When retention last removed content from this session. Null = never.
+    content_purged_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -589,6 +589,11 @@ class Turn(models.Model):
     # after the session is created, long before the agent has done the work.
     reported_at = models.DateTimeField(null=True, blank=True)
     report_source = models.CharField(max_length=100, blank=True, default="")
+    #: When retention (apps/retention) scrubbed this turn's CONTENT: prompt,
+    #: result note, report summary, event ledger, raw transcript. The row itself
+    #: stays, because that the turn happened is operational metadata that
+    #: /activity, KPIs and the schedule lookup read. Null = content intact.
+    content_purged_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["created_at"]
@@ -743,11 +748,10 @@ class TurnTranscript(models.Model):
     rows. See services.append_transcript for why (O(1) appends instead of
     decompress-all + recompress-all under the Turn row lock).
 
-    RETENTION (cross-turn, unbounded): no cap, TTL, or archival tier exists on
-    this TABLE — it grows monotonically with every turn that streams a
-    transcript, forever. That is a deliberate gap, not an oversight: retention
-    policy is an ops/product decision, not implicit in the storage model.
-    Tracked here so it isn't silently forgotten; not addressed by this model.
+    RETENTION (cross-turn): not this model's job. `apps/retention` deletes a
+    turn's row here once its rule's `keep_days` pass (spec
+    2026-10-05-content-retention-design). With no rule, or enforcement off,
+    the table still grows forever.
 
     SIZE (per-turn, bounded — security review 2026-07-26, F2): a single turn's
     content IS capped at `services.TRANSCRIPT_TURN_MAX_BYTES` — a different

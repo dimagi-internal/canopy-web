@@ -746,6 +746,10 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
                 # assigns an ABSOLUTE index off the session's own high-water mark,
                 # so offsetting it too would double-count.
                 index += offset
+            # Retention purged everything below the floor. A re-ship of that
+            # history (backfill, reset) must not write it back.
+            if index < locked.retention_floor_index:
+                continue
             # First occurrence wins, matching what `get_or_create` did implicitly:
             # a repeat within ONE payload used to find the row its predecessor had
             # just written. A bulk insert has no such ordering, and the pair would
@@ -920,6 +924,10 @@ def write_backfill(session, messages) -> int:
     backfilled from before this change is still attributed correctly."""
     ordinal = any(int(m.get("index", -1)) >= 0 for m in messages)
     if not ordinal and Message.objects.filter(session=session).exists():
+        return 0
+    # An ordinal-less payload is numbered from the floor up, so it would write
+    # purged history back above the floor. Refuse it for a purged session.
+    if not ordinal and session.content_purged_at is not None:
         return 0
     return persist_transcript_rows(session, messages, attribute=False)
 
@@ -1220,7 +1228,13 @@ def reset_sessions(sessions, *, prune_ghosts: bool = False, dry_run: bool = Fals
 
 def _next_index(session: Session) -> int:
     current = Message.objects.filter(session=session).aggregate(m=Max("turn_index"))["m"]
-    return 0 if current is None else current + 1
+    # Never below the retention floor: a purged session has no rows left, and a
+    # new row at 0 would sit under the floor that hides the purged history.
+    # Read fresh, because callers pass whatever instance they were handed.
+    floor = Session.objects.filter(pk=session.pk).values_list(
+        "retention_floor_index", flat=True
+    ).first() or 0
+    return max(0 if current is None else current + 1, floor)
 
 
 def _index_offset(session) -> int:
