@@ -335,3 +335,26 @@ def test_the_share_turns_own_reply_does_not_open_the_thread(slack, linked, alice
     assert status.post(turn) is None
     assert relay.relay_after_turn(repo_session, [(7, "Shared to #dev.")]) == 0
     assert len(slack.said("chat.postMessage")) == posts
+
+
+def test_a_bound_session_relays_laptop_replies_but_not_its_life_before_the_bind(
+        slack, linked, alice, repo_session):
+    """Owner decision, 2026-10-05: typing into a bound session on the laptop still
+    keeps its thread in step. What the session said before it was shared does not."""
+    import datetime as dt
+
+    from apps.canopy_sessions.models import Message
+    from apps.slack import relay
+
+    before = Message.objects.create(session=repo_session, turn_index=1, role=Message.USER,
+                                    plaintext="/canopy:share-to-slack #dev bind")
+    Message.objects.filter(pk=before.pk).update(created_at=before.created_at - dt.timedelta(minutes=5))
+    _share(alice, session=repo_session, mode=share.BIND)
+    repo_session.refresh_from_db()
+    posts = len(slack.said("chat.postMessage"))
+    assert relay.relay_after_turn(repo_session, [(2, "Shared to #dev.")]) == 0
+    Message.objects.create(session=repo_session, turn_index=3, role=Message.USER,
+                           plaintext="now tidy the tests")
+    assert relay.relay_after_turn(repo_session, [(4, "Tidied.")]) == 1
+    (post,) = slack.said("chat.postMessage")[posts:]
+    assert post["text"] == "Tidied." and post["thread_ts"] == POSTED_TS

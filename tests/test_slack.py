@@ -1473,7 +1473,8 @@ def test_typing_straight_into_emdash_is_announced_once(bound, slack, django_capt
             django_capture_on_commit_callbacks)
     _stream(runner, runner_owner, session, [ev(2, "user", "and the metrics")], django_capture_on_commit_callbacks)
     (note,) = slack.said("chat.postMessage")
-    assert "carrying on directly in the agent's session on *jj-mbp*" in note["text"]
+    assert "directly in its session on *jj-mbp*" in note["text"]
+    assert "replies will keep appearing here" in note["text"]
     assert note["thread_ts"] == "1700000000.000100"
 
 
@@ -1705,15 +1706,21 @@ def test_text_already_bridged_by_the_turn_is_not_posted_again(bound, slack, djan
     assert [p["text"] for p in slack.said("chat.postMessage")].count("Waiting on CI — back when it lands.") == 1
 
 
-def test_a_reply_to_something_typed_in_emdash_is_not_mirrored(bound, slack, django_capture_on_commit_callbacks):
+def test_a_reply_to_something_typed_in_emdash_reaches_the_thread_but_the_typing_does_not(
+        bound, slack, django_capture_on_commit_callbacks):
+    """Owner decision, 2026-10-05: a conversation that lives in a Slack thread
+    keeps the thread in step even when someone carries it on from the laptop —
+    the agent's replies are posted; what was typed in emdash is not."""
     session, runner, runner_owner = _yielded(bound, django_capture_on_commit_callbacks)
     slack.calls.clear()
     _stream(runner, runner_owner, session, [
-        {"seq": 3, "index": 3000, "kind": "user", "payload": {"text": "private aside, just for me"}},
+        {"seq": 3, "index": 3000, "kind": "user", "payload": {"text": "an aside typed on the laptop"}},
         {"seq": 4, "index": 4000, "kind": "assistant", "payload": {"text": "sure — here's the aside"}},
     ], django_capture_on_commit_callbacks)
-    (note,) = slack.said("chat.postMessage")
-    assert "outside Slack" in note["text"]                       # announced, not mirrored
+    note, reply = slack.said("chat.postMessage")
+    assert "replies will keep appearing here" in note["text"]
+    assert reply["text"] == "sure — here's the aside" and reply["username"] == "Hal"
+    assert not any("an aside typed on the laptop" in p["text"] for p in slack.said("chat.postMessage"))
 
 
 def test_something_typed_in_emdash_during_the_slack_turn_does_not_hold_back_the_answer(
