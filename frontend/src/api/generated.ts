@@ -3895,6 +3895,96 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/retention": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How long this workspace keeps chat and turn content
+         * @description This workspace's retention rules and the ones it inherits from the
+         *     workspaces above it and the deployment. Any member may read them; changing
+         *     them needs the admin role.
+         */
+        readonly get: operations["get_retention"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/retention/preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What the current rules would delete from this workspace right now
+         * @description Counts only, per rule, of what would be dropped from this workspace's
+         *     own chats and turns if the rules were enforced now. Deletes nothing.
+         */
+        readonly get: operations["retention_preview"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/retention/rules": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add a retention rule
+         * @description Blank filters match anything; `keep_days` null keeps matching content
+         *     forever. 422 if a rule with exactly these filters already exists, or the
+         *     agent is not in this workspace.
+         */
+        readonly post: operations["create_retention_rule"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/retention/rules/{rule_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Change a retention rule
+         * @description Replaces the rule's filters, retention and note.
+         */
+        readonly put: operations["update_retention_rule"];
+        readonly post?: never;
+        /**
+         * Remove a retention rule
+         * @description Content the rule would have expired falls back to the next rule that
+         *     matches, or is kept forever.
+         */
+        readonly delete: operations["delete_retention_rule"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/connected-apps": {
         readonly parameters: {
             readonly query?: never;
@@ -12954,6 +13044,136 @@ export interface components {
             /** Depth */
             readonly depth: number;
         };
+        /** RetentionChoice */
+        readonly RetentionChoice: {
+            /** Value */
+            readonly value: string;
+            /** Label */
+            readonly label: string;
+        };
+        /** RetentionChoices */
+        readonly RetentionChoices: {
+            /** Kinds */
+            readonly kinds: readonly components["schemas"]["RetentionChoice"][];
+            /** Sources */
+            readonly sources: readonly components["schemas"]["RetentionChoice"][];
+            /** Principals */
+            readonly principals: readonly components["schemas"]["RetentionChoice"][];
+        };
+        /**
+         * RetentionOut
+         * @description This workspace's own rules, and those it inherits (ancestors nearest
+         *     first, then deployment-wide). An item is governed by the nearest level that
+         *     has ANY matching rule, then the most specific rule there, then the shorter
+         *     retention. No match = kept forever.
+         */
+        readonly RetentionOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Enforced */
+            readonly enforced: boolean;
+            /** Can Manage */
+            readonly can_manage: boolean;
+            /** Rules */
+            readonly rules: readonly components["schemas"]["RetentionRuleOut"][];
+            /** Inherited */
+            readonly inherited: readonly components["schemas"]["RetentionRuleOut"][];
+            readonly choices: components["schemas"]["RetentionChoices"];
+        };
+        /** RetentionRuleOut */
+        readonly RetentionRuleOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace */
+            readonly workspace: string;
+            /** Kind */
+            readonly kind: string;
+            /** Source */
+            readonly source: string;
+            /** Principal */
+            readonly principal: string;
+            /** Agent */
+            readonly agent: string;
+            /** Keep Days */
+            readonly keep_days: number | null;
+            /** Note */
+            readonly note: string;
+            /** Summary */
+            readonly summary: string;
+            /** Created By */
+            readonly created_by: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /**
+         * RetentionPreviewOut
+         * @description What the current rules would drop from this workspace's own chats and
+         *     turns if they were enforced right now.
+         */
+        readonly RetentionPreviewOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Enforced */
+            readonly enforced: boolean;
+            /** Totals */
+            readonly totals: {
+                readonly [key: string]: number;
+            };
+            /** By Rule */
+            readonly by_rule: readonly components["schemas"]["RetentionPreviewRule"][];
+        };
+        /** RetentionPreviewRule */
+        readonly RetentionPreviewRule: {
+            /** Rule Id */
+            readonly rule_id: number;
+            /** Summary */
+            readonly summary: string;
+            /** Counts */
+            readonly counts: {
+                readonly [key: string]: number;
+            };
+        };
+        /**
+         * RetentionRuleIn
+         * @description Blank filters mean "any". `keep_days` null means keep forever: an
+         *     exemption that beats a broader rule.
+         */
+        readonly RetentionRuleIn: {
+            /**
+             * Kind
+             * @default
+             * @enum {string}
+             */
+            readonly kind: "" | "chat" | "turn";
+            /**
+             * Source
+             * @default
+             * @enum {string}
+             */
+            readonly source: "" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack" | "emdash";
+            /**
+             * Principal
+             * @default
+             * @enum {string}
+             */
+            readonly principal: "" | "member" | "contact" | "agent" | "system";
+            /**
+             * Agent
+             * @description An agent slug in this workspace, or blank for any agent.
+             * @default
+             */
+            readonly agent: string;
+            /** Keep Days */
+            readonly keep_days?: number | null;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
         /** ConnectedAgentOut */
         readonly ConnectedAgentOut: {
             /** Slug */
@@ -21077,6 +21297,124 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["AgentTopologyOut"];
                 };
+            };
+        };
+    };
+    readonly get_retention: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RetentionOut"];
+                };
+            };
+        };
+    };
+    readonly retention_preview: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RetentionPreviewOut"];
+                };
+            };
+        };
+    };
+    readonly create_retention_rule: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RetentionRuleIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RetentionRuleOut"];
+                };
+            };
+        };
+    };
+    readonly update_retention_rule: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly rule_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RetentionRuleIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RetentionRuleOut"];
+                };
+            };
+        };
+    };
+    readonly delete_retention_rule: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly rule_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

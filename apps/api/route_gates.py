@@ -41,7 +41,8 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``member`` — workspace membership (``permissions.READ``): a viewer passes.
 * the capabilities of ``apps/workspaces/permissions.py``: ``content.write``,
   ``agent.work``, ``session.drive``, ``events.write``, ``logs.read``,
-  ``members.manage``, ``integrations``, ``runners.route``, ``own``.
+  ``members.manage``, ``integrations``, ``runners.route``, ``retention.manage``,
+  ``own``.
 * ``agent-admin`` — ``Agent.is_admin`` (its owner, a workspace owner, an
   ``AgentAdmin``).
 * ``agent-owner`` — the agent's owner or a workspace owner (transfer, admin
@@ -64,7 +65,7 @@ from __future__ import annotations
 VOCABULARY: frozenset[str] = frozenset({
     "anonymous", "token-link", "authenticated", "self", "member",
     "content.write", "agent.work", "session.drive", "events.write", "logs.read",
-    "members.manage", "integrations", "runners.route", "own",
+    "members.manage", "integrations", "runners.route", "retention.manage", "own",
     "agent-admin", "agent-owner", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host",
@@ -463,6 +464,11 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_shared_vault": ("own",),
     "set_shared_vault": ("own",),
     "get_runner_order": ("member",),
+    "get_retention": ("member",),  # read-only: everyone may know how long their chats are kept
+    "retention_preview": ("retention.manage",),
+    "create_retention_rule": ("retention.manage",),
+    "update_retention_rule": ("retention.manage",),
+    "delete_retention_rule": ("retention.manage",),
     "set_runner_order": ("runners.route",),  # admin+; routes agents in every division below too; each runner's owner must be a member (422 otherwise)
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins

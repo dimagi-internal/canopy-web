@@ -13,8 +13,14 @@ from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.workspaces import permissions as perms
 from apps.api.auth import session_auth
+from apps.retention.schemas import (
+    RetentionOut,
+    RetentionPreviewOut,
+    RetentionRuleIn,
+    RetentionRuleOut,
+)
+from apps.workspaces import permissions as perms
 
 from . import services
 from .models import Workspace, WorkspaceAccessRequest, WorkspaceInvite, WorkspaceMembership
@@ -24,16 +30,16 @@ from .schemas import (
     AccessRequestIn,
     AccessRequestOut,
     AccessSettingsIn,
+    AgentTopologyOut,
     InviteCreateIn,
     InviteOut,
     InvitePreviewOut,
-    RequestableWorkspaceOut,
     MemberOut,
     MemberRoleUpdateIn,
+    RequestableWorkspaceOut,
     RunnerOrderIn,
     RunnerOrderRowOut,
     RunnerTopologyOut,
-    AgentTopologyOut,
     SharedVaultIn,
     SharedVaultOut,
     WorkspaceCreateIn,
@@ -703,3 +709,92 @@ def agent_topology(request: HttpRequest, slug: str) -> AgentTopologyOut:
         m.workspace, request.user,
         visible=lambda s: perms.can(request.user, s, perms.LOGS_READ),
     ))
+
+
+# --- Content retention (apps/retention) ---------------------------------------
+# The routes live here, beside the rest of workspace settings, so they share
+# `_require`; the rules and the purge are apps/retention's.
+
+
+@router.get("/{slug}/retention", response=RetentionOut,
+            summary="How long this workspace keeps chat and turn content")
+def get_retention(request: HttpRequest, slug: str) -> RetentionOut:
+    """This workspace's retention rules and the ones it inherits from the
+    workspaces above it and the deployment. Any member may read them; changing
+    them needs the admin role."""
+    from apps.retention import rules
+
+    m = _require(request.user, slug, perms.READ)
+    return RetentionOut(**rules.policy_for(
+        m.workspace, can_manage=perms.role_allows(m.role, perms.RETENTION_MANAGE)))
+
+
+@router.get("/{slug}/retention/preview", response=RetentionPreviewOut,
+            summary="What the current rules would delete from this workspace right now")
+def retention_preview(request: HttpRequest, slug: str) -> RetentionPreviewOut:
+    """Counts only, per rule, of what would be dropped from this workspace's
+    own chats and turns if the rules were enforced now. Deletes nothing."""
+    from django.conf import settings
+
+    from apps.retention import rules
+    from apps.retention import services as retention_services
+
+    m = _require(request.user, slug, perms.RETENTION_MANAGE)
+    tally = retention_services.preview(m.workspace.slug)
+    return RetentionPreviewOut(
+        workspace=m.workspace.slug,
+        enforced=bool(getattr(settings, "CANOPY_RETENTION_ENFORCE", False)),
+        totals=tally.totals(),
+        by_rule=[
+            {"rule_id": pk, "summary": rules.summary(tally.rules[pk]), "counts": dict(counts)}
+            for pk, counts in sorted(tally.by_rule.items())
+        ],
+    )
+
+
+@router.post("/{slug}/retention/rules", response={201: RetentionRuleOut},
+             summary="Add a retention rule")
+def create_retention_rule(request: HttpRequest, slug: str, payload: RetentionRuleIn):
+    """Blank filters match anything; `keep_days` null keeps matching content
+    forever. 422 if a rule with exactly these filters already exists, or the
+    agent is not in this workspace."""
+    from apps.retention import rules
+
+    m = _require(request.user, slug, perms.RETENTION_MANAGE)
+    try:
+        rule = rules.create_rule(m.workspace, payload.model_dump(), user=request.user)
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201, RetentionRuleOut(**rules.rule_out(rule)))
+
+
+@router.put("/{slug}/retention/rules/{rule_id}", response=RetentionRuleOut,
+            summary="Change a retention rule")
+def update_retention_rule(request: HttpRequest, slug: str, rule_id: int,
+                          payload: RetentionRuleIn) -> RetentionRuleOut:
+    """Replaces the rule's filters, retention and note."""
+    from apps.retention import rules
+
+    m = _require(request.user, slug, perms.RETENTION_MANAGE)
+    try:
+        rule = rules.update_rule(m.workspace, rule_id, payload.model_dump(), user=request.user)
+    except LookupError as exc:
+        raise HttpError(404, "no such rule in this workspace") from exc
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return RetentionRuleOut(**rules.rule_out(rule))
+
+
+@router.delete("/{slug}/retention/rules/{rule_id}", response={204: None},
+               summary="Remove a retention rule")
+def delete_retention_rule(request: HttpRequest, slug: str, rule_id: int):
+    """Content the rule would have expired falls back to the next rule that
+    matches, or is kept forever."""
+    from apps.retention import rules
+
+    m = _require(request.user, slug, perms.RETENTION_MANAGE)
+    try:
+        rules.delete_rule(m.workspace, rule_id, user=request.user)
+    except LookupError as exc:
+        raise HttpError(404, "no such rule in this workspace") from exc
+    return Status(204, None)

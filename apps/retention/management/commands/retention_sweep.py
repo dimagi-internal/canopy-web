@@ -31,7 +31,7 @@ class Command(BaseCommand):
         enforce = getattr(settings, "CANOPY_RETENTION_ENFORCE", False)
         self.stdout.write(f"rules: {rules}   automatic enforcement: {'ON' if enforce else 'off'}")
         if not rules:
-            self.stdout.write("No retention rules, so nothing is ever purged. Add some in /admin/retention/.")
+            self.stdout.write("No retention rules, so nothing is ever purged. Add some under a workspace's Settings → Retention.")
         limits = {k: None for k in services.BATCH_LIMITS} if no_limit else None
         record = services.sweep(apply=apply, limits=limits)
         verb = "PURGED" if apply else "would purge (dry run)"

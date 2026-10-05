@@ -16,6 +16,10 @@ export type InviteRole = components['schemas']['InviteCreateIn']['role']
 export type MemberRole = components['schemas']['MemberRoleUpdateIn']['role']
 export type InvitePreviewOut = components['schemas']['InvitePreviewOut']
 export type SharedVaultOut = components['schemas']['SharedVaultOut']
+export type RetentionOut = components['schemas']['RetentionOut']
+export type RetentionRuleOut = components['schemas']['RetentionRuleOut']
+export type RetentionRuleIn = components['schemas']['RetentionRuleIn']
+export type RetentionPreviewOut = components['schemas']['RetentionPreviewOut']
 
 // Every call below needs the HTTP status (404 for non-member, 403 for an
 // invite-accept email mismatch, 410 for a dead invite) — not just a message —
@@ -337,4 +341,45 @@ export async function setRunnerOrder(
     throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to save the runner order'))
   }
   return Array.from(res.data as unknown as RunnerOrderRowOut[])
+}
+
+// --- Content retention (Settings → Retention) ---
+
+export async function getRetention(slug: string): Promise<RetentionOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/retention', { params: { path: { slug } } })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load retention rules'))
+  }
+  return res.data as unknown as RetentionOut
+}
+
+export async function previewRetention(slug: string): Promise<RetentionPreviewOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/retention/preview', { params: { path: { slug } } })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to preview retention'))
+  }
+  return res.data as unknown as RetentionPreviewOut
+}
+
+export async function saveRetentionRule(
+  slug: string, body: RetentionRuleIn, ruleId?: number,
+): Promise<RetentionRuleOut> {
+  const res = ruleId === undefined
+    ? await apiV2.POST('/api/workspaces/{slug}/retention/rules', { params: { path: { slug } }, body })
+    : await apiV2.PUT('/api/workspaces/{slug}/retention/rules/{rule_id}', {
+      params: { path: { slug, rule_id: ruleId } }, body,
+    })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to save the rule'))
+  }
+  return res.data as unknown as RetentionRuleOut
+}
+
+export async function deleteRetentionRule(slug: string, ruleId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/workspaces/{slug}/retention/rules/{rule_id}', {
+    params: { path: { slug, rule_id: ruleId } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to delete the rule'))
+  }
 }

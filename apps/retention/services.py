@@ -24,7 +24,7 @@ from collections import defaultdict
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -42,15 +42,17 @@ SWEEP_INTERVAL = dt.timedelta(hours=1)
 _LOCK_KEY = "retention:sweep"
 
 
-class _Tally:
-    """Counts per rule, keyed by a label a person can read in the report."""
+class Tally:
+    """Counts per rule. Keyed by rule id; `as_json` labels them for a person."""
 
     def __init__(self):
-        self.by_rule: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self.by_rule: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self.rules: dict[int, RetentionRule] = {}
 
     def add(self, rule: RetentionRule, what: str, n: int = 1) -> None:
         if n:
-            self.by_rule[_label(rule)][what] += n
+            self.rules[rule.pk] = rule
+            self.by_rule[rule.pk][what] += n
 
     def totals(self) -> dict[str, int]:
         out: dict[str, int] = defaultdict(int)
@@ -62,7 +64,7 @@ class _Tally:
     def as_json(self) -> dict:
         return {
             "totals": self.totals(),
-            "by_rule": {label: dict(c) for label, c in sorted(self.by_rule.items())},
+            "by_rule": {_label(self.rules[pk]): dict(c) for pk, c in sorted(self.by_rule.items())},
         }
 
 
@@ -84,15 +86,9 @@ def sweep(*, apply: bool, now: dt.datetime | None = None, trigger: str = "comman
     now = now or timezone.now()
     limits = {**BATCH_LIMITS, **(limits or {})}
     record = RetentionSweep.objects.create(applied=apply, trigger=trigger)
-    tally = _Tally()
+    tally = Tally()
     try:
-        policy = Policy.load()
-        shortest = policy.shortest_keep_days
-        if shortest is not None:
-            horizon = now - dt.timedelta(days=shortest)
-            _sweep_turns(policy, tally, now=now, horizon=horizon, apply=apply, limit=limits["turns"])
-            _sweep_chats(policy, tally, now=now, horizon=horizon, apply=apply, limit=limits["chats"])
-            _sweep_shared(policy, tally, now=now, horizon=horizon, apply=apply, limit=limits["shared"])
+        _run(tally, apply=apply, now=now, limits=limits)
     except Exception as exc:  # noqa: BLE001 - recorded, then re-raised
         record.error = f"{type(exc).__name__}: {exc}"[:2000]
         raise
@@ -101,6 +97,31 @@ def sweep(*, apply: bool, now: dt.datetime | None = None, trigger: str = "comman
         record.finished_at = timezone.now()
         record.save(update_fields=["counts", "finished_at", "error"])
     return record
+
+
+def preview(workspace: str, *, now: dt.datetime | None = None) -> Tally:
+    """What the CURRENT rules would drop from this one workspace's own chats and
+    turns, were they enforced now. Never writes, never recorded, never capped:
+    it is the answer to "what will this rule do", which a capped count would
+    misstate. Descendant workspaces are not included; their admins preview their
+    own."""
+    tally = Tally()
+    _run(tally, apply=False, now=now or timezone.now(),
+         limits={k: None for k in BATCH_LIMITS}, workspace=workspace)
+    return tally
+
+
+def _run(tally: Tally, *, apply: bool, now, limits, workspace: str | None = None) -> None:
+    policy = Policy.load()
+    shortest = policy.shortest_keep_days
+    if shortest is None:
+        return
+    horizon = now - dt.timedelta(days=shortest)
+    common = dict(now=now, horizon=horizon, apply=apply, workspace=workspace)
+    _sweep_turns(policy, tally, limit=limits["turns"], **common)
+    _sweep_chats(policy, tally, limit=limits["chats"], **common)
+    if workspace is None:  # shared transcripts belong to no workspace
+        _sweep_shared(policy, tally, limit=limits["shared"], now=now, horizon=horizon, apply=apply)
 
 
 def maybe_sweep(now: dt.datetime | None = None) -> RetentionSweep | None:
@@ -129,12 +150,15 @@ def _expired_turns(qs):
     )
 
 
-def _sweep_turns(policy, tally, *, now, horizon, apply, limit) -> None:
+def _sweep_turns(policy, tally, *, now, horizon, apply, limit, workspace=None) -> None:
     """Agent and project turns. A turn on a chat is the chat's, see _sweep_chats."""
     from apps.harness.models import Turn
 
+    qs = Turn.objects.filter(chat_session__isnull=True)
+    if workspace is not None:
+        qs = qs.filter(Q(agent__workspace_id=workspace) | Q(agent__isnull=True, workspace_id=workspace))
     rows = (
-        _expired_turns(Turn.objects.filter(chat_session__isnull=True))
+        _expired_turns(qs)
         .filter(aged_at__lt=horizon)
         .values_list("pk", "origin", "initiator_kind", "agent_id",
                      "agent__workspace_id", "workspace_id", "aged_at")
@@ -177,14 +201,15 @@ def _scrub_turns(turn_ids: list, now: dt.datetime) -> None:
 
 # ---------------------------------------------------------------------- chats
 
-def _sweep_chats(policy, tally, *, now, horizon, apply, limit) -> None:
+def _sweep_chats(policy, tally, *, now, horizon, apply, limit, workspace=None) -> None:
     """Chat sessions, and every turn on them, resolved as ONE unit by the
     session's attributes so a conversation's messages and the prompts that
     produced them expire together."""
     from apps.canopy_sessions.models import Session
 
+    sessions = Session.objects.all() if workspace is None else Session.objects.filter(workspace_id=workspace)
     rows = (
-        Session.objects.filter(pk__in=_chat_candidates(horizon))
+        sessions.filter(pk__in=_chat_candidates(horizon))
         .values_list("pk", "workspace_id", "agent_id", "contact_id", "created_by_id",
                      "origin", "metadata")
         .order_by("created_at")

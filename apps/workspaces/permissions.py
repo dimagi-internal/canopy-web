@@ -74,6 +74,12 @@ INTEGRATIONS = "integrations"
 #: 2026-10-05).
 RUNNERS_ROUTE = "runners.route"
 
+#: How long the CONTENT of this workspace's chats and turns is kept
+#: (apps/retention). Admin, not owner, by owner decision (2026-10-05): it is
+#: running the workspace, the same tier that already reads every turn's
+#: content. Every change is written to the event log.
+RETENTION_MANAGE = "retention.manage"
+
 # --- owner: the keys --------------------------------------------------------------
 
 #: Delete the workspace, nest or detach it, the shared vault, the Slack app
@@ -93,6 +99,7 @@ MINIMUM_ROLE: dict[str, str] = {
     MEMBERS_MANAGE: _M.ADMIN,
     INTEGRATIONS: _M.ADMIN,
     RUNNERS_ROUTE: _M.ADMIN,
+    RETENTION_MANAGE: _M.ADMIN,
     OWN: _M.OWNER,
 }
 
