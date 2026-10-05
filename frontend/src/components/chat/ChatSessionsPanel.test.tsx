@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 
 import type { AgentOut, AgentRunnerOut } from '@/api/agents'
 import type { RunnerOut } from '@/api/harness'
-import type { ChatSession, CloseResult } from '@/api/chat'
+import type { ChatSession, CloseResult, TransferResult } from '@/api/chat'
 import type { ProjectSlug } from '@/api/projects'
 
 // vi.mock is hoisted above these declarations, but the factories aren't
@@ -14,11 +14,12 @@ import type { ProjectSlug } from '@/api/projects'
 const createSession = vi.fn<(input: unknown) => Promise<ChatSession>>()
 const listSessions = vi.fn<() => Promise<ChatSession[]>>()
 const closeSession = vi.fn<(id: string) => Promise<CloseResult>>()
+const transferSession = vi.fn<(id: string, runner: string, brief?: string) => Promise<TransferResult>>()
 const getAgentRunners = vi.fn<(slug: string) => Promise<AgentRunnerOut[]>>()
 const listRunners = vi.fn<() => Promise<RunnerOut[]>>()
 const listSlugs = vi.fn<() => Promise<ProjectSlug[]>>()
 
-vi.mock('@/api/chat', () => ({ createSession, listSessions, closeSession }))
+vi.mock('@/api/chat', () => ({ createSession, listSessions, closeSession, transferSession }))
 // Default: the agent has runners of its own, so the picker reads getAgentRunners.
 const getAgentDefaultOrder = vi.fn().mockResolvedValue({ own: true, workspace: null, runners: [], missing_repo: [], cannot_hold: [], repo_url: '' })
 vi.mock('@/api/agents', () => ({ getAgentRunners, getAgentDefaultOrder, listAgents: vi.fn() }))
@@ -441,6 +442,41 @@ describe('ChatSessionsPanel — close a session', () => {
 
     const btn = await screen.findByTestId('close-session-s1')
     expect(btn.closest('a')).toBeNull()
+  })
+})
+
+describe('ChatSessionsPanel — transfer a session', () => {
+  it('transfers to the picked runner and reports a move', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValueOnce([chatSession('s1', { runner_name: 'Laptop' })])
+    listRunners.mockResolvedValue([fleetRunner('b', { name: 'Cloud' })])
+    transferSession.mockResolvedValue({
+      session_id: 's1', runner: 'Cloud', transferred_from: 'Laptop', index_offset: 1,
+      turn_id: 't1', status: 'moved', request_id: null, approvers: [],
+    })
+    listSessions.mockResolvedValueOnce([chatSession('s1', { runner_name: 'Cloud' })])
+
+    renderPanel([agent()])
+
+    fireEvent.click(await screen.findByTestId('transfer-session-s1'))
+    const select = (await screen.findByTestId('transfer-runner-select')) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'b' } })
+    await act(async () => {
+      fireEvent.click(screen.getByText('Transfer'))
+    })
+
+    expect(transferSession).toHaveBeenCalledWith('s1', 'b', '')
+    expect(await screen.findByText('Moved to Cloud.')).toBeTruthy()
+  })
+
+  it('disables the transfer trigger for an unbound session', async () => {
+    listSlugs.mockResolvedValue([])
+    listSessions.mockResolvedValue([chatSession('s1', { runner_name: null, origin: 'web' })])
+
+    renderPanel([agent()])
+
+    const trigger = (await screen.findByTestId('transfer-session-s1')) as HTMLButtonElement
+    expect(trigger.disabled).toBe(true)
   })
 })
 

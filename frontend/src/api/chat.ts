@@ -219,6 +219,29 @@ export function setSessionNotify(id: string, everyCompletion: boolean): Promise<
   });
 }
 
+export type TransferResult = components["schemas"]["TransferOut"];
+
+/**
+ * Move a live session onto another runner (by id or name), history and all.
+ *
+ * `status: "moved"` means it happened now — `runner` names where it landed.
+ * `status: "pending"` means the target belongs to someone else, so this
+ * opened a TransferRequest instead and `approvers` lists who can say yes;
+ * nothing has moved yet.
+ *
+ * Throws `ChatApiError` on refusal: 409 while a turn is executing on the
+ * source (stop the session and retry) or while another request for it is
+ * already waiting, 422 for a target the session can't move onto (already
+ * there, or archived), 404 for an unknown runner or an unbound session.
+ */
+export function transferSession(id: string, runner: string, brief = ""): Promise<TransferResult> {
+  return request<TransferResult>(`/api/canopy-sessions/${encodeURIComponent(id)}/transfer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ runner, brief }),
+  });
+}
+
 export type CloseResult = { ok: boolean; closing: boolean; reason: string };
 
 /**

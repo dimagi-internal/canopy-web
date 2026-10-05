@@ -10,6 +10,8 @@ import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
 import { closeIntent, closeResultMessage, settleClosing } from './closeAction'
 import { parkedReason, parkedSummary, partitionByRunnerReachability } from './runnerEligibility'
 import { NewChatMenu } from './NewChatMenu'
+import { TransferSessionMenu } from './TransferSessionMenu'
+import type { TransferResult } from '@/api/chat'
 
 /** An independent on/off filter — deliberately shaped unlike the sort segments
  *  beside it, so the row does not read as four options where you pick one. */
@@ -74,6 +76,10 @@ export function ChatSessionsPanel({
   // Closes relayed to a runner and not yet confirmed: session id -> when.
   const [pendingClose, setPendingClose] = useState<Record<string, number>>({})
   const [closeError, setCloseError] = useState<string | null>(null)
+  // Set on every transfer attempt, success or failure — a "moved" result is
+  // worth saying too, since the row's own runner name updates silently on the
+  // next poll and a click that visibly did nothing reads as a dropped click.
+  const [transferNote, setTransferNote] = useState<{ text: string; error: boolean } | null>(null)
 
 
   useEffect(() => {
@@ -148,6 +154,29 @@ export function ChatSessionsPanel({
       } finally {
         setClosingId(null)
       }
+    },
+    [showArchived],
+  )
+
+  // `result` is null on failure (the message is the error instead). A "moved"
+  // result refreshes the list so the row's runner name is current at once
+  // rather than waiting for the 20s poll; "pending" leaves the row as-is —
+  // nothing moved, a request is just waiting on an approver now.
+  const onTransferred = useCallback(
+    (result: TransferResult | null, error: string | null) => {
+      if (error) {
+        setTransferNote({ text: error, error: true })
+        return
+      }
+      if (result?.status === 'pending') {
+        setTransferNote({
+          text: `Transfer requested — waiting on ${result.approvers.join(', ') || 'the runner’s administrator'} to approve.`,
+          error: false,
+        })
+        return
+      }
+      setTransferNote({ text: `Moved to ${result?.runner}.`, error: false })
+      void listSessions(showArchived ? 'all' : 'active').then(setSessions)
     },
     [showArchived],
   )
@@ -259,6 +288,11 @@ export function ChatSessionsPanel({
 
       {error && <div className="py-2 text-sm text-destructive">{error}</div>}
       {closeError && <div className="py-2 text-sm text-destructive">{closeError}</div>}
+      {transferNote && (
+        <div className={`py-2 text-sm ${transferNote.error ? 'text-destructive' : 'text-foreground-secondary'}`}>
+          {transferNote.text}
+        </div>
+      )}
       {loading ? (
         <div className="py-6 text-sm text-muted-foreground">Loading sessions…</div>
       ) : visible.length === 0 ? (
@@ -368,6 +402,7 @@ export function ChatSessionsPanel({
                       )}
                     </div>
                   </Link>
+                  <TransferSessionMenu session={s} onResult={onTransferred} />
                   <button
                     type="button"
                     data-testid={`close-session-${s.id}`}
