@@ -505,47 +505,77 @@ export async function getAgentRunnerRules(slug: string, workspace?: string): Pro
   return Array.from(unwrap(res, 'getAgentRunnerRules'))
 }
 
-export async function putAgentRunnerRules(
+export type RunnerRuleEdit = {
+  source: string
+  actor: string
+  runnerIds: readonly string[]
+  strict: boolean
+  turnMode: RuleTurnMode
+}
+
+// Saves the rules ONE AT A TIME: only the rules this edit changed are sent, and a
+// rule it dropped is deleted. Each rule belongs to one (source, person), and its
+// boxes can be someone else's: saving them all at once made every save depend on
+// rights over every box any rule names, which nobody holds once two people's
+// boxes are involved (ACE, 2026-10-05, #1143). `prev` is the list as loaded.
+export async function saveAgentRunnerRules(
   slug: string,
-  rules: readonly {
-    source: string
-    actor: string
-    runnerIds: readonly string[]
-    strict: boolean
-    turnMode: RuleTurnMode
-  }[],
+  prev: readonly AgentRunnerRuleOut[],
+  next: readonly RunnerRuleEdit[],
   workspace?: string,
 ): Promise<AgentRunnerRuleOut[]> {
-  const res = await apiV2.PUT('/api/agents/{slug}/runner-rules', {
-    params: { path: { slug } },
-    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
-    body: {
-      rules: rules.map((r) => ({
-        // Cast against the REQUEST type, not the response's: AgentRunnerRuleOut
-        // .source is a plain string (output schemas serialize what the DB holds),
-        // so casting to it would type-check nothing.
-        source: r.source as RoutableSource,
-        // '' = any actor, which is what a rule meant before actors existed. The
-        // server normalizes (a pasted "Name <addr>" header resolves to the bare
-        // lowercase address) and 422s anything that isn't address-shaped.
-        actor: r.actor,
-        // ORDER IS THE PREFERENCE: rank is the index. A rule names several
-        // runners because the operator's two macOS accounts alternate, so the
-        // live one rotates (spec 2026-09-05).
+  const headers = workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}
+  const key = (r: { source: string; actor: string }) => `${r.source}\u0000${r.actor}`
+  const before = new Map<string, AgentRunnerRuleOut[]>()
+  for (const row of [...prev].sort((a, b) => a.rank - b.rank)) {
+    const k = key(row)
+    before.set(k, [...(before.get(k) ?? []), row])
+  }
+  const wanted = new Set(next.map(key))
+
+  for (const [k, rows] of before) {
+    if (wanted.has(k)) continue
+    const res = await apiV2.DELETE('/api/agents/{slug}/runner-rules/{source}', {
+      params: { path: { slug, source: rows[0].source }, query: { actor: rows[0].actor } },
+      ...headers,
+    })
+    if (res.error) unwrap(res, 'deleteAgentRunnerRule')
+  }
+
+  for (const r of next) {
+    const old = before.get(key(r)) ?? []
+    const unchanged =
+      old.length === r.runnerIds.length &&
+      old.every((o, i) => o.runner_id === r.runnerIds[i]) &&
+      old[0]?.strict === r.strict &&
+      (old[0]?.turn_mode ?? '') === r.turnMode
+    if (unchanged) continue
+    const res = await apiV2.PUT('/api/agents/{slug}/runner-rules/{source}', {
+      params: {
+        // Cast against the REQUEST type: AgentRunnerRuleOut.source is a plain
+        // string (output schemas serialize what the DB holds).
+        path: { slug, source: r.source as RoutableSource },
+        // '' = anyone on this source. The server normalizes a pasted
+        // "Name <addr>" and 422s anything that isn't address-shaped.
+        query: { actor: r.actor },
+      },
+      ...headers,
+      body: {
+        // ORDER IS THE PREFERENCE: rank is the index.
         runners: r.runnerIds.map((id) => ({
           runner_id: id,
-          // Always enabled: this editor has no per-runner disable affordance —
-          // a runner you don't want in a rule is removed from it (cheap to
-          // re-add). The server keeps `enabled` per row for the API's sake.
-          enabled: true,
+          // This editor has no per-runner disable; a runner it keeps keeps its
+          // state, one it adds starts enabled.
+          enabled: old.find((o) => o.runner_id === id)?.enabled ?? true,
         })),
         strict: r.strict,
         // '' = the rule says nothing about mode; the next row down decides.
         turn_mode: r.turnMode,
-      })),
-    },
-  })
-  return Array.from(unwrap(res, 'putAgentRunnerRules'))
+      },
+    })
+    unwrap(res, 'setAgentRunnerRule')
+  }
+  return getAgentRunnerRules(slug, workspace)
 }
 
 export type AgentAdminOut = Schemas['AgentAdminOut']

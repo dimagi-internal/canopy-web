@@ -6,10 +6,10 @@ import type { AgentRunnerRuleOut } from '@/api/agents'
 import type { RunnerOut } from '@/api/harness'
 
 const getAgentRunnerRules = vi.fn<() => Promise<AgentRunnerRuleOut[]>>()
-const putAgentRunnerRules = vi.fn<(slug: string, rules: unknown[]) => Promise<AgentRunnerRuleOut[]>>()
+const saveAgentRunnerRules = vi.fn<(slug: string, prev: unknown[], next: unknown[]) => Promise<AgentRunnerRuleOut[]>>()
 const listRunners = vi.fn<() => Promise<RunnerOut[]>>()
 
-vi.mock('@/api/agents', () => ({ getAgentRunnerRules, putAgentRunnerRules }))
+vi.mock('@/api/agents', () => ({ getAgentRunnerRules, saveAgentRunnerRules }))
 vi.mock('@/api/harness', () => ({ listRunners }))
 // The last row's controls have their own tests; here they only need to render.
 vi.mock('@/components/agents/RunnerAssignments', () => ({ RunnerAssignments: () => <div>default-runners</div> }))
@@ -39,7 +39,7 @@ afterEach(() => {
 async function mount(rules: AgentRunnerRuleOut[]) {
   getAgentRunnerRules.mockResolvedValue(rules)
   listRunners.mockResolvedValue(fleet)
-  putAgentRunnerRules.mockImplementation(async () => rules)
+  saveAgentRunnerRules.mockImplementation(async () => rules)
   render(<AgentRouting agentSlug="eva" initialTurnMode="manual" />)
   await screen.findByTestId('routing-default-row')
 }
@@ -84,8 +84,8 @@ describe('AgentRouting', () => {
     fireEvent.change(within(form).getByRole('combobox', { name: 'Mode' }), { target: { value: 'auto' } })
     fireEvent.click(screen.getByTestId('routing-add-submit'))
 
-    await waitFor(() => expect(putAgentRunnerRules).toHaveBeenCalled())
-    expect(putAgentRunnerRules.mock.calls[0][1]).toEqual([{
+    await waitFor(() => expect(saveAgentRunnerRules).toHaveBeenCalled())
+    expect(saveAgentRunnerRules.mock.calls[0][2]).toEqual([{
       source: 'email', actor: 'beth@dimagi.com', runnerIds: ['r-cloud'], strict: false, turnMode: 'auto',
     }])
   })

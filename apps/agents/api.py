@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -42,6 +43,7 @@ from .schemas import (
     AgentRunnerOut,
     AgentRunnerRowIn,
     AgentRunnerRuleOut,
+    AgentRunnerRuleBodyIn,
     AgentRunnerRulesIn,
     AgentRunnersIn,
     AgentRuntimeOut,
@@ -165,6 +167,64 @@ def _refuse_runners_that_cannot_hold(agent, runners) -> None:
             f"runner(s) {', '.join(refused)} cannot run {agent.slug}: a runner's owner "
             "must be the agent's owner, a workspace owner, or one of its admins",
         )
+
+
+def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
+    """The runners a routing write names, by id — gated on the ones it ADDS.
+
+    THE gate for every write that points an agent's work at boxes (the default
+    list, a source rule, a person's route). A runner being ADDED must live where
+    it could serve this agent (the agent's workspace or one above it — the
+    fleet's boxes live in `dimagi`, its agents in `connect`), be one the caller
+    ADMINISTERS (owns, or holds a grant on), and be trusted with the agent. A
+    runner the write merely KEEPS (`already`: on this list or rule now) is taken
+    as it is.
+
+    Why keeping is free: routing is a shared object. ACE's rules name the fleet's
+    cloud boxes (jjackson's) and Sarvesh's laptop (his), and when every runner was
+    re-checked against the caller, NO one could save ACE's rules at all — not even
+    unchanged (2026-10-05, #1143). The gate exists so a box can't be attached by
+    someone without rights over it; re-sending a row someone with those rights
+    already wrote attaches nothing.
+
+    A box the caller neither administers nor can otherwise see answers "unknown",
+    never "forbidden": a guessed UUID must not learn that a runner exists.
+    """
+    from apps.harness import services as hsvc
+    from apps.harness.api import _runner_read_q
+    from apps.harness.models import Runner
+
+    ids = list(ids)
+    already = set(already)
+    added = [rid for rid in dict.fromkeys(ids) if rid not in already]
+    live = Runner.objects.filter(id__in=ids).exclude(status=Runner.RETIRED)
+    by_id = {r.id: r for r in live.filter(id__in=already)}
+
+    home = [agent.workspace_id, *(agent.workspace.ancestor_slugs() if agent.workspace_id else [])]
+    # ...or, with no workspace at all, the caller's own (a box with no tenant is
+    # its owner's alone — the null leg `_runner_visibility_q` always allowed).
+    candidates = list(live.filter(id__in=added).filter(
+        Q(workspace_id__in=home) | Q(workspace_id__isnull=True, owner=request.user)))
+    seen = set(Runner.objects.filter(id__in=[r.id for r in candidates])
+               .filter(_runner_read_q(request)).values_list("id", flat=True))
+    refused = []
+    for r in candidates:
+        if hsvc.can_administer_runner(request.user, r):
+            by_id[r.id] = r
+        elif r.id in seen:
+            refused.append(r.name)
+    missing = [str(rid) for rid in ids if rid not in by_id and rid not in
+               {r.id for r in candidates if r.name in refused}]
+    if missing:
+        raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
+    if refused:
+        raise HttpError(
+            403,
+            f"you don't administer runner(s) {', '.join(sorted(refused))} — ask its owner to "
+            "grant you admin (POST /api/harness/runners/{id}/admins)",
+        )
+    _refuse_runners_that_cannot_hold(agent, [by_id[rid] for rid in added])
+    return by_id
 
 
 def _refuse_auto_unless_admin(request: HttpRequest, agent, what: str) -> None:
@@ -705,8 +765,7 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     `runners` (ordered rows, each carrying its own `enabled` — a disabled row
     stays in the list, rank preserved, but never routes) or the legacy
     `runner_ids` (ordered ids, all implicitly enabled)."""
-    from apps.harness.api import _runner_visibility_q
-    from apps.harness.models import Runner, RunnerAssignment
+    from apps.harness.models import RunnerAssignment
 
     agent = _agent_for_write(request, slug)
 
@@ -722,21 +781,12 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
     # Reject duplicate runner IDs early
     if len(ids) != len(set(ids)):
         raise HttpError(422, "duplicate runner id in list")
-    # Scoped by the same _runner_visibility_q predicate apps/harness/api.py's
-    # _runner_or_404/list_runners gate on — a runner_id the caller can't see
-    # (owned by someone else, wrong tenant) must 422 as "unknown", never be
-    # attachable/readable just because its UUID was guessed. See that
-    # docstring for the full predicate story.
-    runners = list(
-        Runner.objects.filter(id__in=ids)
-        .exclude(status=Runner.RETIRED)
-        .filter(_runner_visibility_q(request))
+    # Runners this list ADDS must be ones the caller administers; the ones it
+    # keeps are taken as they are (`_runners_for_routing`).
+    by_id = _runners_for_routing(
+        request, agent, ids,
+        RunnerAssignment.objects.filter(agent=agent, source="").values_list("runner_id", flat=True),
     )
-    by_id = {r.id: r for r in runners}
-    missing = [str(rid) for rid in ids if rid not in by_id]
-    if missing:
-        raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
-    _refuse_runners_that_cannot_hold(agent, runners)
     with transaction.atomic():
         # source="" ONLY. Source rules live in this table too, and an unscoped
         # delete here would destroy every one of them each time the default
@@ -804,6 +854,29 @@ def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunner
     ]
 
 
+def _current_rules(agent) -> dict:
+    """(source, actor) -> {"ids": runner ids in the rule, "turn_mode": its mode}."""
+    from apps.harness.models import RunnerAssignment
+
+    out: dict = {}
+    for source, actor, runner_id, turn_mode in (
+        RunnerAssignment.objects.filter(agent=agent).exclude(source="")
+        .values_list("source", "actor", "runner_id", "turn_mode")
+    ):
+        rule = out.setdefault((source, actor), {"ids": set(), "turn_mode": turn_mode})
+        rule["ids"].add(runner_id)
+    return out
+
+
+def _refuse_new_auto(request: HttpRequest, agent, source: str, actor: str, turn_mode: str,
+                     current: dict) -> None:
+    """Setting a rule to `auto` is for the agent's admins — but only SETTING it:
+    keeping an `auto` an admin already set is not, or an editor could never save
+    the rules around it."""
+    if turn_mode == "auto" and current.get((source, actor), {}).get("turn_mode") != "auto":
+        _refuse_auto_unless_admin(request, agent, f"a routing rule ({source}/{actor or 'anyone'})")
+
+
 @router.put("/{slug}/runner-rules", response=list[AgentRunnerRuleOut],
             summary="Replace the agent's per-source routing rules")
 def replace_agent_runner_rules(
@@ -817,8 +890,7 @@ def replace_agent_runner_rules(
     shape stays what the frontend already consumes.
     """
     from apps.harness.actors import normalize_actor
-    from apps.harness.api import _runner_visibility_q
-    from apps.harness.models import Runner, RunnerAssignment
+    from apps.harness.models import RunnerAssignment
 
     agent = _agent_for_write(request, slug)
 
@@ -834,11 +906,12 @@ def replace_agent_runner_rules(
             raise HttpError(422, f"not an email address: {r.actor!r}")
         actors.append(actor)
 
+    current = _current_rules(agent)
+
     # `auto` on a rule is the agent's admins' to set (docs/architecture/access.md).
     # Asked before the runners are, so an editor is told the actual reason.
     for r, actor in zip(payload.rules, actors):
-        if r.turn_mode == "auto":
-            _refuse_auto_unless_admin(request, agent, f"a routing rule ({r.source}/{actor or 'anyone'})")
+        _refuse_new_auto(request, agent, r.source, actor, r.turn_mode, current)
 
     # One rule per (source, actor) — several actors MAY share a source, which is
     # the whole feature. Caught here rather than left to the DB constraint so the
@@ -857,19 +930,15 @@ def replace_agent_runner_rules(
         if len(seen) != len(set(seen)):
             raise HttpError(422, f"a runner may appear once per rule: {r.source}/{actor}")
 
-    # Same visibility predicate the default-list PUT gates on — a runner the
-    # caller can't see must 422 as unknown, never be attachable by guessed UUID.
-    ids = [row.runner_id for r in payload.rules for row in r.runners]
-    runners = list(
-        Runner.objects.filter(id__in=ids)
-        .exclude(status=Runner.RETIRED)
-        .filter(_runner_visibility_q(request))
-    )
-    by_id = {r.id: r for r in runners}
-    missing = [str(rid) for rid in ids if rid not in by_id]
-    if missing:
-        raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
-    _refuse_runners_that_cannot_hold(agent, runners)
+    # Gated per rule on the runners each one ADDS (`_runners_for_routing`): a
+    # runner already in that rule is kept as it is, so re-sending someone else's
+    # rule unchanged is not a claim to administer their box.
+    by_id: dict = {}
+    for r, actor in zip(payload.rules, actors):
+        by_id.update(_runners_for_routing(
+            request, agent, [row.runner_id for row in r.runners],
+            current.get((r.source, actor), {}).get("ids", ()),
+        ))
 
     with transaction.atomic():
         RunnerAssignment.objects.filter(agent=agent).exclude(source="").delete()
@@ -886,6 +955,77 @@ def replace_agent_runner_rules(
             for rank, row in enumerate(r.runners)
         ])
     return list_agent_runner_rules(request, slug)
+
+
+# ---- one rule at a time (#1143) ----
+#
+# A rule belongs to one (source, person) — the person's work, routed to boxes that
+# may belong to someone else entirely. Saving ALL of an agent's rules to change
+# one made every save depend on rights over every box any rule names, which no
+# one holds once two people's boxes are involved. The Settings page saves here,
+# one changed rule at a time; the wholesale PUT above stays for scripts.
+
+def _rule_key_or_422(source: str, actor: str) -> tuple[str, str]:
+    from apps.harness.models import Turn
+    from apps.harness.schemas import RoutableSource
+    from typing import get_args
+
+    if source not in get_args(RoutableSource):
+        raise HttpError(422, f"not a routable source: {source!r}")
+    if not actor:
+        return source, ""
+    actor = _actor_or_422(actor)
+    if source == Turn.ORIGIN_CANOPY_SCHEDULER:
+        raise HttpError(422, "no person is behind canopy_scheduler turns, so a person's rule can't apply there")
+    return source, actor
+
+
+@router.put("/{slug}/runner-rules/{source}", response=list[AgentRunnerRuleOut],
+            summary="Set one routing rule (a source, optionally one person's)")
+def set_agent_runner_rule(
+    request: HttpRequest, slug: str, source: str, payload: AgentRunnerRuleBodyIn, actor: str = "",
+) -> list[AgentRunnerRuleOut]:
+    """Route `source` turns — only `actor`'s, when given — to these runners, in
+    preference order. Replaces that ONE rule and touches no other. Runners the
+    rule already names are kept as they are; a runner it ADDS must be one you
+    administer. `strict`: only these runners may take the work. Returns every rule."""
+    from apps.harness.models import RunnerAssignment
+
+    agent = _agent_for_write(request, slug)
+    source, actor = _rule_key_or_422(source, actor)
+    if not payload.runners:
+        raise HttpError(422, "a rule needs at least one runner — DELETE removes a rule")
+    ids = [row.runner_id for row in payload.runners]
+    if len(ids) != len(set(ids)):
+        raise HttpError(422, "a runner may appear once per rule")
+    current = _current_rules(agent)
+    _refuse_new_auto(request, agent, source, actor, payload.turn_mode, current)
+    by_id = _runners_for_routing(request, agent, ids, current.get((source, actor), {}).get("ids", ()))
+
+    with transaction.atomic():
+        RunnerAssignment.objects.filter(agent=agent, source=source, actor=actor).delete()
+        RunnerAssignment.objects.bulk_create([
+            RunnerAssignment(
+                agent=agent, runner=by_id[row.runner_id], rank=rank, source=source,
+                actor=actor, strict=payload.strict, enabled=row.enabled,
+                turn_mode=payload.turn_mode,
+            )
+            for rank, row in enumerate(payload.runners)
+        ])
+    return list_agent_runner_rules(request, slug)
+
+
+@router.delete("/{slug}/runner-rules/{source}", response={204: None},
+               summary="Remove one routing rule")
+def delete_agent_runner_rule(request: HttpRequest, slug: str, source: str, actor: str = ""):
+    """Remove the rule for `source` (and `actor`, when given). That work goes back
+    to the next rule down and the agent's default order. Idempotent."""
+    from apps.harness.models import RunnerAssignment
+
+    agent = _agent_for_write(request, slug)
+    source, actor = _rule_key_or_422(source, actor)
+    RunnerAssignment.objects.filter(agent=agent, source=source, actor=actor).delete()
+    return Status(204, None)
 
 
 # ---- per-person routing (the additive face of the actor rules above) ----
@@ -969,14 +1109,11 @@ def set_agent_actor_route(
     granted you admin) — this decides where work runs, so it is gated on the box,
     not just the agent. Remove a route with DELETE on the same path.
     """
-    from apps.harness import services as hsvc
-    from apps.harness.api import _runner_read_q
-    from apps.harness.models import Runner, RunnerAssignment
+    from apps.harness.models import RunnerAssignment
 
     agent = _agent_for_write(request, slug)
     actor = _actor_or_422(actor)
-    if payload.turn_mode == "auto":
-        _refuse_auto_unless_admin(request, agent, f"routing {actor}'s work")
+    current = _current_rules(agent)
 
     sources = list(dict.fromkeys(payload.sources or _actor_sources()))
     dead = [s for s in sources if s not in _actor_sources()]
@@ -988,24 +1125,13 @@ def set_agent_actor_route(
     if len(ids) != len(set(ids)):
         raise HttpError(422, "a runner may appear once per route")
 
-    runners = {
-        r.id: r for r in Runner.objects.filter(id__in=ids)
-        .exclude(status=Runner.RETIRED).filter(_runner_read_q(request))
-    }
-    missing = [str(rid) for rid in ids if rid not in runners]
-    if missing:
-        raise HttpError(422, f"unknown or retired runner id(s): {', '.join(missing)}")
-    # The tier that decides what a box does, not the one that speaks AS it: the
-    # operator of a box paired under an agent's identity holds an admin grant, not
-    # the pairing, and must still be able to point work at their own box.
-    refused = [r.name for r in runners.values() if not hsvc.can_administer_runner(request.user, r)]
-    if refused:
-        raise HttpError(
-            403,
-            f"you don't administer runner(s) {', '.join(refused)} — ask its owner to "
-            "grant you admin (POST /api/harness/runners/{id}/admins)",
-        )
-    _refuse_runners_that_cannot_hold(agent, runners.values())
+    # Per source, like the rules it writes: `auto` and the runners are gated on
+    # what changes in each (`_refuse_new_auto`, `_runners_for_routing`).
+    runners: dict = {}
+    for source in sources:
+        _refuse_new_auto(request, agent, source, actor, payload.turn_mode, current)
+        runners.update(_runners_for_routing(
+            request, agent, ids, current.get((source, actor), {}).get("ids", ())))
 
     with transaction.atomic():
         RunnerAssignment.objects.filter(agent=agent, actor=actor).exclude(source="").delete()

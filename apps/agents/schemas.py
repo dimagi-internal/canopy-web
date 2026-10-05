@@ -199,6 +199,16 @@ class AgentRunnerRuleIn(StrictModel):
     turn_mode: Literal["", "manual", "auto"] = ""
 
 
+class AgentRunnerRuleBodyIn(StrictModel):
+    """ONE rule, addressed by the URL (source, and `?actor=` for one person's):
+    the runners in preference order, whether only they may take the work, and
+    the turn mode. See PUT /agents/{slug}/runner-rules/{source}."""
+
+    runners: list[AgentRunnerRowIn] = Field(default_factory=list)
+    strict: bool = False
+    turn_mode: Literal["", "manual", "auto"] = ""
+
+
 class AgentRunnerRulesIn(StrictModel):
     """Wholesale replace of an agent's source rules. Scoped to non-empty-source
     rows: the default ordered list is the sibling endpoint's business, and neither

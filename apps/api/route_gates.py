@@ -91,11 +91,13 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_agent_runtime": ("member",),
     "list_agent_runners": ("member",),
     "get_agent_default_order": ("member",),
-    "replace_agent_runners": ("agent.work", "runner"),  # runners must be visible + holdable
+    "replace_agent_runners": ("agent.work", "runner-admin"),  # every ADDED runner administered + holdable
     "list_agent_runner_rules": ("member",),
-    "replace_agent_runner_rules": ("agent.work", "runner"),
+    "replace_agent_runner_rules": ("agent.work", "runner-admin"),  # every ADDED runner administered
     "list_agent_actor_routes": ("member",),
-    "set_agent_actor_route": ("agent.work", "runner-admin"),  # every named runner administered by caller
+    "set_agent_actor_route": ("agent.work", "runner-admin"),  # every ADDED runner administered by caller
+    "set_agent_runner_rule": ("agent.work", "runner-admin"),  # every ADDED runner administered by caller
+    "delete_agent_runner_rule": ("agent.work",),
     "delete_agent_actor_route": ("agent.work",),
     "list_syncs": ("member",),
     "create_sync": ("agent.work",),
