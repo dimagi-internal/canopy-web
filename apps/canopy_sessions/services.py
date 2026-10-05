@@ -555,6 +555,68 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
         return deleted
 
 
+#: Set on a session the runner report UN-ARCHIVED (harness.replace_reported_sessions)
+#: and cleared by the first transcript ship that follows. Until then nothing says
+#: whether the task was REOPENED or is a NEW task that reused a closed one's name.
+REOPENED_KEY = "reopened_unconfirmed"
+
+
+def fork_if_name_reused(session, transcript_id: str):
+    """The successor Session when a closed session's task NAME was reused by a
+    different conversation; None when this ship belongs to `session` after all.
+
+    The binding is keyed on the emdash task name, so a new task named like a
+    closed one is matched to the closed one's binding, and the report revives it.
+    `ensure_transcript_identity` would then drop the old conversation's rows and
+    fill the session with the new one — inheriting everything ELSE the session
+    carries too: its Slack thread, participants, turns. Observed 2026-10-05: a new
+    `slack` task in canopy-web revived the Sep 21 `slack` session, wiped its
+    history, and posted "carrying on in the agent's session" into the Slack thread
+    that had been told on Sep 22 the session was closed.
+
+    So a REVIVED session whose transcript then turns out to differ forks instead:
+    the binding moves to a new Session and the old one goes back to archived with
+    its rows and metadata intact. A revived session whose transcript matches was
+    genuinely reopened, and carries on. Only revived sessions fork — a live
+    session's transcript can change for ordinary reasons (`/clear`), and its Slack
+    thread or chat should follow it. A blank recorded id (legacy, or a transfer
+    that cleared it) is no evidence of a different conversation, so it does not
+    fork either.
+    """
+    if not transcript_id or not (session.metadata or {}).get(REOPENED_KEY):
+        return None
+    with transaction.atomic():
+        # Binding first, then session: the lock order replace_reported_sessions
+        # and ensure_transcript_identity already use.
+        binding = RunnerBinding.objects.select_for_update().filter(session=session).first()
+        if binding is None:
+            return None
+        old = Session.objects.select_for_update().get(pk=session.pk)
+        meta = dict(old.metadata or {})
+        if not meta.pop(REOPENED_KEY, None):
+            return None     # a concurrent ship already decided
+        old.metadata = meta
+        if not binding.transcript_id or binding.transcript_id == transcript_id:
+            old.save(update_fields=["metadata", "updated_at"])
+            return None
+        new_meta = {TRANSCRIPT_SOURCED: True} if meta.get(TRANSCRIPT_SOURCED) else {}
+        new = Session.objects.create(
+            agent=old.agent, project=old.project, workspace=old.workspace,
+            origin=old.origin, ordinal_scheme=old.ordinal_scheme,
+            title=(binding.session_key or old.title)[:200], metadata=new_meta,
+        )
+        old.status = Session.ARCHIVED
+        old.save(update_fields=["metadata", "status", "updated_at"])
+        binding.session = new
+        binding.transcript_id = transcript_id
+        binding.index_offset = 0
+        binding.transferred_at = binding.transferred_from = None
+        binding.pending_question = None
+        binding.pending_answer = None
+        binding.save()
+        return new
+
+
 def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
     """THE durable write path for a runner session's transcript. rows:
     [{"index","role","text"[,"content"]}] chronological.
