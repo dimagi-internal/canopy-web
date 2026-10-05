@@ -521,6 +521,19 @@ def test_a_slash_command_line_keeps_the_ask_on_every_later_edit(slack, linked, h
     assert "asked *hal*: draft the update" in slack.said("chat.update")[-1]["text"]
 
 
+def test_a_long_slash_command_ask_is_not_cut_off_by_the_status_edit(slack, linked, hal):
+    """The anchor is rewritten from the stored prefix on every edit, so a cap
+    there truncated the person's own words the moment the turn was queued."""
+    ask = "please look at the delivered orgs and " + "explain the resolution approach " * 120
+    command(f"hal {ask}")
+    edit = slack.said("chat.update")[-1]
+    assert ask.strip() in edit["text"]
+    sections = [b["text"]["text"] for b in edit.get("blocks") or [] if b.get("type") == "section"]
+    assert all(len(t) <= 3000 for t in sections)
+    if sections:
+        assert ask.strip() in "".join(sections)
+
+
 def test_slash_command_when_bot_is_not_in_the_channel(slack, linked, hal):
     slack.fail["chat.postMessage"] = "not_in_channel"
     resp = command("hal draft the update")

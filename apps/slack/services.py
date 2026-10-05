@@ -621,7 +621,7 @@ def _adoption_ref(inbound: Inbound) -> dict | None:
     if not inbound.adopt_ts:
         return None
     return {status.ORIGIN_REF_KEY: {"adopt_ts": inbound.adopt_ts,
-                                    "prefix": inbound.adopt_prefix[:300]}}
+                                    "prefix": inbound.adopt_prefix}}
 
 
 def _send(session: Session, created: bool, agent: Agent | None, principal: Principal, prompt: str,

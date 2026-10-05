@@ -323,14 +323,25 @@ def _when(ts) -> str:
 _reach_and_cloud = _ts.reach_and_cloud
 
 
+#: Slack's limit on one section block's text.
+_SECTION_MAX = 3000
+
+
 def _with_prefix(record: SlackTurnPost, text: str, blocks: list | None) -> tuple[str, list | None]:
     """The rendered line, under the words the adopted message already carried."""
     if not record.prefix:
         return text, blocks
     text = f"{record.prefix}\n{text}"
     if blocks:
-        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": record.prefix[:3000]}}, *blocks]
+        blocks = [*_sections(record.prefix), *blocks]
     return text, blocks
+
+
+def _sections(text: str) -> list[dict]:
+    """`text` as section blocks. One holds at most 3000 characters, so a long
+    ask takes several rather than being cut off mid-sentence."""
+    return [{"type": "section", "text": {"type": "mrkdwn", "text": text[i:i + _SECTION_MAX]}}
+            for i in range(0, len(text), _SECTION_MAX)]
 
 
 #: Where a turn carries what its Slack status line must remember from the
@@ -375,7 +386,7 @@ def post(turn: Turn) -> SlackTurnPost | None:
     try:
         with transaction.atomic():
             record = SlackTurnPost.objects.create(turn=turn, channel_id=channel,
-                                                  slack_ts=adopt_ts, prefix=prefix[:300])
+                                                  slack_ts=adopt_ts, prefix=prefix)
     except IntegrityError:
         sync_indicator(turn, dest)      # someone else owns the line; the state still moved
         return None
@@ -422,8 +433,7 @@ def refresh(turn: Turn) -> bool:
         return False
     try:
         client.update_message(installation.bot_token, channel=record.channel_id, ts=record.slack_ts,
-                              text=text, blocks=blocks or [
-                                  {"type": "section", "text": {"type": "mrkdwn", "text": text[:3000]}}])
+                              text=text, blocks=blocks or _sections(text))
     except Exception:  # noqa: BLE001 — a stale status line is cosmetic
         logger.exception("could not edit a Slack status line")
         return False
