@@ -167,6 +167,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ["Name the workspace's shared vault", 'Store or rotate its service account', "Jump to an agent's own vault"],
   },
   {
+    path: '/w/:workspace/settings/retention',
+    title: 'Retention',
+    audience: 'Workspace admin deciding how long conversation content is kept',
+    what: "How long this workspace keeps what was said: chat messages, attachments, and each turn's prompt, event log and raw transcript. Rules filter by kind (chat or turn), source (email, Slack, ace-web…), who started it (member, contact, agent, canopy) and agent, and keep matching content for N days or forever. This workspace's rules override those inherited from above. Any member can read the policy; admins change it, and every change is in the event log. A preview counts what the rules would delete without deleting it.",
+    actions: ['Add, edit or remove a retention rule', 'Preview what the rules would delete', 'See the rules inherited from above'],
+  },
+  {
     path: '/w/:workspace/settings/inbound',
     title: 'Inbound push',
     audience: 'Workspace owner setting up email-triggered agents',

@@ -22,6 +22,7 @@ import { ReviewPage } from './pages/ReviewPage'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
+import { WorkspaceRetentionPage } from './pages/WorkspaceRetentionPage'
 import { WorkspaceRunnersPage } from './pages/WorkspaceRunnersPage'
 import { WorkspaceAgentAccessPage } from './pages/WorkspaceAgentAccessPage'
 import { TopologyMapPage } from './pages/topology/TopologyMapPage'
@@ -244,6 +245,7 @@ export const routeTable: RouteObject[] = [
           { path: 'inbound', element: <InboundPushPage /> },
           { path: 'connected-apps', element: <ConnectedAppsPage /> },
           { path: 'secrets', element: <WorkspaceSecretsPage /> },
+          { path: 'retention', element: <WorkspaceRetentionPage /> },
           { path: 'topology', element: <TopologyMapPage /> },
           { path: 'topology/runners', element: <WorkspaceRunnersPage /> },
           { path: 'topology/agents', element: <WorkspaceAgentAccessPage /> },

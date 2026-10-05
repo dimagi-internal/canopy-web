@@ -143,14 +143,38 @@ The ledger projection needs no guard, because purging deletes the
   content. It records what was purged and when, which is the record you want
   after deleting things.
 
-Rules are managed in Django admin for now. A workspace-owner UI (Settings →
-Retention) and the REST/MCP route that comes with it are follow-ups. The model
-already carries `workspace`, so they need no migration.
+## Who sets the rules
+
+Rules are a **workspace setting**: `/w/:ws/settings/retention`, backed by
+`GET /api/workspaces/{slug}/retention` (the policy: own rules, inherited
+rules, whether the deployment enforces), `…/retention/preview` (counts per
+rule for this workspace's own chats and turns, deleting nothing), and
+`POST …/retention/rules`, `PUT|DELETE …/retention/rules/{id}`. Like every
+route, these are MCP tools too.
+
+- **Any member reads the policy.** It decides when their own conversations
+  go, so it is not hidden from them.
+- **`retention.manage` (admin and above) changes it**, by owner decision. That
+  is the tier that already reads every turn's content (`logs.read`), and
+  setting how long that content lives is part of running the workspace, not
+  holding its keys.
+- **Every change is written to the workspace event log** (`source=retention`)
+  with who made it and the rule before and after. A rule decides what gets
+  deleted, so who set it has to be on record.
+- A workspace edits only its own rules. Inherited ones show read-only, labelled
+  with where they come from. Because the nearest level wins, a division's
+  admin can override the org's rule for their division; the org's rule still
+  governs every division that sets none.
+- **Deployment-wide rules stay in Django admin.** They are the only rules that
+  reach shared transcripts (which have no workspace), and no workspace role
+  should set policy for every other tenant.
 
 ## Turning it on
 
-1. Add rules in `/admin/retention/retentionrule/`.
-2. `retention_sweep` (dry run) and read the counts.
+1. Add rules under Settings → Retention in each workspace, plus a
+   deployment-wide rule in Django admin if shared transcripts should expire.
+2. Use the page's Preview (or `retention_sweep` for the whole deployment) and
+   read the counts.
 3. Either `retention_sweep --apply` once, or set
    `CANOPY_RETENTION_ENFORCE=true` in the task definition and let the
    heartbeat drain it.
