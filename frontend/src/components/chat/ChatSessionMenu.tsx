@@ -28,6 +28,14 @@ import { ShareSecretForm } from "./ShareSecret";
  * something you do while reading a conversation, so they live here. The header
  * keeps what you read: the title and whether the agent is working.
  *
+ * "Load earlier"/"Load full session" joined them for the same reason (Jonathan,
+ * 2026-10-05): they used to be a strip PINNED above the transcript whenever the
+ * server held more history than was loaded, which is most of the time on an
+ * old session — a bar for a control that, once a session is a few days old,
+ * you almost never tap. The warning it can also carry (history unavailable —
+ * runner offline) stays inline on the transcript, because that one is a fact
+ * about what you're reading, not an action to take.
+ *
  * Ordered by how often each is used. Close is last and set apart, because it
  * is the one that cannot be undone (it deletes the emdash task).
  */
@@ -38,6 +46,12 @@ export function ChatSessionMenu({
   onToggleNotify,
   shareDisabledReason,
   onShare,
+  showLoadEarlier,
+  onLoadEarlier,
+  loadingEarlier,
+  showLoadFull,
+  onLoadFull,
+  loadingFull,
   onReset,
   resetting,
   onClose,
@@ -53,6 +67,14 @@ export function ChatSessionMenu({
   /** Why the session cannot take a message now; sharing to Slack IS a message. */
   shareDisabledReason?: string;
   onShare: (command: string) => Promise<void>;
+  /** The server holds more than is loaded — see `hasMoreBefore` in ChatPage. */
+  showLoadEarlier?: boolean;
+  onLoadEarlier?: () => void;
+  loadingEarlier?: boolean;
+  /** See `shouldShowLoadFull` in chatPageLogic.ts. */
+  showLoadFull?: boolean;
+  onLoadFull?: () => void;
+  loadingFull?: boolean;
   onReset: () => void;
   resetting: boolean;
   onClose: () => void;
@@ -119,6 +141,17 @@ export function ChatSessionMenu({
           <DropdownMenuItem inset disabled={resetting} onClick={onReset}>
             {resetting ? "Resetting…" : "Reset from transcript"}
           </DropdownMenuItem>
+          {(showLoadEarlier || showLoadFull) && <DropdownMenuSeparator />}
+          {showLoadEarlier && (
+            <DropdownMenuItem inset disabled={loadingEarlier} onClick={onLoadEarlier} data-testid="menu-load-earlier">
+              {loadingEarlier ? "Loading…" : "Load earlier messages"}
+            </DropdownMenuItem>
+          )}
+          {showLoadFull && (
+            <DropdownMenuItem inset disabled={loadingFull} onClick={onLoadFull} data-testid="menu-load-full">
+              {loadingFull ? "Loading…" : "Load full session"}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             inset

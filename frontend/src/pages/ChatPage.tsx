@@ -35,7 +35,9 @@ import {
   closeResultMessage,
 } from '@/components/chat/closeAction'
 import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
+import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
+import { getAgent } from '@/api/agents'
 import {
   findBoundRunner,
   isBoundRunnerOffline,
@@ -97,6 +99,10 @@ export function ChatPage() {
   const [resetting, setResetting] = useState(false)
   const [resetNote, setResetNote] = useState('')
   const [historyUnavailable, setHistoryUnavailable] = useState(false)
+  // Display name for the header's "with <agent>" tag — `meta.agent_slug` is
+  // the stable id, not something to show. A full agent list isn't otherwise
+  // loaded on this standalone route, so this fetches just the one.
+  const [agentName, setAgentName] = useState<string | null>(null)
 
   // Offline-runner placement banner state. The session payload only carries
   // `runner_name` (no runner id/liveness), so offline-ness is DERIVED by
@@ -169,6 +175,7 @@ export function ChatPage() {
     setMeta(null)
     setMetaError(null)
     setHistoryUnavailable(false)
+    setAgentName(null)
     getSession(id)
       .then((m) => {
         setMeta(m)
@@ -179,6 +186,21 @@ export function ChatPage() {
         setMetaError(err instanceof Error ? err.message : 'session not found')
       })
   }, [id])
+
+  // Resolve the agent's display name for the header tag, once `meta` names a
+  // slug. Not re-fetched per session switch beyond that — `agentSlug` is
+  // stable for the life of a session, so there is nothing to invalidate.
+  useEffect(() => {
+    const slug = meta?.agent_slug
+    if (!slug) return
+    let live = true
+    getAgent(slug)
+      .then((a) => { if (live) setAgentName(a.name) })
+      // Same fallback as every other agent/slug join in this app (e.g.
+      // ChatSessionsPanel's `agentName`): the slug reads fine on its own.
+      .catch(() => { if (live) setAgentName(slug) })
+    return () => { live = false }
+  }, [meta?.agent_slug])
 
   // Reset the placement-banner UI state on session switch, so a stale info/
   // error message doesn't leak across sessions. The "Continue on…" picker's
@@ -636,37 +658,17 @@ export function ChatPage() {
     historyUnavailable,
   })
 
-  // The slot is PINNED above the transcript, so render nothing at all when
-  // there's nothing to offer — otherwise every session carries an empty strip.
-  const hasHistoryControls = historyUnavailable || hasMoreBefore || showLoadFull
-
-  const historySlot = !hasHistoryControls ? undefined : (
+  // "Load earlier"/"Load full session" moved into the ⋯ menu (ChatSessionMenu,
+  // below) — Jonathan, 2026-10-05: they used to live here as a strip PINNED
+  // above the transcript whenever the server held more history, which on an
+  // old session is most of the time, for a control almost never tapped. Only
+  // the WARNING stays pinned: it's a fact about what's on screen, not an
+  // action, so it still renders nothing when there's nothing to say.
+  const historySlot = !historyUnavailable ? undefined : (
     <div className="flex flex-col items-center gap-1 border-b border-border py-2">
-      {historyUnavailable && (
-        <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-1.5 text-[12px] text-warning">
-          Full history unavailable — runner offline. Showing the latest messages.
-        </p>
-      )}
-      {hasMoreBefore && (
-        <button
-          type="button"
-          onClick={() => void loadEarlier()}
-          disabled={loadingEarlier}
-          className="rounded-md border border-border bg-card px-3 py-1 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50"
-        >
-          {loadingEarlier ? 'Loading…' : 'Load earlier'}
-        </button>
-      )}
-      {showLoadFull && (
-        <button
-          type="button"
-          onClick={() => void loadFull()}
-          disabled={loadingFull}
-          className="rounded-md border border-border bg-card px-3 py-1 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50"
-        >
-          {loadingFull ? 'Loading…' : 'Load full session'}
-        </button>
-      )}
+      <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-1.5 text-[12px] text-warning">
+        Full history unavailable — runner offline. Showing the latest messages.
+      </p>
     </div>
   )
 
@@ -722,13 +724,25 @@ export function ChatPage() {
     }
   }
 
+  // "with <agent>" / the project name / "no agent" — the same tag the Feed and
+  // the Sessions list show per row, missing from the one place you most want
+  // it: a session you're actually inside, with only its (often generic) title
+  // to say what it's for (Jonathan, 2026-10-05). Waits for `meta` so it never
+  // flashes "no agent" while the session is still loading.
+  const targetLabel = meta ? sessionTargetLabel(agentName, meta.project) : null
+
   return (
     <div className="flex h-full flex-col">
       {/* The header is for READING: the title and whether the agent is working.
           Actions live in ChatSessionMenu. Five buttons here once ran 145px past
           a phone screen and scrolled the whole page sideways. */}
       <div className="flex items-center gap-2 border-b border-border bg-background px-4 py-2">
-        <h1 className="min-w-0 truncate text-sm font-semibold text-foreground">{title}</h1>
+        <div className="min-w-0">
+          <h1 className="truncate text-sm font-semibold text-foreground">{title}</h1>
+          {targetLabel && (
+            <p className="truncate text-[11px] text-muted-foreground">{targetLabel}</p>
+          )}
+        </div>
         {/* Live agent activity beats the server's liveness fields when a hook has
             reported. `meta.running` derives from the runner's session report —
             emdash's own last_interacted_at, on a report cycle with a 120s window
@@ -782,6 +796,12 @@ export function ChatPage() {
                 await sendMessage(id, command, clientId)
                 socket.noteLocalSend(command, clientId)
               }}
+              showLoadEarlier={hasMoreBefore}
+              onLoadEarlier={() => void loadEarlier()}
+              loadingEarlier={loadingEarlier}
+              showLoadFull={showLoadFull}
+              onLoadFull={() => void loadFull()}
+              loadingFull={loadingFull}
               onReset={() => void resetFromTranscript()}
               resetting={resetting}
               onClose={() => void closeThisSession()}
