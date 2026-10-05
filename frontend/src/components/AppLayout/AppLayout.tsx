@@ -86,6 +86,16 @@ function UserMenu() {
             </div>
           </div>
 
+          {/* Your inbox across every workspace you belong to — personal, not a
+              workspace page, so it sits with your account rather than in the
+              nav. The installed phone app opens straight onto it. */}
+          <Link
+            to="/supervisor"
+            onClick={() => setOpen(false)}
+            className="block px-3 py-2 text-sm text-foreground-secondary hover:bg-muted"
+          >
+            Supervisor
+          </Link>
           <Link
             to="/settings"
             onClick={() => setOpen(false)}

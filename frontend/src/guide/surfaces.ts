@@ -58,7 +58,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/supervisor',
     title: 'Supervisor',
     audience: 'Someone who owns agents',
-    what: 'The cross-fleet "waiting on you" inbox, agent KPI cards and runner status. Spans every workspace, which is why it is not tenant-scoped.',
+    what: 'The cross-fleet "waiting on you" inbox, agent KPI cards and runner status. Spans every workspace, which is why it is not tenant-scoped — and why it lives in your account menu (under your name) rather than the workspace nav.',
     needsFirst: 'At least one agent you own.',
     actions: ['Answer a blocked agent', 'See which runners are online', 'Install it as a phone app and get pushed when an agent needs you'],
   },
