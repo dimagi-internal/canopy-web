@@ -2285,7 +2285,39 @@ def _run_teed(cmd: list[str], *, env: dict, timeout: float, keep: int = 4) -> tu
     return rc, list(tail)
 
 
+def ensure_updater_clone() -> bool:
+    """Make sure CANOPY_WEB_REPO_DIR is a clone: the auto-updater reads
+    update_runner.sh from it (`git show origin/main:...` in the cloud-init shim).
+
+    Nothing created it once the runner moved to its own clone (RUNNER_SRC_DIR):
+    cloud-init only makes the empty directory, so a box built after that logged
+    "no update_runner.sh in /opt/canopy-web yet; skipping" on every tick and
+    stayed on its build-day code while looking current enough — cloud-ec2-2,
+    2026-10-05. Only boxes old enough to have the clone could update. Reported as
+    the `updater_clone` check, so a box that cannot update says so."""
+    repo = pathlib.Path(CANOPY_WEB_REPO_DIR)
+    if (repo / ".git").is_dir():
+        _set_check("updater_clone", "ok", f"{repo}")
+        return True
+    if repo.exists() and any(repo.iterdir()):
+        _set_check("updater_clone", "fail",
+                   f"{repo} is not a clone and not empty — the auto-updater cannot run")
+        return False
+    repo.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(["git", "clone", "--quiet", CANOPY_WEB_REPO_URL, str(repo)],
+                       check=True, timeout=300)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: could not clone {CANOPY_WEB_REPO_URL} to {repo}: {exc}")
+        _set_check("updater_clone", "fail", f"no clone at {repo} ({exc}); this box will not auto-update")
+        return False
+    _log(f"cloned {CANOPY_WEB_REPO_URL} to {repo} for the auto-updater")
+    _set_check("updater_clone", "ok", f"{repo} (cloned)")
+    return True
+
+
 def _run_bootstrap() -> None:
+    ensure_updater_clone()
     if not sync_runner_src():
         _set_check("bootstrap", "fail", f"no runner clone at {RUNNER_SRC_DIR}; agent bootstrap skipped")
         return
