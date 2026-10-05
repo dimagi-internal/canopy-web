@@ -3828,9 +3828,9 @@ export interface paths {
         readonly get: operations["get_runner_order"];
         /**
          * Replace the workspace's default runner order
-         * @description Wholesale replace (index = rank). Workspace owners only: the order routes
-         *     agents in every workspace below this one too, and ownership is the only role
-         *     that flows down the tree. Every runner must be able to SERVE this workspace —
+         * @description Wholesale replace (index = rank). Workspace admins and owners
+         *     (`runners.route`): the order routes agents in every workspace below this one
+         *     too. Every runner must be able to SERVE this workspace —
          *     its owner a member (`runner_tenant_slugs`) — or the order would name a box the
          *     claim path refuses anyway; such a runner is a 422, as is an unknown or retired
          *     one.

@@ -41,7 +41,7 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``member`` — workspace membership (``permissions.READ``): a viewer passes.
 * the capabilities of ``apps/workspaces/permissions.py``: ``content.write``,
   ``agent.work``, ``session.drive``, ``events.write``, ``logs.read``,
-  ``members.manage``, ``integrations``, ``own``.
+  ``members.manage``, ``integrations``, ``runners.route``, ``own``.
 * ``agent-admin`` — ``Agent.is_admin`` (its owner, a workspace owner, an
   ``AgentAdmin``).
 * ``agent-owner`` — the agent's owner or a workspace owner (transfer, admin
@@ -64,7 +64,7 @@ from __future__ import annotations
 VOCABULARY: frozenset[str] = frozenset({
     "anonymous", "token-link", "authenticated", "self", "member",
     "content.write", "agent.work", "session.drive", "events.write", "logs.read",
-    "members.manage", "integrations", "own",
+    "members.manage", "integrations", "runners.route", "own",
     "agent-admin", "agent-owner", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host",
@@ -461,7 +461,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_shared_vault": ("own",),
     "set_shared_vault": ("own",),
     "get_runner_order": ("member",),
-    "set_runner_order": ("own",),  # routes agents in every division below too; each runner's owner must be a member (422 otherwise)
+    "set_runner_order": ("runners.route",),  # admin+; routes agents in every division below too; each runner's owner must be a member (422 otherwise)
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
 }

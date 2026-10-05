@@ -14,8 +14,8 @@ import type { FleetMap, MapAgent } from './topologyMap'
 // agent here with no order of its own follows it live — and so does every agent
 // in a workspace below that has no order of its own — so replacing a cloud box
 // is one edit here, not one per agent (2026-10-03). Repo turns route by it too.
-// Owners only: it reaches agents in every division below, and ownership is the
-// only role that flows down the tree (the server enforces the same).
+// Admins and owners (`runners.route`): it reaches agents in every division
+// below too (the server enforces the same).
 export function WorkspaceOrderPanel({
   workspace,
   map,
@@ -30,7 +30,7 @@ export function WorkspaceOrderPanel({
   onSelectAgent: (slug: string) => void
 }): JSX.Element {
   const { workspaces } = useWorkspace()
-  const canEdit = roleAllows(workspaces.find((w) => w.slug === workspace)?.role, 'own')
+  const canEdit = roleAllows(workspaces.find((w) => w.slug === workspace)?.role, 'runners.route')
   const [rows, setRows] = useState<RunnerOrderRowOut[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState('')
@@ -149,7 +149,7 @@ export function WorkspaceOrderPanel({
           </button>
         </div>
       )}
-      {!canEdit && <p className="m-0 text-[12px] text-muted-foreground">Only a workspace owner can change it.</p>}
+      {!canEdit && <p className="m-0 text-[12px] text-muted-foreground">Only a workspace admin or owner can change it.</p>}
       {error && <p className="m-0 text-[12px] text-destructive">{error}</p>}
 
       <section className="flex flex-col gap-1">
