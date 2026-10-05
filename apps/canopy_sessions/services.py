@@ -9,6 +9,7 @@ serializes a conversation, turn_index assignment never races within a session.
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 import re
 import time
 import uuid
@@ -27,6 +28,8 @@ from .models import Message, RunnerBinding, Session
 from canopy_transcript import BLOCK_STRIDE  # noqa: F401  (the ordinal scheme's one definition)
 
 from .transcript_noise import is_system_noise, scrub_nul
+
+logger = logging.getLogger(__name__)
 
 # Ledger kinds we surface as transcript rows, and the Message role each maps to.
 _ROLE_FOR_KIND = {
@@ -1521,6 +1524,41 @@ def claim_pending_attachments(session, message=None, user=None) -> list[dict]:
         {"id": str(a.id), "filename": a.filename, "content_type": a.content_type}
         for a in pending
     ]
+
+
+def sweep_orphaned_attachments(*, older_than: _dt.timedelta) -> int:
+    """Delete attachments that never got claimed by a send. Returns the count.
+
+    An unbound row (`sent_at IS NULL`) past `older_than` is one of two things:
+    the tab closed before sending, or a send raced the upload and landed before
+    `claim_pending_attachments` had a row to sweep (the composer now blocks
+    sending while an upload is in flight, see SendBox's `attachmentsUploading` —
+    this is cleanup for whatever a send already got past that gate before the
+    fix, plus the ordinary abandoned-tab case going forward). Either way it is
+    never getting bound; the bytes are deleted before the row, best-effort — a
+    row that outlives a failed byte-delete is recoverable later, a blob that
+    outlives its row is not.
+    """
+    from . import attachment_storage
+    from .models import Attachment
+
+    cutoff = timezone.now() - older_than
+    qs = Attachment.objects.filter(sent_at__isnull=True, created_at__lt=cutoff)
+    configured = attachment_storage.is_configured()
+    count = 0
+    for row in qs:
+        if configured:
+            try:
+                attachment_storage.delete(row.storage_key)
+            except Exception:
+                logger.warning(
+                    "sweep: could not delete bytes for attachment %s; deleting the row anyway",
+                    row.id, exc_info=True,
+                )
+        row.delete()
+        count += 1
+    return count
+
 
 # Which product a session BELONGS to, keyed off the marker its creator stamped.
 # `metadata.source` is already the canonical "who made this" marker — canopy's

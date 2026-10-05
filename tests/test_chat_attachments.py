@@ -352,3 +352,89 @@ def test_a_send_with_no_user_claims_nobodys_attachments():
     assert services.claim_pending_attachments(session, None, None) == []
     row.refresh_from_db()
     assert row.sent_at is None
+
+
+# --- sweeping orphans ---------------------------------------------------
+
+
+def _age(row, *, hours):
+    """Back-date `created_at`. `auto_now_add` refuses this on `.save()`, so it
+    goes through `.update()`, which bypasses the field's own machinery."""
+    import datetime as dt
+
+    from django.utils import timezone
+
+    Attachment.objects.filter(pk=row.pk).update(created_at=timezone.now() - dt.timedelta(hours=hours))
+    row.refresh_from_db()
+    return row
+
+
+def test_sweep_deletes_an_old_unclaimed_attachment_and_its_bytes():
+    import datetime as dt
+
+    from apps.canopy_sessions import services
+
+    user, _ws, session, _c = _ctx()
+    row = _age(_pending(session, user), hours=48)
+
+    with mock.patch(f"{STORAGE}.delete") as delete:
+        n = services.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
+
+    assert n == 1
+    delete.assert_called_once_with(row.storage_key)
+    assert not Attachment.objects.filter(pk=row.pk).exists()
+
+
+def test_sweep_leaves_a_fresh_unclaimed_attachment_alone():
+    """An upload mid-flight (or a send about to claim it) must not be swept out
+    from under it just because the cutoff math is close."""
+    import datetime as dt
+
+    from apps.canopy_sessions import services
+
+    user, _ws, session, _c = _ctx()
+    row = _pending(session, user)
+
+    with mock.patch(f"{STORAGE}.delete") as delete:
+        n = services.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
+
+    delete.assert_not_called()
+    assert n == 0
+    assert Attachment.objects.filter(pk=row.pk).exists()
+
+
+def test_sweep_never_touches_a_sent_attachment():
+    import datetime as dt
+
+    from apps.canopy_sessions import services
+
+    user, _ws, session, _c = _ctx()
+    message = Message.objects.create(
+        session=session, turn_index=0, role=Message.USER, plaintext="look", content={},
+    )
+    row = _age(_pending(session, user), hours=48)
+    Attachment.objects.filter(pk=row.pk).update(message=message, sent_at=dt.datetime.now(dt.UTC))
+
+    with mock.patch(f"{STORAGE}.delete") as delete:
+        n = services.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
+
+    delete.assert_not_called()
+    assert n == 0
+    assert Attachment.objects.filter(pk=row.pk).exists()
+
+
+def test_sweep_deletes_the_row_even_when_the_byte_delete_fails():
+    """A row that outlives a failed byte-delete is recoverable later (ops can
+    retry); a blob that outlives its row is not — so the row still goes."""
+    import datetime as dt
+
+    from apps.canopy_sessions import services
+
+    user, _ws, session, _c = _ctx()
+    row = _age(_pending(session, user), hours=48)
+
+    with mock.patch(f"{STORAGE}.delete", side_effect=RuntimeError("s3 is down")):
+        n = services.sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))
+
+    assert n == 1
+    assert not Attachment.objects.filter(pk=row.pk).exists()
