@@ -424,6 +424,77 @@ describe("SendBox — attaching files", () => {
     expect(screen.getByText(/10MB limit/)).toBeTruthy();
   });
 
+  it("blocks send while an attachment is still uploading", () => {
+    // A send issued in this window has nothing server-side to claim yet
+    // (services.claim_pending_attachments runs synchronously at send time) —
+    // the file lands moments later as an orphaned row, unattached to anything.
+    const onSend = vi.fn();
+    render(
+      <SendBox
+        {...attachProps}
+        onSend={onSend}
+        onAttach={vi.fn()}
+        attachments={[{ id: "a2", filename: "slow.png", uploading: true }]}
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "look at this" } });
+
+    expect(screen.getByRole("button", { name: /send/i }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("blocks Enter too while an attachment is still uploading", () => {
+    const onSend = vi.fn();
+    render(
+      <SendBox
+        {...attachProps}
+        onSend={onSend}
+        onAttach={vi.fn()}
+        attachments={[{ id: "a2", filename: "slow.png", uploading: true }]}
+      />,
+    );
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, { target: { value: "look at this" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("allows send again once every attachment has finished uploading", () => {
+    const onSend = vi.fn();
+    render(
+      <SendBox
+        {...attachProps}
+        onSend={onSend}
+        onAttach={vi.fn()}
+        attachments={[{ id: "a2", filename: "slow.png" }]}
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "look at this" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    expect(onSend).toHaveBeenCalled();
+  });
+
+  it("a failed upload does not block sending the rest of the message", () => {
+    // Unlike `uploading`, `error` means the upload is DONE (unsuccessfully) —
+    // nothing is pending, so there is nothing a send would race against.
+    const onSend = vi.fn();
+    render(
+      <SendBox
+        {...attachProps}
+        onSend={onSend}
+        onAttach={vi.fn()}
+        attachments={[{ id: "a3", filename: "huge.png", error: "file is larger than the 10MB limit" }]}
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "never mind the file" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+    expect(onSend).toHaveBeenCalled();
+  });
+
   it("does not offer attaching while sending is blocked", () => {
     // Attaching used to be gated on a teammate's draft lock, which no longer
     // exists; the one real reason to withhold it now is `disabledReason`.

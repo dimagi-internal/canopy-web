@@ -161,6 +161,13 @@ export function SendBox({
   // flushed when the draft exists (see useSessionSocket.sendChat).
   const body = localBody;
   const blocked = Boolean(disabledReason);
+  const staged = attachments ?? [];
+  // An upload still in flight has no server-side Attachment row yet, so a send
+  // issued in that window finds nothing to claim (services.claim_pending_attachments
+  // runs synchronously at send time, scoped to the sender) — the file lands
+  // moments later as an orphaned row, and the message that was supposed to
+  // carry it has none.
+  const attachmentsUploading = staged.some((a) => a.uploading);
   // Sending needs a draft (`chat.send` commits the SERVER's copy, so there must
   // be one) AND a live socket. The socket check is load-bearing now that the
   // composer clears optimistically: `send()` drops every frame but chat.stop
@@ -172,7 +179,8 @@ export function SendBox({
     connected &&
     draft != null &&
     body.trim().length > 0 &&
-    !blocked;
+    !blocked &&
+    !attachmentsUploading;
 
   const handleChange = (value: string) => {
     setLocalBody(value);
@@ -230,9 +238,9 @@ export function SendBox({
       ? "Type a message… (connecting…)"
       : isStreaming
         ? "Type a message — it will be sent after the current reply"
-        : "Type a message… (Enter to send, Shift+Enter for newline)";
-
-  const staged = attachments ?? [];
+        : attachmentsUploading
+          ? "Waiting for attachment to finish uploading…"
+          : "Type a message… (Enter to send, Shift+Enter for newline)";
 
   return (
     <div
