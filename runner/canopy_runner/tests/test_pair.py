@@ -57,8 +57,14 @@ class FakeClient:
 
 
 @pytest.fixture
-def env(tmp_path):
-    """A temp HOME with a PAT, plus a /Users root holding two sibling accounts."""
+def env(tmp_path, monkeypatch):
+    """A temp HOME with a PAT, plus a /Users root holding two sibling accounts.
+
+    The account is pinned to `newbie` too. `pair` names a runner after the real
+    account (the UID, deliberately not $USER), so without the pin these tests
+    pair as whoever runs them, and on the `acedimagi` account that collides with
+    the fake server's existing `acedimagi-mbp-cdp` (2026-10-05)."""
+    monkeypatch.setattr(pair, "macos_user", lambda: "newbie")
     home = tmp_path / "Users" / "newbie"
     (home / ".claude" / "canopy").mkdir(parents=True)
     tok = home / ".claude" / "canopy" / "workbench-token"
