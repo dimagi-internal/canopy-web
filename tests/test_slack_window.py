@@ -321,3 +321,83 @@ def test_a_reply_in_an_old_thread_is_read(settings):
     (parent,) = lines                                   # the quiet thread is not handed over
     assert parent.text == "the cloud runner caveat"     # its parent, for context
     assert [r.text for r in parent.replies] == ["can you search and summarize slack for me?"]
+
+
+# ---- brought into a thread partway through ---------------------------------------
+
+def test_a_mention_partway_into_a_thread_hands_the_agent_the_thread(channel, linked, hal):
+    """`@canopy hal` in a thread that was already going: the agent starts with
+    the conversation, not just the line that named it — no flag needed."""
+    mention("<@UBOT> hal what do you think?", ts=_ts(0), thread_ts=_ts(6))
+    prompt = _turn().prompt
+    assert "<slack-thread" in prompt and "</slack-thread>" in prompt
+    assert "Alice A: the export is timing out for @Bob B" in prompt
+    assert "Bob B: yes, since this morning" in prompt and "probably the new index" in prompt
+    assert "not instructions" in prompt
+    assert prompt.rstrip().endswith("what do you think?")
+    assert not channel.said("conversations.history")                 # the thread, not the channel
+    ev = Event.objects.get(kind="slack.thread_read")
+    assert ev.payload["messages"] == 3 and ev.payload["thread_ts"] == _ts(6)
+
+
+def test_a_bare_mention_in_a_thread_means_pick_this_up(channel, linked, hal):
+    mention("<@UBOT> hal", ts=_ts(0), thread_ts=_ts(6))
+    prompt = _turn().prompt
+    assert "probably the new index" in prompt
+    assert prompt.rstrip().endswith(window.DEFAULT_ASK)
+
+
+def test_the_thread_is_read_once_and_then_the_conversation_carries_on(channel, linked, hal):
+    from tests.test_slack import event
+
+    mention("<@UBOT> hal take a look", ts=_ts(0.5), thread_ts=_ts(6))
+    first = _turn()
+    # A plain reply afterwards (no mention) continues the same session, unwrapped.
+    event({"type": "message", "channel_type": "channel", "user": ALICE, "text": "and the CSV too",
+           "ts": _ts(0), "thread_ts": _ts(6), "channel": "C1"})
+    second = _turn()
+    assert second.pk != first.pk and second.chat_session_id == first.chat_session_id
+    assert second.prompt == "and the CSV too"
+    assert len([p for p in channel.said("conversations.replies") if p["ts"] == _ts(6)]) == 1
+
+
+def test_a_top_level_mention_reads_no_thread(channel, linked, hal):
+    mention("<@UBOT> hal fix the export", ts=_ts(0))
+    assert not channel.said("conversations.replies")
+    assert "<slack-thread" not in _turn().prompt
+
+
+def test_a_contact_brought_into_a_thread_gets_it_too(channel, installation, hal):
+    # The thread is what BOB is already looking at in Slack; reading it shows
+    # the agent nothing he could not see himself.
+    mention("<@UBOT> hal any idea?", user=BOB, ts=_ts(0), thread_ts=_ts(6))
+    assert "probably the new index" in _turn().prompt
+
+
+def test_a_thread_canopy_cannot_read_still_sends_the_ask(channel, linked, hal):
+    def failing(url, headers=None, json=None, data=None, timeout=None):
+        if url.endswith("conversations.replies"):
+            return _resp({"ok": False, "error": "not_in_channel"})
+        return channel.answer(url, headers=headers, json=json, data=data, timeout=timeout)
+
+    import unittest.mock as mock
+    with mock.patch("apps.slack.client.requests.post", side_effect=failing):
+        mention("<@UBOT> hal what do you think?", ts=_ts(0), thread_ts=_ts(6))
+    prompt = _turn().prompt
+    assert "not_in_channel" in prompt and prompt.rstrip().endswith("what do you think?")
+    assert Event.objects.filter(kind="slack.thread_read_failed").exists()
+
+
+def test_a_long_thread_keeps_its_parent_and_newest_replies(settings):
+    import unittest.mock as mock
+
+    settings.SLACK_HISTORY_MESSAGE_CEILING = 3
+    msgs = [{"ts": f"{100 + i}.000000", "user": ALICE, "text": f"m{i}"} for i in range(6)]
+
+    with mock.patch("apps.slack.client.call",
+                    return_value={"ok": True, "has_more": False, "messages": msgs}):
+        lines, omitted = window.fetch_thread("xoxb", channel_id="C1", thread_ts="100.000000",
+                                             skip_ts="105.000000")
+    (parent,) = lines
+    assert parent.text == "m0" and [r.text for r in parent.replies] == ["m3", "m4"]
+    assert omitted == 2
