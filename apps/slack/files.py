@@ -4,8 +4,12 @@ screenshot pasted into canopy-web (`origin_ref.attachments`, execute.fetch_attac
 
 Slack serves a file's bytes from `url_private_download` to a bearer of the bot
 token, and only with the `files:read` scope. Without that scope Slack does not
-refuse: it answers **200 with an HTML sign-in page**, so a status check alone
-would store a web page as `screenshot.png`. The content type is what decides.
+refuse: it REDIRECTS to the workspace's sign-in page (seen in production,
+2026-10-05: `302 → https://<team>.slack.com/?redir=/files-pri/…`, which then
+403s), or answers 200 with that page's HTML. So landing on a sign-in page
+(`?redir=`) is read as the missing scope whatever its status, and the content
+type decides the rest; either way the person is told the scope is what is
+missing, not that the download "failed".
 
 Each file is best-effort: one that cannot be fetched or is not allowed becomes a
 line in the prompt, never a failed message — the person still reaches the agent,
@@ -22,6 +26,15 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 TIMEOUT = 20
+
+#: What the person reads when Slack withholds a file: the fix, not the symptom.
+NO_SCOPE = ("Slack would not hand canopy the file — the canopy Slack app needs the files:read "
+            "permission: a workspace owner reconnects Slack from canopy's workspace settings")
+
+
+def _sign_in_page(resp) -> bool:
+    """Slack sent us to sign in rather than serving the file."""
+    return bool(resp.history) and "redir=" in str(resp.url or "")
 
 
 def _label(f: dict) -> str:
@@ -56,6 +69,10 @@ def store(installation, session, user, files) -> tuple[list[dict], list[str]]:
         try:
             resp = requests.get(url, headers={"Authorization": f"Bearer {installation.bot_token}"},
                                 timeout=TIMEOUT)
+            if _sign_in_page(resp):
+                logger.warning("slack file download landed on a sign-in page: %s", resp.url)
+                missed.append(f"{name} ({NO_SCOPE})")
+                continue
             resp.raise_for_status()
         except requests.RequestException as e:
             logger.warning("slack file download failed: %s", e)
@@ -65,8 +82,7 @@ def store(installation, session, user, files) -> tuple[list[dict], list[str]]:
         body = resp.content or b""
         if got not in allowed:
             # The no-scope case: a 200 sign-in page. Say what fixes it.
-            missed.append(f"{name} (Slack would not hand canopy the file — the app may need the "
-                          "files:read permission and a re-install)")
+            missed.append(f"{name} ({NO_SCOPE})")
             continue
         if not body or len(body) > limit:
             missed.append(f"{name} (empty or over the {limit // (1024 * 1024)}MB limit)")

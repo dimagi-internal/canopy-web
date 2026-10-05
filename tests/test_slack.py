@@ -766,7 +766,8 @@ def _file_reply(text="here's what I see", files=(SHOT,)):
 
 
 def _download(content_type="image/png", body=PNG):
-    resp = mock.Mock(status_code=200, headers={"Content-Type": content_type}, content=body)
+    resp = mock.Mock(status_code=200, headers={"Content-Type": content_type}, content=body,
+                     history=[], url=SHOT["url_private_download"])
     resp.raise_for_status = lambda: None
     return mock.patch("apps.slack.files.requests.get", return_value=resp)
 
@@ -818,6 +819,26 @@ def test_without_the_files_scope_slack_answers_a_web_page_and_the_agent_is_told(
     turn = Turn.objects.order_by("created_at").last()
     assert not Attachment.objects.exists() and "attachments" not in (turn.origin_ref or {})
     assert turn.prompt.startswith("here's what I see") and "files:read" in turn.prompt
+
+
+def test_without_the_files_scope_slack_redirects_to_sign_in_and_the_agent_is_told(slack, linked, hal, bucket):
+    """What Slack actually does in production (2026-10-05) without `files:read`:
+    a redirect to the workspace's sign-in page, which then 403s. That read as a
+    generic "could not be downloaded", hiding the one fix — the scope."""
+    from apps.canopy_sessions.models import Attachment
+
+    mention("hal first")
+    import requests as _requests
+
+    resp = mock.Mock(status_code=403, headers={"Content-Type": "text/html"}, content=b"<html/>",
+                     url="https://acme.slack.com/?redir=%2Ffiles-pri%2FT1-F1%2Fdownload%2Fimage.png",
+                     history=[mock.Mock(status_code=302)])
+    resp.raise_for_status = mock.Mock(side_effect=_requests.HTTPError("403 Client Error: Forbidden"))
+    with mock.patch("apps.slack.files.requests.get", return_value=resp):
+        _file_reply()
+    turn = Turn.objects.order_by("created_at").last()
+    assert not Attachment.objects.exists()
+    assert "files:read" in turn.prompt and "could not be downloaded" not in turn.prompt
 
 
 def test_a_file_type_canopy_does_not_accept_is_named_not_downloaded(slack, linked, hal, bucket):
