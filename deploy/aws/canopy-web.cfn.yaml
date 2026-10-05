@@ -326,8 +326,18 @@ Resources:
   #
   # APPLIED WITH ADMIN CREDENTIALS, like WellKnownListenerRule below — the deploy
   # role cannot write listener rules.
+  #
+  # Retain, because the rule was IMPORTED into the stack and an import requires a
+  # DeletionPolicy — and this template must match it, or every deploy's change
+  # set "modifies" the rule and the preflight refuses it. The import was needed
+  # because a deploy of a commit from BEFORE this rule existed ran after the
+  # admin apply (2026-10-05 22:01): CloudFormation dropped the rule from the
+  # stack, its delete failed (the deploy role cannot delete rules), and the live
+  # rule was orphaned — so the next deploy asked to CREATE it, and was refused.
   HostListenerRule:
     Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       ListenerArn: !Ref HttpsListenerArn
       Priority: 10
