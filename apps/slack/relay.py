@@ -368,18 +368,12 @@ def _norm(text: str) -> str:
     return " ".join((text or "").split())
 
 
-#: The note the runner appends to a prompt that carries attachments
-#: (`canopy_runner.execute.prompt_with_attachments`). The transcript records what
-#: was TYPED, so the person's message comes back with it attached — and, as
-#: stored, without the line break before it.
-_ATTACHMENT_NOTE = re.compile(r"The user attached the following files?\. Read (?:it|them) with the Read tool.*\Z",
-                              re.S)
-
-
 def _asked(text: str) -> str:
     """A human message as the ask it was: whitespace-normalised, with the runner's
     attachment note removed, so it matches the turn prompt it was typed from."""
-    return _norm(_ATTACHMENT_NOTE.sub("", text or ""))
+    from apps.canopy_sessions.authorship import without_attachment_note
+
+    return _norm(without_attachment_note(text))
 
 
 def on_transcript(session, rows) -> None:

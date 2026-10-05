@@ -902,7 +902,7 @@ class _MatchPool:
         ALL whitespace ignored (see `_squash`) — or None. Removes it from the
         pool."""
         self._load()
-        target = _squash(text)
+        target = _squash(authorship.without_attachment_note(text))
         for i, turn in enumerate(self._candidates):
             if _squash(turn.prompt or "") == target:
                 return self._candidates.pop(i)
