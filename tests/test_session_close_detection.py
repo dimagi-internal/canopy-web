@@ -131,3 +131,79 @@ def test_a_reply_to_a_closed_shared_session_is_refused(
 def test_a_quiet_laptop_never_posts_a_closed_notice(slack, shared, runner, ws):
     assert not any("was closed" in p["text"] for p in slack.said("chat.postMessage"))
     assert RunnerBinding.objects.get(session=shared).missed_reports == 0
+
+
+# ---- a new task that reuses a closed one's NAME --------------------------------
+#
+# 2026-10-05: a new emdash task called `slack` in canopy-web matched the binding of
+# the Sep 21 `slack` session (bound to a Slack thread, closed Sep 22). The report
+# revived it, the new transcript replaced its history, and the thread that had been
+# told "closed" was sent "carrying on directly in the agent's session".
+
+def _ship(runner, alice, session_id, transcript_id, text, capture, index=64):
+    from django.test import Client
+
+    c = Client()
+    c.force_login(alice)
+    with capture(execute=True):
+        resp = c.post(f"/api/harness/runners/{runner.id}/session-stream", data={
+            "session_id": str(session_id), "transcript_id": transcript_id,
+            "events": [{"kind": "user", "seq": 0, "index": index, "payload": {"text": text}}],
+        }, content_type="application/json")
+    assert resp.status_code == 200, resp.content
+
+
+@pytest.fixture
+def closed_shared(slack, shared, runner, ws, alice, django_capture_on_commit_callbacks):
+    Runner.objects.filter(pk=runner.pk).update(owner=alice)
+    runner.refresh_from_db()
+    _ship(runner, alice, shared.id, "transcript-sep21", "build share to slack",
+          django_capture_on_commit_callbacks)
+    _close(runner, ws, django_capture_on_commit_callbacks)
+    shared.refresh_from_db()
+    assert shared.status == Session.ARCHIVED
+    return shared
+
+
+def test_a_new_task_reusing_a_closed_name_gets_its_own_session(
+        slack, closed_shared, runner, ws, alice, django_capture_on_commit_callbacks):
+    from apps.canopy_sessions.models import Message
+
+    replace_reported_sessions(runner, ws, [_reported("slack")], complete=True)
+    _ship(runner, alice, closed_shared.id, "transcript-oct05", "a different conversation",
+          django_capture_on_commit_callbacks)
+
+    closed_shared.refresh_from_db()
+    assert closed_shared.status == Session.ARCHIVED
+    assert closed_shared.metadata.get("slack_thread_ts") == POSTED_TS
+    assert list(Message.objects.filter(session=closed_shared)
+                .values_list("plaintext", flat=True)) == ["build share to slack"]
+
+    successor = RunnerBinding.objects.get(session_key="slack").session
+    assert successor.pk != closed_shared.pk and successor.status == Session.ACTIVE
+    assert "slack_thread_ts" not in successor.metadata
+    assert list(Message.objects.filter(session=successor)
+                .values_list("plaintext", flat=True)) == ["a different conversation"]
+    # And the closed thread hears nothing about the new conversation.
+    assert not any("carrying on" in p["text"] for p in slack.said("chat.postMessage"))
+
+
+def test_a_reopened_task_keeps_its_session(
+        slack, closed_shared, runner, ws, alice, django_capture_on_commit_callbacks):
+    replace_reported_sessions(runner, ws, [_reported("slack")], complete=True)
+    _ship(runner, alice, closed_shared.id, "transcript-sep21", "back again",
+          django_capture_on_commit_callbacks, index=128)
+    closed_shared.refresh_from_db()
+    assert closed_shared.status == Session.ACTIVE
+    assert RunnerBinding.objects.get(session_key="slack").session_id == closed_shared.pk
+    assert "reopened_unconfirmed" not in closed_shared.metadata
+
+
+def test_a_live_sessions_new_transcript_does_not_fork(
+        slack, shared, runner, ws, alice, django_capture_on_commit_callbacks):
+    """`/clear` in a live task changes its transcript; the thread should follow it."""
+    Runner.objects.filter(pk=runner.pk).update(owner=alice)
+    runner.refresh_from_db()
+    _ship(runner, alice, shared.id, "before-clear", "hi", django_capture_on_commit_callbacks)
+    _ship(runner, alice, shared.id, "after-clear", "hi again", django_capture_on_commit_callbacks)
+    assert RunnerBinding.objects.get(session_key="slack").session_id == shared.pk

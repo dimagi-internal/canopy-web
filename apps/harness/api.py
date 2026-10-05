@@ -1331,6 +1331,10 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # rows already held, those rows are a different conversation's and would
         # interleave with (or silently swallow) this one. Dropping them is safe
         # because a mismatch is exactly when the runner ships the full history.
+        # Unless a closed session's NAME was reused, in which case these rows are a
+        # new conversation's and go to a new session, leaving the old one whole.
+        if chat_services.fork_if_name_reused(binding.session, payload.transcript_id):
+            binding = RunnerBinding.objects.select_related("session").get(pk=binding.pk)
         chat_services.ensure_transcript_identity(binding.session, payload.transcript_id)
         # Not "was this session discovered in emdash?" — where a conversation
         # started says nothing about where its record belongs. A phone-created chat
@@ -1388,7 +1392,7 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # gate that keeps that from also broadcasting every session in the fleet to
         # session groups no client has joined.
         return {"count": 0}
-    sgroup = groups.session_group(payload.session_id)
+    sgroup = groups.session_group(binding.session_id)
     n = 0
     from apps.canopy_sessions.transcript_noise import is_system_noise
 
@@ -1542,6 +1546,7 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
     if binding is None:
         raise HttpError(404, "session not bound to this runner")
     session = Session.objects.get(pk=payload.session_id)
+    session = chat_services.fork_if_name_reused(session, payload.transcript_id) or session
     # Same guard as the live path: history from a different transcript replaces
     # what is held rather than merging into it. Idempotent across chunks — the
     # first one records the id, so the rest of the ship matches and writes through.

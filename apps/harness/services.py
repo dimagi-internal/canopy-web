@@ -2997,11 +2997,20 @@ def replace_reported_sessions(
     # Un-archive anything re-reported as open. The DERIVED staleness half of
     # `state=active` recomputes on every read, but this WRITTEN half does not heal
     # itself — without this, a task you reopened in emdash stays archived forever.
+    #
+    # A revival is also flagged, because the report cannot tell a REOPENED task
+    # from a new task that reused a closed one's name — only the transcript the
+    # next ship carries can (canopy_sessions.services.fork_if_name_reused).
     if touched_ids:
-        Session.objects.filter(
-            runner_binding__id__in=touched_ids,
-            status=Session.ARCHIVED,
-        ).update(status=Session.ACTIVE)
+        from apps.canopy_sessions.services import REOPENED_KEY
+
+        with transaction.atomic():
+            for revived in Session.objects.select_for_update().filter(
+                runner_binding__id__in=touched_ids, status=Session.ARCHIVED,
+            ):
+                revived.metadata = {**(revived.metadata or {}), REOPENED_KEY: True}
+                revived.status = Session.ACTIVE
+                revived.save(update_fields=["metadata", "status", "updated_at"])
 
     # Apply the closing signal. `now_keys` wins over `archived`: emdash task names are
     # not unique, so an open task must never be retired by an archived namesake.
