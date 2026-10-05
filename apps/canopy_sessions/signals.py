@@ -27,10 +27,15 @@ def _project_messages(sender, turn, rows, **kwargs):
     # The turn moved. Same signal, same reason as the Slack status line: a
     # `status` row IS the transition, and re-deriving is cheap next to the
     # append that just happened.
+    #
+    # The session's LATEST turn, not necessarily this one: when the previous
+    # message ends with a follow-up queued behind it, the follow-up is what the
+    # page is waiting on, and pushing the finished turn's "done" would drop the
+    # bubble over a reply that is still coming (#1147).
     if any(r.kind == "status" for r in rows):
-        from .status_feed import publish_for_turn
+        from .status_feed import publish_for_session
 
-        publish_for_turn(turn)
+        publish_for_session(turn.chat_session_id)
 
 
 @receiver(turn_status_changed, dispatch_uid="chat_turn_status_enqueued")

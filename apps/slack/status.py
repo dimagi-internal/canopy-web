@@ -148,7 +148,15 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     agent = f"`{st.agent_slug}`" if st.agent_slug else "the agent"
     runner = f"*{st.claimed_by}*" if st.claimed_by else "a runner"
     button = None
-    if st.state == ts.PICKING_UP and st.pinned:
+    if st.state == ts.QUEUED_BEHIND and st.behind == "session":
+        # Not "picking this up": the claim will not take it until the turn
+        # ahead ends, and a follow-up that says so looked lost (#1147).
+        line = (f":hourglass: Queued — {agent} is still finishing the previous message in this "
+                f"thread on {_runner_names(st.runners)}, and this one runs next.")
+    elif st.state == ts.QUEUED_BEHIND:
+        line = (f":hourglass: Queued — {agent} is busy with another turn on "
+                f"{_runner_names(st.runners)}; this one runs when it finishes.")
+    elif st.state == ts.PICKING_UP and st.pinned:
         line = f":hourglass_flowing_sand: Sent to *{st.runners[0]}* — {agent} will pick this up there."
     elif st.state == ts.PICKING_UP:
         line = f":hourglass_flowing_sand: {agent} is picking this up on {_runner_names(st.runners)}."

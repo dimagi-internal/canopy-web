@@ -186,7 +186,7 @@ export interface SessionMenu {
  * any of it and simply showed an empty panel.
  */
 export interface TurnStatus {
-  /** `picking_up` | `waiting_runner` | `unrouted` | `working` | `blocked`
+  /** `picking_up` | `queued_behind` | `waiting_runner` | `unrouted` | `working` | `blocked`
    *  | `paused` | `done` | `cancelled` | `missed` | `failed` | `lost`.
    *
    *  Deliberately a string rather than a union: an older client meeting a
@@ -212,6 +212,10 @@ export interface TurnStatus {
   menu_pending: boolean;
   /** Why a `failed` turn failed, in the runner's words. Null for every other
    *  state. Absent on an older server. */
+  /** For `queued_behind`: what it waits behind — `session` (the previous
+   *  message in this conversation) or `agent` (another turn of the same
+   *  agent). Absent on an older server. */
+  behind?: "session" | "agent" | null;
   detail?: string | null;
   /** When a settled turn finished — lets the kit drop a failure the
    *  conversation has since moved past. Absent on an older server. */

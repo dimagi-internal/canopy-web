@@ -95,6 +95,58 @@ def test_queued_with_no_reach_computed_falls_to_unrouted_not_a_crash():
     assert st.state == ts.UNROUTED
 
 
+# -- queued behind the turn ahead (canopy-web#1147) ---------------------------
+#
+# A live runner WILL take these, but `claim_next_turn` holds them until the turn
+# ahead ends. "Picking this up" made a follow-up sent mid-turn look lost.
+
+def _ahead(*, holder="acedimagi-mbp-cdp", session_id=None):
+    return types.SimpleNamespace(claimed_by_id=1, claimed_by=_Runner(holder),
+                                 chat_session_id=session_id)
+
+
+def test_queued_behind_a_busy_session_names_the_box_running_the_previous_message():
+    t = _turn(Turn.QUEUED)
+    t.chat_session_id = 7
+    t.chat_session = types.SimpleNamespace(agent_id=1, agent=types.SimpleNamespace(slug="ace"))
+    reach = _reach("live", [_Runner("other-box")])
+    reach.behind = _ahead(session_id=7)
+    st = ts.derive(t, reach=reach)
+    assert st.state == ts.QUEUED_BEHIND
+    assert st.behind == "session"
+    assert st.runners == ("acedimagi-mbp-cdp",)
+    assert st.agent_slug == "ace"
+    # It resolves itself: still going, nothing for a person to do.
+    assert st.pending and not st.stuck and not st.settled
+    assert st.as_dict()["behind"] == "session"
+
+
+def test_queued_behind_a_busy_agent_says_agent_not_session():
+    reach = _reach("live", [_Runner("jj-mbp")])
+    reach.behind = _ahead(holder="jj-mbp")
+    st = ts.derive(_turn(Turn.QUEUED, agent_slug="hal"), reach=reach)
+    assert st.state == ts.QUEUED_BEHIND
+    assert st.behind == "agent"
+    assert st.runners == ("jj-mbp",)
+    assert not st.stuck
+
+
+def test_a_live_runner_with_nothing_ahead_is_still_picking_up():
+    reach = _reach("live", [_Runner("jj-mbp")])
+    reach.behind = None
+    st = ts.derive(_turn(Turn.QUEUED), reach=reach)
+    assert st.state == ts.PICKING_UP and st.behind is None
+
+
+def test_an_offline_runner_outranks_the_turn_ahead():
+    """Waiting behind a turn resolves itself; waiting on a closed laptop does
+    not. The state that needs a person must not be hidden by one that doesn't."""
+    reach = _reach("offline", [_Runner("jj-mbp")])
+    reach.behind = _ahead()
+    st = ts.derive(_turn(Turn.QUEUED), reach=reach)
+    assert st.state == ts.WAITING_RUNNER and st.stuck
+
+
 # -- claimed, and the one state the turn itself gets wrong ---------------------
 
 def test_claimed_is_working_and_names_its_holder():
@@ -224,6 +276,7 @@ def test_as_dict_is_flat_json_native_and_carries_the_derived_questions():
         "finished_at": None,
         # Derived, not re-derived by four clients that could disagree.
         "requires": [],
+        "behind": None,
         "settled": False,
         "stuck": True,
     }
@@ -233,7 +286,7 @@ def test_state_sets_partition_every_state():
     """A new state added to the module must be classified, or a client asking
     'is this still going' silently answers no for it."""
     all_states = {
-        ts.PICKING_UP, ts.WAITING_RUNNER, ts.UNROUTED, ts.WORKING, ts.BLOCKED,
+        ts.PICKING_UP, ts.QUEUED_BEHIND, ts.WAITING_RUNNER, ts.UNROUTED, ts.WORKING, ts.BLOCKED,
         ts.PAUSED, ts.DONE, ts.CANCELLED, ts.MISSED, ts.FAILED, ts.LOST,
     }
     assert ts.PENDING | ts.TERMINAL == all_states

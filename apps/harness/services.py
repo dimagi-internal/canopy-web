@@ -883,6 +883,65 @@ def _repo_order_allows(runner: Runner, turn: Turn, orders: dict, now) -> bool:
 EXECUTING = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
 
 
+def busy_agent_ids():
+    """Agents with an executing turn — `claim_next_turn` claims none of their
+    queued turns. A subquery, not a list.
+
+    `agent__isnull=False` is load-bearing: a PROJECT turn has agent_id NULL, so
+    without it one executing repo turn injected a NULL into the IN-list and
+    every queued AGENT turn evaluated `agent_id IN (…, NULL)` -> NULL -> got
+    wrongly excluded. Not "that agent is busy": the runner claimed NOTHING AT
+    ALL while any project turn ran. Observed on the cloud runner — a drill sat
+    QUEUED and pinned for 40+ minutes while the runner was online and
+    heartbeating and POST /claim returned 204, because two canopy-web project
+    turns happened to be executing.
+    """
+    return Turn.objects.filter(status__in=EXECUTING, agent__isnull=False).values("agent_id")
+
+
+def busy_session_ids():
+    """Chat sessions with an executing turn. A session serializes like an agent:
+    never claim a session that already has an executing turn
+    (one_executing_turn_per_session would reject the claim anyway).
+
+    `chat_session__isnull=False` is load-bearing for the same reason as
+    `busy_agent_ids`: executing agent/project turns (chat_session_id NULL) would
+    inject a NULL into the IN-list, and every queued SESSION turn would then
+    evaluate `id IN (…, NULL)` -> NULL -> get wrongly excluded whenever any
+    agent turn is running.
+    """
+    return Turn.objects.filter(status__in=EXECUTING, chat_session__isnull=False).values("chat_session_id")
+
+
+def blocking_turn(turn: Turn) -> Turn | None:
+    """The executing turn this QUEUED turn is waiting behind, or None.
+
+    The question `claim_next_turn` answers with `busy_session_ids` /
+    `busy_agent_ids`, asked of one turn — so "queued behind the current turn"
+    in the status line and "not claimable" in the claim cannot drift apart
+    (`tests/test_turn_status.py` pins the two together). Its session's executing
+    turn first: that is the one a person can see ("the previous message in this
+    thread").
+    """
+    if turn.status != Turn.QUEUED:
+        return None
+    executing = Turn.objects.filter(status__in=EXECUTING).select_related("claimed_by")
+    if turn.chat_session_id:
+        held = executing.filter(chat_session_id=turn.chat_session_id).first()
+        if held is not None:
+            return held
+    if turn.agent_id:
+        return executing.filter(agent_id=turn.agent_id).first()
+    return None
+    qs = Turn.objects.select_related("claimed_by")
+    if turn.chat_session_id and Turn.objects.filter(
+            pk=turn.pk, chat_session_id__in=busy_session_ids()).exists():
+        return qs.filter(status__in=EXECUTING, chat_session_id=turn.chat_session_id).first()
+    if turn.agent_id and Turn.objects.filter(pk=turn.pk, agent_id__in=busy_agent_ids()).exists():
+        return qs.filter(status__in=EXECUTING, agent_id=turn.agent_id).first()
+    return None
+
+
 def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None) -> Q:
     """Which queued turns this runner can TARGET under directed routing (spec
     2026-07-24): agents via RunnerAssignment (the one source of truth —
@@ -1153,6 +1212,11 @@ class Reach:
     #: caller's turn) must not be blamed on ZDR — that sends its owner to the
     #: wrong fix.
     blocked_by_requirements: bool = False
+    #: The executing turn this one waits behind (`blocking_turn`): its session's
+    #: previous message, or its agent's current turn. A LIVE runner will take it,
+    #: but not until that turn ends — "picking this up" would be a promise the
+    #: claim is not keeping (canopy-web#1147).
+    behind: Turn | None = None
 
 
 def turn_reach(turn: Turn) -> Reach:
@@ -1182,7 +1246,7 @@ def turn_reach(turn: Turn) -> Reach:
     covering = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities).items() if pks]
     live = [r for r in covering if r.live_status == Runner.ONLINE]
     if live:
-        return Reach(LIVE, live)
+        return Reach(LIVE, live, behind=blocking_turn(turn))
 
     def blocked_by_requirements(*, live_only: bool) -> bool:
         # Would a runner take it if the conversation required nothing? Only
@@ -1360,30 +1424,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # prefer_local turns fall to cloud only via the Phase 2 router policy;
         # Phase 0 has no cloud runners, so keep the simple rule: cloud never
         # takes local_only.
-    # `agent__isnull=False` is load-bearing for exactly the reason spelled out for
-    # busy_sessions below — the same trap, which was fixed there and missed here.
-    # A PROJECT turn has agent_id NULL, so without this filter one executing repo
-    # turn injected a NULL into this IN-list and every queued AGENT turn evaluated
-    # `agent_id IN (…, NULL)` -> NULL -> got wrongly excluded. Not "that agent is
-    # busy": the runner claimed NOTHING AT ALL while any project turn ran.
-    # Observed on the cloud runner — a drill sat QUEUED and pinned for 40+ minutes
-    # while the runner was online and heartbeating and POST /claim returned 204,
-    # because two canopy-web project turns happened to be executing.
-    busy_agents = Turn.objects.filter(
-        status__in=EXECUTING, agent__isnull=False
-    ).values("agent_id")
-    # A session serializes like an agent: never claim a session that already has
-    # an executing turn (one_executing_turn_per_session would reject the claim
-    # anyway; this avoids the wasted attempt). The chat_session__isnull=False filter
-    # is load-bearing: without it, executing agent/project turns (chat_session_id
-    # NULL) would inject a NULL into this IN-list, and every queued SESSION turn
-    # would then evaluate `id IN (…, NULL)` -> NULL -> get wrongly excluded whenever
-    # any agent turn is running. (Agent/project turns are already protected on the
-    # exclude's LEFT side by Django's `AND chat_session_id IS NOT NULL` negation
-    # guard — that's a separate mechanism from this filter.)
-    busy_sessions = Turn.objects.filter(
-        status__in=EXECUTING, chat_session__isnull=False
-    ).values("chat_session_id")
+    # Both busy sets live in `busy_agent_ids` / `busy_session_ids` (with why
+    # their null filters are load-bearing), shared with `blocking_turn` so the
+    # status line's "queued behind the current turn" is this exclusion, not a
+    # second guess at it.
+    busy_agents = busy_agent_ids()
+    busy_sessions = busy_session_ids()
     # Tenant boundary. capabilities is a caller-supplied routing hint declared at
     # pairing and never validated (b4f5ead, Critical); the workspace is the actual
     # gate, and the two INTERSECT — one never substitutes for the other.

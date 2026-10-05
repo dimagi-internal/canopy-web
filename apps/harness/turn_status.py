@@ -39,6 +39,12 @@ from .models import Turn
 #: Queued, and a live runner is going to take it. The only queued state that
 #: resolves itself.
 PICKING_UP = "picking_up"
+#: Queued, a live runner will take it — but not until the turn ahead of it ends:
+#: its conversation's previous message, or its agent's current turn, is still
+#: executing (`services.blocking_turn`, the claim's own busy rule). Resolves on
+#: its own, like PICKING_UP; saying "picking this up" instead made a follow-up
+#: sent mid-turn look lost (canopy-web#1147).
+QUEUED_BEHIND = "queued_behind"
 #: Queued, its runner is offline. Resolves when a human opens the laptop — or
 #: when the ask is moved to a runner that is up.
 WAITING_RUNNER = "waiting_runner"
@@ -65,7 +71,7 @@ TERMINAL = frozenset({DONE, CANCELLED, MISSED, FAILED, LOST})
 #: The person who asked is owed something and has not got it yet. The union a
 #: client turns into "still going" — the distinction between the members is for
 #: the words, not for whether to show them.
-PENDING = frozenset({PICKING_UP, WAITING_RUNNER, UNROUTED, WORKING, BLOCKED, PAUSED})
+PENDING = frozenset({PICKING_UP, QUEUED_BEHIND, WAITING_RUNNER, UNROUTED, WORKING, BLOCKED, PAUSED})
 #: Nothing is moving and only a person can change that.
 STUCK = frozenset({WAITING_RUNNER, UNROUTED, BLOCKED, PAUSED})
 #: A failure reason is one sentence on a chat line, not a traceback.
@@ -122,6 +128,9 @@ class TurnStatus:
     #: while QUEUED, and only when the requirement is what blocks it — some
     #: runner would take the turn without it (`Reach.blocked_by_requirements`).
     requires: tuple[str, ...] = ()
+    #: For QUEUED_BEHIND: what holds it — "session" (the previous message in
+    #: this conversation) or "agent" (another turn of the same agent).
+    behind: str | None = None
 
     @property
     def settled(self) -> bool:
@@ -153,6 +162,7 @@ class TurnStatus:
             "detail": self.detail,
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "requires": list(self.requires),
+            "behind": self.behind,
             "settled": self.settled,
             "stuck": self.stuck,
         }
@@ -198,8 +208,19 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) ->
     claimed_by = turn.claimed_by.name if turn.claimed_by_id else None
 
     pinned = False
+    behind = None
+    ahead = getattr(reach, "behind", None)
     if turn.status == Turn.QUEUED:
-        if turn.pinned_runner_id and reach is not None and reach.kind == harness.LIVE:
+        if ahead is not None and reach.kind == harness.LIVE:
+            # A live runner WILL take it — once the turn ahead ends. Named by
+            # the runner holding that turn, which is where it will run.
+            state = QUEUED_BEHIND
+            runners = ((ahead.claimed_by.name,) if ahead.claimed_by_id
+                       else tuple(r.name for r in reach.runners))
+            pinned = bool(turn.pinned_runner_id)
+            same_session = turn.chat_session_id and ahead.chat_session_id == turn.chat_session_id
+            behind = "session" if same_session else "agent"
+        elif turn.pinned_runner_id and reach is not None and reach.kind == harness.LIVE:
             state, runners, pinned = PICKING_UP, (turn.pinned_runner.name,), True
         elif reach is not None and reach.kind == harness.LIVE:
             state, runners = PICKING_UP, tuple(r.name for r in reach.runners)
@@ -241,7 +262,25 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) ->
         requires=(tuple(sorted(rr.requirements_of(turn)))
                   if turn.status == Turn.QUEUED
                   and getattr(reach, "blocked_by_requirements", False) else ()),
+        behind=behind,
     )
+
+
+def waiting_behind(turn: Turn) -> list[Turn]:
+    """Queued turns that may be QUEUED_BEHIND this one: same conversation, or
+    same agent. When this turn moves — above all when it ends — their status
+    lines must be re-said, because nothing about THEM changed and so nothing
+    else would re-render them until a channel's sweep came round."""
+    from django.db.models import Q
+
+    q = Q()
+    if turn.chat_session_id:
+        q |= Q(chat_session_id=turn.chat_session_id)
+    if turn.agent_id:
+        q |= Q(agent_id=turn.agent_id)
+    if not q:
+        return []
+    return list(Turn.objects.filter(q, status=Turn.QUEUED).exclude(pk=turn.pk))
 
 
 def reach_and_cloud(turn: Turn):

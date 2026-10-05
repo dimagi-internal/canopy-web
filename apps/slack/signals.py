@@ -33,10 +33,17 @@ def _relay_replies(sender, turn, rows, **kwargs):
     except Exception:  # noqa: BLE001 — never break the runner's append over Slack
         logger.exception("slack relay failed")
     if any(r.kind == "status" for r in rows):
-        from .status import on_status
+        from apps.harness.turn_status import waiting_behind
+
+        from .status import on_status, refresh
 
         try:
             on_status(turn)
+            # A follow-up queued behind this turn says so; once this turn moves
+            # (ends, above all) its line is stale — "picking up" now, not
+            # "queued behind" (#1147). Its own claim edits it again.
+            for queued in waiting_behind(turn):
+                refresh(queued)
         except Exception:  # noqa: BLE001
             logger.exception("slack status line failed")
 

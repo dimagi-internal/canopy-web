@@ -262,3 +262,78 @@ def test_a_settled_turn_is_not_swept(monkeypatch):
     sent = _capture(monkeypatch)
     assert status_feed.sweep(force=True) == 0
     assert _statuses(sent, session) == []
+
+
+# -- queued behind the turn ahead (canopy-web#1147) ---------------------------
+#
+# The status and the claim must give the same answer, so these drive the real
+# claim beside the real status: "queued behind" exactly when `claim_next_turn`
+# will not take it, "picking up" again the moment it will.
+
+def test_a_follow_up_behind_a_running_message_is_queued_behind_until_it_ends(monkeypatch):
+    from apps.harness import turn_status as ts
+
+    user, ws, agent, session = _ctx()
+    runner = _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=True)
+    first, _ = harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
+                                    idempotency_key="k1", prompt="first")
+    assert harness.claim_next_turn(runner) == first
+
+    sent = _capture(monkeypatch)
+    follow_up, _ = harness.enqueue_turn(initiator=_BY_CANOPY, session=session,
+                                        origin=Turn.ORIGIN_API, idempotency_key="k2",
+                                        prompt="and a follow-up")
+    [status] = _statuses(sent, session)
+    assert status["state"] == "queued_behind"
+    assert status["behind"] == "session"
+    assert status["runners"] == ["jj-mbp"]
+    assert status["stuck"] is False
+    assert harness.blocking_turn(follow_up) == first
+    assert harness.claim_next_turn(runner) is None          # the claim agrees
+
+    # The turn ahead ends: the page hears about the FOLLOW-UP, not the finished
+    # turn's "done", and it can now be claimed.
+    sent.clear()
+    harness.finish_turn(first, status=Turn.DONE)
+    assert _statuses(sent, session)[-1]["state"] == "picking_up"
+    assert harness.blocking_turn(follow_up) is None
+    assert ts.resolve(follow_up).state == ts.PICKING_UP
+    assert harness.claim_next_turn(runner) == follow_up
+
+
+def test_an_agent_turn_behind_the_agents_running_turn_is_queued_behind():
+    from apps.harness import turn_status as ts
+
+    user, ws, agent, _session = _ctx()
+    runner = _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=True)
+    first, _ = harness.enqueue_turn(initiator=_BY_CANOPY, agent=agent, origin=Turn.ORIGIN_API,
+                                    idempotency_key="a1", prompt="one")
+    assert harness.claim_next_turn(runner) == first
+    second, _ = harness.enqueue_turn(initiator=_BY_CANOPY, agent=agent, origin=Turn.ORIGIN_API,
+                                     idempotency_key="a2", prompt="two")
+
+    st = ts.resolve(second)
+    assert st.state == ts.QUEUED_BEHIND and st.behind == "agent"
+    assert harness.claim_next_turn(runner) is None
+    harness.finish_turn(first, status=Turn.DONE)
+    assert ts.resolve(second).state == ts.PICKING_UP
+    assert harness.claim_next_turn(runner) == second
+
+
+def test_a_busy_session_does_not_hold_another_sessions_turn():
+    """The rule is per conversation: one busy thread must not make every other
+    thread on the same agent read as queued behind it."""
+    from apps.harness import turn_status as ts
+
+    user, ws, agent, session = _ctx()
+    other = Session.objects.create(workspace=ws, created_by=user, agent=agent, title="t2")
+    runner = _runner("jj-mbp", runner_owner=user, ws=ws, agent=agent, online=True)
+    first, _ = harness.enqueue_turn(initiator=_BY_CANOPY, session=session, origin=Turn.ORIGIN_API,
+                                    idempotency_key="k1", prompt="first")
+    assert harness.claim_next_turn(runner) == first
+    elsewhere, _ = harness.enqueue_turn(initiator=_BY_CANOPY, session=other,
+                                        origin=Turn.ORIGIN_API, idempotency_key="k2",
+                                        prompt="unrelated")
+    assert harness.blocking_turn(elsewhere) is None
+    assert ts.resolve(elsewhere).state == ts.PICKING_UP
+    assert harness.claim_next_turn(runner) == elsewhere

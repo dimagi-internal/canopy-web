@@ -1296,6 +1296,56 @@ def test_the_line_is_edited_as_the_turn_moves(slack, linked, hal, alice, django_
     assert len(slack.said("chat.postMessage")) == 1          # one line per ask, edited in place
 
 
+def test_a_follow_up_sent_mid_turn_says_it_is_queued_behind_then_moves(
+        slack, linked, hal, alice, django_capture_on_commit_callbacks):
+    """canopy-web#1147: a follow-up sent while the thread's previous message is
+    still executing is held by the claim, so "picking this up" was a promise
+    nothing kept and the message looked lost. It says it is queued behind, then
+    moves on its own when the turn ahead ends."""
+    runner = _runner("jj-mbp", runner_owner=alice, agent=hal)
+    mention("hal first", ts="1700000000.000100")
+    with django_capture_on_commit_callbacks(execute=True):
+        first = harness_services.claim_next_turn(runner)
+    with django_capture_on_commit_callbacks(execute=True):
+        mention("and a follow-up", ts="1700000050.000100", thread_ts="1700000000.000100")
+    follow_up = Turn.objects.get(status=Turn.QUEUED)
+
+    def line():
+        return SlackTurnPost.objects.get(turn=follow_up).rendered
+
+    assert "still finishing the previous message in this thread on *jj-mbp*" in line()
+    assert "picking this up" not in line()
+    assert harness_services.claim_next_turn(runner) is None      # the claim agrees
+
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_services.finish_turn(first, status=Turn.DONE)
+    assert "is picking this up on *jj-mbp*" in line()
+    with django_capture_on_commit_callbacks(execute=True):
+        assert harness_services.claim_next_turn(runner) == follow_up
+    assert "working on this on *jj-mbp*" in line()
+
+
+def test_queued_behind_renders_for_the_session_and_for_the_agent(slack, linked, hal):
+    from types import SimpleNamespace
+
+    from apps.harness import services as harness_services
+    from apps.slack import status as slack_status
+
+    mention("hal summarise this thread")
+    turn = Turn.objects.select_related("chat_session__agent").get()
+    box = SimpleNamespace(name="acedimagi-mbp-cdp")
+    ahead = SimpleNamespace(claimed_by_id=1, claimed_by=box, chat_session_id=turn.chat_session_id)
+    text, blocks = slack_status.render(turn, reach=SimpleNamespace(
+        kind=harness_services.LIVE, runners=[box], blocked_by_requirements=False, behind=ahead))
+    assert ":hourglass: Queued — `hal` is still finishing the previous message in this thread " \
+           "on *acedimagi-mbp-cdp*, and this one runs next." in text
+    assert blocks is None and "picking this up" not in text
+    ahead.chat_session_id = None
+    text, _ = slack_status.render(turn, reach=SimpleNamespace(
+        kind=harness_services.LIVE, runners=[box], blocked_by_requirements=False, behind=ahead))
+    assert "`hal` is busy with another turn on *acedimagi-mbp-cdp*" in text
+
+
 @pytest.fixture
 def cloud(ws, hal):
     """An online cloud runner owned by someone else, and an offline laptop for hal."""
