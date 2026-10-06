@@ -1,6 +1,7 @@
 {
   "name": "canopy-widget",
   "version": "0.1.0",
+  "license": "BSD-3-Clause",
   "type": "module",
   "description": "Drop-in canopy agent widget: one script tag, overlay / inline / docked, framework-free.",
   "repository": {
