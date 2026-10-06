@@ -265,6 +265,25 @@ class TestCheck:
         ]
         assert "ResourceArns" not in by_action["ecs:RegisterTaskDefinition"]
 
+    def test_an_action_that_takes_no_resource_is_simulated_against_star(self):
+        # DescribeTargetGroups can only be granted on "*"; simulated against the
+        # target group's ARN it reads implicitDeny although "*" is granted. That
+        # false refusal blocked the health-check move on 2026-10-06.
+        described = {"Changes": [{"Type": "Resource", "ResourceChange": {
+            "Action": "Modify", "LogicalResourceId": "TargetGroup",
+            "PhysicalResourceId": "arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/tg/x",
+            "ResourceType": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Replacement": "False"}}]}
+        iam = FakeIam()
+        assert check(FakeCfn(described), iam, "s", "cs", "arn:role") == []
+        for call in iam.calls:
+            if "elasticloadbalancing:DescribeTargetGroups" in call["ActionNames"]:
+                assert call["ActionNames"] == ["elasticloadbalancing:DescribeTargetGroups"]
+                assert "ResourceArns" not in call
+            else:
+                assert call["ResourceArns"] == [
+                    "arn:aws:elasticloadbalancing:us-east-1:1:targetgroup/tg/x"]
+
     def test_a_non_arn_physical_id_is_not_passed_as_a_resource(self):
         # Some physical ids are names, not ARNs (a log group, for one).
         described = {"Changes": [{"Type": "Resource", "ResourceChange": {
