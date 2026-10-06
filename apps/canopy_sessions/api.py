@@ -966,6 +966,12 @@ def attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
     # inline: the browser renders it rather than downloading. filename is already
     # sanitised at upload, so it is safe in the header.
     response["Content-Disposition"] = f'inline; filename="{attachment.filename}"'
+    # Served inline from canopy's own origin, and the type allowlist is an env
+    # setting — so if it ever admits a document type (HTML, SVG), the bytes still
+    # run in an opaque origin, never as the viewer. Same rule as walkthrough
+    # content (apps/walkthroughs/streaming.py::SANDBOX_CSP); harmless on an image.
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Content-Security-Policy"] = "sandbox"
     return response
 
 

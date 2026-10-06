@@ -43,6 +43,35 @@ def _parse_range(header: str, total: int) -> tuple[int, int] | None:
 _CACHE_CONTROL = "private, max-age=86400, immutable"
 
 
+# Uploaded HTML is written by whoever uploaded it (an editor, or an agent), and
+# it is served from canopy's own origin. Without this a script in a deck runs AS
+# THE VIEWER: it can read the cookie-authenticated API (mint a PAT, read every
+# chat), whether it is framed by the viewer page or opened directly. The
+# `sandbox` directive applies even to a top-level navigation, so the document
+# always gets an OPAQUE origin — its own navigation script still runs (arrow
+# keys, #scene-N, the theme toggle, whose localStorage calls are wrapped in
+# try/catch), and nothing else is reachable. No `allow-same-origin` (that would
+# undo the whole thing), no `allow-forms` (a deck has none). Popups may escape
+# the sandbox so an outbound link in a deck opens a normal page.
+SANDBOX_CSP = (
+    "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads"
+)
+
+
+def _harden(resp, w):
+    """Headers every content response carries, whatever its kind.
+
+    Fail-safe by construction: anything that is not a video is sandboxed, so a
+    future kind (or a row whose content_type is wrong) is contained rather than
+    trusted. A video is left alone because the browser's own media document has
+    no script of the uploader's in it, and its Range requests must keep working.
+    """
+    resp["X-Content-Type-Options"] = "nosniff"
+    if not (w.content_type or "").lower().startswith("video/"):
+        resp["Content-Security-Policy"] = SANDBOX_CSP
+    return resp
+
+
 def _etag(w) -> str:
     """Stable per-file validator, so a revalidation is a 304 not a re-download."""
     return f'"{w.drive_file_id}-{w.size_bytes}"'
@@ -70,6 +99,8 @@ def walkthrough_content(request, wid):
     which breaks our own viewer page (``/w/<id>``) when it tries to embed
     this endpoint via ``<iframe src=...>``. Override to ``SAMEORIGIN`` —
     the viewer is the only intended embedder and lives on the same host.
+    Framing is about who may EMBED it; what the bytes may DO is `_harden`'s
+    sandbox CSP — uploaded HTML always runs in an opaque origin.
     """
     if not getattr(settings, "WALKTHROUGHS_ENABLED", True):
         raise Http404("walkthroughs disabled")
@@ -127,7 +158,7 @@ def walkthrough_content(request, wid):
             resp["Accept-Ranges"] = "bytes"
             resp["Cache-Control"] = _CACHE_CONTROL
             resp["ETag"] = _etag(w)
-            return resp
+            return _harden(resp, w)
 
         data, s, e, t = storage.download(file_id=w.drive_file_id)
         resp = StreamingHttpResponse(
@@ -139,7 +170,7 @@ def walkthrough_content(request, wid):
         resp["Accept-Ranges"] = "bytes"
         resp["Cache-Control"] = _CACHE_CONTROL
         resp["ETag"] = _etag(w)
-        return resp
+        return _harden(resp, w)
     except DriveNotConfigured:
         return HttpResponse(status=500)
     except Exception:
