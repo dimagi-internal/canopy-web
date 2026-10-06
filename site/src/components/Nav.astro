@@ -1,0 +1,46 @@
+---
+// Markup and classes from the shared Dimagi product-site nav (open-chat-studio-prelogin's
+// Nav.astro), so styles.css dresses it as it does every sibling site.
+import Logo from './Logo.astro'
+import { GITHUB_URL, NAV_LINKS, SIGN_IN_URL, type NavKey } from '../site'
+
+interface Props {
+  activeNav?: NavKey | null
+}
+const { activeNav = null } = Astro.props
+---
+<div class="nav-wrap">
+  <div class="container">
+    <nav class="primary" aria-label="Site">
+      <Logo />
+      <div class="nav-links">
+        {NAV_LINKS.map(({ key, label, href }) => (
+          <a href={href} class={activeNav === key ? 'nav-active' : undefined}
+             aria-current={activeNav === key ? 'page' : undefined}>{label}</a>
+        ))}
+        <a href={GITHUB_URL}>GitHub</a>
+      </div>
+      <div class="nav-cta">
+        <a class="btn btn-ghost" href={SIGN_IN_URL}>Sign In</a>
+        <button class="btn btn-primary" type="button" data-beta-open>Request access</button>
+      </div>
+      <button class="nav-hamburger" aria-label="Open menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </nav>
+  </div>
+</div>
+
+<script is:inline>
+(function () {
+  var ham = document.querySelector('.nav-hamburger');
+  if (!ham) return;
+  ham.addEventListener('click', function () {
+    var open = this.classList.toggle('is-open');
+    document.querySelector('.nav-links').classList.toggle('is-open');
+    document.querySelector('.nav-cta').classList.toggle('is-open');
+    this.setAttribute('aria-expanded', open ? 'true' : 'false');
+    this.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+  });
+})();
+</script>

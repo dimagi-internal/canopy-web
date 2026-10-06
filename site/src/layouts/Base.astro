@@ -1,14 +1,21 @@
 ---
-import '../styles/site.css'
-import Header from '../components/Header.astro'
+// The <head> + Nav + Footer frame, in the shape of the other Dimagi product sites
+// (open-chat-studio-prelogin's BaseLayout): the shared styles.css first, then the
+// page's own inline styles (slot "head"), then canopy-theme.css, so the theme wins
+// by cascade. Both sheets sit in public/site/ and are linked by hand rather than
+// imported, because Astro picks where an imported sheet lands and it would not
+// reliably fall on the right side of the slot.
+import Nav from '../components/Nav.astro'
 import Footer from '../components/Footer.astro'
 import BetaDialog from '../components/BetaDialog.astro'
+import type { NavKey } from '../site'
 
 interface Props {
   title: string
   description: string
+  activeNav?: NavKey | null
 }
-const { title, description } = Astro.props
+const { title, description, activeNav = null } = Astro.props
 ---
 <!doctype html>
 <html lang="en">
@@ -17,21 +24,25 @@ const { title, description } = Astro.props
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    <meta property="og:type" content="website" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
-    <meta property="og:type" content="website" />
-    <meta name="theme-color" content="#171412" />
+    <meta name="theme-color" content="#1F6B4A" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&family=Work+Sans:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@200;300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="/site/styles.css" />
+    <slot name="head" />
+    <link rel="stylesheet" href="/site/canopy-theme.css" />
   </head>
   <body>
-    <Header />
-    <main>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <Nav activeNav={activeNav} />
+    <main id="main">
       <slot />
     </main>
     <Footer />
