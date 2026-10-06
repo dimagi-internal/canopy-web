@@ -202,3 +202,45 @@ def test_a_follow_up_waits_while_a_dialog_is_up():
     binding.pending_question = {"question": "Claude needs your attention", "options": []}
     binding.save(update_fields=["pending_question"])
     assert harness.claim_next_turn(runner) == follow_up
+
+
+def test_a_follow_up_that_cannot_be_typed_mid_turn_waits_for_the_turn_instead():
+    """Measured live 2026-10-05: the rider was claimed, every send failed
+    COMPOSER_NOT_VISIBLE, and the follow-up ended FAILED — lost, where before
+    mid-turn delivery it would only have been late. It now waits, exactly as it
+    did before, and is delivered when the running turn ends."""
+    _user, _ws, _agent, session, runner = _ctx()
+    first = _running(session, runner)
+    _send(session, "k2", "skip the PR checks")
+    rider = harness.claim_next_turn(runner)
+    attempts = rider.attempts
+
+    harness.finish_turn(rider, status=Turn.FAILED,
+                        result_note="chat reuse send failed: COMPOSER_NOT_VISIBLE")
+    rider.refresh_from_db()
+    assert rider.status == Turn.QUEUED
+    assert rider.rides_turn_id is None and rider.attempts == attempts
+    assert rider.origin_ref.get(harness.MIDTURN_FAILED) is True
+
+    # It does not ride again — it waits, and says so.
+    assert harness.claim_next_turn(runner) is None
+    assert harness.blocking_turn(rider) == first
+    assert ts.resolve(rider).state == ts.QUEUED_BEHIND
+
+    harness.finish_turn(first, status=Turn.DONE)
+    again = harness.claim_next_turn(runner)
+    assert again == rider and again.rides_turn_id is None
+
+
+def test_a_rider_whose_keystrokes_went_out_is_never_requeued():
+    """Typed but unconfirmed: the runner reports the session, so the failure is
+    terminal — requeueing would type it a second time."""
+    _user, _ws, _agent, session, runner = _ctx()
+    _running(session, runner)
+    _send(session, "k2", "skip the PR checks")
+    rider = harness.claim_next_turn(runner)
+    Turn.objects.filter(pk=rider.pk).update(session_key="ace-chat-1")
+    rider.refresh_from_db()
+    harness.finish_turn(rider, status=Turn.FAILED, result_note="couldn't confirm delivery")
+    rider.refresh_from_db()
+    assert rider.status == Turn.FAILED
