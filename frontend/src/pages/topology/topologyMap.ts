@@ -225,7 +225,7 @@ export function curve(a: Rect, b: Rect): { d: string; labelX: number; labelY: nu
 
 /** The canopy-web the runner pairs with when told nothing else
  *  (runner/canopy_runner/canopy_runner/pair.py::DEFAULT_BASE_URL). */
-export const RUNNER_DEFAULT_BASE_URL = 'https://labs.connect.dimagi.com/canopy'
+export const RUNNER_DEFAULT_BASE_URL = 'https://canopy.dimagi.com'
 
 /** The one command that pairs a new laptop runner into `workspace`, as run on
  *  that macOS account (runner/canopy_runner/README.md, "One-time laptop setup").

@@ -115,7 +115,7 @@ What `pair` automates, for reference or a non-macOS box:
    full field list):
    ```json
    {
-     "base_url": "https://labs.connect.dimagi.com/canopy",
+     "base_url": "https://canopy.dimagi.com",
      "token": "@~/.claude/canopy/workbench-token",
      "runner_id": "<uuid from step 2>",
      "emdash_db": "/Users/<you>/Library/Application Support/emdash/emdash4.db",

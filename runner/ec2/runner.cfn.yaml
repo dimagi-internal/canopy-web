@@ -20,7 +20,7 @@ Parameters:
     Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
   CanopyBaseUrl:
     Type: String
-    Default: https://labs.connect.dimagi.com/canopy
+    Default: https://canopy.dimagi.com
   RunnerProjects:
     Type: String
     Default: canopy-web

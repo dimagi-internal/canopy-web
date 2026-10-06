@@ -464,7 +464,7 @@ freshly-paired runner's bundle (`/api/harness/runners/{id}/credential`) — that
 Enqueue a turn the runner can claim (target must be in its caps — default
 `RunnerProjects=canopy-web`):
 ```bash
-curl -sS -X POST "https://labs.connect.dimagi.com/canopy/api/harness/turns/" \
+curl -sS -X POST "https://canopy.dimagi.com/api/harness/turns/" \
   -H "Authorization: Bearer <canopy-pat>" -H 'Content-Type: application/json' \
   -d '{"project":"canopy-web","workspace":"dimagi","origin":"api","prompt":"Reply with a one-line hello.","idempotency_key":"ec2-smoke-1"}'
 ```

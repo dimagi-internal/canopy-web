@@ -52,19 +52,52 @@ def _commands_url() -> str:
     return public_url("/api/slack/commands")
 
 
-def _former_commands_urls() -> set[str]:
-    """Command URLs this deployment wrote under an address it has since left.
+def _former_urls(path: str) -> set[str]:
+    """``path`` under every address this deployment has since left.
 
     canopy moved from labs.connect.dimagi.com/canopy to canopy.dimagi.com
-    (2026-10-05); the old address is still canopy's identity base and still
-    serves /api/. Without this a sync no longer recognised the commands it had
-    created — `managed` compares URLs — so it could neither move them to the new
-    address nor remove one whose agent was switched off.
+    (2026-10-05), and its protocol identity followed. Without this a sync no
+    longer recognised the commands it had created — `managed` compares URLs — so
+    it could neither move them to the new address nor remove one whose agent was
+    switched off. ``CANOPY_FORMER_BASE_URLS`` names the old addresses; the
+    identity base is included while it still differs from the visited one.
     """
+    from django.conf import settings
+
     from apps.tokens.client_identity import public_base
 
-    former = f"{public_base()}/api/slack/commands"
-    return {former} - {_commands_url()}
+    bases = {public_base(), *(getattr(settings, "CANOPY_FORMER_BASE_URLS", None) or [])}
+    from .services import public_url
+
+    return {f"{b.rstrip('/')}{path}" for b in bases if b} - {public_url(path)}
+
+
+def _former_commands_urls() -> set[str]:
+    return _former_urls("/api/slack/commands")
+
+
+#: The app's two other webhooks: (manifest path to the url, canopy's path).
+#: Slack sends every event and every button press to exactly one URL each, so
+#: these move with the address too, or a sync leaves them on the old one.
+_WEBHOOKS = ((("event_subscriptions", "request_url"), "/api/slack/events"),
+             (("interactivity", "request_url"), "/api/slack/interactions"))
+
+
+def _move_webhooks(manifest: dict) -> list[str]:
+    """Re-point the event and interactivity URLs that sit on a former address.
+
+    Only a URL canopy recognises as its own old one moves; a URL pointing
+    anywhere else is somebody's deliberate choice and is left alone."""
+    from .services import public_url
+
+    moved = []
+    settings_ = manifest.setdefault("settings", {})
+    for (section, key), path in _WEBHOOKS:
+        block = settings_.get(section)
+        if isinstance(block, dict) and block.get(key) in _former_urls(path):
+            block[key] = public_url(path)
+            moved.append(section)
+    return moved
 
 
 def _oauth_redirect_url() -> str:
@@ -197,7 +230,8 @@ def reconcile(installation: SlackInstallation) -> dict:
         redirect_added = _oauth_redirect_url() not in redirects
         if redirect_added:
             oauth["redirect_urls"] = redirects + [_oauth_redirect_url()]
-        if added or removed or updated or scopes_added or redirect_added:
+        webhooks_moved = _move_webhooks(manifest)
+        if added or removed or updated or scopes_added or redirect_added or webhooks_moved:
             features["slash_commands"] = kept
             client.call("apps.manifest.update", token=token,
                         data={"app_id": installation.app_id, "manifest": json.dumps(manifest)})
@@ -205,7 +239,7 @@ def reconcile(installation: SlackInstallation) -> dict:
         installation.commands_sync_error = ""
         installation.save(update_fields=["commands_synced_at", "commands_sync_error"])
         return {"added": sorted(added), "removed": sorted(removed), "updated": sorted(updated), "unfit": unfit,
-                "scopes_added": scopes_added}
+                "scopes_added": scopes_added, "webhooks_moved": webhooks_moved}
     except NotConfigured:
         raise
     except Exception as e:

@@ -21,7 +21,7 @@ cold-starting — see _session_resume_plan / _record_session_resume below for ex
 which field carries that id and why.
 
 Config comes from the environment (see runner/ec2/README.md):
-  CANOPY_BASE_URL   e.g. https://labs.connect.dimagi.com/canopy
+  CANOPY_BASE_URL   e.g. https://canopy.dimagi.com
   CANOPY_TOKEN      a canopy-web Personal Access Token (Bearer)
   RUNNER_NAME       display name (default: this hostname)
   RUNNER_PROJECTS   comma-separated repo names this runner may drive (e.g. canopy-web)

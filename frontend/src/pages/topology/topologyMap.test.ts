@@ -92,7 +92,7 @@ describe('curve', () => {
 
 describe('pairingCommand', () => {
   it('names the workspace and leaves the default deployment implicit', () => {
-    expect(pairingCommand('connect', 'https://labs.connect.dimagi.com/canopy/')).toBe(
+    expect(pairingCommand('connect', 'https://canopy.dimagi.com/')).toBe(
       '~/emdash-projects/canopy-web/runner/canopy_runner/scripts/install-runner.sh --workspace connect',
     )
   })

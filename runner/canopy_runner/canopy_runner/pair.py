@@ -32,7 +32,7 @@ from pathlib import Path
 
 from .client import Client
 
-DEFAULT_BASE_URL = "https://labs.connect.dimagi.com/canopy"
+DEFAULT_BASE_URL = "https://canopy.dimagi.com"
 DEFAULT_TOKEN_REF = "@~/.claude/canopy/workbench-token"
 # The first account took the Chrome/Electron default 9222 and the hook listener's
 # default 8787; each further account steps up from there (jj 9222/8787, acedimagi

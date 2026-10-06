@@ -15,7 +15,7 @@ const base = {
 vi.mock('@/api/slack', async (orig) => ({
   ...(await orig<typeof import('@/api/slack')>()),
   getSlackConfig: vi.fn(async () => base),
-  setSlackConfigToken: vi.fn(async () => ({ status: 'synced', detail: '', added: ['/hal'], removed: [], unfit: [], scopes_added: [] })),
+  setSlackConfigToken: vi.fn(async () => ({ status: 'synced', detail: '', added: ['/hal'], removed: [], unfit: [], scopes_added: [], webhooks_moved: [] })),
   setSlackHistory: vi.fn(async (_ws: string, enabled: boolean, max_minutes: number) => ({
     ...base, history: { enabled, max_minutes },
   })),
@@ -50,16 +50,21 @@ describe('SlackSettingsPage', () => {
 })
 
 describe('syncSummary', () => {
+  it('says when the webhooks moved', () => {
+    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [],
+      scopes_added: [], webhooks_moved: ['event_subscriptions', 'interactivity'] }))
+      .toBe('Moved the event_subscriptions and interactivity URL to this address.')
+  })
   it('reads like a sentence', () => {
-    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [], scopes_added: [] }))
+    expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [], scopes_added: [], webhooks_moved: [] }))
       .toBe('Slash commands already match.')
-    expect(slack.syncSummary({ status: 'not_configured', detail: 'no token', added: [], updated: [], removed: [], unfit: [], scopes_added: [] }))
+    expect(slack.syncSummary({ status: 'not_configured', detail: 'no token', added: [], updated: [], removed: [], unfit: [], scopes_added: [], webhooks_moved: [] }))
       .toBe('no token')
     expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: [], removed: [], unfit: [],
-      scopes_added: ['files:read'] }))
+      scopes_added: ['files:read'], webhooks_moved: [] }))
       .toBe('Added the files:read permission — reconnect Slack to grant it.')
     expect(slack.syncSummary({ status: 'synced', detail: '', added: [], updated: ['/hal'], removed: [],
-      unfit: [], scopes_added: [] }))
+      unfit: [], scopes_added: [], webhooks_moved: [] }))
       .toBe('Updated /hal.')
   })
 })

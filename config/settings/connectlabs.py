@@ -39,11 +39,17 @@ FORCE_SCRIPT_NAME = env("FORCE_SCRIPT_NAME", default="") or None
 # OAuth callbacks, readiness-drill reports) is built from this.
 CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="https://canopy.dimagi.com")
 
-# canopy's protocol identity stays on the OLD address until each connected site
-# is re-pointed: ace-web pins CANOPY_CLIENT_ID to …/canopy/oauth/client.json and
-# signs its visitor assertions for this audience. Everything it names is still
-# served there. Moving it is a coordinated change with every connected site.
-CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="https://labs.connect.dimagi.com/canopy")
+# canopy's protocol identity — its CIMD client_id, the audience a site signs
+# visitor assertions for, its own issuer and MCP resource. It stayed on the old
+# address after the move until ace-web and connect-labs were re-pointed in the
+# same change (2026-10-06); they pin CANOPY_CLIENT_ID and the audience, so moving
+# it again is a coordinated change with every connected site.
+CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="https://canopy.dimagi.com")
+
+# Addresses canopy has left. Machine traffic there is still served
+# (apps/common/legacy_prefix.py); this lets the Slack sync recognise the
+# commands and webhooks it registered under them and move them.
+CANOPY_FORMER_BASE_URLS = ["https://labs.connect.dimagi.com/canopy"]
 
 # canopy's live probe of its OWN host half (the `canopy-web` Connected site):
 # the dedicated, non-admin user tokens/0026_probe_user creates. Non-secret, and

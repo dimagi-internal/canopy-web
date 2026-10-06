@@ -58,4 +58,4 @@ cd frontend && npm run build  # frontend type check + build
 - [`docs/superpowers/specs/`](docs/superpowers/specs/) — dated design specs (the "why" record for every major feature).
 - [`docs/architecture/mcp-surface.md`](docs/architecture/mcp-surface.md) — the MCP server surface.
 
-Deployed at `https://labs.connect.dimagi.com/canopy/` (Dimagi login required).
+Deployed at `https://canopy.dimagi.com/` (Dimagi login required).

@@ -48,9 +48,9 @@ method = a[a.index("-X") + 1] if "-X" in a else "GET"
 url = next(x for x in a if x.startswith("http"))
 body = pathlib.Path(a[a.index("--data") + 1][1:]).read_text() if "--data" in a else ""
 with (S / "calls").open("a") as fh:
-    fh.write(method + " " + url.split("/canopy", 1)[1] + chr(10))
+    fh.write(method + " " + "/" + url.split("://", 1)[1].split("/", 1)[1] + chr(10))
 agents = json.loads((S / "agents.json").read_text())
-path = url.split("/canopy", 1)[1]
+path = "/" + url.split("://", 1)[1].split("/", 1)[1]
 def out(x): print(json.dumps(x))
 if path.startswith("/api/agents/") and path.count("/") >= 4:
     slug, rest = path.split("/")[3], "/".join(path.split("/")[4:])

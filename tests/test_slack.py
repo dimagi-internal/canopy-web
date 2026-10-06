@@ -1900,6 +1900,41 @@ def test_moving_canopys_address_moves_its_commands_and_its_install_callback(
     assert "/hal" not in _commands(slack)
 
 
+def test_a_sync_moves_the_event_and_interactivity_urls_off_a_former_address(
+        slack, hal, ws, managed, owner_client, settings):
+    """Once the identity moved too, the old address is known only from
+    CANOPY_FORMER_BASE_URLS — and Slack's two webhooks have to move with the
+    commands, or every event keeps going to the address canopy left."""
+    old, new = "https://labs.test/canopy", "https://canopy.test"
+    settings.CANOPY_PUBLIC_BASE_URL = settings.CANOPY_IDENTITY_BASE_URL = new
+    settings.CANOPY_FORMER_BASE_URLS = [old]
+    for cmd in slack.manifest["features"]["slash_commands"]:
+        if cmd["command"] == "/hal":
+            cmd["url"] = f"{old}/api/slack/commands"
+    slack.manifest.setdefault("settings", {}).update({
+        "event_subscriptions": {"request_url": f"{old}/api/slack/events", "bot_events": ["message.im"]},
+        "interactivity": {"is_enabled": True, "request_url": f"{old}/api/slack/interactions"},
+    })
+
+    resp = owner_client.post(f"/api/slack-config/{ws.slug}/sync").json()
+
+    conf = slack.manifest["settings"]
+    assert conf["event_subscriptions"]["request_url"] == f"{new}/api/slack/events"
+    assert conf["event_subscriptions"]["bot_events"] == ["message.im"]
+    assert conf["interactivity"]["request_url"] == f"{new}/api/slack/interactions"
+    assert set(resp["webhooks_moved"]) == {"event_subscriptions", "interactivity"}
+    assert _commands(slack)["/hal"]["url"] == f"{new}/api/slack/commands"
+
+
+def test_a_webhook_canopy_does_not_own_is_never_moved(slack, hal, ws, managed, owner_client, settings):
+    settings.CANOPY_PUBLIC_BASE_URL = settings.CANOPY_IDENTITY_BASE_URL = "https://canopy.test"
+    settings.CANOPY_FORMER_BASE_URLS = ["https://labs.test/canopy"]
+    slack.manifest.setdefault("settings", {})["event_subscriptions"] = {
+        "request_url": "https://elsewhere.example/events"}
+    owner_client.post(f"/api/slack-config/{ws.slug}/sync")
+    assert slack.manifest["settings"]["event_subscriptions"]["request_url"] == "https://elsewhere.example/events"
+
+
 def test_a_command_canopy_does_not_own_is_never_removed(slack, ws, managed, owner_client):
     # `/hal` exists but points somewhere else: not canopy's to remove.
     Agent.objects.create(slug="hal", name="Hal", workspace=ws, slack_enabled=False)

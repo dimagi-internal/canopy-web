@@ -531,6 +531,6 @@ Outputs:
   EcrRepoUri:
     Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/labs-jj-canopy-web"
   Url:
-    Value: https://labs.connect.dimagi.com/canopy/
+    Value: https://canopy.dimagi.com/
   ServiceName:
     Value: !Ref Service
