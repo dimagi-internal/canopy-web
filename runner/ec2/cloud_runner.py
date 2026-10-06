@@ -589,6 +589,55 @@ def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
     return True
 
 
+#: Addresses canopy has left (it moved to canopy.dimagi.com on 2026-10-05).
+FORMER_BASES = frozenset({"https://labs.connect.dimagi.com/canopy"})
+RUNNER_ENV_FILE = os.environ.get("CANOPY_RUNNER_ENV_FILE", "/opt/canopy-runner/runner.env")
+
+
+def maybe_rebase(advertised: str, runner_id: str) -> bool:
+    """Move this box off an address canopy has left: rewrite CANOPY_BASE_URL in
+    runner.env and restart. Same guards as the laptop runner's rebase.py — only
+    off a FORMER address, only to https, only once the new address answers as
+    THIS runner, only while idle. The boot script re-renders runner.env from the
+    stack parameter, so a reboot can put the old address back; the first
+    heartbeat after it moves the box again. Returns True when a restart started."""
+    target = (advertised or "").rstrip("/")
+    current = BASE_URL.rstrip("/")
+    if current not in FORMER_BASES or not target.startswith("https://") or target == current:
+        return False
+    if _in_flight_ids():
+        return False
+    try:
+        req = urllib.request.Request(f"{target}/api/harness/runners/", method="GET")
+        req.add_header("Authorization", f"Bearer {TOKEN}")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            rows = json.loads(resp.read() or b"[]")
+    except Exception as exc:  # noqa: BLE001
+        _log(f"rebase: {target} did not answer ({exc}); staying on {current}")
+        return False
+    if not runner_id or not any(str((r or {}).get("id")) == str(runner_id) for r in rows or []):
+        _log(f"rebase: {target} does not know runner {str(runner_id)[:8]}; staying on {current}")
+        return False
+    try:
+        env = pathlib.Path(RUNNER_ENV_FILE)
+        lines = env.read_text().splitlines()
+        out = [f"CANOPY_BASE_URL={target}" if ln.startswith("CANOPY_BASE_URL=") else ln for ln in lines]
+        if out == lines:
+            return False
+        env.write_text("\n".join(out) + "\n")
+    except Exception as exc:  # noqa: BLE001
+        _log(f"rebase: could not rewrite {RUNNER_ENV_FILE} ({exc}); staying on {current}")
+        return False
+    _log(f"rebase: canopy moved to {target}; runner.env updated from {current}; restarting")
+    try:
+        subprocess.run(["sudo", "-n", "systemctl", "restart", "canopy-runner.service"],
+                       capture_output=True, timeout=30, check=True)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"rebase: restart failed ({exc})")
+        return False
+    return True
+
+
 def _chunk_transcript_lines(
     lines: list[str], max_bytes: int = TRANSCRIPT_APPEND_MAX_BYTES
 ) -> list[list[str]]:
@@ -4315,6 +4364,7 @@ def run_over_rest(runner_id: str) -> None:
         # the others expire mid-run.
         _, beat = _api("POST", f"/runners/{runner_id}/heartbeat", _heartbeat_body(_in_flight_ids()))
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
+        maybe_rebase((beat or {}).get("canonical_base_url", ""), runner_id)
         # Attached viewers are served on this path too — a runner that fell back
         # to REST must not also silently stop being watchable.
         _sync_session_views(runner_id)
@@ -4527,6 +4577,7 @@ def run_over_ws(runner_id: str) -> bool:
             # This thread is the one that claims, so "idle" holds until the
             # restart; see maybe_self_refresh.
             maybe_self_refresh(bool((ack or {}).get("refresh_pending")))
+            maybe_rebase((ack or {}).get("canonical_base_url", ""), runner_id)
 
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)

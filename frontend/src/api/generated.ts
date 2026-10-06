@@ -13741,6 +13741,8 @@ export interface components {
             readonly refresh_requested_at?: string | null;
             /** Refresh Pending */
             readonly refresh_pending?: boolean | null;
+            /** Canonical Base Url */
+            readonly canonical_base_url?: string | null;
         };
         /** RunnerIn */
         readonly RunnerIn: {

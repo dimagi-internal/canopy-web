@@ -51,4 +51,13 @@ class LegacyPrefixMiddleware:
         request.META["SCRIPT_NAME"] = prefix
         request.script_name = prefix
         set_script_prefix(prefix)
-        return self.get_response(request)
+        response = self.get_response(request)
+        # After the response, so the caller has been authenticated: who is still
+        # on this address is the evidence for retiring it (legacy_traffic.py).
+        from . import legacy_traffic
+
+        legacy_traffic.note(
+            path=request.path, user=getattr(request, "user", None),
+            credential=getattr(request, "auth_credential", None),
+            client=request.headers.get("X-Canopy-Client") or request.headers.get("User-Agent", ""))
+        return response

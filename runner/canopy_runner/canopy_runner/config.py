@@ -78,6 +78,9 @@ class Config:
     # so a project-grouped list doesn't show tails on some rows and not others. The
     # bounded tail-read (TAIL_BYTES) keeps ~30 transcript reads/tick cheap.
     session_tail_count: int = 30
+    # Where this config was read from — not stored in it. The runner rewrites its
+    # own base_url here when canopy has moved (rebase.py).
+    config_path: str = ""
 
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -91,4 +94,5 @@ class Config:
         cfg = cls(**kwargs)
         if not cfg.state_path:
             cfg.state_path = str(Path(path).with_name("runner-state.json"))
+        cfg.config_path = str(path)
         return cfg
