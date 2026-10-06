@@ -24,7 +24,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BUILD/CanopyRunner" "$APP/Contents/MacOS/CanopyRunner"
 cp "$BRAND/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
-cp "$BRAND"/menubar-tree*.png "$APP/Contents/Resources/"
+cp "$BRAND"/menubar-mark*.png "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

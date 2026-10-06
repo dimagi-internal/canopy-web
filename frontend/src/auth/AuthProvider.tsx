@@ -3,6 +3,7 @@ import { bootstrapCsrf } from '@/api/csrf'
 import { isLoginBounceInFlight, noteAuthSucceeded } from '@/api/client.v2'
 import { getMe, type MeOut as MeResponse } from '@/api/me'
 import { currentNext, loginHref } from './loginHref'
+import { CanopyWordmark } from '@/brand/CanopyWordmark'
 
 type AuthState =
   | { status: 'loading'; user: null }
@@ -109,7 +110,7 @@ function LoginPrompt() {
     <div className="min-h-screen bg-background text-foreground-secondary flex items-center justify-center px-6">
       <div className="max-w-md w-full bg-card border border-border rounded-xl p-8 text-center">
         <h1 className="text-2xl font-semibold text-foreground mb-2">
-          Canopy<span className="text-primary">.</span>
+          <CanopyWordmark />
         </h1>
         <p className="text-sm text-foreground-secondary mb-6">
           Sign in with your Dimagi Google account to continue.
