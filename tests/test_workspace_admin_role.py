@@ -186,6 +186,19 @@ def test_a_turns_content_is_read_by_its_starter_and_admins(adm, path):
             assert (res.status_code == 200) == can, (role, res.status_code)
 
 
+def test_a_turns_provenance_is_hidden_with_its_content(adm):
+    """Which token (its label), user agent and request id made a turn is a log,
+    read by the same people as the prompt (apps/harness/turn_access.py)."""
+    turn = _turn(adm, adm[M.OWNER])
+    turn.provenance = {"credential": {"type": "pat", "id": 9, "label": "jj-laptop-monitoring"},
+                       "user_agent": "canopy-cli/0.2.590", "request_id": "r1"}
+    turn.save(update_fields=["provenance"])
+    url = f"/api/harness/turns/{turn.id}"
+    assert _c(adm[M.EDITOR]).get(url).json()["provenance"] == {}
+    assert _c(adm[M.ADMIN]).get(url).json()["provenance"]["credential"]["label"] == \
+        "jj-laptop-monitoring"
+
+
 def test_turn_lists_show_that_a_turn_ran_but_not_its_prompt(adm):
     _turn(adm, adm[M.OWNER])
     rows = _c(adm[M.EDITOR]).get("/api/harness/turns/").json()
