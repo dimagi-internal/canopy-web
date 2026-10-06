@@ -1,10 +1,6 @@
 """Timeline source for the projects app: ``projects`` (context pushes + skill
 actions).
 
-``ProjectContext`` rows with ``context_type="insight"`` are excluded: they were
-the retired Insights feed's cards (removed 2026-10), and the rows that remain are
-unreachable on purpose rather than resurfaced here.
-
 Each returns *candidates* (newest ``limit`` per component plus cursor-instant
 ties); :func:`apps.timeline.sources.gather` does the final merge/order/slice.
 """
@@ -12,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from .models import RETIRED_CONTEXT_TYPE, ProjectAction, ProjectContext
+from .models import ProjectAction, ProjectContext
 
 
 def project_events(
@@ -27,7 +23,7 @@ def project_events(
         return qs if workspace_slugs is None else qs.filter(project__workspace_id__in=workspace_slugs)
 
     ctx = _scope(
-        ProjectContext.objects.exclude(context_type=RETIRED_CONTEXT_TYPE).select_related("project")
+        ProjectContext.objects.select_related("project")
     ).order_by("-created_at")
     for c in cursor_page(ctx, "created_at", before=before, limit=limit):
         label = dict(ProjectContext.CONTEXT_TYPES).get(c.context_type, c.context_type)

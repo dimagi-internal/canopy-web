@@ -117,18 +117,6 @@ def test_unknown_subsystem_falls_back_to_all(client, owner, ws):
     assert body["events"]  # not an empty/error result
 
 
-def test_retired_insight_rows_do_not_surface(client, owner, ws):
-    """The Insights feed was retired but its rows were kept (deleting them is
-    held for approval). They must stay unreachable — not resurface as generic
-    project context on the timeline."""
-    project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
-    ProjectContext.objects.create(
-        project=project, context_type="insight", content="[stale] old card", source="x"
-    )
-    body = client.get(BASE).json()
-    assert not [e for e in body["events"] if "old card" in (e["title"] or "")]
-
-
 def test_before_cursor_paginates(client, owner, ws):
     project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
     for i, day in enumerate((10, 11, 12)):

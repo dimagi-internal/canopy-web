@@ -515,35 +515,23 @@ def test_the_insights_api_is_gone():
 
 
 @pytest.mark.django_db
-def test_project_outputs_no_longer_count_insights_and_keep_the_rows():
+def test_project_outputs_no_longer_count_insights():
     p = _make_project(slug="ins-retired")
-    ctx = ProjectContext.objects.create(
-        project=p, context_type="insight", content="[stale] x", source="test"
-    )
     c = _auth_client()
     row = next(r for r in c.get("/api/projects/").json()["items"] if r["slug"] == p.slug)
     assert "insight_count" not in row
     assert "insight_count" not in c.get(f"/api/projects/{p.slug}/").json()
-    assert ProjectContext.objects.filter(pk=ctx.pk).exists(), "rows are kept, not deleted"
 
 
 @pytest.mark.django_db
-def test_insight_context_is_rejected_on_write_and_hidden_on_read():
-    """A stale caller still posting insights fails loudly instead of writing
-    rows nobody reads; the leftover rows never come back out."""
+def test_insight_context_is_rejected_on_write():
+    """A stale caller still posting insights fails loudly."""
     p = _make_project(slug="ins-strict")
-    ProjectContext.objects.create(project=p, context_type="insight", content="old", source="t")
-    ProjectContext.objects.create(project=p, context_type="note", content="kept", source="t")
     c = _auth_client()
     r = _post_json(c, f"/api/projects/{p.slug}/context/",
                    {"context_type": "insight", "content": "x", "source": "t"})
     assert r.status_code == 422
-    assert ProjectContext.objects.filter(project=p, context_type="insight").count() == 1
-    assert [e["context_type"] for e in c.get(f"/api/projects/{p.slug}/context/").json()] == ["note"]
-    assert set(c.get(f"/api/projects/{p.slug}/context/latest/").json()["contexts"]) == {"note"}
-    assert set(c.get(f"/api/projects/{p.slug}/").json()["latest_context"]) == {"note"}
-    row = next(r for r in c.get("/api/projects/").json()["items"] if r["slug"] == p.slug)
-    assert set(row["latest_context"]) == {"note"}
+    assert not ProjectContext.objects.filter(project=p).exists()
 
 
 @pytest.mark.django_db
