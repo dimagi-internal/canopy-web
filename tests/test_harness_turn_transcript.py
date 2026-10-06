@@ -17,7 +17,7 @@ import zlib
 import pytest
 
 from apps.agents.models import Agent
-from apps.harness import services
+from apps.harness import ledger, services
 from apps.harness.models import Turn, TurnTranscript
 from apps.workspaces.testing import a_workspace
 
@@ -250,10 +250,10 @@ def test_embedded_newline_in_a_line_logs_a_warning(caplog):
     # base.py) so it never reaches root — attach caplog's own handler
     # directly to the emitting logger rather than relying on propagation.
     turn = _turn()
-    target_logger = logging.getLogger("apps.harness.services")
+    target_logger = logging.getLogger("apps.harness.ledger")
     target_logger.addHandler(caplog.handler)
     try:
-        with caplog.at_level(logging.WARNING, logger="apps.harness.services"):
+        with caplog.at_level(logging.WARNING, logger="apps.harness.ledger"):
             services.append_transcript(turn, ["line one\nline two"])
     finally:
         target_logger.removeHandler(caplog.handler)
@@ -263,10 +263,10 @@ def test_embedded_newline_in_a_line_logs_a_warning(caplog):
 
 def test_line_without_embedded_newline_logs_nothing(caplog):
     turn = _turn()
-    target_logger = logging.getLogger("apps.harness.services")
+    target_logger = logging.getLogger("apps.harness.ledger")
     target_logger.addHandler(caplog.handler)
     try:
-        with caplog.at_level(logging.WARNING, logger="apps.harness.services"):
+        with caplog.at_level(logging.WARNING, logger="apps.harness.ledger"):
             services.append_transcript(turn, ["a perfectly normal line"])
     finally:
         target_logger.removeHandler(caplog.handler)
@@ -276,7 +276,7 @@ def test_line_without_embedded_newline_logs_nothing(caplog):
 
 # --- Security review 2026-07-26 fix round -----------------------------------
 #
-# F2 — a per-turn ceiling (services.TRANSCRIPT_TURN_MAX_BYTES), checked inside
+# F2 — a per-turn ceiling (ledger.TRANSCRIPT_TURN_MAX_BYTES), checked inside
 # the same locked transaction as every other append, so a runaway/very-long
 # turn can never grow this row past Postgres's bytea limit (or the
 # PositiveIntegerField counters) and blow up mid-turn. The real ceiling is
@@ -285,7 +285,7 @@ def test_line_without_embedded_newline_logs_nothing(caplog):
 
 
 def test_batch_under_the_ceiling_is_unaffected(monkeypatch):
-    monkeypatch.setattr(services, "TRANSCRIPT_TURN_MAX_BYTES", 1000)
+    monkeypatch.setattr(ledger, "TRANSCRIPT_TURN_MAX_BYTES", 1000)
     turn = _turn()
 
     transcript = services.append_transcript(turn, ["short line"])
@@ -295,7 +295,7 @@ def test_batch_under_the_ceiling_is_unaffected(monkeypatch):
 
 
 def test_crossing_the_ceiling_drops_the_batch_and_writes_one_marker(monkeypatch):
-    monkeypatch.setattr(services, "TRANSCRIPT_TURN_MAX_BYTES", 10)
+    monkeypatch.setattr(ledger, "TRANSCRIPT_TURN_MAX_BYTES", 10)
     turn = _turn()
 
     transcript = services.append_transcript(turn, ["this line is way over ten bytes"])
@@ -310,7 +310,7 @@ def test_crossing_the_ceiling_drops_the_batch_and_writes_one_marker(monkeypatch)
 
 
 def test_after_truncation_every_further_batch_is_a_silent_noop(monkeypatch):
-    monkeypatch.setattr(services, "TRANSCRIPT_TURN_MAX_BYTES", 10)
+    monkeypatch.setattr(ledger, "TRANSCRIPT_TURN_MAX_BYTES", 10)
     turn = _turn()
     services.append_transcript(turn, ["over the tiny ceiling"])
     raw_after_marker = services.read_transcript(turn)
@@ -326,7 +326,7 @@ def test_truncation_never_raises_a_running_turn_must_not_4xx(monkeypatch):
     """The whole point of F2: a turn whose transcript got long is still a
     turn that's succeeding. append_transcript must return normally, never
     raise, when it crosses the ceiling."""
-    monkeypatch.setattr(services, "TRANSCRIPT_TURN_MAX_BYTES", 1)
+    monkeypatch.setattr(ledger, "TRANSCRIPT_TURN_MAX_BYTES", 1)
     turn = _turn()
 
     transcript = services.append_transcript(turn, ["anything at all"])
