@@ -31,6 +31,16 @@ def version() -> str:
     return __version__
 
 
+#: What "the runner's code" means for staleness, repo-relative. Not only the Python
+#: package: the installer, the menu-bar app and the icons it bundles ship to a box
+#: through the same auto-update, and a change to any of them that did not mark the
+#: box stale never reached it (the 2026-10-06 mark sat installed-nowhere-visible).
+#: The SAME list is in .github/workflows/deploy-labs.yml (what the server expects)
+#: and install-runner.sh (what an install stamps); tests/test_runner_code_paths.py
+#: fails if the three drift, because a mismatch is a box marked stale forever.
+CODE_PATHS = ('runner/canopy_runner/canopy_runner', 'runner/canopy_runner/scripts', 'runner/menubar', 'assets/brand')
+
+
 def runner_src_dir() -> Path:
     """This package's own source directory — the path whose git history defines
     "the runner's code", separately from the rest of canopy-web."""
@@ -92,9 +102,9 @@ def code_sha() -> str:
     if _build_info.SHA:
         return _build_info.SHA
     try:
-        src = runner_src_dir()
+        repo = runner_src_dir().parents[2]
         out = subprocess.run(
-            ["git", "-C", str(src), "log", "-1", "--format=%H", "--", str(src)],
+            ["git", "-C", str(repo), "log", "-1", "--format=%H", "--", *CODE_PATHS],
             capture_output=True, text=True, timeout=5,
         )
         return out.stdout.strip() if out.returncode == 0 else ""
@@ -128,9 +138,9 @@ def code_committed_at() -> int:
     if stamped:
         return int(stamped)
     try:
-        src = runner_src_dir()
+        repo = runner_src_dir().parents[2]
         out = subprocess.run(
-            ["git", "-C", str(src), "log", "-1", "--format=%ct", "--", str(src)],
+            ["git", "-C", str(repo), "log", "-1", "--format=%ct", "--", *CODE_PATHS],
             capture_output=True, text=True, timeout=5,
         )
         return int(out.stdout.strip()) if out.returncode == 0 else 0
