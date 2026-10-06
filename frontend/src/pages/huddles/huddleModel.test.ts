@@ -33,6 +33,38 @@ describe('arcsFor', () => {
     expect(arcs[0]).toMatchObject({ from: 'head-echo', to: 'eva-2', state: 'pending' })
   })
 
+  it("turns an amend the lead accepted in round 4 into a co-sign, a rejected one into held", () => {
+    const cells = [
+      cell('eva', 2, { proposals: [proposal('Pipeline sheet', 'eva', ['hal', 'echo']), proposal('Funder map', 'eva', ['hal'])] }),
+      cell('hal', 3, { answers: [
+        { title: 'Pipeline sheet', lead: 'eva', answer: 'amend', note: 'weekly' },
+        { title: 'Funder map', lead: 'eva', answer: 'amend', note: 'smaller' },
+      ] }),
+      cell('echo', 3, { answers: [{ title: 'Pipeline sheet', lead: 'eva', answer: 'co-sign' }] }),
+    ]
+    const before = arcsFor({ cells })
+    expect(before.find((a) => a.partner === 'hal' && a.title === 'Pipeline sheet')?.state).toBe('amend')
+
+    const after = arcsFor({ cells: [...cells, cell('eva', 4, { resolutions: [
+      { title: 'pipeline sheet', lead: 'eva', resolution: 'accept', note: 'fair', proposal: proposal('Pipeline sheet', 'eva', ['hal', 'echo']) },
+      { title: 'Funder map', lead: 'eva', resolution: 'reject', note: 'needs daily' },
+    ] })] })
+    const by = Object.fromEntries(after.map((a) => [`${a.partner}:${a.title}`, a.state]))
+    expect(by['hal:Pipeline sheet']).toBe('amend-accepted')
+    expect(by['hal:Funder map']).toBe('amend-rejected')
+    // A partner who co-signed outright is untouched by the resolution.
+    expect(by['echo:Pipeline sheet']).toBe('co-sign')
+  })
+
+  it('ignores a round-4 resolution from someone who is not the lead', () => {
+    const cells = [
+      cell('eva', 2, { proposals: [proposal('A', 'eva', ['hal'])] }),
+      cell('hal', 3, { answers: [{ title: 'A', lead: 'eva', answer: 'amend' }] }),
+      cell('echo', 4, { resolutions: [{ title: 'A', lead: 'eva', resolution: 'accept' }] }),
+    ]
+    expect(arcsFor({ cells })[0].state).toBe('amend')
+  })
+
   it('still draws an answer whose proposal it cannot see, to the lead column', () => {
     const arcs = arcsFor({ cells: [cell('echo', 3, { answers: [{ title: 'A', lead: 'eva', answer: 'decline' }] })] })
     expect(arcs[0]).toMatchObject({ from: 'echo-3', to: 'head-eva', state: 'decline' })
@@ -50,7 +82,11 @@ it('normalises answers', () => {
 it('names rounds by type and always shows the type rounds', () => {
   expect(roundName('work', 2)).toBe('Roundtable')
   expect(roundName('health', 2)).toBe('Round 2')
+  expect(roundName('work', 4)).toBe('Resolve')
   expect(roundsToShow({ type: 'work', rounds_dispatched: 1, cells: [] })).toEqual([1, 2, 3])
+  // Round 4 (resolve) is conditional: shown only once it is dispatched.
+  expect(roundsToShow({ type: 'work', rounds_dispatched: 3, cells: [] })).toEqual([1, 2, 3])
+  expect(roundsToShow({ type: 'work', rounds_dispatched: 4, cells: [] })).toEqual([1, 2, 3, 4])
   expect(roundsToShow({ type: 'x', rounds_dispatched: 2, cells: [] })).toEqual([1, 2])
 })
 
