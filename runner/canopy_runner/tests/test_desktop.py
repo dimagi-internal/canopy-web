@@ -349,3 +349,49 @@ def test_no_cli_means_new_threads_stay_on_emdash_and_readiness_says_why(cfg, mon
 def test_the_cli_runs_with_a_real_path(tmp_path):
     env = desktop._cli_env(Path("/somewhere/bin/claude"))
     assert env["PATH"].split(":")[:2] == ["/somewhere/bin", str(Path.home() / ".local" / "bin")]
+
+
+# ── the session report ──────────────────────────────────────────────────────
+
+def test_desktop_sessions_join_the_session_report(cfg, tmp_path, monkeypatch):
+    """Left out of the report, canopy-web listed every desktop session as archived."""
+    live = tmp_path / "wt-live"
+    ch = live / desktop.CHANNEL
+    ch.mkdir(parents=True)
+    (ch / "alive").write_text(str(int(time.time() * 1000)))
+    t = int(time.time() * 1000)
+    (ch / f"ev-{t}-1-turn.start.json").write_text(json.dumps({"t": t, "kind": "turn.start"}))
+    desktop._remember(cfg, "sid-live", live, "hal")
+    desktop._remember(cfg, "sid-gone", tmp_path / "deleted-worktree", "hal")
+    monkeypatch.setattr(desktop, "transcript_path", lambda sid, claude_home=None: None)
+    rows = desktop.open_sessions(cfg)
+    assert [r["emdash_task"] for r in rows] == ["sid-live"]  # a gone worktree is a closed session
+    assert rows[0]["project"] == "hal" and rows[0]["agent_status"] == "working"
+    t2 = t + 5
+    (ch / f"ev-{t2}-2-ask.json").write_text(json.dumps({"t": t2, "kind": "ask", "extra": {"tool": "Bash"}}))
+    assert desktop.open_sessions(cfg)[0]["agent_status"] == "awaiting-input"
+    (ch / f"ev-{t2 + 1}-3-turn.complete.json").write_text(json.dumps({"t": t2 + 1, "kind": "turn.complete"}))
+    assert desktop.open_sessions(cfg)[0]["agent_status"] == ""
+
+
+def test_a_new_sessions_turn_transcript_skips_the_seed(cfg, tmp_path, no_app, monkeypatch):
+    cfg.desktop_projects = {"scratch": str(_repo(tmp_path))}
+    seed_file = tmp_path / "proj" / "sid-1.jsonl"
+    seed_file.parent.mkdir()
+    seed_file.write_text(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "ready"}]}}) + "\n")
+    monkeypatch.setattr(desktop, "transcript_path", lambda sid, claude_home=None: seed_file)
+    turn = _turn(origin_ref={"thread_key": "th", "chat_session_id": "c"})
+    client = FakeClient()
+    run = desktop.TurnRun(cfg, client, "r", turn, "th", {"reuse": False}, reuse="")
+    th = threading.Thread(target=run.run)
+    th.start()
+    ch = _channel_of(cfg, "scratch")
+    with seed_file.open("a") as fh:  # the real work, after the seed
+        fh.write(json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "the work"}]}}) + "\n")
+    _mod(ch, "task", "sid-1", "done")
+    th.join(10)
+    shipped = [ln for c in client.of("post_transcript") for ln in c[1][1]]
+    assert shipped and all("ready" not in ln for ln in shipped)
+    assert any("the work" in ln for ln in shipped)
