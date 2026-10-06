@@ -20,6 +20,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Max, OuterRef, Subquery
 from django.utils import timezone
 
+from apps.harness import provenance
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
@@ -607,6 +608,8 @@ def fork_if_name_reused(session, transcript_id: str):
             agent=old.agent, project=old.project, workspace=old.workspace,
             origin=old.origin, ordinal_scheme=old.ordinal_scheme,
             title=(binding.session_key or old.title)[:200], metadata=new_meta,
+            # The successor of the session whose task name was reused.
+            **provenance.session_fields(parent={"session": old}, forked_from=str(old.pk)),
         )
         old.status = Session.ARCHIVED
         old.save(update_fields=["metadata", "status", "updated_at"])
@@ -1075,7 +1078,7 @@ def add_runner_requirements(session: Session, reqs) -> None:
 
 
 def create_session(*, workspace, created_by=None, agent=None, project: str = "", title: str = "",
-                   metadata: dict | None = None, contact=None) -> Session:
+                   metadata: dict | None = None, contact=None, parent=None) -> Session:
     """One way to start a conversation, whoever starts it. A USER owns it (a
     participant row, SP3 multiplayer); a CONTACT has no account, so the session
     records them on `contact` instead and has no creator — which is what keeps
@@ -1096,6 +1099,8 @@ def create_session(*, workspace, created_by=None, agent=None, project: str = "",
         session = Session.objects.create(
             workspace=workspace, agent=agent, project=project, created_by=created_by,
             title=title, metadata=meta, contact=contact,
+            # What opened it (request + `parent`): apps/harness/provenance.py.
+            **provenance.session_fields(parent=parent),
         )
         if created_by is not None:
             ensure_participant(session, created_by, SessionParticipant.OWNER)
@@ -1502,6 +1507,9 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
             enqueued_by=user,
             pinned_runner=target,
             initiator=_initiator(initiator, user, "transfer"),
+            # The session being moved is what this handoff turn comes from.
+            parent={"session": session},
+            provenance_extra={"transfer_from": source_name},
         )
     return binding, turn
 
@@ -1628,7 +1636,7 @@ def _merge_origin_ref(extra: dict | None, *, thread_key: str, session: Session) 
 def send_message(
     *, session: Session, text: str, user, client_id: str = "", placement: str | None = None,
     origin: str | None = None, initiator=None, origin_ref: dict | None = None,
-    capability: str | None = None,
+    capability: str | None = None, parent=None,
 ) -> tuple[Message, Turn]:
     """Record the human's message and enqueue the session Turn that answers it.
 
@@ -1662,7 +1670,7 @@ def send_message(
         return _send_transcript_sourced_message(
             session=session, text=text, user=user, client_id=client_id,
             placement=placement, origin=origin, initiator=initiator,
-            origin_ref=origin_ref, capability=capability,
+            origin_ref=origin_ref, capability=capability, parent=parent,
         )
     with transaction.atomic():
         Session.objects.select_for_update().get(pk=session.pk)
@@ -1721,6 +1729,7 @@ def send_message(
             pinned_runner=pinned,
             initiator=_initiator(initiator, user, origin),
             capability=capability,
+            parent=parent,
         )
         # The ledger path writes its own row, so it records the author directly
         # rather than through the transcript marker.
@@ -1929,6 +1938,7 @@ def _send_transcript_sourced_message(
     *, session: Session, text: str, user=None, client_id: str = "",
     placement: str | None = None, origin: str = Turn.ORIGIN_CANOPY_WEB_CHAT,
     initiator=None, origin_ref: dict | None = None, capability: str | None = None,
+    parent=None,
 ) -> tuple[Message, Turn]:
     """The transcript-sourced send path: enqueue the Turn, author NO durable user row.
 
@@ -1981,6 +1991,7 @@ def _send_transcript_sourced_message(
         pinned_runner=pinned,
         initiator=_initiator(initiator, user, origin),
         capability=capability,
+        parent=parent,
     )
     return message, turn
 

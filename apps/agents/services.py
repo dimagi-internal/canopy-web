@@ -281,7 +281,7 @@ def _claim_dispatch_row(agent: Agent, data) -> Turn | None:
     return None
 
 
-def upsert_turn(agent: Agent, data) -> Turn:
+def upsert_turn(agent: Agent, data, initiator=None) -> Turn:
     """Attach an agent's close-out report to the turn it was dispatched as.
 
     Idempotent per (agent, cli_session_id). When no dispatch row can be matched —
@@ -317,6 +317,10 @@ def upsert_turn(agent: Agent, data) -> Turn:
         return turn
 
     return Turn.objects.create(
+        # Who reported it, when the caller says (the API passes the request's
+        # asker). Provenance + the TURN_CREATED line come from the harness's
+        # pre_save/post_save receivers (apps/harness/provenance.py).
+        **(initiator.fields() if initiator is not None else {}),
         agent=agent,
         origin=Turn.ORIGIN_API,
         status=Turn.DONE,

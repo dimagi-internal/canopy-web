@@ -18,6 +18,13 @@ import time
 import urllib.error
 import urllib.request
 
+# What canopy records as the program behind anything this script creates
+# (X-Canopy-Client, User-Agent, X-Canopy-Parent-* from the environment).
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+import script_provenance  # noqa: E402
+
+SCRIPT = "smoke_mobile_loop.py"
+NONCE = os.urandom(4).hex()
 URL = os.environ.get("CANOPY_URL", "").rstrip("/")
 PAT = os.environ.get("CANOPY_PAT", "")
 TASK = "smoke-loop"
@@ -29,6 +36,8 @@ def _req(method: str, path: str, body: dict | None = None) -> tuple[int, object]
     data = json.dumps(body).encode() if body is not None else None
     r = urllib.request.Request(f"{URL}{path}", data=data, method=method)
     r.add_header("Authorization", f"Bearer {PAT}")
+    for k, v in script_provenance.headers(SCRIPT, NONCE).items():
+        r.add_header(k, v)
     if data is not None:
         r.add_header("Content-Type", "application/json")
     try:
@@ -79,7 +88,8 @@ def main() -> int:
                         {"project": PROJECT, "origin": "manual",
                          "idempotency_key": f"smoke-{int(time.time())}",
                          "prompt": "smoke: continue this session",
-                         "origin_ref": {"thread_key": THREAD}})
+                         "origin_ref": {"thread_key": THREAD,
+                                        "e2e": {"script": SCRIPT, "nonce": NONCE}}})
         turn_id = turn.get("id") if isinstance(turn, dict) else None
         check("dispatch continue", st in (200, 201) and bool(turn_id), f"HTTP {st} {turn}")
 

@@ -846,6 +846,8 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
             # Idempotent per lost turn: a double click re-asks once.
             client_id=f"requeue:{turn.pk}", origin=turn.origin,
             initiator=who.for_user(user, via=via, assurance=""),
+            # The re-ask comes FROM the lost turn whose words it repeats.
+            parent={"turn": turn},
         )
         asked.append(again)
     return closed, asked

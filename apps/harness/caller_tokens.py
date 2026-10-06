@@ -40,6 +40,8 @@ class Grant:
     user: object | None          # the asker when they are a canopy user; None for a contact
     tool_globs: list[str] = field(default_factory=list)
     turn_ids: set[str] = field(default_factory=set)
+    #: The CallerToken row, for provenance (which credential created a turn).
+    token_id: int | None = None
 
     def allows_tool(self, name: str) -> bool:
         return any(fnmatch.fnmatchcase(name, g) for g in self.tool_globs)
@@ -89,4 +91,4 @@ def resolve(raw: str) -> Grant | None:
         return None
     return Grant(turn=current, user=user,
                  tool_globs=canopy_tool_globs(profile(agent, current.capability)),
-                 turn_ids=turn_ids)
+                 turn_ids=turn_ids, token_id=tok.pk)

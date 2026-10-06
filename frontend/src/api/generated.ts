@@ -8431,6 +8431,19 @@ export interface components {
             readonly contact?: components["schemas"]["InitiatorPersonOut"] | null;
             /** Agent */
             readonly agent?: string | null;
+            /** Credential */
+            readonly credential?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Client
+             * @default
+             */
+            readonly client: string;
+            /** Parent */
+            readonly parent?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /** InitiatorPersonOut */
         readonly InitiatorPersonOut: {
@@ -8496,6 +8509,29 @@ export interface components {
             readonly pinned_runner_name?: string | null;
             /** Rides Turn Id */
             readonly rides_turn_id?: string | null;
+            /**
+             * Provenance
+             * @default {}
+             */
+            readonly provenance: {
+                readonly [key: string]: unknown;
+            };
+            /** Parent Turn Id */
+            readonly parent_turn_id?: string | null;
+            /** Parent Session Id */
+            readonly parent_session_id?: string | null;
+            /**
+             * Parent Task
+             * @default
+             */
+            readonly parent_task: string;
+            /**
+             * Parent Claude Session
+             * @default
+             */
+            readonly parent_claude_session: string;
+            /** Raised From Task Id */
+            readonly raised_from_task_id?: number | null;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
@@ -9624,6 +9660,29 @@ export interface components {
              * @default []
              */
             readonly runner_requirements: readonly string[];
+            /** Created By */
+            readonly created_by?: string | null;
+            /**
+             * Provenance
+             * @default {}
+             */
+            readonly provenance: {
+                readonly [key: string]: unknown;
+            };
+            /** Parent Turn Id */
+            readonly parent_turn_id?: string | null;
+            /** Parent Session Id */
+            readonly parent_session_id?: string | null;
+            /**
+             * Parent Task
+             * @default
+             */
+            readonly parent_task: string;
+            /**
+             * Parent Claude Session
+             * @default
+             */
+            readonly parent_claude_session: string;
             /** Messages */
             readonly messages: readonly components["schemas"]["MessageOut"][];
             /** Menu */
@@ -14178,6 +14237,29 @@ export interface components {
             readonly pinned_runner_name?: string | null;
             /** Rides Turn Id */
             readonly rides_turn_id?: string | null;
+            /**
+             * Provenance
+             * @default {}
+             */
+            readonly provenance: {
+                readonly [key: string]: unknown;
+            };
+            /** Parent Turn Id */
+            readonly parent_turn_id?: string | null;
+            /** Parent Session Id */
+            readonly parent_session_id?: string | null;
+            /**
+             * Parent Task
+             * @default
+             */
+            readonly parent_task: string;
+            /**
+             * Parent Claude Session
+             * @default
+             */
+            readonly parent_claude_session: string;
+            /** Raised From Task Id */
+            readonly raised_from_task_id?: number | null;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
@@ -14593,6 +14675,48 @@ export interface components {
              */
             readonly kind: string;
         };
+        /**
+         * ParentIn
+         * @description What the caller was running INSIDE when it asked for this work — recorded
+         *     on the new turn/session as `parent_*` + `provenance.parent`. Every field is
+         *     optional and none is checked: an id that does not resolve is recorded as
+         *     given and never refuses the request. The `X-Canopy-Parent-Turn`,
+         *     `X-Canopy-Parent-Session`, `X-Canopy-Parent-Task`, `X-Canopy-Parent-Host` and
+         *     `X-Canopy-Claude-Session` headers say the same thing; a field here wins over
+         *     its header.
+         */
+        readonly ParentIn: {
+            /**
+             * Turn
+             * @default
+             */
+            readonly turn: string;
+            /**
+             * Session
+             * @default
+             */
+            readonly session: string;
+            /**
+             * Task
+             * @default
+             */
+            readonly task: string;
+            /**
+             * Host
+             * @default
+             */
+            readonly host: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /**
+             * Claude Session
+             * @default
+             */
+            readonly claude_session: string;
+        };
         /** TurnIn */
         readonly TurnIn: {
             /**
@@ -14634,6 +14758,7 @@ export interface components {
             readonly runner_id?: string | null;
             /** Turn Mode */
             readonly turn_mode?: ("auto" | "manual") | null;
+            readonly parent?: components["schemas"]["ParentIn"] | null;
         };
         /** EmdashSessionOut */
         readonly EmdashSessionOut: {
@@ -14973,6 +15098,29 @@ export interface components {
              * @default []
              */
             readonly runner_requirements: readonly string[];
+            /** Created By */
+            readonly created_by?: string | null;
+            /**
+             * Provenance
+             * @default {}
+             */
+            readonly provenance: {
+                readonly [key: string]: unknown;
+            };
+            /** Parent Turn Id */
+            readonly parent_turn_id?: string | null;
+            /** Parent Session Id */
+            readonly parent_session_id?: string | null;
+            /**
+             * Parent Task
+             * @default
+             */
+            readonly parent_task: string;
+            /**
+             * Parent Claude Session
+             * @default
+             */
+            readonly parent_claude_session: string;
         };
         /** SessionCreateIn */
         readonly SessionCreateIn: {
@@ -14997,6 +15145,7 @@ export interface components {
             };
             /** Runner Id */
             readonly runner_id?: string | null;
+            readonly parent?: components["schemas"]["ParentIn"] | null;
         };
         /**
          * ResetOut
@@ -15185,6 +15334,7 @@ export interface components {
             readonly placement?: string | null;
             /** Origin */
             readonly origin?: ("api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill") | null;
+            readonly parent?: components["schemas"]["ParentIn"] | null;
         };
         /**
          * TurnOutMinimal

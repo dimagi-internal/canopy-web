@@ -388,10 +388,16 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # union — a socket without them never lifts a floor already set.
         chat_services.add_runner_requirements(self.session,
                                               self.scope.get("runner_requirements", ()))
-        msg, turn = chat_services.send_message(
-            session=self.session, text=text, user=self.user, client_id=client_id,
-            initiator=who.for_scope(self.scope, via="chat"),
-        )
+        from apps.common import request_context
+
+        # No HTTP request behind a socket frame, so nothing else would record what
+        # sent it: bind the socket's own provenance (apps/harness/provenance.py),
+        # and name a widget's host the way the REST send does (`who.channel`).
+        with request_context.bound(_socket_context(self.scope)):
+            msg, turn = chat_services.send_message(
+                session=self.session, text=text, user=self.user, client_id=client_id,
+                initiator=who.for_scope(self.scope, via=who.channel(self.scope, "chat")),
+            )
         chat_services.maybe_execute_inline(turn)
         return str(msg.pk)
 
@@ -667,3 +673,25 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 queued=chat_services.queued_messages(self.session),
             ),
         }
+
+
+def _socket_context(scope) -> dict:
+    """A WebSocket's provenance context: client=websocket, its user agent and
+    address, and the door that authenticated it (`channels_auth`)."""
+    from apps.common import request_context as rc
+
+    headers = {k.decode("latin-1").lower(): v.decode("latin-1", "replace")
+               for k, v in scope.get("headers") or []}
+    method = scope.get("auth_method") or ("contact" if scope.get("contact") is not None else "")
+    app = scope.get("delegated_app")
+    cred = {"type": method, "id": None, "label": getattr(app, "name", "") or ""} if method else None
+    client = scope.get("client") or ("", 0)
+    forwarded = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    ctx = {
+        "request_id": rc.mint_request_id(headers.get("x-request-id", "")),
+        "client": "websocket",
+        "user_agent": rc.clean(headers.get("user-agent", "")),
+        "ip": rc.clean(forwarded or (client[0] if client else ""), 64),
+        "credential": cred,
+    }
+    return {k: v for k, v in ctx.items() if v}

@@ -39,6 +39,11 @@ pytestmark = pytest.mark.django_db(transaction=True)
 @pytest.fixture
 def sent(monkeypatch):
     out = []
+    # The dirty set lives on the CONNECTION and is not transactional: an earlier
+    # test on this xdist worker that marked a resource inside a rolled-back
+    # transaction leaves it there, and this test's first commit would flush it
+    # (seen: a stale `insight://` failing the item test in the merge queue).
+    invalidation._dirty_set().clear()
     monkeypatch.setattr(invalidation, "publish", lambda group, msg: out.append((group, msg)))
     return out
 

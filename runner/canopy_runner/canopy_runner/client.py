@@ -1,9 +1,11 @@
 """Control-plane HTTP client. stdlib urllib; every call is short and synchronous."""
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import pathlib
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -96,6 +98,7 @@ class Client:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Authorization", f"Bearer {self.token}")
+        _identify(req)
         if data is not None:
             req.add_header("Content-Type", "application/json")
         try:
@@ -132,6 +135,7 @@ class Client:
         url = f"{self.base_url}/api/canopy-sessions/attachments/{attachment_id}/content"
         req = urllib.request.Request(url, method="GET")
         req.add_header("Authorization", f"Bearer {self.token}")
+        _identify(req)
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
                 raw = resp.read()
@@ -427,3 +431,27 @@ class Client:
     def get_turn(self, turn_id: str) -> dict:
         _, payload = self._call("GET", f"/turns/{turn_id}")
         return payload or {}
+
+
+#: What canopy-web records as this request's program (`X-Canopy-Client`), so a
+#: turn or session the runner creates says "canopy-runner" in its provenance and
+#: in the server's TURN_CREATED / SESSION_CREATED log line rather than urllib's
+#: default user agent.
+CLIENT_NAME = "canopy-runner"
+
+
+@functools.lru_cache(maxsize=1)
+def user_agent() -> str:
+    """`canopy-runner/<version> host=<hostname>`."""
+    from . import provenance
+
+    try:
+        host = socket.gethostname()
+    except OSError:
+        host = "unknown"
+    return f"{CLIENT_NAME}/{provenance.version()} host={host}"
+
+
+def _identify(req: urllib.request.Request) -> None:
+    req.add_header("User-Agent", user_agent())
+    req.add_header("X-Canopy-Client", CLIENT_NAME)

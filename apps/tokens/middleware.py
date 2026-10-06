@@ -67,6 +67,10 @@ class BearerTokenAuthMiddleware:
                 # initiator records (apps/harness/initiator.py). Absent means
                 # canopy's own session did it.
                 request.auth_method = "pat"
+                # WHICH token — not just "a PAT". Without it a script on someone's
+                # PAT and the web UI recorded identical turns (2026-10-05).
+                request.auth_credential = _credential(
+                    "oauth" if token.oauth_grant_id else "pat", token.pk, token.label)
                 request._dont_enforce_csrf_checks = True
                 return
 
@@ -83,6 +87,7 @@ class BearerTokenAuthMiddleware:
             # anything the request itself carries.
             request.runner_requirements = tuple(ctok.runner_requirements or ())
             request.auth_method = "contact"
+            request.auth_credential = _credential("contact", ctok.pk, ctok.app.name)
             request._dont_enforce_csrf_checks = True
             return
 
@@ -131,6 +136,7 @@ class BearerTokenAuthMiddleware:
         if not already_signed_in:
             request.user = dtok.user
             request.auth_method = dtok.assurance or "delegated"
+            request.auth_credential = _credential("delegated", dtok.pk, dtok.app.name)
 
         # Safe with or without a session, and required with one: the frame
         # authenticates by header and holds no CSRF cookie for canopy, so its
@@ -161,6 +167,17 @@ def _authenticate_mcp_call(request: HttpRequest) -> bool:
     if user is not None:
         request.user = user
         request.auth_method = principal.get("auth_method") or "pat"
+    cred = principal.get("credential")
+    if cred:
+        request.auth_credential = dict(cred)
     request.via_mcp = True
+    request.mcp_tool = principal.get("mcp_tool") or ""
     request._dont_enforce_csrf_checks = True
     return True
+
+
+def _credential(kind: str, pk, label: str) -> dict:
+    """`request.auth_credential`: which credential authenticated the request, for
+    provenance (apps/common/request_context.py). Never a secret — a row id and
+    its human label."""
+    return {"type": kind, "id": pk, "label": (label or "")[:200]}

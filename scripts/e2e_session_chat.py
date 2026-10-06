@@ -5,7 +5,7 @@
 real server, a real runner and a real agent — and checks each step actually
 worked, rather than that it returned a success code.
 
-It creates a chat with `hal` on this machine's runner (spawning a real Claude in
+It creates a chat with an agent (`--agent`) on this machine's runner (spawning a real Claude in
 a real worktree, which you can watch in emdash), sends a message and waits for
 the reply, gets the agent to raise a question dialog and answers it through the
 API the way a phone tap does, then checks the answer REACHED THE AGENT. After
@@ -26,9 +26,16 @@ The session is PINNED to one runner — by default the one on this machine — f
 two reasons: you can watch it happen in emdash, and the answer step's keystroke
 has a known destination rather than wherever routing chose.
 
-    uv run python scripts/e2e_session_chat.py
-    uv run python scripts/e2e_session_chat.py --steps check_runner    # free
-    uv run python scripts/e2e_session_chat.py --keep                  # leave it open
+    CANOPY_E2E_TOKEN=<pat> uv run python scripts/e2e_session_chat.py --agent hal
+    uv run python scripts/e2e_session_chat.py --agent hal --token <pat> --steps check_runner
+    uv run python scripts/e2e_session_chat.py --agent hal --keep      # leave it open
+
+Both the token and the agent must be NAMED: there is no default token file (it
+was the operator's own PAT, so the script's chats were indistinguishable from
+them typing) and no default agent. Every request carries `X-Canopy-Client:
+e2e_session_chat.py`, a user agent, an `X-Request-Id` with the run's nonce, and
+the `X-Canopy-Parent-*` headers from CANOPY_TURN_ID / CANOPY_SESSION_ID / … when
+it runs inside an agent's session (scripts/script_provenance.py).
 
 Exit code is 0 only if every selected step passed.
 
@@ -67,8 +74,11 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import script_provenance  # noqa: E402
+
+SCRIPT = "e2e_session_chat.py"
 DEFAULT_BASE = "https://labs.connect.dimagi.com/canopy"
-DEFAULT_TOKEN_FILE = Path.home() / ".claude" / "canopy" / "workbench-token"
 RUNNER_CONFIG = Path.home() / ".canopy" / "runner.json"
 
 ALL_STEPS = ("check_runner", "create_session", "send_and_reply",
@@ -89,8 +99,9 @@ class Failure(Exception):
 
 
 class Client:
-    def __init__(self, base: str, token: str, verbose: bool = False):
+    def __init__(self, base: str, token: str, verbose: bool = False, nonce: str = ""):
         self.base, self.token, self.verbose = base.rstrip("/"), token, verbose
+        self.nonce = nonce
 
     def __call__(self, method: str, path: str, body=None, timeout: int = 30):
         url = f"{self.base}/api{path}"
@@ -98,7 +109,8 @@ class Client:
             url, method=method,
             data=json.dumps(body).encode() if body is not None else None,
             headers={"Authorization": f"Bearer {self.token}",
-                     "Content-Type": "application/json"})
+                     "Content-Type": "application/json",
+                     **script_provenance.headers(SCRIPT, self.nonce)})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read().decode()
@@ -190,7 +202,9 @@ def send_and_reply(ctx):
     marker = f"E2E-REPLY-{ctx['nonce']}"
     ctx["api"]("POST", f"/canopy-sessions/{ctx['session_id']}/send", {
         "text": f"Reply with exactly this token and nothing else: {marker}",
-        "client_id": str(uuid.uuid4()),
+        # The run's nonce rides the client id, which canopy keeps on the turn's
+        # origin_ref — so a turn this run made is findable by its nonce.
+        "client_id": f"e2e-{ctx['nonce']}-{uuid.uuid4().hex[:12]}",
     })
     wait_for(f"the agent to echo {marker}",
              lambda: any(marker in t for t in assistant_texts(session(ctx))),
@@ -216,7 +230,9 @@ def answer_from_the_web(ctx):
                  f"'Pick a colour' with exactly two options, '{colour}' and 'Beige'. "
                  "Ask nothing else and do nothing else first. After I answer, reply "
                  "with exactly: PICKED=<the option I chose>"),
-        "client_id": str(uuid.uuid4()),
+        # The run's nonce rides the client id, which canopy keeps on the turn's
+        # origin_ref — so a turn this run made is findable by its nonce.
+        "client_id": f"e2e-{ctx['nonce']}-{uuid.uuid4().hex[:12]}",
     })
 
     def dialog():
@@ -405,9 +421,9 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--base-url", default=DEFAULT_BASE)
-    p.add_argument("--token-file", default=str(DEFAULT_TOKEN_FILE))
-    p.add_argument("--token", default="")
-    p.add_argument("--agent", default="hal", help="agent slug to chat with")
+    p.add_argument("--token", default="",
+                   help=f"PAT to act with (else ${script_provenance.TOKEN_ENV}); required")
+    p.add_argument("--agent", required=True, help="agent slug to chat with (required)")
     p.add_argument("--workspace", default="", help="tenant; defaults to the agent's own")
     p.add_argument("--runner", default="",
                    help="runner id to pin to; defaults to the one on THIS machine")
@@ -438,11 +454,12 @@ def main() -> int:
         print("create_session needs check_runner (it resolves the workspace)", file=sys.stderr)
         return 2
 
+    nonce = uuid.uuid4().hex[:8]
     ctx = {
-        "api": Client(args.base_url, args.token or Path(args.token_file).read_text().strip(),
-                      args.verbose),
+        "api": Client(args.base_url, script_provenance.require_token(args.token),
+                      args.verbose, nonce=nonce),
         "agent": args.agent, "workspace": args.workspace, "runner_id": runner_id,
-        "runner_name": runner_id[:8], "nonce": uuid.uuid4().hex[:8],
+        "runner_name": runner_id[:8], "nonce": nonce,
         "timeout": args.timeout, "session_id": None, "closed": False,
     }
 

@@ -220,6 +220,8 @@ def enqueue_turn(
     capability: str | None = None,
     requested_turn_mode: str = "",
     requested_turn_mode_by=None,
+    parent=None,
+    provenance_extra: dict | None = None,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -228,6 +230,12 @@ def enqueue_turn(
     workspace: it has no agent/session to derive tenancy from, and claim_next_turn
     fails it closed without one, so accepting it here would silently queue a turn
     nothing can ever run. Session turns derive tenancy from session.workspace.
+
+    `parent` names what this turn was started FROM ({turn, session, task, host,
+    project, claude_session}: ids, or a Turn/Session) — a payload's `parent`, or
+    canopy's own (a transfer, a re-ask, a dispatch). It overrides the request's
+    X-Canopy-Parent-* headers key by key. `provenance_extra` adds keys to the
+    turn's provenance record (`clicked_by`). See apps/harness/provenance.py.
     """
     # One chokepoint for the retired spellings, because not every producer comes
     # through a request schema: TurnSpec.from_dict parses origin as a free string
@@ -334,10 +342,13 @@ def enqueue_turn(
         # production path that still lands here.
         from . import initiator as who
         initiator = who.unknown(via=origin)
+    from . import provenance
+
     try:
         with transaction.atomic():
             turn = Turn.objects.create(
                 **initiator.fields(),
+                **provenance.turn_fields(parent=parent, **(provenance_extra or {})),
                 agent=agent,
                 project=project,
                 chat_session=session,
@@ -2376,7 +2387,7 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
     return turn, created
 
 
-def run_schedule_now(schedule) -> Turn:
+def run_schedule_now(schedule, clicked_by=None) -> Turn:
     """Manual off-cycle trigger. Supersedes any still-open occurrence first,
     exactly as fire_schedule does — you only ever owe the newest, however it was
     launched. Run now is the designed remediation for an unfinished slot, so it
@@ -2402,6 +2413,9 @@ def run_schedule_now(schedule) -> Turn:
                         "schedule_name": schedule.name},
             routing=schedule.routing,
             initiator=_schedule_initiator(schedule, manual=True),
+            # The schedule's creator is who it is FOR; this is who pressed the
+            # button, which is the reason it ran now.
+            provenance_extra={"clicked_by": getattr(clicked_by, "email", "") or ""},
         )
     return turn
 

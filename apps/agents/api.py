@@ -1207,7 +1207,12 @@ def list_turns(request: HttpRequest, slug: str, limit: int = 100) -> Page[AgentT
              summary="Package a turn (idempotent per cli_session_id)",)
 def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status:
     agent = _agent_for_write(request, slug)
-    turn = services.upsert_turn(agent, payload)
+    from apps.harness import initiator as who
+
+    # A report-only row (no dispatch matched) is a turn someone ran by hand; the
+    # caller posting its close-out is the best account of who that was.
+    turn = services.upsert_turn(agent, payload,
+                                initiator=who.for_request(request, via="closeout"))
     return Status(201, AgentTurnOut.model_validate(turn))
 
 

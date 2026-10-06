@@ -1692,6 +1692,8 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         initiator=initiator,
         requested_turn_mode=payload.turn_mode or "",
         requested_turn_mode_by=request.user if payload.turn_mode else None,
+        # What the caller was running inside (overrides X-Canopy-Parent-*).
+        parent=payload.parent,
     )
     return Status(201 if created else 200, turn)
 
