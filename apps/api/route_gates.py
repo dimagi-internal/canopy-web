@@ -194,6 +194,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "enqueue_turn": ("agent.work",),  # agent and project turns alike
     "harness_list_turns": ("member", "session-acl", "turn-content"),  # session turns by chat ACL; redacted
     "harness_list_sessions": ("member", "session-acl"),
+    # --- apps/huddles/api.py: a derived view over the same visible turns as harness_list_turns
+    "list_huddles": ("member", "session-acl"),  # anchors via visible_turns_qs; summary carries no content
+    "get_huddle": ("member", "session-acl", "turn-content"),  # prompt/reply/digest only with turn-content
     "get_turn": ("member", "session-acl", "turn-content"),  # redacted unless turn-content
     "get_turn_caller_context": ("turn-content",),
     "append_turn_events": ("runner", "agent.work", "session-acl"),  # claimed: owner; unclaimed: agent.work / chat write

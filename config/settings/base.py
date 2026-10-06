@@ -99,6 +99,7 @@ INSTALLED_APPS = [
     "apps.timeline",
     "apps.system",
     "apps.harness",
+    "apps.huddles",
     "apps.feedback",
     "apps.storyboards",
     "apps.beta_requests",
