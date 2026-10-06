@@ -295,3 +295,51 @@ def test_a_cancelled_chat_turn_stops_the_session_and_finishes_cancelled(cfg, tmp
     assert fin[1] == ("turn-cancel-1", "cancelled by user")
     assert fin[2] == {"status": "cancelled", "emdash_task_id": "sid-5"}
     assert "turn-cancel-1" not in desktop.CANCELLED_TURNS
+
+
+# ── finding the CLI under launchd's bare PATH ───────────────────────────────
+
+def _no_cli_anywhere(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")  # what launchd gives the runner
+    monkeypatch.setattr(desktop.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(desktop.shutil, "which", lambda name: None)
+    real_is_file = desktop.Path.is_file
+    monkeypatch.setattr(desktop.Path, "is_file",
+                        lambda self: str(self).startswith(str(tmp_path)) and real_is_file(self))
+
+
+def _exe(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_the_cli_is_found_in_local_bin_without_it_on_path(monkeypatch, tmp_path):
+    _no_cli_anywhere(monkeypatch, tmp_path)
+    cli = _exe(tmp_path / ".local" / "bin" / "claude")
+    assert desktop.claude_cli() == cli
+
+
+def test_the_apps_bundled_cli_is_the_last_resort(monkeypatch, tmp_path):
+    _no_cli_anywhere(monkeypatch, tmp_path)
+    bundled = _exe(tmp_path / "Library" / "Application Support" / "Claude" / "claude-code"
+                   / "2.1.288" / "claude.app" / "Contents" / "MacOS" / "claude")
+    assert desktop.claude_cli() == bundled
+
+
+def test_no_cli_means_new_threads_stay_on_emdash_and_readiness_says_why(cfg, monkeypatch, tmp_path):
+    _no_cli_anywhere(monkeypatch, tmp_path)
+    assert desktop.claude_cli() is None
+    monkeypatch.setattr(desktop, "_current", desktop.CLAUDE_DESKTOP)
+    assert desktop.maybe_execute(cfg, FakeClient(), "r", _turn(), "th") is None
+
+    from canopy_runner import readiness
+    monkeypatch.setattr(readiness.cdp_control, "cdp_healthy", lambda port: True)
+    ready, note = readiness.compute(SimpleNamespace(cdp_port=1, state_path=str(tmp_path / "state")))
+    assert ready is False and "no Claude Code CLI" in note
+
+
+def test_the_cli_runs_with_a_real_path(tmp_path):
+    env = desktop._cli_env(Path("/somewhere/bin/claude"))
+    assert env["PATH"].split(":")[:2] == ["/somewhere/bin", str(Path.home() / ".local" / "bin")]

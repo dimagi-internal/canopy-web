@@ -248,11 +248,58 @@ def worktree_settings(allow: list[str], existing: dict | None = None) -> dict:
     return out
 
 
+# ── the Claude Code CLI ─────────────────────────────────────────────────────
+#
+# The runner runs under launchd, whose PATH is the bare system one — it does NOT
+# have ~/.local/bin, where the native installer puts `claude`. emdash never cared
+# (it spawns Claude Code itself); this runtime shells out to the CLI to seed a
+# session and to install the mod, so it resolves the binary explicitly instead of
+# trusting PATH. Found the hard way: the first live turn on haldimagi crashed with
+# FileNotFoundError: 'claude' (canopy-web#1188), though every test from a shell
+# had passed — a shell's PATH has ~/.local/bin.
+
+def _cli_candidates() -> list[Path]:
+    home = Path.home()
+    found = [shutil.which("claude")]
+    found += [str(home / ".local" / "bin" / "claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
+    # The CLI the desktop app bundles for its own sessions — always present where
+    # the app is, so the runtime works even on a box that never installed the CLI.
+    bundled = glob.glob(str(home / "Library" / "Application Support" / "Claude" / "claude-code"
+                            / "*" / "claude.app" / "Contents" / "MacOS" / "claude"))
+    found += sorted(bundled, key=lambda p: Path(p).stat().st_mtime, reverse=True)
+    return [Path(p) for p in found if p]
+
+
+def claude_cli() -> Path | None:
+    """The Claude Code CLI this runtime runs, or None when there is none."""
+    for p in _cli_candidates():
+        if p.is_file() and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def _cli() -> Path:
+    cli = claude_cli()
+    if cli is None:
+        raise RuntimeError("no Claude Code CLI on this runner (looked on PATH, in ~/.local/bin, "
+                           "Homebrew, and the Claude app's bundled copy)")
+    return cli
+
+
+def _cli_env(cli: Path) -> dict:
+    """The CLI's own subprocesses (hooks, git, gh, uv) need a real PATH too."""
+    home = Path.home()
+    extra = [str(cli.parent), str(home / ".local" / "bin"), "/opt/homebrew/bin", "/usr/local/bin"]
+    path = os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    return {**os.environ, "PATH": ":".join(extra + [path])}
+
+
 def prepare_settings(cfg, wt: Path) -> None:
+    cli = _cli()
     # `install` alone reuses whatever version is already in Claude Code's plugin
     # cache; `update` is what brings in the mod a runner upgrade shipped.
     for verb in ("install", "update"):
-        subprocess.run(["claude", "plugin", verb, PLUGIN, "--scope", "local"],
+        subprocess.run([str(cli), "plugin", verb, PLUGIN, "--scope", "local"], env=_cli_env(cli),
                        cwd=wt, capture_output=True, text=True, check=False, timeout=120)
     path = wt / ".claude" / "settings.local.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -269,21 +316,24 @@ def ensure_mod() -> None:
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(MOD_SRC, dest)
-    listed = subprocess.run(["claude", "plugin", "marketplace", "list"],
+    cli = _cli()
+    env = _cli_env(cli)
+    listed = subprocess.run([str(cli), "plugin", "marketplace", "list"], env=env,
                             capture_output=True, text=True, timeout=60).stdout
     if MARKETPLACE not in listed:
-        subprocess.run(["claude", "plugin", "marketplace", "add", str(dest)],
+        subprocess.run([str(cli), "plugin", "marketplace", "add", str(dest)], env=env,
                        capture_output=True, text=True, timeout=120)
-    subprocess.run(["claude", "plugin", "marketplace", "update", MARKETPLACE],
+    subprocess.run([str(cli), "plugin", "marketplace", "update", MARKETPLACE], env=env,
                    capture_output=True, text=True, timeout=120)
 
 
 def seed_session(cfg, wt: Path) -> str:
-    argv = ["claude", "-p", SEED_PROMPT, "--output-format", "json"]
+    cli = _cli()
+    argv = [str(cli), "-p", SEED_PROMPT, "--output-format", "json"]
     model = getattr(cfg, "desktop_model", "")
     if model:
         argv += ["--model", model]
-    out = subprocess.run(argv, cwd=wt, capture_output=True, text=True, timeout=300)
+    out = subprocess.run(argv, cwd=wt, env=_cli_env(cli), capture_output=True, text=True, timeout=300)
     try:
         return json.loads(out.stdout)["session_id"]
     except (ValueError, KeyError) as exc:
@@ -431,6 +481,13 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
         run = TurnRun(cfg, client, runner_id, turn, thread_key, plan, reuse=key)
     elif key or _current != CLAUDE_DESKTOP:
         return None  # an emdash thread continues in emdash
+    elif claude_cli() is None:
+        # A new desktop session needs the CLI (seed + mod install). Without it the
+        # turn would only crash, so it runs on emdash instead — loudly: readiness
+        # reports the same reason on every heartbeat (readiness.compute).
+        logger.error("claude-desktop runtime: no Claude Code CLI on this runner — turn %s "
+                     "runs on emdash instead", turn.get("id"))
+        return None
     else:
         run = TurnRun(cfg, client, runner_id, turn, thread_key, plan, reuse="")
     th = threading.Thread(target=run.run, daemon=True, name=f"desktop-{str(turn['id'])[:8]}")
@@ -479,7 +536,9 @@ class TurnRun:
             try:
                 self.finish(False, f"Claude desktop runtime error: {exc}")
             except Exception:  # noqa: BLE001
-                pass
+                # Never silent: a crash whose fail did not land leaves the turn
+                # CLAIMED until its lease runs out, and the log is the only trace.
+                logger.exception("desktop turn=%s: could not report the failure", self.id)
 
     def _run(self) -> None:
         if not ensure_app():
