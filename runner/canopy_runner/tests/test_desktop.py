@@ -395,3 +395,50 @@ def test_a_new_sessions_turn_transcript_skips_the_seed(cfg, tmp_path, no_app, mo
     shipped = [ln for c in client.of("post_transcript") for ln in c[1][1]]
     assert shipped and all("ready" not in ln for ln in shipped)
     assert any("the work" in ln for ln in shipped)
+
+
+# ── the shells a stopped turn leaves behind ─────────────────────────────────
+
+def test_only_the_stopped_turns_shells_are_selected():
+    now = time.time()
+    snap = "/bin/zsh -c source /Users/x/.claude/shell-snapshots/snapshot-zsh-1.sh && eval 'python3 -c sleep'"
+    procs = [
+        (10, 1, now - 300, "/Applications/Claude.app/Contents/Helpers/disclaimer --pgroup -- claude --resume=sid-1"),
+        (11, 10, now - 300, "claude --output-format stream-json --resume=sid-1"),
+        (20, 11, now - 5, snap),              # this turn's Bash        -> killed
+        (21, 20, now - 5, "python3 -c sleep"),  # ...and its child       -> killed
+        (30, 11, now - 200, snap),            # an earlier background task -> kept
+        (40, 11, now - 5, "node mcp-server.js"),  # an MCP server        -> kept
+        (50, 99, now - 5, snap),              # another session's shell -> kept
+    ]
+    assert sorted(desktop.turn_shells("sid-1", now - 30, procs=procs)) == [20, 21]
+
+
+def test_etime_parses_every_ps_shape():
+    assert desktop._etime_seconds("00:22") == 22
+    assert desktop._etime_seconds("01:02:03") == 3723
+    assert desktop._etime_seconds("2-00:00:01") == 172801
+
+
+def test_the_same_name_twice_gets_two_worktrees(cfg, tmp_path):
+    repo = _repo(tmp_path)
+    a = desktop.make_worktree(cfg, repo, "HEAD", "c-same-name-e3b9")
+    b = desktop.make_worktree(cfg, repo, "HEAD", "c-same-name-e3b9")
+    assert a != b and a.exists() and b.exists()
+
+
+def test_a_stop_kills_the_running_turns_shells_before_aborting(cfg, tmp_path, monkeypatch):
+    """Kill-then-abort: killing after the abort hits a BACKGROUNDED task, whose death
+    makes Claude Code start a new turn that redoes the work."""
+    ch = _live_channel(cfg, tmp_path)
+    t = int(time.time() * 1000)
+    (ch / f"ev-{t}-1-turn.start.json").write_text(json.dumps({"t": t, "kind": "turn.start"}))
+    order = []
+    monkeypatch.setattr(desktop, "kill_turn_shells",
+                        lambda sid, since: order.append(("kill", not (ch / "stop-1.txt").exists())) or 2)
+    th = threading.Thread(target=_mod_stops, args=(ch, "interrupted"))
+    th.start()
+    res = desktop.stop(cfg, "sid-5", wait=5)
+    th.join()
+    assert order == [("kill", True)]  # killed while no stop request existed yet
+    assert res == {"action": "interrupted", "reason": "", "killed": 2}

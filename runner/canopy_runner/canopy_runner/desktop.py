@@ -225,6 +225,12 @@ def _git(repo: Path, *args: str, check: bool = True) -> str:
 def make_worktree(cfg, repo: Path, base_ref: str, name: str) -> Path:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-")[:80] or uuid.uuid4().hex[:8]
     wt = _root(cfg) / "worktrees" / repo.name / slug
+    branches = _git(repo, "branch", "--list", f"canopy-desktop/{slug}", check=False)
+    if wt.exists() or branches:
+        # The same name twice (same prompt, same thread key) must not crash the
+        # turn on `worktree add`: a new session gets its own place (found in #1188).
+        slug = f"{slug}-{uuid.uuid4().hex[:6]}"
+        wt = wt.with_name(slug)
     wt.parent.mkdir(parents=True, exist_ok=True)
     if "/" in base_ref:  # origin/main: bring it current, best-effort
         remote, _, branch = base_ref.partition("/")
@@ -410,6 +416,14 @@ def stop(cfg, session_key: str, wait: float = STOP_WAIT_SECONDS) -> dict:
     channel = wt / CHANNEL
     if not channel_alive(channel):
         return {"action": "idle", "reason": "the session's process is not running"}
+    # Kill the running turn's shells FIRST, then abort. The other order leaves the
+    # command backgrounded by the abort, and killing a BACKGROUND task makes Claude
+    # Code notify the model, which starts a new turn and runs the work again (found
+    # live, #1188). Killed while still a foreground tool call, the call just fails.
+    killed = 0
+    turn_started = _running_turn_started(channel)
+    if turn_started is not None:
+        killed = kill_turn_shells(session_key, turn_started / 1000)
     n = next_followup_index(channel, "stop")
     which = f"stop-{n}"
     (channel / f"{which}.txt").write_text(str(int(time.time() * 1000)))
@@ -420,9 +434,103 @@ def stop(cfg, session_key: str, wait: float = STOP_WAIT_SECONDS) -> dict:
         if hit:
             outcome = (hit.get("extra") or {}).get("outcome")
             return {"action": outcome if outcome in ("interrupted", "idle") else "unreadable",
-                    "reason": (hit.get("extra") or {}).get("err", "")}
+                    "reason": (hit.get("extra") or {}).get("err", ""), "killed": killed}
         time.sleep(0.5)
-    return {"action": "unreadable", "reason": "the session did not answer the stop"}
+    return {"action": "unreadable", "reason": "the session did not answer the stop", "killed": killed}
+
+
+def _running_turn_started(channel: Path) -> int | None:
+    """When the model turn running now began (ms), or None when none is running."""
+    started = None
+    for e in read_events(channel):
+        if e.get("kind") == "turn.start":
+            started = e.get("t", 0)
+        elif e.get("kind") == "turn.complete":
+            started = None
+    return started
+
+
+# ── the shells a stopped turn leaves behind ─────────────────────────────────
+#
+# Aborting a turn does NOT kill the Bash command it was running: Claude Code
+# backgrounds it, and it runs on after the stop (a 120s sleep outlived a stop,
+# found live in #1188). Its own TaskStop tool, called by the mod with the
+# backgrounded task's id, reported success and left the process running — so the
+# runner ends it directly. Claude Code runs every Bash command as
+# `/bin/zsh -c source ~/.claude/shell-snapshots/…`, a descendant of the session's
+# CLI process (`--resume=<id>`). Only those shells that started during the stopped
+# turn are killed: a background task the session started earlier on purpose, and
+# the session's MCP servers, are left alone.
+
+_SHELL_MARK = "/.claude/shell-snapshots/"
+
+
+def _etime_seconds(etime: str) -> int:
+    """ps `etime` ([[dd-]hh:]mm:ss) in seconds."""
+    days, _, rest = etime.strip().rpartition("-")
+    parts = [int(p) for p in rest.split(":")]
+    while len(parts) < 3:
+        parts.insert(0, 0)
+    h, m, s = parts
+    return (int(days) if days else 0) * 86400 + h * 3600 + m * 60 + s
+
+
+def _processes() -> list[tuple[int, int, float, str]]:
+    """(pid, ppid, started_at, command) for this user's processes."""
+    out = subprocess.run(["ps", "-U", str(os.getuid()), "-o", "pid=,ppid=,etime=,command="],
+                         capture_output=True, text=True).stdout
+    now, rows = time.time(), []
+    for line in out.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) == 4:
+            try:
+                rows.append((int(parts[0]), int(parts[1]), now - _etime_seconds(parts[2]), parts[3]))
+            except ValueError:
+                continue
+    return rows
+
+
+def turn_shells(sid: str, since: float, procs=None) -> list[int]:
+    """PIDs of the Bash shells (and everything under them) that the session `sid`
+    started at or after `since` (epoch seconds)."""
+    procs = _processes() if procs is None else procs
+    children: dict[int, list[int]] = {}
+    for pid, ppid, _, _ in procs:
+        children.setdefault(ppid, []).append(pid)
+    info = {pid: (start, cmd) for pid, _, start, cmd in procs}
+    roots = [pid for pid, _, _, cmd in procs
+             if f"--resume={sid}" in cmd or f"--resume {sid}" in cmd]
+
+    def below(pid):
+        for c in children.get(pid, []):
+            yield c
+            yield from below(c)
+
+    victims: list[int] = []
+    for root in roots:
+        for pid in children.get(root, []):
+            start, cmd = info[pid]
+            if _SHELL_MARK in cmd and start >= since - 2:  # 2s: etime is whole seconds
+                victims += [pid, *below(pid)]
+    return victims
+
+
+def kill_turn_shells(sid: str, since: float) -> int:
+    import signal
+
+    victims = turn_shells(sid, since)
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in victims:
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+        if sig == signal.SIGTERM and victims:
+            time.sleep(1.5)
+    if victims:
+        logger.info("desktop session %s: killed %d process(es) left running by the stopped turn",
+                    sid, len(victims))
+    return len(victims)
 
 
 # ── the session report ──────────────────────────────────────────────────────
