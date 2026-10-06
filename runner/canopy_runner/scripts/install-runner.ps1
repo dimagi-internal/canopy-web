@@ -89,6 +89,9 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $RUNNER_SRC   = "runner/canopy_runner/canopy_runner"
+# Same list as provenance.CODE_PATHS, install-runner.sh and deploy-labs.yml
+# (tests/test_runner_code_paths.py). A different list here = a box marked stale forever.
+$RUNNER_CODE_PATHS = @("runner/canopy_runner/canopy_runner", "runner/canopy_runner/scripts", "runner/menubar", "assets/brand")
 $TASK_FOLDER  = "\Canopy"
 $RUNNER_TASK  = "canopy-runner"
 $UPDATER_TASK = "canopy-runner-updater"
@@ -166,8 +169,8 @@ if ($LASTEXITCODE -ne 0) {
 # The provenance the runner reports and the server compares against: the last
 # commit that touched the runner's OWN source, NOT the repo HEAD (which moves on
 # every canopy-web commit and would mark every runner stale on a CSS change).
-$RunnerSha   = (& git -C $Repo log -1 --format=%H $Ref -- $RUNNER_SRC).Trim()
-$CommittedAt = (& git -C $Repo log -1 --format=%ct $Ref -- $RUNNER_SRC).Trim()
+$RunnerSha   = (& git -C $Repo log -1 --format=%H $Ref -- @RUNNER_CODE_PATHS).Trim()
+$CommittedAt = (& git -C $Repo log -1 --format=%ct $Ref -- @RUNNER_CODE_PATHS).Trim()
 $BuiltAt     = Stamp
 if ($RunnerSha) {
     Info "ref $Ref | runner source at $($RunnerSha.Substring(0,12))"

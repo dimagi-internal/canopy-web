@@ -40,6 +40,10 @@ IF_STALE=0
 DO_PAIR=""          # "" = pair only if there is no config; 1 = always check; 0 = never
 PAIR_ARGS=()
 RUNNER_SRC="runner/canopy_runner/canopy_runner"
+# What counts as the runner's code for staleness: the package, the installer, the
+# menu-bar app and the icons it bundles. Same list as provenance.CODE_PATHS and
+# deploy-labs.yml (tests/test_runner_code_paths.py keeps the three equal).
+RUNNER_CODE_PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar assets/brand"
 LABEL="com.canopy.runner"
 UPDATER_LABEL="com.canopy.runner.updater"
 CONFIG="$HOME/.canopy/runner.json"
@@ -129,11 +133,11 @@ fi
 # The provenance the runner reports and the server compares against: the last
 # commit that touched the runner's OWN source, NOT the repo HEAD (which moves on
 # every canopy-web commit and would mark every runner stale on a CSS change).
-RUNNER_SHA="$(git -C "$REPO" log -1 --format=%H "$REF" -- "$RUNNER_SRC")"
+RUNNER_SHA="$(git -C "$REPO" log -1 --format=%H "$REF" -- $RUNNER_CODE_PATHS)"
 # Committer epoch of the SAME commit. The sha says WHICH code; this says WHEN, and
 # only the pair can tell "this box is behind" from "this box is ahead of the
 # deploy" — which the supervisor was reporting as the former either way.
-RUNNER_COMMITTED_AT="$(git -C "$REPO" log -1 --format=%ct "$REF" -- "$RUNNER_SRC")"
+RUNNER_COMMITTED_AT="$(git -C "$REPO" log -1 --format=%ct "$REF" -- $RUNNER_CODE_PATHS)"
 BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [ -n "$RUNNER_SHA" ]; then
   echo "==> ref $REF | runner source at ${RUNNER_SHA:0:12}"

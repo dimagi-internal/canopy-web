@@ -426,7 +426,8 @@ VAPID_SUBJECT = env("VAPID_SUBJECT", default="mailto:jjackson@dimagi.com")
 CHAT_STUB_EXECUTOR = env.bool("CHAT_STUB_EXECUTOR", default=True)
 
 # --- Runner code provenance (apps/harness, spec 2026-07-28) ---
-# The sha of the last commit that touched `runner/canopy_runner/canopy_runner/`,
+# The sha of the last commit that touched the runner's code — the package, its
+# installer, the menu-bar app and its icons (provenance.CODE_PATHS) —
 # computed by the deploy workflow and baked into the image. A laptop runner reports
 # the SAME quantity on its heartbeat, and the supervisor alerts when the two differ —
 # i.e. that box is executing runner code older than what shipped.

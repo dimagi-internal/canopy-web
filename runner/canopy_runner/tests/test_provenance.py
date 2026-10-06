@@ -34,8 +34,9 @@ def test_prefers_the_stamped_build_over_git(monkeypatch):
 
 def test_falls_back_to_the_runner_sources_own_git_log(monkeypatch):
     """A SOURCE runner computes the same quantity live: the last commit touching
-    the runner's own source dir — NOT the repo HEAD, which moves on every
-    canopy-web commit and would alert on an unrelated frontend change."""
+    the runner's code (provenance.CODE_PATHS, from the repo root) — NOT the repo
+    HEAD, which moves on every canopy-web commit and would alert on an unrelated
+    frontend change."""
     captured = {}
 
     def fake_run(cmd, **kwargs):
@@ -46,10 +47,11 @@ def test_falls_back_to_the_runner_sources_own_git_log(monkeypatch):
     monkeypatch.setattr(provenance.subprocess, "run", fake_run)
     assert provenance.code_sha() == "b" * 40
 
-    src = str(provenance.runner_src_dir())
-    assert captured["cmd"][:5] == ["git", "-C", src, "log", "-1"]
+    repo = str(provenance.runner_src_dir().parents[2])
+    assert captured["cmd"][:5] == ["git", "-C", repo, "log", "-1"]
     # Path-scoped, or it degenerates into HEAD.
-    assert captured["cmd"][-2:] == ["--", src]
+    n = len(provenance.CODE_PATHS)
+    assert captured["cmd"][-(n + 1):] == ["--", *provenance.CODE_PATHS]
 
 
 def test_is_empty_when_git_fails(monkeypatch):
@@ -183,9 +185,10 @@ def test_committed_at_falls_back_to_the_same_git_log_as_the_sha(monkeypatch):
     monkeypatch.setattr(provenance.subprocess, "run", fake_run)
     assert provenance.code_committed_at() == 1753999999
 
-    src = str(provenance.runner_src_dir())
-    assert captured["cmd"][:5] == ["git", "-C", src, "log", "-1"]
-    assert captured["cmd"][-2:] == ["--", src]  # path-scoped, like the sha
+    repo = str(provenance.runner_src_dir().parents[2])
+    assert captured["cmd"][:5] == ["git", "-C", repo, "log", "-1"]
+    n = len(provenance.CODE_PATHS)
+    assert captured["cmd"][-(n + 1):] == ["--", *provenance.CODE_PATHS]  # path-scoped, like the sha
 
 
 def test_committed_at_is_zero_when_git_fails(monkeypatch):
