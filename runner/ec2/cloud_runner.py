@@ -4096,12 +4096,13 @@ def _provenance_brief(turn: dict) -> str:
 
 
 def _lineage_env(turn: dict) -> dict:
-    """WHICH turn / session / task this Claude session runs for, so anything it
-    asks canopy for in turn names it as the parent. The `canopy` CLI forwards
-    these as `X-Canopy-Parent-Turn` / `-Session` / `-Task` / `-Host`
-    (canopy-web apps/common/request_context.py), and canopy records them on the
-    turn or session the request creates. Without them a script run inside an
-    agent's session creates work that looks like its owner typed it.
+    """WHICH turn / session this Claude session runs for, so anything it asks
+    canopy for in turn names it as the parent. The `canopy` CLI forwards these as
+    `X-Canopy-Parent-Turn` / `-Session` (canopy-web
+    apps/common/request_context.py), and canopy records them on the turn or
+    session the request creates. Without them a script run inside an agent's
+    session creates work that looks like its owner typed it. Nothing
+    runner-specific: the server reads this runner off the parent turn.
 
     Not secrets — ids. Only well-formed values are exported."""
     out = {}
@@ -4111,14 +4112,6 @@ def _lineage_env(turn: dict) -> dict:
     chat_id = _chat_session_id(turn)
     if re.fullmatch(r"[0-9a-fA-F-]{8,64}", chat_id or ""):
         out["CANOPY_SESSION_ID"] = chat_id
-    thread = str((turn.get("origin_ref") or {}).get("thread_key") or "")
-    task = thread[len("emdash:"):] if thread.startswith("emdash:") else ""
-    if task and re.fullmatch(r"[\w.:@-]{1,200}", task):
-        out["CANOPY_EMDASH_TASK"] = task
-    try:
-        out["CANOPY_HOST"] = socket.gethostname()
-    except OSError:
-        pass
     return out
 
 

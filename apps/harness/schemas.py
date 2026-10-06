@@ -512,17 +512,12 @@ class ParentIn(Schema):
     on the new turn/session as `parent_*` + `provenance.parent`. Every field is
     optional and none is checked: an id that does not resolve is recorded as
     given and never refuses the request. The `X-Canopy-Parent-Turn`,
-    `X-Canopy-Parent-Session`, `X-Canopy-Parent-Task`, `X-Canopy-Parent-Host` and
-    `X-Canopy-Claude-Session` headers say the same thing; a field here wins over
-    its header."""
+    `X-Canopy-Parent-Session` and `X-Canopy-Claude-Session` headers say the same
+    thing; a field here wins over its header. Nothing runner-specific: the parent
+    turn names the runner that claimed it."""
 
     turn: str = ""
     session: str = ""
-    # An emdash task name (with `host` and `project`, resolved through the runner
-    # binding to a session).
-    task: str = ""
-    host: str = ""
-    project: str = ""
     claude_session: str = ""
 
 
@@ -574,7 +569,8 @@ class InitiatorOut(Schema):
     # the program that sent it (X-Canopy-Client). Null when canopy started it.
     credential: dict | None = None
     client: str = ""
-    # The turn / session / task it was started from (see TurnOut.parent_*).
+    # The turn / session it was started from, and the runner that parent turn ran
+    # on ({id, name, kind}) — see TurnOut.parent_*.
     parent: dict | None = None
 
 

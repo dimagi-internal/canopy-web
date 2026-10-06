@@ -14681,9 +14681,9 @@ export interface components {
          *     on the new turn/session as `parent_*` + `provenance.parent`. Every field is
          *     optional and none is checked: an id that does not resolve is recorded as
          *     given and never refuses the request. The `X-Canopy-Parent-Turn`,
-         *     `X-Canopy-Parent-Session`, `X-Canopy-Parent-Task`, `X-Canopy-Parent-Host` and
-         *     `X-Canopy-Claude-Session` headers say the same thing; a field here wins over
-         *     its header.
+         *     `X-Canopy-Parent-Session` and `X-Canopy-Claude-Session` headers say the same
+         *     thing; a field here wins over its header. Nothing runner-specific: the parent
+         *     turn names the runner that claimed it.
          */
         readonly ParentIn: {
             /**
@@ -14696,21 +14696,6 @@ export interface components {
              * @default
              */
             readonly session: string;
-            /**
-             * Task
-             * @default
-             */
-            readonly task: string;
-            /**
-             * Host
-             * @default
-             */
-            readonly host: string;
-            /**
-             * Project
-             * @default
-             */
-            readonly project: string;
             /**
              * Claude Session
              * @default
