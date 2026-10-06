@@ -427,3 +427,133 @@ export function countdown(iso: string | null | undefined, now: Date): string {
   if (mins < 60) return `${mins}m`
   return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`
 }
+
+// ── the leader's side of the conversation ───────────────────────────────────
+
+/** What the leader asks of everyone in a round, in one line. */
+const ROUND_ASKS: Record<string, Record<number, string>> = {
+  work: {
+    1: 'report: work + priorities',
+    2: "roundtable: propose, given everyone's reports",
+    3: 'co-sign the joint work naming you',
+    4: 'resolve amends',
+  },
+}
+
+export function roundAsk(type: string, round: number): string {
+  return ROUND_ASKS[type]?.[round] ?? roundName(type, round).toLowerCase()
+}
+
+/** One question the leader put to a member. `about` names the proposal it is
+ * about (round 3's critiques), or '' for a question to the member at large. */
+export type LeaderAsk = { about: string; text: string }
+
+const NONE = /^(none\.?|n\/a|-)$/i
+const BULLET = /^\s*(?:[-*•]|\d+[.)])\s+/
+
+/**
+ * The questions the leader sent one member, read out of that member's round
+ * prompt — the critique sections the `work` engine renders:
+ *  - round 2: bullets under "<leader>'s questions for you:";
+ *  - round 3: a "Critique: …" paragraph after each "### <title> (lead x)" joint
+ *    proposal, and bullets under "<leader>'s questions on your own proposals …:".
+ * Defensive: a header with prose instead of bullets is one question; "none" is
+ * none; anything it cannot read returns [] (the card then offers the prompt).
+ */
+export function leaderAsks(prompt: string, leader: string): LeaderAsk[] {
+  if (!prompt || !leader) return []
+  const esc = leader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const header = new RegExp(`^${esc}['’]s questions\\b.*:\\s*$`, 'i')
+  const lines = prompt.split('\n')
+  const out: LeaderAsk[] = []
+  let title = ''
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
+    const h3 = /^###\s+(.+?)(?:\s+\(lead [^)]*\))?\s*$/.exec(line)
+    if (h3) {
+      title = h3[1].trim()
+      continue
+    }
+    const crit = /^Critique:\s*(.*)$/i.exec(line)
+    if (crit) {
+      const para = [crit[1]]
+      while (i + 1 < lines.length && lines[i + 1].trim()) para.push(lines[++i].trim())
+      const text = para.join(' ').trim()
+      if (text && !NONE.test(text)) out.push({ about: title, text })
+      continue
+    }
+    if (!header.test(line)) continue
+    const about = /own proposals/i.test(line) ? 'your own proposals' : ''
+    const items: string[] = []
+    let j = i + 1
+    while (j < lines.length && !lines[j].trim()) j++
+    for (; j < lines.length; j++) {
+      const l = lines[j]
+      if (!l.trim()) {
+        // A blank line ends the section unless another bullet follows it.
+        let k = j + 1
+        while (k < lines.length && !lines[k].trim()) k++
+        if (k < lines.length && BULLET.test(lines[k]) && items.length) { j = k - 1; continue }
+        break
+      }
+      if (BULLET.test(l)) items.push(l.replace(BULLET, '').trim())
+      else if (items.length) items[items.length - 1] += ' ' + l.trim()
+      else items.push(l.trim())
+    }
+    i = j
+    for (const t of items) if (t && !NONE.test(t)) out.push({ about, text: t })
+  }
+  return out
+}
+
+// ── compact card summaries ──────────────────────────────────────────────────
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+const str = (v: unknown) => (v === null || v === undefined ? '' : typeof v === 'string' ? v : String(v))
+
+/** Round 1: "5 worked on · 4 priorities · 3 needs", plus the top priority. */
+export function reportSummary(b: Block): { stats: string; top: string } {
+  const n = (k: string) => list<unknown>(b[k]).length
+  const parts = [
+    n('worked_on') ? `${n('worked_on')} worked on` : '',
+    n('priorities') ? plural(n('priorities'), 'priority', 'priorities') : '',
+    n('needs') ? plural(n('needs'), 'need') : '',
+  ].filter(Boolean)
+  const top = list<unknown>(b.priorities)[0]
+  return { stats: parts.join(' · '), top: top === undefined ? '' : typeof top === 'string' ? top : JSON.stringify(top) }
+}
+
+export type ProposalLine = { title: string; lead: string; partners: string[]; anchor: string }
+
+/** Round 2: one line per proposal (title, partners), anchored for the arcs. */
+export function proposalLines(b: Block, member: string): ProposalLine[] {
+  return list<Proposal>(b.proposals).map((p) => {
+    const lead = str(p.lead) || member
+    const title = str(p.title)
+    return {
+      title, lead,
+      partners: [...new Set(list<unknown>(p.with).map(str))].filter((m) => m && m !== lead),
+      anchor: anchorKey.proposal(lead, title),
+    }
+  })
+}
+
+export type AnswerLine = { title: string; lead: string; answer: Answer; anchor: string }
+
+/** Round 3: one row per answer, anchored for the arcs. */
+export function answerLines(b: Block, member: string): AnswerLine[] {
+  return list<AnswerRow>(b.answers).map((a) => ({
+    title: str(a.title), lead: str(a.lead), answer: normAnswer(a.answer), anchor: anchorKey.answer(member, str(a.title)),
+  }))
+}
+
+/** Round 4: accept / reject + title. */
+export function resolutionLines(b: Block): { title: string; verdict: Resolution | null }[] {
+  return list<ResolutionRow>(b.resolutions).map((r) => ({ title: str(r.title), verdict: normResolution(r.resolution) }))
+}
+
+/** "answered 3 of ada's questions" — round 2's `critique_answers`. */
+export function critiqueAnswered(b: Block, leader: string): string {
+  const n = list<unknown>(b.critique_answers).length
+  return n ? `answered ${n} of ${leader}'s question${n === 1 ? '' : 's'}` : ''
+}

@@ -83,7 +83,7 @@ export function AnswerPill({ answer, title }: { answer: ArcState; title?: string
     <span
       data-answer={answer}
       title={title}
-      className={`inline-flex h-5 items-center rounded-full border px-2 text-[11px] font-medium ${s.pill}`}
+      className={`inline-flex h-5 shrink-0 items-center whitespace-nowrap rounded-full border px-2 text-[11px] font-medium ${s.pill}`}
     >
       {s.label}
     </span>
