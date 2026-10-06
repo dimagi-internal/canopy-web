@@ -32,7 +32,7 @@ S = pathlib.Path({str(state)!r})
 a = sys.argv[1:]
 method = a[a.index("-X") + 1] if "-X" in a else "GET"
 url = next(x for x in a if x.startswith("http"))
-path = url.split("/canopy", 1)[1]
+path = "/" + url.split("://", 1)[1].split("/", 1)[1]
 with (S / "calls").open("a") as fh:
     fh.write(method + " " + path + chr(10))
 if path == "/api/harness/runners/":
