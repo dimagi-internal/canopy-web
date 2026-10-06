@@ -1054,6 +1054,21 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     # resumed turn, and fold it into this turn's result text. Observed directly:
     # a resumed turn re-emitted the previous turn's tool call and reply.
     state = {"replaying": False}
+    # The reply text of the message being streamed. ACP sends a reply as many
+    # `agent_message_chunk` fragments — often a few characters each — and every
+    # assistant event becomes one row everywhere downstream: a Slack post, a
+    # chat line. So fragments are joined here and the message is emitted WHOLE,
+    # when the agent moves on to a tool call or the turn ends — the same unit
+    # the CLI executor emits. Observed 2026-10-06: one Eva reply posted to Slack
+    # as 85 messages split mid-word.
+    message: list = []
+
+    def _close_message():
+        """Emit the message being streamed, if any. Caller holds `lock`."""
+        text = "".join(message)
+        message.clear()
+        if text.strip():
+            batch.append({"kind": "assistant", "payload": {"text": text}})
 
     def _emit_tool_start(call_id, call):
         """One tool_start per call, carrying real arguments.
@@ -1085,8 +1100,9 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             if kind == "agent_message_chunk":
                 text = _content_text_of(update)
                 if text:
-                    batch.append({"kind": "assistant", "payload": {"text": text}})
+                    message.append(text)
             elif kind in ("tool_call", "tool_call_update"):
+                _close_message()
                 call_id = update.get("toolCallId") or ""
                 call = reducer.tool_call(call_id)
                 if call is None:
@@ -1103,8 +1119,10 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                         "content": call.result_text,
                     }})
 
-    def flush():
+    def flush(final=False):
         with lock:
+            if final:
+                _close_message()
             if not batch:
                 return
             pending, batch[:] = list(batch), []
@@ -1151,7 +1169,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                     agent.cancel()
                     raise RuntimeError(
                         f"ACP turn exceeded {ACP_TURN_TIMEOUT_SECONDS}s") from None
-        flush()
+        flush(final=True)
 
         stop = (result or {}).get("stopReason", "")
         ok = stop in ("end_turn", "max_tokens")
@@ -1161,7 +1179,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                  f"({reducer.rate_limit.get('rateLimitType')})")
         return ok, final_text, session_id
     except Exception as exc:  # noqa: BLE001 — a turn must fail, never crash the runner
-        flush()
+        flush(final=True)
         # Why the adapter went away, when it did — without this a crash, an OOM
         # kill and a clean exit all read "connection closed" and nobody can tell
         # them apart afterwards. Best-effort: older canopy_acp has no exit_report.
