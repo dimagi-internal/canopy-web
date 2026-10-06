@@ -1,6 +1,7 @@
 import type { Register } from 'claude-code'
 
-// The in-app half of the canopy desktop runner (runner/claude_desktop/README.md).
+// The in-app half of the canopy runner's Claude desktop runtime
+// (runner/canopy_runner/canopy_runner/desktop.py).
 //
 // The runner daemon outside the app cannot type into a desktop session, and the
 // app gives it no API to. This mod is the hand inside: it runs in every desktop
@@ -10,9 +11,10 @@ import type { Register } from 'claude-code'
 //
 //   runner -> mod   task.txt          the turn's prompt, submitted once
 //                   fu-<n>.txt        a follow-up, submitted once (fu-<n>.done marks it)
+//                   stop-<n>.txt      stop the running turn (stop-<n>.done marks it)
 //   mod -> runner   alive             a timestamp, rewritten every poll: "this session's process is up"
 //                   ev-<t>-<n>-<kind>.json   session.start / submitted / turn.start /
-//                                     turn.complete / ask / submit.error
+//                                     turn.complete / ask / submit.error / stopped
 //
 // Files, not HTTP: the mod has no credential and should not need one, and a
 // file left by a session that died is still there for the runner to read.
@@ -21,6 +23,8 @@ let dir = ''
 let sid = ''
 let seq = 0
 let started = false
+// The model turn running now, from turn.start, so a stop can name it.
+let running = ''
 
 async function emit($: any, kind: string, extra: unknown) {
   if (!dir) return
@@ -51,6 +55,21 @@ async function submitOnce($: any, file: string, marker: string, which: string) {
   }
 }
 
+async function stopOnce($: any, file: string, marker: string, which: string) {
+  if (!(await $.fs.exists(file)) || (await $.fs.exists(marker))) return
+  await $.fs.write(marker, String(Date.now()))
+  if (!running) {
+    await emit($, 'stopped', { which, outcome: 'idle' })
+    return
+  }
+  try {
+    await $.turn.abort({ turnId: running })
+    await emit($, 'stopped', { which, outcome: 'interrupted', turnId: running })
+  } catch (err) {
+    await emit($, 'stopped', { which, outcome: 'failed', err: String(err) })
+  }
+}
+
 // The channel belongs to the session the runner seeded for it, named in `seeded`.
 // Checked on every poll, not once: a directory can be recreated under a session
 // that is still running, and that session must not take the new one's prompt.
@@ -62,6 +81,11 @@ async function mine($: any): Promise<boolean> {
 async function poll($: any) {
   if (!(await mine($))) return
   await $.fs.write(`${dir}/alive`, String(Date.now()))
+  for (let n = 1; n <= 200; n++) {
+    const stop = `${dir}/stop-${n}.txt`
+    if (!(await $.fs.exists(stop))) break
+    await stopOnce($, stop, `${dir}/stop-${n}.done`, `stop-${n}`)
+  }
   await submitOnce($, `${dir}/task.txt`, `${dir}/task.claimed`, 'task')
   for (let n = 1; n <= 200; n++) {
     const fu = `${dir}/fu-${n}.txt`
@@ -92,12 +116,14 @@ export const register: Register = (on) => {
   })
 
   on('turn.start', async ($, e, next) => {
-    await emit($, 'turn.start', {})
+    running = e.turnId
+    await emit($, 'turn.start', { turnId: e.turnId })
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
+    if (running === e.turnId) running = ''
     await emit($, 'turn.complete', {
       turnId: e.turnId, isAborted: e.isAborted, reason: e.reason,
       answer: String(e.answer ?? '').slice(0, 4000),

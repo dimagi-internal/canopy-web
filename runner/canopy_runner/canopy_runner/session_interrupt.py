@@ -89,12 +89,16 @@ def drain(cfg, client, runner_id: str) -> int:
     main loop next to the heartbeat, and a wedged emdash must not cost the runner
     its liveness.
     """
-    from . import cdp_control
+    from . import cdp_control, desktop
 
     confirmed_count = 0
     for session_key, session_id in take():
         try:
-            res = cdp_control.interrupt(session_key, port=cfg.cdp_port) or {}
+            if desktop.worktree_for(cfg, session_key) is not None:
+                # A Claude desktop session: its mod aborts the running turn.
+                res = desktop.stop(cfg, session_key)
+            else:
+                res = cdp_control.interrupt(session_key, port=cfg.cdp_port) or {}
             # A sidecar older than the verifying `interrupt` returns no `action`.
             # Unverified, NOT success — runner and sidecar update separately.
             action = res.get("action") or "unreadable"
