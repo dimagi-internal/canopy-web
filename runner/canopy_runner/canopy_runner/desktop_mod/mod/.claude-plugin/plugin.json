@@ -1,3 +1,3 @@
-{ "name": "canopy-desktop", "version": "0.1.0",
+{ "name": "canopy-desktop", "version": "0.4.0",
   "description": "Drives a canopy desktop-runner session from inside the Claude app (inert outside a runner worktree)",
   "author": { "name": "canopy" } }

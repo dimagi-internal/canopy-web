@@ -37,7 +37,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import chat_bridge, chat_pump, close, hooks, inbox_due, mailbox_probe, sessions
+from . import chat_bridge, chat_pump, close, desktop, hooks, inbox_due, mailbox_probe, sessions
 from . import session_interrupt, streams
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
@@ -600,7 +600,7 @@ def run_once(cfg: Config, client: Client) -> str:
         # ("what can this runner do right now"), same tick. The degraded and paused
         # heartbeats below deliberately omit it: omission is a no-op server-side,
         # and a runner that isn't claiming has no use for a refreshed list.
-        me = client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), host=host,
+        me = client.heartbeat(cfg.runner_id, _active_turn_ids(), host=host,
                               ready=_ready, ready_note=_rnote,
                               projects=sessions.reported_projects(cfg),
                               mailboxes_readable=mailbox_probe.readable())
@@ -609,7 +609,7 @@ def run_once(cfg: Config, client: Client) -> str:
         # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
         # control plane + menu-bar app read ("alive but can't execute"). It's a status field,
         # overwritten each tick, so it is not spam.
-        me = client.heartbeat(cfg.runner_id, sorted(chat_bridge.IN_FLIGHT), degraded=True,
+        me = client.heartbeat(cfg.runner_id, _active_turn_ids(), degraded=True,
                               note=f"emdash CDP unreachable on :{cfg.cdp_port} — not claiming",
                               host=host, ready=False,
                               ready_note=f"emdash CDP unreachable on :{cfg.cdp_port}",
@@ -624,6 +624,10 @@ def run_once(cfg: Config, client: Client) -> str:
                 "--remote-debugging-port=%s; the backlog auto-drains when it returns.",
                 cfg.cdp_port, _cdp_down_ticks, cfg.cdp_port)
             _cdp_down_signalled = True
+
+    # The session runtime canopy-web wants (Supervisor → this runner → Session
+    # runtime) rides the heartbeat response; adopting it here is the whole flip.
+    desktop.observe(me)
 
     # Before the reports: an in-flight reply is the freshest thing on this box, and
     # finishing a turn here frees the session for the next message. Runs even while
@@ -651,6 +655,12 @@ def run_once(cfg: Config, client: Client) -> str:
         return _decide_and_claim(cfg, client, me, healthy)
     finally:
         _report_sweep(cfg, client)
+
+
+def _active_turn_ids() -> list[str]:
+    """Every turn this box is still carrying, for lease renewal: bridged emdash
+    chat replies, and desktop turns still being followed (desktop.py)."""
+    return sorted(set(chat_bridge.IN_FLIGHT) | set(desktop.in_flight()))
 
 
 def _step(name: str, fn, *args, **kwargs) -> None:
@@ -876,6 +886,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     verify_parser.add_argument("--config", required=True)
 
+    runtime_parser = subparsers.add_parser(
+        "runtime",
+        help="show or set where this runner opens NEW sessions: emdash or claude-desktop "
+             "(the same switch as canopy-web → Supervisor → this runner → Session runtime; "
+             "takes effect on the next heartbeat, no restart; live sessions stay put)",
+    )
+    runtime_parser.add_argument("action", nargs="?", choices=["show", "set"], default="show")
+    runtime_parser.add_argument("engine", nargs="?", choices=list(desktop.RUNTIMES))
+    runtime_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))
+
     pair_parser = subparsers.add_parser(
         "pair",
         help="set this macOS account up as a runner: pair with canopy-web (once — a "
@@ -901,6 +921,28 @@ def _build_parser() -> argparse.ArgumentParser:
                              help="print the plan; pair nothing, write nothing")
 
     return parser
+
+
+def runtime_cmd(args) -> int:
+    """`canopy-runner runtime [show | set emdash|claude-desktop]`.
+
+    Reads/writes the ONE switch canopy-web holds for this runner (the same one its
+    Supervisor toggle flips), with this runner's own credential. Nothing local is
+    written: the daemon adopts the value off its next heartbeat, within seconds,
+    and only NEW sessions follow it."""
+    cfg = Config.load(Path(args.config))
+    client = Client(cfg.base_url, cfg.token)
+    if args.action == "set":
+        if not args.engine:
+            print("usage: canopy-runner runtime set emdash|claude-desktop", file=sys.stderr)
+            return 2
+        row = client.set_engine(cfg.runner_id, args.engine)
+        print(f"{row.get('name', cfg.runner_id)}: new sessions now open in "
+              f"{row.get('engine', args.engine)} (live sessions stay where they are)")
+        return 0
+    row = next((r for r in client.list_runners() if r.get("id") == cfg.runner_id), {})
+    print(f"{row.get('name', cfg.runner_id)}: {row.get('engine', 'emdash')}")
+    return 0
 
 
 def pair_cmd(args) -> int:
@@ -1039,6 +1081,9 @@ def main() -> None:
 
     if command == "pair":
         raise SystemExit(pair_cmd(args))
+
+    if command == "runtime":
+        raise SystemExit(runtime_cmd(args))
 
     if command == "verify-emdash":
         if not args.config:

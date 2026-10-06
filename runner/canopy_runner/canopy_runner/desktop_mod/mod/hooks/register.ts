@@ -34,17 +34,33 @@ async function submitOnce($: any, file: string, marker: string, which: string) {
   // Mark first: a reload mid-submit must never send the same prompt twice.
   await $.fs.write(marker, String(Date.now()))
   try {
-    // asUser: the model reads the prompt bare, as the person's own words,
-    // instead of "The canopy-desktop plugin sent a message: …".
-    await $.prompt.submit({ text: await $.fs.read(file), asUser: true })
+    const text = await $.fs.read(file)
+    const slash = /^\/([^\s]+)(?:[ \t]+|\n|$)([\s\S]*)$/.exec(text)
+    if (slash) {
+      // `/hal:turn …` is a command, not a prompt: prompt.submit refuses a leading
+      // slash and names this call. Runs as if the person typed it.
+      await $.command.run({ command: slash[1], args: slash[2] ?? '' })
+    } else {
+      // asUser: the model reads the prompt bare, as the person's own words,
+      // instead of "The canopy-desktop plugin sent a message: …".
+      await $.prompt.submit({ text, asUser: true })
+    }
     await emit($, 'submitted', { which })
   } catch (err) {
     await emit($, 'submit.error', { which, err: String(err) })
   }
 }
 
+// The channel belongs to the session the runner seeded for it, named in `seeded`.
+// Checked on every poll, not once: a directory can be recreated under a session
+// that is still running, and that session must not take the new one's prompt.
+async function mine($: any): Promise<boolean> {
+  if (!dir || !sid || !(await $.fs.exists(`${dir}/seeded`))) return false
+  return (await $.fs.read(`${dir}/seeded`)).trim() === sid
+}
+
 async function poll($: any) {
-  if (!dir || !(await $.fs.exists(dir))) return
+  if (!(await mine($))) return
   await $.fs.write(`${dir}/alive`, String(Date.now()))
   await submitOnce($, `${dir}/task.txt`, `${dir}/task.claimed`, 'task')
   for (let n = 1; n <= 200; n++) {
@@ -64,12 +80,14 @@ export const register: Register = (on) => {
     if (!(await $.fs.exists(`${candidate}/seeded`))) return r
     dir = candidate
     sid = await $.session.id()
+    if (!(await mine($))) { dir = ''; return r }
     await emit($, 'session.start', { surface: e.surface, isInteractive: e.isInteractive })
+    // Submitting is left to the clock, never done in this hook: a command run
+    // from inside a hook the session is waiting on is refused.
     if (!started) {
       started = true
       $.clock.every(2000, () => poll($))
     }
-    await poll($)
     return r
   })
 

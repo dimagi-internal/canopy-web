@@ -750,6 +750,14 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
 
     `cancel_check` (`lambda turn_id: bool`) is threaded straight through to
     `execute_chat_turn` — only chat/session turns are cancellable today (see there)."""
+    # The session runtime (canopy-web#1188): a new thread on a box switched to
+    # claude-desktop, or any thread whose session already lives there, goes to the
+    # desktop backend; everything else falls through to emdash, unchanged.
+    from . import desktop
+
+    taken = desktop.maybe_execute(cfg, client, runner_id, turn, _thread_key(turn))
+    if taken is not None:
+        return taken
     # A chat session send is bridged back to the website (its own path); everything
     # else fires into the visible emdash session and continues there.
     if (turn.get("origin_ref") or {}).get("chat_session_id"):

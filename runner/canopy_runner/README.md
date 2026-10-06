@@ -17,6 +17,43 @@ skips that session report rather than POSTing an empty list that would clear
 every binding server-side. `verify-emdash` (below) remains the proactive check
 for the schema drift that causes such a failure.
 
+## Session runtime: emdash or Claude desktop
+
+A runner opens new sessions in **emdash** (the default) or in the **Claude
+desktop app's Code tab**. Flip it either way, any time:
+
+- **canopy-web:** Supervisor → the runner → **Session runtime** → *emdash* /
+  *Claude desktop*. Available to the runner's owner and its admins.
+- **On the box:** `canopy-runner runtime set claude-desktop` and
+  `canopy-runner runtime set emdash` (`canopy-runner runtime` shows the current
+  setting). This sets the same switch on canopy-web.
+
+Nothing needs restarting. The runner reads the setting off its next heartbeat,
+so the flip takes effect within seconds. It's safe while sessions are live,
+because it only decides where **new** threads open. A thread already running in
+emdash keeps going in its emdash session, and a thread already running in Claude
+desktop keeps going there, including follow-ups. Routing, projects and pairing
+are identical either way. A caller's confined turn always runs on emdash, where
+confinement is enforced.
+
+How a Claude desktop session is driven (`desktop.py`, design and tests in
+canopy-web#1188):
+- **New thread:** the runner makes a `git worktree add` from the same checkout emdash
+  uses for that project, writes the worktree's `.claude/settings.local.json`
+  (the `canopy-desktop` mod plus a tool allow-list), seeds a `claude -p` session,
+  and imports it into the app with `claude://resume?session=<id>`.
+- **Submitting:** the mod (`desktop_mod/`) runs inside the app's session and submits
+  the prompt as the person's words. `/agent:turn` goes through `$.command.run`.
+- **Reporting:** the runner tails the session's transcript into canopy-web, and a
+  permission card waiting in the app is reported as `needs_input`.
+- **Waking:** a follow-up into a stopped session wakes it with the same deep link.
+- **Focus:** that deep link brings Claude.app to the front of *its* macOS session
+  once per new session (not for follow-ups). That's invisible on a
+  fast-user-switched runner account, and noticeable on the account you're typing
+  in.
+- **Keep the app running:** Claude.app must stay running (it may be hidden), and
+  the runner starts it if it isn't. Quitting it stops that runtime's sessions.
+
 ## Layout
 
 `main.py` is the LOOP and the CLI. Every subsystem it drives owns its own module,

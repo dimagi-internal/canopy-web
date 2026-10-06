@@ -211,6 +211,12 @@ class Client:
         _, payload = self._call("POST", path, {"note": note} if paused else {})
         return payload or {}
 
+    def set_engine(self, runner_id: str, engine: str) -> dict:
+        """Set this runner's session runtime on canopy-web (emdash|claude-desktop).
+        The loop picks it up off its next heartbeat — see desktop.observe."""
+        _, payload = self._call("PUT", f"/runners/{runner_id}/engine", {"engine": engine})
+        return payload or {}
+
     def list_runners(self) -> list[dict]:
         """The fleet this token can see. READ-ONLY, and the only call the updater
         makes: it needs `expected_code_sha` off its own row, and must never
