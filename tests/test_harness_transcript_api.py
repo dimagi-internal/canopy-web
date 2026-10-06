@@ -18,7 +18,7 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
-from apps.harness import services
+from apps.harness import ledger, services
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -245,7 +245,7 @@ def test_crossing_the_per_turn_ceiling_still_200s_and_reports_truncated(owner_cl
     """The whole point of F2: a turn that's still executing must not 4xx just
     because its retained transcript got long. Monkeypatches the real 100MB
     ceiling down to something a single request can cross."""
-    monkeypatch.setattr(services, "TRANSCRIPT_TURN_MAX_BYTES", 10)
+    monkeypatch.setattr(ledger, "TRANSCRIPT_TURN_MAX_BYTES", 10)
     turn_id = _enqueue(owner_client)
 
     resp = _post_lines(owner_client, turn_id, ["this batch is way more than ten bytes"])
