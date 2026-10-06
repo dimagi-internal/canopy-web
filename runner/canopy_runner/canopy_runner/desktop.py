@@ -35,11 +35,14 @@ HOW A DESKTOP SESSION IS DRIVEN (each step proven on a background macOS user, #1
   5. A follow-up into a session whose process has stopped (idle timeout, app
      restart: `alive` goes stale) wakes it with the same deep link.
 
-THE DEEP LINK ACTIVATES CLAUDE.APP in its macOS session, even with `open -g` and
-even when hidden. On a fast-user-switched account nobody is looking at, that is
-invisible; on the account a person is typing in, it takes focus once per NEW
-session (follow-ups into a live session do not). That is why this runtime suits
-the background runner accounts.
+THE DEEP LINK ACTIVATES CLAUDE.APP in its macOS session, even with `open -g`,
+NSWorkspace `activates = false`, or the app hidden: its open-url handler calls
+show() + focus() for every claude:// link it handles, and no query parameter
+skips that (Focus round 2, #1188). So `open_session` opens through
+`desktop_quiet_open.js`, which gives focus straight back to the app the person
+was in and re-hides Claude: Claude holds the front ~60ms per NEW session or wake.
+That is a mitigation, not a fix: a keystroke typed in that window can land in
+Claude. Follow-ups into a live session open no URL at all.
 
 TURN LIFECYCLE matches the emdash backend: an agent/project turn finishes once
 its prompt is delivered (the work continues in the visible session, and the
@@ -391,8 +394,38 @@ def ensure_app() -> bool:
     return False
 
 
+#: Opens a claude:// URL and hands focus straight back (see the file's header).
+QUIET_OPEN = Path(__file__).resolve().parent / "desktop_quiet_open.js"
+#: How long the helper watches for the app to come forward after the open.
+QUIET_OPEN_WATCH_SECONDS = 3
+
+
 def open_session(sid: str) -> None:
-    subprocess.run(["open", "-g", f"claude://resume?session={sid}"], check=False)
+    """Hand a session to the app — and give focus back to whoever had it.
+
+    The app raises itself for every claude:// link (its open-url handler calls
+    show() + focus(); `open -g` and NSWorkspace `activates = false` are both
+    overridden — canopy-web#1188, Focus round 2), so on an account a person is
+    using this would steal their focus. The helper undoes it within ~60ms. Plain
+    `open -g` stays as the fallback: a session that opens with a flicker beats one
+    that never opens."""
+    url = f"claude://resume?session={sid}"
+    try:
+        out = subprocess.run(["osascript", "-l", "JavaScript", str(QUIET_OPEN), url,
+                              str(QUIET_OPEN_WATCH_SECONDS)],
+                             capture_output=True, text=True, timeout=QUIET_OPEN_WATCH_SECONDS + 15)
+        if out.returncode == 0:
+            logger.info("desktop open %s: %s", sid, out.stdout.strip())
+            return
+        logger.warning("desktop open %s: quiet open failed (%s); plain open instead",
+                       sid, (out.stderr or out.stdout).strip()[-300:])
+    except subprocess.TimeoutExpired:
+        # The URL went out before the watch began; opening it again would only flicker.
+        logger.warning("desktop open %s: quiet open timed out after opening", sid)
+        return
+    except OSError as exc:
+        logger.warning("desktop open %s: quiet open failed (%s); plain open instead", sid, exc)
+    subprocess.run(["open", "-g", url], check=False)
 
 
 def channel_alive(channel: Path) -> bool:
