@@ -4078,7 +4078,8 @@ export interface paths {
          * @description The GitHub token and git identity for ONE turn this runner is executing:
          *     the turn's agent owner's token for that agent. canopy decides whose — the
          *     runner only names the turn. Refused (409, with the reason) when the owner
-         *     has lent none or it has expired; there is no shared fallback.
+         *     has lent none or it has expired, and always for a caller's turn (one confined
+         *     to a capability); there is no shared fallback.
          */
         readonly post: operations["turn_github_token"];
         readonly delete?: never;
