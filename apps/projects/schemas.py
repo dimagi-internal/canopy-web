@@ -10,9 +10,6 @@ from apps.common.schemas import StrictModel
 
 ProjectVisibility = Literal["public", "private"]
 ProjectStatus = Literal["active", "stale", "archived"]
-# No "insight": the Insights feed was retired 2026-10. Writing one is a 422 (a
-# stale caller should fail loudly, not write rows nobody reads), and the
-# remaining rows are never returned (`RETIRED_CONTEXT_TYPE`).
 ProjectContextType = Literal["current_work", "next_step", "summary", "note"]
 ActionStatus = Literal["started", "completed", "failed"]
 

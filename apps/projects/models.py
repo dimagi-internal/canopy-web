@@ -55,18 +55,12 @@ class Project(models.Model):
         return self.name
 
 
-#: The context type of the retired Insights feed (2026-10). The choice stays so
-#: the leftover rows still validate; nothing writes or returns them.
-RETIRED_CONTEXT_TYPE = "insight"
-
-
 class ProjectContext(models.Model):
     CONTEXT_TYPES = [
         ("current_work", "Current Work"),
         ("next_step", "Next Step"),
         ("summary", "Summary"),
         ("note", "Note"),
-        ("insight", "Insight"),
     ]
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="contexts")
