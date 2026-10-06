@@ -121,6 +121,24 @@ def test_send_with_placement_pins_the_turn(client, ctx):
     assert turn.pinned_runner_id == runner.id
 
 
+def test_send_with_clear_prompt_tells_the_runner(client, ctx):
+    """"Clear & send": the runner reads it off origin_ref and clears any unsent
+    text in the session's prompt instead of asking on the box."""
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
+    r = client.post(
+        f"/api/canopy-sessions/{sid}/send",
+        data={"text": "hi", "clear_prompt": True},
+        content_type="application/json",
+    )
+    assert r.status_code == 200, r.content
+    turn = Turn.objects.get(pk=r.json()["turn_id"])
+    assert turn.origin_ref["clear_prompt"] is True
+    assert turn.origin_ref["chat_session_id"] == sid  # the routing keys survive
+
+    plain = client.post(f"/api/canopy-sessions/{sid}/send", data={"text": "again"}, content_type="application/json")
+    assert "clear_prompt" not in Turn.objects.get(pk=plain.json()["turn_id"]).origin_ref
+
+
 def test_send_with_unknown_placement_is_422(client, ctx):
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
     r = client.post(

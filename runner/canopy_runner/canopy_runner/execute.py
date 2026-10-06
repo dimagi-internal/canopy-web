@@ -556,6 +556,14 @@ def _chat_collision_choice(task: str, line: str, now_fn=time.monotonic) -> str:
     return choice
 
 
+def _clear_requested(turn: dict) -> bool:
+    """Did the sender ask, with this message, to clear whatever unsent text is in
+    the session's prompt? Set by the web's "Clear & send" (`SendIn.clear_prompt`,
+    carried on `origin_ref`). It answers the collision dialog in advance, for a
+    person who is not at the machine the dialog would appear on."""
+    return bool((turn.get("origin_ref") or {}).get("clear_prompt"))
+
+
 def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> str:
     """A chat SESSION turn: inject the human's message into the session's emdash session,
     and REGISTER a bridge that carries the assistant reply back into the ledger — unlike
@@ -647,9 +655,18 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         # there.
         if res.get("action") == "collision":
             line = res.get("line", "")
-            choice = _chat_collision_choice(task, line)
-            logger.info("chat collision on '%s' (turn=%s): unsent text in prompt %r — "
-                        "human chose %r", task, turn_id, _preview(line), choice)
+            if _clear_requested(turn):
+                # The sender pressed "Clear & send" — that IS the human yes for this
+                # line, given from wherever they are. Asking again would put a popup
+                # on a box nobody is sitting at, which is the case this exists for.
+                choice = dialog.CLEAR
+                logger.info("chat collision on '%s' (turn=%s): unsent text in prompt %r — "
+                            "sender asked to clear it (clear_prompt)", task, turn_id,
+                            _preview(line))
+            else:
+                choice = _chat_collision_choice(task, line)
+                logger.info("chat collision on '%s' (turn=%s): unsent text in prompt %r — "
+                            "human chose %r", task, turn_id, _preview(line), choice)
             if choice == dialog.CLEAR:
                 cdp_control.open_and_send(task, prompt, clear_first=True, port=cfg.cdp_port,
                                           project=target)

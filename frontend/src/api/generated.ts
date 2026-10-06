@@ -14907,6 +14907,11 @@ export interface components {
             /** Origin */
             readonly origin?: ("api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill") | null;
             readonly parent?: components["schemas"]["ParentIn"] | null;
+            /**
+             * Clear Prompt
+             * @default false
+             */
+            readonly clear_prompt: boolean;
         };
         /**
          * TurnOutMinimal

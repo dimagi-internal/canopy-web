@@ -170,6 +170,9 @@ export function sendMessage(
   text: string,
   clientId = "",
   placement?: string,
+  /** "Clear & send": the runner deletes any unsent text already in the
+   *  session's prompt and delivers this, instead of asking on its own screen. */
+  clearPrompt = false,
 ): Promise<SendResult> {
   return request<SendResult>(`/api/canopy-sessions/${encodeURIComponent(id)}/send`, {
     method: "POST",
@@ -178,6 +181,7 @@ export function sendMessage(
       text,
       client_id: clientId,
       placement: placement ?? null,
+      ...(clearPrompt ? { clear_prompt: true } : {}),
     }),
   });
 }
