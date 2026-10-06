@@ -2569,10 +2569,35 @@ def _binding_for_thread(agent, project, workspace, thread_key):
     ).first()
 
 
-def _thread_session(agent, project, workspace, thread_key):
+class ThreadSessionNotFound(LookupError):
+    """A thread_key named an existing Session that is not this thread's to bind.
+    The API answers 404 — the same as a session that does not exist — so a
+    runner cannot learn which session ids are real."""
+
+
+def _session_is_this_threads(session, agent, project, workspace, runner) -> bool:
+    """May `runner` bind the EXISTING `session` as the thread (agent | project)?
+
+    Binding re-points the session's live hint, its streams and its next turns at
+    this box, so a session id must not be a key to someone else's conversation:
+    it has to be a session OF this target — the same agent, or the same repo in
+    the same workspace — in a workspace the runner's owner belongs to. Fails
+    closed on a runner with no owner (no pairing human, no tenant)."""
+    if agent is not None:
+        if session.agent_id != agent.pk:
+            return False
+    elif (session.agent_id is not None or session.project != (project or "")
+          or workspace is None or session.workspace_id != workspace.pk):
+        return False
+    owner = getattr(runner, "owner", None)
+    return owner is not None and wsvc.member_role(owner, session.workspace_id) is not None
+
+
+def _thread_session(agent, project, workspace, thread_key, *, runner):
     """Find-or-create the durable Session a thread maps to. A chat thread_key is
-    str(session.id) — bind that exact existing Session. Otherwise create a durable
-    origin=runner Session for the phone/agent/project thread.
+    str(session.id) — bind that exact existing Session, when it is this thread's
+    (`_session_is_this_threads`; else ThreadSessionNotFound). Otherwise create a
+    durable origin=runner Session for the phone/agent/project thread.
 
     The Session's workspace is the one the caller pinned, else the agent's own
     home (Agent.workspace is NOT NULL). A thread with neither has no tenant, and
@@ -2584,6 +2609,8 @@ def _thread_session(agent, project, workspace, thread_key):
     except (ValueError, TypeError):
         existing = None
     if existing is not None:
+        if not _session_is_this_threads(existing, agent, project, workspace, runner):
+            raise ThreadSessionNotFound(thread_key)
         return existing
     home = workspace or (agent.workspace if agent else None)
     if home is None:
@@ -2766,7 +2793,7 @@ def record_session(
     with transaction.atomic():
         binding = _binding_for_thread(agent, project, workspace, thread_key)
         if binding is None:
-            session = _thread_session(agent, project, workspace, thread_key)
+            session = _thread_session(agent, project, workspace, thread_key, runner=runner)
             binding = (
                 RunnerBinding.objects.select_for_update()
                 .filter(session=session)

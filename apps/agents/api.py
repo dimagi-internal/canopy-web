@@ -344,6 +344,22 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     if (existing is not None and explicit and existing.workspace_id != explicit
             and not existing.is_admin(request.user)):
         raise HttpError(403, "moving an agent requires being its owner or one of its admins")
+    # Changing WHAT an existing agent is — the repo its boxes clone, the engine,
+    # the secrets and sources they install — is holding its keys: whoever names
+    # the repo writes the code that runs with the agent's credentials. So it is
+    # the agent's admins', like its credentials. A field sent with the value
+    # already stored is not a change: the plugin re-upserts on every publish.
+    # Creating an agent, and editing its name/description/persona, stay editor.
+    if existing is not None and not existing.is_admin(request.user):
+        changed = [f for f in services.DEFINITION_FIELDS
+                   if getattr(payload, f, None) is not None
+                   and getattr(payload, f) != getattr(existing, f)]
+        if changed:
+            raise HttpError(
+                403,
+                f"changing {', '.join(changed)} on {existing.slug} requires being its "
+                "owner or one of its admins",
+            )
 
     agent = services.upsert_agent(payload, workspace=home)
     if explicit and agent.workspace_id != explicit:

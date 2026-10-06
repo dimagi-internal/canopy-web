@@ -280,6 +280,24 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         reqs = getattr(request, "runner_requirements", ())
         if reqs:
             metadata["runner_requirements"] = list(reqs)
+    if payload.runner_id and agent is not None:
+        from apps.agents.access import may_pin_runner
+        from apps.harness.models import Runner
+
+        # The stash is consumed on the first send WITHOUT asking who may pin
+        # (services._resolve_placement), so the pin is decided here, by the same
+        # rule a pinned dispatch and an explicit placement apply: the agent's
+        # admins may pin any box, anyone else only a box they administer. An id
+        # that names no runner is left as before — the first send ignores it.
+        # The message names no runner: the id may be one the caller cannot see.
+        requested = Runner.objects.filter(pk=payload.runner_id).first()
+        if requested is not None and not may_pin_runner(request.user, agent, requested):
+            raise HttpError(
+                403,
+                f"running {agent.slug} on a chosen runner is for the agent's owner or "
+                "admins, or for someone who administers that runner; start the chat "
+                "without a runner and the agent's routing places it",
+            )
     if payload.runner_id:
         # Directed new chat: stashed for the session's first send to pin onto
         # (as long as it's still unbound at that point) — see services.send_message.

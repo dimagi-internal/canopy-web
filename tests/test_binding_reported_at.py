@@ -47,7 +47,8 @@ def test_record_session_stamps_live_seen_at_but_not_reported_at():
     branch and canopy would relay a close to a box with no emdash to close."""
     user, ws, runner = _ctx()
     session = Session.objects.create(
-        workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="cloud chat"
+        workspace=ws, created_by=user, origin=Session.ORIGIN_WEB, title="cloud chat",
+        project="canopy-web",
     )
     binding = RunnerBinding.objects.create(
         session=session, runner=runner, host=runner.host, session_key="", thread_key=str(session.id)
