@@ -167,6 +167,12 @@ jobs:
         working-directory: runner/ec2
         run: uv run --with pytest --with pytest-timeout pytest -q
 
+      # The desktop runner (Claude app Code tab, #1188). Stdlib-only like
+      # cloud_runner; --no-project is what proves it stays that way.
+      - name: Run claude_desktop runner tests
+        working-directory: runner/claude_desktop
+        run: uv run --no-project --with pytest --with pytest-timeout pytest -q --timeout 60
+
       # canopy_transcript is the Claude Code transcript core BOTH runners execute
       # against — ordinals, block extraction, payload caps, NUL scrubbing. It was
       # extracted precisely because the two runners had drifted apart while each

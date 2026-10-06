@@ -1,0 +1,8 @@
+{
+  "name": "canopy-desktop",
+  "owner": { "name": "canopy" },
+  "plugins": [
+    { "name": "canopy-desktop", "source": "./mod",
+      "description": "Drives a canopy desktop-runner session from inside the Claude app: submits the turn's prompt and follow-ups, reports turns and permission asks." }
+  ]
+}
