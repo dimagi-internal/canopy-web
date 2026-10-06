@@ -62,6 +62,7 @@ import json
 
 ACCT = "858923557655"
 REGION = "us-east-1"
+ECS_CLUSTER = "labs-jj-cluster"
 
 APPS = {
     "canopy-web": {
@@ -84,6 +85,9 @@ APPS = {
         "ecr": ["labs-jj-canopy-web"],
         "target_group": "labs-jj-canopy-web-tg",
         "log_groups": ["/ecs/labs-jj-canopy-web"],
+        # canopy-web.cfn.yaml: ServiceName + TaskDefinition Family.
+        "ecs_services": ["labs-jj-canopy-web"],
+        "task_families": ["labs-jj-canopy-web"],
         "preflight": True,
         "metrics": True,
     },
@@ -165,21 +169,69 @@ def policy_for(app: str, cfg: dict) -> dict:
         "Resource": "*",
     })
 
-    # ECS: the describe/register calls do not support resource-level
-    # permissions, and RunTask/UpdateService scoping by cluster is what keeps
-    # one app out of another's service. Kept as the shared policy had it,
-    # because narrowing these is where a broken deploy would come from — the
-    # isolation that matters (stack, secrets, ECR, target group) is above.
-    st.append({
-        "Sid": "EcsDeployActions",
-        "Effect": "Allow",
-        "Action": [
-            "ecs:UpdateService", "ecs:DescribeServices", "ecs:DescribeTaskDefinition",
-            "ecs:DescribeTasks", "ecs:ListTasks", "ecs:RunTask",
-            "ecs:RegisterTaskDefinition",
-        ],
-        "Resource": "*",
-    })
+    if cfg.get("ecs_services"):
+        # Scoped: this deployment may roll ITS service and run ITS task family,
+        # and nothing else on the shared cluster. With these on "*" (below, and
+        # what ace-web/connect-labs still have), canopy-web's deploy credentials
+        # could UpdateService ace-web's or connect-labs' service, or RunTask any
+        # task definition in the account with the shared task roles — i.e. a
+        # bad workflow on canopy-web reached every labs app. Agents ship to
+        # main without a human review, so "it had to merge first" is not the
+        # boundary; what the role can touch is.
+        #
+        # Every call the pipeline makes is still covered (deploy-labs.yml):
+        #   describe/register the migrate task def  → EcsCallsThatTakeNoResource
+        #   run-task + describe-tasks + wait        → RunOwnTaskFamilyOnly / no-resource
+        #   CFN rolling the service (UpdateService) → OwnServiceOnly
+        #   the failure report's describe-services  → OwnServiceOnly
+        # The migrate task def is registered from the LIVE one with only the
+        # image swapped, so it is the same family. preflight.py simulates
+        # UpdateService against the service's real ARN, so it sees this grant.
+        cluster_arn = f"arn:aws:ecs:{REGION}:{ACCT}:cluster/{ECS_CLUSTER}"
+        st.append({
+            "Sid": "OwnServiceOnly",
+            "Effect": "Allow",
+            "Action": ["ecs:UpdateService", "ecs:DescribeServices"],
+            # The long, cluster-qualified ARN — what `describe-services`
+            # returns for this service (checked 2026-10-06).
+            "Resource": [f"arn:aws:ecs:{REGION}:{ACCT}:service/{ECS_CLUSTER}/{s}"
+                         for s in cfg["ecs_services"]],
+        })
+        st.append({
+            "Sid": "RunOwnTaskFamilyOnly",
+            "Effect": "Allow",
+            "Action": "ecs:RunTask",
+            "Resource": [f"arn:aws:ecs:{REGION}:{ACCT}:task-definition/{f}:*"
+                         for f in cfg["task_families"]],
+            "Condition": {"ArnEquals": {"ecs:cluster": cluster_arn}},
+        })
+        # Register/DescribeTaskDefinition take no resource. Registering alone
+        # runs nothing (RunTask/UpdateService above are what would), and
+        # DescribeTasks/ListTasks are reads.
+        st.append({
+            "Sid": "EcsCallsThatTakeNoResource",
+            "Effect": "Allow",
+            "Action": [
+                "ecs:DescribeTaskDefinition", "ecs:RegisterTaskDefinition",
+                "ecs:DescribeTasks", "ecs:ListTasks",
+            ],
+            "Resource": "*",
+        })
+    else:
+        # Unscoped, as the shared policy had it: the describe/register calls do
+        # not support resource-level permissions, and narrowing RunTask/
+        # UpdateService needs this deployment's service and task family names,
+        # which are not recorded here — a guess would be a broken deploy.
+        st.append({
+            "Sid": "EcsDeployActions",
+            "Effect": "Allow",
+            "Action": [
+                "ecs:UpdateService", "ecs:DescribeServices", "ecs:DescribeTaskDefinition",
+                "ecs:DescribeTasks", "ecs:ListTasks", "ecs:RunTask",
+                "ecs:RegisterTaskDefinition",
+            ],
+            "Resource": "*",
+        })
     st.append({
         "Sid": "PassSharedTaskRolesToEcs",
         "Effect": "Allow",
@@ -250,6 +302,15 @@ def policy_for(app: str, cfg: dict) -> dict:
             "Effect": "Allow",
             "Action": ["logs:GetLogEvents", "logs:FilterLogEvents", "logs:DescribeLogStreams"],
             "Resource": [f"arn:aws:logs:{REGION}:{ACCT}:log-group:{g}:*" for g in cfg["log_groups"]],
+        })
+        # Hand-added to all three live roles before this file recorded it
+        # (found 2026-10-06 diffing live against generated); without it here,
+        # re-applying the generated policy would silently drop it.
+        st.append({
+            "Sid": "DescribeLogGroupsTakesNoResource",
+            "Effect": "Allow",
+            "Action": "logs:DescribeLogGroups",
+            "Resource": "*",
         })
 
     if cfg["metrics"]:
