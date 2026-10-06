@@ -8,11 +8,22 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.harness.api import visible_turns_qs
+from apps.workspaces import services as wsvc
 
 from . import services
 from .schemas import HuddleOut, HuddleSummaryOut
 
 router = Router(tags=["huddles"])
+
+
+def _scope(request: HttpRequest):
+    """(visible turns, workspaces) for a huddle read. A huddle's members can live
+    in several workspaces, so a `/api/w/{ws}/huddles` read spans EVERY workspace
+    the caller belongs to rather than the pinned one — never more: each turn still
+    passes the same tenant/site filter, and each cell's content `turn_access`."""
+    user = request.user
+    workspaces = wsvc.user_workspace_slugs(user) if user.is_authenticated else set()
+    return visible_turns_qs(request, all_memberships=True), workspaces
 
 
 @router.get("/", response=list[HuddleSummaryOut], summary="List huddles")
@@ -21,7 +32,7 @@ def list_huddles(request: HttpRequest, agent: str | None = None, limit: int = 50
     its type, team, leader, members, how many rounds have been dispatched, whether it
     has been filed (`finished`) and how many board tasks it produced. `agent` keeps the
     huddles that agent led or was a member of."""
-    vis = visible_turns_qs(request)
+    vis, workspaces = _scope(request)
     limit = max(1, min(limit, 200))
     kept, seen = [], set()
     # Anchors are one row per huddle, so walking them all to apply `agent` (a
@@ -38,7 +49,7 @@ def list_huddles(request: HttpRequest, agent: str | None = None, limit: int = 50
         kept.append(a)
         if len(kept) >= limit:
             break
-    return services.summaries(kept, vis)
+    return services.summaries(kept, vis, workspaces)
 
 
 @router.get("/{huddle_id}", response=HuddleOut, summary="Get one huddle")
@@ -47,8 +58,8 @@ def get_huddle(request: HttpRequest, huddle_id: str):
     you may read that turn's content, its prompt and the member's parsed reply block
     (from its close-out, else its transcript) — plus the board tasks it produced, with
     their live status. 404 when no anchor turn you can see names this huddle."""
-    vis = visible_turns_qs(request)
+    vis, workspaces = _scope(request)
     anchor = services.anchors(vis).filter(origin_ref__huddle=huddle_id).order_by("-created_at").first()
     if anchor is None:
         raise HttpError(404, f"huddle {huddle_id!r} not found")
-    return services.detail(anchor, user=request.user, visible_qs=vis)
+    return services.detail(anchor, user=request.user, visible_qs=vis, workspaces=workspaces)

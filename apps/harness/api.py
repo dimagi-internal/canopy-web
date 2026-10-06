@@ -1830,13 +1830,18 @@ def _check_access(request, payload: TurnIn, agent, initiator) -> None:
         raise HttpError(403, d.reason or f"{agent.slug} does not take work from you")
 
 
-def visible_turns_qs(request: HttpRequest):
+def visible_turns_qs(request: HttpRequest, *, all_memberships: bool = False):
     """Every turn this caller may see LISTED — the exact tenant + site filter
     `list_turns` applies, newest first. Shared so a derived view over turns (the
     huddles API) can never show a turn `/api/harness/turns/` would not. Content
     is a separate gate: rows still go through `turn_access` before their prompt
-    or transcript is read."""
-    ws = getattr(request, "workspace_slug", None)
+    or transcript is read.
+
+    `all_memberships` ignores a `/api/w/{ws}/` pin and spans every workspace the
+    caller belongs to — for a view whose subject itself crosses workspaces (a
+    huddle's members can live in several). It never widens past the caller's own
+    memberships: that is exactly the unpinned `/api/harness/turns/` scope."""
+    ws = None if all_memberships else getattr(request, "workspace_slug", None)
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
     qs = Turn.objects.select_related(
         "agent", "claimed_by", "initiator_user", "initiator_contact",

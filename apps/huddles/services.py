@@ -120,9 +120,11 @@ def _rounds_qs(visible_qs, huddle_ids):
     return visible_qs.filter(origin_ref__kind="huddle_round", origin_ref__huddle__in=list(huddle_ids))
 
 
-def _outputs_qs(workspace_id):
+def _outputs_qs(workspaces):
+    """Board tasks pointing at a huddle page, filed by an agent in any of
+    `workspaces` (the caller's own) — a huddle's members span workspaces."""
     return AgentTask.objects.select_related("agent", "project").filter(
-        agent__workspace_id=workspace_id, source_url__contains="/huddles/")
+        agent__workspace_id__in=list(workspaces), source_url__contains="/huddles/")
 
 
 def _huddle_of_url(url: str) -> str:
@@ -148,26 +150,26 @@ def _base(anchor, *, rounds_dispatched: int, outcome_count: int) -> dict:
     }
 
 
-def summaries(anchor_rows, visible_qs) -> list[dict]:
+def summaries(anchor_rows, visible_qs, workspaces) -> list[dict]:
     """One summary per anchor, in the order given — a fixed handful of queries
-    for the whole list, not several per huddle."""
+    for the whole list, not several per huddle. `workspaces` are the caller's own:
+    a huddle's outcomes count tasks from any of them, not just the anchor's."""
     ids = {str(_ref(a).get("huddle") or "") for a in anchor_rows}
     top: dict[str, int] = {}
     for ref in _rounds_qs(visible_qs, ids).values_list("origin_ref", flat=True):
         ref = ref if isinstance(ref, dict) else {}
         h = str(ref.get("huddle") or "")
         top[h] = max(top.get(h, 0), _int(ref.get("round")))
-    counts: dict[tuple[str, str], int] = {}
-    for ws in {a.agent.workspace_id for a in anchor_rows if a.agent_id}:
-        for url in _outputs_qs(ws).values_list("source_url", flat=True):
+    counts: dict[str, int] = {}
+    if ids:
+        for url in _outputs_qs(workspaces).values_list("source_url", flat=True):
             h = _huddle_of_url(url)
             if h in ids:
-                counts[(ws, h)] = counts.get((ws, h), 0) + 1
+                counts[h] = counts.get(h, 0) + 1
     out = []
     for a in anchor_rows:
         h = str(_ref(a).get("huddle") or "")
-        ws = a.agent.workspace_id if a.agent_id else None
-        out.append(_base(a, rounds_dispatched=top.get(h, 0), outcome_count=counts.get((ws, h), 0)))
+        out.append(_base(a, rounds_dispatched=top.get(h, 0), outcome_count=counts.get(h, 0)))
     return out
 
 
@@ -212,7 +214,7 @@ def _cell(turn, *, huddle, user, closeouts, memo) -> dict:
     return {**out, "reply_error": err}
 
 
-def detail(anchor, *, user, visible_qs) -> dict:
+def detail(anchor, *, user, visible_qs, workspaces) -> dict:
     hid = str(_ref(anchor).get("huddle") or "")
     rounds = list(
         _rounds_qs(visible_qs, [hid])
@@ -238,16 +240,15 @@ def detail(anchor, *, user, visible_qs) -> dict:
              for t in sorted(latest.values(), key=lambda t: (_int(_ref(t).get("round")),
                                                              str(_ref(t).get("member") or "")))]
     r1 = [t.created_at for (_, r), t in latest.items() if r == 1]
-    ws = anchor.agent.workspace_id if anchor.agent_id else None
     outputs = [
         {"agent": a.agent.slug, "task_id": a.id, "ext_id": a.ext_id, "title": a.title,
          "status": a.status, "assigned": a.assigned,
          "project": a.project.ext_id if a.project_id else "",
          "url": f"/w/{a.agent.workspace_id}/agents/{a.agent.slug}/work"}
-        for a in _outputs_qs(ws).filter(
+        for a in _outputs_qs(workspaces).filter(
             Q(source_url__endswith=f"/huddles/{hid}") | Q(source_url__endswith=f"/huddles/{hid}/"))
         .order_by("agent__slug", "id")
-    ] if ws else []
+    ]
     base = _base(anchor, rounds_dispatched=max([r for _, r in latest] or [0]),
                  outcome_count=len(outputs))
     # The leader's digest is the anchor's content; same gate as a round's.
