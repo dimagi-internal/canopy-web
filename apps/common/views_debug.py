@@ -56,6 +56,13 @@ def mint_session(request):
     """
     if not request.user.is_authenticated:
         return JsonResponse({"detail": "Sign in required."}, status=401)
+    # A cookie living a week, minted from an hour-long OAuth token or a site's
+    # delegated token, would outlive both — and escape the site's surface limit.
+    from apps.tokens.middleware import minting_refusal
+
+    refused = minting_refusal(request)
+    if refused:
+        return JsonResponse({"detail": refused}, status=403)
 
     try:
         body = json.loads(request.body) if request.body else {}

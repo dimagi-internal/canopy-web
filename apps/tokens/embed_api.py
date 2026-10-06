@@ -21,6 +21,7 @@ from ninja.errors import HttpError
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.api.errors import TYPE_FORBIDDEN, ProblemError
 from apps.workspaces import services as wsvc
 
 from .audit import record as audit
@@ -171,6 +172,18 @@ def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
     a short grant to its own tools for that page; `host_grant` says whether it
     did. Any other value, or none, is simply no grant.
     """
+    # Session-authenticated means ONLY a session. This route sits inside the
+    # delegated-token surface (`^/api/embed/`), so without this a connected
+    # site's token could mint itself a fresh one for canopy's OWN app: shedding
+    # the site's assurance, outliving the site's revocation, and renewing itself
+    # forever. canopy's panel calls it with the cookie and no Authorization
+    # header (canopy-widget `mintToken`), so a header means it is not the panel.
+    if (request.META.get("HTTP_AUTHORIZATION") or getattr(request, "delegated_app", None)
+            or getattr(request, "via_mcp", False)):
+        raise ProblemError(403, "Sign in to canopy in a browser to use its panel",
+                           type_=TYPE_FORBIDDEN,
+                           detail="This token is minted for a browser session only, "
+                                  "never from another token.")
     app = _self_app()
     if app is None:
         raise HttpError(404, "no connected site shows its panel on canopy's own pages")

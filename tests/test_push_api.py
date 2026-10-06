@@ -41,6 +41,31 @@ def _vapid_configured(settings):
     settings.VAPID_PRIVATE_KEY = "PrivateKeyHere"
 
 
+_PRIVATE_NAME = "push.internal.example"
+
+
+@pytest.fixture(autouse=True)
+def _dns(monkeypatch):
+    """Subscribing resolves the endpoint's host (it must be public). No test
+    here may depend on real DNS: a name resolves to a public address, except
+    `_PRIVATE_NAME` (a public-looking name pointing inside the VPC); an IP
+    literal resolves as itself, offline."""
+    import ipaddress
+    import socket
+
+    real = socket.getaddrinfo
+
+    def fake(host, *args, **kwargs):
+        try:
+            ipaddress.ip_address(host)
+            return real(host, *args, **kwargs)
+        except ValueError:
+            addr = "10.0.0.5" if host == _PRIVATE_NAME else "142.250.80.10"
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (addr, 443))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake)
+
+
 def test_vapid_public_key_is_served(client, settings):
     settings.VAPID_PUBLIC_KEY = "BPublicKeyHere"
     resp = client.get("/api/push/vapid-public-key")
@@ -157,3 +182,75 @@ def test_sessions_roll_forward_on_use():
     from django.conf import settings
 
     assert settings.SESSION_SAVE_EVERY_REQUEST is True
+
+
+@pytest.mark.parametrize("endpoint", [
+    "http://fcm.googleapis.com/fcm/send/AAA",          # not https
+    "https://127.0.0.1/push",                           # loopback
+    "https://169.254.169.254/latest/meta-data/",        # the metadata service
+    f"https://{_PRIVATE_NAME}/push",                    # a name that resolves inside
+    "https://user:pw@fcm.googleapis.com/fcm/send/AAA",  # userinfo
+    "file:///etc/passwd",
+])
+def test_an_endpoint_canopy_must_not_post_to_is_refused(client, endpoint):
+    """canopy POSTs to every stored endpoint from inside the VPC, so storing one
+    that points anywhere but a public push service is a blind SSRF."""
+    resp = client.post("/api/push/subscribe", {**SUB, "endpoint": endpoint},
+                       content_type="application/json")
+    assert resp.status_code == 422
+    assert not PushSubscription.objects.filter(endpoint=endpoint).exists()
+
+
+@pytest.mark.parametrize("endpoint", [
+    "https://fcm.googleapis.com/fcm/send/AAA",
+    "https://updates.push.services.mozilla.com/wpush/v2/gAAA",
+    "https://web.push.apple.com/QAAA",
+    "https://wns2-par02p.notify.windows.com/w/?token=AAA",
+])
+def test_every_real_browser_push_service_is_accepted(client, endpoint):
+    resp = client.post("/api/push/subscribe", {**SUB, "endpoint": endpoint},
+                       content_type="application/json")
+    assert resp.status_code == 201
+    assert PushSubscription.objects.filter(endpoint=endpoint).exists()
+
+
+def test_a_send_does_not_follow_a_redirect(monkeypatch, user, settings):
+    """A redirect is the cheapest way past the subscribe-time address check, so
+    the send goes through a session that never follows one."""
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from py_vapid import Vapid
+
+    from apps.push import services
+
+    vapid = Vapid()
+    vapid.generate_keys()
+    settings.VAPID_PRIVATE_KEY = vapid
+    settings.VAPID_SUBJECT = "mailto:test@dimagi.com"
+    browser_key = ec.generate_private_key(ec.SECP256R1()).public_key().public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+
+    sent = {}
+
+    def fake_request(self, method, url, **kwargs):
+        sent.update(method=method, url=url, **kwargs)
+
+        class Resp:
+            status_code = 201
+            text = ""
+            headers = {}
+
+        return Resp()
+
+    monkeypatch.setattr(services._NoRedirectSession, "request", fake_request)
+    sub = PushSubscription.objects.create(
+        user=user, endpoint="https://fcm.googleapis.com/fcm/send/AAA",
+        # A real P-256 public key + auth secret, so pywebpush can encrypt.
+        p256dh=base64.urlsafe_b64encode(browser_key).decode().rstrip("="),
+        auth=base64.urlsafe_b64encode(b"0123456789abcdef").decode().rstrip("="),
+    )
+    services._send_one(sub, {"title": "t"})
+    assert sent["url"] == sub.endpoint
+    assert sent["allow_redirects"] is False

@@ -7,7 +7,7 @@ from django.utils import timezone
 from ninja import Router, Status
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_NOT_FOUND, ProblemError
+from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, ProblemError
 
 from . import github_app
 from .models import GitHubConnection, OAuthGrant, PersonalToken
@@ -46,6 +46,14 @@ def list_tokens(request: HttpRequest) -> list[PersonalTokenOut]:
 
 @router.post("/", response={201: PersonalTokenCreatedOut}, summary="Mint a token")
 def create_token(request: HttpRequest, payload: PersonalTokenCreateIn) -> Status:
+    # An hour-long OAuth token (or a site's delegated token) minting a PAT that
+    # never expires and survives "Disconnect" is the escalation this refuses.
+    from .middleware import minting_refusal
+
+    refused = minting_refusal(request)
+    if refused:
+        raise ProblemError(403, "Cannot mint a token with this credential",
+                           type_=TYPE_FORBIDDEN, detail=refused)
     raw, token = PersonalToken.create_for_user(
         user=request.user, label=payload.label, ttl_days=payload.ttl_days
     )

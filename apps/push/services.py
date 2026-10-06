@@ -13,6 +13,7 @@ import datetime as dt
 import json
 import logging
 
+import requests
 from django.conf import settings
 from django.db import connection, transaction
 from django.utils import timezone
@@ -46,6 +47,16 @@ def _dirty_set() -> set[int]:
     return connection._push_dirty
 
 
+class _NoRedirectSession(requests.Session):
+    """A push service answers a send itself; it never redirects one. A redirect
+    is the cheapest way past the public-address check the endpoint passed at
+    subscribe time (apps/push/api.py), so it is not followed."""
+
+    def post(self, url, data=None, json=None, **kwargs):
+        kwargs["allow_redirects"] = False
+        return super().post(url, data=data, json=json, **kwargs)
+
+
 def _send_one(sub: PushSubscription, payload: dict) -> None:
     """The raw send. Patched in tests — keep it dependency-free and dumb."""
     webpush(
@@ -56,6 +67,7 @@ def _send_one(sub: PushSubscription, payload: dict) -> None:
         data=json.dumps(payload),
         vapid_private_key=settings.VAPID_PRIVATE_KEY,
         vapid_claims={"sub": settings.VAPID_SUBJECT},
+        requests_session=_NoRedirectSession(),
         timeout=10,  # pywebpush's own default is dead code: send() pops a key that is
                      # always present, so None reaches requests.post. Unbounded here
                      # would hold a request thread forever — and the bare except below

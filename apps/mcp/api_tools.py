@@ -34,6 +34,7 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import re
 from typing import Any
 
 import httpx2
@@ -176,9 +177,16 @@ async def _django_app(scope, receive, send):
         _django_handler = get_asgi_application()
     call = _current_call.get()
     if scope["type"] == "http" and call is not None:
+        refused = _smuggled(scope)
+        if refused:
+            await _refuse(send, refused)
+            return
         scope = dict(scope)
         scope[MCP_PRINCIPAL_SCOPE_KEY] = call["principal"]
         ws = call.get("workspace")
+        if ws and not valid_workspace(ws):
+            await _refuse(send, f"not a workspace slug: {ws!r}")
+            return
         if ws and scope["path"].startswith("/api/"):
             path = f"/api/w/{ws}/{scope['path'][len('/api/'):]}"
             scope["path"] = path
@@ -196,6 +204,50 @@ async def _django_app(scope, receive, send):
         if call.get("json_body"):
             scope, receive = await _ensure_json_body(scope, receive)
     await _django_handler(scope, receive, send)
+
+
+#: Encoded separators that must never arrive inside a path parameter.
+_SMUGGLED = (b"%2f", b"%3f", b"%23", b"%5c")
+
+_WORKSPACE_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+
+
+def valid_workspace(value) -> bool:
+    """The workspace slug charset (`apps.workspaces.models.SLUG_PATTERN`)."""
+    return isinstance(value, str) and _WORKSPACE_SLUG.fullmatch(value) is not None
+
+
+def bad_path_arg(value) -> bool:
+    """A path parameter that would change WHICH route the call reaches."""
+    text = str(value)
+    return text in (".", "..") or any(c in text for c in "/?#\\")
+
+
+def _smuggled(scope) -> str | None:
+    """Why this in-process request names a different route than its tool, or None.
+
+    FastMCP percent-encodes a path parameter, but the ASGI transport hands
+    Django the DECODED path, so `turn_id="<id>/transcript"` would reach
+    `/turns/<id>/transcript` from a tool named for `/turns/<id>` — past the
+    tool-name confinement of a confined or delegated caller
+    (`TurnScopeMiddleware`, `DelegatedScopeMiddleware`). No canopy route takes a
+    path parameter holding a separator, so refusing one costs nothing."""
+    raw = (scope.get("raw_path") or b"").lower()
+    if any(s in raw for s in _SMUGGLED):
+        return "a path argument may not contain '/', '?', '#' or '\\'"
+    path = scope.get("path") or ""
+    if "?" in path or "#" in path:
+        return "a path argument may not contain '?' or '#'"
+    return None
+
+
+async def _refuse(send, detail: str) -> None:
+    body = json.dumps({"type": "about:blank", "title": "Bad tool argument",
+                       "status": 400, "detail": detail}).encode()
+    await send({"type": "http.response.start", "status": 400,
+                "headers": [(b"content-type", b"application/problem+json"),
+                            (b"content-length", str(len(body)).encode())]})
+    await send({"type": "http.response.body", "body": body})
 
 
 async def _ensure_json_body(scope, receive):
@@ -299,6 +351,15 @@ class CanopyAPITool(OpenAPITool):
     async def run(self, arguments: dict[str, Any]):
         args = dict(arguments)
         workspace = args.pop(WORKSPACE_ARG, None) if self.adds_workspace else None
+        # Refused before anything is sent: `..` is collapsed by URL
+        # normalisation before the transport sees it, so `_smuggled` alone
+        # could not catch it. `_django_app` checks the encoded path again.
+        if workspace and not valid_workspace(workspace):
+            raise ToolError(f"not a workspace slug: {workspace!r}")
+        for key, value in args.items():
+            if "{" + key + "}" in self._route.path and bad_path_arg(value):
+                raise ToolError(f"{key} may not contain '/', '?', '#' or a backslash, "
+                                "nor be '.' or '..'")
         principal = _principal()
         principal["mcp_tool"] = self.name
         method = self._route.method.upper()

@@ -176,6 +176,32 @@ def _authenticate_mcp_call(request: HttpRequest) -> bool:
     return True
 
 
+#: Credentials that may NOT mint another credential (a PAT, a session). Each is
+#: deliberately narrower than a PAT — an OAuth access token lives an hour and
+#: dies with its grant ("Disconnect"), a delegated token is a site's, bounded to
+#: `site ∩ user` and revoked with the site — so trading one for a never-expiring
+#: PAT or a week-long cookie would launder away exactly the limit that made it
+#: safe to hand out.
+NON_MINTING_CREDENTIALS = frozenset({"oauth", "delegated", "contact"})
+
+
+def minting_refusal(request: HttpRequest) -> str | None:
+    """Why this request may not mint a credential, or None when it may.
+
+    Reads the credential the middleware recorded (`auth_credential`), never a
+    header, so it agrees with whatever actually authenticated the request. A
+    browser session records none and may mint; so may a plain PAT, which is
+    already the most a token can be."""
+    kind = (getattr(request, "auth_credential", None) or {}).get("type")
+    if kind in NON_MINTING_CREDENTIALS:
+        return (
+            f"A credential cannot be minted with a {kind} token: it would outlive the "
+            "limits that token carries. Sign in to canopy in a browser, or use a "
+            "personal access token."
+        )
+    return None
+
+
 def _credential(kind: str, pk, label: str) -> dict:
     """`request.auth_credential`: which credential authenticated the request, for
     provenance (apps/common/request_context.py). Never a secret — a row id and

@@ -124,13 +124,18 @@ class PersonalToken(models.Model):
         and MCP (`CanopyPATVerifier`) — both resolve tokens through here, so
         expiry lands on both surfaces at once and cannot drift between them.
         A NULL expires_at never expires (see the field's help_text).
+
+        A deactivated user's tokens are dead too. Deactivating is how an account
+        is switched off, and every other credential path (delegated tokens, the
+        MCP principal, the socket session) already refuses an inactive user — a
+        PAT that kept working would be the one door left open.
         """
         if not raw:
             return None
         token_hash = hashlib.sha256(raw.encode()).hexdigest()
         return (
             cls.objects.select_related("user")
-            .filter(token_hash=token_hash, revoked_at__isnull=True)
+            .filter(token_hash=token_hash, revoked_at__isnull=True, user__is_active=True)
             .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
             .first()
         )
