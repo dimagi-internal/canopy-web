@@ -70,6 +70,7 @@ export function syncSummary(r: SlackSyncOut): string {
     r.scopes_added.length
       ? `Added the ${r.scopes_added.join(', ')} permission — reconnect Slack to grant it` : '',
     r.webhooks_moved?.length ? `Moved the ${r.webhooks_moved.join(' and ')} URL to this address` : '',
+    r.redirects_removed?.length ? `Removed the sign-in callback on a former address` : '',
   ].filter(Boolean)
   return parts.length ? `${parts.join('. ')}.` : 'Slash commands already match.'
 }

@@ -65,6 +65,9 @@ class SlackSyncOut(StrictModel):
     #: Webhooks (`event_subscriptions`, `interactivity`) moved off an address
     #: canopy has left.
     webhooks_moved: list[str] = []
+    #: Sign-in callbacks removed from the app because they sat on an address
+    #: canopy has left.
+    redirects_removed: list[str] = []
 
 
 class SlackDeclareAgentOut(StrictModel):
