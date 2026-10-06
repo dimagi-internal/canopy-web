@@ -22,8 +22,6 @@ import uuid
 PARENT_ENV = {
     "CANOPY_TURN_ID": "X-Canopy-Parent-Turn",
     "CANOPY_SESSION_ID": "X-Canopy-Parent-Session",
-    "CANOPY_EMDASH_TASK": "X-Canopy-Parent-Task",
-    "CANOPY_HOST": "X-Canopy-Parent-Host",
     "CLAUDE_SESSION_ID": "X-Canopy-Claude-Session",
 }
 TOKEN_ENV = "CANOPY_E2E_TOKEN"

@@ -39,7 +39,7 @@ from apps.common import request_context
 logger = logging.getLogger("canopy.provenance")
 
 #: The keys a parent may carry, whether from headers or a payload `parent` object.
-PARENT_KEYS = ("turn", "session", "task", "host", "project", "claude_session")
+PARENT_KEYS = ("turn", "session", "claude_session")
 _SNAPSHOT_KEYS = ("credential", "client", "user_agent", "request_id", "ip", "mcp_tool")
 _BARE = re.compile(r'^[^\s"=]+$')
 PROMPT_HEAD = 80
@@ -97,19 +97,14 @@ def _session(value):
     return Session.objects.filter(pk=pk).first() if pk else None
 
 
-def _session_for_task(task: str, host: str = "", project: str = ""):
-    """The session a runner binding maps an emdash task (or a cloud runner's
-    Claude session id) to, narrowed by host/project when given."""
+def _session_for_key(key: str):
+    """The session a runner binding maps a Claude session id to."""
     from apps.canopy_sessions.models import RunnerBinding
 
-    if not task:
+    if not key:
         return None
-    qs = RunnerBinding.objects.select_related("session").filter(session_key=task)
-    if host:
-        qs = qs.filter(host=host)
-    if project:
-        qs = qs.filter(emdash_project=project)
-    binding = qs.order_by("-updated_at").first()
+    binding = (RunnerBinding.objects.select_related("session").filter(session_key=key)
+               .order_by("-updated_at").first())
     return binding.session if binding is not None else None
 
 
@@ -137,23 +132,17 @@ def parent_fields(explicit=None) -> tuple[dict, dict]:
             unresolved.append("session")
         if session is None and turn is not None and turn.chat_session_id:
             session = turn.chat_session
-        task = str(raw.get("task") or "")
-        host = str(raw.get("host") or "")
-        project = str(raw.get("project") or "")
         claude_session = str(raw.get("claude_session") or "")
         if session is None and not raw.get("session"):
-            session = (_session_for_task(task, host, project)
-                       or _session_for_task(claude_session))
+            session = _session_for_key(claude_session)
     except Exception:  # noqa: BLE001 — a record must never fail the creation
         logger.exception("could not resolve a parent %r", record)
         return {}, {**record, "unresolved": "error"}
     if unresolved:
         record["unresolved"] = ",".join(unresolved)
-    parent_task = f"{host}:{project}:{task}" if host and task else task
     fields = {
         "parent_turn": turn,
         "parent_session": session,
-        "parent_task": parent_task[:300],
         "parent_claude_session": claude_session[:100],
     }
     return fields, record
@@ -203,12 +192,31 @@ def public(prov) -> dict:
     return {k: v for k, v in (prov or {}).items() if k not in _PRIVATE}
 
 
+def parent_runner(obj) -> dict | None:
+    """{id, name, kind} of the runner the parent turn ran on — derived, never sent
+    by the client: the parent turn's `claimed_by` IS the runner. None when the
+    parent is not a claimed turn."""
+    try:
+        runner = obj.parent_turn.claimed_by if obj.parent_turn_id else None
+    except Exception:  # noqa: BLE001 — a record must never fail a read
+        return None
+    if runner is None:
+        return None
+    return {"id": str(runner.pk), "name": runner.name, "kind": runner.kind}
+
+
+def _runner_text(runner) -> str:
+    return f"{runner['name']}({runner['kind']})" if runner else ""
+
+
 def parent_of(obj) -> dict | None:
     """The parent as the API's initiator block shows it; None when there is none."""
     prov = getattr(obj, "provenance", None) or {}
     out = {
         "turn": str(obj.parent_turn_id or "") or None,
         "session": str(obj.parent_session_id or "") or None,
+        "runner": parent_runner(obj),
+        # Legacy rows only: older clients sent an emdash task; nothing writes it now.
         "task": obj.parent_task or None,
         "claude_session": obj.parent_claude_session or None,
     }
@@ -271,7 +279,7 @@ def _common(obj) -> dict:
         "parent_turn": str(obj.parent_turn_id or "") or (prov.get("parent") or {}).get("turn", ""),
         "parent_session": (str(obj.parent_session_id or "")
                            or (prov.get("parent") or {}).get("session", "")),
-        "parent_task": obj.parent_task,
+        "parent_runner": _runner_text(parent_runner(obj)),
         "parent_claude_session": obj.parent_claude_session,
     }
 

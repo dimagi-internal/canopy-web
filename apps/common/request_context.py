@@ -33,16 +33,17 @@ from django.http import HttpRequest, HttpResponse
 REQUEST_ID_HEADER = "X-Request-Id"
 #: What program is calling ("canopy-runner", "e2e_session_chat.py", "canopy-cli").
 CLIENT_HEADER = "X-Canopy-Client"
-#: Parent headers: the turn / session / emdash task / host / Claude session the
-#: CALLER was running inside when it made this request. The `canopy` CLI fills
-#: them from CANOPY_TURN_ID / CANOPY_SESSION_ID / CANOPY_EMDASH_TASK /
-#: CANOPY_HOST / CLAUDE_SESSION_ID, which the runners export into every session
-#: they launch.
+#: Parent headers: the turn / session / Claude session the CALLER was running
+#: inside when it made this request. The `canopy` CLI fills them from
+#: CANOPY_TURN_ID / CANOPY_SESSION_ID / CLAUDE_CODE_SESSION_ID, which runners
+#: export into every session they launch. The parent TURN is the whole contract:
+#: it already records which runner claimed it (so the runner's kind and host), so
+#: nothing runner-specific is accepted here and a new kind of runner only has to
+#: export CANOPY_TURN_ID. (`X-Canopy-Parent-Task` / `-Host` from older clients
+#: are ignored.)
 PARENT_HEADERS = {
     "turn": "X-Canopy-Parent-Turn",
     "session": "X-Canopy-Parent-Session",
-    "task": "X-Canopy-Parent-Task",
-    "host": "X-Canopy-Parent-Host",
     "claude_session": "X-Canopy-Claude-Session",
 }
 

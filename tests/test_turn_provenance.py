@@ -21,12 +21,12 @@ from fastmcp.server.auth import AccessToken
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
 from apps.agents.models import Agent
-from apps.canopy_sessions.models import RunnerBinding, Session
+from apps.canopy_sessions.models import Session
 from apps.common import request_context
 from apps.common.log_format import JsonFormatter
 from apps.harness import initiator as who
 from apps.harness import provenance, services
-from apps.harness.models import AgentSchedule, Turn
+from apps.harness.models import AgentSchedule, Runner, Turn
 from apps.mcp.server import mcp
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -134,46 +134,58 @@ def _parent_turn(agent, owner):
     return turn, session
 
 
+def _claim(turn, owner, *, name="jj-mbp", kind=Runner.EMDASH):
+    runner = Runner.objects.create(name=name, kind=kind, owner=owner,
+                                   workspace_id=turn.chat_session.workspace_id)
+    turn.claimed_by = runner
+    turn.save(update_fields=["claimed_by"])
+    return runner
+
+
 def test_parent_headers_are_persisted_and_the_session_resolved_from_the_turn(ctx):
     owner, _ws, agent, raw, _pat = ctx
     parent, parent_session = _parent_turn(agent, owner)
+    runner = _claim(parent, owner)
     r = _enqueue(_client(raw, HTTP_X_CANOPY_PARENT_TURN=str(parent.pk),
-                         HTTP_X_CANOPY_PARENT_TASK="c-scratch-1",
                          HTTP_X_CANOPY_CLAUDE_SESSION="0b1c-claude"))
     assert r.status_code == 201, r.content
     turn = Turn.objects.get(idempotency_key="k1")
     assert turn.parent_turn == parent
     assert turn.parent_session == parent_session
-    assert turn.parent_task == "c-scratch-1"
     assert turn.parent_claude_session == "0b1c-claude"
     body = r.json()
     assert body["parent_turn_id"] == str(parent.pk)
     assert body["parent_session_id"] == str(parent_session.pk)
     assert body["initiator"]["parent"]["turn"] == str(parent.pk)
+    # the runner is DERIVED from the parent turn, never sent by the client
+    assert body["initiator"]["parent"]["runner"] == {
+        "id": str(runner.pk), "name": "jj-mbp", "kind": Runner.EMDASH}
 
 
-def test_a_host_project_task_parent_resolves_its_session_through_the_binding(ctx):
+def test_runner_specific_parent_fields_from_old_clients_are_ignored(ctx):
+    """`X-Canopy-Parent-Task` / `-Host` and a payload task/host/project were an
+    emdash detail; a new kind of runner exports only CANOPY_TURN_ID."""
     owner, _ws, agent, raw, _pat = ctx
-    session = Session.objects.create(workspace=agent.workspace, agent=agent, created_by=owner)
-    b = RunnerBinding(session=session, session_key="c-scratch-1", host="laptop-1")
-    b.emdash_project = "canopy-web"
-    b.save()
-    r = _enqueue(_client(raw), parent={"task": "c-scratch-1", "host": "laptop-1",
-                                       "project": "canopy-web"})
+    parent, _s = _parent_turn(agent, owner)
+    r = _enqueue(_client(raw, HTTP_X_CANOPY_PARENT_TURN=str(parent.pk),
+                         HTTP_X_CANOPY_PARENT_TASK="c-scratch-1",
+                         HTTP_X_CANOPY_PARENT_HOST="laptop-1"),
+                 parent={"task": "c-scratch-1", "host": "laptop-1", "project": "canopy-web"})
     assert r.status_code == 201, r.content
-    turn = Turn.objects.get()
-    assert turn.parent_session == session
-    assert turn.parent_task == "laptop-1:canopy-web:c-scratch-1"
+    turn = Turn.objects.get(idempotency_key="k1")
+    assert turn.parent_turn == parent
+    assert turn.parent_task == ""
+    assert "task" not in turn.provenance.get("parent", {})
 
 
 def test_the_payload_parent_wins_over_the_header(ctx):
     owner, _ws, agent, raw, _pat = ctx
     parent, _s = _parent_turn(agent, owner)
-    r = _enqueue(_client(raw, HTTP_X_CANOPY_PARENT_TASK="from-header"),
-                 parent={"turn": str(parent.pk), "task": "from-payload"})
+    r = _enqueue(_client(raw, HTTP_X_CANOPY_CLAUDE_SESSION="from-header"),
+                 parent={"turn": str(parent.pk), "claude_session": "from-payload"})
     assert r.status_code == 201
     turn = Turn.objects.get(idempotency_key="k1")
-    assert (turn.parent_turn, turn.parent_task) == (parent, "from-payload")
+    assert (turn.parent_turn, turn.parent_claude_session) == (parent, "from-payload")
 
 
 def test_an_unknown_parent_is_recorded_raw_and_never_refuses(ctx):
@@ -201,11 +213,12 @@ def test_a_session_created_and_sent_to_records_creator_and_parent(ctx):
     assert session.parent_turn == parent
 
     r = _client(raw).post(f"/api/canopy-sessions/{session.pk}/send",
-                          {"text": "hi", "client_id": "n1", "parent": {"task": "c-other"}},
+                          {"text": "hi", "client_id": "n1",
+                           "parent": {"claude_session": "c-other"}},
                           content_type="application/json")
     assert r.status_code == 200, r.content
     turn = Turn.objects.get(pk=r.json()["turn_id"])
-    assert turn.parent_task == "c-other"
+    assert turn.parent_claude_session == "c-other"
     assert turn.provenance["credential"]["label"] == "scratch-script"
 
 
@@ -278,6 +291,7 @@ def test_turn_created_and_session_created_are_logged_on_commit(
         ctx, django_capture_on_commit_callbacks):
     owner, _ws, agent, raw, pat = ctx
     parent, parent_session = _parent_turn(agent, owner)
+    _claim(parent, owner, name="cloud-1", kind=Runner.CLOUD)
     with captured() as records, django_capture_on_commit_callbacks(execute=True):
         _client(raw, HTTP_X_CANOPY_CLIENT="scratch.py",
                 HTTP_X_CANOPY_PARENT_TURN=str(parent.pk)).post(
@@ -293,6 +307,7 @@ def test_turn_created_and_session_created_are_logged_on_commit(
     assert "client=scratch.py" in line
     assert f"parent_turn={parent.pk}" in line
     assert f"parent_session={parent_session.pk}" in line
+    assert f"parent_runner=cloud-1({Runner.CLOUD})" in line
     assert "who=user:jj@dimagi.com" in line
     assert 'prompt_head="say \\"hi\\"\\nthen stop"' in line
     session_lines = [m for m in lines if m.startswith("SESSION_CREATED")]

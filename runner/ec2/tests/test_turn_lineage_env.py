@@ -4,7 +4,7 @@ the claim log line says who and what the turn came from (`_provenance_brief`).""
 from __future__ import annotations
 
 
-def test_lineage_env_exports_turn_session_and_task(load_cloud_runner):
+def test_lineage_env_exports_turn_and_session_only(load_cloud_runner):
     cr = load_cloud_runner()
     env = cr._lineage_env({
         "id": "6f1c0000-0000-0000-0000-000000000001",
@@ -13,14 +13,14 @@ def test_lineage_env_exports_turn_session_and_task(load_cloud_runner):
     })
     assert env["CANOPY_TURN_ID"] == "6f1c0000-0000-0000-0000-000000000001"
     assert env["CANOPY_SESSION_ID"] == "7a2d0000-0000-0000-0000-000000000002"
-    assert env["CANOPY_EMDASH_TASK"] == "c-scratch-1"
-    assert env["CANOPY_HOST"]
+    # nothing runner-specific: the server reads the runner off the parent turn
+    assert set(env) == {"CANOPY_TURN_ID", "CANOPY_SESSION_ID"}
 
 
 def test_lineage_env_drops_malformed_values(load_cloud_runner):
     cr = load_cloud_runner()
     env = cr._lineage_env({"id": "x; rm -rf /", "origin_ref": {"thread_key": "plain"}})
-    assert "CANOPY_TURN_ID" not in env and "CANOPY_EMDASH_TASK" not in env
+    assert "CANOPY_TURN_ID" not in env
 
 
 def test_provenance_brief(load_cloud_runner):
