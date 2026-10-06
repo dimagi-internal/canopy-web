@@ -1926,6 +1926,25 @@ def test_a_sync_moves_the_event_and_interactivity_urls_off_a_former_address(
     assert _commands(slack)["/hal"]["url"] == f"{new}/api/slack/commands"
 
 
+def test_a_sync_removes_the_sign_in_callback_on_a_former_address(
+        slack, hal, ws, managed, owner_client, settings):
+    """The old address redirects every browser page to the new one, so its
+    callback is never built again; left on the app it only lets Slack send an
+    install where canopy is not. A callback canopy does not own stays."""
+    old, new = "https://labs.test/canopy", "https://canopy.test"
+    settings.CANOPY_PUBLIC_BASE_URL = settings.CANOPY_IDENTITY_BASE_URL = new
+    settings.CANOPY_FORMER_BASE_URLS = [old]
+    oauth = slack.manifest.setdefault("oauth_config", {})
+    oauth["redirect_urls"] = [f"{old}/auth/slack/callback/", f"{new}/auth/slack/callback/",
+                              "https://elsewhere.example/callback"]
+
+    resp = owner_client.post(f"/api/slack-config/{ws.slug}/sync").json()
+
+    assert slack.manifest["oauth_config"]["redirect_urls"] == [
+        f"{new}/auth/slack/callback/", "https://elsewhere.example/callback"]
+    assert resp["redirects_removed"] == [f"{old}/auth/slack/callback/"]
+
+
 def test_a_webhook_canopy_does_not_own_is_never_moved(slack, hal, ws, managed, owner_client, settings):
     settings.CANOPY_PUBLIC_BASE_URL = settings.CANOPY_IDENTITY_BASE_URL = "https://canopy.test"
     settings.CANOPY_FORMER_BASE_URLS = ["https://labs.test/canopy"]

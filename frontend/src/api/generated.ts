@@ -7672,6 +7672,11 @@ export interface components {
              * @default []
              */
             readonly webhooks_moved: readonly string[];
+            /**
+             * Redirects Removed
+             * @default []
+             */
+            readonly redirects_removed: readonly string[];
         };
         /** SlackConfigTokenIn */
         readonly SlackConfigTokenIn: {

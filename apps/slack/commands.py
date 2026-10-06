@@ -229,9 +229,18 @@ def reconcile(installation: SlackInstallation) -> dict:
         redirects = list(oauth.get("redirect_urls") or [])
         redirect_added = _oauth_redirect_url() not in redirects
         if redirect_added:
-            oauth["redirect_urls"] = redirects + [_oauth_redirect_url()]
+            redirects = redirects + [_oauth_redirect_url()]
+        # And the callback on an address canopy has left goes: nothing builds it
+        # any more (an install starts from the address the person is on, and the
+        # old address redirects every browser page to the new one), so keeping it
+        # only leaves Slack willing to send an install somewhere canopy is not.
+        former_callbacks = _former_urls("/auth/slack/callback/")
+        redirects_removed = [u for u in redirects if u in former_callbacks]
+        if redirect_added or redirects_removed:
+            oauth["redirect_urls"] = [u for u in redirects if u not in former_callbacks]
         webhooks_moved = _move_webhooks(manifest)
-        if added or removed or updated or scopes_added or redirect_added or webhooks_moved:
+        if (added or removed or updated or scopes_added or redirect_added or webhooks_moved
+                or redirects_removed):
             features["slash_commands"] = kept
             client.call("apps.manifest.update", token=token,
                         data={"app_id": installation.app_id, "manifest": json.dumps(manifest)})
@@ -239,7 +248,8 @@ def reconcile(installation: SlackInstallation) -> dict:
         installation.commands_sync_error = ""
         installation.save(update_fields=["commands_synced_at", "commands_sync_error"])
         return {"added": sorted(added), "removed": sorted(removed), "updated": sorted(updated), "unfit": unfit,
-                "scopes_added": scopes_added, "webhooks_moved": webhooks_moved}
+                "scopes_added": scopes_added, "webhooks_moved": webhooks_moved,
+                "redirects_removed": redirects_removed}
     except NotConfigured:
         raise
     except Exception as e:
