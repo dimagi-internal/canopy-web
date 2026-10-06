@@ -468,3 +468,44 @@ def test_a_new_desktop_session_is_recorded_with_its_task_name(cfg, tmp_path, no_
     th.join(10)
     title = client.of("record_session")[0][2]["title"]
     assert title and title != "sid-1"
+
+
+# ── opening a session gives focus back (canopy-web#1188, Focus round 2) ──────
+
+def _record_runs(monkeypatch, results):
+    calls = []
+
+    def run(argv, **kw):
+        calls.append(argv)
+        r = results.pop(0) if results else subprocess.CompletedProcess(argv, 0, "", "")
+        if isinstance(r, BaseException):
+            raise r
+        return r
+    monkeypatch.setattr(desktop.subprocess, "run", run)
+    return calls
+
+
+def test_opening_a_session_goes_through_the_focus_returning_helper(monkeypatch):
+    calls = _record_runs(monkeypatch, [subprocess.CompletedProcess([], 0, "gave focus back", "")])
+    desktop.open_session("sid-9")
+    assert calls == [["osascript", "-l", "JavaScript", str(desktop.QUIET_OPEN),
+                      "claude://resume?session=sid-9", str(desktop.QUIET_OPEN_WATCH_SECONDS)]]
+    assert desktop.QUIET_OPEN.is_file()  # shipped next to the module, so in the wheel
+
+
+def test_a_failed_helper_still_opens_the_session(monkeypatch):
+    calls = _record_runs(monkeypatch, [subprocess.CompletedProcess([], 1, "", "execution error")])
+    desktop.open_session("sid-9")
+    assert calls[-1] == ["open", "-g", "claude://resume?session=sid-9"]
+
+
+def test_no_osascript_still_opens_the_session(monkeypatch):
+    calls = _record_runs(monkeypatch, [FileNotFoundError("osascript")])
+    desktop.open_session("sid-9")
+    assert calls[-1] == ["open", "-g", "claude://resume?session=sid-9"]
+
+
+def test_a_helper_that_timed_out_does_not_open_twice(monkeypatch):
+    calls = _record_runs(monkeypatch, [subprocess.TimeoutExpired("osascript", 18)])
+    desktop.open_session("sid-9")
+    assert len(calls) == 1
