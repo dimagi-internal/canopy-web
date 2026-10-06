@@ -442,3 +442,29 @@ def test_a_stop_kills_the_running_turns_shells_before_aborting(cfg, tmp_path, mo
     th.join()
     assert order == [("kill", True)]  # killed while no stop request existed yet
     assert res == {"action": "interrupted", "reason": "", "killed": 2}
+
+
+# ── the seed stays out of every session view ────────────────────────────────
+
+def test_drop_seed_removes_only_the_seed_exchange():
+    rows = [
+        {"index": 1, "role": "user", "text": desktop.SEED_PROMPT},
+        {"index": 2, "role": "assistant", "text": "ready"},
+        {"index": 3, "role": "user", "text": "the real task"},
+        {"index": 4, "role": "assistant", "text": "ready"},  # a real reply that says ready: kept
+    ]
+    assert [r["index"] for r in desktop.drop_seed(rows)] == [3, 4]
+    assert desktop.drop_seed([{"role": "user", "text": "hello"}]) == [{"role": "user", "text": "hello"}]
+
+
+def test_a_new_desktop_session_is_recorded_with_its_task_name(cfg, tmp_path, no_app):
+    cfg.desktop_projects = {"scratch": str(_repo(tmp_path))}
+    turn = _turn(origin_ref={"thread_key": "th", "chat_session_id": "c"})
+    client = FakeClient()
+    run = desktop.TurnRun(cfg, client, "r", turn, "th", {"reuse": False}, reuse="")
+    th = threading.Thread(target=run.run)
+    th.start()
+    _mod(_channel_of(cfg, "scratch"), "task", "sid-1", "done")
+    th.join(10)
+    title = client.of("record_session")[0][2]["title"]
+    assert title and title != "sid-1"

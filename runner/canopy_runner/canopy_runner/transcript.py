@@ -440,7 +440,9 @@ def attach_recent_tail(
         if path is None:
             s["recent_messages"] = []
             continue
-        s["recent_messages"] = read_recent_messages(path, limit=limit)
+        from . import desktop as _desktop
+
+        s["recent_messages"] = _desktop.drop_seed(read_recent_messages(path, limit=limit))
         newest = newest_record_time(path)
         if newest and _is_later(newest, s.get("last_interacted_at")):
             s["last_interacted_at"] = newest
