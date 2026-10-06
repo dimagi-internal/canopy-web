@@ -21,6 +21,7 @@
     --font-heading: var(--font-sans);
     --font-sans: 'Geist Variable', sans-serif;
     --animate-pulse-slow: pulse-slow 3s ease-in-out infinite;
+    --color-brand: var(--brand);  /* the mark only — never a UI accent; that is --primary */
 }
 
 :root {
@@ -36,6 +37,7 @@
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.216 0.006 56.04);
     --primary: oklch(0.646 0.222 41.12);          /* ~orange-600 (readable on white) */
+    --brand: #1F6B4A;                             /* the mark's deep green (assets/brand) */
     --primary-foreground: oklch(1 0 0);
     --secondary: oklch(0.970 0.001 106.42);       /* ~stone-100 */
     --secondary-foreground: oklch(0.216 0.006 56.04);
@@ -84,6 +86,7 @@
     --popover: oklch(0.216 0.006 56.04);
     --popover-foreground: oklch(0.923 0.003 48.72);
     --primary: oklch(0.757 0.161 53.57);         /* orange-400 */
+    --brand: #3FA374;                            /* the mark's green (assets/brand) */
     --primary-foreground: oklch(0.147 0.004 49.25);
     --secondary: oklch(0.268 0.007 34.3);        /* ~stone-800 */
     --secondary-foreground: oklch(0.923 0.003 48.72);

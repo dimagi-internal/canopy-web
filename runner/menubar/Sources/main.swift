@@ -239,13 +239,15 @@ final class Controller: NSObject, NSApplicationDelegate {
         return tok.isEmpty ? nil : tok
     }
 
-    // Load the committed monochrome menu-bar tree (bundled from assets/brand), sized for
-    // the menu bar. Falls back to an SF Symbol so the app never launches icon-less.
+    // Load the committed monochrome menu-bar mark (bundled from assets/brand), sized for
+    // the menu bar. The mark is wide and low, so its image is landscape (24x16pt, the
+    // MENUBAR_PT in assets/brand/generate.py). Falls back to an SF Symbol so the app
+    // never launches icon-less.
     func loadTree() -> NSImage {
-        for name in ["menubar-tree@2x", "menubar-tree"] {
+        for name in ["menubar-mark@2x", "menubar-mark"] {
             if let path = Bundle.main.path(forResource: name, ofType: "png"),
                let img = NSImage(contentsOfFile: path) {
-                img.size = NSSize(width: 18, height: 18)
+                img.size = NSSize(width: 24, height: 16)
                 return img
             }
         }

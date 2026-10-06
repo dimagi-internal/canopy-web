@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
 """Regenerate EVERY canopy brand image from the one geometry source.
 
-The bare-branch tree is defined ONCE as line segments in
-`assets/brand/tree.py`. This script renders that geometry
-into every committed image the product needs, so nothing is drawn just-in-time at
-build or runtime. Edit `tree.py` to change the shape, then run this and commit the
-results — never hand-edit the outputs.
+The mark (the low dome) is defined ONCE in `assets/brand/mark.py`. This script
+renders it into every committed image the product needs, so nothing is drawn
+just-in-time at build or runtime. Edit `mark.py` to change the shape, then run this
+and commit the results — never hand-edit the outputs.
 
-    python3 -m venv .venv && .venv/bin/pip install pyobjc-framework-Cocoa  # one-time
-    .venv/bin/python assets/brand/generate.py                              # regenerate all
+    brew install librsvg                 # one-time: rsvg-convert
+    python3 assets/brand/generate.py     # regenerate all
 
 Outputs (all committed, first-class):
-    assets/brand/tree.svg                 master vector (white tree on black)
-    assets/brand/menubar-tree.png/@2x/@3x monochrome tree for the macOS status bar
-                                          (the menu-bar app tints it per runner status)
-    assets/brand/app-icon-1024.png        macOS app-icon artwork (green tree, warm tile)
-    assets/brand/AppIcon.icns             compiled macOS app icon (all sizes)
-    frontend/public/favicon.svg           web favicon  (identical to tree.svg)
-    frontend/public/icons/icon-192.png    PWA icon
-    frontend/public/icons/icon-512.png    PWA icon
-    frontend/public/icons/icon-maskable-512.png  PWA maskable icon
+    assets/brand/mark.svg                  master vector (green mark on the bark tile)
+    assets/brand/menubar-mark.png/@2x/@3x  monochrome mark for the macOS status bar
+                                           (the menu-bar app tints it per runner status)
+    assets/brand/app-icon-1024.png         macOS app-icon artwork
+    assets/brand/AppIcon.icns              compiled macOS app icon (all sizes)
+    frontend/public/favicon.svg            web favicon
+    frontend/public/icons/icon-*.png       PWA icons (+ maskable)
+    frontend/src/brand/CanopyMark.tsx      the mark as a React component (currentColor)
+    site/public/favicon.svg, site/src/assets/mark.svg   the public site's copies
 
-macOS-only: PNG/icns rendering uses AppKit + `iconutil`. Asset generation is a
-dev-machine task; the outputs are committed so CI and every consumer just read files.
+Rasters go through `rsvg-convert`, so every PNG is rendered from the same SVG the web
+uses rather than from a second drawing of the shape. `.icns` needs macOS `iconutil`;
+asset generation is a dev-machine task and CI only reads the committed files.
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,156 +34,113 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 BRAND = REPO / "assets" / "brand"
-WEB_ICONS = REPO / "frontend" / "public" / "icons"
-WEB_FAVICON = REPO / "frontend" / "public" / "favicon.svg"
+WEB_PUBLIC = REPO / "frontend" / "public"
+WEB_COMPONENT = REPO / "frontend" / "src" / "brand" / "CanopyMark.tsx"
+SITE = REPO / "site"
 
-# tree.py (pure geometry) + render_tree_svg (pure SVG) are the shape source of truth.
-# They live HERE, beside their only consumer. They used to sit inside
-# runner/canopy_runner and were therefore built into the runner wheel and
-# installed onto every box in the fleet — 112 lines of icon geometry the daemon
-# never imports.
 sys.path.insert(0, str(BRAND))
-from render_tree_svg import render_svg  # noqa: E402
-from tree import ICON_INSET, ink_bounds, tree_segments  # noqa: E402
+import mark  # noqa: E402
 
 # Brand palette (canopy Warm Earth) — the ONLY place these hexes live for the mark.
-WARM_TILE = (0.16, 0.13, 0.11)   # app-icon background
-BRAND_GREEN = (0.40, 0.71, 0.52)  # the tree on the app icon
-BLACK = (0.0, 0.0, 0.0)           # menu-bar template ink (tinted per status at runtime)
+BARK = "#26211D"   # the tile
+GREEN = "#3FA374"  # the mark on the tile
+BLACK = "#000000"  # menu-bar template ink (tinted per status at runtime)
 
-
-def _draw_tree(px: int, rgb, *, fill_frac: float, cx_off=0.0, cy_off=0.0):
-    """Return an NSImage of the tree in `rgb`, scaled to `fill_frac` of a px-square,
-    centered. Shared by every raster output so they can't drift from tree.py."""
-    from AppKit import (
-        NSAffineTransform, NSBezierPath, NSColor, NSImage, NSMakePoint, NSMakeSize,
-        NSRoundLineCapStyle,
-    )
-    segs = tree_segments()
-    x0, y0, x1, y1 = ink_bounds(segs)
-    span = max(x1 - x0, y1 - y0)
-    scale = px * fill_frac / span
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-
-    def _draw(_rect) -> bool:
-        NSColor.colorWithSRGBRed_green_blue_alpha_(rgb[0], rgb[1], rgb[2], 1.0).set()
-        xf = NSAffineTransform.transform()
-        xf.translateXBy_yBy_(px / 2 + cx_off, px / 2 + cy_off)
-        xf.scaleBy_(scale)
-        xf.translateXBy_yBy_(-cx, -cy)
-        xf.concat()
-        for a, b, w in segs:
-            p = NSBezierPath.bezierPath()
-            p.moveToPoint_(NSMakePoint(*a))
-            p.lineToPoint_(NSMakePoint(*b))
-            p.setLineWidth_(w)
-            p.setLineCapStyle_(NSRoundLineCapStyle)
-            p.stroke()
-        return True
-
-    return NSImage.imageWithSize_flipped_drawingHandler_(NSMakeSize(px, px), False, _draw)
-
-
-def _write_png(img, path: Path) -> None:
-    from AppKit import NSBitmapImageRep
-    rep = NSBitmapImageRep.alloc().initWithData_(img.TIFFRepresentation())
-    png = rep.representationUsingType_properties_(4, None)  # 4 = NSPNGFileType
-    if not png.writeToFile_atomically_(str(path), True):
-        raise RuntimeError(f"failed to write {path}")
-    print(f"  wrote {_rel(path)}")
+# The menu bar is short and the mark is wide, so its image is a landscape box (points).
+MENUBAR_PT = (24, 16)
 
 
 def _rel(path: Path) -> str:
     try:
         return str(path.relative_to(REPO))
     except ValueError:
-        return str(path)  # e.g. iconset staged in a temp dir
+        return str(path)
 
 
-def _app_icon(px: int):
-    """Green tree on a warm rounded-rect tile — the macOS/Spotlight app icon."""
-    from AppKit import (
-        NSBezierPath, NSColor, NSImage, NSMakeRect, NSMakeSize,
-    )
-    tree = _draw_tree(px, BRAND_GREEN, fill_frac=0.52)
-
-    def _draw(_rect) -> bool:
-        inset = px * 0.06
-        rect = NSMakeRect(inset, inset, px - 2 * inset, px - 2 * inset)
-        bg = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(rect, px * 0.225, px * 0.225)
-        NSColor.colorWithSRGBRed_green_blue_alpha_(*WARM_TILE, 1.0).set()
-        bg.fill()
-        tree.drawInRect_(NSMakeRect(0, 0, px, px))
-        return True
-
-    return NSImage.imageWithSize_flipped_drawingHandler_(NSMakeSize(px, px), False, _draw)
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    print(f"  wrote {_rel(path)}")
 
 
-def _build_icns(png_1024: Path, out: Path) -> None:
-    """Fold the 1024 artwork into a full multi-size .icns via macOS iconutil."""
-    from AppKit import NSImage
-    with tempfile.TemporaryDirectory() as td:
-        iconset = Path(td) / "AppIcon.iconset"
-        iconset.mkdir()
-        base = NSImage.alloc().initWithContentsOfFile_(str(png_1024))
-        for px, name in [(16, "16x16"), (32, "16x16@2x"), (32, "32x32"), (64, "32x32@2x"),
-                         (128, "128x128"), (256, "128x128@2x"), (256, "256x256"),
-                         (512, "256x256@2x"), (512, "512x512"), (1024, "512x512@2x")]:
-            _write_png(_scaled(base, px), iconset / f"icon_{name}.png")
-        subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(out)], check=True)
-    print(f"  wrote {_rel(out)}")
+def _png(svg_text: str, path: Path, width: int, height: int | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    args = ["rsvg-convert", "-w", str(width), "-h", str(height or width), "-o", str(path)]
+    subprocess.run(args, input=svg_text.encode(), check=True)
+    print(f"  wrote {_rel(path)}")
 
 
-def _scaled(img, px: int):
-    from AppKit import NSImage, NSMakeRect, NSMakeSize
-    out = NSImage.alloc().initWithSize_(NSMakeSize(px, px))
-    out.lockFocus()
-    img.drawInRect_(NSMakeRect(0, 0, px, px))
-    out.unlockFocus()
-    return out
+def tile(px: int, *, fill: float, radius: float) -> str:
+    return mark.svg(px, px, GREEN, fill=fill, background=BARK, radius=radius)
+
+
+def app_icon(px: int) -> str:
+    """The macOS app icon: a rounded tile inset from the canvas edge, as Apple's grid
+    expects, with the mark inside it."""
+    inset = px * 0.06
+    inner = px - 2 * inset
+    nested = tile(int(inner), fill=0.70, radius=0.225).replace(
+        "<svg ", f'<svg x="{inset:g}" y="{inset:g}" ', 1)
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{px}" height="{px}" '
+            f'viewBox="0 0 {px} {px}">{nested}</svg>\n')
+
+
+def component() -> str:
+    x0, y0, x1, y1 = mark.bounds()
+    pad = 0.5
+    vb = f"{x0 - pad:.2f} {y0 - pad:.2f} {x1 - x0 + 2 * pad:.2f} {y1 - y0 + 2 * pad:.2f}"
+    return f"""// GENERATED by assets/brand/generate.py from assets/brand/mark.py — do not edit.
+// The canopy mark (the low dome), drawn in currentColor so it takes the text colour
+// of wherever it sits. Size it with a height class; the width follows its aspect.
+import type {{ SVGProps }} from 'react'
+
+export function CanopyMark(props: SVGProps<SVGSVGElement>) {{
+  return (
+    <svg viewBox="{vb}" role="img" aria-label="Canopy" {{...props}}>
+      {mark.body("currentColor").replace('"/>', '" />')}
+    </svg>
+  )
+}}
+"""
 
 
 def main() -> None:
-    BRAND.mkdir(parents=True, exist_ok=True)
-    WEB_ICONS.mkdir(parents=True, exist_ok=True)
-    print("Regenerating brand assets from assets/brand/tree.py:")
+    if not shutil.which("rsvg-convert"):
+        raise SystemExit("rsvg-convert not found: brew install librsvg")
+    print("Regenerating brand assets from assets/brand/mark.py:")
 
-    # 1. Master SVG + web favicon (pure-python; white tree on black).
-    svg = render_svg(512)
-    (BRAND / "tree.svg").write_text(svg)
-    print(f"  wrote {(BRAND / 'tree.svg').relative_to(REPO)}")
-    WEB_FAVICON.write_text(svg)
-    print(f"  wrote {WEB_FAVICON.relative_to(REPO)}")
+    master = tile(512, fill=0.70, radius=0.22)
+    _write(BRAND / "mark.svg", master)
 
-    # 2. Menu-bar tree — monochrome black on transparent, tinted per status at runtime.
+    favicon = tile(64, fill=0.80, radius=0.22)
+    _write(WEB_PUBLIC / "favicon.svg", favicon)
+    if SITE.is_dir():  # the public site (site/), when this checkout has one
+        _write(SITE / "public" / "favicon.svg", favicon)
+        _write(SITE / "src" / "assets" / "mark.svg", mark.svg(116, 46, "currentColor"))
+    _write(WEB_COMPONENT, component())
+
+    w, h = MENUBAR_PT
     for scale, suffix in [(1, ""), (2, "@2x"), (3, "@3x")]:
-        _write_png(_draw_tree(18 * scale, BLACK, fill_frac=1 - 2 * ICON_INSET),
-                   BRAND / f"menubar-tree{suffix}.png")
+        _png(mark.svg(w, h, BLACK), BRAND / f"menubar-mark{suffix}.png", w * scale, h * scale)
 
-    # 3. App icon artwork + compiled icns.
-    _write_png(_app_icon(1024), BRAND / "app-icon-1024.png")
-    _build_icns(BRAND / "app-icon-1024.png", BRAND / "AppIcon.icns")
+    _png(app_icon(1024), BRAND / "app-icon-1024.png", 1024)
+    with tempfile.TemporaryDirectory() as td:
+        iconset = Path(td) / "AppIcon.iconset"
+        for px, name in [(16, "16x16"), (32, "16x16@2x"), (32, "32x32"), (64, "32x32@2x"),
+                         (128, "128x128"), (256, "128x128@2x"), (256, "256x256"),
+                         (512, "256x256@2x"), (512, "512x512"), (1024, "512x512@2x")]:
+            _png(app_icon(1024), iconset / f"icon_{name}.png", px)
+        subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o",
+                        str(BRAND / "AppIcon.icns")], check=True)
+        print(f"  wrote {_rel(BRAND / 'AppIcon.icns')}")
 
-    # 4. PWA icons — white tree on black (matches the historical committed set).
-    for px, name in [(192, "icon-192.png"), (512, "icon-512.png"), (512, "icon-maskable-512.png")]:
-        # maskable needs safe-area padding (0.8) so the tree survives a circular mask.
-        frac = 0.62 if "maskable" in name else 1 - 2 * ICON_INSET
-        _write_png(_tree_on_black(px, frac), WEB_ICONS / name)
+    # PWA: the OS applies its own mask, so these are full-bleed squares. Maskable keeps
+    # the mark inside the 80% safe zone so a circular mask cannot clip the dome's ends.
+    for px, name, fill in [(192, "icon-192.png", 0.72), (512, "icon-512.png", 0.72),
+                           (512, "icon-maskable-512.png", 0.56)]:
+        _png(tile(px, fill=fill, radius=0), WEB_PUBLIC / "icons" / name, px)
 
-    print("Done. Commit the changes under assets/brand/ and frontend/public/.")
-
-
-def _tree_on_black(px: int, frac: float):
-    from AppKit import NSBezierPath, NSColor, NSImage, NSMakeRect, NSMakeSize
-    tree = _draw_tree(px, (1.0, 1.0, 1.0), fill_frac=frac)
-
-    def _draw(_rect) -> bool:
-        NSColor.blackColor().set()
-        NSBezierPath.bezierPathWithRect_(NSMakeRect(0, 0, px, px)).fill()
-        tree.drawInRect_(NSMakeRect(0, 0, px, px))
-        return True
-
-    return NSImage.imageWithSize_flipped_drawingHandler_(NSMakeSize(px, px), False, _draw)
+    print("Done. Commit the changes under assets/brand/, frontend/ and site/.")
 
 
 if __name__ == "__main__":

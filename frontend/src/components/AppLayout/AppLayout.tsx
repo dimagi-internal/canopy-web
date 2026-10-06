@@ -17,6 +17,7 @@ import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
 import { canopyPresenceRules } from '@/presence/routes'
 import { CanopyWidget } from '@/widget/CanopyWidget'
 import { isNavGroupActive, isNavItemActive, resolveNavGroups } from './nav'
+import { CanopyWordmark } from '@/brand/CanopyWordmark'
 
 function UserMenu() {
   const auth = useAuth()
@@ -293,9 +294,9 @@ function AppShell() {
       <header className="shrink-0 border-b border-border bg-background relative">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
           {isAuthed ? (
-            <Link to="/" className="flex min-h-11 shrink-0 items-center text-lg font-semibold text-foreground sm:min-h-0">Canopy<span className="text-primary">.</span></Link>
+            <Link to="/" className="flex min-h-11 shrink-0 items-center text-lg font-semibold text-foreground sm:min-h-0"><CanopyWordmark /></Link>
           ) : (
-            <span className="text-lg font-semibold text-foreground shrink-0">Canopy<span className="text-primary">.</span></span>
+            <span className="text-lg font-semibold text-foreground shrink-0"><CanopyWordmark /></span>
           )}
           <div className="flex min-w-0 items-center gap-2 md:gap-3">
             {/* Four menu triggers, so the inline nav fits from `md` up. It was

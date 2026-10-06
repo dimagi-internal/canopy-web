@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthProvider'
 import { ThemeToggle } from '@/theme/ThemeProvider'
+import { CanopyWordmark } from '@/brand/CanopyWordmark'
 
 /**
  * The Canopy bar on public pages.
@@ -26,11 +27,11 @@ export function PublicHeader({ trail }: { trail?: React.ReactNode }) {
         <div className="flex min-w-0 items-baseline gap-3">
           {isAuthed ? (
             <Link to="/" className="shrink-0 text-lg font-semibold text-foreground">
-              Canopy<span className="text-primary">.</span>
+              <CanopyWordmark />
             </Link>
           ) : (
             <span className="shrink-0 text-lg font-semibold text-foreground">
-              Canopy<span className="text-primary">.</span>
+              <CanopyWordmark />
             </span>
           )}
           {trail && (
