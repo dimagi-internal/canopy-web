@@ -237,6 +237,50 @@ def test_a_co_tenant_cannot_read_a_private_chats_turns(esc):
     assert _client(esc["owner"]).get(f"/api/harness/turns/{turn.id}").status_code == 200
 
 
+def _private_chat_turn_claimed_by(esc, box_owner):
+    """canopy-web#1210's shape: a private chat ONE member created, claimed by a box
+    ANOTHER member paired. The claim is legitimate (tenant + routing); the claiming
+    box's owner simply cannot read the chat."""
+    from apps.canopy_sessions.models import Session
+
+    session = Session.objects.create(workspace=esc["ws"], agent=esc["agent"],
+                                     created_by=esc["owner"], title="private")
+    box = _runner(box_owner, f"{box_owner.username}-box")
+    return Turn.objects.create(
+        chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="hi",
+        idempotency_key=uuid.uuid4().hex, status=Turn.CLAIMED, claimed_by=box,
+        claimed_at=timezone.now(), lease_expires_at=timezone.now() + timezone.timedelta(minutes=5))
+
+
+@pytest.mark.parametrize("path,body", [
+    ("start", {"session_id": "x"}),
+    ("events", {"events": [{"kind": "status", "payload": {"status": "running"}}]}),
+    ("transcript", {"lines": ['{"type": "assistant"}']}),
+    ("finish", {"status": "done", "result_note": "ok"}),
+])
+def test_the_claiming_box_reports_on_a_turn_its_owner_cannot_read(esc, path, body):
+    """#1210: the editor's box claimed the owner's private chat turn. Reporting used to
+    404 (the readability check ran first), stranding the turn CLAIMED until its lease
+    expired, its work never recorded. The box that holds the claim reports on it."""
+    turn = _private_chat_turn_claimed_by(esc, esc["editor"])
+    box = Client(HTTP_AUTHORIZATION=f"Bearer {_pat(esc['editor'])}")
+    res = box.post(f"/api/harness/turns/{turn.id}/{path}", data=body, content_type="application/json")
+    assert res.status_code == 200, res.content
+
+
+def test_holding_the_claim_does_not_make_the_chat_readable(esc):
+    """Reporting is the runner protocol; READING is still the chat's. The claiming
+    box's owner may finish the turn but not read it, and other members may do
+    neither."""
+    turn = _private_chat_turn_claimed_by(esc, esc["editor"])
+    editor = _client(esc["editor"])
+    assert editor.get(f"/api/harness/turns/{turn.id}").status_code == 404
+    assert editor.get(f"/api/harness/turns/{turn.id}/transcript").status_code == 404
+    viewer = _client(esc["viewer"])
+    assert viewer.post(f"/api/harness/turns/{turn.id}/finish", data={"status": "done"},
+                       content_type="application/json").status_code == 404
+
+
 def test_the_live_turn_socket_gives_the_same_answer(esc):
     from apps.canopy_sessions.models import Session
     from apps.realtime.groups import user_can_read_turn
