@@ -7,7 +7,7 @@
  * (member, round) with the member's parsed reply block. Nothing below invents
  * state — an arc is drawn only from what blocks actually say.
  */
-import type { Huddle, HuddleCell } from '@/api/huddles'
+import type { Huddle, HuddleCell, HuddleOutput } from '@/api/huddles'
 
 export type Block = Record<string, unknown>
 
@@ -176,6 +176,217 @@ export function arcsFor(h: Pick<Huddle, 'cells'>): Arc[] {
 export const anchorKey = {
   proposal: (lead: string, title: string) => `prop|${lead}|${title.toLowerCase().trim()}`,
   answer: (member: string, title: string) => `ans|${member}|${title.toLowerCase().trim()}`,
+}
+
+// ── the outcome: what each proposal became ──────────────────────────────────
+
+/** A proposal as made in round 2, flattened for the outcome summary. */
+export type ProposalInfo = {
+  key: string
+  title: string
+  lead: string
+  /** Who must co-sign — `with` minus the lead. Empty for a solo proposal. */
+  partners: string[]
+  /** The member whose round-2 reply carried it (may differ from the lead). */
+  proposedBy: string
+  priority: string
+  project: string
+  effort: string
+  confidence: number | null
+  why: string
+}
+
+/**
+ * - `filed`  — on the board (it has tasks), or agreed and waiting to be filed;
+ * - `held`   — the huddle is over and it did not get through;
+ * - `open`   — the huddle is still running and it is not settled yet.
+ */
+export type Verdict = 'filed' | 'held' | 'open'
+
+/** Why a proposal is held (or still open), and the partners it is about. */
+export type Hold =
+  | { kind: 'declined'; who: string[] }
+  | { kind: 'amend-rejected'; who: string[] }
+  | { kind: 'amend'; who: string[] }
+  | { kind: 'pending'; who: string[] }
+  /** Every partner co-signed but the leader's filing gates held it. */
+  | { kind: 'gate'; who: string[] }
+
+export type ProposalOutcome = ProposalInfo & {
+  verdict: Verdict
+  hold: Hold | null
+  /** Each partner's answer arc (the same arcs the conversation draws). */
+  arcs: Arc[]
+  /** The board tasks it produced: the lead's first, then one per partner. */
+  tasks: HuddleOutput[]
+}
+
+export type Outcome = {
+  filed: ProposalOutcome[]
+  held: ProposalOutcome[]
+  open: ProposalOutcome[]
+  /** Board tasks pointing at this huddle that match no proposal we can see. */
+  unmatched: HuddleOutput[]
+}
+
+/** "Pre-flight … — eva's part (lead ace)": the per-partner task title the
+ * huddle engine files for a joint proposal (canopy `huddle_cli`). */
+const PART_TITLE = /^(.*?)\s+[—–-]+\s+(\S+?)['’]s part \(lead ([^)]+)\)\s*$/
+
+/** Which proposal a board task belongs to. The API carries no structured link
+ * (a task only knows the huddle page it came from), so this matches by title:
+ * the lead's task IS the proposal title, each partner's is "<title> — <m>'s part
+ * (lead <lead>)". */
+export function taskProposalKey(o: Pick<HuddleOutput, 'title' | 'agent'>, proposals: ProposalInfo[]): string | null {
+  const m = PART_TITLE.exec(o.title)
+  if (m) {
+    const [, base, , lead] = m
+    const hit = proposals.find((p) => norm(p.title) === norm(base) && p.lead === lead.trim())
+      ?? proposals.find((p) => norm(p.title) === norm(base))
+    return hit?.key ?? null
+  }
+  const same = proposals.filter((p) => norm(p.title) === norm(o.title))
+  return (same.find((p) => p.lead === o.agent) ?? same[0])?.key ?? null
+}
+
+type ProposalRaw = Proposal & {
+  priority?: unknown; project?: unknown; effort?: unknown; confidence?: unknown; why?: unknown
+}
+
+/** Every round-2 proposal, once each (lead + title), in column then card order. */
+export function proposalsOf(h: Pick<Huddle, 'cells' | 'members'>): ProposalInfo[] {
+  const cols = columns(h)
+  const cells = h.cells
+    .filter((c) => c.round === 2 && c.block)
+    .sort((a, b) => cols.indexOf(a.member) - cols.indexOf(b.member))
+  const out = new Map<string, ProposalInfo>()
+  for (const c of cells) {
+    for (const p of list<ProposalRaw>((c.block as Block).proposals)) {
+      const lead = String(p.lead || c.member)
+      const title = String(p.title ?? '').trim()
+      if (!title) continue
+      const key = `${lead}|${norm(title)}`
+      if (out.has(key)) continue
+      const project = p.project && typeof p.project === 'object' ? (p.project as { name?: unknown }).name : p.project
+      out.set(key, {
+        key, title, lead, proposedBy: c.member,
+        partners: [...new Set(list<string>(p.with).map(String))].filter((m) => m && m !== lead),
+        priority: String(p.priority ?? ''),
+        project: String(project ?? ''),
+        effort: String(p.effort ?? ''),
+        confidence: typeof p.confidence === 'number' ? p.confidence : null,
+        why: String(p.why ?? ''),
+      })
+    }
+  }
+  return [...out.values()]
+}
+
+/** The partners' answers decide it, read off the same arcs the grid draws — so a
+ * round-4 accepted amend counts as a co-sign and a rejected one holds (canopy's
+ * `work_gates` order: a decline, then a rejected amend, then an open amend, then
+ * a missing answer). */
+function holdFrom(arcs: Arc[]): Hold | null {
+  const who = (...s: ArcState[]) => arcs.filter((a) => s.includes(a.state)).map((a) => a.partner)
+  if (who('decline').length) return { kind: 'declined', who: who('decline') }
+  if (who('amend-rejected').length) return { kind: 'amend-rejected', who: who('amend-rejected') }
+  if (who('amend').length) return { kind: 'amend', who: who('amend') }
+  if (who('pending').length) return { kind: 'pending', who: who('pending') }
+  return null
+}
+
+/** What the huddle produced, proposal by proposal: the filed ones with their
+ * board tasks grouped beneath, the held ones with why. A proposal with tasks is
+ * filed whatever its arcs say — the board is the record of what was filed. */
+export function outcomeOf(h: Pick<Huddle, 'cells' | 'members' | 'outputs' | 'finished'>): Outcome {
+  const proposals = proposalsOf(h)
+  const arcs = arcsFor(h)
+  const tasks = new Map<string, HuddleOutput[]>()
+  const unmatched: HuddleOutput[] = []
+  for (const o of h.outputs) {
+    const k = taskProposalKey(o, proposals)
+    if (k) tasks.set(k, [...(tasks.get(k) ?? []), o])
+    else unmatched.push(o)
+  }
+  const out: Outcome = { filed: [], held: [], open: [], unmatched }
+  for (const p of proposals) {
+    const mine = arcs.filter((a) => a.lead === p.lead && norm(a.title) === norm(p.title) && p.partners.includes(a.partner))
+    // A partner with no arc at all (its answer never parsed) is still owed one.
+    for (const m of p.partners) {
+      if (!mine.some((a) => a.partner === m)) {
+        mine.push({ key: `${m}|${p.key}`, title: p.title, lead: p.lead, partner: m, state: 'pending', note: '', from: `head-${m}`, to: `${p.proposedBy}-2` })
+      }
+    }
+    const ts = (tasks.get(p.key) ?? []).sort((a, b) => Number(b.agent === p.lead) - Number(a.agent === p.lead))
+    const hold = holdFrom(mine)
+    let verdict: Verdict
+    let why: Hold | null = hold
+    if (ts.length) {
+      verdict = 'filed'
+      why = null
+    } else if (!h.finished) {
+      verdict = hold ? 'open' : 'filed'
+    } else {
+      verdict = 'held'
+      why = hold ?? { kind: 'gate', who: [] }
+    }
+    const row: ProposalOutcome = { ...p, verdict, hold: why, arcs: mine, tasks: ts }
+    out[verdict].push(row)
+  }
+  return out
+}
+
+/** Plain words for the proposal's shorthand. */
+const EFFORT: Record<string, string> = { s: 'small', m: 'medium', l: 'large', xs: 'tiny', xl: 'very large' }
+
+export function sizeWords(effort: string, confidence: number | null): string {
+  const size = EFFORT[effort.trim().toLowerCase()] ?? effort.trim()
+  const sure = confidence === null ? '' : `${Math.round((confidence <= 1 ? confidence * 100 : confidence))}% confident`
+  return [size, sure].filter(Boolean).join(' · ')
+}
+
+/** A board task's status, as the person reading the huddle has to act on it.
+ * `suggested` is the board's inbox: a task waiting for its owner to Accept or
+ * Decline (TasksBoard). In progress, `assigned` is who the next step waits on. */
+export function taskStatusWords(o: Pick<HuddleOutput, 'status' | 'assigned'>): string {
+  switch (o.status) {
+    case 'suggested': return 'awaiting your accept / decline'
+    case 'in_progress': return o.assigned ? `in progress · waiting on ${o.assigned}` : 'in progress'
+    case 'done': return 'done'
+    case 'declined': return 'declined'
+    default: return o.status.replace(/_/g, ' ')
+  }
+}
+
+const and = (who: string[]) =>
+  who.length <= 1 ? (who[0] ?? '') : `${who.slice(0, -1).join(', ')} and ${who[who.length - 1]}`
+
+/** Why a proposal is held (or not settled yet), and what would clear it. */
+export function holdWords(p: Pick<ProposalOutcome, 'hold' | 'lead' | 'verdict'>, leader: string): { why: string; clear: string } {
+  const h = p.hold
+  if (!h) return { why: '', clear: '' }
+  const who = and(h.who)
+  const open = p.verdict === 'open'
+  switch (h.kind) {
+    case 'declined':
+      return { why: `${who} declined to take part.`, clear: 'Nothing in this huddle — it would take a new proposal in a later one.' }
+    case 'amend-rejected':
+      return { why: `${who} co-signed only with changes, and ${p.lead} (the lead) rejected them in round 4.`, clear: 'It stays held; it can be re-proposed in a later huddle.' }
+    case 'amend':
+      return {
+        why: `${who} co-signed with conditions; ${p.lead} (the lead) ${open ? 'has not resolved them yet' : "hasn't resolved them"}.`,
+        clear: open ? `Round 4: ${p.lead} accepts the conditions (then it files) or rejects them.` : `A round 4 would — ${p.lead} accepting the conditions files it.`,
+      }
+    case 'pending':
+      return open
+        ? { why: `Waiting on ${who} to co-sign.`, clear: `${who}'s round-3 answer.` }
+        : { why: `${who} never answered.`, clear: `A co-sign from ${who} in a later huddle.` }
+    case 'gate':
+      return {
+        why: `Every partner co-signed, but ${leader} held it at filing (a filing rule — stated priority, project, critique answered, or the cap).`,
+        clear: `See ${leader}'s email below for which rule.`,
+      }
+  }
 }
 
 // ── the leader's critique ────────────────────────────────────────────────────

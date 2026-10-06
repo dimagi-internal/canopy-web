@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { HuddleCell } from '@/api/huddles'
-import { arcsFor, cellState, columns, countdown, critiqueFrom, normAnswer, roundName, roundsToShow } from './huddleModel'
+import type { Huddle, HuddleCell } from '@/api/huddles'
+import {
+  arcsFor, cellState, columns, countdown, critiqueFrom, holdWords, normAnswer, outcomeOf, roundName, roundsToShow,
+  sizeWords, taskProposalKey, taskStatusWords, type ProposalInfo,
+} from './huddleModel'
 
 function cell(member: string, round: number, block: Record<string, unknown> | null, over: Partial<HuddleCell> = {}): HuddleCell {
   return {
@@ -115,4 +118,109 @@ it('counts down to a deadline', () => {
   expect(countdown('2026-10-06T11:05:00Z', now)).toBe('1h 05m')
   expect(countdown('2026-10-06T09:00:00Z', now)).toBe('')
   expect(countdown(null, now)).toBe('')
+})
+
+// ── the outcome ──────────────────────────────────────────────────────────────
+
+describe('outcomeOf — the live work-fleet-20261006 huddle', async () => {
+  const { default: live } = await import('./__fixtures__/work-fleet-20261006.json')
+  const h = live as unknown as Huddle
+  const o = outcomeOf(h)
+
+  it('files the three proposals the email named, held the two it held', () => {
+    expect(o.filed.map((p) => p.title)).toEqual([
+      'Pre-flight one live demo for the IDM talk',
+      'Diagnose chrome-sales MCP connect failures on cloud-ec2-2',
+      'Deploy connect-labs ALB 5xx alarms, then bound web tier',
+    ])
+    expect(o.held.map((p) => p.title).sort()).toEqual([
+      'IDM talk: live demo from Ace, story slide from Echo',
+      'Take PRIDE cholera story to reviewed draft',
+    ])
+    expect(o.open).toEqual([])
+  })
+
+  it('groups the five board tasks under their proposals — one per agent on a joint one', () => {
+    expect(o.unmatched).toEqual([])
+    const tasks = Object.fromEntries(o.filed.map((p) => [p.title, p.tasks.map((t) => `${t.agent}:${t.ext_id}`)]))
+    expect(tasks).toEqual({
+      'Pre-flight one live demo for the IDM talk': ['ace:T9', 'eva:T45'],
+      'Diagnose chrome-sales MCP connect failures on cloud-ec2-2': ['hal:T50', 'eva:T46'],
+      'Deploy connect-labs ALB 5xx alarms, then bound web tier': ['hal:T51'],
+    })
+  })
+
+  it('says why each held one is held, naming who amended', () => {
+    const idm = o.held.find((p) => p.lead === 'eva')!
+    expect(idm.hold).toEqual({ kind: 'amend', who: ['echo'] })
+    expect(holdWords(idm, 'ada').why).toBe("echo co-signed with conditions; eva (the lead) hasn't resolved them.")
+    expect(holdWords(idm, 'ada').clear).toMatch(/round 4 would/)
+    const pride = o.held.find((p) => p.lead === 'echo')!
+    expect(pride.hold).toMatchObject({ kind: 'amend', who: expect.arrayContaining(['eva', 'ace']) })
+  })
+
+  it('keeps the goal a proposal serves whole', () => {
+    expect(o.filed[0].priority).toBe(
+      'Gates/IDM talk Tue Oct 13 11:45am PT + Seattle blitz 10/12-14 and the deck due 10/9 (T40/T27; goals sheet Oct set, board, trip-planning state)')
+  })
+})
+
+describe('outcomeOf — round 4', () => {
+  const cells = [
+    cell('eva', 2, { proposals: [proposal('Pipeline sheet', 'eva', ['hal']), proposal('Funder map', 'eva', ['hal'])] }),
+    cell('hal', 3, { answers: [
+      { title: 'Pipeline sheet', lead: 'eva', answer: 'amend', note: 'weekly' },
+      { title: 'Funder map', lead: 'eva', answer: 'amend', note: 'smaller' },
+    ] }),
+    cell('eva', 4, { resolutions: [
+      { title: 'Pipeline sheet', lead: 'eva', resolution: 'accept' },
+      { title: 'Funder map', lead: 'eva', resolution: 'reject' },
+    ] }),
+  ]
+  const task = { agent: 'eva', task_id: 1, ext_id: 'T1', title: 'Pipeline sheet', status: 'suggested', assigned: 'eva', project: '', url: '/b' }
+
+  it('treats an accepted amend as filed and a rejected one as held', () => {
+    const o = outcomeOf({ cells, members: ['eva', 'hal'], outputs: [task], finished: true })
+    expect(o.filed.map((p) => p.title)).toEqual(['Pipeline sheet'])
+    expect(o.held.map((p) => [p.title, p.hold?.kind])).toEqual([['Funder map', 'amend-rejected']])
+  })
+
+  it('before filing, an accepted amend is agreed and an open one is still being decided', () => {
+    const o = outcomeOf({ cells: cells.slice(0, 2), members: ['eva', 'hal'], outputs: [], finished: false })
+    expect(o.filed).toEqual([])
+    expect(o.open.map((p) => p.hold?.kind)).toEqual(['amend', 'amend'])
+    const after = outcomeOf({ cells, members: ['eva', 'hal'], outputs: [], finished: false })
+    expect(after.filed.map((p) => p.title)).toEqual(['Pipeline sheet'])
+    expect(after.filed[0].tasks).toEqual([])
+  })
+
+  it('holds a fully co-signed proposal the leader did not file, as a filing gate', () => {
+    const o = outcomeOf({
+      cells: [cell('eva', 2, { proposals: [proposal('Solo', 'eva', [])] })], members: ['eva'], outputs: [], finished: true,
+    })
+    expect(o.held[0].hold?.kind).toBe('gate')
+  })
+})
+
+describe('taskProposalKey', () => {
+  const ps = [
+    { key: 'ace|demo', title: 'Demo', lead: 'ace' },
+    { key: 'eva|demo', title: 'Demo', lead: 'eva' },
+    { key: 'eva|demo plus', title: 'Demo plus', lead: 'eva' },
+  ] as ProposalInfo[]
+  it("matches a partner's part by title and lead, the lead's task by title and agent", () => {
+    expect(taskProposalKey({ title: "Demo — hal's part (lead eva)", agent: 'hal' }, ps)).toBe('eva|demo')
+    expect(taskProposalKey({ title: 'Demo', agent: 'ace' }, ps)).toBe('ace|demo')
+    expect(taskProposalKey({ title: 'Demo plus', agent: 'eva' }, ps)).toBe('eva|demo plus')
+    expect(taskProposalKey({ title: 'Something else', agent: 'eva' }, ps)).toBeNull()
+  })
+})
+
+describe('plain words', () => {
+  it('spells out size, confidence and task status', () => {
+    expect(sizeWords('S', 0.6)).toBe('small · 60% confident')
+    expect(sizeWords('M', null)).toBe('medium')
+    expect(taskStatusWords({ status: 'suggested', assigned: 'eva' })).toBe('awaiting your accept / decline')
+    expect(taskStatusWords({ status: 'in_progress', assigned: 'eva' })).toBe('in progress · waiting on eva')
+  })
 })
