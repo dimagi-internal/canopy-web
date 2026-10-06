@@ -91,7 +91,20 @@ describe('SessionFeed', () => {
     fireEvent.change(box, { target: { value: 'ship it' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     await waitFor(() => expect(screen.queryByTestId('feed-card-a')).toBeNull())
-    expect(sendMessage).toHaveBeenCalledWith('a', 'ship it', 'client-1')
+    expect(sendMessage).toHaveBeenCalledWith('a', 'ship it', 'client-1', undefined, false)
+  })
+
+  // Away from the runner's box, nobody can answer its "session busy" dialog
+  // about leftover text in the prompt — Clear & send answers it in advance.
+  it('Clear & send asks the runner to clear the prompt first', async () => {
+    listSessions.mockResolvedValue([s('a')])
+    sendMessage.mockResolvedValue({ turn_id: 't1' })
+    renderFeed()
+    const box = await screen.findByLabelText('Reply to title a')
+    fireEvent.change(box, { target: { value: 'ship it' } })
+    fireEvent.click(screen.getByTestId('feed-clear-send-a'))
+    await waitFor(() => expect(screen.queryByTestId('feed-card-a')).toBeNull())
+    expect(sendMessage).toHaveBeenCalledWith('a', 'ship it', 'client-1', undefined, true)
   })
 
   // Close must END the session, not archive it: an archived runner session is

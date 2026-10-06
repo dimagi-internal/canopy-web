@@ -274,7 +274,7 @@ function FeedCard({
   onClosed: () => void
 }): JSX.Element {
   const [draft, setDraft] = useState('')
-  const [busy, setBusy] = useState<'send' | 'done' | null>(null)
+  const [busy, setBusy] = useState<'send' | 'clear' | 'done' | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const chatHref = `/w/${s.workspace}/chat/${s.id}`
@@ -286,13 +286,16 @@ function FeedCard({
     ? reply.length > 240 || reply.split('\n').length > 4
     : reply.length > 700 || reply.split('\n').length > 12
 
-  const send = async () => {
+  // `clear`: "Clear & send" — if the session's prompt on the runner's box still
+  // holds unsent text, delete it and send this, rather than the runner putting
+  // up a dialog there that nobody away from that machine can answer.
+  const send = async (clear = false) => {
     const text = draft.trim()
     if (!text || busy) return
-    setBusy('send')
+    setBusy(clear ? 'clear' : 'send')
     setErr(null)
     try {
-      await sendMessage(s.id, text, crypto.randomUUID())
+      await sendMessage(s.id, text, crypto.randomUUID(), undefined, clear)
       onHandled(s)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Send failed')
@@ -442,7 +445,7 @@ function FeedCard({
             Still open: {s.runner_name ?? 'its runner'} has not confirmed the close. Try again, or close it in emdash.
           </p>
         )}
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5">
             {/* Bordered, so they read as buttons rather than captions. */}
             <Link
@@ -466,9 +469,21 @@ function FeedCard({
               {closing ? 'Closing in emdash…' : busy === 'done' ? 'Closing…' : 'Close'}
             </button>
           </div>
-          <Button size="sm" onClick={() => void send()} disabled={!draft.trim() || busy !== null}>
-            {busy === 'send' ? 'Sending…' : 'Send'}
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => void send(true)}
+              disabled={!draft.trim() || busy !== null}
+              title="Delete any unsent text already in this session's prompt, then send — no dialog on the runner's screen"
+              className="inline-flex min-h-8 items-center rounded-md border border-border bg-background px-2.5 text-[12px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
+              data-testid={`feed-clear-send-${s.id}`}
+            >
+              {busy === 'clear' ? 'Clearing…' : 'Clear & send'}
+            </button>
+            <Button size="sm" onClick={() => void send()} disabled={!draft.trim() || busy !== null}>
+              {busy === 'send' ? 'Sending…' : 'Send'}
+            </Button>
+          </div>
         </div>
       </div>
     </article>

@@ -731,6 +731,7 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
             origin=payload.origin,
             initiator=who.for_request(request, via=who.channel(request, "chat")),
             parent=payload.parent,
+            origin_ref={"clear_prompt": True} if payload.clear_prompt else None,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

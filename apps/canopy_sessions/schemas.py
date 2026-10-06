@@ -46,6 +46,11 @@ class SendIn(Schema):
     origin: Origin | None = None
     # What this send was made from (ParentIn); recorded on the turn it enqueues.
     parent: ParentIn | None = None
+    # "Clear & send": if the session's prompt already holds unsent text, the
+    # runner deletes it and delivers this message instead of putting up its
+    # collision dialog on a box the sender may not be sitting at. Carried to the
+    # runner as `origin_ref["clear_prompt"]`.
+    clear_prompt: bool = False
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 

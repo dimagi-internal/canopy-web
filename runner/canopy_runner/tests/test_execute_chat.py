@@ -312,6 +312,34 @@ def test_clear_is_never_reused_without_asking(monkeypatch, _fresh_collision_answ
     assert asked == ["half typed", "half typed"]
 
 
+def test_clear_and_send_from_the_web_clears_without_a_popup(
+    monkeypatch, _fresh_collision_answers
+):
+    """A sender away from the box pressed "Clear & send": no dialog on a screen
+    nobody is watching — the leftover line is cleared and the message goes in."""
+    sent = []
+
+    def fake_open_and_send(task, text, clear_first=False, port=9222, project=""):
+        sent.append(clear_first)
+        if clear_first:
+            return {"ok": True, "action": "sent-cleared", "task": task}
+        return {"ok": True, "action": "collision", "task": task, "line": "half typed"}
+
+    def no_dialog(*a, **k):
+        raise AssertionError("must not ask: the sender already chose Clear & send")
+
+    monkeypatch.setattr(execute.cdp_control, "open_and_send", fake_open_and_send)
+    monkeypatch.setattr(execute.dialog, "collision_choice", no_dialog)
+    monkeypatch.setattr(execute.emdash, "task_state", lambda *a, **k: "open")
+    monkeypatch.setattr(execute, "_undelivered", lambda *a, **k: False)
+    cfg = types.SimpleNamespace(cdp_port=9222, emdash_db="/nonexistent")
+    turn = _turn()
+    turn["origin_ref"] = {**(turn.get("origin_ref") or {}), "clear_prompt": True}
+    res = execute.execute_chat_turn(cfg, _ReuseClient(), "runner1", turn)
+    assert sent == [False, True]  # tried plain, hit the line, cleared and sent
+    assert not res.startswith(("deferred:", "cancelled:", "failed:"))
+
+
 def test_a_remembered_answer_expires(monkeypatch, _fresh_collision_answers):
     monkeypatch.setattr(execute.dialog, "collision_choice", lambda *a, **k: execute.dialog.NEW)
     assert execute._chat_collision_choice("t", "x", now_fn=lambda: 0.0) == execute.dialog.NEW
