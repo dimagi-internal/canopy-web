@@ -380,6 +380,19 @@ def _reporting_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     itself, so it takes the same tier as cancelling it (editor on an agent turn,
     write access to the chat on a session turn). Same uniform 404 otherwise.
     """
+    # The box that CLAIMED the turn reports on it, even when its owner cannot READ
+    # it (canopy-web#1210). The claim is tenant- and routing-gated already, and it
+    # handed the box the prompt; refusing the report then only stranded the turn
+    # CLAIMED until its lease ran out — observed when a runner paired by one person
+    # claimed a private chat another member created. Not for a connected site
+    # acting for a visitor: a site never reports as a runner.
+    from apps.tokens import delegation
+
+    if delegation.offered_for(request) is None:
+        mine = (Turn.objects.select_related("claimed_by")
+                .filter(pk=turn_id, claimed_by__owner_id=request.user.pk).first())
+        if mine is not None:
+            return mine
     turn = _turn_or_404(request, turn_id)
     if turn.claimed_by_id is not None:
         if turn.claimed_by.owner_id != request.user.pk:
