@@ -27,8 +27,12 @@ def delegated():
     return user, raw
 
 
-def _scope(query=b"", headers=()):
-    return {"query_string": query, "headers": list(headers)}
+def _scope(ticket_token="", headers=()):
+    """A scope as the handshake leaves it after redeeming a `?ticket=`."""
+    scope = {"query_string": b"", "headers": list(headers)}
+    if ticket_token:
+        scope[channels_auth.WS_TOKEN] = ticket_token
+    return scope
 
 
 def test_bearer_resolves_delegated_token(delegated):
@@ -40,11 +44,11 @@ def test_bearer_resolves_delegated_token(delegated):
 def test_query_token_resolves_delegated_only(delegated):
     user, raw = delegated
     assert async_to_sync(channels_auth._user_from_query_token)(
-        _scope(query=f"token={raw}".encode())).pk == user.pk
+        _scope(ticket_token=raw)).pk == user.pk
     # a PAT on the query string must NOT authenticate
     raw_pat, _ = PersonalToken.create_for_user(user=user, label="x")
     assert async_to_sync(channels_auth._user_from_query_token)(
-        _scope(query=f"token={raw_pat}".encode())) is None
+        _scope(ticket_token=raw_pat)) is None
 
 
 def test_bearer_rejects_delegated_token_for_deactivated_user(delegated):
@@ -62,4 +66,4 @@ def test_query_token_rejects_delegated_token_for_deactivated_user(delegated):
     user.is_active = False
     user.save(update_fields=["is_active"])
     assert async_to_sync(channels_auth._user_from_query_token)(
-        _scope(query=f"token={raw}".encode())) is None
+        _scope(ticket_token=raw)) is None

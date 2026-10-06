@@ -206,7 +206,7 @@ async def test_a_blocked_contact_resolves_to_nothing_on_the_socket():
 
     _owner, _ws, _app, priv = await sync_to_async(_world)()
     token = await sync_to_async(_contact_token)(priv)
-    scope = {"query_string": f"token={token}".encode()}
+    scope = {"canopy.ws_token": token}
     assert await _contact_from_query_token(scope) is not None
 
     await sync_to_async(services.block)(await sync_to_async(Contact.objects.get)())
@@ -235,7 +235,7 @@ async def test_a_contact_token_does_not_become_a_user_on_the_socket():
 
     _owner, _ws, _app, priv = await sync_to_async(_world)()
     token = await sync_to_async(_contact_token)(priv)
-    scope = {"query_string": f"token={token}".encode()}
+    scope = {"canopy.ws_token": token}
 
     assert await _user_from_query_token(scope) is None
     assert await _contact_from_query_token(scope) is not None

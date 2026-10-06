@@ -13,6 +13,8 @@ Also here: a widget names an earlier conversation by what was first asked
 from __future__ import annotations
 
 import pytest
+
+from apps.tokens import ws_ticket
 from asgiref.sync import async_to_sync
 from django.contrib.auth.models import User
 from django.test import Client
@@ -96,13 +98,13 @@ def _ws_scope(query: str, *, login=None):
 
 
 def test_a_widget_token_marks_the_socket_as_a_widgets(world):
-    assert _ws_scope(f"token={world['raw']}")["via_widget"] is True
+    assert _ws_scope(f"ticket={ws_ticket.mint(world['raw'])}")["via_widget"] is True
 
 
 def test_canopy_embedding_its_own_widget_is_still_a_widget(world):
     """Same-origin: the cookie signs the socket in, so `delegated_app` is never
     resolved — the site token riding along is what says this is a widget."""
-    scope = _ws_scope(f"token={world['raw']}", login=world["me"])
+    scope = _ws_scope(f"ticket={ws_ticket.mint(world['raw'])}", login=world["me"])
 
     assert scope["user"].pk == world["me"].pk
     assert scope["via_widget"] is True

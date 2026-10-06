@@ -299,7 +299,7 @@ def test_the_socket_carries_the_tokens_requirements(site, key):
     _member(site)
     raw = _arrive(key, requirements=["zdr"], email="mem@dimagi.com", verified=True).json()["token"]
     assert async_to_sync(channels_auth._delegated_runner_requirements)(
-        {"query_string": f"token={raw}".encode(), "headers": []}) == ("zdr",)
+        {channels_auth.WS_TOKEN: raw, "headers": []}) == ("zdr",)
     assert async_to_sync(channels_auth._delegated_runner_requirements)(
         {"query_string": b"", "headers": [(b"authorization", f"Bearer {raw}".encode())]}) == ("zdr",)
     assert async_to_sync(channels_auth._delegated_runner_requirements)(
