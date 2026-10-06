@@ -16,6 +16,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     id: "r1",
     name: "Runner One",
     kind: "emdash",
+    engine: "emdash",
     status: "online",
     status_note: "",
     ready: true,

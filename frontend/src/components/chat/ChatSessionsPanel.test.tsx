@@ -55,6 +55,7 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     id,
     name: `Runner ${id}`,
     kind: 'emdash',
+    engine: 'emdash',
     status: 'online',
     status_note: '',
     ready: true,

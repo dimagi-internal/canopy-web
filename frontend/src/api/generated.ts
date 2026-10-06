@@ -4493,6 +4493,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/engine": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Choose the session runtime a laptop runner opens new sessions in
+         * @description Set the runtime (`emdash` or `claude-desktop`) a laptop runner opens new
+         *     sessions in. Takes effect on the runner's next heartbeat; sessions already
+         *     running stay where they are.
+         */
+        readonly put: operations["set_runner_engine"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -13587,6 +13609,11 @@ export interface components {
             readonly name: string;
             /** Kind */
             readonly kind: string;
+            /**
+             * Engine
+             * @default emdash
+             */
+            readonly engine: string;
             /** Status */
             readonly status: string;
             /** Status Note */
@@ -13936,6 +13963,11 @@ export interface components {
         readonly RunnerFlagsIn: {
             /** Flags */
             readonly flags: readonly string[];
+        };
+        /** RunnerEngineIn */
+        readonly RunnerEngineIn: {
+            /** Engine */
+            readonly engine: string;
         };
         /** RunnerCapabilitiesIn */
         readonly RunnerCapabilitiesIn: {
@@ -22121,6 +22153,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["RunnerFlagsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly set_runner_engine: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerEngineIn"];
             };
         };
         readonly responses: {

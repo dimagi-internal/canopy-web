@@ -21,19 +21,25 @@ HEARTBEAT_ONLINE_WINDOW = dt.timedelta(seconds=90)
 
 
 class Runner(models.Model):
-    """A paired executor (laptop emdash daemon, cloud container, remote box, or a
-    laptop daemon driving the Claude desktop app's Code tab — `desktop`)."""
+    """A paired executor (laptop emdash daemon, cloud container, remote box)."""
 
-    EMDASH, CLOUD, REMOTE, DESKTOP = "emdash", "cloud", "remote", "desktop"
-    KIND_CHOICES = [(EMDASH, "Emdash"), (CLOUD, "Cloud"), (REMOTE, "Remote"),
-                    (DESKTOP, "Claude desktop")]
+    EMDASH, CLOUD, REMOTE = "emdash", "cloud", "remote"
+    KIND_CHOICES = [(EMDASH, "Emdash"), (CLOUD, "Cloud"), (REMOTE, "Remote")]
 
     # Environment (first-class; the persistence tier derives from `location`).
     LOCAL = "local"
     CLOUD = "cloud"
     LOCATION_CHOICES = [(LOCAL, "Local"), (CLOUD, "Cloud")]
+    # The session runtime a LAPTOP runner opens new sessions in (canopy-web#1188).
+    # Set here by the runner's owner or admins, read back by the runner off every
+    # heartbeat, so flipping it needs no restart and no shell on the box. It only
+    # decides where NEW sessions go: a thread already running in one runtime keeps
+    # its session there. Not a kind — the box, its routing and its repos are the
+    # same either way. (A `desktop` kind briefly existed for a separate desktop
+    # daemon; it was folded into the laptop runner as this setting.)
     ENGINE_EMDASH = "emdash"
-    ENGINE_CHOICES = [(ENGINE_EMDASH, "emdash")]
+    ENGINE_CLAUDE_DESKTOP = "claude-desktop"
+    ENGINE_CHOICES = [(ENGINE_EMDASH, "emdash"), (ENGINE_CLAUDE_DESKTOP, "Claude desktop")]
 
     ONLINE, STALE, DISCONNECTED, DEGRADED, RETIRED = (
         "online", "stale", "disconnected", "degraded", "retired",
