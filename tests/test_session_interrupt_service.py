@@ -190,3 +190,40 @@ def test_a_stop_event_fans_out_live_and_is_never_persisted():
     assert "stop:failed".startswith(LIVE_ONLY_PREFIXES)
     assert "activity:working".startswith(LIVE_ONLY_PREFIXES)
     assert not "assistant".startswith(LIVE_ONLY_PREFIXES)
+
+
+def test_rest_stop_interrupts_an_agent_session_with_no_open_turn(seeded, monkeypatch):
+    """canopy-web#1226. `POST /canopy-sessions/{id}/stop` (REST, and so the MCP
+    `stop_session_turn` tool) used to cancel turns only — for a delivered agent turn
+    it found nothing, answered {"cancelled": false}, and the agent worked on. It now
+    takes the web UI's route: no open turn, so the session is interrupted."""
+    from django.test import Client
+    from apps.realtime import groups
+
+    owner, _ws, _agent, session, runner = seeded
+    _bind(session, runner)
+    published = []
+    monkeypatch.setattr(groups, "publish", lambda group, msg: published.append((group, msg)))
+    c = Client()
+    c.force_login(owner)
+
+    r = c.post(f"/api/canopy-sessions/{session.id}/stop", content_type="application/json")
+
+    assert r.status_code == 200, r.content
+    assert r.json() == {"cancelled": False, "interrupted": True, "route": "session"}
+    [(group, msg)] = published
+    assert group == groups.runner_group(runner.id)
+    assert msg["type"] == "runner.session_interrupt" and msg["session_key"] == "hal-canopy-sweep-1"
+
+
+def test_rest_and_websocket_stop_are_the_same_stop(seeded, monkeypatch):
+    """One function behind both doors, so they cannot drift apart again."""
+    from apps.canopy_sessions.consumers import SessionConsumer
+
+    _owner, _ws, _agent, session, _runner = seeded
+    calls = []
+    monkeypatch.setattr(chat, "stop_session", lambda s: calls.append(s.pk) or "session")
+    consumer = SessionConsumer()
+    consumer.session = session
+    assert consumer._stop_session() == "session"
+    assert calls == [session.pk]

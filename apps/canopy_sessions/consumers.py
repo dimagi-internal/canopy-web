@@ -13,8 +13,6 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from apps.harness import initiator as who
-from apps.harness import services as harness_services
-from apps.harness.models import Turn
 from apps.realtime.groups import chat_user_group, session_group
 
 from . import access, agui, attach, drafts, presence, serializers, stream_map
@@ -423,20 +421,12 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         Deliberately not both: a chat turn's cancel already interrupts the same
         terminal through the bridge, and firing a second Escape at it could land
         after the agent has moved on to something else.
+
+        The logic lives in `services.stop_session`, shared with REST/MCP
+        `POST /canopy-sessions/{id}/stop` so the two can never disagree again
+        (canopy-web#1226: REST stopped at the turns and did nothing to an agent).
         """
-        # ALL non-terminal turns, not just the newest: a mid-reply send queues a
-        # second turn behind the one still running, so Stop must reach both.
-        # NOTE: not a bare `any(... for turn in turns)` — any() short-circuits
-        # on the first truthy result, which would skip cancelling every turn
-        # after the first non-None one.
-        turns = Turn.objects.filter(chat_session=self.session, status__in=list(Turn.NON_TERMINAL))
-        cancelled = False
-        for turn in turns:
-            if harness_services.cancel_turn(turn) is not None:
-                cancelled = True
-        if cancelled:
-            return "turns"
-        return "session" if chat_services.interrupt_session(self.session) == "sent" else ""
+        return chat_services.stop_session(self.session)
 
     def _resolve_message_id_sync(self, turn_id, seq):
         if turn_id:
