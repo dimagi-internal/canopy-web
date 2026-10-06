@@ -235,3 +235,63 @@ def test_a_followup_wakes_a_stopped_session(cfg, tmp_path, no_app):
     assert no_app == ["sid-9"]  # no `alive` stamp -> woken with the deep link
     assert not client.of("record_session")
     assert client.of("finish")[0][1][1] == "second"
+
+
+# ── stopping ────────────────────────────────────────────────────────────────
+
+def _live_channel(cfg, tmp_path, sid="sid-5") -> Path:
+    wt = tmp_path / "wt-stop"
+    ch = wt / desktop.CHANNEL
+    ch.mkdir(parents=True)
+    (ch / "alive").write_text(str(int(time.time() * 1000)))
+    desktop._remember(cfg, sid, wt, "scratch")
+    return ch
+
+
+def _mod_stops(ch: Path, outcome: str):
+    for _ in range(300):
+        if (ch / "stop-1.txt").exists():
+            break
+        time.sleep(0.02)
+    t = int(time.time() * 1000)
+    (ch / f"ev-{t}-1-stopped.json").write_text(json.dumps(
+        {"t": t, "kind": "stopped", "extra": {"which": "stop-1", "outcome": outcome}}))
+
+
+def test_stop_asks_the_mod_and_reports_its_verdict(cfg, tmp_path):
+    ch = _live_channel(cfg, tmp_path)
+    th = threading.Thread(target=_mod_stops, args=(ch, "interrupted"))
+    th.start()
+    assert desktop.stop(cfg, "sid-5", wait=5)["action"] == "interrupted"
+    th.join()
+
+
+def test_stopping_a_session_with_no_process_is_idle(cfg, tmp_path):
+    ch = _live_channel(cfg, tmp_path)
+    (ch / "alive").write_text("0")
+    assert desktop.stop(cfg, "sid-5")["action"] == "idle"
+    assert not (ch / "stop-1.txt").exists()
+
+
+def test_an_unanswered_stop_is_unreadable_not_success(cfg, tmp_path):
+    _live_channel(cfg, tmp_path)
+    assert desktop.stop(cfg, "sid-5", wait=0.5)["action"] == "unreadable"
+
+
+def test_a_cancelled_chat_turn_stops_the_session_and_finishes_cancelled(cfg, tmp_path, no_app, monkeypatch):
+    ch = _live_channel(cfg, tmp_path)
+    (ch / "seeded").write_text("sid-5")
+    monkeypatch.setattr(desktop, "stop", lambda c, sid, **k: {"action": "interrupted"})
+    turn = _turn(id="turn-cancel-1", origin_ref={"thread_key": "th", "chat_session_id": "c"})
+    client = FakeClient()
+    run = desktop.TurnRun(cfg, client, "r", turn, "th", {"reuse": True}, reuse="sid-5")
+    t = int(time.time() * 1000)
+    (ch / "fu-1.txt").write_text("x")
+    (ch / f"ev-{t}-1-submitted.json").write_text(json.dumps(
+        {"t": t, "kind": "submitted", "extra": {"which": "fu-2"}}))
+    desktop.CANCELLED_TURNS.add("turn-cancel-1")
+    run.run()
+    fin = client.of("finish")[0]
+    assert fin[1] == ("turn-cancel-1", "cancelled by user")
+    assert fin[2] == {"status": "cancelled", "emdash_task_id": "sid-5"}
+    assert "turn-cancel-1" not in desktop.CANCELLED_TURNS

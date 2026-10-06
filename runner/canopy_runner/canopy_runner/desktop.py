@@ -63,6 +63,7 @@ import uuid
 from pathlib import Path
 
 from . import caller, session_naming
+from .cancel import CANCELLED_TURNS
 
 logger = logging.getLogger("canopy_runner.desktop")
 
@@ -329,11 +330,44 @@ def read_events(channel: Path) -> list[dict]:
     return sorted(evs, key=lambda e: e.get("t", 0))
 
 
-def next_followup_index(channel: Path) -> int:
+def next_followup_index(channel: Path, prefix: str = "fu") -> int:
     n = 1
-    while (channel / f"fu-{n}.txt").exists():
+    while (channel / f"{prefix}-{n}.txt").exists():
         n += 1
     return n
+
+
+#: How long a stop waits for the mod's verdict before calling it unreadable.
+STOP_WAIT_SECONDS = 12
+
+
+def stop(cfg, session_key: str, wait: float = STOP_WAIT_SECONDS) -> dict:
+    """Stop the running model turn in a desktop session. Same contract as
+    `cdp_control.interrupt` so the callers need no second vocabulary:
+    `{"action": "interrupted" | "idle" | "unreadable"}`.
+
+    The mod does the stopping (`$.turn.abort` on the turn it saw start) and says
+    what happened in a `stopped` event. A session whose process is down has
+    nothing running, which is `idle` — the honest answer, not a failure."""
+    wt = worktree_for(cfg, session_key)
+    if wt is None:
+        return {"action": "unreadable", "reason": "no worktree for this desktop session"}
+    channel = wt / CHANNEL
+    if not channel_alive(channel):
+        return {"action": "idle", "reason": "the session's process is not running"}
+    n = next_followup_index(channel, "stop")
+    which = f"stop-{n}"
+    (channel / f"{which}.txt").write_text(str(int(time.time() * 1000)))
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        hit = next((e for e in read_events(channel) if e.get("kind") == "stopped"
+                    and (e.get("extra") or {}).get("which") == which), None)
+        if hit:
+            outcome = (hit.get("extra") or {}).get("outcome")
+            return {"action": outcome if outcome in ("interrupted", "idle") else "unreadable",
+                    "reason": (hit.get("extra") or {}).get("err", "")}
+        time.sleep(0.5)
+    return {"action": "unreadable", "reason": "the session did not answer the stop"}
 
 
 # ── transcript → turn events ────────────────────────────────────────────────
@@ -526,6 +560,17 @@ class TurnRun:
                                 "(is Claude.app signed in, and the canopy-desktop mod installed?)", sid)
                     return
             offset = self._ship(sid, offset)
+            if self.id in CANCELLED_TURNS:
+                # The person hit stop on this chat turn: stop the session's turn,
+                # then close canopy's out as cancelled (the chat_pump contract).
+                res = stop(self.cfg, sid)
+                CANCELLED_TURNS.discard(self.id)
+                self._ship(sid, offset)
+                note = ("cancelled by user" if res["action"] == "interrupted" else
+                        "cancelled by user (the agent had already stopped)" if res["action"] == "idle"
+                        else f"cancelled by user; the stop was not confirmed ({res.get('reason')})")
+                self.client.finish(self.id, note, status="cancelled", emdash_task_id=sid)
+                return
             if submitted_at is not None:
                 for e in evs:
                     if e.get("kind") == "ask" and e.get("t", 0) >= submitted_at:
