@@ -128,6 +128,17 @@ def test_framework_source_does_not_reference_product_modules() -> None:
     )
 
 
+def test_carve_outs_name_files_that_exist() -> None:
+    """A carve-out for a file that is gone is a hole waiting for a new file of
+    that name — and a sign the docs still describe a seam that no longer exists.
+    (`apps/mcp/tools/insights.py` sat here after it was deleted.)"""
+    missing = sorted(rel for rel in ALLOWED_FILES | STRING_REF_ALLOWED if not (ROOT / rel).is_file())
+    assert not missing, (
+        f"carve-out(s) {missing} name files that no longer exist — remove them here "
+        "and from ARCHITECTURE.md"
+    )
+
+
 def test_every_app_is_classified() -> None:
     """A new app can't silently dodge the boundary — it must be tiered explicitly."""
     on_disk = {

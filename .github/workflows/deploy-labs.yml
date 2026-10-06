@@ -19,10 +19,11 @@ name: Deploy to Labs (AWS)
 # rolls the service.
 #
 # Required GitHub secrets (see deploy/aws + Phase 2 of the labs migration):
-#   AWS_ROLE_ARN         — the shared github-actions-labs-deploy OIDC role.
+#   AWS_ROLE_ARN         — the github-actions-canopy-web-deploy OIDC role
+#                          (deploy/aws/deploy_roles.py), which trusts main only.
 #                          Since this repo was transferred into the org (2026-07-28)
 #                          GitHub mints its OIDC token with an IMMUTABLE subject —
-#                          repo:dimagi-internal@272902307/canopy-web@1193139337:* —
+#                          repo:dimagi-internal@272902307/canopy-web@1193139337:ref:refs/heads/main —
 #                          NOT the name-based repo:dimagi-internal/canopy-web:*.
 #                          The trust policy must allow the immutable form; the
 #                          name-based one silently fails with "Not authorized to
@@ -157,17 +158,17 @@ jobs:
             echo "::warning::canopy plugin clone failed — /system will show an empty catalog."
           fi
 
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build and push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: Dockerfile
@@ -198,7 +199,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}

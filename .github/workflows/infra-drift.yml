@@ -40,7 +40,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: aws-actions/configure-aws-credentials@v6
+      # The deploy role trusts canopy-web's OIDC subject on refs/heads/main ONLY
+      # (deploy/aws/deploy_roles.py), so a dispatch from a branch could not
+      # assume it anyway. Say so plainly instead of failing inside
+      # configure-aws-credentials with "Not authorized".
+      - name: Check ref is refs/heads/main
+        run: |
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "::error::Drift detection runs from main only. Got ref=${{ github.ref }}. Re-run from branch=main."
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1

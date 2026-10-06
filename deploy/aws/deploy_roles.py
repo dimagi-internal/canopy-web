@@ -1,6 +1,13 @@
 """Generate one scoped GitHub Actions deploy role per deployment.
 
-Run it to print/emit the policies; apply with `aws iam put-role-policy`. This
+Run it to print/emit the policies (to /tmp/role-<app>-{policy,trust}.json);
+apply the permissions with `aws iam put-role-policy` and a TRUST change with
+
+    aws iam update-assume-role-policy --role-name github-actions-<app>-deploy \
+        --policy-document file:///tmp/role-<app>-trust.json
+
+Nothing applies this file automatically — an edit here is not live until a
+human runs those commands. This
 file exists because the alternative is what was here before: the deploy role's
 grants were hand-made on a shared role and tracked nowhere, so nobody could
 review them and adding a resource type meant a failed deploy for whoever
@@ -60,7 +67,18 @@ APPS = {
     "canopy-web": {
         # canopy-web was transferred into the org, so GitHub mints the IMMUTABLE
         # subject. The name-based form silently fails AssumeRoleWithWebIdentity.
-        "sub": "repo:dimagi-internal@272902307/canopy-web@1193139337:*",
+        #
+        # MAIN ONLY, not `:*`. Both workflows that assume this role run from
+        # main and nowhere else: deploy-labs.yml refuses any other ref in its
+        # `guard` job, and infra-drift.yml runs on a schedule (default branch)
+        # plus a dispatch that now refuses a branch too. With `:*` any branch
+        # of this repo — a dispatch from an unmerged PR branch — could mint
+        # this role and push an image or change the stack; the in-workflow
+        # guard was the only thing stopping it, and the workflow file on that
+        # branch is exactly what such a branch controls. Neither workflow uses
+        # a GitHub `environment:`, which would change the subject's shape to
+        # `:environment:<name>` — adding one means updating this.
+        "sub": "repo:dimagi-internal@272902307/canopy-web@1193139337:ref:refs/heads/main",
         "stack": "canopy-web",
         "secret_prefix": "canopy-web/",
         "ecr": ["labs-jj-canopy-web"],
