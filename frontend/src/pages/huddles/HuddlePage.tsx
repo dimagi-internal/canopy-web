@@ -125,7 +125,9 @@ export function HuddlePage() {
 
   const due = countdown(huddle.deadline_at, now)
   return (
-    <div className="pb-6">
+    // pb-28: room under the last cards for the site-wide floating "Canopy AI"
+    // button, which otherwise covers the bottom-right member card.
+    <div className="pb-28">
       <Link to={`/w/${workspace}/huddles`} className="text-[12px] text-muted-foreground hover:text-primary">← Huddles</Link>
 
       <header className="mt-3 mb-6 rounded-2xl border border-border bg-card p-5">

@@ -311,6 +311,10 @@ def test_member_of_one_workspace_sees_no_other_workspace(owner, ws, agents):
         d = c.get(path).json()
         assert [x["member"] for x in d["cells"]] == ["eva"]
         assert d["outputs"] == []
-        assert "ace" not in str(d["cells"]) and "worked_on" not in str(d["cells"])
+        # Nothing of ace's (workspace B) may leak. Checked by ace's turn ids, not the
+        # substring "ace": random uuids contain it ("…dbace44…") and flaked CI.
+        ace_ids = {str(t) for t in Turn.objects.filter(agent__slug="ace").values_list("id", flat=True)}
+        assert ace_ids and not any(i in str(d) for i in ace_ids)
+        assert "worked_on" not in str(d["cells"])
     assert c.get("/api/w/connect/huddles/").json()[0]["outcome_count"] == 0
     assert c.get("/api/w/dimagi/huddles/h1").status_code in (403, 404)
