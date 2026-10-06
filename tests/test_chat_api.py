@@ -328,7 +328,7 @@ def test_stop_cancels_queued_turn(client):
     )
     r = client.post(f"/api/canopy-sessions/{sid}/stop", content_type="application/json")
     assert r.status_code == 200, r.content
-    assert r.json() == {"cancelled": True}
+    assert r.json() == {"cancelled": True, "interrupted": False, "route": "turns"}
     turn.refresh_from_db()
     assert turn.status == Turn.CANCELLED
 
@@ -346,7 +346,7 @@ def test_stop_cancels_every_non_terminal_turn_not_just_the_newest(client):
     )
     r = client.post(f"/api/canopy-sessions/{sid}/stop", content_type="application/json")
     assert r.status_code == 200, r.content
-    assert r.json() == {"cancelled": True}
+    assert r.json() == {"cancelled": True, "interrupted": False, "route": "turns"}
 
     turn_a.refresh_from_db()
     turn_b.refresh_from_db()
@@ -359,7 +359,8 @@ def test_stop_with_nothing_to_cancel_returns_false(client):
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"}, content_type="application/json").json()["id"]
     r = client.post(f"/api/canopy-sessions/{sid}/stop", content_type="application/json")
     assert r.status_code == 200, r.content
-    assert r.json() == {"cancelled": False}
+    # No open turn and no runner binding: nothing to cancel, nobody to interrupt.
+    assert r.json() == {"cancelled": False, "interrupted": False, "route": ""}
 
 
 # --- runner_online: liveness an embedder's delegated user can actually read ---

@@ -861,13 +861,19 @@ def close_session(request: HttpRequest, session_id: uuid.UUID):
     return {"ok": ok, "closing": outcome == "closing", "reason": "" if ok else outcome}
 
 
-@router.post("/{session_id}/stop", response=dict, summary="Cancel every non-terminal turn on this session")
+@router.post("/{session_id}/stop", response=dict,
+             summary="Stop this session: cancel its open turns, or interrupt its agent")
 def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
+    """Stop whatever this session is doing — the same stop as the web UI's button.
+    Returns `cancelled` (an open turn was cancelled), `interrupted` (no turn was
+    open, so the session's runner was asked to interrupt the agent) and `route`."""
+    # canopy-web#1226: this used to cancel turns only. An agent/project turn is
+    # already DONE once its prompt is delivered, so a stop from MCP or a script
+    # found nothing to cancel and the agent worked on. services.stop_session is the
+    # one stop the websocket uses too: turns first, then the session interrupt.
     session = _session_or_404(request, session_id, write=True)
-    # Shared with close_session's unreported branch — a closed session must not be
-    # woken by a turn that was still queued, and the "all non-terminal turns, and
-    # not via any()" reasoning belongs in one place.
-    return {"cancelled": services.cancel_session_turns(session)}
+    route = services.stop_session(session)
+    return {"cancelled": route == "turns", "interrupted": route == "session", "route": route}
 
 
 @router.post("/{session_id}/attach", response=StreamStateOut, summary="Attach a viewer (start live streaming)")

@@ -2169,6 +2169,31 @@ def cancel_session_turns(session: Session) -> bool:
     return cancelled
 
 
+def stop_session(session: Session) -> str:
+    """Stop this session, by whichever route actually owns the running work.
+    Returns WHICH route fired: "turns" | "session" | "".
+
+    TURNS FIRST. A chat reply is owned by a live Turn: cancelling it records the
+    intent, reaches a queued turn behind the running one, and lets the runner's
+    bridge interrupt and finish it.
+
+    THEN THE SESSION. If no turn moved, the work is not turn-shaped — the normal
+    state of an agent, board, scheduled or project turn, which goes terminal the
+    moment its prompt is delivered — so stop it as a session (`interrupt_session`).
+
+    Deliberately not both: a chat turn's cancel already interrupts the same session
+    through the bridge, and a second interrupt could land after the agent moved on.
+
+    The ONE stop. The web UI (the session websocket) and REST/MCP
+    (`POST /canopy-sessions/{id}/stop`) both call this; REST used to stop at the
+    turns, so a stop from MCP or a script did nothing to a working agent
+    (canopy-web#1226).
+    """
+    if cancel_session_turns(session):
+        return "turns"
+    return "session" if interrupt_session(session) == "sent" else ""
+
+
 def _is_runner_reported(binding) -> bool:
     """Is a runner CURRENTLY reporting an emdash task for this session?
 

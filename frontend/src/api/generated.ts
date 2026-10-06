@@ -5762,7 +5762,12 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Cancel every non-terminal turn on this session */
+        /**
+         * Stop this session: cancel its open turns, or interrupt its agent
+         * @description Stop whatever this session is doing — the same stop as the web UI's button.
+         *     Returns `cancelled` (an open turn was cancelled), `interrupted` (no turn was
+         *     open, so the session's runner was asked to interrupt the agent) and `route`.
+         */
         readonly post: operations["stop_session_turn"];
         readonly delete?: never;
         readonly options?: never;
