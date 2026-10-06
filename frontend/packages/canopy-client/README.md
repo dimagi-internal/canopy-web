@@ -56,9 +56,8 @@ const sessions = await canopy.rest.listSessions()
 const session = await canopy.rest.getSession(sessions[0].id)
 await canopy.rest.send(session.id, 'what is stale here?', crypto.randomUUID())
 
-// The socket URL with the current token already on it — or null before the
-// first token is minted, so you never open a socket that will be refused.
-const url = canopy.sessionSocketUrl(session.id)
+// A one-time ticket per connection, reconnects included — never the token.
+const url = await canopy.sessionSocketTicketUrl(session.id)
 ```
 
 **Users and contacts are both first-class.** `canopy.rest.principal()` says which

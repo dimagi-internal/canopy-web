@@ -4,6 +4,8 @@ from the REST send."""
 from __future__ import annotations
 
 import pytest
+
+from apps.tokens import ws_ticket
 from allauth.account.models import EmailAddress
 from channels.db import database_sync_to_async
 from channels.testing import WebsocketCommunicator
@@ -45,7 +47,7 @@ async def test_a_later_zdr_token_stamps_an_older_session_over_the_socket():
     session, raw = await database_sync_to_async(_seed)()
     path = f"/ws/canopy-sessions/{session.id}/"
     comm = WebsocketCommunicator(RealtimeAuthMiddleware(SessionConsumer.as_asgi()),
-                                 f"{path}?token={raw}")
+                                 f"{path}?ticket={ws_ticket.mint(raw)}")
     comm.scope["url_route"] = {"kwargs": {"session_id": str(session.id)}}
     connected, code = await comm.connect()
     assert connected, code

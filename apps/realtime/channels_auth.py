@@ -1,17 +1,16 @@
-"""WebSocket handshake auth: session cookie, then Bearer, then `?token=`.
+"""WebSocket handshake auth: session cookie, then Bearer, then `?ticket=`.
 
 Ports ace-web's AceSessionAuthMiddleware. Reads settings.SESSION_COOKIE_NAME
 (sessionid_canopy on connectlabs, sessionid elsewhere) — never hardcoded. Bearer
 resolution reuses apps/tokens (PersonalToken.lookup, then DelegatedToken.lookup)
-so scripted clients — and SP4's ace-web — authenticate over WS exactly as they
-do over REST.
+so scripted clients authenticate over WS exactly as they do over REST.
 
 Resolution order: session cookie → `Authorization: Bearer` (PersonalToken, then
-DelegatedToken) → `?token=<raw>` query param. The query param accepts
-DelegatedTokens ONLY — browsers can't set an Authorization header on
-`new WebSocket()`, so short-lived delegated tokens are allowed to ride the
-query string; long-lived PATs are deliberately rejected there by design (a PAT
-in a URL would end up in access logs, browser history, and referrers).
+DelegatedToken) → `?ticket=`. A browser cannot put a header on
+`new WebSocket()`, so a page holding a delegated or contact token trades it for
+a one-time ticket over REST (apps/tokens/ws_ticket.py) and opens the socket with
+that. A token is never read from the URL: `?token=` was accepted until
+2026-10-06 and put live tokens in access logs.
 
 The middleware always sets scope["user"] to a real User or AnonymousUser; the
 per-surface authorization (can this user read this turn?) happens in the consumer.
@@ -26,6 +25,16 @@ from django.conf import settings
 from django.contrib.auth import HASH_SESSION_KEY, SESSION_KEY, get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.utils.crypto import constant_time_compare
+
+
+#: Where the handshake keeps the token a `?ticket=` stood for. Set only by
+#: `_redeem_ticket`, server-side; a client cannot write a scope key, so this is
+#: the one place a token can come from other than the Authorization header.
+WS_TOKEN = "canopy.ws_token"
+
+
+def _ticket_token(scope) -> str:
+    return scope.get(WS_TOKEN) or ""
 
 
 def _header(scope, name: bytes) -> bytes | None:
@@ -104,15 +113,12 @@ def _contact_from_query_token(scope):
     every consumer in the app treats it as somebody with memberships — the same
     mistake `ContactToken` exists as its own model to prevent.
     """
-    from urllib.parse import parse_qs
-
     from apps.tokens.models import ContactToken
 
-    qs = parse_qs((scope.get("query_string") or b"").decode("latin1"))
-    values = qs.get("token") or []
-    if not values:
+    raw = _ticket_token(scope)
+    if not raw:
         return None
-    token = ContactToken.lookup(values[0])
+    token = ContactToken.lookup(raw)
     return token.contact if token is not None else None
 
 
@@ -122,15 +128,12 @@ def _user_from_query_token(scope):
     Authorization header on `new WebSocket()`, so short-lived delegated tokens
     ride the query string; long-lived PATs are deliberately rejected here so
     they never land in URLs or access logs."""
-    from urllib.parse import parse_qs
-
-    qs = parse_qs((scope.get("query_string") or b"").decode("latin1"))
-    values = qs.get("token") or []
-    if not values:
+    raw = _ticket_token(scope)
+    if not raw:
         return None
     from apps.tokens.models import DelegatedToken
 
-    token = DelegatedToken.lookup(values[0])
+    token = DelegatedToken.lookup(raw)
     if token is not None and token.user.is_active:
         return token.user
     return None
@@ -140,12 +143,10 @@ def _user_from_query_token(scope):
 def _query_token_method(scope) -> str:
     """How the `?token=` user was established: `delegated`, or `host_signed` for
     a visitor a connected site resolved to their existing account."""
-    from urllib.parse import parse_qs
-
     from apps.tokens.models import DelegatedToken
 
-    values = parse_qs((scope.get("query_string") or b"").decode("latin1")).get("token") or []
-    token = DelegatedToken.lookup(values[0]) if values else None
+    raw = _ticket_token(scope)
+    token = DelegatedToken.lookup(raw) if raw else None
     return (token.assurance or "delegated") if token is not None else "delegated"
 
 
@@ -155,15 +156,13 @@ def _delegated_token_sync(scope):
     Read from the same two places a delegated token can ride — the bearer
     header and `?token=` — and never from anything else the client controls.
     """
-    from urllib.parse import parse_qs
-
     from apps.tokens.models import DelegatedToken
 
     raw = _header(scope, b"authorization")
     candidates = []
     if raw and raw.lower().startswith(b"bearer "):
         candidates.append(raw[7:].decode("latin1").strip())
-    candidates += parse_qs((scope.get("query_string") or b"").decode("latin1")).get("token") or []
+    candidates.append(_ticket_token(scope))
     for value in candidates:
         token = DelegatedToken.lookup(value) if value else None
         if token is not None:
@@ -190,28 +189,25 @@ def _delegated_runner_requirements(scope) -> tuple[str, ...]:
 
 @database_sync_to_async
 def _redeem_ticket(scope):
-    """`?ticket=` swapped for the token it stands for (apps/tokens/ws_ticket.py).
+    """`?ticket=` exchanged for the token it stands for (apps/tokens/ws_ticket.py).
 
-    Returns the scope with `token=<raw>` in place of the ticket, so everything
-    below resolves a ticketed socket exactly as it would the token — identity,
-    connected site, runner requirements, assurance. An unknown, expired or spent
-    ticket is simply dropped: the socket then has no token and is refused by the
-    consumer's existing check. The rewritten query string lives only in this
-    in-process scope; it is never logged, because the request line was.
+    The token goes on the scope under WS_TOKEN — never back into the query
+    string — so everything below resolves a ticketed socket exactly as it would
+    the token (identity, connected site, runner requirements, assurance), and a
+    `token=` a client puts on the URL is read by nothing. An unknown, expired or
+    spent ticket leaves no token: the consumer's existing check refuses it.
     """
-    from urllib.parse import parse_qsl, urlencode
+    from urllib.parse import parse_qs
 
-    pairs = parse_qsl((scope.get("query_string") or b"").decode("latin1"), keep_blank_values=True)
-    if not any(k == "ticket" for k, _ in pairs):
-        return scope
-    from apps.tokens import ws_ticket
-
-    kept = [(k, v) for k, v in pairs if k not in ("ticket", "token")]
-    raw = ws_ticket.redeem(next(v for k, v in pairs if k == "ticket"))
-    if raw:
-        kept.append(("token", raw))
     scope = dict(scope)
-    scope["query_string"] = urlencode(kept).encode("latin1")
+    scope.pop(WS_TOKEN, None)
+    values = parse_qs((scope.get("query_string") or b"").decode("latin1")).get("ticket") or []
+    if values:
+        from apps.tokens import ws_ticket
+
+        raw = ws_ticket.redeem(values[0])
+        if raw:
+            scope[WS_TOKEN] = raw
     return scope
 
 

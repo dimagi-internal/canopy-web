@@ -106,3 +106,19 @@ async def test_a_bad_ticket_cannot_smuggle_a_token_beside_it():
     raw, _tok = await sync_to_async(DelegatedToken.issue)(app=app, user=owner, ttl_seconds=900)
     scope = await _scope_after_auth(f"ticket=spent&token={raw}")
     assert not scope["user"].is_authenticated
+
+
+@pytest.mark.asyncio
+async def test_a_token_on_the_url_authenticates_nobody():
+    """`?token=` put live tokens in access logs; it is read by nothing now.
+    A delegated token and a contact token on the URL both leave the socket
+    anonymous."""
+    owner, _ws, app, priv = await sync_to_async(_world)()
+    raw, _tok = await sync_to_async(DelegatedToken.issue)(app=app, user=owner, ttl_seconds=900)
+    contact_raw = await sync_to_async(_contact_token)(priv)
+
+    for token in (raw, contact_raw):
+        scope = await _scope_after_auth(f"token={token}")
+        assert not scope["user"].is_authenticated
+        assert scope["contact"] is None
+        assert scope["delegated_app"] is None

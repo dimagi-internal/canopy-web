@@ -9,6 +9,8 @@ themselves. See `apps/tokens/delegation.py`.
 from __future__ import annotations
 
 import pytest
+
+from apps.tokens import ws_ticket
 from asgiref.sync import async_to_sync
 from django.contrib.auth.models import User
 from django.test import Client
@@ -150,7 +152,7 @@ def _ws_scope(path, raw):
     async def app(scope, receive, send):
         captured.update(scope)
 
-    scope = {"type": "websocket", "path": path, "query_string": f"token={raw}".encode(),
+    scope = {"type": "websocket", "path": path, "query_string": f"ticket={ws_ticket.mint(raw)}".encode(),
              "headers": []}
     async_to_sync(RealtimeAuthMiddleware(app))(scope, None, None)
     return captured
