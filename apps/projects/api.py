@@ -18,7 +18,7 @@ from apps.api.errors import (
 )
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
 
-from .models import Project, ProjectAction, ProjectContext
+from .models import RETIRED_CONTEXT_TYPE, Project, ProjectAction, ProjectContext
 from .schemas import (
     BatchActionsIn,
     BatchContextIn,
@@ -47,7 +47,7 @@ def _build_project_list_data(qs):
     qs = qs.select_related("created_by").prefetch_related(
         Prefetch(
             "contexts",
-            queryset=ProjectContext.objects.order_by("-created_at"),
+            queryset=ProjectContext.objects.exclude(context_type=RETIRED_CONTEXT_TYPE).order_by("-created_at"),
             to_attr="_prefetched_contexts",
         ),
         Prefetch(
@@ -59,7 +59,7 @@ def _build_project_list_data(qs):
 
     result = []
     for p in qs:
-        contexts = getattr(p, "_prefetched_contexts", None) or list(p.contexts.all())
+        contexts = getattr(p, "_prefetched_contexts", None) or list(p.contexts.exclude(context_type=RETIRED_CONTEXT_TYPE))
         actions = getattr(p, "_prefetched_actions", None) or list(p.actions.all())
 
         # latest_context: first occurrence per context_type (prefetch is newest-first)
@@ -208,7 +208,7 @@ def _project_to_detail_out(project: Project) -> ProjectDetailOut:
 
     # latest_context: first entry per context_type (newest-first ordering)
     latest_context: dict[str, ProjectContextOut] = {}
-    for ctx in project.contexts.order_by("-created_at"):
+    for ctx in project.contexts.exclude(context_type=RETIRED_CONTEXT_TYPE).order_by("-created_at"):
         if ctx.context_type not in latest_context:
             latest_context[ctx.context_type] = ProjectContextOut(
                 content=ctx.content,
@@ -469,7 +469,7 @@ def delete_project(
 )
 def list_context(request: HttpRequest, slug: str) -> list[ProjectContextEntryOut]:
     project = _get_project_or_404_ninja(request, slug)
-    contexts = project.contexts.order_by("-created_at")
+    contexts = project.contexts.exclude(context_type=RETIRED_CONTEXT_TYPE).order_by("-created_at")
     return [
         ProjectContextEntryOut(
             id=ctx.pk,
@@ -517,7 +517,7 @@ def create_context(
 def get_context_latest(request: HttpRequest, slug: str) -> ProjectContextLatestOut:
     project = _get_project_or_404_ninja(request, slug)
     result: dict[str, ProjectContextOut] = {}
-    for ctx in project.contexts.order_by("-created_at"):
+    for ctx in project.contexts.exclude(context_type=RETIRED_CONTEXT_TYPE).order_by("-created_at"):
         if ctx.context_type not in result:
             result[ctx.context_type] = ProjectContextOut(
                 content=ctx.content,

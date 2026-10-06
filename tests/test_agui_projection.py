@@ -442,10 +442,6 @@ FIXTURE = Path(__file__).resolve().parents[1] / "frontend" / "packages" / \
 #: TypeScript asserts its inverse recovers the original frame. Drift in either
 #: direction fails a test instead of silently producing a client that renders a
 #: subtly different conversation.
-#:
-#: The tool name and text in these frames are opaque sample data. They still say
-#: `list_insights` (a tool retired 2026-10) because the fixture is shipped in the
-#: published canopy-ui package; renaming them is a canopy-ui release, not a fix.
 ROUND_TRIP_FRAMES = [
     {"event": "chat.stream_start", "data": {"message_id": "m1", "turn_index": 4}},
     {"event": "chat.delta", "data": {"message_id": "m1", "text": "hello"}},
@@ -455,12 +451,12 @@ ROUND_TRIP_FRAMES = [
               "author": {"name": "Jon", "user_id": 7}}},
     {"event": "chat.tool_use",
      "data": {"tool_message_id": "t9", "parent_message_id": "m1", "turn_index": 5,
-              "block": {"name": "list_insights", "input": {"limit": 5}}}},
+              "block": {"name": "list_items", "input": {"limit": 5}}}},
     {"event": "chat.tool_result",
      "data": {"tool_message_id": "t9", "parent_message_id": "m1", "turn_index": 6,
               "block": {"type": "tool_result", "tool_use_id": "toolu_01ABC",
                         "content": "[]"}}},
-    {"event": "session.title_updated", "data": {"title": "Insights triage"}},
+    {"event": "session.title_updated", "data": {"title": "Inbox triage"}},
     {"event": "draft.updated", "data": {"id": "d1", "body": "x", "version": 2}},
     {"event": "draft.typing",
      "data": {"author": {"id": 7, "name": "Beth"}, "body": "wip", "at": "2026-09-26T12:00:00+00:00"}},
@@ -479,7 +475,7 @@ ROUND_TRIP_FRAMES = [
                    "error_detail": None, "started_at": None, "completed_at": None,
                    "created_at": "2026-09-18T12:00:00+00:00"},
                   {"id": "42", "turn_index": 1, "role": "assistant", "content": {},
-                   "plaintext": "Three insights are.", "status": "complete",
+                   "plaintext": "Three items are.", "status": "complete",
                    "error_detail": None, "started_at": None, "completed_at": None,
                    "created_at": "2026-09-18T12:00:05+00:00"}],
               "active_draft": None,

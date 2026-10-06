@@ -6511,7 +6511,7 @@ export interface components {
              * Context Type
              * @enum {string}
              */
-            readonly context_type: "current_work" | "next_step" | "summary" | "note" | "insight";
+            readonly context_type: "current_work" | "next_step" | "summary" | "note";
             /** Content */
             readonly content: string;
             /** Source */
@@ -6583,7 +6583,7 @@ export interface components {
              * Context Type
              * @enum {string}
              */
-            readonly context_type: "current_work" | "next_step" | "summary" | "note" | "insight";
+            readonly context_type: "current_work" | "next_step" | "summary" | "note";
             /** Content */
             readonly content: string;
             /** Source */

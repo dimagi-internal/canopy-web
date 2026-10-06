@@ -86,8 +86,7 @@ export const projectsApi = {
           | "current_work"
           | "next_step"
           | "summary"
-          | "note"
-          | "insight",
+          | "note",
         content: input.content,
         source: input.source,
       },

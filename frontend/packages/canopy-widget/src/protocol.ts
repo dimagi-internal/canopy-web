@@ -21,7 +21,7 @@ export const SOURCE = 'canopy-widget' as const
  * One thing the host's page can be asked to do.
  *
  * `parameters` is JSON-Schema and is the reason this is a spec rather than a
- * bare name: an agent cannot call `dismissInsights` without being told it takes
+ * bare name: an agent cannot call `dismissItems` without being told it takes
  * `{ids: number[]}`. Names alone force the agent to learn the call shape from
  * prose, which is exactly what a tool schema exists to prevent.
  */

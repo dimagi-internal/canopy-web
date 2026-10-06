@@ -528,6 +528,25 @@ def test_project_outputs_no_longer_count_insights_and_keep_the_rows():
 
 
 @pytest.mark.django_db
+def test_insight_context_is_rejected_on_write_and_hidden_on_read():
+    """A stale caller still posting insights fails loudly instead of writing
+    rows nobody reads; the leftover rows never come back out."""
+    p = _make_project(slug="ins-strict")
+    ProjectContext.objects.create(project=p, context_type="insight", content="old", source="t")
+    ProjectContext.objects.create(project=p, context_type="note", content="kept", source="t")
+    c = _auth_client()
+    r = _post_json(c, f"/api/projects/{p.slug}/context/",
+                   {"context_type": "insight", "content": "x", "source": "t"})
+    assert r.status_code == 422
+    assert ProjectContext.objects.filter(project=p, context_type="insight").count() == 1
+    assert [e["context_type"] for e in c.get(f"/api/projects/{p.slug}/context/").json()] == ["note"]
+    assert set(c.get(f"/api/projects/{p.slug}/context/latest/").json()["contexts"]) == {"note"}
+    assert set(c.get(f"/api/projects/{p.slug}/").json()["latest_context"]) == {"note"}
+    row = next(r for r in c.get("/api/projects/").json()["items"] if r["slug"] == p.slug)
+    assert set(row["latest_context"]) == {"note"}
+
+
+@pytest.mark.django_db
 def test_create_records_and_serializes_the_creator():
     user = _make_user("bob", "bob@dimagi.com")
     c = _auth_client(user)
