@@ -946,6 +946,11 @@ def _agent_env(slug: str | None) -> dict:
         if key in _GITHUB_ENV_KEYS:
             continue  # GitHub is the owner's, issued per turn — never the agent's .env
         value = value.strip().strip('"').strip("'")
+        # An agent .env provisioned before canopy moved names its OLD address;
+        # left alone it would send every CLI call this turn makes there
+        # (observed 2026-10-06, after this box itself had moved).
+        if key in ("CANOPY_WEB_API_URL", "CANOPY_BASE_URL") and value.rstrip("/") in FORMER_BASES:
+            value = BASE_URL
         env[key] = value
         loaded += 1
     if loaded:
