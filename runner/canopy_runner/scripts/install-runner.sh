@@ -355,7 +355,11 @@ MENUBAR_STAMP="$HOME/.canopy/menubar.sha"
 MENUBAR_APP="${CANOPY_RUNNER_APP:-$HOME/Applications/Canopy Runner.app}"
 if [ "$DO_LAUNCHD" -eq 1 ] && [ "$(uname -s)" = "Darwin" ] \
    && [ "${CANOPY_MENUBAR:-1}" = "1" ] && [ -f "$MENUBAR/build.sh" ]; then
-  want="$(cat "$MENUBAR/Sources/main.swift" "$MENUBAR/build.sh" | shasum | cut -d' ' -f1)"
+  # The icons are part of the app: an icon-only change (assets/brand) must rebuild
+  # it too, or a new mark never reaches a box whose Swift source did not move.
+  want="$(cat "$MENUBAR/Sources/main.swift" "$MENUBAR/build.sh" \
+            "$TMP/assets/brand/AppIcon.icns" "$TMP/assets/brand"/menubar-mark*.png 2>/dev/null \
+          | shasum | cut -d' ' -f1)"
   have="$(cat "$MENUBAR_STAMP" 2>/dev/null || true)"
   if [ -d "$MENUBAR_APP" ] && [ "$want" = "$have" ]; then
     echo "==> menu-bar app unchanged"
