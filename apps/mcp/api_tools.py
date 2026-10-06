@@ -39,7 +39,7 @@ from typing import Any
 import httpx2
 from asgiref.sync import sync_to_async
 from fastmcp.exceptions import ToolError
-from fastmcp.server.dependencies import get_access_token
+from fastmcp.server.dependencies import get_access_token, get_http_headers
 from fastmcp.server.providers.openapi import OpenAPIProvider
 from fastmcp.server.providers.openapi.components import OpenAPITool
 from mcp.types import ToolAnnotations
@@ -182,6 +182,16 @@ async def _django_app(scope, receive, send):
             path = f"/api/w/{ws}/{scope['path'][len('/api/'):]}"
             scope["path"] = path
             scope["raw_path"] = path.encode()
+        forwarded = call.get("headers") or {}
+        if forwarded:
+            # The MCP CLIENT's own user agent, client name, request id and parent
+            # headers, so the turn this call creates records the program and the
+            # session behind it rather than httpx's in-process defaults.
+            names = {k.encode() for k in forwarded}
+            scope["headers"] = [(k, v) for k, v in scope.get("headers", [])
+                                if k.lower() not in names]
+            scope["headers"] += [(k.encode(), v.encode("latin-1", "replace"))
+                                 for k, v in forwarded.items()]
         if call.get("json_body"):
             scope, receive = await _ensure_json_body(scope, receive)
     await _django_handler(scope, receive, send)
@@ -240,14 +250,43 @@ def _client() -> httpx2.AsyncClient:
 
 # -- the tool --------------------------------------------------------------
 
+#: Headers of the MCP client's HTTP request carried into the in-process call:
+#: provenance only (apps/common/request_context.py) — never a credential.
+FORWARDED_HEADERS = (
+    "user-agent", "x-canopy-client", "x-request-id", "x-forwarded-for",
+    "x-canopy-parent-turn", "x-canopy-parent-session", "x-canopy-parent-task",
+    "x-canopy-parent-host", "x-canopy-claude-session",
+)
+
+
 def _principal() -> dict:
-    """The caller, from the MCP access token — or a ToolError saying why not."""
+    """The caller, from the MCP access token — or a ToolError saying why not.
+
+    Carries the CREDENTIAL too (type, token id, label; a caller token's turn), so
+    a turn created through MCP names the token behind it exactly as a REST call
+    does (`BearerTokenAuthMiddleware._authenticate_mcp_call` reads it)."""
     token = get_access_token()
     claims = (token.claims or {}) if token is not None else {}
     user_id = claims.get("user_id")
     if user_id is None:
         raise ToolError("This tool acts as a canopy user; sign in with a personal access token.")
-    return {"user_id": int(user_id), "auth_method": claims.get("auth_method") or "pat"}
+    method = claims.get("auth_method") or "pat"
+    credential = {
+        "type": claims.get("credential_type") or method,
+        "id": claims.get("token_id"),
+        "label": claims.get("token_label") or "",
+    }
+    if claims.get("turn_id"):
+        credential["turn_id"] = str(claims["turn_id"])
+    return {"user_id": int(user_id), "auth_method": method, "credential": credential}
+
+
+def _forwarded_headers() -> dict[str, str]:
+    try:
+        headers = get_http_headers(include_all=True)
+    except Exception:  # noqa: BLE001 — provenance never fails a tool call
+        return {}
+    return {k: v for k, v in headers.items() if k.lower() in FORWARDED_HEADERS and v}
 
 
 class CanopyAPITool(OpenAPITool):
@@ -260,6 +299,7 @@ class CanopyAPITool(OpenAPITool):
         args = dict(arguments)
         workspace = args.pop(WORKSPACE_ARG, None) if self.adds_workspace else None
         principal = _principal()
+        principal["mcp_tool"] = self.name
         method = self._route.method.upper()
         # The path with its ids filled in, so the audit row names WHICH agent or
         # schedule a write touched; body values stay out (they can hold secrets).
@@ -279,6 +319,7 @@ class CanopyAPITool(OpenAPITool):
         token = _current_call.set({
             "principal": principal, "workspace": workspace,
             "json_body": self._route.request_body is not None,
+            "headers": _forwarded_headers(),
         })
         try:
             result = await super().run(args)

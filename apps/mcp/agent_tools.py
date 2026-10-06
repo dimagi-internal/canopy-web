@@ -121,9 +121,10 @@ class AgentCapabilityTool(Tool):
 
         user_id = current_user_id()
         wait = _wait(arguments.get("wait_seconds"))
+        caller = _caller_context(self.name)
         try:
             session_id, turn_id = await sync_to_async(invoke, thread_sensitive=True)(
-                user_id, self.agent_slug, self.capability, arguments or {})
+                user_id, self.agent_slug, self.capability, arguments or {}, caller=caller)
         except InvocationError as exc:
             await write_audit(user_id=user_id, tool=self.name, args_summary=str(exc)[:200],
                               ok=False, error=str(exc))
@@ -182,8 +183,51 @@ def _check_inputs(cap: dict, arguments: dict) -> dict:
     return out
 
 
-def invoke(user_id, agent_slug: str, capability: str, arguments: dict) -> tuple[str, str]:
-    """Send the caller's request as a turn of the agent. Returns (conversation, turn)."""
+def _caller_context(tool: str) -> dict:
+    """This MCP call as a provenance context (apps/common/request_context.py):
+    the credential from the access token, the client's own headers, the tool.
+    These tools run outside any Django request, so nothing else would record it."""
+    from apps.common import request_context as rc
+
+    from .api_tools import _forwarded_headers, _principal
+
+    try:
+        principal = _principal()
+    except Exception:  # noqa: BLE001 — invoke() refuses an anonymous caller itself
+        principal = {}
+    headers = _forwarded_headers()
+    parent = {key: rc.clean(headers.get(name.lower(), ""))
+              for key, name in rc.PARENT_HEADERS.items() if headers.get(name.lower())}
+    cred = principal.get("credential") or {}
+    if cred.get("turn_id") and not parent.get("turn"):
+        parent["turn"] = cred["turn_id"]
+    ctx = {
+        "request_id": rc.mint_request_id(headers.get("x-request-id", "")),
+        "user_agent": rc.clean(headers.get("user-agent", "")),
+        "client": rc.clean(headers.get("x-canopy-client", "")),
+        "credential": cred or None,
+        "via_mcp": True,
+        "mcp_tool": tool,
+        "parent": parent,
+        "auth_method": principal.get("auth_method") or "",
+    }
+    return {k: v for k, v in ctx.items() if v not in ("", None, {})}
+
+
+def invoke(user_id, agent_slug: str, capability: str, arguments: dict,
+           caller: dict | None = None) -> tuple[str, str]:
+    """Send the caller's request as a turn of the agent. Returns (conversation, turn).
+
+    `caller` is the MCP call's provenance context (`_caller_context`); the turn
+    and session are created inside it so they record the token and client."""
+    from apps.common import request_context as rc
+
+    with rc.bound(caller or {}):
+        return _invoke(user_id, agent_slug, capability, arguments, caller or {})
+
+
+def _invoke(user_id, agent_slug: str, capability: str, arguments: dict,
+            caller: dict) -> tuple[str, str]:
     from django.contrib.auth import get_user_model
 
     from apps.agents.interface import ASK, offered_to
@@ -243,7 +287,10 @@ def invoke(user_id, agent_slug: str, capability: str, arguments: dict) -> tuple[
     _msg, turn = chat.send_message(
         session=session, text=prompt, user=user, client_id=uuid.uuid4().hex,
         origin=Turn.ORIGIN_API, capability=capability,
-        initiator=who.for_user(user, via=f"mcp:{capability}", assurance=who.PAT),
+        # The assurance the caller's token actually carries (an OAuth token, a
+        # PAT, a caller token), not a hard-coded PAT.
+        initiator=who.for_user(user, via=f"mcp:{capability}",
+                               assurance=caller.get("auth_method") or who.PAT),
     )
     if turn is None:
         raise InvocationError("the message could not be sent")

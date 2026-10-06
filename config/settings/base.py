@@ -129,6 +129,10 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "apps.tokens.middleware.BearerTokenAuthMiddleware",  # PAT bearer auth (after AuthenticationMiddleware, before LoginRequired)
+    # X-Request-Id + who/what/parent of this request, read when a Turn or Session
+    # is created (apps/harness/provenance.py). After the bearer middleware: it
+    # records the credential that middleware resolved.
+    "apps.common.request_context.RequestContextMiddleware",
     "apps.api.tenancy.WorkspaceResolveMiddleware",  # resolve /api/w/{ws}/ + flat-route compat shim (needs request.user)
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -592,9 +596,13 @@ if DEBUG:
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        # The X-Request-Id of the request in flight (apps/common/request_context).
+        "request_id": {"()": "apps.common.request_context.RequestIdFilter"},
+    },
     "formatters": {
         "verbose": {
-            "format": "{levelname} {asctime} {name} {message}",
+            "format": "{levelname} {asctime} {name} [{request_id}] {message}",
             "style": "{",
         },
     },
@@ -602,9 +610,18 @@ LOGGING = {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "verbose",
+            "filters": ["request_id"],
         },
     },
     "loggers": {
+        # One TURN_CREATED / SESSION_CREATED line per creation, saying who, from
+        # what, and under which parent (apps/harness/provenance.py). INFO always:
+        # it is the audit trail for "what created this turn?".
+        "canopy.provenance": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
         # Our own code. WARNING by default; DJANGO_LOG_LEVEL=DEBUG turns the
         # volume up without a code change when something needs watching live.
         "apps": {

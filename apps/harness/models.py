@@ -521,6 +521,31 @@ class Turn(models.Model):
         related_name="turns_initiated",
     )
     initiator_agent = models.CharField(max_length=64, blank=True, default="")
+    # WHAT created this turn and WHY — apps/harness/provenance.py. The initiator
+    # above says who it is FOR; this says through which credential (type, id,
+    # label), from which program (`client` = X-Canopy-Client, `user_agent`), on
+    # which request (`request_id`, `ip`), via which MCP tool, and under which
+    # parent. Stamped once at creation from the request in flight; {} for a turn
+    # canopy started itself with no request behind it (a schedule firing).
+    # Added after a script on a person's PAT was indistinguishable from the web
+    # UI (2026-10-05).
+    provenance = models.JSONField(default=dict, blank=True)
+    # The turn / session / emdash task / Claude session this turn was started
+    # FROM — from the X-Canopy-Parent-* headers, a `parent` object in the
+    # payload, a confined session's caller token, or set by canopy itself (a
+    # transfer, a re-ask of a lost turn, a dispatch from a task a turn raised).
+    # The two FKs are only set when the id resolved; an unknown id is kept raw in
+    # `provenance["parent"]` instead and never refuses the request.
+    parent_turn = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="child_turns",
+    )
+    parent_session = models.ForeignKey(
+        "canopy_sessions.Session", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="child_turns",
+    )
+    # An emdash task (`task`) or `host:project:task`.
+    parent_task = models.CharField(max_length=300, blank=True, default="")
+    parent_claude_session = models.CharField(max_length=100, blank=True, default="")
     # THE MODE THIS TURN RUNS IN (manual | auto), decided once at CLAIM by
     # `apps/harness/turn_mode.py` — a routing rule's mode where one matches, else
     # the agent's own `turn_mode`. "" until claimed, and always "" for a project

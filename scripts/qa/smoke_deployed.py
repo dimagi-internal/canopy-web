@@ -26,6 +26,9 @@ from pathlib import Path
 
 from playwright.sync_api import Browser, Page, sync_playwright
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import script_provenance  # noqa: E402
+
 URL = os.environ.get("CANOPY_URL", "https://canopy-web-ujpz2cuyxq-uc.a.run.app")
 PAT = os.environ.get("CANOPY_PAT", "")
 SCREENSHOTS = Path(__file__).parent / "screenshots"
@@ -42,7 +45,8 @@ def check_page(
 ) -> tuple[bool, str]:
     """Navigate to URL+path with Bearer PAT, assert text expectations, screenshot."""
     context = browser.new_context(
-        extra_http_headers={"Authorization": f"Bearer {pat}"},
+        extra_http_headers={"Authorization": f"Bearer {pat}",
+                            **script_provenance.headers("smoke_deployed.py")},
     )
     page: Page = context.new_page()
     console_errors: list[str] = []

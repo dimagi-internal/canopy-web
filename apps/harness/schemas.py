@@ -507,6 +507,25 @@ class SessionReportOut(Schema):
     count: int
 
 
+class ParentIn(Schema):
+    """What the caller was running INSIDE when it asked for this work — recorded
+    on the new turn/session as `parent_*` + `provenance.parent`. Every field is
+    optional and none is checked: an id that does not resolve is recorded as
+    given and never refuses the request. The `X-Canopy-Parent-Turn`,
+    `X-Canopy-Parent-Session`, `X-Canopy-Parent-Task`, `X-Canopy-Parent-Host` and
+    `X-Canopy-Claude-Session` headers say the same thing; a field here wins over
+    its header."""
+
+    turn: str = ""
+    session: str = ""
+    # An emdash task name (with `host` and `project`, resolved through the runner
+    # binding to a session).
+    task: str = ""
+    host: str = ""
+    project: str = ""
+    claude_session: str = ""
+
+
 class TurnIn(Schema):
     # Exactly one of agent_slug / project. Enforced in the view (422) rather than
     # by a validator so the error matches the rest of the harness's shape.
@@ -529,6 +548,8 @@ class TurnIn(Schema):
     # PAT; anyone else gets a 403. Refused on a project turn and on email, which a
     # runner posts on a stranger's behalf. Omit to let the rules decide.
     turn_mode: Literal["auto", "manual"] | None = None
+    # What this request was made from (see ParentIn). Optional.
+    parent: ParentIn | None = None
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
@@ -548,6 +569,13 @@ class InitiatorOut(Schema):
     user: InitiatorPersonOut | None = None
     contact: InitiatorPersonOut | None = None
     agent: str | None = None
+    # WHICH credential the request that created the turn used — {type, id, label}
+    # (`pat`, `oauth`, `session`, `delegated`, `contact`, `caller_token`) — and
+    # the program that sent it (X-Canopy-Client). Null when canopy started it.
+    credential: dict | None = None
+    client: str = ""
+    # The turn / session / task it was started from (see TurnOut.parent_*).
+    parent: dict | None = None
 
 
 class TurnOut(Schema):
@@ -584,6 +612,16 @@ class TurnOut(Schema):
     # running turn (that turn's id) rather than run on its own: the runner types
     # it into the live session and it finishes when that turn does.
     rides_turn_id: uuid.UUID | None = None
+    # WHAT created this turn (apps/harness/provenance.py): credential, client,
+    # user_agent, request_id, mcp_tool, parent (raw), clicked_by. The client ip
+    # is recorded but not served.
+    provenance: dict = {}
+    parent_turn_id: uuid.UUID | None = None
+    parent_session_id: uuid.UUID | None = None
+    parent_task: str = ""
+    parent_claude_session: str = ""
+    # The board task whose approved dispatch created this turn, if any.
+    raised_from_task_id: int | None = None
     session_id: str
     result_note: str
     # True when `prompt`, `origin_ref` and `result_note` were blanked because
@@ -642,6 +680,12 @@ class TurnOut(Schema):
     @staticmethod
     def resolve_pinned_runner_name(obj) -> str | None:
         return obj.pinned_runner.name if obj.pinned_runner_id else None
+
+    @staticmethod
+    def resolve_provenance(obj) -> dict:
+        from .provenance import public
+
+        return public(getattr(obj, "provenance", None))
 
     @staticmethod
     def resolve_initiator(obj) -> dict:

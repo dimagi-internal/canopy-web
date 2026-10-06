@@ -83,9 +83,11 @@ class CanopyPATVerifier(TokenVerifier):
                 claims={"sub": f"turn:{grant.turn.pk}",
                         "user_id": grant.user.pk if grant.user is not None else None,
                         "auth_method": "caller_token", "turn_id": str(grant.turn.pk),
+                        # Provenance: WHICH credential (apps/harness/provenance.py).
+                        "token_id": grant.token_id, "token_label": f"turn:{grant.turn.pk}",
                         "turn_ids": sorted(grant.turn_ids), "tool_globs": grant.tool_globs},
             )
-        user, _pat = await sync_to_async(_lookup_user, thread_sensitive=True)(token)
+        user, pat = await sync_to_async(_lookup_user, thread_sensitive=True)(token)
         if user is None:
             return None
 
@@ -98,5 +100,11 @@ class CanopyPATVerifier(TokenVerifier):
                 "user_id": user.pk,
                 "email": getattr(user, "email", "") or "",
                 "auth_method": "pat",
+                # Provenance: WHICH token, so a turn this call creates can name it
+                # (apps/harness/provenance.py). An OAuth access token IS a
+                # PersonalToken, minted for a grant — typed apart so the log says so.
+                "token_id": pat.pk,
+                "token_label": pat.label,
+                "credential_type": "oauth" if pat.oauth_grant_id else "pat",
             },
         )

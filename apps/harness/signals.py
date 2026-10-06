@@ -106,3 +106,40 @@ def _item_changed(sender, instance: AgentTask, **kwargs) -> None:
     same batching `apps/push` relies on, for the same reason.
     """
     mark_dirty(ITEM_RESOURCE)
+
+
+# -- provenance: every Turn and Session says what created it -----------------
+#
+# Receivers rather than a call at each creation site, for the reason the item
+# receiver above gives: there are ten-odd sites (enqueue_turn, the close-out
+# upsert, five raw `Session.objects.create`s, the runner report…) and the next
+# one will not remember. `pre_save` fills what the site did not set from the
+# request in flight; `post_save` logs ONE `TURN_CREATED` / `SESSION_CREATED`
+# line on commit. Both no-ops for an update. See apps/harness/provenance.py.
+
+from django.db.models.signals import pre_save  # noqa: E402
+
+from apps.canopy_sessions.models import Session  # noqa: E402
+
+from . import provenance  # noqa: E402
+from .models import Turn  # noqa: E402
+
+
+@receiver(pre_save, sender=Turn)
+@receiver(pre_save, sender=Session)
+def _stamp_provenance(sender, instance, raw=False, **kwargs) -> None:
+    if raw:   # fixture loading: the row says what it says
+        return
+    try:
+        provenance.stamp(instance)
+    except Exception:  # noqa: BLE001 — a record must never fail a creation
+        import logging
+
+        logging.getLogger("canopy.provenance").exception("could not stamp provenance")
+
+
+@receiver(post_save, sender=Turn)
+@receiver(post_save, sender=Session)
+def _log_created(sender, instance, created=False, raw=False, **kwargs) -> None:
+    if created and not raw:
+        provenance.on_created(instance)

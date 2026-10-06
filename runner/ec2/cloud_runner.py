@@ -224,6 +224,10 @@ def _api(method: str, path: str, body: dict | None = None, *,
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {TOKEN}")
     req.add_header("Content-Type", "application/json")
+    # Provenance (canopy-web apps/common/request_context.py): what canopy records
+    # as the program behind anything this request creates.
+    req.add_header("X-Canopy-Client", "canopy-cloud-runner")
+    req.add_header("User-Agent", f"canopy-cloud-runner host={socket.gethostname()}")
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             raw = resp.read()
@@ -4046,6 +4050,60 @@ def _write_envelope(turn: dict) -> dict:
     return {"CANOPY_CALLER": str(path)}
 
 
+def _provenance_brief(turn: dict) -> str:
+    """`origin=… who=… credential=… client=… parent=…` from the claimed turn (the
+    server's TurnOut.initiator / provenance / parent_*), mirroring the laptop
+    runner's canopy_runner/whois.py — this file is stdlib-only and cannot import
+    it. `-` for anything an older server did not send."""
+    ini = turn.get("initiator") or {}
+    person = ini.get("user") or ini.get("contact") or {}
+    ident = person.get("email") or ini.get("agent") or ""
+    who = f"{ini.get('kind') or 'unknown'}:{ident}" if ident else (ini.get("kind") or "unknown")
+    cred = ini.get("credential") or (turn.get("provenance") or {}).get("credential") or {}
+    cred_s = ":".join([str(cred.get("type") or "?"), "" if cred.get("id") is None
+                       else str(cred["id"]), str(cred.get("label") or "")]) if cred else ""
+    parent = ""
+    for key in ("parent_turn_id", "parent_session_id", "parent_task", "parent_claude_session"):
+        if turn.get(key):
+            parent = f"{key[len('parent_'):].removesuffix('_id')}:{turn[key]}"
+            break
+    client = ini.get("client") or (turn.get("provenance") or {}).get("client") or ""
+
+    def v(x):
+        x = str(x or "").strip()
+        return json.dumps(x) if any(c in x for c in ' "=\n') else (x or "-")
+    head = json.dumps(str(turn.get("prompt") or "")[:80])
+    return (f"origin={v(turn.get('origin'))} who={v(who)} credential={v(cred_s)} "
+            f"client={v(client)} parent={v(parent)} prompt_head={head}")
+
+
+def _lineage_env(turn: dict) -> dict:
+    """WHICH turn / session / task this Claude session runs for, so anything it
+    asks canopy for in turn names it as the parent. The `canopy` CLI forwards
+    these as `X-Canopy-Parent-Turn` / `-Session` / `-Task` / `-Host`
+    (canopy-web apps/common/request_context.py), and canopy records them on the
+    turn or session the request creates. Without them a script run inside an
+    agent's session creates work that looks like its owner typed it.
+
+    Not secrets — ids. Only well-formed values are exported."""
+    out = {}
+    turn_id = str(turn.get("id") or "")
+    if re.fullmatch(r"[0-9a-fA-F-]{8,64}", turn_id):
+        out["CANOPY_TURN_ID"] = turn_id
+    chat_id = _chat_session_id(turn)
+    if re.fullmatch(r"[0-9a-fA-F-]{8,64}", chat_id or ""):
+        out["CANOPY_SESSION_ID"] = chat_id
+    thread = str((turn.get("origin_ref") or {}).get("thread_key") or "")
+    task = thread[len("emdash:"):] if thread.startswith("emdash:") else ""
+    if task and re.fullmatch(r"[\w.:@-]{1,200}", task):
+        out["CANOPY_EMDASH_TASK"] = task
+    try:
+        out["CANOPY_HOST"] = socket.gethostname()
+    except OSError:
+        pass
+    return out
+
+
 def _native_settings(turn: dict, cwd: pathlib.Path, caller_path: str) -> str | None:
     """A confined turn's capability as Claude Code's OWN permission rules, passed
     with `--settings` — the second layer under profile_guard (canopy_runner's
@@ -4117,7 +4175,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # own git pull needs it), its caller envelope and, for a chat, that
         # chat's key.
         per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
-                    **_chat_key_env(turn), **ONE_SHOT_TURN_ENV}
+                    **_chat_key_env(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV}
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(_turn_agent_slug(turn)))
@@ -4263,7 +4321,8 @@ def run_over_rest(runner_id: str) -> None:
             time.sleep(POLL_SECONDS)
             continue
         turn_id = turn["id"]
-        _log(f"claimed turn {turn_id[:8]} target={turn.get('target')} (REST)")
+        _log(f"claimed turn {turn_id[:8]} target={turn.get('target')} (REST) "
+             f"{_provenance_brief(turn)}")
         resume_id = _session_resume_plan(runner_id, turn)
         turn["_resume_id"] = resume_id or ""
         _api("POST", f"/turns/{turn_id}/start",
@@ -4375,7 +4434,7 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
     if not turn:
         return False
     tid = turn["id"]
-    _log(f"claimed turn {tid[:8]} target={turn.get('target')} (WS)")
+    _log(f"claimed turn {tid[:8]} target={turn.get('target')} (WS) {_provenance_brief(turn)}")
     resume_id = _session_resume_plan(runner_id, turn)
     turn["_resume_id"] = resume_id or ""
     _ws_request(ws, {"action": "start", "turn_id": tid,

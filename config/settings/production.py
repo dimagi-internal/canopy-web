@@ -54,20 +54,29 @@ CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h and h != "*"]
 # DATABASE_URL format: postgres://USER:PASSWORD@//cloudsql/PROJECT:REGION:INSTANCE/DBNAME
 # django-environ handles the //cloudsql/ socket path automatically
 
-# Logging
+# Logging — REAL JSON (apps/common/log_format.JsonFormatter). This was a format
+# string shaped like JSON, which broke on any quote in a message and carried no
+# timestamp, logger name or request id. `request_id` comes from
+# apps/common/request_context.RequestIdFilter (the X-Request-Id of the request in
+# flight). `canopy.provenance` is the TURN_CREATED / SESSION_CREATED audit line.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {"()": "apps.common.request_context.RequestIdFilter"},
+    },
     "formatters": {
-        "json": {
-            "format": '{"severity":"%(levelname)s","message":"%(message)s","module":"%(module)s"}',
-        },
+        "json": {"()": "apps.common.log_format.JsonFormatter"},
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "json",
+            "filters": ["request_id"],
         },
+    },
+    "loggers": {
+        "canopy.provenance": {"handlers": ["console"], "level": "INFO", "propagate": False},
     },
     "root": {
         "handlers": ["console"],

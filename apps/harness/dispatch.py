@@ -163,6 +163,9 @@ def dispatch(item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
             origin_ref=origin_ref,
             routing=spec.routing,
             initiator=_dispatch_initiator(item),
+            # The turn that raised the task (and its conversation) is what this
+            # work came FROM — the chain a reader follows back from the new turn.
+            parent=_dispatch_parent(item),
         )
         if _is_task(item):
             if turn.raised_from_task_id is None:
@@ -173,3 +176,14 @@ def dispatch(item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
             turn.save(update_fields=["raised_from"])
         turns.append(turn)
     return turns
+
+
+def _dispatch_parent(item) -> dict | None:
+    """The turn that raised `item` (an AgentTask), when one did."""
+    raised_by = getattr(item, "raised_by", None) if getattr(item, "raised_by_id", None) else None
+    if raised_by is None:
+        return None
+    parent = {"turn": raised_by}
+    if raised_by.chat_session_id:
+        parent["session"] = raised_by.chat_session
+    return parent

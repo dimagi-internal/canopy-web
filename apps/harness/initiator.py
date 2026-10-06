@@ -118,7 +118,13 @@ def for_request(request, *, via: str) -> Initiator:
 
     `request.auth_method` is stamped by `BearerTokenAuthMiddleware`; a request it
     did not touch was authenticated by canopy's own session.
+
+    A request an MCP tool call dispatched in-process (`request.via_mcp`) is
+    `via=mcp:<tool>` rather than the route's own channel: "chat" would claim
+    someone typed in canopy's chat, when a program called `canopy_sessions_send`.
     """
+    if getattr(request, "via_mcp", False):
+        via = f"mcp:{getattr(request, 'mcp_tool', '') or via}"
     contact = getattr(request, "contact", None)
     if contact is not None:
         return for_contact(contact, via=via)
@@ -139,8 +145,14 @@ def for_scope(scope, *, via: str) -> Initiator:
 def channel(request, default: str) -> str:
     """The channel a request came through. An app-delegated or contact token
     means an embedding host's widget, and names the host — "chat" would hide
-    that the person was on connect-labs rather than in canopy."""
-    app = getattr(request, "delegated_app", None)
+    that the person was on connect-labs rather than in canopy.
+
+    Takes a WebSocket scope (a dict) too: a widget's chat socket is the same
+    host's widget as its REST sends."""
+    if isinstance(request, dict):
+        app = request.get("delegated_app")
+    else:
+        app = getattr(request, "delegated_app", None)
     return f"widget:{app.name}" if app is not None else default
 
 
@@ -168,4 +180,13 @@ def describe(turn) -> dict:
         }
     if turn.initiator_agent:
         out["agent"] = turn.initiator_agent
+    # WHICH credential and program, and what it was started from — the half an
+    # assurance grade cannot say: `pat` is every script on that person's token
+    # AND their CLI. See apps/harness/provenance.py.
+    from .provenance import parent_of
+
+    prov = getattr(turn, "provenance", None) or {}
+    out["credential"] = prov.get("credential") or None
+    out["client"] = prov.get("client", "")
+    out["parent"] = parent_of(turn)
     return out

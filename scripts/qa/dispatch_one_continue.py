@@ -18,6 +18,13 @@ import time
 import urllib.error
 import urllib.request
 
+# What canopy records as the program behind anything this script creates
+# (X-Canopy-Client, User-Agent, X-Canopy-Parent-* from the environment).
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+import script_provenance  # noqa: E402
+
+SCRIPT = "dispatch_one_continue.py"
+NONCE = os.urandom(4).hex()
 URL = os.environ.get("CANOPY_URL", "").rstrip("/")
 PAT = os.environ.get("CANOPY_PAT", "")
 
@@ -26,6 +33,8 @@ def _post(path: str, body: dict) -> tuple[int, object]:
     r = urllib.request.Request(f"{URL}{path}", data=json.dumps(body).encode(), method="POST")
     r.add_header("Authorization", f"Bearer {PAT}")
     r.add_header("Content-Type", "application/json")
+    for k, v in script_provenance.headers(SCRIPT, NONCE).items():
+        r.add_header(k, v)
     try:
         with urllib.request.urlopen(r, timeout=30) as resp:
             raw = resp.read()
@@ -53,7 +62,8 @@ def main() -> int:
 
     body = {
         "origin": "manual", "idempotency_key": f"dispatch1-{int(time.time())}",
-        "prompt": args.prompt, "origin_ref": {"thread_key": args.thread},
+        "prompt": args.prompt,
+        "origin_ref": {"thread_key": args.thread, "e2e": {"script": SCRIPT, "nonce": NONCE}},
     }
     if args.agent:
         body["agent_slug"] = args.agent

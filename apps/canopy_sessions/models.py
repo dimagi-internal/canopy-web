@@ -98,6 +98,18 @@ class Session(models.Model):
     ordinal_scheme = models.PositiveSmallIntegerField(default=0)
     # Opaque product linkage (e.g. {"opp_slug": "..."}) — never interpreted here.
     metadata = models.JSONField(default=dict, blank=True)
+    # WHAT created this session and under which parent — the same shape and rules
+    # as `harness.Turn.provenance` / `parent_*` (apps/harness/provenance.py).
+    provenance = models.JSONField(default=dict, blank=True)
+    parent_turn = models.ForeignKey(
+        "harness.Turn", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="child_sessions",
+    )
+    parent_session = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="child_sessions",
+    )
+    parent_task = models.CharField(max_length=300, blank=True, default="")
+    parent_claude_session = models.CharField(max_length=100, blank=True, default="")
     #: What the attached page says it can do — the host's `registerAction`
     #: declarations, as a list of `{name, description, parameters}` where
     #: `parameters` is JSON-Schema.
