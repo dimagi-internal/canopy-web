@@ -153,6 +153,29 @@ def test_move_parent_requires_owner_of_both_ends(tree):
     assert r.status_code == 422
 
 
+def test_an_inherited_owner_cannot_move_a_child_out_from_under_its_parent(tree):
+    """Re-parenting ends the old parent's inherited ownerships exactly as
+    detaching does: org_owner owns `strategy` only through `dimagi`, and moving
+    it under `other` (a root only they own) would cut out dimagi's co-owners."""
+    co_owner = _user("coo@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=tree["dimagi"], user=co_owner, role=OWNER)
+    WorkspaceMembership.objects.create(workspace=tree["other"], user=tree["org_owner"], role=OWNER)
+    r = _json(_client(tree["org_owner"]), "put", "/api/workspaces/strategy/parent", {"parent": "other"})
+    assert r.status_code == 409, r.content
+    assert Workspace.objects.get(slug="strategy").parent_id == "dimagi"
+    assert services.member_role(co_owner, "strategy") == OWNER
+    # Restating the current parent is not a move, so it is not refused.
+    r = _json(_client(tree["org_owner"]), "put", "/api/workspaces/strategy/parent", {"parent": "dimagi"})
+    assert r.status_code == 200, r.content
+
+
+def test_a_direct_owner_may_still_move_their_workspace(tree):
+    WorkspaceMembership.objects.create(workspace=tree["other"], user=tree["div_owner"], role=OWNER)
+    r = _json(_client(tree["div_owner"]), "put", "/api/workspaces/strategy/parent", {"parent": "other"})
+    assert r.status_code == 200, r.content
+    assert Workspace.objects.get(slug="strategy").parent_id == "other"
+
+
 def test_delete_refuses_parent_with_children(tree):
     r = _client(tree["org_owner"]).delete("/api/workspaces/dimagi/")
     assert r.status_code == 409

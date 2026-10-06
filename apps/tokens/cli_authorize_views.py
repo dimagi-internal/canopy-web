@@ -21,7 +21,13 @@ import logging
 from urllib.parse import urlencode, urlparse
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest, HttpResponseRedirect
+from django.http import (
+    HttpRequest,
+    HttpResponse,
+    HttpResponseBadRequest,
+    HttpResponseForbidden,
+    HttpResponseRedirect,
+)
 from django.shortcuts import render
 from django.views.decorators.http import require_http_methods
 
@@ -74,6 +80,13 @@ def cli_authorize(request: HttpRequest) -> HttpResponse:
         return HttpResponseBadRequest("invalid or missing cb (must be http://127.0.0.1:NNNN/...)")
     if not state:
         return HttpResponseBadRequest("missing state")
+    # Meant for a person at a browser; a bearer that reaches it (the middleware
+    # signs one in) must not turn an hour-long OAuth token into a PAT.
+    from .middleware import minting_refusal
+
+    refused = minting_refusal(request)
+    if refused:
+        return HttpResponseForbidden(refused)
 
     if request.method == "GET":
         return render(

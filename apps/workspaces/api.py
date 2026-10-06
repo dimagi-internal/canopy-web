@@ -233,6 +233,16 @@ def set_workspace_parent(request: HttpRequest, slug: str, payload: WorkspacePare
         if getattr(m, "inherited", False):
             raise HttpError(409, "only a direct owner of this workspace can make it a root; "
                                  "you own it through its parent, and would lose it")
+    # Moving it under ANOTHER parent ends the old parent's inherited ownerships
+    # just as detaching does: an inherited owner re-parenting it under a root
+    # only they own cut every co-owner out. So an inherited owner may move it
+    # only where every current owner stays one (an org owner moving a division
+    # between two orgs they both run); a direct owner keeps the say they have.
+    owners_before = (
+        services.owner_user_ids(ws)
+        if ws.parent_id and payload.parent and payload.parent != ws.parent_id
+        and getattr(m, "inherited", False) else None
+    )
     from django.core.exceptions import ValidationError
     from django.db import transaction
 
@@ -240,6 +250,10 @@ def set_workspace_parent(request: HttpRequest, slug: str, payload: WorkspacePare
         with transaction.atomic():
             ws.parent_id = payload.parent or None
             ws.save()
+            if owners_before is not None and not owners_before <= services.owner_user_ids(ws):
+                raise HttpError(409, "only a direct owner of this workspace can move it where "
+                                     "its current owners would lose it; you own it through "
+                                     "its parent")
             mine = services.membership(request.user, ws)
             if mine is None:
                 # Cannot happen given the checks above (a direct owner stays one,

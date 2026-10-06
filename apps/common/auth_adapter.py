@@ -203,6 +203,34 @@ class CustomAccountAdapter(DefaultAccountAdapter):
     def is_open_for_signup(self, request):
         return False
 
+    def is_safe_url(self, url):
+        # allauth's own check trusts every host in ALLOWED_HOSTS, and labs runs
+        # with ALLOWED_HOSTS=["*"] (the ALB health-checks by IP) — so any
+        # `?next=https://evil.example` passed, an open redirect off the sign-in
+        # page. Trust a relative URL, the host this request came in on, and
+        # canopy's own named addresses; never ALLOWED_HOSTS.
+        from urllib.parse import urlparse
+
+        from django.conf import settings
+        from django.utils.http import url_has_allowed_host_and_scheme
+
+        allowed = set()
+        for base in (getattr(settings, "CANOPY_PUBLIC_BASE_URL", ""),
+                     getattr(settings, "CANOPY_IDENTITY_BASE_URL", ""),
+                     *(getattr(settings, "CANOPY_FORMER_BASE_URLS", None) or ())):
+            host = urlparse(base or "").netloc
+            if host:
+                allowed.add(host)
+        from allauth.core import context
+
+        request = context.request
+        if request is not None:
+            try:
+                allowed.add(request.get_host())
+            except Exception:  # noqa: BLE001 — a bad Host header earns no trust
+                pass
+        return url_has_allowed_host_and_scheme(url, allowed_hosts=allowed)
+
     def send_mail(self, template_prefix, email, context):
         # allauth sends NO mail here — every one of its messages (password
         # reset, "no account with that address", email confirmation) is for a

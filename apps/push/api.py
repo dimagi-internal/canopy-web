@@ -1,12 +1,15 @@
 """Django Ninja router for /api/push — Web Push subscription registry."""
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from django.conf import settings
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import TYPE_VALIDATION, ProblemError
 
 from .models import NotificationPreference, PushSubscription, session_idle_minutes_for
 from .schemas import (
@@ -28,6 +31,27 @@ def _push_configured() -> bool:
     return bool(settings.VAPID_PUBLIC_KEY and settings.VAPID_PRIVATE_KEY)
 
 
+def _refuse_unsendable(endpoint: str) -> None:
+    # canopy POSTs to every stored endpoint from inside the VPC, so an endpoint
+    # is an outbound URL a signed-in person typed — the blind-SSRF shape the
+    # host grant flow already guards (apps/tokens/outbound.py). A real browser's
+    # endpoint is always https on a public push service (FCM, Mozilla, Apple,
+    # WNS), so this refuses nothing a browser hands us. Deliberately NOT an
+    # allowlist of those hosts: a new push service must not need a deploy.
+    from apps.tokens.outbound import OutboundError, refuse_private
+
+    parsed = urlparse((endpoint or "").strip())
+    try:
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise OutboundError("a push endpoint must be an https URL")
+        if parsed.username or parsed.password:
+            raise OutboundError("a push endpoint must not carry credentials")
+        refuse_private(parsed.hostname)
+    except OutboundError as exc:
+        raise ProblemError(422, "Invalid push endpoint", type_=TYPE_VALIDATION,
+                           detail=str(exc)) from exc
+
+
 @router.get("/vapid-public-key", response=VapidKeyOut, summary="The VAPID public key")
 def vapid_public_key(request: HttpRequest) -> VapidKeyOut:
     """The browser needs this to subscribe. Not a secret — it ships in the JS
@@ -46,6 +70,7 @@ def subscribe(request: HttpRequest, payload: PushSubscribeIn):
     person, so on a shared device it must follow whoever is logged in now."""
     if not _push_configured():
         raise HttpError(503, "push is not configured")
+    _refuse_unsendable(payload.endpoint)
     PushSubscription.objects.update_or_create(
         endpoint=payload.endpoint,
         defaults={

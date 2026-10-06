@@ -219,6 +219,38 @@ def test_unauthenticated_is_refused(db):
         _call("list_workspaces")
 
 
+# -- a tool reaches its own route, and only that ---------------------------
+
+@pytest.mark.parametrize("slug", ["hal/runners", "hal?x=1", "hal#x", "..", "hal\\runners"])
+def test_a_path_argument_cannot_reach_another_route(tenancy, slug):
+    """`get_agent(slug="hal/runners")` would otherwise be answered by
+    `list_agent_runners` — a different route than the tool a confined or
+    delegated caller was allowed — because the transport decodes the path."""
+    with as_user(tenancy["jj"]), pytest.raises(ToolError, match="may not contain"):
+        _call("get_agent", {"slug": slug})
+
+
+@pytest.mark.parametrize("slug", ["hal/runners", "hal?x=1", "hal#x"])
+def test_the_transport_refuses_a_smuggled_path_on_its_own(tenancy, monkeypatch, slug):
+    """The second layer: with the argument check out of the way, the encoded
+    path reaching `_django_app` is still refused before Django routes it."""
+    monkeypatch.setattr(api_tools, "bad_path_arg", lambda value: False)
+    with as_user(tenancy["jj"]), pytest.raises(ToolError, match="400"):
+        _call("get_agent", {"slug": slug})
+
+
+@pytest.mark.parametrize("ws", ["connect/../secret", "secret/", "Connect", "a?b", "../api"])
+def test_the_workspace_argument_must_be_a_slug(tenancy, ws):
+    with as_user(tenancy["jj"]), pytest.raises(ToolError, match="not a workspace slug"):
+        _call("list_agents", {"workspace": ws})
+
+
+def test_ordinary_path_and_workspace_arguments_still_work(tenancy):
+    with as_user(tenancy["jj"]):
+        assert _call("get_agent", {"slug": "hal"})["slug"] == "hal"
+        assert _call("get_agent", {"slug": "eva", "workspace": "dimagi"})["slug"] == "eva"
+
+
 # -- the handoff into Django ----------------------------------------------
 
 def _request_with_scope(scope):
