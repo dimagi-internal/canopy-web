@@ -17,6 +17,10 @@ import pytest
 
 from canopy_runner import desktop
 
+#: The real resolver, for the tests about finding the CLI. Every other test runs
+#: with a stub, so they pass on a box with no Claude Code CLI at all — CI has none.
+REAL_CLAUDE_CLI = desktop.claude_cli
+
 
 class FakeClient:
     def __init__(self, plan=None):
@@ -40,6 +44,7 @@ class FakeClient:
 def fresh_runtime(monkeypatch):
     monkeypatch.setattr(desktop, "_current", desktop.EMDASH)
     monkeypatch.setattr(desktop, "IN_FLIGHT", {})
+    monkeypatch.setattr(desktop, "claude_cli", lambda: Path("/stub/bin/claude"))
     yield
 
 
@@ -300,6 +305,7 @@ def test_a_cancelled_chat_turn_stops_the_session_and_finishes_cancelled(cfg, tmp
 # ── finding the CLI under launchd's bare PATH ───────────────────────────────
 
 def _no_cli_anywhere(monkeypatch, tmp_path):
+    monkeypatch.setattr(desktop, "claude_cli", REAL_CLAUDE_CLI)  # the thing under test here
     monkeypatch.setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")  # what launchd gives the runner
     monkeypatch.setattr(desktop.Path, "home", classmethod(lambda cls: tmp_path))
     monkeypatch.setattr(desktop.shutil, "which", lambda name: None)
