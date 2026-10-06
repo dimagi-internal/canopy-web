@@ -9,6 +9,7 @@ import {
 } from '@/api/ddd'
 import { sceneHashFragment, withSceneHash } from '@/lib/sceneHash'
 import { withBase } from '@/lib/basePath'
+import { UPLOADED_CONTENT_SANDBOX } from '@/lib/uploadedContentSandbox'
 import {
   runSectionDomId,
   useRunSectionNav,
@@ -149,7 +150,7 @@ function HtmlEmbed({
         <iframe
           src={withSceneHash(withBase(contentUrl), sceneHash)}
           title={title}
-          sandbox="allow-scripts allow-same-origin"
+          sandbox={UPLOADED_CONTENT_SANDBOX}
           className="h-[70vh] w-full bg-white"
         />
       </div>

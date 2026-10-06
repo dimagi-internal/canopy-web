@@ -13,6 +13,7 @@ import { useAuth } from '@/auth/AuthProvider'
 import { currentNext, loginHref } from '@/auth/loginHref'
 import { withSceneHash } from '../lib/sceneHash'
 import { timeHashSeconds, withTimeFragment } from '../lib/timeHash'
+import { UPLOADED_CONTENT_SANDBOX } from '../lib/uploadedContentSandbox'
 
 /** A failed load, keeping the status so the render can tell the cases apart. */
 type LoadError = { status: number | null; message: string }
@@ -282,7 +283,7 @@ export function WalkthroughViewerPage() {
           <iframe
             src={contentSrc}
             title={w.title}
-            sandbox="allow-scripts allow-same-origin"
+            sandbox={UPLOADED_CONTENT_SANDBOX}
             className="w-full h-[80vh] bg-white"
           />
         )}

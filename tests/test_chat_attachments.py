@@ -162,6 +162,10 @@ def test_content_streams_the_bytes_inline():
     assert resp.content == PNG
     assert resp["Content-Type"] == "image/png"
     assert "inline" in resp["Content-Disposition"]
+    # Inline from canopy's origin: if the allowlist ever admits a document type,
+    # it still renders in an opaque origin, never as the viewer.
+    assert resp["Content-Security-Policy"] == "sandbox"
+    assert resp["X-Content-Type-Options"] == "nosniff"
 
 
 def test_a_teammate_can_read_what_was_shared_in_the_session():

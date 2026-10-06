@@ -19,8 +19,9 @@ import {
   type ProductFindingsRequestJson,
   type ProductFindingsResponseJson,
 } from '../api/reviews'
-import { walkthroughContentUrl } from '../api/walkthroughs'
+import { getWalkthrough, walkthroughContentUrl } from '../api/walkthroughs'
 import { withBase } from '../lib/basePath'
+import { UPLOADED_CONTENT_SANDBOX } from '../lib/uploadedContentSandbox'
 import {
   ReviewEditorProvider,
   useReviewEditor,
@@ -981,6 +982,37 @@ interface ReviewEditorInnerProps {
   onResolved: (updated: ReviewDetail) => void
 }
 
+/** The review's cut, by what it IS. A video plays in a `<video>` on this page —
+ *  NOT in a frame: an uploaded-content frame has an opaque origin (no
+ *  `allow-same-origin`, see UPLOADED_CONTENT_SANDBOX), and the browser's own media
+ *  document inside it fetches the bytes without the session cookie, so a private
+ *  cut 404s there. Anything else (a deck) goes in the sandboxed frame, where its
+ *  own script may drive its slides and nothing more. Until the kind is known we
+ *  render nothing rather than guess; if it cannot be learned, the frame. */
+function ReviewCut({ walkthroughId }: { walkthroughId: string }) {
+  const [kind, setKind] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    getWalkthrough(walkthroughId)
+      .then((w) => { if (live) setKind(w.kind) })
+      .catch(() => { if (live) setKind('unknown') })
+    return () => { live = false }
+  }, [walkthroughId])
+  const contentSrc = walkthroughContentUrl(walkthroughId)
+  if (kind === null) return <div className="h-[60vh]" />
+  if (kind === 'video') {
+    return <video src={contentSrc} controls className="w-full max-h-[60vh] bg-black" />
+  }
+  return (
+    <iframe
+      src={contentSrc}
+      title="Review cut"
+      sandbox={UPLOADED_CONTENT_SANDBOX}
+      className="w-full h-[60vh]"
+    />
+  )
+}
+
 function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }: ReviewEditorInnerProps) {
   const {
     state,
@@ -1185,15 +1217,7 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
   // Video embed
   let videoElement: React.ReactNode = null
   if (req.video?.walkthrough_id) {
-    const contentSrc = walkthroughContentUrl(req.video.walkthrough_id)
-    videoElement = (
-      <iframe
-        src={contentSrc}
-        title="Review cut"
-        sandbox="allow-scripts allow-same-origin"
-        className="w-full h-[60vh]"
-      />
-    )
+    videoElement = <ReviewCut walkthroughId={req.video.walkthrough_id} />
   } else if (req.video?.url) {
     videoElement = (
       <video src={withBase(req.video.url)} controls className="w-full max-h-[60vh] bg-black" />
