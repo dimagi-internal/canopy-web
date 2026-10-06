@@ -38,6 +38,7 @@ from apps.harness import initiator as who
 from . import assertions
 from .audit import client_ip, record as audit
 from .models import ContactToken, EmbedAuditLog
+from .schemas import WsTicketOut
 from .rate_limit import (
     ContactTokenRateLimitError,
     check_contact_token_client,
@@ -292,6 +293,21 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
         return False
     host_grants.record_outcome(app, ok=True, subject=subject, scope=grant.scope)
     return True
+
+
+@contact_router.post("/ws-ticket", response=WsTicketOut,
+                     summary="Trade this contact token for a one-time socket ticket")
+def contact_ws_ticket(request: HttpRequest) -> WsTicketOut:
+    """A single-use ticket to open my chat socket with, in place of the token.
+
+    Open the socket with `?ticket=<ticket>` instead of `?token=`: the ticket
+    works once, within `expires_in` seconds. Fetch a fresh one for every
+    connection, reconnects included.
+    """
+    from . import ws_ticket
+
+    return WsTicketOut(ticket=ws_ticket.mint(ws_ticket.bearer(request)),
+                       expires_in=ws_ticket.TICKET_TTL_SECONDS)
 
 
 @contact_router.get("/me", response=ContactMeOut, summary="Who canopy thinks I am")

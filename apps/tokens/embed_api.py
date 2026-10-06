@@ -26,7 +26,7 @@ from apps.workspaces import services as wsvc
 from .audit import record as audit
 from .models import AppCredential, DelegatedToken, EmbedAuditLog
 from .rate_limit import MintRateLimitError, check_mint_limit
-from .schemas import EmbedAgentOut, EmbedSelfOut, EmbedSelfTokenOut
+from .schemas import EmbedAgentOut, EmbedSelfOut, EmbedSelfTokenOut, WsTicketOut
 
 embed_router = Router(auth=session_auth, tags=["embed"])
 
@@ -195,3 +195,23 @@ def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
     audit(event=EmbedAuditLog.MINT, request=request, app=app, subject=request.user,
           detail=f"ttl={TOKEN_TTL_SECONDS}s host_grant={granted} page={page[:40]!r}")
     return EmbedSelfTokenOut(token=raw, expires_at=token.expires_at.isoformat(), host_grant=granted)
+
+
+@embed_router.post("/ws-ticket", response=WsTicketOut,
+                   summary="Trade this delegated token for a one-time socket ticket")
+def embed_ws_ticket(request: HttpRequest) -> WsTicketOut:
+    """A single-use ticket to open a chat socket with, in place of the token.
+
+    Open the socket with `?ticket=<ticket>` instead of `?token=`: the ticket
+    works once, within `expires_in` seconds, and stands for the delegated token
+    this request presented. Fetch a fresh one for every connection, reconnects
+    included.
+    """
+    # Only a delegated token is traded. A browser on canopy's own pages signs its
+    # socket in with the session cookie, and a PAT client can send a header.
+    from . import ws_ticket
+
+    raw = ws_ticket.bearer(request)
+    if getattr(request, "delegated_app", None) is None or DelegatedToken.lookup(raw) is None:
+        raise HttpError(400, "present the delegated token this ticket should stand for")
+    return WsTicketOut(ticket=ws_ticket.mint(raw), expires_in=ws_ticket.TICKET_TTL_SECONDS)

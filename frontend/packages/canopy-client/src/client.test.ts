@@ -393,3 +393,12 @@ describe('both principals are first-class', () => {
     expect(seen).toEqual([{ text: 'hi', client_id: 'n1' }])
   })
 })
+
+describe('ticketed socket URL', () => {
+  it('carries a ticket and no token', async () => {
+    const { buildSessionWsUrlWithTicket } = await import('./ws')
+    const url = buildSessionWsUrlWithTicket('https://canopy.example', 'sess-1', 'tk/1')
+    expect(url).toBe('wss://canopy.example/ws/canopy-sessions/sess-1/?ticket=tk%2F1')
+    expect(url).not.toContain('token=')
+  })
+})

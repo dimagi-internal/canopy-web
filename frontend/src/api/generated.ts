@@ -1205,6 +1205,55 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/embed/ws-ticket": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Trade this delegated token for a one-time socket ticket
+         * @description A single-use ticket to open a chat socket with, in place of the token.
+         *
+         *     Open the socket with `?ticket=<ticket>` instead of `?token=`: the ticket
+         *     works once, within `expires_in` seconds, and stands for the delegated token
+         *     this request presented. Fetch a fresh one for every connection, reconnects
+         *     included.
+         */
+        readonly post: operations["embed_ws_ticket"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/ws-ticket": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Trade this contact token for a one-time socket ticket
+         * @description A single-use ticket to open my chat socket with, in place of the token.
+         *
+         *     Open the socket with `?ticket=<ticket>` instead of `?token=`: the ticket
+         *     works once, within `expires_in` seconds. Fetch a fresh one for every
+         *     connection, reconnects included.
+         */
+        readonly post: operations["contact_ws_ticket"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/contact/me": {
         readonly parameters: {
             readonly query?: never;
@@ -8188,6 +8237,13 @@ export interface components {
              * @default false
              */
             readonly host_grant: boolean;
+        };
+        /** WsTicketOut */
+        readonly WsTicketOut: {
+            /** Ticket */
+            readonly ticket: string;
+            /** Expires In */
+            readonly expires_in: number;
         };
         /** ContactAgentOut */
         readonly ContactAgentOut: {
@@ -17522,6 +17578,46 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["EmbedSelfTokenOut"];
+                };
+            };
+        };
+    };
+    readonly embed_ws_ticket: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WsTicketOut"];
+                };
+            };
+        };
+    };
+    readonly contact_ws_ticket: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WsTicketOut"];
                 };
             };
         };

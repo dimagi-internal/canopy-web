@@ -39,7 +39,7 @@
 export { createTokenStore } from './token'
 export type { CanopyToken, FetchToken, Principal, TokenStore } from './token'
 
-export { buildSessionWsUrl } from './ws'
+export { buildSessionWsUrl, buildSessionWsUrlWithTicket } from './ws'
 export type { WsLocation } from './ws'
 
 export { createRest, CanopyRestError, RUNNER_STATUS_ONLINE } from './rest'
@@ -50,7 +50,7 @@ export type { ContextProvider, HostAction, HostBridge, HostContext } from './bri
 
 import { createRest, type CanopyRest } from './rest'
 import { createTokenStore, type FetchToken } from './token'
-import { buildSessionWsUrl } from './ws'
+import { buildSessionWsUrl, buildSessionWsUrlWithTicket } from './ws'
 
 export interface CanopyClientConfig {
   /** Browser-facing canopy base: a same-origin path prefix (`/canopy`) or an
@@ -73,6 +73,11 @@ export interface CanopyClient {
    *  socket in that state, and getting `null` is easier to handle correctly
    *  than a URL that will be rejected. */
   sessionSocketUrl(sessionId: string): string | null
+  /** The session socket URL with a fresh one-time ticket on it instead of the
+   *  token — what to open the socket with, since a URL lands in access logs.
+   *  Call it for EVERY connection, reconnects included: a ticket works once.
+   *  `contact` picks the contact surface for a visitor with no canopy account. */
+  sessionSocketTicketUrl(sessionId: string, opts?: { contact?: boolean }): Promise<string>
   /** Force the next request to re-mint. For a host that knows the user's
    *  identity changed (a sign-out, an account switch). */
   invalidateToken(): void
@@ -94,6 +99,11 @@ export function createCanopyClient(config: CanopyClientConfig): CanopyClient {
       const token = tokens.peek()
       if (!token) return null
       return buildSessionWsUrl(config.baseUrl, sessionId, token)
+    },
+    async sessionSocketTicketUrl(sessionId, opts) {
+      const path = opts?.contact ? '/api/contact/ws-ticket' : '/api/embed/ws-ticket'
+      const { ticket } = await rest.json<{ ticket: string }>(path, { method: 'POST' })
+      return buildSessionWsUrlWithTicket(config.baseUrl, sessionId, ticket)
     },
     invalidateToken() {
       tokens.clear()

@@ -303,6 +303,7 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/tokens/contact_api.py  (/api/contact/: ContactAuth; contact_session_q)
     "contact_token": ("host",),  # auth=None; site-signed assertion (+ optional ID-JAG)
     "contact_me": ("contact",),
+    "contact_ws_ticket": ("contact",),  # a one-time socket ticket standing for the caller's own contact token
     "start_session": ("contact",),
     "tokens_contact_list_sessions": ("contact",),
     "tokens_contact_get_session": ("contact",),
@@ -321,7 +322,8 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/tokens/embed_api.py
     "list_embeddable_agents": ("member",),  # delegated token required; app allowlist ∩ caller's workspaces
     "embed_self": ("authenticated",),
-    "embed_self_token": ("self",),  # mints a 15-min DelegatedToken for the caller
+    "embed_self_token": ("self",),
+    "embed_ws_ticket": ("self",),  # a one-time socket ticket standing for the caller's own delegated token  # mints a 15-min DelegatedToken for the caller
     # --- apps/projects/api.py  (reads: _member_project / request_workspace_slugs; writes: _may_write = CONTENT_WRITE)
     "projects_list_projects": ("member",),
     "projects_create_project": ("content.write",),  # creation_workspace + CONTENT_WRITE

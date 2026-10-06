@@ -633,9 +633,11 @@ function EmbedChat({
 }) {
   // No tool calls ever arrive here: canopy withholds them from every widget
   // connection, decided by the token rather than asked for (consumers.py).
+  // A one-time ticket per connection rather than the token on the URL: URLs are
+  // written to access logs, and a ticket found in one is already spent.
   const wsUrl = useCallback(
-    () => client.sessionSocketUrl(sessionId) ?? '',
-    [client, sessionId],
+    () => client.sessionSocketTicketUrl(sessionId, { contact: isContact }),
+    [client, sessionId, isContact],
   )
   // The agent asking this page to do something. Arrives on the session socket
   // as a DOORBELL only — the durable PageAction row is the mechanism, and the
