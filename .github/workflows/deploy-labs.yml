@@ -117,14 +117,15 @@ jobs:
           # Same list as runner provenance.CODE_PATHS and install-runner.sh's
           # RUNNER_CODE_PATHS (tests/test_runner_code_paths.py): the menu-bar app and
           # its icons ship through the same auto-update as the package.
-          PATHS="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar assets/brand"
-          SHA="$(git log -1 --format=%H -- $PATHS)"
+          # RUNNER_CODE, not *PATHS: the cloud step below owns `PATHS=` and its tests find it by that text.
+          RUNNER_CODE="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar assets/brand"
+          SHA="$(git log -1 --format=%H -- $RUNNER_CODE)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           # Committer epoch of the SAME commit, from the same command. A sha is an
           # identity, not a position: without this the supervisor can only say a
           # runner "differs" and was rendering that as "behind" — including for a
           # box installed from main ahead of the deploy, i.e. the most current one.
-          TS="$(git log -1 --format=%ct -- $PATHS)"
+          TS="$(git log -1 --format=%ct -- $RUNNER_CODE)"
           echo "committed_at=${TS:-0}" >> "$GITHUB_OUTPUT"
           echo "Runner source last changed at ${SHA:-<none>} (${TS:-0})"
 

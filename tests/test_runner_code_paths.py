@@ -34,7 +34,7 @@ def test_every_place_names_the_same_runner_code_paths():
     expected = _provenance_paths()
     assert _quoted(r'RUNNER_CODE_PATHS="([^"]+)"', "runner/canopy_runner/scripts/install-runner.sh") == expected
     assert _quoted(
-        r'id: runner_sha\n(?:.*\n)*?\s+PATHS="([^"]+)"', ".github/workflows/deploy-labs.yml"
+        r'RUNNER_CODE="([^"]+)"', ".github/workflows/deploy-labs.yml"
     ) == expected
     ps1 = (ROOT / "runner/canopy_runner/scripts/install-runner.ps1").read_text()
     m = re.search(r"\$RUNNER_CODE_PATHS = @\(([^)]+)\)", ps1)
