@@ -86,10 +86,11 @@ def mint_request_id(raw: str = "") -> str:
 
 
 def client_ip(request: HttpRequest) -> str:
-    """First X-Forwarded-For entry (the ALB's), else REMOTE_ADDR. Correlation,
-    not evidence — see apps/tokens/audit.client_ip."""
-    forwarded = (request.META.get("HTTP_X_FORWARDED_FOR") or "").split(",")[0].strip()
-    return clean(forwarded or request.META.get("REMOTE_ADDR") or "", 64)
+    """The caller's address (`apps/common/client_ip`), clamped for storage.
+    Correlation, not evidence."""
+    from .client_ip import client_ip as _client_ip
+
+    return clean(_client_ip(request), 64)
 
 
 def _meta(request: HttpRequest, header: str) -> str:

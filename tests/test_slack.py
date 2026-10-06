@@ -1203,6 +1203,11 @@ def _runner(name, *, kind=Runner.EMDASH, online=True, runner_owner, agent=None):
                               capabilities={"sessions": True})
     if agent is not None:
         RunnerAssignment.objects.create(agent=agent, runner=r, rank=0)
+        # A box holds an agent — its turns AND its chats' turns — only when its
+        # owner is one of the agent's admins (runner_may_hold_agent).
+        from apps.agents.models import AgentAdmin
+
+        AgentAdmin.objects.get_or_create(agent=agent, user=runner_owner)
     return r
 
 

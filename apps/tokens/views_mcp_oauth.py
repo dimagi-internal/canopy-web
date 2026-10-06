@@ -16,6 +16,7 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
+from apps.common.client_ip import client_ip
 from apps.common.script_prefix import self_full_path
 from apps.common.views_debug import is_machine
 
@@ -55,18 +56,13 @@ def preflight() -> HttpResponse:
     return cors(HttpResponse(status=204))
 
 
-def _client_ip(request: HttpRequest) -> str:
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    return forwarded.split(",")[0].strip() or request.META.get("REMOTE_ADDR", "")
-
-
 @csrf_exempt
 @require_http_methods(["POST", "OPTIONS"])
 def register(request: HttpRequest) -> HttpResponse:
     """RFC 7591 dynamic client registration, for public (PKCE) clients."""
     if request.method == "OPTIONS":
         return preflight()
-    key = f"mcp-oauth:register:{_client_ip(request)}"
+    key = f"mcp-oauth:register:{client_ip(request) or 'unknown'}"
     cache.add(key, 0, timeout=3600)
     if cache.incr(key) > REGISTER_LIMIT:
         return cors(JsonResponse({"error": "slow_down",

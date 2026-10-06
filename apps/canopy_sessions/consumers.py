@@ -679,19 +679,18 @@ def _socket_context(scope) -> dict:
     """A WebSocket's provenance context: client=websocket, its user agent and
     address, and the door that authenticated it (`channels_auth`)."""
     from apps.common import request_context as rc
+    from apps.common.client_ip import from_scope
 
     headers = {k.decode("latin-1").lower(): v.decode("latin-1", "replace")
                for k, v in scope.get("headers") or []}
     method = scope.get("auth_method") or ("contact" if scope.get("contact") is not None else "")
     app = scope.get("delegated_app")
     cred = {"type": method, "id": None, "label": getattr(app, "name", "") or ""} if method else None
-    client = scope.get("client") or ("", 0)
-    forwarded = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
     ctx = {
         "request_id": rc.mint_request_id(headers.get("x-request-id", "")),
         "client": "websocket",
         "user_agent": rc.clean(headers.get("user-agent", "")),
-        "ip": rc.clean(forwarded or (client[0] if client else ""), 64),
+        "ip": rc.clean(from_scope(scope), 64),
         "credential": cred,
     }
     return {k: v for k, v in ctx.items() if v}

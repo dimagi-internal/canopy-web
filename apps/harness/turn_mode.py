@@ -42,7 +42,9 @@ their turn runs in its full profile — but never in `auto`: whatever a rule or 
 agent's switch says, the turn is manual and its basis says why, because acting
 outbound unreviewed is for the agent's owner and admins. Decided at every claim
 (`access.decide_for_turn`), so promoting the editor to admin while the turn is
-queued takes effect, as does a demotion.
+queued takes effect, as does a demotion. The same holds for a turn canopy
+starts on someone's behalf — a schedule's occurrence is bounded by its
+creator, so a schedule is not a way around the cap.
 
 Pure given the loaded rows, like `services.assignment_rows_for` — callable from
 the claim path (which has them) and from the envelope (which loads them).
@@ -107,15 +109,42 @@ def requested(turn, agent) -> Resolved | None:
 
 def editor_cap(turn, agent) -> Resolved | None:
     """MANUAL for a turn started by a workspace editor who is not an agent admin
-    (the editor tier of docs/architecture/access.md), else None."""
+    (the editor tier of docs/architecture/access.md), or for one canopy started
+    on behalf of such a person (`_accountable_cap`), else None."""
     if getattr(turn, "initiator_user_id", None) is None:
         return None
+    from . import initiator as who
+
+    if turn.initiator_kind == who.SYSTEM:
+        return _accountable_cap(turn, agent)
     from apps.agents import access
 
     if not access.decide_for_turn(turn, agent).manual_only:
         return None
     email = turn.initiator_user.email if turn.initiator_user is not None else "a member"
     return Resolved(MANUAL, f"editor {email}: manual — outbound needs an admin of {agent.slug}")
+
+
+def _accountable_cap(turn, agent) -> Resolved | None:
+    """The editor cap for a turn CANOPY started on someone's behalf — a schedule
+    firing (or run now, or a one-off) for its creator, a drill for whoever ran it.
+
+    `access.decide` gives a SYSTEM turn the agent's whole profile and no cap,
+    which is right for canopy itself but let an editor launder their work into
+    `auto`: create a schedule, and every occurrence ran as SYSTEM, past the cap
+    their own dispatch would hit. So the turn is bounded by the person recorded
+    as accountable (`initiator.system(accountable=...)`): unless they are an
+    admin of the agent, or the agent's own login (`Agent.user` is the agent
+    itself), it runs manual. No accountable person (a schedule whose creator is
+    unknown) keeps the SYSTEM posture, as before."""
+    user = turn.initiator_user
+    if user is None or (agent.user_id is not None and agent.user_id == user.pk):
+        return None
+    if agent.is_admin(user):
+        return None
+    via = (turn.initiator_via or "canopy").split(":", 1)[0]
+    return Resolved(MANUAL, f"{via} for {user.email}: manual — {user.email} is not an "
+                            f"admin of {agent.slug}")
 
 
 def _agent_of(turn):

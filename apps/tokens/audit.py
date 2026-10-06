@@ -25,17 +25,13 @@ log = logging.getLogger(__name__)
 
 
 def client_ip(request: HttpRequest | None) -> str | None:
-    """The caller's address, preferring the proxy header the ALB sets.
+    """The caller's address (`apps/common/client_ip`), or None when unknown.
 
-    `X-Forwarded-For` is a client-settable header on a direct connection, so
-    this is correlation material rather than evidence. Taking the FIRST entry
-    is the convention behind a single trusted proxy, which is what canopy runs
-    behind on labs.
-    """
-    if request is None:
-        return None
-    forwarded = (request.META.get("HTTP_X_FORWARDED_FOR") or "").split(",")[0].strip()
-    return forwarded or request.META.get("REMOTE_ADDR") or None
+    Correlation material rather than evidence: it is the address the ALB saw,
+    which may be a NAT or a VPN."""
+    from apps.common.client_ip import client_ip as _client_ip
+
+    return _client_ip(request) or None
 
 
 def record(

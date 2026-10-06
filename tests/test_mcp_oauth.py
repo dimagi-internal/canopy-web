@@ -163,6 +163,23 @@ def test_registration_is_rate_limited(settings):
     assert _register().status_code == 429
 
 
+
+def test_rewriting_the_first_forwarded_entry_does_not_dodge_the_limit(db):
+    """The ALB appends the real address; a client rotating the entry it writes
+    itself still lands in one bucket (apps/common/client_ip.py)."""
+    from apps.tokens import views_mcp_oauth
+
+    def register(i):
+        return Client().post(
+            "/oauth/register", {"client_name": "x", "redirect_uris": [REDIRECT]},
+            content_type="application/json",
+            HTTP_X_FORWARDED_FOR=f"198.51.100.{i}, 203.0.113.7",
+        )
+
+    for i in range(views_mcp_oauth.REGISTER_LIMIT):
+        assert register(i).status_code == 201
+    assert register(999).status_code == 429
+
 # -- the consent page ------------------------------------------------------
 
 def test_an_anonymous_visitor_is_sent_to_sign_in_and_back():

@@ -386,6 +386,12 @@ AGENT_RUNS_DRIVE_SA_KEY_PATH = env("AGENT_RUNS_DRIVE_SA_KEY_PATH", default="")
 #   AGENT_RUNS_DRIVE_ROOTS='{"ace": "0AbCdEf...root-folder-id"}'
 AGENT_RUNS_DRIVE_ROOTS = env.json("AGENT_RUNS_DRIVE_ROOTS", default={})
 
+# How many proxies APPEND to X-Forwarded-For in front of Django: 1 = the AWS
+# ALB alone (canopy.dimagi.com is a DNS-only CNAME to it). The client address is
+# that many entries from the END — the first entry is whatever the client wrote.
+# Read only by apps/common/client_ip.py.
+CANOPY_TRUSTED_PROXY_HOPS = env.int("CANOPY_TRUSTED_PROXY_HOPS", default=1)
+
 # Machine-caller authentication: see apps/tokens/ for Personal Access
 # Tokens. Mint with `manage.py create_token --email X --label Y`; the
 # raw value goes in the `Authorization: Bearer <raw>` header and
