@@ -37,9 +37,9 @@ class Session(models.Model):
         "workspaces.Workspace", on_delete=models.PROTECT, related_name="chat_sessions",
     )
     # The repo checkout this session drives (the emdash project name), for an
-    # agentless PROJECT chat. A bare string mirroring Turn.project — NOT a FK to
-    # projects.Project, so this framework-tier app never imports product code. A
-    # session targets an agent XOR a project (or neither).
+    # agentless PROJECT chat. A bare string mirroring Turn.project — a repo
+    # name, not a row anywhere. A session targets an agent XOR a project (or
+    # neither).
     project = models.CharField(max_length=100, blank=True, default="")
 
     @property

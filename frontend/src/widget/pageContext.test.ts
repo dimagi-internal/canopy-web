@@ -44,9 +44,8 @@ describe('the route layer', () => {
     })
   })
 
-  it('describes the workbench at the bare workspace root', () => {
-    expect(describePage('/w/connect').surface).toBe('the project workbench')
-    expect(describePage('/w/connect/').surface).toBe('the project workbench')
+  it('has no surface of its own at the bare workspace root (it redirects to agents)', () => {
+    expect(describePage('/w/connect').surface).not.toBe('the project workbench')
   })
 
   it('covers the personal surfaces', () => {

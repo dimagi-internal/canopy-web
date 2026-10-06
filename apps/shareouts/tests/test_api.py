@@ -12,7 +12,6 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client, override_settings
 
-from apps.projects.models import Project
 from apps.shareouts.models import Shareout
 from apps.shareouts.schemas import ShareoutOut
 
@@ -21,10 +20,6 @@ User = get_user_model()
 
 def _make_user(username="alice", email="alice@dimagi.com"):
     return User.objects.create_user(username=username, email=email, password="pw")
-
-
-def _make_project(slug="canopy-web", name="canopy-web"):
-    return Project.objects.create(name=name, slug=slug, status="active")
 
 
 def _auth_client(user=None):
@@ -75,7 +70,6 @@ def test_post_pat_writable():
 
     user = User.objects.create_user(username="bot", email="bot@dimagi-ai.com")
     raw, _ = PersonalToken.create_for_user(user=user, label="shareout-writer")
-    _make_project()
     resp = Client().post(
         "/api/shareouts/",
         data=json.dumps({"shareouts": [_item()]}),
@@ -91,12 +85,11 @@ def test_post_pat_writable():
 
 @pytest.mark.django_db
 def test_post_creates_rows():
-    _make_project()
     c = _auth_client()
     resp = _post(c, {"shareouts": [_item()]})
     assert resp.status_code == 201
     body = resp.json()
-    assert body == {"created": 1, "replaced": 0, "skipped": 0}
+    assert body == {"created": 1, "replaced": 0}
     assert Shareout.objects.count() == 1
 
 
@@ -107,33 +100,50 @@ def test_post_rollup_has_null_project():
     assert resp.status_code == 201
     assert resp.json()["created"] == 1
     row = Shareout.objects.get()
-    assert row.project_id is None
+    assert row.project_slug is None
 
 
 @pytest.mark.django_db
-def test_post_unknown_slug_skipped():
+def test_post_any_well_formed_slug_is_stored():
+    """There is no project registry to check a slug against any more: any
+    well-formed slug is stored as given (it used to be skipped as unknown)."""
     c = _auth_client()
-    resp = _post(c, {"shareouts": [_item(project_slug="does-not-exist")]})
+    resp = _post(c, {"shareouts": [_item(project_slug="never-registered.repo")]})
     assert resp.status_code == 201
-    assert resp.json() == {"created": 0, "replaced": 0, "skipped": 1}
+    assert resp.json() == {"created": 1, "replaced": 0}
+    assert Shareout.objects.get().project_slug == "never-registered.repo"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("bad", ["has space", "-leading", "slash/in/it", "x" * 201])
+def test_post_malformed_slug_is_rejected(bad):
+    c = _auth_client()
+    resp = _post(c, {"shareouts": [_item(project_slug=bad)]})
+    assert resp.status_code == 422
     assert Shareout.objects.count() == 0
 
 
 @pytest.mark.django_db
+def test_post_empty_slug_is_the_rollup():
+    c = _auth_client()
+    resp = _post(c, {"shareouts": [_item(project_slug="")]})
+    assert resp.status_code == 201
+    assert Shareout.objects.get().project_slug is None
+
+
+@pytest.mark.django_db
 def test_post_idempotent_replace_same_group():
-    _make_project()
     c = _auth_client()
     _post(c, {"shareouts": [_item(content="v1")]})
     resp = _post(c, {"shareouts": [_item(content="v2")]})
     assert resp.status_code == 201
-    assert resp.json() == {"created": 1, "replaced": 1, "skipped": 0}
+    assert resp.json() == {"created": 1, "replaced": 1}
     assert Shareout.objects.count() == 1
     assert Shareout.objects.get().content == "v2"
 
 
 @pytest.mark.django_db
 def test_post_different_period_does_not_replace():
-    _make_project()
     c = _auth_client()
     _post(c, {"shareouts": [_item(period_start="2026-06-02T09:00:00Z", period_end="2026-06-02T17:00:00Z")]})
     _post(c, {"shareouts": [_item(period_start="2026-06-03T09:00:00Z", period_end="2026-06-03T17:00:00Z")]})
@@ -145,7 +155,6 @@ def test_post_different_period_does_not_replace():
 
 @pytest.mark.django_db
 def test_list_returns_rows_and_validates():
-    _make_project()
     c = _auth_client()
     _post(c, {"shareouts": [_item()]})
     resp = c.get("/api/shareouts/")
@@ -159,8 +168,6 @@ def test_list_returns_rows_and_validates():
 
 @pytest.mark.django_db
 def test_list_project_filter_excludes_others():
-    _make_project(slug="canopy-web")
-    _make_project(slug="ace", name="ace")
     c = _auth_client()
     _post(c, {"shareouts": [_item(project_slug="canopy-web")]})
     _post(c, {"shareouts": [_item(project_slug="ace")]})
@@ -172,7 +179,6 @@ def test_list_project_filter_excludes_others():
 
 @pytest.mark.django_db
 def test_list_date_filter():
-    _make_project()
     c = _auth_client()
     _post(c, {"shareouts": [_item(period_start="2026-05-01T09:00:00Z", period_end="2026-05-01T17:00:00Z")]})
     _post(c, {"shareouts": [_item(period_start="2026-06-03T09:00:00Z", period_end="2026-06-03T17:00:00Z")]})
@@ -187,7 +193,6 @@ def test_list_date_filter():
 
 @pytest.mark.django_db
 def test_clear_by_source():
-    _make_project()
     c = _auth_client()
     _post(c, {"shareouts": [_item(source="run-A")]})
     _post(c, {"shareouts": [_item(period_start="2026-06-04T09:00:00Z", period_end="2026-06-04T17:00:00Z", source="run-B")]})
@@ -200,7 +205,6 @@ def test_clear_by_source():
 
 @pytest.mark.django_db
 def test_clear_empty_body_clears_all():
-    _make_project()
     c = _auth_client()
     _post(c, {"shareouts": [_item()]})
     resp = c.post("/api/shareouts/clear/", data=json.dumps({}), content_type="application/json")
@@ -217,7 +221,6 @@ def test_produced_by_agent_round_trips():
     """An agent-produced shareout records the producer; a human run omits it
     and reads back as empty."""
     client = _auth_client()
-    _make_project()
     resp = _post(client, {"shareouts": [
         _item(produced_by_agent="eva"),
         _item(project_slug=None, title="Roll-up", produced_by_agent="eva"),
@@ -229,7 +232,6 @@ def test_produced_by_agent_round_trips():
     assert all(r["produced_by_agent"] == "eva" for r in rows)
 
     # A human run (no produced_by_agent) reads back as "".
-    _make_project(slug="echo", name="echo")
     _post(client, {"shareouts": [_item(
         project_slug="echo",
         source="canopy:shareout@human",
@@ -243,10 +245,9 @@ def test_produced_by_agent_not_in_idempotency_key():
     """produced_by_agent rides along — two posts differing ONLY in it (same
     project+period+source) still dedupe to one row, latest value winning."""
     client = _auth_client()
-    _make_project()
     _post(client, {"shareouts": [_item(produced_by_agent="")]})
     _post(client, {"shareouts": [_item(produced_by_agent="eva")]})
 
-    rows = Shareout.objects.filter(project__slug="canopy-web")
+    rows = Shareout.objects.filter(project_slug="canopy-web")
     assert rows.count() == 1, "same period+source must replace, not append"
     assert rows.first().produced_by_agent == "eva"

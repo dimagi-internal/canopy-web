@@ -82,7 +82,7 @@ def test_minted_cookie_authorizes_api(auth_client, db):
 
     fresh = Client()
     fresh.cookies["sessionid"] = mint["cookie_value"]
-    resp = fresh.get("/api/projects/")
+    resp = fresh.get("/api/agents/")
     assert resp.status_code == 200
 
 

@@ -12,7 +12,6 @@ import { lazyRoute } from './pwa/staleChunk'
 import { CredentialsRedirect } from './pages/agents/CredentialsRedirect'
 import { AgentSkillsPage } from './pages/agents/AgentSkillsPage'
 import { WorkRedirect } from './pages/agents/WorkRedirect'
-import { ProjectsPage } from './pages/ProjectsPage'
 import { ShareoutsPage } from './pages/ShareoutsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { WalkthroughsPage } from './pages/WalkthroughsPage'
@@ -145,7 +144,7 @@ export function TenantRedirect({ to }: { to: string }) {
   return <Navigate to={`/w/${active}/${to}${suffix}`} replace />
 }
 
-// Bare "/" → the active workspace's workbench.
+// Bare "/" → the active workspace's index (which lands on its agents).
 export function RootRedirect() {
   const { active, loading } = useWorkspace()
   if (loading) return null
@@ -165,7 +164,9 @@ export function SettingsRedirect({ to }: { to: string }) {
 }
 
 // /w/:workspace index. Disambiguates a legacy /w/<uuid> walkthrough link
-// (redirect to the new viewer) from a real workspace slug (render the workbench).
+// (redirect to the new viewer) from a real workspace slug, which lands on the
+// workspace's agents: their projects and tasks are canopy's one project system
+// (the workbench Projects page that used to live here was retired 2026-10-06).
 function WorkspaceIndex() {
   const { workspace } = useParams()
   const { search, hash } = useLocation()
@@ -173,7 +174,7 @@ function WorkspaceIndex() {
     // Preserve ?t=<share_token> and #t=<seconds> across the redirect.
     return <Navigate to={`/walkthrough/${workspace}${search}${hash}`} replace />
   }
-  return <ProjectsPage />
+  return <Navigate to={`/w/${workspace}/agents`} replace />
 }
 
 /**
@@ -274,6 +275,8 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/walkthroughs', element: <WalkthroughsPage /> },
       { path: '/w/:workspace/storyboards', element: <StoryboardsPage /> },
       { path: '/w/:workspace/agents', element: <AgentsPage /> },
+      // The retired workbench Projects page. Agent projects/tasks replaced it.
+      { path: '/w/:workspace/projects', element: <WorkspaceIndex /> },
       { path: '/w/:workspace/schedules', element: <SchedulesPage /> },
       {
         path: '/w/:workspace/chat',
@@ -361,6 +364,8 @@ export const routeTable: RouteObject[] = [
       // The Insights feed was retired (superseded by agent tasks/items); old
       // bookmarks land on the home page rather than the not-found screen.
       { path: '/insights', element: <Navigate to="/" replace /> },
+      // Same for the retired workbench Projects page (it was the workspace index).
+      { path: '/projects', element: <Navigate to="/" replace /> },
 
       // Catch-all (LAST): an unmatched path is a bad URL OR a browser still on
       // a pre-deploy bundle (PWA precache) whose router lacks a route this

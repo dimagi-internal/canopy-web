@@ -47,13 +47,6 @@ describe('guideGroups', () => {
     expect(chats?.surfaces.map((s) => s.path)).toContain('/w/:workspace/chat/:id')
   })
 
-  it('does not let the tenant index swallow every tenant path', () => {
-    // /w/:workspace prefixes every tenant route; if it prefix-matched, the group
-    // holding Projects would absorb the entire app.
-    const work = guideGroups().find((g) => g.surfaces.some((s) => s.path === '/w/:workspace'))
-    expect(work?.surfaces.map((s) => s.path)).not.toContain('/w/:workspace/settings')
-  })
-
   it('keeps Elsewhere a small remainder, not a dumping ground', () => {
     const elsewhere = guideGroups().find((g) => g.label === 'Elsewhere')
     // Measured at ~4 genuinely uncategorised surfaces. A jump here means a new

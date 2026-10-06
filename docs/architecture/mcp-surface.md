@@ -30,8 +30,8 @@ share, session-noise audit). The implementation lives in `apps/mcp/`.
 | `audit.py` | `current_user_id()` + `write_audit()` (writes `MCPAuditLog`). |
 | `models.py` | `MCPAuditLog` — one row per tool call. |
 
-Tools reuse the SAME service functions as the REST views
-(`apps.projects.services`), so the REST and MCP surfaces cannot drift.
+Tools ARE the REST views (each call is dispatched in-process to its route), so
+the REST and MCP surfaces cannot drift.
 
 ## Auth model — dual auth (MultiAuth)
 

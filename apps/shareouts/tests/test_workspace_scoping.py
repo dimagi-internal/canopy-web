@@ -40,7 +40,7 @@ def _client(u):
 
 
 def _item(**overrides):
-    # Roll-up rows (project_slug=None) so scoping tests don't need a Project.
+    # Roll-up rows (project_slug=None): scoping is by workspace, not project.
     base = {
         "project_slug": None,
         "period_start": "2026-06-03T09:00:00Z",
@@ -116,7 +116,7 @@ def _workspace(slug):
 
 def _shareout_in(ws):
     return Shareout.objects.create(
-        project=None, workspace=ws,
+        project_slug=None, workspace=ws,
         period_start="2026-06-03T09:00:00Z", period_end="2026-06-03T17:30:00Z",
         title="Other tenant's briefing", content="secret", source="s",
     )

@@ -110,13 +110,6 @@ export const SURFACES: SurfaceDescriptor[] = [
 
   // --- Tenant-scoped surfaces under /w/:workspace ---
   {
-    path: '/w/:workspace',
-    title: 'Project workbench',
-    audience: 'Anyone in a workspace',
-    what: 'The workspace home — a tile per project, most recently updated first, with stale projects tucked behind a toggle. Expand a tile for its summary, hygiene actions and skills.',
-    actions: ['Open a project', 'Show stale projects'],
-  },
-  {
     path: '/w/:workspace/settings',
     title: 'Workspace settings',
     audience: 'Any workspace member (owner-only actions)',

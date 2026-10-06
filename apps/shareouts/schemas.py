@@ -20,10 +20,16 @@ class ShareoutPR(StrictModel):
     state: str = ""
 
 
+#: A repo slug: letters, digits, `-`, `_` and `.` (repo names carry dots), not
+#: starting with a separator — or "" (treated like null: the roll-up). Any
+#: well-formed slug is accepted; there is no project registry to check it against.
+PROJECT_SLUG_PATTERN = r"^([A-Za-z0-9][A-Za-z0-9._-]*)?$"
+
+
 class ShareoutIn(StrictModel):
     """One briefing in a POST batch. `project_slug` omitted/null = roll-up."""
 
-    project_slug: str | None = None
+    project_slug: str | None = Field(default=None, max_length=200, pattern=PROJECT_SLUG_PATTERN)
     period_start: dt.datetime
     period_end: dt.datetime
     title: str = Field(min_length=1, max_length=200)
@@ -45,7 +51,6 @@ class ShareoutBatchIn(StrictModel):
 class ShareoutBatchOut(StrictModel):
     created: int
     replaced: int
-    skipped: int
 
 
 class ShareoutsClearIn(StrictModel):
@@ -66,7 +71,6 @@ class ShareoutsClearOut(StrictModel):
 class ShareoutOut(StrictModel):
     id: int
     project_slug: str | None = None
-    project_name: str | None = None
     period_start: dt.datetime
     period_end: dt.datetime
     title: str

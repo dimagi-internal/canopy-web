@@ -7,8 +7,6 @@ import datetime as dt
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.projects.models import Project
-
 from .models import Shareout
 
 
@@ -19,17 +17,6 @@ def _aware(value):
     if isinstance(value, dt.datetime) and timezone.is_naive(value):
         return value.replace(tzinfo=dt.timezone.utc)
     return value
-
-
-def _resolve_project(slug: str | None) -> tuple[Project | None, bool]:
-    """Return (project, ok). ok is False only when a non-null slug doesn't
-    resolve — the caller skips those. A null slug is the roll-up (ok=True)."""
-    if not slug:
-        return None, True
-    try:
-        return Project.objects.get(slug=slug), True
-    except Project.DoesNotExist:
-        return None, False
 
 
 def upsert_shareouts(items: list, *, workspace=None, created_by=None) -> dict:
@@ -46,26 +33,23 @@ def upsert_shareouts(items: list, *, workspace=None, created_by=None) -> dict:
     same source for everybody).
 
     `items` is a list of ShareoutIn-like objects (anything with the attribute
-    names). Items whose `project_slug` doesn't resolve are skipped. `workspace`
-    is the tenant these rows belong to (assigned on create).
+    names). `project_slug` is stored as given (the schema checks its shape);
+    there is no project registry to resolve it against. `workspace` is the
+    tenant these rows belong to (assigned on create).
 
-    Returns {created, replaced, skipped}.
+    Returns {created, replaced}.
     """
-    created = replaced = skipped = 0
+    created = replaced = 0
     cleared_groups: set[tuple] = set()
 
     for item in items:
-        project, ok = _resolve_project(item.project_slug)
-        if not ok:
-            skipped += 1
-            continue
-
+        project_slug = item.project_slug or None
         period_start = _aware(item.period_start)
         period_end = _aware(item.period_end)
         group = (
             workspace.pk if workspace else None,
             created_by.pk if created_by else None,
-            project.pk if project else None,
+            project_slug,
             period_start,
             period_end,
             item.source,
@@ -74,7 +58,7 @@ def upsert_shareouts(items: list, *, workspace=None, created_by=None) -> dict:
             existing = Shareout.objects.filter(
                 workspace=workspace,
                 created_by=created_by,
-                project=project,
+                project_slug=project_slug,
                 period_start=period_start,
                 period_end=period_end,
                 source=item.source,
@@ -85,7 +69,7 @@ def upsert_shareouts(items: list, *, workspace=None, created_by=None) -> dict:
 
         Shareout.objects.create(
             workspace=workspace,
-            project=project,
+            project_slug=project_slug,
             period_start=period_start,
             period_end=period_end,
             title=item.title,
@@ -100,7 +84,7 @@ def upsert_shareouts(items: list, *, workspace=None, created_by=None) -> dict:
         )
         created += 1
 
-    return {"created": created, "replaced": replaced, "skipped": skipped}
+    return {"created": created, "replaced": replaced}
 
 
 def clear_shareouts(
@@ -133,7 +117,7 @@ def clear_shareouts(
     if source:
         qs = qs.filter(source=source)
     if project:
-        qs = qs.filter(project__slug=project)
+        qs = qs.filter(project_slug=project)
     if date_from is not None:
         qs = qs.filter(period_end__date__gte=date_from)
     if date_to is not None:
@@ -162,7 +146,7 @@ def list_shareouts(
                        tenant scoping (used by non-scoped callers/tests).
     """
     limit = min(max(limit, 0), 500)
-    qs = Shareout.objects.select_related("project").all()
+    qs = Shareout.objects.all()
     if workspace_slugs is not None:
         qs = qs.filter(workspace_id__in=workspace_slugs)
     if date_from is not None:
@@ -170,13 +154,12 @@ def list_shareouts(
     if date_to is not None:
         qs = qs.filter(period_start__date__lte=date_to)
     if project:
-        qs = qs.filter(project__slug=project)
+        qs = qs.filter(project_slug=project)
 
     return [
         {
             "id": s.pk,
-            "project_slug": s.project.slug if s.project_id else None,
-            "project_name": s.project.name if s.project_id else None,
+            "project_slug": s.project_slug or None,
             "period_start": s.period_start,
             "period_end": s.period_end,
             "title": s.title,

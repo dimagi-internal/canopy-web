@@ -17,7 +17,7 @@ describe('canopyPresenceRules — which pages get presence at all', () => {
     // badge. These all used to have rules; presence on them was noise, since
     // nobody can collide with anyone by reading.
     for (const path of [
-      '/w/dimagi',                       // workspace index (Projects)
+      '/w/dimagi',                       // workspace index (redirects to agents)
       '/w/dimagi/',
       '/w/dimagi/members',
       '/w/dimagi/timeline',

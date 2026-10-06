@@ -995,6 +995,10 @@ class AgentGitHubOut(StrictModel):
     error: str = ""
     checked_at: datetime | None = None
     updated_at: datetime | None = None
+    #: Repos whose agentless project turns (`Turn.project`, no agent) run as
+    #: this agent's GitHub identity — its `RepoIdentity` rows. Read-only here;
+    #: set in Django admin.
+    identity_for_repos: list[str] = Field(default_factory=list)
 
 
 # ---- A2A Agent Card (apps/agents/agent_card.py) ----

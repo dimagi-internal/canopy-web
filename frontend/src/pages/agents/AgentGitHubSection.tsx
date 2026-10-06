@@ -113,6 +113,18 @@ export function AgentGitHubSection({ slug }: { slug: string }) {
           </ul>
         )}
         {gh.error && <p className="mt-1 text-destructive">{gh.error}</p>}
+        {(gh.identity_for_repos ?? []).length > 0 && (
+          <p className="mt-1 text-[11px] text-muted-foreground" data-testid="github-identity-for-repos">
+            Agentless turns on{' '}
+            {(gh.identity_for_repos ?? []).map((r, i) => (
+              <span key={r}>
+                {i > 0 ? ', ' : null}
+                <span className="font-mono">{r}</span>
+              </span>
+            ))}{' '}
+            also run as this identity.
+          </p>
+        )}
 
         {isOwner ? (
           <div className="mt-3 border-t border-border pt-2" data-testid="github-setup">

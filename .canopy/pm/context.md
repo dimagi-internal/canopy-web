@@ -26,7 +26,6 @@ Active product, shipping multiple PRs/week. Recent work: cross-portfolio insight
 ## Known Considerations
 - No multi-tenant auth in V1 — single allowed domain (`@dimagi.com`). Auth model could shift later; sweep stale guards when it does.
 - Canopy CLI plugin is a git submodule at `./canopy/`; some skills test against this app.
-- Walkthrough QA spec at `docs/walkthroughs/project-workbench.yaml` is the closest thing to an end-to-end smoke test.
 - Deploy step in CI is a separate manual job — no auto-deploy on main merges.
 - Health endpoint: `/health/`; production: `https://canopy.dimagi-ai.com/` (verify before relying).
 - TODOS.md catalogues V2 work: proactive detection, MCP layer, prompt hardening, OAuth integrations, multi-tenant auth, cowork adapter.

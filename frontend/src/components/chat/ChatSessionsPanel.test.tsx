@@ -6,7 +6,6 @@ import { MemoryRouter } from 'react-router-dom'
 import type { AgentOut, AgentRunnerOut } from '@/api/agents'
 import type { RunnerOut } from '@/api/harness'
 import type { ChatSession, CloseResult, TransferResult } from '@/api/chat'
-import type { ProjectSlug } from '@/api/projects'
 
 // vi.mock is hoisted above these declarations, but the factories aren't
 // invoked until the dynamic `import('./ChatSessionsPanel')` below — see
@@ -17,14 +16,12 @@ const closeSession = vi.fn<(id: string) => Promise<CloseResult>>()
 const transferSession = vi.fn<(id: string, runner: string, brief?: string) => Promise<TransferResult>>()
 const getAgentRunners = vi.fn<(slug: string) => Promise<AgentRunnerOut[]>>()
 const listRunners = vi.fn<() => Promise<RunnerOut[]>>()
-const listSlugs = vi.fn<() => Promise<ProjectSlug[]>>()
 
 vi.mock('@/api/chat', () => ({ createSession, listSessions, closeSession, transferSession }))
 // Default: the agent has runners of its own, so the picker reads getAgentRunners.
 const getAgentDefaultOrder = vi.fn().mockResolvedValue({ own: true, workspace: null, runners: [], missing_repo: [], cannot_hold: [], repo_url: '' })
 vi.mock('@/api/agents', () => ({ getAgentRunners, getAgentDefaultOrder, listAgents: vi.fn() }))
 vi.mock('@/api/harness', () => ({ listRunners }))
-vi.mock('@/api/projects', () => ({ projectsApi: { listSlugs } }))
 
 const { ChatSessionsPanel } = await import('./ChatSessionsPanel')
 
@@ -112,7 +109,7 @@ afterEach(() => {
 describe('ChatSessionsPanel — Run on picker', () => {
   it('offers the runners of the default order an agent follows when it has none of its own', async () => {
     listSessions.mockResolvedValue([])
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     getAgentDefaultOrder.mockResolvedValue({
       own: false, workspace: 'dimagi', missing_repo: [], cannot_hold: [], repo_url: '',
       runners: [agentRunner('r1', { runner_name: 'haldimagi-mbp-cdp', online: true }),
@@ -132,7 +129,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
   it('lists the agent’s assigned runners with an online/offline marker, defaulting to Auto', async () => {
     listSessions.mockResolvedValue([])
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     getAgentRunners.mockResolvedValue([
       agentRunner('r1', { runner_name: 'Laptop', online: true }),
       agentRunner('r2', { runner_name: 'Cloud', online: false }),
@@ -153,7 +150,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
   it('passes the chosen runnerId to createSession when a specific runner is picked', async () => {
     listSessions.mockResolvedValue([])
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     getAgentRunners.mockResolvedValue([agentRunner('r1', { runner_name: 'Laptop', online: true })])
     createSession.mockResolvedValue({
       id: 's1',
@@ -189,7 +186,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
   it('omits runnerId when Auto is left selected', async () => {
     listSessions.mockResolvedValue([])
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     getAgentRunners.mockResolvedValue([agentRunner('r1', { runner_name: 'Laptop', online: true })])
     createSession.mockResolvedValue({
       id: 's2',
@@ -221,7 +218,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
   it('does not let a stale getAgentRunners response overwrite a later pick', async () => {
     listSessions.mockResolvedValue([])
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
 
     const first = deferred<AgentRunnerOut[]>()
     const second = deferred<AgentRunnerOut[]>()
@@ -262,11 +259,13 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
   it('filters project "Run on" options to online + sessions-capable fleet runners', async () => {
     listSessions.mockResolvedValue([])
-    listSlugs.mockResolvedValue([{ slug: 'acme', name: 'Acme', workspace: 'dimagi' } as ProjectSlug])
+    // The repos offered are the ones online, session-capable runners report;
+    // "Run on" then narrows to the runners holding the picked repo.
     listRunners.mockResolvedValue([
-      fleetRunner('a', { name: 'Alpha', status: 'online', capabilities: { sessions: true } }),
-      fleetRunner('b', { name: 'Beta', status: 'offline', capabilities: { sessions: true } }),
-      fleetRunner('c', { name: 'Gamma', status: 'online', capabilities: {} }),
+      fleetRunner('a', { name: 'Alpha', status: 'online', capabilities: { sessions: true, projects: ['acme'] } }),
+      fleetRunner('b', { name: 'Beta', status: 'offline', capabilities: { sessions: true, projects: ['acme'] } }),
+      fleetRunner('c', { name: 'Gamma', status: 'online', capabilities: { projects: ['acme'] } }),
+      fleetRunner('d', { name: 'Delta', status: 'online', capabilities: { sessions: true, projects: ['other'] } }),
     ])
 
     renderPanel([])
@@ -277,12 +276,12 @@ describe('ChatSessionsPanel — Run on picker', () => {
     //
     // The trigger is `disabled={creating || (agents.length === 0 && projects.length === 0)}`.
     // This test renders with agents=[], so the button is disabled until
-    // listSlugs() resolves and fills `projects`. findByText('New chat')
+    // listRunners() resolves and fills the repo choices. findByText('New chat')
     // resolves the moment the TEXT exists — which is the first render, while
     // the button is still disabled. Clicking a disabled button is a no-op:
-    // the menu never opens, and 'Acme' can never render.
+    // the menu never opens, and 'acme' can never render.
     //
-    // So it was a race between listSlugs() settling and the test clicking,
+    // So it was a race between listRunners() settling and the test clicking,
     // which is why it only lost on a loaded CI box, and why raising budgets
     // could never help: by the time anything started waiting, the single
     // click had already been swallowed and nothing would re-issue it.
@@ -298,7 +297,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
       fireEvent.click(newChatButton())
     })
 
-    const acme = await screen.findByText('Acme')
+    const acme = await screen.findByText('acme')
     await act(async () => {
       fireEvent.click(acme)
     })
@@ -335,7 +334,7 @@ function chatSession(id: string, overrides: Partial<ChatSession> = {}): ChatSess
 // comes back — so a chat on one must not sit in the list looking sendable.
 describe('ChatSessionsPanel — sessions on a parked runner', () => {
   it('hides them by default and says how many, and why', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([
       chatSession('live', { title: 'Live one' }),
       chatSession('parked', { title: 'Parked one', runner_online: false, runner_status: 'paused' }),
@@ -354,7 +353,7 @@ describe('ChatSessionsPanel — sessions on a parked runner', () => {
   })
 
   it('reveals them dimmed, with the reason on the row, when Show offline is on', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([
       chatSession('live', { title: 'Live one' }),
       chatSession('parked', { title: 'Parked one', runner_online: false, runner_status: 'paused' }),
@@ -372,7 +371,7 @@ describe('ChatSessionsPanel — sessions on a parked runner', () => {
   it('still offers the reveal toggle when EVERY session is parked', async () => {
     // The sort row used to render only for >1 session, so a lone parked chat
     // would hide with no control left on screen to bring it back.
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([
       chatSession('only', { title: 'Only one', runner_online: false, runner_status: 'disconnected' }),
     ])
@@ -385,7 +384,7 @@ describe('ChatSessionsPanel — sessions on a parked runner', () => {
   })
 
   it('keeps an unbound web chat visible — it has no runner to be offline', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([
       chatSession('web', {
         title: 'Fresh chat',
@@ -405,7 +404,7 @@ describe('ChatSessionsPanel — sessions on a parked runner', () => {
 
 describe('ChatSessionsPanel — close a session', () => {
   it('closes an idle session without asking', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([chatSession('s1', { running: false })])
     closeSession.mockResolvedValue({ ok: true, closing: false, reason: '' })
 
@@ -419,7 +418,7 @@ describe('ChatSessionsPanel — close a session', () => {
   })
 
   it('asks first when the agent is mid-turn', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([chatSession('s1', { running: true })])
     closeSession.mockResolvedValue({ ok: true, closing: true, reason: '' })
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
@@ -435,7 +434,7 @@ describe('ChatSessionsPanel — close a session', () => {
   })
 
   it('does not navigate into the chat when Close is clicked', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([chatSession('s1')])
     closeSession.mockResolvedValue({ ok: true, closing: false, reason: '' })
 
@@ -448,7 +447,7 @@ describe('ChatSessionsPanel — close a session', () => {
 
 describe('ChatSessionsPanel — transfer a session', () => {
   it('transfers to the picked runner and reports a move', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValueOnce([chatSession('s1', { runner_name: 'Laptop' })])
     listRunners.mockResolvedValue([fleetRunner('b', { name: 'Cloud' })])
     transferSession.mockResolvedValue({
@@ -471,7 +470,7 @@ describe('ChatSessionsPanel — transfer a session', () => {
   })
 
   it('disables the transfer trigger for an unbound session', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([chatSession('s1', { runner_name: null, origin: 'web' })])
 
     renderPanel([agent()])
@@ -483,7 +482,7 @@ describe('ChatSessionsPanel — transfer a session', () => {
 
 describe('ChatSessionsPanel — empty states', () => {
   it('says "You need an agent first" when there are zero agents and zero sessions', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([])
 
     renderPanel([])
@@ -493,7 +492,7 @@ describe('ChatSessionsPanel — empty states', () => {
   })
 
   it('says "Pick one from New chat with… above" when there are agents but zero sessions', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([])
 
     renderPanel([agent()])
@@ -503,8 +502,10 @@ describe('ChatSessionsPanel — empty states', () => {
     expect(screen.queryByText('You need an agent first')).toBeNull()
   })
 
-  it('says "Pick one from New chat with… above" when there are projects but zero agents and zero sessions', async () => {
-    listSlugs.mockResolvedValue([{ slug: 'acme', name: 'Acme', workspace: 'dimagi' } as ProjectSlug])
+  it('says "Pick one from New chat with… above" when there are repos but zero agents and zero sessions', async () => {
+    listRunners.mockResolvedValue([
+      fleetRunner('a', { name: 'Alpha', status: 'online', capabilities: { sessions: true, projects: ['acme'] } }),
+    ])
     listSessions.mockResolvedValue([])
 
     renderPanel([])
@@ -515,7 +516,7 @@ describe('ChatSessionsPanel — empty states', () => {
   })
 
   it('preserves the "No chats on a live runner" message when all sessions are parked', async () => {
-    listSlugs.mockResolvedValue([])
+    listRunners.mockResolvedValue([])
     listSessions.mockResolvedValue([
       chatSession('parked', { runner_online: false, runner_status: 'paused' }),
     ])

@@ -42,6 +42,38 @@ export function onlineSessionCapableRunners(
 }
 
 /**
+ * A repo an agentless (project) chat can be started on. `workspace` is the home
+ * workspace of the first runner reporting it — the tenant the chat is created
+ * in — or null to let the server use the caller's default.
+ */
+export type RepoChoice = { slug: string; workspace: string | null }
+
+/** The repos a runner reports holding (`capabilities.projects` — the emdash
+ * project names it can open a worktree in). Defensive: the bag is caller-reported. */
+export function reportedRepos(runner: Pick<RunnerOut, "capabilities">): string[] {
+  const repos = (runner.capabilities as { projects?: unknown } | null)?.projects;
+  return Array.isArray(repos) ? repos.filter((r): r is string => typeof r === "string" && r !== "") : [];
+}
+
+/**
+ * The repos a project chat can actually run on: the union of what the online,
+ * session-capable runners report, sorted by name. This is the same list the
+ * server claims against (`claim_next_turn` matches a project turn's repo to a
+ * runner's `capabilities.projects`), so a repo offered here is one some box can
+ * take. It replaced the retired workbench project registry, which listed repos
+ * whether or not any runner held them.
+ */
+export function repoChoices(fleet: readonly RunnerOut[]): RepoChoice[] {
+  const by = new Map<string, RepoChoice>();
+  for (const r of onlineSessionCapableRunners(fleet)) {
+    for (const slug of reportedRepos(r)) {
+      if (!by.has(slug)) by.set(slug, { slug, workspace: r.workspace ?? null });
+    }
+  }
+  return [...by.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+/**
  * Whether the session's bound runner is offline — i.e. whether to raise the
  * placement banner and let the user choose wait-vs-continue.
  *

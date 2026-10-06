@@ -42,6 +42,11 @@ const NOT_DOCUMENTABLE = new Set([
   '/ddd-plans',
   '/reviews',
   '/insights', // retired feed; redirects home
+  // The retired workbench Projects page: the workspace index now redirects to
+  // the workspace's agents, and old /projects links follow it.
+  '/w/:workspace',
+  '/w/:workspace/projects',
+  '/projects',
   // The four pages that became sections of /w/:workspace/settings.
   '/w/:workspace/members',
   '/w/:workspace/connected-apps',

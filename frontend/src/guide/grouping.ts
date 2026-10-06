@@ -19,23 +19,17 @@ function navItemPath(item: { path: string; tenant: boolean }): string {
   return item.path ? `/w/:workspace/${item.path}` : '/w/:workspace'
 }
 
-/** The tenant index — matches only EXACTLY. See `navMatch`. */
-const TENANT_INDEX = '/w/:workspace'
-
 /**
  * Does `surfacePath` belong under the nav item at `navPath`?
  *
  * Exact match, or a detail route beneath it — `/w/:workspace/chat/:id` belongs
  * with `/w/:workspace/chat`, because a reader looking for "the chat page" wants
- * the list and the single chat together.
- *
- * The tenant index is the exception. `/w/:workspace` is a prefix of every tenant
- * route, so prefix-matching it would pull the whole app into the Projects entry.
+ * the list and the single chat together. (No nav item links the bare tenant
+ * index any more — it redirects to Agents — so nothing here can prefix-match
+ * the whole app.)
  */
 function navMatch(surfacePath: string, navPath: string): boolean {
-  if (surfacePath === navPath) return true
-  if (navPath === TENANT_INDEX) return false
-  return surfacePath.startsWith(`${navPath}/`)
+  return surfacePath === navPath || surfacePath.startsWith(`${navPath}/`)
 }
 
 /**

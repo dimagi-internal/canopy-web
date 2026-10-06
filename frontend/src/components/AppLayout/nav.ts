@@ -15,8 +15,9 @@
  *
  * Every item lives in a group — deliberately no bare top-level links mixed in
  * with menu triggers, so a reader never has to guess which labels navigate and
- * which open. `Projects` costing a click is covered by the `Canopy.` wordmark,
- * which already links to `/` and redirects to the active workspace's workbench.
+ * which open. The workspace index has no entry of its own: it lands on Agents
+ * (the workbench Projects page it used to render was retired 2026-10-06), and
+ * the `Canopy.` wordmark already links there.
  */
 
 /** A single destination. `tenant` items resolve under /w/:workspace. */
@@ -38,7 +39,6 @@ export const NAV_GROUPS: NavGroup[] = [
     // What you are working on right now.
     label: 'Work',
     items: [
-      { path: '', label: 'Projects', tenant: true },
       { path: 'chat', label: 'Chats', tenant: true },
     ],
   },
@@ -129,8 +129,8 @@ export function resolveNavGroups(opts: {
  * Is `pathname` at or below `href`?
  *
  * The workspace index (/w/<slug>) is a prefix of EVERY tenant route, so it has
- * to match exactly — otherwise Projects, and with it the whole Work menu,
- * highlights on every tenant page.
+ * to match exactly — otherwise an item linking there, and its whole menu,
+ * would highlight on every tenant page.
  */
 export function isNavItemActive(href: string, pathname: string): boolean {
   const isIndex = href === '/' || /^\/w\/[^/]+$/.test(href)

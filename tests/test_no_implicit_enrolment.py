@@ -65,15 +65,23 @@ def _memberships(user) -> set[str]:
     )
 
 
-def test_creating_a_project_does_not_enrol_the_caller(outsider):
-    client, user = outsider
-    res = client.post(
-        "/api/projects/",
-        {"name": "Trojan", "slug": "trojan"},
-        content_type="application/json",
-    )
-    assert res.status_code == 422, res.content
-    assert _memberships(user) == set()
+def _shareout_batch(title):
+    now = dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
+    return {
+        "shareouts": [{
+            "period_start": now.isoformat(),
+            "period_end": now.isoformat(),
+            "title": title,
+            "content": "x",
+            "source": "test",
+        }],
+    }
+
+
+def _shareout_workspace(title):
+    from apps.shareouts.models import Shareout
+
+    return Shareout.objects.get(title=title).workspace_id
 
 
 def test_posting_a_shareout_does_not_enrol_the_caller(outsider):
@@ -171,14 +179,10 @@ def insider(default_workspace):
 
 def test_a_member_posting_flat_still_lands_in_the_default_workspace(insider, default_workspace):
     client, user = insider
-    res = client.post(
-        "/api/projects/", {"name": "Real", "slug": "real"}, content_type="application/json"
-    )
+    res = client.post("/api/shareouts/", _shareout_batch("Real"), content_type="application/json")
     assert res.status_code == 201, res.content
 
-    from apps.projects.models import Project
-
-    assert Project.objects.get(slug="real").workspace_id == default_workspace.slug
+    assert _shareout_workspace("Real") == default_workspace.slug
     assert _memberships(user) == {default_workspace.slug}
 
 
@@ -196,15 +200,10 @@ def test_a_member_of_only_one_other_workspace_lands_there_not_in_the_default(def
     )
     c = Client()
     c.force_login(user)
-    res = c.post(
-        "/api/projects/", {"name": "Acme thing", "slug": "acme-thing"},
-        content_type="application/json",
-    )
+    res = c.post("/api/shareouts/", _shareout_batch("Acme thing"), content_type="application/json")
     assert res.status_code == 201, res.content
 
-    from apps.projects.models import Project
-
-    assert Project.objects.get(slug="acme-thing").workspace_id == "acme"
+    assert _shareout_workspace("Acme thing") == "acme"
     assert _memberships(user) == {"acme"}
 
 
@@ -214,11 +213,12 @@ def test_the_pinned_tenant_route_is_unchanged(insider, default_workspace):
     fix must not add a second, divergent check on that path."""
     client, user = insider
     res = client.post(
-        f"/api/w/{default_workspace.slug}/projects/",
-        {"name": "Pinned", "slug": "pinned"},
+        f"/api/w/{default_workspace.slug}/shareouts/",
+        _shareout_batch("Pinned"),
         content_type="application/json",
     )
     assert res.status_code == 201, res.content
+    assert _shareout_workspace("Pinned") == default_workspace.slug
     assert _memberships(user) == {default_workspace.slug}
 
 

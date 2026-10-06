@@ -175,7 +175,6 @@ def _auth_smoke(request: HttpRequest) -> dict:
 
 
 from apps.common.api import common_router, public_router  # noqa: E402
-from apps.projects.api import router as projects_router  # noqa: E402
 from apps.issues.api import router as issues_router  # noqa: E402
 from apps.tokens.api import router as tokens_router  # noqa: E402
 from apps.reviews.api import router as reviews_router  # noqa: E402
@@ -214,7 +213,6 @@ from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
 from apps.tokens.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.tokens.embed_api import embed_router
 
-api.add_router("/projects", projects_router)
 api.add_router("/issues", issues_router)
 api.add_router("", common_router)
 api.add_router("", public_router)

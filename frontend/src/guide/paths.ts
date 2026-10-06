@@ -79,7 +79,7 @@ export const USER_ROLES: UserRole[] = [
     who: 'Someone shaping what an agent is, not just what it is doing today.',
     enforcement:
       'Editor. Enforced on agents, schedules, turns and on every product surface — ' +
-      'projects, walkthroughs, shareouts, reviews, storyboards.',
+      'walkthroughs, shareouts, reviews, storyboards.',
     startHere: 'Run /canopy:create-agent, then register the agent in your workspace.',
     surfaces: ['/w/:workspace/agents', '/w/:workspace/schedules', '/system'],
     note:

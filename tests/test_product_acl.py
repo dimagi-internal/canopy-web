@@ -1,7 +1,7 @@
 """The product surfaces' write gate: mutating is the EDITOR tier.
 
 Before this, any member of a workspace — a viewer included — could mutate every
-product surface: edit and delete projects, wipe a whole feed with `{}`,
+product surface: wipe a whole feed with `{}`,
 approve a DDD gate, delete a narrative (and its Drive files), rewrite a
 storyboard, forge the fleet event log. And rows with no workspace were readable
 and writable by ANY signed-in user. The rules pinned here, per surface:
@@ -24,7 +24,6 @@ from django.test import Client, override_settings
 from apps.events.models import Event
 from apps.feedback import services as feedback_services
 from apps.issues.models import OriginIssue
-from apps.projects.models import Project, ProjectContext
 from apps.reviews.models import ReviewRequest
 from apps.shareouts.models import Shareout
 from apps.storyboards.models import Storyboard
@@ -72,54 +71,6 @@ def _json(client, method, url, body=None):
     return getattr(client, method)(
         url, data=json.dumps(body if body is not None else {}), content_type="application/json"
     )
-
-
-# --- projects -----------------------------------------------------------------
-
-
-def _project(slug, workspace_id=WS):
-    return Project.objects.create(name=slug, slug=slug, workspace_id=workspace_id)
-
-
-def test_project_writes_are_editor_reads_are_membership(acl):
-    _project("pa-proj")
-    viewer = _c(acl["viewer"])
-    assert viewer.get("/api/projects/pa-proj/").status_code == 200
-    assert _json(viewer, "patch", "/api/projects/pa-proj/", {"name": "x"}).status_code == 403
-    assert viewer.delete("/api/projects/pa-proj/").status_code == 403
-    assert _json(viewer, "post", "/api/projects/pa-proj/context/",
-                 {"context_type": "note", "content": "x", "source": "t"}).status_code == 403
-    assert _json(_c(acl["outsider"]), "patch", "/api/projects/pa-proj/", {"name": "x"}).status_code == 404
-
-    res = _json(_c(acl["editor"]), "patch", "/api/projects/pa-proj/", {"name": "renamed"})
-    assert res.status_code == 200, res.content
-    assert Project.objects.get(slug="pa-proj").name == "renamed"
-
-
-def test_a_viewer_cannot_create_or_batch_write_projects(acl):
-    viewer = _c(acl["viewer"])
-    body = {"name": "New", "slug": "pa-new"}
-    assert _json(viewer, "post", f"/api/w/{WS}/projects/", body).status_code == 403
-    assert not Project.objects.filter(slug="pa-new").exists()
-
-    _project("pa-proj")
-    res = _json(viewer, "post", "/api/projects/batch-context/",
-                {"updates": {"pa-proj": [{"context_type": "note", "content": "x", "source": "t"}]}})
-    assert res.status_code == 201
-    assert res.json() == {"pa-proj": 0}
-    assert not ProjectContext.objects.exists()
-
-    assert _json(_c(acl["editor"]), "post", f"/api/w/{WS}/projects/", body).status_code == 201
-
-
-def test_a_null_workspace_project_is_visible_to_nobody(acl):
-    orphan = Project.objects.create(name="orphan", slug="pa-orphan")
-    ProjectContext.objects.create(project=orphan, context_type="note", content="x")
-    owner = _c(acl["owner"])
-    assert owner.get("/api/projects/pa-orphan/").status_code == 404
-    assert _json(owner, "patch", "/api/projects/pa-orphan/", {"name": "x"}).status_code == 404
-    assert "pa-orphan" not in [p["slug"] for p in owner.get("/api/projects/").json()["items"]]
-    assert owner.get("/api/projects/pa-orphan/context/").status_code == 404
 
 
 # --- walkthroughs -------------------------------------------------------------
