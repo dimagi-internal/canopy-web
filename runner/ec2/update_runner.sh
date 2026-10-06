@@ -47,6 +47,12 @@ set -uo pipefail
 
 RUNNER_HOME="${RUNNER_HOME:-/opt/canopy-runner}"
 ENV_FILE="${ENV_FILE:-$RUNNER_HOME/runner.env}"
+# Where a box that MOVED records its new address (cloud_runner.py maybe_rebase).
+# runner.env still names the stack parameter's address, which canopy-fetch-env
+# re-renders on every start, so this timer must prefer the override exactly as
+# the runner does — or it keeps calling the address canopy has left (it did,
+# every 30 minutes, after the 2026-10-06 move).
+OVERRIDE_FILE="${CANOPY_BASE_URL_OVERRIDE_FILE:-$RUNNER_HOME/base_url.override}"
 TARGET="$RUNNER_HOME/cloud_runner.py"
 STAMP="$RUNNER_HOME/build-info.json"
 BUSY="$RUNNER_HOME/in-flight"
@@ -124,13 +130,22 @@ except Exception:
 PY
 }
 
+# The moved-to address, or nothing. https only, like the runner's own reader.
+moved_base() {
+  local m
+  m="$(tr -d '[:space:]' < "$OVERRIDE_FILE" 2>/dev/null)"
+  m="${m%/}"
+  case "$m" in https://*) echo "$m" ;; esac
+}
+
 # --- what should be installed ----------------------------------------------
 expected_sha() {
   # GET the fleet list and pick our own row. Read-only by construction: there is no
   # POST anywhere in this script, deliberately (see the header).
   local base token rid
   [ -r "$ENV_FILE" ] || { echo ""; return; }
-  base="$(sed -n 's/^CANOPY_BASE_URL=//p' "$ENV_FILE" | tail -1)"
+  base="$(moved_base)"
+  [ -n "$base" ] || base="$(sed -n 's/^CANOPY_BASE_URL=//p' "$ENV_FILE" | tail -1)"
   token="$(sed -n 's/^CANOPY_TOKEN=//p' "$ENV_FILE" | tail -1)"
   rid="$(json_field "$STATE_FILE" runner_id "")"
   [ -n "$base" ] && [ -n "$token" ] && [ -n "$rid" ] || { echo ""; return; }
@@ -354,6 +369,13 @@ elif [ -x "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" ]; then
   # so the control plane was told the fleet's mailboxes were dead every 30 minutes.
   ( set +e
     if [ -r "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
+    moved="$(moved_base)"
+    if [ -n "$moved" ]; then
+      case "${CANOPY_WEB_API_URL:-}" in
+        ""|"${CANOPY_BASE_URL:-}"|"${CANOPY_BASE_URL:-}/") export CANOPY_WEB_API_URL="$moved" ;;
+      esac
+      export CANOPY_BASE_URL="$moved"
+    fi
     "$BOOT_DIR/runner/ec2/bootstrap_agents.sh" --credentials-only ) \
     || log "credentials refresh returned non-zero — the box is otherwise untouched."
 fi
