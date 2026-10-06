@@ -359,6 +359,7 @@ def test_every_run_moves_origin_main_so_the_shim_runs_the_newest_updater(box):
     # day-old updater because of it (2026-10-06).
     upstream = box.root / "upstream"
     subprocess.run(["git", "clone", "-q", str(box.repo), str(upstream)], check=True)
+    _git(upstream, "checkout", "-q", "-B", "main")  # CI's git may default to master
     _git(box.repo, "remote", "add", "origin", str(upstream))
     _git(box.repo, "fetch", "-q", "origin")
     (upstream / "marker").write_text("new\n")
