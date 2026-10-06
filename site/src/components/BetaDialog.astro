@@ -1,12 +1,12 @@
 ---
 // Every "Request access" button opens this. The request goes to canopy-web
-// (POST /api/beta-requests), which keeps it and emails the team that runs the beta.
+// (POST /api/beta-requests), which keeps it and emails the person who grants access.
 import { API_BASE } from '../site'
 ---
 <dialog class="beta" id="beta-dialog" aria-labelledby="beta-title" data-api={API_BASE}>
   <button class="beta-close" type="button" data-beta-close aria-label="Close">×</button>
   <div class="beta-body" data-state="form">
-    <h2 id="beta-title">Canopy is currently in a closed beta.</h2>
+    <h2 id="beta-title">Canopy is currently in closed access for Dimagi and its partners.</h2>
     <p>Enter your email to request access.</p>
     <form novalidate>
       <label>
@@ -29,7 +29,7 @@ import { API_BASE } from '../site'
   </div>
   <div class="beta-body done" data-state="done" hidden>
     <h2>Thanks, your request is in.</h2>
-    <p>If there is room in the beta, we will be in touch by email.</p>
+    <p>We will be in touch by email.</p>
     <div class="row" style="margin-top:22px">
       <button class="btn btn-dark" type="button" data-beta-close>Close</button>
     </div>

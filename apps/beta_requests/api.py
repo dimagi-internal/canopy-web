@@ -14,11 +14,11 @@ router = Router(tags=["beta"])
 # path is also allowlisted there. The response is identical for a first request and
 # a repeat, so the form cannot be used to learn who has already asked.
 @router.post("/beta-requests", response=BetaRequestOut, auth=None,
-             summary="Request access to the closed beta (anonymous)")
+             summary="Request access to Canopy (anonymous)")
 def submit_beta_request(request: HttpRequest, payload: BetaRequestIn) -> dict:
-    """Ask to join canopy's closed beta.
+    """Ask for access to canopy, which is currently closed to Dimagi and its partners.
 
-    Records the request and notifies the team that runs the beta, who reply by
+    Records the request and notifies the person who grants access, who replies by
     email. Granting access is a separate, ordinary workspace invite.
     """
     if payload.website:

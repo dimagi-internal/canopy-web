@@ -3,7 +3,8 @@
 // (Claude Design deck "IDM AI Talk (Dimagi brand)"), including the claims that
 // talk's own notes say not to make: no fleet-wide kill switch, no spend limits,
 // and manual-mode approval is procedure rather than a code-enforced pop-up.
-// Every number carries the date it was true.
+// Every number carries the date it was true. No fleet roster or live counts on
+// purpose: the page describes the product, not who at Dimagi runs it.
 import Base from '../layouts/Base.astro'
 import Mark from '../components/Mark.astro'
 import { GITHUB_URL, SIGN_IN_URL } from '../site'
@@ -25,14 +26,6 @@ const layers = [
   ['Interactions', 'Email, Slack, web chat, and the applications people already use.'],
 ]
 
-const fleet = [
-  ['Eva', 'sales, fundraising, chief of staff'],
-  ['Echo', 'Connect marketing'],
-  ['ACE', 'Connect programme setup'],
-  ['Hal', 'engineering'],
-  ['Ada', 'coordinates the others'],
-  ['Fizzy', 'workstream tracking'],
-]
 ---
 <Base
   title="Canopy — the open source control plane for agent oversight"
@@ -52,7 +45,7 @@ const fleet = [
         <button class="btn btn-primary" type="button" data-beta-open>Request access</button>
         <a class="btn btn-ghost" href={GITHUB_URL}>View on GitHub</a>
       </div>
-      <p class="beta-note">Canopy is in a closed beta. Already a member? <a href={SIGN_IN_URL} style="color:var(--on-dark)">Sign in</a>.</p>
+      <p class="beta-note">Access is currently closed to Dimagi and its partners. Already have access? <a href={SIGN_IN_URL} style="color:var(--on-dark)">Sign in</a>.</p>
     </div>
   </section>
 
@@ -198,32 +191,10 @@ const fleet = [
     </div>
   </section>
 
-  <section class="section section-stone">
-    <div class="wrap">
-      <div class="section-head">
-        <p class="eyebrow">In use at Dimagi</p>
-        <h2>A working fleet, honestly sized</h2>
-        <p>Canopy runs Dimagi’s own agents today: a handful of agents and a growing group of people, not yet the whole organisation.</p>
-      </div>
-      <div class="figures" id="live-figures" hidden>
-        <div class="figure"><b data-stat="agents">—</b><span>agents</span></div>
-        <div class="figure"><b data-stat="skills">—</b><span>skills</span></div>
-        <div class="figure"><b data-stat="turns_executed">—</b><span>turns run</span></div>
-        <div class="figure"><b data-stat="runners_online">—</b><span>runners online now</span></div>
-      </div>
-      <div class="fleet">
-        {fleet.map(([name, role]) => (
-          <span class="agent"><Mark class="brand-mark" /><b>{name}</b><span>{role}</span></span>
-        ))}
-      </div>
-      <p class="honest">Some of the agents in Dimagi’s fleet, October 2026. The figures above are live.</p>
-    </div>
-  </section>
-
   <section class="cta">
     <div class="wrap">
       <h2>Help us build oversight that makes AI better for everyone</h2>
-      <p>Canopy is open source and in a closed beta. Read the code, or ask to try it.</p>
+      <p>Canopy is open source, with access currently closed to Dimagi and its partners. Read the code, or request access.</p>
       <div class="actions">
         <button class="btn btn-primary" type="button" data-beta-open>Request access</button>
         <a class="btn btn-ghost" href={GITHUB_URL}>View on GitHub</a>
@@ -232,22 +203,3 @@ const fleet = [
   </section>
 </Base>
 
-<script>
-  // Live counts, because prose about a fleet goes stale within a month. The same
-  // anonymous aggregate the app's /about page reads; the section reads fine without it.
-  import { API_BASE } from '../site'
-
-  type Stats = Record<string, number>
-  const box = document.getElementById('live-figures')
-  fetch(`${API_BASE}/api/system/public-stats`)
-    .then((r) => (r.ok ? (r.json() as Promise<Stats>) : null))
-    .then((stats) => {
-      if (!stats || !box) return
-      box.querySelectorAll<HTMLElement>('[data-stat]').forEach((el) => {
-        const v = stats[el.dataset.stat ?? '']
-        if (typeof v === 'number') el.textContent = v.toLocaleString('en')
-      })
-      box.hidden = false
-    })
-    .catch(() => {})
-</script>

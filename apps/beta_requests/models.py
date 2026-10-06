@@ -1,4 +1,5 @@
-"""A request to join canopy's closed beta, from the public site's sign-up form.
+"""A request for access to canopy (closed to Dimagi and its partners), from the
+public site's request-access form.
 
 Deliberately NOT a `WorkspaceAccessRequest`: that needs an account, names a
 workspace, and grants a membership when approved. A beta request is a note to a
