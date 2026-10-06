@@ -131,9 +131,15 @@ Asked in this order; the first row that matches decides.
   yourself"), but every turn they start runs `manual` — outbound or irreversible
   actions wait for an admin — and they may not set `auto` anywhere: not on a
   dispatch, not on a routing rule or actor route, not on the agent's own switch.
+* Row 1's `system` is bounded by the person canopy acted FOR: a schedule's
+  occurrence (fired, run now, or a one-off) carries its creator as the
+  accountable person, and unless they are an agent admin or the agent's own
+  login it runs `manual`, as their own dispatch would (`turn_mode._accountable_cap`).
+  With no accountable person recorded it keeps row 1's posture.
 * A **runner admin** is a runner's owner or a `RunnerAdmin` grant. A pinned box
   must also be able to hold the agent at all (`runner_may_hold_agent`: its owner is
-  one of the agent's admins). Chosen 2026-10-04: pinning is for an **agent admin
+  one of the agent's admins) — and that holds for a chat WITH the agent as much
+  as for its own turns. Chosen 2026-10-04: pinning is for an **agent admin
   OR a runner admin**, consistent with actor routes, which already required the
   runner admin.
 

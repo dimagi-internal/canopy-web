@@ -119,18 +119,46 @@ def _assignment_rows_for_turns(turns) -> tuple[dict, dict]:
     return load_assignment_rows(agent_ids)
 
 
+def _held_agent(t: Turn):
+    """The agent a turn runs AS — its own, or its chat's — else None."""
+    if t.agent_id:
+        return t.agent
+    if t.chat_session_id and t.chat_session.agent_id:
+        return t.chat_session.agent
+    return None
+
+
+def _may_hold(r: Runner, t: Turn, holds: dict | None) -> bool:
+    """claim_next_turn's `runner_may_hold_agent` gate, cached per (runner, agent)."""
+    agent = _held_agent(t)
+    if agent is None:
+        return True
+    from apps.agents.services import runner_may_hold_agent
+
+    if holds is None:
+        return runner_may_hold_agent(r, agent)
+    key = (r.id, agent.id)
+    if key not in holds:
+        holds[key] = runner_may_hold_agent(r, agent)
+    return holds[key]
+
+
 def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
-                    *, ignore_requirements: bool = False, orders: dict | None = None) -> bool:
+                    *, ignore_requirements: bool = False, orders: dict | None = None,
+                    ignore_hold: bool = False, holds: dict | None = None) -> bool:
     """The per-candidate refinements claim_next_turn applies after the coarse
     target match — same checks, same ORDER, so coverage can't overstate what
     claiming will do.
 
     `ignore_requirements` answers the counterfactual "would this runner take it
     if the conversation required nothing?" — only ever asked to decide whether
-    a requirement is what BLOCKS a turn, never to route one."""
+    a requirement is what BLOCKS a turn, never to route one. `ignore_hold` is
+    the same counterfactual for `runner_may_hold_agent`."""
     reqs = frozenset() if ignore_requirements else rr.requirements_of(t)
     if not rr.satisfies(r.flags, reqs):
         return False  # above the pin and the binding, as in claim_next_turn
+    if not ignore_hold and not _may_hold(r, t, holds):
+        return False  # likewise above the pin and the binding
     # A pin trumps everything below it (claim_next_turn's `pinned_here`).
     if t.pinned_runner_id == r.id:
         return True
@@ -166,14 +194,16 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
 
 
 def _coverage(ids, runners, defaults: dict, priorities: dict,
-              *, ignore_requirements: bool = False) -> dict:
+              *, ignore_requirements: bool = False, ignore_hold: bool = False) -> dict:
     """{runner: {turn pk it could claim}} over `ids` — the coverage half of both
     `unclaimable_queued_turns` and `turn_reach`, one implementation so the web
     warning and the Slack acknowledgement cannot disagree about the same turn.
 
     `ignore_requirements=True` is the counterfactual used only to diagnose: which
-    runners would take the turn if its conversation required nothing."""
+    runners would take the turn if its conversation required nothing;
+    `ignore_hold=True` likewise, if every runner's owner could hold the agent."""
     out: dict = {}
+    holds: dict = {}
     orders = load_workspace_orders(
         Turn.objects.filter(pk__in=ids, agent__isnull=True, chat_session__isnull=True)
         .values_list("workspace_id", flat=True)
@@ -190,13 +220,15 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
             # path; the coarse predicate above does not say so on its own.
             .filter(Q(pinned_runner__isnull=True) | Q(pinned_runner=r))
             .filter(profile_q(r))
-            .select_related("agent", "chat_session", "chat_session__runner_binding")
+            .select_related("agent", "chat_session", "chat_session__runner_binding",
+                            "chat_session__agent")
         ):
             # Then the per-source refinement. A runner assigned the agent but
             # excluded by a strict rule for THIS turn's source does not cover
             # it, and saying otherwise would mask a genuinely parked queue.
             if _refined_allows(r, t, defaults, priorities,
-                               ignore_requirements=ignore_requirements, orders=orders):
+                               ignore_requirements=ignore_requirements, orders=orders,
+                               ignore_hold=ignore_hold, holds=holds):
                 covered.add(t.pk)
         out[r] = covered
     return out
@@ -239,7 +271,8 @@ def turn_reach(turn: Turn) -> Reach:
     page anyone; this one is a promise, and `claim_next_turn` only claims on
     ONLINE, so a degraded box is not "picking it up".
     """
-    turn = (Turn.objects.select_related("agent", "chat_session", "chat_session__runner_binding")
+    turn = (Turn.objects.select_related("agent", "chat_session", "chat_session__runner_binding",
+                                        "chat_session__agent")
             .get(pk=turn.pk))
     if turn.chat_session_id:
         ws = turn.chat_session.workspace_id
@@ -319,7 +352,8 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         )
         # chat_session + its binding are read per turn by the per-source
         # refinement below (once per turn PER RUNNER), so preload them.
-        .select_related("agent", "chat_session", "chat_session__runner_binding")
+        .select_related("agent", "chat_session", "chat_session__runner_binding",
+                        "chat_session__agent")
         .filter(turn_q if turn_q is not None else Q())
         # A user sees a session turn (and its prompt) only in a chat they may
         # read — the chat ACL, not the tenant. A contact is already narrowed to
@@ -358,6 +392,11 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     required = {t.pk for t in queued if t.pk not in claimable_ever and rr.requirements_of(t)}
     blocked_by_reqs = set().union(*_coverage(required, runners, defaults, priorities,
                                              ignore_requirements=True).values()) if required else set()
+    # The same counterfactual for the hold gate: a turn only boxes whose owners
+    # are not admins of its agent would take is a grant away, not a routing fix.
+    unheld = {t.pk for t in queued if t.pk not in claimable_ever and _held_agent(t) is not None}
+    blocked_by_hold = set().union(*_coverage(unheld, runners, defaults, priorities,
+                                             ignore_hold=True).values()) if unheld else set()
 
     out = []
     for t in queued:
@@ -374,6 +413,11 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
             kind = "config"
             reason = (f"this conversation's site requires a {rr.describe(reqs)} runner, and "
                       f"no runner that serves it is declared {rr.describe(reqs)}")
+        elif t.pk in blocked_by_hold:
+            kind = "config"
+            reason = (f"the runners {what} are owned by people who are not admins of "
+                      f"'{_held_agent(t).slug}', so they may not run as it — make the "
+                      "runner's owner an admin of the agent")
         elif t.capability and t.pk not in claimable_ever:
             kind = "config"
             reason = (f"this is a caller's turn, confined to '{t.capability}', and no runner "
@@ -537,10 +581,13 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # owner's GitHub identity. Only a box whose owner is one of the agent's
         # admins may take one — also above the pin, since pinning is open to the
         # editor tier and must not be a way to direct an agent at your own box.
-        if turn.agent_id:
-            if turn.agent_id not in trusted:
-                trusted[turn.agent_id] = runner_may_hold_agent(runner, turn.agent)
-            if not trusted[turn.agent_id]:
+        # A chat with an agent runs as that agent just the same (its session,
+        # its credentials), so a session turn is held to its agent's rule too.
+        held = _held_agent(turn)
+        if held is not None:
+            if held.id not in trusted:
+                trusted[held.id] = runner_may_hold_agent(runner, held)
+            if not trusted[held.id]:
                 continue
         pinned_here = turn.pinned_runner_id == runner.id
         if not pinned_here:
