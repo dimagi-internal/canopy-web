@@ -352,3 +352,69 @@ def test_a_dropped_acp_connection_carries_the_adapters_exit(cloud_runner, monkey
     assert (ok, sid) == (False, "acp-2")
     assert note == ("runner error (acp): ACP connection closed before a reply arrived "
                     "(adapter killed by signal 9; no stderr)")
+
+
+# ── an ACP reply is recorded as whole messages, not stream fragments ─────────
+
+def test_acp_reply_fragments_are_emitted_as_whole_messages(cloud_runner, monkeypatch, tmp_path):
+    """ACP streams a reply as `agent_message_chunk` fragments of a few characters.
+    Each assistant event is one row downstream — one Slack post — so emitting a
+    fragment per event posted an Eva reply to Slack as 85 messages split
+    mid-word (2026-10-06). A message is emitted whole: when the agent moves to a
+    tool call, and at the end of the turn."""
+    from types import SimpleNamespace
+
+    class Reducer:
+        assistant_text = "Checking.Done."
+        rate_limit = None
+
+        def apply(self, update):
+            return update.get("sessionUpdate")
+
+        def tool_call(self, call_id):
+            return SimpleNamespace(raw_input={"command": "ls"}, is_complete=True, is_error=False,
+                                   tool_name="Bash", kind="execute", result_text="ok")
+
+        def reset_stream_state(self):
+            pass
+
+    def chunk(text):
+        return {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}
+
+    class Agent:
+        session_id = "acp-2"
+
+        def __init__(self, cwd, env, on_update):
+            self.on_update = on_update
+
+        def start(self):
+            pass
+
+        def new_session(self, timeout=None):
+            return self.session_id
+
+        def prompt(self, _p):
+            for u in [chunk("Check"), chunk("ing"), chunk("."),
+                      {"sessionUpdate": "tool_call", "toolCallId": "c1"},
+                      chunk("Do"), chunk("ne"), chunk(".")]:
+                self.on_update(self.session_id, u)
+            return _Done()
+
+        def cancel(self):
+            pass
+
+        def close(self):
+            pass
+
+    class Core:
+        AcpAgent = Agent
+        UpdateReducer = Reducer
+
+    monkeypatch.setattr(cloud_runner, "_acp_core", lambda: Core)
+    monkeypatch.setattr(cloud_runner, "_agent_env", lambda slug: {})
+    events = []
+    ok, _, _ = cloud_runner.run_acp("hi", "t-frag", events.extend, cwd=tmp_path)
+
+    assert ok
+    assert [(e["kind"], e["payload"].get("text")) for e in events] == [
+        ("assistant", "Checking."), ("tool_start", None), ("tool_end", None), ("assistant", "Done.")]
