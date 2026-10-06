@@ -273,6 +273,13 @@ def _describe_change_set_all_pages(cfn, stack_name: str, change_set: str) -> dic
     return {"Changes": changes}
 
 
+#: Actions that take no resource: IAM can only grant them on "*", and simulating
+#: one against a specific ARN answers implicitDeny even when "*" is granted. That
+#: false refusal blocked the /health/ health-check move on 2026-10-06 and was
+#: misread as the deploy role drifting from deploy_roles.py (it had not).
+UNSCOPED_ACTIONS = frozenset({"elasticloadbalancing:DescribeTargetGroups"})
+
+
 def check(cfn, iam, stack_name: str, change_set: str, principal_arn: str) -> list[Finding]:
     """Findings for every resource this change set would touch."""
     described = _describe_change_set_all_pages(cfn, stack_name, change_set)
@@ -283,27 +290,34 @@ def check(cfn, iam, stack_name: str, change_set: str, principal_arn: str) -> lis
         if not actions:
             continue
 
-        kwargs: dict = {
-            "PolicySourceArn": principal_arn,
-            "ActionNames": list(actions),
-            # Region-conditioned grants (DescribeTargetGroups) evaluate as denied
-            # without this, because the condition key would be absent.
-            "ContextEntries": [{
-                "ContextKeyName": "aws:RequestedRegion",
-                "ContextKeyValues": ["us-east-1"],
-                "ContextKeyType": "string",
-            }],
-        }
         # Only pass a resource when it is genuinely an ARN. Some physical ids are
         # names (a log group is "/ecs/canopy-web"), and simulate rejects those.
-        if change.physical_id and change.physical_id.startswith("arn:"):
-            kwargs["ResourceArns"] = [change.physical_id]
+        arn = change.physical_id if (change.physical_id or "").startswith("arn:") else None
+        scoped = [a for a in actions if a not in UNSCOPED_ACTIONS]
+        unscoped = [a for a in actions if a in UNSCOPED_ACTIONS]
 
-        results = iam.simulate_principal_policy(**kwargs)
-        decisions = {
-            r["EvalActionName"]: r["EvalDecision"]
-            for r in results.get("EvaluationResults", [])
-        }
+        decisions: dict = {}
+        for names, resource in ((scoped, arn), (unscoped, None)):
+            if not names:
+                continue
+            kwargs: dict = {
+                "PolicySourceArn": principal_arn,
+                "ActionNames": names,
+                # Region-conditioned grants (DescribeTargetGroups) evaluate as
+                # denied without this, because the condition key would be absent.
+                "ContextEntries": [{
+                    "ContextKeyName": "aws:RequestedRegion",
+                    "ContextKeyValues": ["us-east-1"],
+                    "ContextKeyType": "string",
+                }],
+            }
+            if resource:
+                kwargs["ResourceArns"] = [resource]
+            results = iam.simulate_principal_policy(**kwargs)
+            decisions.update({
+                r["EvalActionName"]: r["EvalDecision"]
+                for r in results.get("EvaluationResults", [])
+            })
         findings.extend(evaluate(change, decisions))
 
     return findings
