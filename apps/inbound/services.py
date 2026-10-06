@@ -362,6 +362,19 @@ def push_url(request, workspace_slug: str) -> str:
         # Carry the script prefix here too: a fallback that silently drops it is
         # how the bug above stayed invisible.
         path = f"{get_script_prefix().rstrip('/')}/api/inbound/gmail/{workspace_slug}/"
+    # The deployment's public address, not the request's host: a config read
+    # over MCP arrives on an in-process transport whose host is `localhost`,
+    # and one through the old address carries that address — neither is where
+    # a subscription should push. CANOPY_PUBLIC_BASE_URL already includes any
+    # script prefix, so the route path is taken without it.
+    from django.conf import settings
+
+    base = (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").rstrip("/")
+    if base:
+        prefix = get_script_prefix().rstrip("/")
+        if prefix and path.startswith(prefix + "/"):
+            path = path[len(prefix):]
+        return base + path
     return request.build_absolute_uri(path)
 
 

@@ -591,6 +591,11 @@ MANAGERS: list = []
 # CORS
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
+else:
+    # Only the API, and only for a live connected site's declared origins
+    # (apps/tokens/cors.py), with no cookies: a connected site's page calls
+    # canopy with a Bearer token it holds, and that token is all it carries.
+    CORS_URLS_REGEX = r"^/api/.*$"
 
 # --- Logging ---
 # There was no LOGGING config at all, so anything our code logged fell through to

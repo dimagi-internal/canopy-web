@@ -78,7 +78,7 @@ def test_config_serves_the_push_url_so_nobody_hand_copies_it(owner, workspace):
     assert body["push_url"].endswith("/api/inbound/gmail/dimagi/")
 
 
-def test_push_url_carries_the_script_prefix():
+def test_push_url_carries_the_script_prefix(settings):
     """The whole reason this value is server-computed.
 
     Labs runs behind ``FORCE_SCRIPT_NAME=/canopy``; a push URL missing that
@@ -96,13 +96,35 @@ def test_push_url_carries_the_script_prefix():
 
     from apps.inbound import services
 
+    settings.CANOPY_PUBLIC_BASE_URL = "https://labs.test/canopy"
     try:
         set_script_prefix("/canopy/")
         url = services.push_url(RequestFactory().get("/api/inbound/config/dimagi"), "dimagi")
     finally:
         set_script_prefix("/")
 
-    assert url.endswith("/canopy/api/inbound/gmail/dimagi/"), url
+    assert url == "https://labs.test/canopy/api/inbound/gmail/dimagi/", url
+
+
+def test_push_url_is_the_public_address_whoever_asks(settings):
+    """A read over MCP arrives on an in-process transport whose host is
+    `localhost`, and a read through the old address carries THAT address. The
+    config screen served `https://localhost/api/inbound/gmail/<ws>/` to paste
+    into Pub/Sub. The subscription must push to the deployment's own address."""
+    from django.test import RequestFactory
+    from django.urls import set_script_prefix
+
+    from apps.inbound import services
+
+    settings.CANOPY_PUBLIC_BASE_URL = "https://canopy.test"
+    assert services.push_url(RequestFactory(SERVER_NAME="localhost").get("/x"), "dimagi") == \
+        "https://canopy.test/api/inbound/gmail/dimagi/"
+    try:
+        set_script_prefix("/canopy/")   # arrived on the old, prefixed address
+        url = services.push_url(RequestFactory().get("/x"), "dimagi")
+    finally:
+        set_script_prefix("/")
+    assert url == "https://canopy.test/api/inbound/gmail/dimagi/"
 
 
 def test_push_url_reverses_rather_than_falling_back(monkeypatch):
