@@ -141,6 +141,14 @@ def resolve_transcript(
     reverse. Which matters, because the convention is the part that breaks silently
     when emdash renames a directory, and every caller reads None as "not yet".
     """
+    # A Claude desktop session (desktop.py) is not an emdash task: its key IS the
+    # CLI session id, which names the file exactly. Asked first; None for anything
+    # that is not one, so emdash resolution below is unchanged.
+    from . import desktop as _desktop
+
+    desktop_path = _desktop.transcript_for(task, home=home, claude_home=claude_home)
+    if desktop_path is not None:
+        return desktop_path
     if emdash_db:
         ref = _emdash.session_transcript_ref(emdash_db, repo, task)
         if ref is not None:
