@@ -65,6 +65,14 @@ def compute(cfg) -> tuple[bool, str]:
     failed and hasn't been cleared by a clean run."""
     if not cdp_control.cdp_healthy(port=getattr(cfg, "cdp_port", 9222)):
         return False, "emdash CDP unreachable"
+    from . import desktop
+
+    if desktop.current() == desktop.CLAUDE_DESKTOP and desktop.claude_cli() is None:
+        # Switched to Claude desktop but cannot open a session there: new threads
+        # fall back to emdash (desktop.maybe_execute). Said here so it shows on the
+        # runner, not only in a log nobody reads.
+        return False, ("runtime is Claude desktop but no Claude Code CLI was found "
+                       "(PATH, ~/.local/bin, Homebrew, the app's bundled copy) — new sessions open in emdash")
     marker = _marker(cfg)
     try:
         note = marker.read_text().strip()
