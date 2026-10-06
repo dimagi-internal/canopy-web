@@ -90,6 +90,27 @@ DEFAULT_ALLOW = ["Read", "Glob", "Grep", "Edit", "Write", "NotebookEdit", "Bash"
                  "WebFetch", "WebSearch", "TodoWrite", "Task", "Skill", "mcp__*"]
 SEED_PROMPT = "This session was prepared by canopy. Reply with exactly: ready"
 
+
+def drop_seed(rows: list[dict]) -> list[dict]:
+    """Conversational rows without the seed exchange (SEED_PROMPT and the `ready`
+    reply after it). The seed is the headless turn that made the session id; it is
+    in the CLI transcript, so every session view opened with it (found live after
+    #1218, which kept it out of TURN transcripts only). Matches the exact prompt
+    this module writes, so it can never drop a real message."""
+    out, skip_reply = [], False
+    for r in rows:
+        text = (r.get("text") or "").strip()
+        if r.get("role") == "user" and text == SEED_PROMPT:
+            skip_reply = True
+            continue
+        if skip_reply and r.get("role") == "assistant" and text == "ready":
+            skip_reply = False
+            continue
+        if r.get("role") == "assistant":
+            skip_reply = False
+        out.append(r)
+    return out
+
 # The runtime canopy-web last told us (heartbeat response `engine`). Starts at the
 # default so a server that predates the field leaves the runner on emdash.
 _current = EMDASH
@@ -751,7 +772,9 @@ class TurnRun:
                 self.rid, self.turn.get("agent_slug") or "", self.thread_key,
                 project=self.turn.get("project") or "",
                 workspace=self.turn.get("workspace_slug") or "",
-                emdash_task_id=sid, session_id=sid, summary=None)
+                emdash_task_id=sid, session_id=sid, summary=None,
+                # The task name, not the session uuid canopy-web would show otherwise.
+                title=name)
             open_session(sid)
             self.status("created_session", runtime=CLAUDE_DESKTOP, session=sid, worktree=str(wt))
         self._follow(sid, channel, which, offset)

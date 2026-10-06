@@ -242,15 +242,20 @@ class Client:
     def record_session(self, runner_id: str, agent_slug: str, thread_key: str, *,
                        project: str = "", workspace: str = "",
                        emdash_task_id: str = "", session_id: str = "",
-                       agent_task_ext_id: str | None = None, summary: str | None = None) -> dict:
-        """Record/point the durable thread link at THIS runner's live session."""
-        _, payload = self._call(
-            "POST", f"/runners/{runner_id}/record-session",
-            {"agent_slug": agent_slug, "project": project, "workspace": workspace,
-             "thread_key": thread_key,
-             "session_key": emdash_task_id, "session_id": session_id,
-             "agent_task_ext_id": agent_task_ext_id, "summary": summary},
-        )
+                       agent_task_ext_id: str | None = None, summary: str | None = None,
+                       title: str = "") -> dict:
+        """Record/point the durable thread link at THIS runner's live session.
+
+        `title` names a session the server is creating for this thread; omitted, an
+        emdash session is titled from its task name, but a key that is a bare CLI
+        session id (a Claude desktop session) would be listed as that uuid."""
+        body = {"agent_slug": agent_slug, "project": project, "workspace": workspace,
+                "thread_key": thread_key,
+                "session_key": emdash_task_id, "session_id": session_id,
+                "agent_task_ext_id": agent_task_ext_id, "summary": summary}
+        if title:
+            body["title"] = title
+        _, payload = self._call("POST", f"/runners/{runner_id}/record-session", body)
         return _emdash_plan(payload)
 
     def report_sessions(

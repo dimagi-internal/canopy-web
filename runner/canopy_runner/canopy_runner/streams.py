@@ -14,7 +14,7 @@ from pathlib import Path
 # cannot drift on either question (what to ship, and how big a request may be).
 from canopy_transcript import chunk_rows, rows_to_ship
 
-from . import chat_bridge, hooks, transcript
+from . import chat_bridge, desktop, hooks, transcript
 from .client import Client
 from .config import Config
 from .failure_log import note_failure, note_success
@@ -145,7 +145,7 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
                 st["server_transcript_id"] == transcript_id
             )
             rows = rows_to_ship(
-                chat_bridge.conversational_messages(records, -1),
+                desktop.drop_seed(chat_bridge.conversational_messages(records, -1)),
                 first_held=st.get("first_index") if same else None,
                 last_held=st.get("last_index") if same else None,
             )
@@ -160,7 +160,8 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
         # The batch's records start at `base` in the file; the offset is applied
         # to the RECORD ordinal inside compose_index, never to the composite
         # index (adding it there would shift a row into another record's slots).
-        rows = chat_bridge.conversational_messages(new_records, -1, record_offset=base)
+        rows = desktop.drop_seed(
+            chat_bridge.conversational_messages(new_records, -1, record_offset=base))
         if rows and not post_stream_rows(cfg, client, sid, rows, transcript_id):
             # Don't advance past unshipped records: reset so the next tick
             # re-attaches and catches up from the server marker.
@@ -264,7 +265,8 @@ def drain_backfills(cfg: Config, client: Client) -> None:
         )
         if not (sid and path):
             continue  # transcript not resolvable -> leave it; server keeps showing the tail
-        messages = chat_bridge.conversational_messages(chat_bridge.read_records(path), -1)
+        messages = desktop.drop_seed(
+            chat_bridge.conversational_messages(chat_bridge.read_records(path), -1))
         # `or [[]]` so an empty transcript still posts once: the ask is only
         # retired by a final chunk, and a session with nothing to ship must not
         # leave the request set forever.
