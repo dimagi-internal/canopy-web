@@ -1,4 +1,4 @@
-"""Record a closed-beta request and tell the person who answers them.
+"""Record a request for access and tell the person who answers them.
 
 The order is the point: the row is written FIRST and the mail is best-effort, so a
 request survives an SES outage and can still be read in Django admin.
@@ -49,20 +49,20 @@ def submit(*, email: str, reason: str, client_ip: str | None, user_agent: str) -
 
 
 def _notify(req: BetaRequest) -> str:
-    """One email to the beta's reader: `sent` | `not_configured` | `failed`. Never raises."""
+    """One email to the person who grants access: `sent` | `not_configured` | `failed`. Never raises."""
     to = getattr(settings, "CANOPY_BETA_REQUESTS_TO", "")
     if not to:
         return "not_configured"
-    subject = f"Canopy beta request: {req.email}"
+    subject = f"Canopy access request: {req.email}"
     text = (
-        f"{req.email} asked to join the Canopy beta.\n\n"
+        f"{req.email} asked for access to Canopy.\n\n"
         f"Why they want access:\n{req.reason}\n\n"
         "Reply to this email to answer them. To let them in, invite them to a "
         "workspace from its Settings → Members."
     )
     reason_html = escape(req.reason).replace("\n", "<br>")
     html = (
-        f"<p><b>{escape(req.email)}</b> asked to join the Canopy beta.</p>"
+        f"<p><b>{escape(req.email)}</b> asked for access to Canopy.</p>"
         f"<p><b>Why they want access:</b><br>{reason_html}</p>"
         "<p style=\"color:#6b6b6b\">Reply to this email to answer them. To let them in, "
         "invite them to a workspace from its Settings → Members.</p>"

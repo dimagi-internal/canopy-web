@@ -88,7 +88,7 @@ PUBLIC_PATH_PREFIXES = (
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
     "/api/slack/",            # Slack webhooks — self-enforce via the Slack signing secret (apps/slack/views.py)
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
-    "/api/beta-requests",        # auth=None — the public site's closed-beta form; grants nothing
+    "/api/beta-requests",        # auth=None — the public site's request-access form; grants nothing
     # NOTE: "/about" is NOT here. Every other entry above ends in "/" (or is a
     # full path), so prefix-matching it is safe; "/about" alone would also
     # admit any future "/about-billing" or "/aboutus" route as a side effect.

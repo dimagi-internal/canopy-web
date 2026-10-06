@@ -140,7 +140,7 @@ the active workspace. `/ddd-plans` and `/reviews` now redirect to `/`.
 - `/w/:workspace/chat/:id` — Live multiplayer chat with an agent, built on the **`canopy-ui/chat`** kit (ported from ace-web; `ChatPanel` + `useSessionSocket` over `ws/canopy-sessions/{id}/`, co-edited draft + presence + streamed reply). A send enqueues a session `Turn`; a session-capable runner drives the agent's emdash session and bridges the reply back live. See `docs/superpowers/specs/2026-07-22-reusable-chat-kit-design.md`.
 
 **Root / personal / global:**
-- `/` (signed out) + `/how-it-works` — **the public product site**: static Astro pages from `site/` (built to `site/dist`, served by `config/public_site.py`; its own assets at `/site/assets/`). Signed-out `/` is the site, signed-in `/` is the workbench; every other site page is served to everyone, and only a path that exists in the build is ever the site's, so no app route can be shadowed. WhiteNoise is subclassed (`config/static_middleware.py`) to leave `/` to Django, because it runs before auth. Its **Request access** form posts to `POST /api/beta-requests` (`apps/beta_requests`, anonymous): the request is stored and emailed to `CANOPY_BETA_REQUESTS_TO` (default Jonathan) with Reply-To the requester, and grants nothing — access is an ordinary invite. Copy comes from the IDM AI talk; see `docs/superpowers/specs/2026-10-05-public-site-and-mark-design.md`
+- `/` (signed out) + `/how-it-works` — **the public product site**: static Astro pages from `site/` (built to `site/dist`, served by `config/public_site.py`; its own assets at `/site/assets/`). Signed-out `/` is the site, signed-in `/` is the workbench; every other site page is served to everyone, and only a path that exists in the build is ever the site's, so no app route can be shadowed. WhiteNoise is subclassed (`config/static_middleware.py`) to leave `/` to Django, because it runs before auth. Its **Request access** form ("closed access for Dimagi and its partners") posts to `POST /api/beta-requests` (`apps/beta_requests`, anonymous): the request is stored and emailed to `CANOPY_BETA_REQUESTS_TO` (default Jonathan) with Reply-To the requester, and grants nothing — access is an ordinary invite. Copy comes from the IDM AI talk; see `docs/superpowers/specs/2026-10-05-public-site-and-mark-design.md`
 - `/system` — Capability catalog + Workflows view (how canopy's plugin capabilities compose; read live from the canopy plugin)
 - `/insights` — Cross-portfolio AI insights feed (user-scoped; deliberately not tenant-scoped)
 - `/supervisor` — Cross-fleet "waiting on you" inbox, agent KPI cards, and runner status. Loaded by three consumers (phone PWA, the menubar's WKWebView, desktop browser); deliberately root, not `/w/:workspace/` — the fleet spans workspaces, like `/insights`. Installable as an Android PWA (manifest + service worker) and pushes only about what lands on your Feed — see Push below
@@ -201,7 +201,7 @@ What lives where:
 - **Storyboards (`apps/storyboards`) — the shareable arc**
 - **Timeline (`apps/timeline`)**
 - **Push (`apps/push`) — Web Push for `/supervisor`**
-- **Beta requests (`apps/beta_requests`) — the public site's closed-beta form**
+- **Beta requests (`apps/beta_requests`) — the public site's request-access form**
 - **System (`apps/system`)**
 - **MCP (`apps/mcp`, mounted at `/api/mcp/`)**
 

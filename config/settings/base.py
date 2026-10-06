@@ -579,7 +579,7 @@ elif DEBUG:
 else:
     EMAIL_BACKEND = "apps.common.email.NotConfiguredEmailBackend"
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Canopy <noreply@localhost>")
-# Who reads closed-beta requests from the public site's sign-up form
+# Who reads access requests from the public site's request-access form
 # (apps/beta_requests). Empty = record them without mailing anyone.
 CANOPY_BETA_REQUESTS_TO = env("CANOPY_BETA_REQUESTS_TO", default="jjackson@dimagi.com")
 # Django mails ADMINS on every unhandled 500 once a real backend is live;

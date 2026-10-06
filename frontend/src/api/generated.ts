@@ -1105,10 +1105,10 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Request access to the closed beta (anonymous)
-         * @description Ask to join canopy's closed beta.
+         * Request access to Canopy (anonymous)
+         * @description Ask for access to canopy, which is currently closed to Dimagi and its partners.
          *
-         *     Records the request and notifies the team that runs the beta, who reply by
+         *     Records the request and notifies the person who grants access, who replies by
          *     email. Granting access is a separate, ordinary workspace invite.
          */
         readonly post: operations["submit_beta_request"];
