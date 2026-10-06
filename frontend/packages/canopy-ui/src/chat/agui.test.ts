@@ -102,7 +102,7 @@ describe('a tool call spans three events, so it is assembled not truncated', () 
     const start = fromAgui({
       type: 'TOOL_CALL_START',
       toolCallId: 't1',
-      toolCallName: 'list_insights',
+      toolCallName: 'list_items',
     })
 
     expect(start).toEqual([])
@@ -114,11 +114,11 @@ describe('a tool call spans three events, so it is assembled not truncated', () 
     // laptop, the cloud runner's over ACP. Rebuilding one from the AG-UI fields
     // would invent an `id` and a `type` that the real payload may not have had,
     // and hand the renderer something no runner ever sent.
-    const block = { type: 'tool_use', id: 'toolu_01ABC', name: 'list_insights', input: { limit: 5 } }
+    const block = { type: 'tool_use', id: 'toolu_01ABC', name: 'list_items', input: { limit: 5 } }
     fromAgui({
       type: 'TOOL_CALL_START',
       toolCallId: 't1',
-      toolCallName: 'list_insights',
+      toolCallName: 'list_items',
       parentMessageId: 'm1',
       metadata: { canopy: { turn_index: 5, block } },
     })

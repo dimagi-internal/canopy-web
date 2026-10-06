@@ -233,14 +233,14 @@ describe('the credential path', () => {
   it('reads a tokenUrl function on every mint, so a later mint names the page now on screen', async () => {
     // canopy's own single-page app: the widget outlives navigation, and the
     // token endpoint needs the page the visitor is on AT MINT TIME.
-    let page = 'insights'
+    let page = 'projects'
     const { fromFrame } = widgetHarness({ tokenUrl: () => `${TOKEN_URL}?page=${page}` })
     await fromFrame({ source: SOURCE, type: 'ready' })
     page = 'agent.inbox'
     await fromFrame({ source: SOURCE, type: 'token-request', id: 'r2' })
 
     const urls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
-    expect(urls).toEqual([`${TOKEN_URL}?page=insights`, `${TOKEN_URL}?page=agent.inbox`])
+    expect(urls).toEqual([`${TOKEN_URL}?page=projects`, `${TOKEN_URL}?page=agent.inbox`])
   })
 
   it('sends the CSRF header when the host uses a csrftoken cookie', async () => {
@@ -732,12 +732,12 @@ describe('the page state channel', () => {
     const { widget, fromFrame, sent } = widgetHarness()
     await fromFrame({ source: SOURCE, type: 'ready' })
 
-    widget.setPageState({ visible_ids: [4471, 4472], backing_tool: 'list_insights' })
+    widget.setPageState({ visible_ids: [4471, 4472], backing_tool: 'list_items' })
 
     const [push] = sent('state')
     expect(push.message.state).toEqual({
       visible_ids: [4471, 4472],
-      backing_tool: 'list_insights',
+      backing_tool: 'list_items',
     })
     // The canopy origin, never '*' — the view describes the user's screen.
     expect(push.targetOrigin).toBe(CANOPY)

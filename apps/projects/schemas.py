@@ -10,10 +10,10 @@ from apps.common.schemas import StrictModel
 
 ProjectVisibility = Literal["public", "private"]
 ProjectStatus = Literal["active", "stale", "archived"]
-# "insight" mirrors the `ProjectContext` choice, which is KEPT although the
-# Insights feed (/insights, /api/insights/) was retired 2026-10: existing rows
-# still come back from the context endpoints, so the output type must name it.
-ProjectContextType = Literal["current_work", "next_step", "summary", "note", "insight"]
+# No "insight": the Insights feed was retired 2026-10. Writing one is a 422 (a
+# stale caller should fail loudly, not write rows nobody reads), and the
+# remaining rows are never returned (`RETIRED_CONTEXT_TYPE`).
+ProjectContextType = Literal["current_work", "next_step", "summary", "note"]
 ActionStatus = Literal["started", "completed", "failed"]
 
 SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]*$"
