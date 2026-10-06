@@ -21,7 +21,6 @@ from mcp.server.auth.middleware.auth_context import (
 )
 
 from apps.mcp.server import mcp
-from apps.projects.models import Project
 from apps.shareouts.models import Shareout
 
 from apps.workspaces.models import WorkspaceMembership
@@ -54,20 +53,15 @@ def _editor():
     return user
 
 
-def _project(name, slug):
-    # Homed: a project with no workspace is visible to nobody.
-    return Project.objects.create(name=name, slug=slug, workspace=a_workspace())
-
-
 _DAY = iter(range(1, 28))
 
 
-def _shareout(user, project, title, source="canopy"):
+def _shareout(user, project_slug, title, source="canopy"):
     """A shareout the editor posted (an editor clears their own). Each on its own
     day, so the one-per-period-and-source constraint never trips."""
     day = next(_DAY)
     return Shareout.objects.create(
-        project=project, workspace=a_workspace(), created_by=user, title=title,
+        project_slug=project_slug, workspace=a_workspace(), created_by=user, title=title,
         content="c", source=source,
         period_start=dt.datetime(2026, 9, day, 0, tzinfo=dt.timezone.utc),
         period_end=dt.datetime(2026, 9, day, 23, tzinfo=dt.timezone.utc),
@@ -84,7 +78,7 @@ def test_tools_list_returns_the_list_and_clear_tools():
 @pytest.mark.django_db
 def test_list_shareouts_runs_and_returns_rows():
     user = _editor()
-    proj = _project("Canopy", "canopy")
+    proj = "canopy"
     _shareout(user, proj, "shipped the thing")
 
     with as_user(user):
@@ -99,8 +93,8 @@ def test_list_shareouts_runs_and_returns_rows():
 @pytest.mark.django_db
 def test_clear_shareouts_respects_project_filter():
     user = _editor()
-    keep = _project("Keep", "keep")
-    drop = _project("Drop", "drop")
+    keep = "keep"
+    drop = "drop"
     _shareout(user, keep, "keep me")
     _shareout(user, drop, "drop me 1")
     _shareout(user, drop, "drop me 2")
@@ -111,13 +105,13 @@ def test_clear_shareouts_respects_project_filter():
     assert result.structured_content == {"cleared": 2}
     remaining = Shareout.objects.all()
     assert remaining.count() == 1
-    assert remaining.first().project_id == keep.pk
+    assert remaining.first().project_slug == keep
 
 
 @pytest.mark.django_db
 def test_clear_shareouts_respects_source_filter():
     user = _editor()
-    proj = _project("P", "p")
+    proj = "p"
     _shareout(user, proj, "x", source="run-a")
     _shareout(user, proj, "y", source="run-b")
 
@@ -136,7 +130,7 @@ def test_clear_shareouts_with_no_arguments_runs_and_writes_audit_as_user():
     from apps.mcp.models import MCPAuditLog
 
     user = _editor()
-    proj = _project("P", "p")
+    proj = "p"
     _shareout(user, proj, "x")
 
     with as_user(user):

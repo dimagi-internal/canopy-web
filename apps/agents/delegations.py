@@ -8,7 +8,8 @@ THE ONE RULE: a turn's GitHub credential is its agent owner's delegation to that
 agent, resolved here, server-side. The runner names a turn it has claimed and
 nothing else — it never chooses whose identity to use, and there is no fallback
 to any shared token when the delegation is missing. A turn with no agent (a repo
-chat, a project turn) has no GitHub credential at all.
+chat, a project turn) has no GitHub credential at all — unless its repo has a
+`RepoIdentity` row, in which case it runs as that agent, under the same rule.
 
 The caller of a turn (the person who emailed the agent, say) is deliberately NOT
 the principal: an agent's GitHub writes use its owner's identity, whoever caused
@@ -21,7 +22,6 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Callable
 from urllib.parse import urlencode
 
 import requests
@@ -30,7 +30,7 @@ from django.utils import timezone
 from apps.common.encryption import decrypt_secret, encrypt_secret
 
 from .definition import definition_key
-from .models import Agent, AgentDelegation
+from .models import Agent, AgentDelegation, RepoIdentity
 
 GITHUB_API = "https://api.github.com"
 HTTP_TIMEOUT = 15
@@ -287,6 +287,9 @@ def status(agent: Agent) -> dict:
         "owner_email": owner.email if owner else "",
         "create_url": create_url(agent),
         "set": row is not None,
+        # Repos whose agentless project turns borrow this identity (RepoIdentity).
+        "identity_for_repos": list(
+            RepoIdentity.objects.filter(agent=agent).values_list("repo_slug", flat=True)),
     }
     if row is None:
         return base
@@ -330,39 +333,23 @@ def readiness(agent: Agent) -> tuple[str, str]:
 
 # ---- handing it to a turn ----------------------------------------------------
 
-#: Resolves a project turn's slug (`Turn.project`) to a fallback agent slug, or
-#: "" for none. `apps.agents` is FRAMEWORK and `apps.projects` is PRODUCT
-#: (ARCHITECTURE.md) — the one-way arrow means this module can't import
-#: `Project` to read its `default_identity_agent`. Instead `apps.projects`
-#: registers itself here from `AppConfig.ready()`, the inversion
-#: ARCHITECTURE.md already names as the preferred fix for this shape of seam.
-#: None until projects' app config has run.
-_project_identity_resolver: Callable[[str], str] | None = None
-
-
-def register_project_identity_resolver(fn: Callable[[str], str]) -> None:
-    """Called once, from the product project app's own AppConfig.ready(). Last
-    registration wins — there is only ever the one caller."""
-    global _project_identity_resolver
-    _project_identity_resolver = fn
-
-
 def turn_agent(turn) -> Agent | None:
     """The agent a turn runs AS: its own for an agent turn, the session's for a
     chat with an agent, a project turn's configured fallback if it has one,
     else none (a repo chat, or a project with no default set). The same
     decision the runner makes in `_turn_agent_slug`, made here from the rows —
     except the project fallback, which the runner cannot make: it would need
-    to know the project's configured agent, and only canopy-web does."""
+    to know the repo's configured agent (`RepoIdentity`), and only canopy-web
+    does."""
     if turn.agent_id:
         return turn.agent
     cs = getattr(turn, "chat_session", None)
     if cs is not None and cs.agent_id:
         return cs.agent
-    if turn.project and _project_identity_resolver is not None:
-        slug = _project_identity_resolver(turn.project)
-        if slug:
-            return Agent.objects.filter(slug=slug).first()
+    if turn.project:
+        row = RepoIdentity.objects.select_related("agent").filter(repo_slug=turn.project).first()
+        if row is not None:
+            return row.agent
     return None
 
 

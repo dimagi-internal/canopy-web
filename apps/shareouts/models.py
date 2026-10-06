@@ -1,25 +1,26 @@
 from django.conf import settings
 from django.db import models
 
-from apps.projects.models import Project
-
 
 class Shareout(models.Model):
     """A dated, teammate-facing work briefing.
 
-    One row per project per period; a row with `project=None` is the
+    One row per project per period; a row with `project_slug=None` is the
     cross-project roll-up for that period. Posted by the `canopy:shareout`
     skill. Re-running the same period from the same source replaces the
     prior rows (see `apps.shareouts.services.upsert_shareouts`), so the feed
     is a clean log rather than an append pile.
     """
 
-    project = models.ForeignKey(
-        Project,
-        on_delete=models.CASCADE,
-        related_name="shareouts",
-        null=True,
+    # The repo slug this briefing is about — a bare string, the same shape
+    # `Walkthrough.project_slug` uses. It was an FK to the workbench project
+    # registry until that was retired (shareouts/0008 copied the slugs); any
+    # well-formed slug is accepted now, because there is no registry to check.
+    project_slug = models.CharField(
+        max_length=200,
         blank=True,
+        null=True,
+        db_index=True,
         help_text="Null = cross-project roll-up for the period.",
     )
     workspace = models.ForeignKey(
@@ -30,7 +31,7 @@ class Shareout(models.Model):
         blank=True,
         help_text=(
             "The tenant that owns this shareout. Shareout is its own tenant root "
-            "(the project FK is orthogonal). Nullable for migration safety; the "
+            "(project_slug is orthogonal). Nullable for migration safety; the "
             "API always assigns one (default workspace when unspecified)."
         ),
     )
@@ -76,5 +77,5 @@ class Shareout(models.Model):
         ]
 
     def __str__(self):
-        scope = self.project.slug if self.project_id else "roll-up"
+        scope = self.project_slug or "roll-up"
         return f"shareout:{scope}:{self.period_start}..{self.period_end}"

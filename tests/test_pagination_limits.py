@@ -50,8 +50,7 @@ def agent(workspace):
 
 
 # One case per distinct clamp shape across the paginated surface: the 500-cap
-# routes, the projects route, and the routes that also take a
-# caller-supplied offset.
+# routes and the routes that also take a caller-supplied offset.
 @pytest.mark.parametrize("path", [
     "/api/agents/",
     "/api/agents/echo/syncs/",
@@ -59,7 +58,6 @@ def agent(workspace):
     "/api/agents/echo/work-products/",
     "/api/agents/echo/runs/",
     "/api/agents/echo/schedules/",
-    "/api/projects/",
     "/api/issues/",
     "/api/shareouts/",
 ])
@@ -70,7 +68,7 @@ def test_nonsense_limit_is_a_client_no_op_not_a_500(client, agent, path, query):
     assert resp.json()["limit"] == 1  # clamped to Page.limit's floor
 
 
-@pytest.mark.parametrize("path", ["/api/projects/", "/api/issues/"])
+@pytest.mark.parametrize("path", ["/api/contacts/", "/api/issues/"])
 def test_negative_offset_is_a_client_no_op_not_a_500(client, path):
     resp = client.get(f"{path}?offset=-1")
     assert resp.status_code == 200, f"{path} → {resp.status_code}"

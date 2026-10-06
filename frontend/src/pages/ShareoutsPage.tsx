@@ -162,7 +162,7 @@ function ProjectCard({ shareout }: { shareout: Shareout }) {
             <div className="flex items-center gap-2 flex-wrap">
               {shareout.project_slug && (
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-foreground-secondary bg-muted px-1.5 py-0.5 rounded">
-                  {shareout.project_name ?? shareout.project_slug}
+                  {shareout.project_slug}
                 </span>
               )}
               {shareout.all_prs && shareout.all_prs.length > 0 && (
@@ -182,14 +182,6 @@ function ProjectCard({ shareout }: { shareout: Shareout }) {
         <Markdown>{shareout.content}</Markdown>
         <LinkChips links={shareout.links} />
         <AllPRs prs={shareout.all_prs} />
-        {shareout.project_slug && (
-          <Link
-            to={`/?expand=${encodeURIComponent(shareout.project_slug)}`}
-            className="inline-block mt-3 text-[11px] text-muted-foreground hover:text-primary transition-colors"
-          >
-            Open {shareout.project_name ?? shareout.project_slug} on the dashboard →
-          </Link>
-        )}
       </div>
     </details>
   )

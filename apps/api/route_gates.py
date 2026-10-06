@@ -113,10 +113,10 @@ GATES: dict[str, tuple[str, ...]] = {
     "sync_skill_history": ("agent.work",),
     "skill_history": ("member",),
     "skill_revision_diff": ("member",),
-    "agents_list_projects": ("member",),
-    "agents_create_project": ("agent.work",),
-    "agents_get_project": ("member",),
-    "agents_patch_project": ("agent.work",),
+    "list_projects": ("member",),
+    "create_project": ("agent.work",),
+    "get_project": ("member",),
+    "patch_project": ("agent.work",),
     "list_tasks": ("member",),
     "list_waiting_tasks": ("member",),
     "sync_tasks": ("agent.work",),
@@ -328,27 +328,12 @@ GATES: dict[str, tuple[str, ...]] = {
     "embed_self": ("authenticated",),
     "embed_self_token": ("self",),
     "embed_ws_ticket": ("self",),  # a one-time socket ticket standing for the caller's own delegated token  # mints a 15-min DelegatedToken for the caller
-    # --- apps/projects/api.py  (reads: _member_project / request_workspace_slugs; writes: _may_write = CONTENT_WRITE)
-    "projects_list_projects": ("member",),
-    "projects_create_project": ("content.write",),  # creation_workspace + CONTENT_WRITE
-    "get_project_slugs": ("member",),
-    "seed_projects": ("content.write",),  # creation_workspace + CONTENT_WRITE; foreign slugs skipped
-    "batch_context": ("content.write",),  # per-slug; unwritable slug counts 0
-    "batch_actions": ("content.write",),  # per-slug; unwritable slug counts 0
-    "projects_get_project": ("member",),
-    "projects_patch_project": ("content.write",),
-    "delete_project": ("content.write",),
-    "list_context": ("member",),
-    "create_context": ("content.write",),
+    # --- apps/agent_runs/documents.py  (run docs; mounted with agent_runs)
     "list_run_docs": ("member",),
     "list_agent_projects": ("member",),
     "get_run_doc": ("member",),
     "create_run_doc": ("agent.work",),
     "put_run_doc_state": ("agent.work",),
-    "get_context_latest": ("member",),
-    "list_actions": ("member",),
-    "create_action": ("content.write",),
-    "get_actions_summary": ("member",),
     # --- apps/reviews/api.py
     "list_reviews": ("member",),
     "create_review": ("content.write",),  # creation_workspace + CONTENT_WRITE

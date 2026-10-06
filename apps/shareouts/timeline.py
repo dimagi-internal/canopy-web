@@ -38,7 +38,7 @@ def recent_events(
 ) -> list:
     from apps.timeline.types import ActivityEvent, cursor_page, truncate
 
-    qs = Shareout.objects.select_related("project").order_by("-period_end")
+    qs = Shareout.objects.order_by("-period_end")
     if workspace_slugs is not None:
         qs = qs.filter(workspace_id__in=workspace_slugs)
     return [
@@ -48,7 +48,7 @@ def recent_events(
             at=s.period_end,
             title=s.title,
             summary=truncate(s.summary),
-            project_slug=s.project.slug if s.project_id else None,
+            project_slug=s.project_slug or None,
             actor=s.author or s.source or None,
             href=f"/shareouts/{quote(_period_slug(s.period_start, s.period_end))}",
             id=f"shareout:{s.id}",

@@ -13,54 +13,54 @@ import {
 import { createSession } from '@/api/chat'
 import { getAgentDefaultOrder, getAgentRunners, type AgentOut, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
-import { projectsApi, type ProjectSlug } from '@/api/projects'
-import { onlineSessionCapableRunners } from './runnerEligibility'
+import { onlineSessionCapableRunners, repoChoices, reportedRepos, type RepoChoice } from './runnerEligibility'
 
 // The "Run on" picker's pending target — set when the user picks an agent or
 // project from the menu, before they've confirmed a runner + Start.
 type PendingTarget =
   | { kind: 'agent'; agent: AgentOut }
-  | { kind: 'project'; project: ProjectSlug }
+  | { kind: 'project'; project: RepoChoice }
 
 /**
- * "+ New chat": pick an agent (or an agentless project), pick where it runs,
- * start. CROSS-WORKSPACE — the chat is created in the chosen agent's or
- * project's own workspace. One implementation, two doors: the Sessions list
- * and the supervisor feed.
+ * "+ New chat": pick an agent (or a repo, for an agentless project chat), pick
+ * where it runs, start. CROSS-WORKSPACE — an agent chat is created in the
+ * agent's own workspace, a repo chat in its runner's. One implementation, two
+ * doors: the Sessions list and the supervisor feed.
  *
- * `projects` may be passed by a caller that already loaded them; otherwise the
+ * The repos offered are the ones the fleet's online, session-capable runners
+ * report (`repoChoices`) — the set a project chat can actually be claimed on.
+ * `runners` may be passed by a caller that already loaded them; otherwise the
  * menu loads them itself.
  */
 export function NewChatMenu({
   agents,
-  projects: projectsProp,
+  runners: runnersProp,
   onError,
 }: {
   agents: readonly AgentOut[]
-  projects?: readonly ProjectSlug[]
+  runners?: readonly RunnerOut[] | null
   onError: (message: string) => void
 }) {
   const navigate = useNavigate()
-  const [ownProjects, setOwnProjects] = useState<ProjectSlug[]>([])
-  const projects = projectsProp ?? ownProjects
+  const [ownRunners, setOwnRunners] = useState<RunnerOut[] | null>(null)
+  const fleetRunners = runnersProp ?? ownRunners
+  const projects = useMemo(() => repoChoices(fleetRunners ?? []), [fleetRunners])
   const [creating, setCreating] = useState(false)
   const [pending, setPending] = useState<PendingTarget | null>(null)
   const [agentRunnerOptions, setAgentRunnerOptions] = useState<AgentRunnerOut[]>([])
-  const [fleetRunners, setFleetRunners] = useState<RunnerOut[] | null>(null)
   const [runnersLoading, setRunnersLoading] = useState(false)
   const [selectedRunnerId, setSelectedRunnerId] = useState('')
 
   useEffect(() => {
-    if (projectsProp) return
+    if (runnersProp !== undefined) return
     let live = true
-    projectsApi
-      .listSlugs()
-      .then((p) => { if (live) setOwnProjects(p) })
-      .catch(() => { /* agents alone still make a usable menu */ })
+    listRunners()
+      .then((r) => { if (live) setOwnRunners(r) })
+      .catch(() => { if (live) setOwnRunners([]) /* agents alone still make a usable menu */ })
     return () => {
       live = false
     }
-  }, [projectsProp])
+  }, [runnersProp])
 
   const start = useCallback(
     (args: Parameters<typeof createSession>[0]) => {
@@ -116,19 +116,10 @@ export function NewChatMenu({
       })
   }, [])
 
-  const pickProject = useCallback(
-    (project: ProjectSlug) => {
-      setSelectedRunnerId('')
-      setPending({ kind: 'project', project })
-      if (fleetRunners !== null) return
-      setRunnersLoading(true)
-      listRunners()
-        .then(setFleetRunners)
-        .catch(() => setFleetRunners([]))
-        .finally(() => setRunnersLoading(false))
-    },
-    [fleetRunners],
-  )
+  const pickProject = useCallback((project: RepoChoice) => {
+    setSelectedRunnerId('')
+    setPending({ kind: 'project', project })
+  }, [])
 
   const confirmStart = useCallback(() => {
     if (!pending) return
@@ -141,10 +132,13 @@ export function NewChatMenu({
   }, [pending, selectedRunnerId, start])
 
   // Project chats route through the fleet-wide runner list, filtered to
-  // online + sessions-capable (only those can execute a chat turn at all).
+  // online + sessions-capable (only those can execute a chat turn at all) and
+  // to the runners that hold the picked repo (no other box could claim it).
+  const pickedRepo = pending?.kind === 'project' ? pending.project.slug : null
   const projectRunnerOptions = useMemo(
-    () => onlineSessionCapableRunners(fleetRunners ?? []),
-    [fleetRunners],
+    () => onlineSessionCapableRunners(fleetRunners ?? [])
+      .filter((r) => pickedRepo !== null && reportedRepos(r).includes(pickedRepo)),
+    [fleetRunners, pickedRepo],
   )
 
   return (
@@ -179,14 +173,14 @@ export function NewChatMenu({
             {projects.length > 0 && (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuLabel>Projects</DropdownMenuLabel>
+                <DropdownMenuLabel>Repos</DropdownMenuLabel>
                 {projects.map((p) => (
                   <DropdownMenuItem
                     key={`${p.workspace}/${p.slug}`}
                     closeOnClick={false}
                     onClick={() => pickProject(p)}
                   >
-                    {p.name}
+                    {p.slug}
                     {p.workspace ? <span className="ml-2 text-xs text-muted-foreground">{p.workspace}</span> : null}
                   </DropdownMenuItem>
                 ))}
@@ -196,7 +190,7 @@ export function NewChatMenu({
         ) : (
           <div className="flex flex-col gap-2 px-2 py-1.5" data-testid="run-on-picker">
             <div className="text-sm text-foreground">
-              {pending.kind === 'agent' ? pending.agent.name : pending.project.name}
+              {pending.kind === 'agent' ? pending.agent.name : pending.project.slug}
             </div>
             <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
               Run on

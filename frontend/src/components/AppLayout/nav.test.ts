@@ -22,11 +22,13 @@ describe('NAV_GROUPS', () => {
     // transcripts (/sessions), which are reached by their /share/<token> link
     // and deliberately have no menu entry. Insights was retired outright
     // (2026-10): its job moved to agent tasks and items, reached via Agents.
+    // So was the workbench Projects page (2026-10-06): the workspace index now
+    // lands on Agents, whose projects and tasks are the one project system.
     const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))
     expect(labels.sort()).toEqual(
       [
         'Activity', 'Agents', 'Chats', 'DDD', 'Guide', 'Huddles',
-        'Projects', 'Schedule', 'Settings', 'Shareouts', 'Storyboards',
+        'Schedule', 'Settings', 'Shareouts', 'Storyboards',
         'System', 'Timeline', 'Walkthroughs',
       ].sort(),
     )
@@ -46,7 +48,6 @@ describe('resolveNavGroups', () => {
   it('resolves tenant items under the active workspace', () => {
     const work = resolveNavGroups(authed).find((g) => g.label === 'Work')!
     expect(work.items).toEqual([
-      { href: '/w/connect', label: 'Projects' },
       { href: '/w/connect/chat', label: 'Chats' },
     ])
   })
@@ -66,7 +67,7 @@ describe('resolveNavGroups', () => {
   })
 
   it('drops a group whose items are all tenant-scoped while the workspace is unknown', () => {
-    // Demos is DDD + Walkthroughs + Storyboards, and Work is Projects + Chats —
+    // Demos is DDD + Walkthroughs + Storyboards, and Work is Chats —
     // all tenant items. An empty menu would be a trigger that opens onto nothing.
     const labels = resolveNavGroups({ isAuthed: true, active: null }).map((g) => g.label)
     expect(labels).not.toContain('Demos')
@@ -95,8 +96,8 @@ describe('isNavItemActive', () => {
   })
 
   it('matches the workspace index only exactly', () => {
-    // /w/<slug> prefixes every tenant route, so a prefix match would light
-    // Projects up on every page in the workspace.
+    // /w/<slug> prefixes every tenant route, so a prefix match would light an
+    // item linking there up on every page in the workspace.
     expect(isNavItemActive('/w/connect', '/w/connect')).toBe(true)
     expect(isNavItemActive('/w/connect', '/w/connect/timeline')).toBe(false)
   })
@@ -111,20 +112,14 @@ describe('isNavGroupActive', () => {
     expect(isNavGroupActive(group('Workspace'), '/w/connect/shareouts/2026-09-01')).toBe(true)
   })
 
-  it('marks Work on the workspace index', () => {
-    expect(isNavGroupActive(group('Work'), '/w/connect')).toBe(true)
-  })
-
   it('does not mark Work on some other tenant page', () => {
-    // The regression the exact-match carve-out exists to prevent: Projects is
-    // /w/<slug>, a prefix of every tenant route.
     expect(isNavGroupActive(group('Work'), '/w/connect/members')).toBe(false)
     expect(isNavGroupActive(group('Work'), '/w/connect/ddd/onboarding')).toBe(false)
   })
 
   it('marks exactly one group for any given route', () => {
     for (const pathname of [
-      '/w/connect', '/w/connect/chat',
+      '/w/connect/chat',
       '/w/connect/agents', '/activity', '/schedules', '/w/connect/ddd', '/w/connect/huddles',
       '/w/connect/walkthroughs', '/w/connect/storyboards', '/w/connect/shareouts', '/w/connect/timeline',
       '/w/connect/settings', '/w/connect/settings/slack', '/system',

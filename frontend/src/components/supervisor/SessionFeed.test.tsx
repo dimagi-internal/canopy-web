@@ -13,8 +13,12 @@ vi.mock('@/api/chat', () => ({
   closeSession: (...a: unknown[]) => closeSession(...a),
 }))
 
-// The New chat menu loads projects on mount; nothing here exercises it.
-vi.mock('@/api/projects', () => ({ projectsApi: { listSlugs: () => Promise.resolve([]) } }))
+// The New chat menu loads the fleet's runners (their repos) on mount; nothing
+// here exercises it.
+vi.mock('@/api/harness', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/harness')>()),
+  listRunners: () => Promise.resolve([]),
+}))
 
 import { SessionFeed } from './SessionFeed'
 

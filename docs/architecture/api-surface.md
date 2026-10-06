@@ -31,22 +31,8 @@ All endpoints are served by Django Ninja (Pydantic v2 typed) under `/api/`. Erro
 - `GET /api/tokens/on-behalf-of/jwks` — **REMOVED 2026-09-26**, with `apps/tokens/onbehalf.py`, the `act_on_behalf_of_caller` MCP tool and the claim response's `on_behalf_of`: canopy signing "this is <visitor>" with a key a host trusted would have made canopy an identity authority for every connected site. Never enabled. Replaced by host-issued grants (above).
 - `GET|PATCH /api/me/presence-preference/` — Read / set the user's presence-visibility opt-out (see the presence bullet under Design Decisions).
 
-### Projects
-- `GET /api/projects/` — List projects with latest context
-- `POST /api/projects/` — Create project
-- `GET /api/projects/slugs/` — Lightweight slug list
-- `GET /api/projects/{slug}/` — Project detail with full context
-- `PATCH /api/projects/{slug}/` — Update project
-- `DELETE /api/projects/{slug}/` — Delete project
-- `POST /api/projects/{slug}/context/` — Push context entry
-- `GET /api/projects/{slug}/context/` — List context entries
-- `GET /api/projects/{slug}/context/latest/` — Latest context per type
-- `POST /api/projects/seed/` — Bulk seed projects
-- `POST /api/projects/batch-context/` — Create context entries across many projects in one request (body: `{updates: {slug: [...]}}`)
-- `POST /api/projects/batch-actions/` — Record actions across many projects in one request (body: `{updates: {slug: [...]}}`)
-- `POST /api/projects/{slug}/actions/` — Record a skill action
-- `GET /api/projects/{slug}/actions/` — List actions (filter: ?skill=name)
-- `GET /api/projects/{slug}/actions/summary/` — Latest action per skill
+### Projects — retired
+The pre-agentic workbench Projects app (`/api/projects/*`: the repo registry, its context feed, skill-action log, slugs and seed routes) was retired 2026-10-06; every route is gone and a stale caller gets a 404. An agent's projects (`/api/agents/{slug}/projects/`, below) are canopy's one project system. The repo-turn GitHub identity it held now lives in `agents.RepoIdentity` (see Agents), and a shareout's project is a plain `project_slug`.
 
 ### Workspaces (`apps/workspaces`) — multi-tenancy
 The tenant that owns agents + runs. `Workspace` + members (owner / editor / viewer) + email invites (ported from ace-web, domain-agnostic). Replaced the retired `apps/workspace` (singular) co-authoring session app — that whole SSE skill-authoring engine and its `/api/workspace/*` routes are gone.
@@ -137,11 +123,11 @@ The narrative is identified by `narrative_slug` (decoupled from `run_id`); a ser
 
 ### Shareouts (`apps/shareouts`)
 - `GET /api/shareouts/` — List shareouts (teammate-facing work briefings, timestamped per window)
-- `POST /api/shareouts/` — Create shareouts (batch; idempotent per `period`+`source`)
+- `POST /api/shareouts/` — Create shareouts (batch; idempotent per `period`+`source`). Each item's optional `project_slug` is stored as given — any well-formed slug (letters, digits, `.`, `_`, `-`); there is no project registry to check it against, so nothing is skipped. Response `{created, replaced}`
 - `POST /api/shareouts/clear/` — Clear shareouts by source / project / date (AND-combined)
 
 ### Agents (`apps/agents`) — first-class AI-agent workspace
-An `Agent` (e.g. "Echo") is a first-class entity — distinct from a code Project — with its own Google-Doc syncs, work products, skill catalog, packaged turns, and an actionable task board. The **DB is the source of truth**; the board renders by "who has the ball" (the agent vs a human). A human's board action POSTs a *command*; the agent drains pending commands on its next turn and marks them applied (`result_note` + `applied_at`). All routes are session-authed and `x-mcp-expose`d.
+An `Agent` (e.g. "Echo") is a first-class entity — distinct from a code repo — with its own Google-Doc syncs, work products, skill catalog, packaged turns, and an actionable task board. The **DB is the source of truth**; the board renders by "who has the ball" (the agent vs a human). A human's board action POSTs a *command*; the agent drains pending commands on its next turn and marks them applied (`result_note` + `applied_at`). All routes are session-authed and `x-mcp-expose`d.
 - `GET /api/agents/` — List agents
 - `POST /api/agents/` — Create or update an agent (upsert by slug)
 - `GET /api/agents/{slug}/` — Agent detail (with counts, incl. `turn_count` + `latest_turn_at`). Both are read off the **harness turn queue** — the same rows `GET /api/harness/turns/?agent={slug}` serves — so the fleet page and the queue cannot disagree. `latest_turn_at` is the newest `started_at` (a queued turn nobody picked up is not a run), falling back to `created_at`
@@ -162,6 +148,7 @@ An `Agent` (e.g. "Echo") is a first-class entity — distinct from a code Projec
 - `GET /api/agents/{slug}/runtime` — The **Agent Runtime Registry** read: a PAT-authed runner asks "how do I run agent X?" and gets the repo pointer, secret-reference names, engine preference, and tenant. See `docs/superpowers/specs/2026-07-20-agent-runtime-registry-design.md`
 - `GET|POST /api/agents/{slug}/projects/` — list / create the agent's **projects**: the state behind each `Projects/<name>` Drive folder — what is open, what is parked on a person, whether the work is still running. The folder keeps the files. Per agent, like the folders are, so two agents on one initiative have a project each and share files when they want to; numbered `P<N>` per agent and never reused, since a recycled id would point an old link at new work. The list carries `task_count` + `open_task_count` without a query per project
 - `GET|PATCH /api/agents/{slug}/projects/{ref}/` — read / patch one by `P<N>` or numeric id. Closing a project (`status=done`) **keeps its tasks**: the history of what the work was is the point of a finished one
+- `GET /api/agents/{slug}/github` — How the agent acts on GitHub (masked; never the token). `identity_for_repos` lists the repos whose AGENTLESS project turns (`Turn.project`, no agent) borrow this agent's identity — its `agents.RepoIdentity` rows (`repo_slug` unique → agent), read-only here and edited in Django admin. A repo with no row keeps the refusal: no GitHub identity at all.
 - `GET /api/agents/{slug}/tasks/waiting/` — the tasks parked on a PERSON, which is what the board could not say before: `assigned` was free text (one person, three spellings). Backs the Inbox's parked band
 - `GET /api/agents/{slug}/tasks/` — List the board
 - `POST /api/agents/{slug}/tasks/sync` — Upsert tasks from the (legacy) source sheet (non-destructive). This is what `canopy agent add` posts, so it honours `project` — but **only when the payload names one**: defaulting it to `""` would unfile every task a wholesale sync touches, so editing a title from the CLI would quietly empty the project it belongs to

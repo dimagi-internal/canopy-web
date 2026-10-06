@@ -115,7 +115,6 @@ export const apiV2 = createClient<paths>({
 // and strips the prefix back to the flat mount. Off a tenant route the flat
 // path is used and the server resolves the caller's default workspace.
 const WS_SCOPED_API_PREFIXES = [
-  "/api/projects",
   "/api/walkthroughs",
   "/api/reviews",
   "/api/shareouts",
@@ -160,7 +159,7 @@ function activeWorkspaceFromUrl(): string | null {
 export async function rewriteForWorkspace(request: Request, ws: string): Promise<Request> {
   const url = new URL(request.url);
   // openapi-fetch already prefixed API_BASE; match + rewrite against the
-  // deployment-relative path so /canopy/api/projects → /canopy/api/w/:ws/projects.
+  // deployment-relative path so /canopy/api/agents → /canopy/api/w/:ws/agents.
   const rel = url.pathname.slice(API_BASE.length);
   url.pathname = `${API_BASE}/api/w/${ws}${rel.slice("/api".length)}`;
   const hasBody = !["GET", "HEAD"].includes(request.method);
@@ -198,7 +197,7 @@ apiV2.use({
     if (!ws) return request;
     const url = new URL(request.url);
     // openapi-fetch already prefixed API_BASE; match against the
-    // deployment-relative path so /canopy/api/projects → /canopy/api/w/:ws/projects.
+    // deployment-relative path so /canopy/api/agents → /canopy/api/w/:ws/agents.
     const rel = url.pathname.slice(API_BASE.length);
     if (WS_SCOPED_API_PREFIXES.some((p) => rel.startsWith(p))) {
       return rewriteForWorkspace(request, ws);

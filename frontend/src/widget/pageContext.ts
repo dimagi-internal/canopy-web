@@ -84,10 +84,6 @@ export const pageContextRules: PageContextRule[] = [
     pattern: /^\/w\/([^/]+)\/(timeline|activity|shareouts|walkthroughs|storyboards|members|schedules|chat)/,
     build: (m) => ({ surface: `the ${m[2]} page`, params: { workspace: m[1] } }),
   },
-  {
-    pattern: /^\/w\/([^/]+)\/?$/,
-    build: (m) => ({ surface: 'the project workbench', params: { workspace: m[1] } }),
-  },
 
   // --- personal / global --------------------------------------------------
   { pattern: /^\/supervisor/, build: () => ({ surface: 'the supervisor inbox' }) },

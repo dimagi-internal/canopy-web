@@ -8,7 +8,6 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentSync
-from apps.projects.models import Project, ProjectContext
 from apps.runs.tests.factories import (
     DEFAULT_TEST_WS,
     add_member,
@@ -33,7 +32,7 @@ def owner(db):
 @pytest.fixture
 def ws(owner):
     """The owner's tenant. Workspace-scoped sources (walkthroughs, shareouts,
-    agents, projects) only surface rows in a workspace the caller belongs to, so
+    agents) only surface rows in a workspace the caller belongs to, so
     tests place their objects here — mirrors production where the API assigns one.
     Matches the workspace make_walkthrough() uses, so all sources share a tenant."""
     w = make_workspace(DEFAULT_TEST_WS)
@@ -64,14 +63,19 @@ def test_requires_auth():
     assert Client().get(BASE).status_code == 401
 
 
-def test_merges_across_subsystems(client, owner, ws):
-    project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
-    note = ProjectContext.objects.create(
-        project=project, context_type="note", content="ship it", source="x"
+def _agent_sync(owner, ws, title="ship it"):
+    agent = Agent.objects.get_or_create(
+        slug="reef-agent", defaults={"name": "Reef", "owner": owner, "workspace": ws})[0]
+    return AgentSync.objects.create(
+        agent=agent, period_start=_aware(2026, 6, 10, 0), period_end=_aware(2026, 6, 10),
+        title=title, summary="s", doc_url="https://d/x", source="x",
     )
-    _at(ProjectContext, note.pk, _aware(2026, 6, 10))
+
+
+def test_merges_across_subsystems(client, owner, ws):
+    _agent_sync(owner, ws)
     Shareout.objects.create(
-        project=project,
+        project_slug="reef",
         workspace=ws,
         period_start=_aware(2026, 6, 11, 0),
         period_end=_aware(2026, 6, 11, 23),
@@ -85,43 +89,38 @@ def test_merges_across_subsystems(client, owner, ws):
 
     body = client.get(BASE).json()
     by_sub = {e["subsystem"] for e in body["events"]}
-    assert {"projects", "shareouts", "walkthroughs"} <= by_sub
+    assert {"agents", "shareouts", "walkthroughs"} <= by_sub
     # newest first
     ats = [e["at"] for e in body["events"]]
     assert ats == sorted(ats, reverse=True)
     # catalog present for the rail
     keys = {s["key"] for s in body["subsystems"]}
-    assert {"ddd", "projects", "walkthroughs", "shareouts", "agents", "sessions"} <= keys
-    # The Insights feed was retired (2026-10): it is no longer a rail entry.
+    assert {"ddd", "walkthroughs", "shareouts", "agents", "sessions"} <= keys
+    # The Insights feed and the workbench Projects app were retired (2026-10):
+    # neither is a rail entry any more.
     assert "insights" not in keys
+    assert "projects" not in keys
 
 
 def test_subsystem_filter(client, owner, ws):
-    project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
-    ProjectContext.objects.create(
-        project=project, context_type="note", content="a note", source="x"
-    )
+    _agent_sync(owner, ws, title="a note")
     make_walkthrough(owner, kind="video")  # standalone walkthrough
 
-    body = client.get(BASE, {"subsystem": "projects"}).json()
+    body = client.get(BASE, {"subsystem": "agents"}).json()
     assert body["events"]
-    assert all(e["subsystem"] == "projects" for e in body["events"])
+    assert all(e["subsystem"] == "agents" for e in body["events"])
 
 
 def test_unknown_subsystem_falls_back_to_all(client, owner, ws):
-    project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
-    ProjectContext.objects.create(
-        project=project, context_type="note", content="a note", source="x"
-    )
+    _agent_sync(owner, ws, title="a note")
     body = client.get(BASE, {"subsystem": "bogus"}).json()
     assert body["events"]  # not an empty/error result
 
 
 def test_before_cursor_paginates(client, owner, ws):
-    project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
     for i, day in enumerate((10, 11, 12)):
         Shareout.objects.create(
-            project=project,
+            project_slug="reef",
             workspace=ws,
             period_start=_aware(2026, 6, day, 0),
             period_end=_aware(2026, 6, day, 23),
@@ -145,11 +144,10 @@ def test_before_cursor_paginates(client, owner, ws):
 def test_cursor_no_loss_on_tied_timestamps(client, owner, ws):
     # Two shareouts stamped at the exact same instant — a strict `< at` cursor
     # would drop one when paging. The compound (at, id) cursor must surface both.
-    project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
     same = _aware(2026, 6, 11, 12)
     for i in range(2):
         Shareout.objects.create(
-            project=project,
+            project_slug="reef",
             workspace=ws,
             period_start=same,
             period_end=same,

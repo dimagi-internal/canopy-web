@@ -73,6 +73,22 @@ describe('AgentGitHubSection', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('cannot see this repo'))
   })
 
+  it('lists the repos whose agentless turns borrow this identity, read-only', async () => {
+    getAgentGitHub.mockResolvedValue({ ...WORKING, identity_for_repos: ['canopy-web', 'connect-labs'] })
+    show('someone@dimagi.com')
+    await waitFor(() => expect(screen.getByTestId('github-identity-for-repos')).toBeTruthy())
+    const text = screen.getByTestId('github-identity-for-repos').textContent
+    expect(text).toContain('canopy-web')
+    expect(text).toContain('connect-labs')
+  })
+
+  it('says nothing about repos when none borrow it', async () => {
+    getAgentGitHub.mockResolvedValue(WORKING)
+    show('someone@dimagi.com')
+    await waitFor(() => expect(screen.getByTestId('github-status')).toBeTruthy())
+    expect(screen.queryByTestId('github-identity-for-repos')).toBeNull()
+  })
+
   it('says who it acts as and what it can do once set', async () => {
     getAgentGitHub.mockResolvedValue(WORKING)
     show('someone@dimagi.com')

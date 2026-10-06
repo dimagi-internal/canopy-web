@@ -432,6 +432,46 @@ class AgentDelegation(models.Model):
         return f"delegation:{self.user_id}->{self.agent_id}:{self.service}"
 
 
+class RepoIdentity(models.Model):
+    """Which agent's GitHub identity an AGENTLESS repo turn borrows.
+
+    A project turn (`Turn.project` = a repo name such as "canopy-web", no
+    agent) runs as nobody, so `delegations.github_token_for_turn` refuses it —
+    by design there is no shared fallback. A row here lifts that refusal for one
+    repo: the turn runs as `agent`, using its owner's delegation (and refused
+    exactly as that agent's own turns would be when the delegation is missing
+    or expired). No row keeps the refusal.
+
+    A row per REPO, not a field on `Agent`: the question is asked by repo name
+    ("who does canopy-web's turn run as?"), one agent answers for several repos
+    (Hal for canopy, canopy-web, ace-web and connect-labs), and a repo must have
+    at most one answer. `repo_slug` unique is that rule in the database; a list
+    on `Agent` could not stop two agents claiming the same repo.
+
+    Moved here from the retired workbench project registry's
+    `default_identity_agent` (agents/0037 copies the rows), so the lookup is a
+    plain framework query instead of a resolver a product app registered.
+    """
+
+    repo_slug = models.CharField(
+        max_length=100, unique=True,
+        help_text="The repo name a project turn carries in Turn.project (e.g. canopy-web).",
+    )
+    agent = models.ForeignKey(
+        Agent, on_delete=models.CASCADE, related_name="repo_identities",
+        help_text="The agent whose owner's GitHub delegation the repo's agentless turns use.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["repo_slug"]
+        verbose_name_plural = "repo identities"
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"repo-identity:{self.repo_slug}->{self.agent_id}"
+
+
 class AgentSync(models.Model):
     """A periodic manager sync — a Google Doc covering code/skill improvement AND
     work products. Body lives in `doc_url`; canopy-web keeps the summary +
@@ -545,13 +585,10 @@ class AgentProject(models.Model):
     share files across them when they want to. A single shared project would have
     to own a folder that the Drive layout gives no place to.
 
-    Distinct from the workbench's own `Project` (product tier — the list of
-    REPOS: canopy-web, connect-labs, the agent repos). A
-    project HERE is a piece of work with an end — "UNGA 2026 conference
-    planning" — and names a repo it touches only as a slug (`repo_slug`), never
-    an FK, because framework code may not reach into a product app at all. The
-    architecture test even forbids naming that module in a string, which is how
-    this paragraph came to describe it instead.
+    This is canopy's one project system (the pre-agentic workbench registry of
+    repos was retired 2026-10-06). A project is a piece of work with an end —
+    "UNGA 2026 conference planning" — and names a repo it touches only as a
+    slug (`repo_slug`); there is no repo registry to point at.
     """
 
     ACTIVE, DONE, ARCHIVED = "active", "done", "archived"
@@ -580,9 +617,8 @@ class AgentProject(models.Model):
     drive_folder_id = models.CharField(max_length=128, blank=True, default="")
     drive_folder_url = models.URLField(max_length=500, blank=True, default="")
 
-    #: The repo this work touches, as a slug, if any — deliberately a string and
-    #: not an FK: `apps.projects` is product tier and `agents` is framework, and
-    #: framework may not import product (ARCHITECTURE.md).
+    #: The repo this work touches, as a slug, if any — the same bare repo name
+    #: `Turn.project` carries; there is no repo registry to FK.
     repo_slug = models.CharField(max_length=100, blank=True, default="")
 
     notes = models.TextField(blank=True, default="")

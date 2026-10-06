@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link } from 'react-router-dom'
 import { closeSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
 import { listAgents, type AgentOut } from '@/api/agents'
-import { projectsApi, type ProjectSlug } from '@/api/projects'
+import { listRunners, type RunnerOut } from '@/api/harness'
 import { relativeTime } from '@/components/activity/turnLog'
 import { sessionTargetLabel } from './sessionTargetLabel'
 import { sessionDisplayTitle } from './sessionDisplayTitle'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
 import { closeIntent, closeResultMessage, settleClosing } from './closeAction'
-import { parkedReason, parkedSummary, partitionByRunnerReachability } from './runnerEligibility'
+import { parkedReason, parkedSummary, partitionByRunnerReachability, repoChoices } from './runnerEligibility'
 import { NewChatMenu } from './NewChatMenu'
 import { TransferSessionMenu } from './TransferSessionMenu'
 import type { TransferResult } from '@/api/chat'
@@ -61,7 +61,7 @@ export function ChatSessionsPanel({
 }) {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [agents, setAgents] = useState<AgentOut[]>(agentsProp ?? [])
-  const [projects, setProjects] = useState<ProjectSlug[]>([])
+  const [runners, setRunners] = useState<RunnerOut[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [sort, setSort] = useState<SessionSort>('time')
   const [showArchived, setShowArchived] = useState(false)
@@ -89,16 +89,16 @@ export function ChatSessionsPanel({
   useEffect(() => {
     let live = true
     setLoading(true)
-    // Sessions + projects always load (projects feed the "+ New chat" dropdown);
-    // agents load unless provided by a prop.
-    const jobs: Promise<unknown>[] = [listSessions(showArchived ? 'all' : 'active'), projectsApi.listSlugs()]
+    // Sessions + runners always load (the runners' reported repos feed the
+    // "+ New chat" dropdown's repo chats); agents load unless provided by a prop.
+    const jobs: Promise<unknown>[] = [listSessions(showArchived ? 'all' : 'active'), listRunners()]
     if (!agentsProp) jobs.push(listAgents({ limit: 100 }))
     Promise.allSettled(jobs).then((results) => {
       if (!live) return
       const [s, p, a] = results
       if (s.status === 'fulfilled') setSessions(s.value as ChatSession[])
       else setError(s.reason instanceof Error ? s.reason.message : 'failed to load sessions')
-      if (p.status === 'fulfilled') setProjects(p.value as ProjectSlug[])
+      setRunners(p.status === 'fulfilled' ? ((p.value as RunnerOut[] | undefined) ?? []) : [])
       if (!agentsProp && a && a.status === 'fulfilled') {
         setAgents((a.value as { items: AgentOut[] }).items)
       }
@@ -120,6 +120,8 @@ export function ChatSessionsPanel({
     }, 20_000)
     return () => window.clearInterval(id)
   }, [showArchived])
+
+  const repos = useMemo(() => repoChoices(runners ?? []), [runners])
 
   const agentName = useMemo(() => {
     const by = new Map(agents.map((a) => [a.slug, a.name]))
@@ -236,7 +238,7 @@ export function ChatSessionsPanel({
             </span>
           )}
         </h2>
-        <NewChatMenu agents={agents} projects={projects} onError={setError} />
+        <NewChatMenu agents={agents} runners={runners} onError={setError} />
       </div>
 
       {/* `parked.length` opens the toolbar too: with one session, and that one
@@ -309,7 +311,7 @@ export function ChatSessionsPanel({
               picks it up and streams the reply back as it works.
             </p>
             <p className="mt-2 text-[12px] text-muted-foreground">
-              {agents.length === 0 && projects.length === 0 ? (
+              {agents.length === 0 && repos.length === 0 ? (
                 <>
                   Nothing to chat with?{' '}
                   <Link to="/guide#/w/:workspace/agents" className="text-primary hover:underline">

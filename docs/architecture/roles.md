@@ -124,7 +124,7 @@ requests: the domain list survives, renamed `access_request_domains` (`workspace
 and now means "may ask" rather than "may join".
 
 Nor is creating a row a way in — but it **was**, and that mattered more than auto-join did.
-Five create endpoints (projects, shareouts, walkthroughs, reviews, issues) each held their own
+Five create endpoints (projects — since retired —, shareouts, walkthroughs, reviews, issues) each held their own
 copy of `ws = pinned or ensure_default_workspace(); ensure_member(ws, request.user)`. On the
 flat `/api/…` mount nothing is pinned, so `ws` was the org default *whoever was calling*, and
 `ensure_member` made them an **editor** of it as a side effect of the write. An
@@ -236,7 +236,7 @@ prompt of their choosing and fire it at the fleet. Now:
   conditional: `turn_targets_agent_xor_project_xor_session` means a session turn carries no
   agent FK at all.
 
-**The product surfaces** — projects, walkthroughs, shareouts, reviews, DDD runs and
+**The product surfaces** — walkthroughs, shareouts, reviews, DDD runs and
 narratives, storyboards, origin issues, the event log, feedback dispositions — gate every
 MUTATION on `editor` in the row's workspace and every READ on membership (2026-10-02; until
 then a `viewer` could do all of it, including approving a DDD gate and wiping a whole
@@ -254,7 +254,7 @@ feed with `{}`). Three shapes recur, all pinned by `tests/test_product_acl.py`:
 The anonymous token reads (`?t=` on walkthroughs and storyboards, `link` reviews, storyboard
 feedback) are a property of the link, not of a role, and are unchanged.
 
-**A row with no workspace is visible to nobody.** Projects, reviews, walkthroughs and origin
+**A row with no workspace is visible to nobody.** Projects (since retired), reviews, walkthroughs and origin
 issues each had a `workspace IS NULL ⇒ any signed-in user` leg — the NULL-means-allow shape.
 They fail closed now; `projects/0009` and `issues/0003` homed the stragglers first (a
 walkthrough with no workspace is still readable by its share token).

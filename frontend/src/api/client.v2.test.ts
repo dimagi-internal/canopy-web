@@ -103,11 +103,11 @@ describe('rewriteForWorkspace', () => {
   })
 
   it('rewrites a bodyless GET without attaching a body', async () => {
-    const original = new Request('http://localhost/api/projects/', { method: 'GET' })
+    const original = new Request('http://localhost/api/agents/', { method: 'GET' })
 
     const rewritten = await rewriteForWorkspace(original, 'acme')
 
-    expect(new URL(rewritten.url).pathname).toBe('/api/w/acme/projects/')
+    expect(new URL(rewritten.url).pathname).toBe('/api/w/acme/agents/')
     expect(rewritten.method).toBe('GET')
     expect(rewritten.body).toBeNull()
   })
