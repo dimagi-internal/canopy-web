@@ -948,6 +948,11 @@ def _dialog_up(session_id) -> bool:
     return bool(isinstance(menu, dict) and menu.get("options"))
 
 
+#: `origin_ref` flag on a follow-up whose mid-turn delivery failed: it waits for
+#: the running turn to end, as before canopy-web#1153, rather than ride again.
+MIDTURN_FAILED = "midturn_failed"
+
+
 def may_ride(turn: Turn, holder: Turn) -> bool:
     """Can queued `turn` be delivered INTO `holder`, its conversation's running
     turn, instead of waiting for it to end (canopy-web#1153)?
@@ -958,6 +963,7 @@ def may_ride(turn: Turn, holder: Turn) -> bool:
     business in the owner's, and the owner's has none in a caller's.
     """
     return (turn.chat_session_id is not None
+            and not (turn.origin_ref or {}).get(MIDTURN_FAILED)
             and holder.chat_session_id == turn.chat_session_id
             and holder.status in (Turn.CLAIMED, Turn.RUNNING)
             and holder.rides_turn_id is None
@@ -1627,8 +1633,10 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
 
         mode = modes.for_turn(turn, priorities, fresh=True)
         rides = ridable.get(turn.chat_session_id) if turn.chat_session_id else None
-        if rides is not None and turn.capability:
-            continue  # a confined turn never rides into the owner's session
+        if rides is not None and (turn.capability or (turn.origin_ref or {}).get(MIDTURN_FAILED)):
+            # A confined turn never rides into the owner's session; one whose
+            # mid-turn delivery already failed waits for the turn to end.
+            continue
         try:
             # Own atomic block per attempt: an IntegrityError from the
             # one_executing_turn_per_agent index (concurrent claim for the
@@ -1987,6 +1995,29 @@ def finish_turn(
     """
     if status not in (Turn.DONE, Turn.FAILED, Turn.MISSED, Turn.CANCELLED):
         raise ValueError(f"finish status must be done|failed|missed|cancelled, got {status!r}")
+
+    # ---- a follow-up that could not be typed into the running turn waits instead ----
+    #
+    # Measured live (2026-10-05, the #1153 check): the rider was claimed into the
+    # running turn within 5s, then every attempt to type it failed
+    # COMPOSER_NOT_VISIBLE and the follow-up ended FAILED — a message that, before
+    # mid-turn delivery, would merely have arrived late. A rider's send failure
+    # names no session (nothing was typed), so it goes back to the queue marked
+    # MIDTURN_FAILED: `may_ride` refuses it, and it is claimed the ordinary way when
+    # the running turn ends. Not counted as an attempt — nothing about the request
+    # failed, only the shortcut. A rider whose keystrokes DID go out reports its
+    # session and stays terminal, so it is never typed twice.
+    if status == Turn.FAILED and turn.rides_turn_id and not turn.session_key:
+        ref = {**(turn.origin_ref or {}), MIDTURN_FAILED: True}
+        waiting = Turn.objects.filter(
+            pk=turn.pk, status__in=[Turn.CLAIMED, Turn.RUNNING], session_key=""
+        ).update(status=Turn.QUEUED, claimed_by=None, claimed_at=None, lease_expires_at=None,
+                 started_at=None, rides_turn=None, origin_ref=ref, result_note=result_note)
+        turn.refresh_from_db()
+        if waiting:
+            append_events(turn, [{"kind": "status", "payload": {
+                "status": Turn.QUEUED, "midturn_failed": True, "detail": result_note}}])
+            return turn
 
     # ---- a turn that never got a session is a NON-attempt, not a failed attempt ----
     #
