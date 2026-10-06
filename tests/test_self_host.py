@@ -37,7 +37,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 
 from apps.agents.interface import parse
-from apps.agents.models import Agent
+from apps.agents.models import Agent, AgentTask
 from apps.canopy_sessions.models import Session
 from apps.common.encryption import decrypt_secret
 from apps.harness import caller_tokens
@@ -46,7 +46,6 @@ from apps.mcp import delegation
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
-from apps.projects.models import Project, ProjectContext
 from apps.tokens import client_identity, host_gateway, self_host
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -88,12 +87,15 @@ def world():
     app.show_on_canopy_pages = True
     app.save()
     AppCredentialAgent.objects.create(app=app, agent=agent)
-    mine = ProjectContext.objects.create(
-        project=Project.objects.create(slug="mine", name="Mine", workspace=ws),
-        context_type="insight", content="[stale] visible to gillian", source="test")
-    theirs = ProjectContext.objects.create(
-        project=Project.objects.create(slug="theirs", name="Theirs", workspace=other),
-        context_type="insight", content="[stale] NOT visible to gillian", source="test")
+    # One open ask in the visitor's workspace, one in a workspace they are not in:
+    # the fleet inbox (`list_items`) must return the first and never the second.
+    mine = AgentTask.objects.create(
+        agent=agent, ext_id="T1", title="review: visible to gillian", origin="manual",
+        ask_kind=AgentTask.ASK_REVIEW, idempotency_key="self-host-mine")
+    theirs = AgentTask.objects.create(
+        agent=Agent.objects.create(slug="hal", name="Hal", workspace=other, owner=owner),
+        ext_id="T1", title="review: NOT visible to gillian", origin="manual",
+        ask_kind=AgentTask.ASK_REVIEW, idempotency_key="self-host-theirs")
     return {"owner": owner, "visitor": visitor, "ws": ws, "agent": agent, "app": app,
             "mine": mine, "theirs": theirs}
 
@@ -145,10 +147,10 @@ def _in_lifespan(inner, fn):
     return out
 
 
-def _visitor_turn(w, backing="list_insights"):
+def _visitor_turn(w, backing="list_items"):
     session = Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=w["visitor"],
                                      metadata={"embed_app": "canopy-web"},
-                                     page_state={"resource": "insight://", "backing_tool": backing})
+                                     page_state={"resource": "item://", "backing_tool": backing})
     return Turn.objects.create(chat_session=session, prompt="which are stale?",
                                initiator_user=w["visitor"], initiator_kind="member",
                                capability="workbench")
@@ -163,18 +165,18 @@ def _ctx(raw, ceiling=("*",)):
 # --- the whole round trip ---------------------------------------------------------------
 
 
-def test_a_member_on_the_insights_page_gets_an_agent_that_reads_as_them(world, gateway_to_self):
+def test_a_member_on_the_inbox_page_gets_an_agent_that_reads_as_them(world, gateway_to_self):
     inner, _app = gateway_to_self
     visitor = world["visitor"]
 
     # 1 + 2: the widget mints; canopy issues and redeems its own grant.
-    r = _mint(visitor, "insights")
+    r = _mint(visitor, "agent.inbox")
     assert r.status_code == 200, r.content
     assert r.json()["host_grant"] is True
 
     grant = HostGrant.objects.get(app=world["app"])
     assert grant.user == visitor and grant.contact is None and grant.subject == str(visitor.pk)
-    assert grant.scope == "insights:read"
+    assert grant.scope == "items:read"
     assert grant.dpop_jkt == client_identity.dpop_jkt(), "bound to canopy's DPoP key"
     from canopy_sdk.django.models import DelegatedToken as IssuedByHost
 
@@ -187,7 +189,7 @@ def test_a_member_on_the_insights_page_gets_an_agent_that_reads_as_them(world, g
     # 3: the agent's call, through canopy's mounted MCP, into canopy's own MCP.
     turn = _visitor_turn(world)
     with _as_visitor(turn):
-        out = _in_lifespan(inner, lambda: mcp.call_tool("site_call", {"tool": "list_insights",
+        out = _in_lifespan(inner, lambda: mcp.call_tool("site_call", {"tool": "list_items",
                                                                       "arguments": {}}))
     body = out.structured_content
     assert body["is_error"] is False, body
@@ -196,18 +198,18 @@ def test_a_member_on_the_insights_page_gets_an_agent_that_reads_as_them(world, g
     assert "NOT visible" not in text, "the tool ran with the visitor's own ACL"
 
     # The tool ran AS the visitor: canopy's audit says who.
-    row = MCPAuditLog.objects.filter(tool="list_insights").get()
+    row = MCPAuditLog.objects.filter(tool="list_items").get()
     assert row.user_id == visitor.pk and row.ok
 
 
 def test_the_site_lists_only_the_tools_the_grant_allows(world, gateway_to_self):
     inner, _app = gateway_to_self
-    _mint(world["visitor"], "insights")
+    _mint(world["visitor"], "agent.inbox")
     turn = _visitor_turn(world)
     with _as_visitor(turn):
         out = _in_lifespan(inner, lambda: mcp.call_tool("site_tools", {}))
     names = [t["name"] for t in out.structured_content["tools"]]
-    assert names == ["list_insights"]
+    assert names == ["list_items"]
 
 
 # --- scope limits at canopy's own MCP -------------------------------------------------------
@@ -226,17 +228,23 @@ def test_a_delegated_token_reaches_only_its_scopes_tools(world, gateway_to_self)
     listed = _in_lifespan(inner, lambda: host_gateway.list_tools(wide))
     assert [t["name"] for t in listed] == ["list_items"]
 
-    out = _in_lifespan(inner, lambda: host_gateway.call_tool(wide, "list_insights", {}))
+    # A read tool another page's scope unlocks (`skills:read`) is out of reach...
+    out = _in_lifespan(inner, lambda: host_gateway.call_tool(
+        wide, "skill_history", {"slug": world["agent"].slug}))
     assert out["is_error"] is True
     assert "not within this grant" in out["content"][0]["text"]
-    out = _in_lifespan(inner, lambda: host_gateway.call_tool(wide, "clear_insights", {}))
+    # ...and so is a write on the very rows the grant can read.
+    mine = world["mine"]
+    out = _in_lifespan(inner, lambda: host_gateway.call_tool(
+        wide, "dismiss_item", {"item_id": str(mine.uuid)}))
     assert out["is_error"] is True, "a write tool is never reachable with a read grant"
-    assert ProjectContext.objects.filter(pk=world["mine"].pk).exists()
+    mine.refresh_from_db()
+    assert mine.decided_at is None, "the item was not dismissed"
 
 
 def test_a_bound_token_sent_as_a_plain_bearer_is_refused(world, mcp_app):
     inner, app = mcp_app
-    _mint(world["visitor"], "insights")
+    _mint(world["visitor"], "agent.inbox")
     raw = decrypt_secret(HostGrant.objects.get().access_token_enc)
 
     async def post(headers):
@@ -257,7 +265,7 @@ def test_a_bound_token_sent_as_a_plain_bearer_is_refused(world, mcp_app):
 
 def test_a_deactivated_visitor_s_token_stops_working(world, gateway_to_self):
     inner, _app = gateway_to_self
-    _mint(world["visitor"], "insights")
+    _mint(world["visitor"], "agent.inbox")
     raw = decrypt_secret(HostGrant.objects.get().access_token_enc)
     User.objects.filter(pk=world["visitor"].pk).update(is_active=False)
     with pytest.raises(host_gateway.GatewayRefusal):
@@ -279,7 +287,7 @@ def test_a_site_that_does_not_name_this_deployment_gets_no_self_grant(world):
     app = world["app"]
     app.host_issuer = "https://elsewhere.test"
     app.save()
-    assert _mint(world["visitor"], "insights").json()["host_grant"] is False
+    assert _mint(world["visitor"], "agent.inbox").json()["host_grant"] is False
     assert not HostGrant.objects.exists()
 
 
@@ -287,7 +295,7 @@ def test_a_site_that_does_not_name_this_deployment_gets_no_self_grant(world):
                    CANOPY_OAUTH_CLIENT_KEY="", CANOPY_OAUTH_DPOP_KEY="")
 def test_everything_is_off_until_configured(world, mcp_app):
     assert not self_host.configured()
-    r = _mint(world["visitor"], "insights")
+    r = _mint(world["visitor"], "agent.inbox")
     assert r.status_code == 200 and r.json()["host_grant"] is False
     c = Client()
     assert c.get("/oauth/host/jwks.json").status_code == 503
@@ -317,7 +325,7 @@ def test_a_configured_pem_signing_key_is_the_one_published(world):
 
         published = Client().get("/oauth/host/jwks.json").json()["keys"]
         assert [k["kid"] for k in published] == [public_jwk(key)["kid"]]
-        assert _mint(world["visitor"], "insights").json()["host_grant"] is True
+        assert _mint(world["visitor"], "agent.inbox").json()["host_grant"] is True
 
 
 # --- the public surface ----------------------------------------------------------------------

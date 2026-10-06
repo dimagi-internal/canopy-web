@@ -250,104 +250,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/insights/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * List insights
-         * @description Insight cards from the feed, newest first, in the caller's workspaces.
-         *
-         *     Filters are optional and AND-combined: `category` (content tagged
-         *     "[<category>]"), `source`, `project` slug. `limit` is capped at 100.
-         */
-        readonly get: operations["list_insights"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/insights/clear/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Clear insights
-         * @description Delete insights matching the provided filters.
-         *
-         *     All filters in the request body are optional and AND-combined:
-         *       - source: ProjectContext.source exact match
-         *       - category: content starts with "[<category>]"
-         *       - project: project slug exact match
-         *       - older_than_days: created_at older than N days ago
-         *
-         *     A body with no filters ({}) clears every insight in the workspaces where
-         *     you hold the editor role — not those you can only read.
-         */
-        readonly post: operations["clear_insights"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/insights/dismiss": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Dismiss insights by id
-         * @description Dismiss specific insights; returns the ids that went.
-         *
-         *     Use this for "close the ones I am looking at": the page's current selection
-         *     is a set of ids. Prefer it over `clear_insights` whenever the request is
-         *     about a visible set — a filter only approximates what somebody can see, on
-         *     a paginated feed it also matches rows they never looked at, and with no
-         *     filters at all it deletes everything.
-         *
-         *     Ids outside the caller's workspaces are absent from the result rather than
-         *     an error, so compare the returned list against what you asked for.
-         */
-        readonly post: operations["dismiss_insights"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/insights/{pk}/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        /** Dismiss insight */
-        readonly delete: operations["dismiss_insight"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/me/": {
         readonly parameters: {
             readonly query?: never;
@@ -6397,8 +6299,6 @@ export interface components {
             readonly latest_actions: {
                 readonly [key: string]: components["schemas"]["ProjectActionLatestOut"];
             };
-            /** Insight Count */
-            readonly insight_count: number;
             /**
              * Walkthrough Count
              * @default 0
@@ -6473,8 +6373,6 @@ export interface components {
             readonly latest_actions: {
                 readonly [key: string]: components["schemas"]["ProjectActionLatestOut"];
             };
-            /** Insight Count */
-            readonly insight_count: number;
             /**
              * Walkthrough Count
              * @default 0
@@ -6843,76 +6741,6 @@ export interface components {
             readonly offset: number;
             /** Limit */
             readonly limit: number;
-        };
-        /** InsightOut */
-        readonly InsightOut: {
-            /** Id */
-            readonly id: number;
-            /** Project Slug */
-            readonly project_slug: string;
-            /** Project Name */
-            readonly project_name: string;
-            /** Content */
-            readonly content: string;
-            /** Source */
-            readonly source: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-        };
-        /** Page[InsightOut] */
-        readonly Page_InsightOut_: {
-            /** Items */
-            readonly items: readonly components["schemas"]["InsightOut"][];
-            /** Total */
-            readonly total: number;
-            /** Offset */
-            readonly offset: number;
-            /** Limit */
-            readonly limit: number;
-        };
-        /** InsightsClearOut */
-        readonly InsightsClearOut: {
-            /** Cleared */
-            readonly cleared: number;
-        };
-        /**
-         * InsightsClearIn
-         * @description Body of POST /api/insights/clear/.
-         *
-         *     All fields optional. Provided filters are AND-combined to narrow which
-         *     insights are deleted. A body with no filters clears every insight in the
-         *     workspaces where the caller holds the editor role.
-         */
-        readonly InsightsClearIn: {
-            /** Source */
-            readonly source?: string | null;
-            /** Category */
-            readonly category?: string | null;
-            /** Project */
-            readonly project?: string | null;
-            /** Older Than Days */
-            readonly older_than_days?: number | null;
-        };
-        /** InsightsDismissOut */
-        readonly InsightsDismissOut: {
-            /** Dismissed */
-            readonly dismissed: readonly number[];
-        };
-        /**
-         * InsightsDismissIn
-         * @description Body of POST /api/insights/dismiss.
-         */
-        readonly InsightsDismissIn: {
-            /** Ids */
-            readonly ids: readonly number[];
-        };
-        /** InsightDismissOut */
-        readonly InsightDismissOut: {
-            /** Dismissed */
-            readonly dismissed: number;
         };
         /**
          * MeOut
@@ -8346,8 +8174,8 @@ export interface components {
          *
          *     `parameters` is JSON-Schema, written by the HOST and passed through
          *     uninterpreted — canopy is not the party that knows what a host's action
-         *     means. It is what lets an agent call `dismissInsights` knowing it takes
-         *     `{ids: number[]}`, rather than being told in prose.
+         *     means. It is what lets an agent call `dismissItems` knowing it takes
+         *     `{ids: string[]}`, rather than being told in prose.
          *
          *     May also be sent as `inputSchema`, which is MCP's name for the same field;
          *     it is read back under `parameters` either way.
@@ -16186,101 +16014,6 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    readonly list_insights: {
-        readonly parameters: {
-            readonly query?: {
-                readonly category?: string | null;
-                readonly source?: string | null;
-                readonly project?: string | null;
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Page_InsightOut_"];
-                };
-            };
-        };
-    };
-    readonly clear_insights: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["InsightsClearIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["InsightsClearOut"];
-                };
-            };
-        };
-    };
-    readonly dismiss_insights: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["InsightsDismissIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["InsightsDismissOut"];
-                };
-            };
-        };
-    };
-    readonly dismiss_insight: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly pk: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["InsightDismissOut"];
-                };
             };
         };
     };

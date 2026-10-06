@@ -40,6 +40,7 @@ const NOT_DOCUMENTABLE = new Set([
   '/ddd/*',
   '/ddd-plans',
   '/reviews',
+  '/insights', // retired feed; redirects home
   // The four pages that became sections of /w/:workspace/settings.
   '/w/:workspace/members',
   '/w/:workspace/connected-apps',

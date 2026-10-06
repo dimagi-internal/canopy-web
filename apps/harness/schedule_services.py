@@ -1,6 +1,6 @@
 """Request-free schedule service layer.
 
-The MCP invariant (apps/mcp/tools/insights.py) is that tools call the SAME
+The MCP invariant (apps/mcp/api_tools.py: every tool IS its REST route) is that tools call the SAME
 service functions as the REST views, so the two surfaces can't drift. Schedules
 had no such layer — create/update/delete were inline in the Ninja handlers — so
 this module extracts them. It takes a `user` (not a `request`) and raises domain

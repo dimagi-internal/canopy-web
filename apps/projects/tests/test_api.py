@@ -1,4 +1,4 @@
-"""Contract tests for the projects + insights Ninja surface.
+"""Contract tests for the projects Ninja surface.
 
 These tests verify:
 - Auth: 401 for anonymous, 200 for force_login sessions.
@@ -17,7 +17,6 @@ from django.test import Client, override_settings
 
 from apps.projects.models import Project, ProjectAction, ProjectContext
 from apps.projects.schemas import (
-    InsightOut,
     ProjectDetailOut,
     ProjectListOut,
     ProjectSlugOut,
@@ -499,206 +498,33 @@ def test_batch_context_authenticated_writable():
 
 
 # ---------------------------------------------------------------------------
-# Insights
+# The retired Insights feed (2026-10)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
-def test_list_insights_200_happy_path():
-    p = _make_project(slug="ins-proj")
-    ProjectContext.objects.create(
-        project=p, context_type="insight", content="[ship_gap] Open PR", source="canopy:portfolio-review"
-    )
+def test_the_insights_api_is_gone():
+    """The feed's routes are removed, not merely hidden: nothing can list,
+    clear or dismiss the remaining `insight` rows (their deletion is held for
+    an explicit decision)."""
     c = _auth_client()
-    resp = c.get("/api/insights/")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert "items" in body
-    assert body["total"] >= 1
-    InsightOut.model_validate(body["items"][0])
+    assert c.get("/api/insights/").status_code == 404
+    assert _post_json(c, "/api/insights/clear/", {}).status_code == 404
+    assert _post_json(c, "/api/insights/dismiss", {"ids": [1]}).status_code == 404
+    assert _delete(c, "/api/insights/1/").status_code == 404
 
 
 @pytest.mark.django_db
-def test_list_insights_401_anonymous():
-    c = Client()
-    resp = c.get("/api/insights/")
-    assert resp.status_code == 401
-
-
-@pytest.mark.django_db
-def test_list_insights_category_filter():
-    p = _make_project(slug="ins-filter")
-    ProjectContext.objects.create(
-        project=p, context_type="insight", content="[ship_gap] X", source="test"
-    )
-    ProjectContext.objects.create(
-        project=p, context_type="insight", content="[debt] Y", source="test"
-    )
-    c = _auth_client()
-    resp = c.get("/api/insights/?category=ship_gap")
-    assert resp.status_code == 200
-    body = resp.json()
-    for item in body["items"]:
-        assert item["content"].startswith("[ship_gap]")
-
-
-@pytest.mark.django_db
-@override_settings(REQUIRE_AUTH=True)
-def test_list_insights_pat_readable():
-    """GET /insights/ should accept a valid PAT."""
-    from apps.tokens.models import PersonalToken
-
-    user = User.objects.create_user(username="bot-ins", email="ins@dimagi-ai.com")
-    raw, _ = PersonalToken.create_for_user(user=user, label="insights-reader")
-    p = _make_project(slug="ins-bearer")
-    ProjectContext.objects.create(
-        project=p, context_type="insight", content="[test] hi", source="test"
-    )
-    anon_client = Client()
-    resp = anon_client.get("/api/insights/", HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert resp.status_code == 200
-
-
-@pytest.mark.django_db
-def test_clear_insights_all_empty_body():
-    """An empty body clears ALL insights."""
-    p = _make_project(slug="ins-clear")
-    ProjectContext.objects.create(
-        project=p, context_type="insight", content="[a] x", source="src-a"
-    )
-    ProjectContext.objects.create(
-        project=p, context_type="insight", content="[b] y", source="src-b"
-    )
-    c = _auth_client()
-    resp = _post_json(c, "/api/insights/clear/", {})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["cleared"] == 2
-    assert not ProjectContext.objects.filter(context_type="insight").exists()
-
-
-@pytest.mark.django_db
-def test_clear_insights_source_filter():
-    p = _make_project(slug="ins-clear-src")
-    keep = ProjectContext.objects.create(
-        project=p, context_type="insight", content="[a] x", source="keep"
-    )
-    ProjectContext.objects.create(
-        project=p, context_type="insight", content="[a] y", source="drop"
-    )
-    c = _auth_client()
-    resp = _post_json(c, "/api/insights/clear/", {"source": "drop"})
-    assert resp.status_code == 200
-    assert resp.json()["cleared"] == 1
-    remaining = list(ProjectContext.objects.filter(context_type="insight"))
-    assert [r.pk for r in remaining] == [keep.pk]
-
-
-@pytest.mark.django_db
-def test_clear_insights_category_filter():
-    p = _make_project(slug="ins-clear-cat")
-    ProjectContext.objects.create(
-        project=p, context_type="insight", content="[ship_gap] X", source="test"
-    )
-    keep = ProjectContext.objects.create(
-        project=p, context_type="insight", content="[debt] Y", source="test"
-    )
-    c = _auth_client()
-    resp = _post_json(c, "/api/insights/clear/", {"category": "ship_gap"})
-    assert resp.status_code == 200
-    assert resp.json()["cleared"] == 1
-    remaining = list(ProjectContext.objects.filter(context_type="insight"))
-    assert [r.pk for r in remaining] == [keep.pk]
-
-
-@pytest.mark.django_db
-def test_clear_insights_project_filter():
-    p1 = _make_project(slug="ins-clear-p1")
-    p2 = _make_project(slug="ins-clear-p2")
-    ProjectContext.objects.create(
-        project=p1, context_type="insight", content="[a] x", source="test"
-    )
-    keep = ProjectContext.objects.create(
-        project=p2, context_type="insight", content="[a] y", source="test"
-    )
-    c = _auth_client()
-    resp = _post_json(c, "/api/insights/clear/", {"project": "ins-clear-p1"})
-    assert resp.status_code == 200
-    assert resp.json()["cleared"] == 1
-    remaining = list(ProjectContext.objects.filter(context_type="insight"))
-    assert [r.pk for r in remaining] == [keep.pk]
-
-
-@pytest.mark.django_db
-def test_clear_insights_older_than_days_filter():
-    from django.utils import timezone as _tz
-
-    p = _make_project(slug="ins-clear-age")
-    old = ProjectContext.objects.create(
-        project=p, context_type="insight", content="[a] old", source="test"
-    )
-    # auto_now_add sets created_at; force it into the past.
-    ProjectContext.objects.filter(pk=old.pk).update(
-        created_at=_tz.now() - dt.timedelta(days=30)
-    )
-    fresh = ProjectContext.objects.create(
-        project=p, context_type="insight", content="[a] fresh", source="test"
-    )
-    c = _auth_client()
-    resp = _post_json(c, "/api/insights/clear/", {"older_than_days": 7})
-    assert resp.status_code == 200
-    assert resp.json()["cleared"] == 1
-    remaining = list(ProjectContext.objects.filter(context_type="insight"))
-    assert [r.pk for r in remaining] == [fresh.pk]
-
-
-@pytest.mark.django_db
-def test_clear_insights_combined_filters():
-    p1 = _make_project(slug="ins-clear-c1")
-    p2 = _make_project(slug="ins-clear-c2")
-    target = ProjectContext.objects.create(
-        project=p1, context_type="insight", content="[ship_gap] X", source="test"
-    )
-    # Same category, different project — must survive.
-    survives_project = ProjectContext.objects.create(
-        project=p2, context_type="insight", content="[ship_gap] Y", source="test"
-    )
-    # Same project, different category — must survive.
-    survives_category = ProjectContext.objects.create(
-        project=p1, context_type="insight", content="[debt] Z", source="test"
-    )
-    c = _auth_client()
-    resp = _post_json(
-        c, "/api/insights/clear/", {"category": "ship_gap", "project": "ins-clear-c1"}
-    )
-    assert resp.status_code == 200
-    assert resp.json()["cleared"] == 1
-    remaining = {r.pk for r in ProjectContext.objects.filter(context_type="insight")}
-    assert remaining == {survives_project.pk, survives_category.pk}
-    assert not ProjectContext.objects.filter(pk=target.pk).exists()
-
-
-@pytest.mark.django_db
-def test_dismiss_insight_200():
-    p = _make_project(slug="ins-dismiss")
+def test_project_outputs_no_longer_count_insights_and_keep_the_rows():
+    p = _make_project(slug="ins-retired")
     ctx = ProjectContext.objects.create(
-        project=p, context_type="insight", content="x", source="test"
+        project=p, context_type="insight", content="[stale] x", source="test"
     )
     c = _auth_client()
-    resp = _delete(c, f"/api/insights/{ctx.pk}/")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["dismissed"] == ctx.pk
-    assert not ProjectContext.objects.filter(pk=ctx.pk).exists()
-
-
-@pytest.mark.django_db
-def test_dismiss_insight_404():
-    c = _auth_client()
-    resp = _delete(c, "/api/insights/999999/")
-    assert resp.status_code == 404
-    body = resp.json()
-    assert body["status"] == 404
+    row = next(r for r in c.get("/api/projects/").json()["items"] if r["slug"] == p.slug)
+    assert "insight_count" not in row
+    assert "insight_count" not in c.get(f"/api/projects/{p.slug}/").json()
+    assert ProjectContext.objects.filter(pk=ctx.pk).exists(), "rows are kept, not deleted"
 
 
 @pytest.mark.django_db

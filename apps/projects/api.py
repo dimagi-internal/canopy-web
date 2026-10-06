@@ -1,4 +1,4 @@
-"""Django Ninja v2 router for the projects + insights surface."""
+"""Django Ninja v2 router for the projects surface."""
 from __future__ import annotations
 
 from django.db import IntegrityError, transaction
@@ -7,7 +7,6 @@ from django.http import HttpRequest
 from ninja import Body, Router, Status
 
 from apps.api.auth import session_auth
-from apps.projects import services
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.api.errors import (
@@ -23,12 +22,6 @@ from .models import Project, ProjectAction, ProjectContext
 from .schemas import (
     BatchActionsIn,
     BatchContextIn,
-    InsightDismissOut,
-    InsightsDismissIn,
-    InsightsDismissOut,
-    InsightOut,
-    InsightsClearIn,
-    InsightsClearOut,
     ProjectActionCreateIn,
     ProjectActionOut,
     ProjectActionSummaryOut,
@@ -71,10 +64,7 @@ def _build_project_list_data(qs):
 
         # latest_context: first occurrence per context_type (prefetch is newest-first)
         latest_context: dict[str, dict] = {}
-        insight_count = 0
         for ctx in contexts:
-            if ctx.context_type == "insight":
-                insight_count += 1
             if ctx.context_type not in latest_context:
                 latest_context[ctx.context_type] = {
                     "content": ctx.content,
@@ -106,7 +96,6 @@ def _build_project_list_data(qs):
             "skills": p.skills or [],
             "latest_context": latest_context,
             "latest_actions": latest_actions,
-            "insight_count": insight_count,
             "walkthrough_count": walkthrough_count,
             "created_by_email": p.created_by.email if p.created_by_id else None,
             "created_at": p.created_at.isoformat(),
@@ -115,7 +104,6 @@ def _build_project_list_data(qs):
     return result
 
 router = Router(auth=session_auth, tags=["projects"])
-insights_router = Router(auth=session_auth, tags=["insights"])
 
 
 def _scoped_project_queryset(request: HttpRequest):
@@ -151,8 +139,8 @@ def _member_project(request: HttpRequest, slug: str) -> Project | None:
 
 
 def _may_write(request: HttpRequest, project: Project) -> bool:
-    """Writing to a project — its fields, its context feed, its action log, its
-    insights — is the author tier (`editor`). A viewer reads the workbench."""
+    """Writing to a project — its fields, its context feed, its action log —
+    is the author tier (`editor`). A viewer reads the workbench."""
     return perms.can(request.user, project.workspace_id, perms.CONTENT_WRITE)
 
 
@@ -212,7 +200,7 @@ def _project_to_detail_out(project: Project) -> ProjectDetailOut:
     """Build a ProjectDetailOut from a Project instance.
 
     Mirrors the DRF ProjectListSerializer shape: latest_context,
-    latest_actions, insight_count, walkthrough_count are all computed
+    latest_actions, walkthrough_count are all computed
     from the related rows — no prefetch assumed here (safe for single-object
     calls; list paths use _build_project_list_data for efficiency).
     """
@@ -240,7 +228,6 @@ def _project_to_detail_out(project: Project) -> ProjectDetailOut:
                 completed_at=action.completed_at,
             )
 
-    insight_count = project.contexts.filter(context_type="insight").count()
     walkthrough_count = Walkthrough.objects.filter(project_slug=project.slug).count()
 
     skills_raw = project.skills or []
@@ -267,7 +254,6 @@ def _project_to_detail_out(project: Project) -> ProjectDetailOut:
         skills=skills,
         latest_context=latest_context,
         latest_actions=latest_actions,
-        insight_count=insight_count,
         walkthrough_count=walkthrough_count,
         created_by_email=project.created_by.email if project.created_by_id else None,
         created_at=project.created_at,
@@ -364,7 +350,7 @@ def seed_projects(
             },
         )
         # `slug` is globally unique, so get_or_create FOUND another tenant's
-        # project and this used to return its detail — context, insights,
+        # project and this used to return its detail — context and
         # actions — to anyone who named it. A slug held elsewhere is simply not
         # seeded here, and not reported, which says nothing about whether it exists.
         if project.workspace_id not in mine:
@@ -630,119 +616,3 @@ def get_actions_summary(
                 )
             )
     return result
-
-
-# ---------------------------------------------------------------------------
-# Insights router
-# ---------------------------------------------------------------------------
-
-
-def _insight_write_slugs(request: HttpRequest) -> set[str]:
-    """Workspaces whose insights the caller may delete — `editor` or better."""
-    return perms.request_slugs_with(request, perms.CONTENT_WRITE)
-
-
-@insights_router.get(
-    "/",
-    response=Page[InsightOut],
-    summary="List insights",
-)
-def list_insights(
-    request: HttpRequest,
-    category: str | None = None,
-    source: str | None = None,
-    project: str | None = None,
-    limit: int = 20,
-) -> Page[InsightOut]:
-    """Insight cards from the feed, newest first, in the caller's workspaces.
-
-    Filters are optional and AND-combined: `category` (content tagged
-    "[<category>]"), `source`, `project` slug. `limit` is capped at 100.
-    """
-    limit = clamp_limit(limit, cap=100)
-    rows = services.list_insights(
-        workspace_slugs=wsvc.request_workspace_slugs(request),
-        category=category, source=source, project=project, limit=limit,
-    )
-    items = [InsightOut.model_validate(row) for row in rows]
-    return paginate(items, offset=0, limit=limit)
-
-
-@insights_router.post(
-    "/clear/",
-    response=InsightsClearOut,
-    summary="Clear insights",
-)
-def clear_insights(
-    request: HttpRequest,
-    payload: InsightsClearIn,
-) -> InsightsClearOut:
-    """Delete insights matching the provided filters.
-
-    All filters in the request body are optional and AND-combined:
-      - source: ProjectContext.source exact match
-      - category: content starts with "[<category>]"
-      - project: project slug exact match
-      - older_than_days: created_at older than N days ago
-
-    A body with no filters ({}) clears every insight in the workspaces where
-    you hold the editor role — not those you can only read.
-    """
-    # Scoped by the WRITE set, not the read set: with the read set, a viewer's
-    # `{}` deleted every insight across every workspace they could see.
-    count = services.clear_insights(
-        workspace_slugs=_insight_write_slugs(request),
-        source=payload.source,
-        category=payload.category,
-        project=payload.project,
-        older_than_days=payload.older_than_days,
-    )
-    return InsightsClearOut(cleared=count)
-
-
-@insights_router.post("/dismiss", response=InsightsDismissOut, summary="Dismiss insights by id")
-def dismiss_insights(request: HttpRequest, payload: InsightsDismissIn) -> InsightsDismissOut:
-    """Dismiss specific insights; returns the ids that went.
-
-    Use this for "close the ones I am looking at": the page's current selection
-    is a set of ids. Prefer it over `clear_insights` whenever the request is
-    about a visible set — a filter only approximates what somebody can see, on
-    a paginated feed it also matches rows they never looked at, and with no
-    filters at all it deletes everything.
-
-    Ids outside the caller's workspaces are absent from the result rather than
-    an error, so compare the returned list against what you asked for.
-    """
-    dismissed = services.dismiss_insights(
-        workspace_slugs=_insight_write_slugs(request), ids=list(payload.ids),
-    )
-    return InsightsDismissOut(dismissed=dismissed)
-
-
-@insights_router.delete("/{pk}/", response=InsightDismissOut, summary="Dismiss insight")
-def dismiss_insight(request: HttpRequest, pk: int) -> InsightDismissOut:
-    # Scope by the caller's workspaces (via the insight's project) so a member of
-    # one workspace can't delete another's insight by enumerating pks. A row outside
-    # scope is indistinguishable from a missing one → 404, no existence leak.
-    insight = (
-        services.insights_queryset(workspace_slugs=wsvc.request_workspace_slugs(request))
-        .filter(pk=pk)
-        .first()
-    )
-    if insight is None:
-        raise ProblemError(
-            404,
-            "Insight not found",
-            type_=TYPE_NOT_FOUND,
-            detail=f"No insight with pk={pk}.",
-        )
-    # Readable, so a refusal leaks nothing: 403 rather than 404 for a viewer.
-    if insight.project.workspace_id not in _insight_write_slugs(request):
-        raise ProblemError(
-            403,
-            "Editor role required",
-            type_=TYPE_FORBIDDEN,
-            detail="dismissing an insight requires the editor role in its workspace",
-        )
-    insight.delete()
-    return InsightDismissOut(dismissed=pk)

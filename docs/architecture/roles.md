@@ -236,16 +236,16 @@ prompt of their choosing and fire it at the fleet. Now:
   conditional: `turn_targets_agent_xor_project_xor_session` means a session turn carries no
   agent FK at all.
 
-**The product surfaces** — projects + insights, walkthroughs, shareouts, reviews, DDD runs and
+**The product surfaces** — projects, walkthroughs, shareouts, reviews, DDD runs and
 narratives, storyboards, origin issues, the event log, feedback dispositions — gate every
 MUTATION on `editor` in the row's workspace and every READ on membership (2026-10-02; until
-then a `viewer` could do all of it, including approving a DDD gate and wiping the insights
+then a `viewer` could do all of it, including approving a DDD gate and wiping a whole
 feed with `{}`). Three shapes recur, all pinned by `tests/test_product_acl.py`:
 
 - **By-id writes resolve through the read gate first**: a non-member gets 404, a viewer who
   can already see the row gets 403, an editor writes.
 - **Bulk writes are scoped by the WRITE set**, `perms.request_slugs_with(request,
-  perms.CONTENT_WRITE)`, never by the read set — `clear_insights({})`, a narrative delete or visibility flip
+  perms.CONTENT_WRITE)`, never by the read set — `clear_shareouts({})`, a narrative delete or visibility flip
   that spans workspaces touches only the rows in workspaces where the caller is an editor.
 - **Some rows belong to a person within the tenant.** A walkthrough is changed by its uploader
   *while they are still an editor there*, or by a workspace owner; a shareout is replaced or

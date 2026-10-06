@@ -206,20 +206,20 @@ def test_history_filters_by_the_page_it_was_had_on():
     """"The conversations I had on THIS page." Matched on the session's own
     declared page state, not on anything canopy infers."""
     user, ws, agent, app = _ctx()
-    on_insights = _session_from("connect-labs", user, ws, agent, "insights",
-                                {"path": "/insights", "resource": "insight://"})
+    on_inbox = _session_from("connect-labs", user, ws, agent, "inbox",
+                             {"path": "/w/w1/agents/echo/inbox", "resource": "item://"})
     _session_from("connect-labs", user, ws, agent, "stock",
                   {"path": "/stock", "resource": "stock://"})
 
-    assert _listed(_bearer(app, user), "&resource=insight://") == {str(on_insights.id)}
+    assert _listed(_bearer(app, user), "&resource=item://") == {str(on_inbox.id)}
 
 
 def test_it_filters_by_exact_path_too():
     user, ws, agent, app = _ctx()
-    a = _session_from("connect-labs", user, ws, agent, "a", {"path": "/insights"})
+    a = _session_from("connect-labs", user, ws, agent, "a", {"path": "/w/w1/agents/echo/inbox"})
     _session_from("connect-labs", user, ws, agent, "b", {"path": "/supervisor"})
 
-    assert _listed(_bearer(app, user), "&page_path=/insights") == {str(a.id)}
+    assert _listed(_bearer(app, user), "&page_path=/w/w1/agents/echo/inbox") == {str(a.id)}
 
 
 def test_a_session_that_declared_no_page_matches_no_page_filter():
@@ -228,4 +228,4 @@ def test_a_session_that_declared_no_page_matches_no_page_filter():
     user, ws, agent, app = _ctx()
     _session_from("connect-labs", user, ws, agent, title="no page")
 
-    assert _listed(_bearer(app, user), "&resource=insight://") == set()
+    assert _listed(_bearer(app, user), "&resource=item://") == set()

@@ -32,7 +32,6 @@ describe('canopyPresenceRules — which pages get presence at all', () => {
       '/w/dimagi/activity',
       '/walkthrough/abc',
       '/supervisor',
-      '/insights',
       '/sessions',
       '/activity',
       '/schedules',

@@ -110,8 +110,8 @@ def test_the_agent_sees_the_page_it_is_talking_about_through_the_chat_key():
     other = Session.objects.create(workspace=session.workspace, created_by=human,
                                    agent=session.agent, title="another chat")
     for s, ids in ((session, [1, 2]), (other, [9])):
-        page_state.set_page_state(s, {"path": "/insights", "visible_ids": ids})
-    page_actions.set_declared_actions(session, [{"name": "dismissInsights"}])
+        page_state.set_page_state(s, {"path": "/w/w1/agents/echo/inbox", "visible_ids": ids})
+    page_actions.set_declared_actions(session, [{"name": "dismissItems"}])
     page_actions.set_declared_actions(other, [{"name": "somethingElse"}])
     key = chat_keys.mint(session)
 
@@ -120,7 +120,7 @@ def test_the_agent_sees_the_page_it_is_talking_about_through_the_chat_key():
         tools = async_to_sync(PageActionProvider()._list_tools)()
 
     assert [p["state"]["visible_ids"] for p in pages] == [[1, 2]]
-    assert [t.name for t in tools] == ["page_dismissInsights"]
+    assert [t.name for t in tools] == ["page_dismissItems"]
 
 
 def test_without_a_key_the_agent_gets_no_page_tools():
@@ -128,6 +128,6 @@ def test_without_a_key_the_agent_gets_no_page_tools():
     from apps.mcp.page_tools import page_tool_specs
 
     _human, ace_user, _hal, session = _world()
-    page_actions.set_declared_actions(session, [{"name": "dismissInsights"}])
+    page_actions.set_declared_actions(session, [{"name": "dismissItems"}])
 
     assert page_tool_specs(ace_user) == []

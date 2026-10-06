@@ -23,7 +23,6 @@ const ICON: Record<string, string> = {
   video: '▶',
   deck: '◫',
   doc: '⎘',
-  insight: '✦',
   narrative: '✎',
   note: '·',
   sync: '⟳',

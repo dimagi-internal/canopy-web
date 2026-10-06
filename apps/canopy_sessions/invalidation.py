@@ -4,15 +4,15 @@ The other half of `page_state.py`. That module lets a page say what it is
 showing; this one makes the saying *stay true*, by notifying every attached page
 when the data behind it changes — **whoever changed it, through whatever door**.
 
-**The bug.** Ask canopy "close everything" on `/insights` and what you see
-depends on which tool the agent picks: `page_dismissInsights` makes the rows
-vanish in front of you, `clear_insights` deletes them server-side and leaves the
-page displaying twenty rows that no longer exist until you reload. Same sentence,
-two outcomes. And the same staleness arrives with no agent involved at all — the
-fleet dismissing an insight while you watch the feed, a scheduled turn, a second
-tab, a colleague. The agent only made it easy to notice.
+**The bug.** Ask canopy "close the ones I'm looking at" on an agent's inbox
+and what you see used to depend on which tool the agent picked: a page action
+made the rows vanish in front of you, while a server-side tool (`dismiss_item`)
+removed them and left the page displaying rows that no longer existed until you
+reloaded. Same sentence, two outcomes. And the same staleness arrives with no
+agent involved at all — the fleet raising an item while you watch the inbox, a
+scheduled turn, a second tab, a colleague. The agent only made it easy to notice.
 
-**The vocabulary is MCP's.** A resource URI (`insight://`), and a notification
+**The vocabulary is MCP's.** A resource URI (`item://`), and a notification
 carrying the URI and nothing else, after which the receiver re-reads. That is
 `notifications/resources/updated` exactly, and re-reading rather than patching is
 deliberate: the refetch goes through the normal tool where authorization applies,

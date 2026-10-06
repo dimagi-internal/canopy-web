@@ -13,7 +13,7 @@ is making the rewrite fail the build.
 
 Borrowed from Scout's `tests/test_authorizer_is_sole_gate.py` (dimagi-rad/scout,
 read 2026-09-14), which guards the same seam with the same technique. Scout's
-insight is the SIGNATURE: a `WorkspaceMembership` read filtered by BOTH a
+key observation is the SIGNATURE: a `WorkspaceMembership` read filtered by BOTH a
 workspace key and a user key is, definitionally, an access decision — nobody
 writes that query for any other reason. So the test does not need to understand
 authorization, only to recognise its shape.

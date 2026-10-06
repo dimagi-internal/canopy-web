@@ -4,7 +4,7 @@ The failure this design exists to prevent is an agent believing it acted. A
 control frame published to a group with nobody listening is silently discarded
 (`RunnerBinding.pending_answer`'s docstring calls that "the purest form of
 clicking does nothing"), and for a page action the consequence is worse: the
-agent reports closing twelve insights that are all still there.
+agent reports closing twelve items that are all still there.
 
 So most of these tests are about refusals — no page, unknown action, bad
 arguments, a host that says no, and a tab that never answers. Each must reach
@@ -26,8 +26,8 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 
 DISMISS = {
-    "name": "dismissInsights",
-    "description": "Dismiss the given insights from the page the user is viewing",
+    "name": "dismissItems",
+    "description": "Dismiss the given items from the page the user is viewing",
     "parameters": {
         "type": "object",
         "properties": {"ids": {"type": "array"}, "reason": {"type": "string"}},
@@ -84,7 +84,7 @@ def test_a_page_declares_its_actions_and_the_agent_can_discover_them():
           data={"actions": [DISMISS]}, content_type="application/json")
 
     listed = c.get(f"/api/canopy-sessions/{session.id}/page-actions").json()
-    assert [a["name"] for a in listed] == ["dismissInsights"]
+    assert [a["name"] for a in listed] == ["dismissItems"]
     # The SCHEMA is the point: without it an agent cannot know the call takes
     # `ids`, and would have to be told in prose.
     assert listed[0]["parameters"]["required"] == ["ids"]
@@ -101,7 +101,7 @@ def test_a_host_may_spell_the_schema_the_way_mcp_does():
 
     c.put(f"/api/canopy-sessions/{session.id}/page-actions",
           data={"actions": [{
-              "name": "dismissInsights",
+              "name": "dismissItems",
               "inputSchema": {"type": "object", "required": ["ids"]},
           }]}, content_type="application/json")
 
@@ -138,7 +138,7 @@ def test_no_page_attached_refuses_and_says_so(monkeypatch):
     _fast(monkeypatch)
     user, session, _c = _ctx()
     with pytest.raises(page_actions.PageActionError) as exc:
-        page_actions.request_action(session=session, name="dismissInsights",
+        page_actions.request_action(session=session, name="dismissItems",
                                     args={"ids": [1]}, user=user)
     assert exc.value.code == "no_page"
     assert "cannot be queued" in exc.value.message
@@ -155,7 +155,7 @@ def test_an_action_the_page_does_not_offer_is_refused_with_the_list(monkeypatch)
 
     assert exc.value.code == "unknown_action"
     # Naming what IS available turns a dead end into a correction.
-    assert "dismissInsights" in exc.value.message
+    assert "dismissItems" in exc.value.message
 
 
 def test_a_missing_required_argument_is_caught_before_the_round_trip(monkeypatch):
@@ -164,7 +164,7 @@ def test_a_missing_required_argument_is_caught_before_the_round_trip(monkeypatch
     page_actions.set_declared_actions(session, [DISMISS])
 
     with pytest.raises(page_actions.PageActionError) as exc:
-        page_actions.request_action(session=session, name="dismissInsights",
+        page_actions.request_action(session=session, name="dismissItems",
                                     args={"reason": "stale"}, user=user)
 
     assert exc.value.code == "bad_arguments"
@@ -176,7 +176,7 @@ def test_a_wrongly_typed_argument_is_caught():
     user, session, _c = _ctx()
     page_actions.set_declared_actions(session, [DISMISS])
     with pytest.raises(page_actions.PageActionError) as exc:
-        page_actions.request_action(session=session, name="dismissInsights",
+        page_actions.request_action(session=session, name="dismissItems",
                                     args={"ids": "not-a-list"}, user=user)
     assert exc.value.code == "bad_arguments"
 
@@ -192,7 +192,7 @@ def test_a_schema_declared_as_inputSchema_is_enforced_too():
     """
     user, session, _c = _ctx()
     page_actions.set_declared_actions(session, [{
-        "name": "dismissInsights",
+        "name": "dismissItems",
         "inputSchema": {
             "type": "object",
             "properties": {"ids": {"type": "array"}},
@@ -201,7 +201,7 @@ def test_a_schema_declared_as_inputSchema_is_enforced_too():
     }])
 
     with pytest.raises(page_actions.PageActionError) as exc:
-        page_actions.request_action(session=session, name="dismissInsights",
+        page_actions.request_action(session=session, name="dismissItems",
                                     args={}, user=user)
 
     assert exc.value.code == "bad_arguments"
@@ -218,7 +218,7 @@ def test_the_timeout_constant_is_read_at_call_time(monkeypatch):
 
     started = time.monotonic()
     with pytest.raises(page_actions.PageActionError):
-        page_actions.request_action(session=session, name="dismissInsights",
+        page_actions.request_action(session=session, name="dismissItems",
                                     args={"ids": [1]}, user=user)
 
     assert time.monotonic() - started < 5, "the module constant is still not the knob"
@@ -246,7 +246,7 @@ def test_a_page_that_never_answers_times_out_rather_than_hanging(monkeypatch):
     page_actions.set_declared_actions(session, [DISMISS])
 
     with pytest.raises(page_actions.PageActionError) as exc:
-        page_actions.request_action(session=session, name="dismissInsights",
+        page_actions.request_action(session=session, name="dismissItems",
                                     args={"ids": [1]}, user=user)
 
     assert exc.value.code == "timeout"
@@ -262,14 +262,14 @@ def test_a_host_refusal_reaches_the_agent_as_an_error_not_a_success(monkeypatch)
     _fast(monkeypatch, seconds=2)
     user, session, _c = _ctx()
     page_actions.set_declared_actions(session, [DISMISS])
-    _answer_during_the_wait(monkeypatch, error="this insight is already closed")
+    _answer_during_the_wait(monkeypatch, error="this item is already dismissed")
 
     with pytest.raises(page_actions.PageActionError) as exc:
-        page_actions.request_action(session=session, name="dismissInsights",
+        page_actions.request_action(session=session, name="dismissItems",
                                     args={"ids": [1]}, user=user)
 
     assert exc.value.code == "refused"
-    assert "already closed" in exc.value.message
+    assert "already dismissed" in exc.value.message
 
 
 # --- the happy path ---------------------------------------------------------
@@ -281,7 +281,7 @@ def test_a_page_that_answers_returns_its_result(monkeypatch):
     page_actions.set_declared_actions(session, [DISMISS])
     _answer_during_the_wait(monkeypatch, result={"dismissed": 3})
 
-    action = page_actions.request_action(session=session, name="dismissInsights",
+    action = page_actions.request_action(session=session, name="dismissItems",
                                          args={"ids": [1, 2, 3]}, user=user)
 
     assert action.status == PageAction.DONE
@@ -296,7 +296,7 @@ def test_a_late_answer_cannot_resolve_an_action_already_expired():
     flip that to success afterwards."""
     user, session, _c = _ctx()
     action = PageAction.objects.create(
-        session=session, name="dismissInsights", args={"ids": [1]},
+        session=session, name="dismissItems", args={"ids": [1]},
         requested_for=user, status=PageAction.EXPIRED, resolved_at=timezone.now(),
     )
     page_actions.resolve(action, result={"dismissed": 3})
@@ -332,7 +332,7 @@ def test_bad_arguments_are_a_422_not_a_409(monkeypatch):
     _user, session, c = _ctx()
     page_actions.set_declared_actions(session, [DISMISS])
     r = c.post(f"/api/canopy-sessions/{session.id}/page-actions/invoke",
-               data={"name": "dismissInsights", "args": {}}, content_type="application/json")
+               data={"name": "dismissItems", "args": {}}, content_type="application/json")
     assert r.status_code == 422
 
 

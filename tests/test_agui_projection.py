@@ -79,7 +79,7 @@ def test_every_projected_event_survives_a_round_trip_through_the_sdk():
         {"event": "chat.tool_use",
          "data": {"tool_message_id": "t9", "parent_message_id": "m1",
                   "block": {"type": "tool_use", "id": "toolu_01ABC",
-                        "name": "list_insights", "input": {"limit": 5}}}},
+                        "name": "list_items", "input": {"limit": 5}}}},
         {"event": "chat.tool_result",
          "data": {"tool_message_id": "t9", "block": {"content": "[]"}}},
         {"event": "session.activity", "data": {"state": "working"}},
@@ -168,7 +168,7 @@ def test_a_tool_call_becomes_start_args_end_with_one_correlating_id():
     events = agui.project(
         {"event": "chat.tool_use",
          "data": {"tool_message_id": "t9", "parent_message_id": "m1",
-                  "block": {"name": "clear_insights", "input": {"category": "stale"}}}},
+                  "block": {"name": "clear_shareouts", "input": {"source": "run-a"}}}},
         thread_id="t1",
     )
 
@@ -178,7 +178,7 @@ def test_a_tool_call_becomes_start_args_end_with_one_correlating_id():
         E.EventType.TOOL_CALL_END,
     ]
     assert {e.tool_call_id for e in events} == {"t9"}
-    assert events[0].tool_call_name == "clear_insights"
+    assert events[0].tool_call_name == "clear_shareouts"
 
 
 def test_tool_arguments_are_a_json_string_not_an_object():
@@ -442,6 +442,10 @@ FIXTURE = Path(__file__).resolve().parents[1] / "frontend" / "packages" / \
 #: TypeScript asserts its inverse recovers the original frame. Drift in either
 #: direction fails a test instead of silently producing a client that renders a
 #: subtly different conversation.
+#:
+#: The tool name and text in these frames are opaque sample data. They still say
+#: `list_insights` (a tool retired 2026-10) because the fixture is shipped in the
+#: published canopy-ui package; renaming them is a canopy-ui release, not a fix.
 ROUND_TRIP_FRAMES = [
     {"event": "chat.stream_start", "data": {"message_id": "m1", "turn_index": 4}},
     {"event": "chat.delta", "data": {"message_id": "m1", "text": "hello"}},

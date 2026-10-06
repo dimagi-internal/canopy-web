@@ -254,7 +254,7 @@ class PageAction(models.Model):
     while the consumer is away lands in a group with nobody listening and is
     discarded, the caller reads success, and nothing happens — "the purest form
     of clicking does nothing". A page action has the same shape and a worse
-    failure, because the agent would report having closed twelve insights that
+    failure, because the agent would report having closed twelve items that
     are still there. So the frame is the doorbell and this is the record.
 
     **Why it is NOT drained like `pending_answer`.** A runner comes back and
@@ -278,7 +278,7 @@ class PageAction(models.Model):
     session = models.ForeignKey(
         Session, on_delete=models.CASCADE, related_name="page_actions"
     )
-    #: The host-declared action name, e.g. "dismissInsights".
+    #: The host-declared action name, e.g. "dismissItems".
     name = models.CharField(max_length=120)
     #: Arguments as the agent supplied them. Validated against the host's
     #: declared JSON-Schema before the row is written, so a stored row is one

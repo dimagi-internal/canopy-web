@@ -199,7 +199,7 @@ async def _django_app(scope, receive, send):
 
 
 async def _ensure_json_body(scope, receive):
-    """A route with a JSON body whose fields are all optional (`clear_insights`)
+    """A route with a JSON body whose fields are all optional (`clear_shareouts`)
     still needs a body: called with no arguments, the request carries none, and
     Ninja answers 422 "payload: Field required". Send `{}` — what the web app
     sends for the same "no filters" call."""

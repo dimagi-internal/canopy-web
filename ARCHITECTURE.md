@@ -47,7 +47,7 @@ the arrow's direction and enforce it in CI.
 | `slack` | **framework** | The Slack front door: a Slack thread becomes a chat session with an agent whose owner turned Slack on, sent as `origin="slack"` by the linked canopy user. Holds the bot token (encrypted); agents never do. A member acts as their own account; anyone else (a Slack guest, a non-member) is recorded as a `Contact` and answered as one, like an email sender — granted nothing. See `docs/superpowers/specs/2026-09-18-slack-front-door-design.md`. |
 | `retention` | **framework** | How long the CONTENT of AI conversations and turns is kept. `RetentionRule`s (workspace / kind / source / principal / agent → `keep_days`; nearest workspace, then most specific, then shortest wins) drive a sweep that scrubs a turn's prompt, ledger and raw transcript while keeping its row, drops a chat's expired message prefix behind a `retention_floor_index` that stops runner re-ships writing it back, and deletes shared transcripts. Off until `CANOPY_RETENTION_ENFORCE`; `manage.py retention_sweep` dry-runs. See `docs/superpowers/specs/2026-10-05-content-retention-design.md`. |
 | `inbound` | **framework** | The push doorbell: receives a Gmail Pub/Sub notification and rings the runner that holds the mailbox credentials. **Never reads mail** — a Gmail push carries `{emailAddress, historyId}` and no content, and only the runner holds the agents' `gog` mailbox tokens, so no mail credential enters the web app and a forged ping can at worst cause a read that finds nothing. **Per-workspace by construction:** the tenant is named in the URL (`/api/inbound/gmail/{workspace}/`) and verification binds to that workspace's own `InboundPushConfig` (audience + signer + watch topic), so a second tenant in its own GCP project verifies correctly and one tenant's service account can never satisfy another's check — a *list* of allowed signers would not do that. Naming the tenant in the path also means it is known before the body is decoded, so no attacker-controlled byte selects the credential. `InboundMailbox` maps address → agent (explicit data, not an `@`-split convention whose failure is silent); tenancy derives one hop away via the agent, the same shape `Turn` uses. Composes its runner list with `harness.assignment_rows_for`, the helper claiming uses, so the doorbell can't ring a box routing would never give the turn to. Unlike `events` this app DOES have a signal — a `post_save` audit that writes a log row when the 300s poll finds mail push should have rung for — but it only ever writes a row, never work. All configuration is first-class records edited at `/w/:workspace/settings/inbound`; there are deliberately no deployment-global settings. |
-| `projects` | **product** | Canopy's portfolio/insights feature: repos + which canopy skills ran (`skills[]`, `skill_name`, hygiene-skill frontend). Not a generic registry today — promote to framework only when a real second consumer needs one. |
+| `projects` | **product** | The workspace's index of projects: repos + which canopy skills ran (`skills[]`, `skill_name`, hygiene-skill frontend). Not a generic registry today — promote to framework only when a real second consumer needs one. |
 | `walkthroughs` | **product** | DDD walkthrough artifacts (HTML/video demos). |
 | `reviews` | **product** | DDD narrative review surface. |
 | `shareouts` | **product** | Team shareout briefings. |
@@ -61,13 +61,7 @@ The boundary holds everywhere except these documented, intentional places:
 
 1. **`apps/api` — the composition root.** One NinjaAPI imports every router; a
    framework needs exactly one such wiring seam. Exempt by design.
-2. **`apps/mcp/tools/insights.py` — a product MCP tool on the framework server.**
-   `apps/mcp/server.py` registers tools by importing `apps.mcp.tools` as a side
-   effect; the `insights` tool exposes the `projects` (portfolio) product. Same
-   composition-root shape as the api hub. **Candidate for inversion** later
-   (let `projects` register its own tool via `AppConfig.ready`), which would
-   remove this carve-out.
-3. **`apps/timeline/sources.py` — a string registry of product event-sources.**
+2. **`apps/timeline/sources.py` — a string registry of product event-sources.**
    Timeline resolves each source by dotted path via `import_module` precisely to
    AVOID a hard framework→product import; a missing product app degrades
    gracefully. The string indirection is the seam. Allowlisted in the content

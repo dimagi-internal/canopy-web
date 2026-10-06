@@ -35,7 +35,7 @@ describe('the state channel pushes, where context was pulled', () => {
   })
 
   it('registering is last-wins, so navigating replaces rather than merges', () => {
-    const first = setPageStateContributor(() => ({ path: '/insights' }))
+    const first = setPageStateContributor(() => ({ path: '/w/connect/agents/echo/inbox' }))
     dispose = setPageStateContributor(() => ({ path: '/supervisor' }))
 
     expect(currentPageState()).toEqual({ path: '/supervisor' })
@@ -52,7 +52,7 @@ describe('the state channel pushes, where context was pulled', () => {
 
     // The route layer beneath it is still true, and an agent with the path and
     // no selection is far better off than an agent with nothing.
-    expect(currentPageState({ path: '/insights' })).toEqual({ path: '/insights' })
+    expect(currentPageState({ path: '/w/connect/agents/echo/inbox' })).toEqual({ path: '/w/connect/agents/echo/inbox' })
   })
 
   it('distinguishes "no page declared anything" from "the page is empty"', () => {
@@ -64,7 +64,7 @@ describe('the state channel pushes, where context was pulled', () => {
   })
 
   it('unregisters on dispose, so a page left behind stops describing itself', () => {
-    const stop = setPageStateContributor(() => ({ path: '/insights' }))
+    const stop = setPageStateContributor(() => ({ path: '/w/connect/agents/echo/inbox' }))
     stop()
 
     expect(hasPageState()).toBe(false)
@@ -75,26 +75,26 @@ describe('the state channel pushes, where context was pulled', () => {
     const listener = vi.fn()
     const stop = onPageStateChanged(listener)
 
-    dispose = setPageStateContributor(() => ({ path: '/insights' }))
+    dispose = setPageStateContributor(() => ({ path: '/w/connect/agents/echo/inbox' }))
 
     stop()
-    expect(listener).toHaveBeenCalledWith({ path: '/insights' })
+    expect(listener).toHaveBeenCalledWith({ path: '/w/connect/agents/echo/inbox' })
   })
 })
 
 describe('describeSelection is the shape that works', () => {
   it('carries which rows and which tool resolves them', () => {
     const state = describeSelection({
-      backingTool: 'list_insights',
+      backingTool: 'list_items',
       ids: [4471, 4472],
-      filters: { category: 'stale' },
+      filters: { state: 'open' },
     })
 
     expect(state).toEqual({
-      backing_tool: 'list_insights',
+      backing_tool: 'list_items',
       visible_ids: [4471, 4472],
       visible_count: 2,
-      filters: { category: 'stale' },
+      filters: { state: 'open' },
     })
   })
 
@@ -102,7 +102,7 @@ describe('describeSelection is the shape that works', () => {
     // The agent re-reads the rows through `backing_tool`, live, with the user's
     // own permissions. A copy serialised here could go stale between render and
     // send and would be a second place an ACL could be got wrong.
-    const state = describeSelection({ backingTool: 'list_insights', ids: [1, 2, 3] })
+    const state = describeSelection({ backingTool: 'list_items', ids: [1, 2, 3] })
 
     expect(Object.keys(state).sort()).toEqual(['backing_tool', 'visible_count', 'visible_ids'])
   })
@@ -114,7 +114,7 @@ describe('describeSelection is the shape that works', () => {
   })
 
   it('counts what is visible, so the agent can tell a page from a whole list', () => {
-    const state = describeSelection({ backingTool: 'list_insights', ids: [1, 2, 3, 4, 5] })
+    const state = describeSelection({ backingTool: 'list_items', ids: [1, 2, 3, 4, 5] })
 
     expect(state.visible_count).toBe(5)
   })
@@ -134,18 +134,18 @@ describe('the first message must not depend on MCP being up', () => {
   it('merges the selection into what rides the first message', () => {
     dispose = setPageStateContributor(() =>
       describeSelection({
-        backingTool: 'list_insights',
-        resource: 'insight://',
+        backingTool: 'list_items',
+        resource: 'item://',
         ids: [61, 60, 59],
       }),
     )
 
-    const forTheBlock = { ...currentPageState({ surface: 'the insights feed', path: '/insights' }) }
+    const forTheBlock = { ...currentPageState({ surface: 'the agent inbox', path: '/w/connect/agents/echo/inbox' }) }
 
     // The route layer AND the selection, in one object.
-    expect(forTheBlock.path).toBe('/insights')
+    expect(forTheBlock.path).toBe('/w/connect/agents/echo/inbox')
     expect(forTheBlock.visible_ids).toEqual([61, 60, 59])
-    expect(forTheBlock.backing_tool).toBe('list_insights')
+    expect(forTheBlock.backing_tool).toBe('list_items')
   })
 
   it('still produces the route alone when no page declared a selection', () => {
@@ -159,10 +159,10 @@ describe('the first message must not depend on MCP being up', () => {
   it('lets the page override a route field it knows better', () => {
     // The page is the only party that knows what it actually rendered, so its
     // own keys win over the route table's guess.
-    dispose = setPageStateContributor(() => ({ surface: 'the filtered insights feed' }))
+    dispose = setPageStateContributor(() => ({ surface: 'the open items in the inbox' }))
 
-    expect(currentPageState({ surface: 'the insights feed', path: '/insights' }).surface).toBe(
-      'the filtered insights feed',
+    expect(currentPageState({ surface: 'the agent inbox', path: '/w/connect/agents/echo/inbox' }).surface).toBe(
+      'the open items in the inbox',
     )
   })
 })

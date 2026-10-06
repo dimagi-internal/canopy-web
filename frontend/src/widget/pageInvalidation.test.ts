@@ -12,9 +12,9 @@ beforeEach(() => resetResourceHandlers())
 describe('a page is told to re-read what it is showing', () => {
   it('calls the handler registered for that resource', () => {
     const refetch = vi.fn()
-    onResourceChanged('insight://', refetch)
+    onResourceChanged('item://', refetch)
 
-    expect(resourceChanged('insight://')).toBe(1)
+    expect(resourceChanged('item://')).toBe(1)
     expect(refetch).toHaveBeenCalledOnce()
   })
 
@@ -22,7 +22,7 @@ describe('a page is told to re-read what it is showing', () => {
     const refetch = vi.fn()
     onResourceChanged('walkthrough://', refetch)
 
-    resourceChanged('insight://')
+    resourceChanged('item://')
 
     expect(refetch).not.toHaveBeenCalled()
   })
@@ -30,20 +30,20 @@ describe('a page is told to re-read what it is showing', () => {
   it('tells every page showing it — two tabs are two handlers', () => {
     const a = vi.fn()
     const b = vi.fn()
-    onResourceChanged('insight://', a)
-    onResourceChanged('insight://', b)
+    onResourceChanged('item://', a)
+    onResourceChanged('item://', b)
 
-    expect(resourceChanged('insight://')).toBe(2)
+    expect(resourceChanged('item://')).toBe(2)
     expect(a).toHaveBeenCalledOnce()
     expect(b).toHaveBeenCalledOnce()
   })
 
   it('stops after the page unmounts', () => {
     const refetch = vi.fn()
-    const stop = onResourceChanged('insight://', refetch)
+    const stop = onResourceChanged('item://', refetch)
 
     stop()
-    resourceChanged('insight://')
+    resourceChanged('item://')
 
     expect(refetch).not.toHaveBeenCalled()
   })
@@ -55,34 +55,34 @@ describe('a page is told to re-read what it is showing', () => {
 
 describe('a failing refetch cannot break the conversation', () => {
   it('survives a handler that throws', () => {
-    onResourceChanged('insight://', () => {
+    onResourceChanged('item://', () => {
       throw new Error('the list endpoint is down')
     })
 
     // An exception escaping here would propagate into the socket handler and
     // could take down the connection carrying the chat — a strictly worse
     // outcome than a page showing slightly old rows.
-    expect(() => resourceChanged('insight://')).not.toThrow()
+    expect(() => resourceChanged('item://')).not.toThrow()
   })
 
   it('survives a handler whose promise rejects', async () => {
-    onResourceChanged('insight://', async () => {
+    onResourceChanged('item://', async () => {
       throw new Error('network')
     })
 
-    expect(() => resourceChanged('insight://')).not.toThrow()
+    expect(() => resourceChanged('item://')).not.toThrow()
     // And leaves no unhandled rejection behind.
     await new Promise((r) => setTimeout(r, 0))
   })
 
   it('still calls the other handlers when one throws', () => {
     const ok = vi.fn()
-    onResourceChanged('insight://', () => {
+    onResourceChanged('item://', () => {
       throw new Error('boom')
     })
-    onResourceChanged('insight://', ok)
+    onResourceChanged('item://', ok)
 
-    resourceChanged('insight://')
+    resourceChanged('item://')
 
     expect(ok).toHaveBeenCalledOnce()
   })
@@ -91,18 +91,18 @@ describe('a failing refetch cannot break the conversation', () => {
 describe('declaring the resource is what makes any of it fire', () => {
   it('carries the resource into the page state', () => {
     const state = describeSelection({
-      backingTool: 'list_insights',
-      resource: 'insight://',
+      backingTool: 'list_items',
+      resource: 'item://',
       ids: [1, 2],
     })
 
-    expect(state.resource).toBe('insight://')
+    expect(state.resource).toBe('item://')
   })
 
   it('omits it when a page does not declare one', () => {
     // Legal, and means "describe me to the agent, but I will not refresh
     // myself" — a worse page, not a broken one.
-    const state = describeSelection({ backingTool: 'list_insights', ids: [1] })
+    const state = describeSelection({ backingTool: 'list_items', ids: [1] })
 
     expect(state).not.toHaveProperty('resource')
   })

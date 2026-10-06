@@ -91,7 +91,6 @@ export const pageContextRules: PageContextRule[] = [
 
   // --- personal / global --------------------------------------------------
   { pattern: /^\/supervisor/, build: () => ({ surface: 'the supervisor inbox' }) },
-  { pattern: /^\/insights/, build: () => ({ surface: 'the cross-portfolio insights feed' }) },
   { pattern: /^\/activity/, build: () => ({ surface: 'the fleet activity log' }) },
   { pattern: /^\/schedules/, build: () => ({ surface: 'the personal schedule calendar' }) },
   { pattern: /^\/sessions/, build: () => ({ surface: 'my shared sessions' }) },
@@ -129,7 +128,7 @@ export function describeQuery(search: string): Record<string, string> | null {
  *
  *  `search` is the cheapest context there is. A page whose state lives in its
  *  URL — which is every page you can usefully link to — describes its own view
- *  for free, with no per-page code: `/insights?project=x&category=stale` says
+ *  for free, with no per-page code: `/w/connect/agents/echo/work?by=project` says
  *  what is on screen as precisely as a hand-written contributor would, and
  *  cannot drift from it. It was being dropped, so a filtered page looked
  *  identical to an unfiltered one.

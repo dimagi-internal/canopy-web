@@ -6,8 +6,9 @@ import { registerPageAction, type PageActionSpec } from './pageActions'
  * Offer the embedded agent something this page can do.
  *
  * ```tsx
- * usePageAction('dismissInsights', async ({ ids }) => { … }, {
- *   description: 'Dismiss insights from the list the user is viewing',
+ * // Illustrative — no page registers this today.
+ * usePageAction('dismissItems', async ({ ids }) => { … }, {
+ *   description: 'Dismiss the inbox items the user is viewing',
  *   parameters: { type: 'object', properties: { ids: { type: 'array' } }, required: ['ids'] },
  * })
  * ```

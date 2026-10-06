@@ -111,7 +111,7 @@ class TurnConsumer(AsyncJsonWebsocketConsumer):
 class SupervisorConsumer(AsyncJsonWebsocketConsumer):
     """Live /supervisor: a per-user group receives runner-status and
     waiting-count deltas; a snapshot is sent on connect. The socket spans all the
-    user's workspaces (the fleet is cross-tenant, like /insights)."""
+    user's workspaces (the fleet is cross-tenant, like /activity)."""
 
     async def connect(self):
         user = self.scope.get("user")

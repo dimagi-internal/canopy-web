@@ -70,9 +70,8 @@ export const WORKFLOWS: Workflow[] = [
     id: 'portfolio',
     title: 'Portfolio sweep',
     description:
-      'Survey every project, surface categorized insights and per-project next steps, and roll it into a strategic brief.',
+      'Survey every project for per-project next steps and roll it into a strategic brief.',
     steps: [
-      { kind: 'skill', name: 'portfolio-review', note: 'Categorized cross-portfolio insights' },
       { kind: 'skill', name: 'portfolio-guide', note: '"What to do next" per project' },
       { kind: 'skill', name: 'brief', note: 'Strategic brief from recent activity' },
     ],

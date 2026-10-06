@@ -48,7 +48,7 @@ export const NAVIGATE_FALLBACK_ALLOWLIST: RegExp[] = [
   /^\/(canopy\/)?$/, // root → workbench redirect
   /^\/(canopy\/)?w\//, // tenant-scoped surfaces (/w/:workspace/…)
   /^\/(canopy\/)?supervisor/,
-  /^\/(canopy\/)?insights/,
+  /^\/(canopy\/)?insights/, // retired feed → redirect home (old bookmarks)
   /^\/(canopy\/)?system/,
   /^\/(canopy\/)?settings/,
   /^\/(canopy\/)?sessions/,

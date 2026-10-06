@@ -1,7 +1,7 @@
 """The product surfaces' write gate: mutating is the EDITOR tier.
 
 Before this, any member of a workspace — a viewer included — could mutate every
-product surface: edit and delete projects, wipe the insights feed with `{}`,
+product surface: edit and delete projects, wipe a whole feed with `{}`,
 approve a DDD gate, delete a narrative (and its Drive files), rewrite a
 storyboard, forge the fleet event log. And rows with no workspace were readable
 and writable by ANY signed-in user. The rules pinned here, per surface:
@@ -74,15 +74,11 @@ def _json(client, method, url, body=None):
     )
 
 
-# --- projects + insights -----------------------------------------------------
+# --- projects -----------------------------------------------------------------
 
 
 def _project(slug, workspace_id=WS):
     return Project.objects.create(name=slug, slug=slug, workspace_id=workspace_id)
-
-
-def _insight(project, content="[a] x"):
-    return ProjectContext.objects.create(project=project, context_type="insight", content=content)
 
 
 def test_project_writes_are_editor_reads_are_membership(acl):
@@ -116,45 +112,14 @@ def test_a_viewer_cannot_create_or_batch_write_projects(acl):
     assert _json(_c(acl["editor"]), "post", f"/api/w/{WS}/projects/", body).status_code == 201
 
 
-def test_a_viewers_empty_clear_deletes_nothing(acl):
-    """`{}` used to clear every insight in every workspace the caller could READ."""
-    _insight(_project("pa-proj"))
-    res = _json(_c(acl["viewer"]), "post", "/api/insights/clear/", {})
-    assert res.status_code == 200
-    assert res.json() == {"cleared": 0}
-    assert ProjectContext.objects.count() == 1
-
-
-def test_an_editors_empty_clear_stays_in_their_editor_workspaces(acl):
-    """An editor of one workspace who only views another clears the first."""
-    mine = _insight(_project("pa-proj"))
-    a_member(acl["other"], email="pa-editor@dimagi.com", role=WorkspaceMembership.VIEWER)
-    theirs = _insight(_project("pa-theirs", OTHER))
-
-    res = _json(_c(acl["editor"]), "post", "/api/insights/clear/", {})
-    assert res.json() == {"cleared": 1}
-    assert not ProjectContext.objects.filter(pk=mine.pk).exists()
-    assert ProjectContext.objects.filter(pk=theirs.pk).exists()
-
-
-def test_dismissing_an_insight_is_editor(acl):
-    ins = _insight(_project("pa-proj"))
-    assert _c(acl["viewer"]).delete(f"/api/insights/{ins.pk}/").status_code == 403
-    assert _c(acl["outsider"]).delete(f"/api/insights/{ins.pk}/").status_code == 404
-    res = _json(_c(acl["viewer"]), "post", "/api/insights/dismiss", {"ids": [ins.pk]})
-    assert res.json() == {"dismissed": []}
-    assert _c(acl["editor"]).delete(f"/api/insights/{ins.pk}/").status_code == 200
-
-
 def test_a_null_workspace_project_is_visible_to_nobody(acl):
     orphan = Project.objects.create(name="orphan", slug="pa-orphan")
-    _insight(orphan)
+    ProjectContext.objects.create(project=orphan, context_type="note", content="x")
     owner = _c(acl["owner"])
     assert owner.get("/api/projects/pa-orphan/").status_code == 404
     assert _json(owner, "patch", "/api/projects/pa-orphan/", {"name": "x"}).status_code == 404
     assert "pa-orphan" not in [p["slug"] for p in owner.get("/api/projects/").json()["items"]]
-    assert owner.get("/api/insights/").json()["items"] == []
-    assert _json(owner, "post", "/api/insights/clear/", {}).json() == {"cleared": 0}
+    assert owner.get("/api/projects/pa-orphan/context/").status_code == 404
 
 
 # --- walkthroughs -------------------------------------------------------------
@@ -284,6 +249,24 @@ def test_clearing_shareouts_is_your_own_unless_you_own_the_workspace(acl):
     assert list(Shareout.objects.values_list("title", flat=True)) == ["theirs"]
     assert _json(_c(acl["owner"]), "post", "/api/shareouts/clear/", {}).json() == {"cleared": 1}
     assert not Shareout.objects.exists()
+
+
+def test_an_editors_empty_clear_stays_in_their_editor_workspaces(acl):
+    """An editor of one workspace who only VIEWS another clears the first. A bulk
+    clear is scoped by the WRITE set (`request_slugs_with(CONTENT_WRITE)`), never
+    the read set — with the read set, `{}` reached every workspace they could see.
+    (Pinned on the Insights feed's clear until that feed was retired, 2026-10.)"""
+    _json(_c(acl["editor"]), "post", f"/api/w/{WS}/shareouts/", _shareout_body("mine"))
+    a_member(acl["other"], email="pa-editor@dimagi.com", role=WorkspaceMembership.VIEWER)
+    theirs = Shareout.objects.create(
+        workspace=acl["other"], created_by=acl["editor"], title="theirs", content="c",
+        source="canopy:shareout", period_start="2026-10-01T00:00:00Z",
+        period_end="2026-10-02T00:00:00Z",
+    )
+
+    res = _json(_c(acl["editor"]), "post", "/api/shareouts/clear/", {})
+    assert res.json() == {"cleared": 1}
+    assert list(Shareout.objects.values_list("pk", flat=True)) == [theirs.pk]
 
 
 # --- reviews ------------------------------------------------------------------

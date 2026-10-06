@@ -50,7 +50,7 @@ def agent(workspace):
 
 
 # One case per distinct clamp shape across the paginated surface: the 500-cap
-# routes, the 100-cap route (insights/projects), and the routes that also take a
+# routes, the projects route, and the routes that also take a
 # caller-supplied offset.
 @pytest.mark.parametrize("path", [
     "/api/agents/",
@@ -60,7 +60,6 @@ def agent(workspace):
     "/api/agents/echo/runs/",
     "/api/agents/echo/schedules/",
     "/api/projects/",
-    "/api/insights/",
     "/api/issues/",
     "/api/shareouts/",
 ])
@@ -85,8 +84,20 @@ def test_oversized_limit_clamps_to_the_cap(client, agent, path):
     assert resp.json()["limit"] == 500
 
 
-def test_insights_clamps_to_its_own_lower_cap(client):
-    # not every route shares the 500 budget — the cap is per-route policy
-    resp = client.get("/api/insights/?limit=99999")
+def test_the_timeline_clamps_to_its_own_lower_cap(client, monkeypatch):
+    # not every route shares the 500 budget — the cap is per-route policy.
+    # The timeline's page is not a `Page` (no `limit` in the body), so read the
+    # clamped value where it is used: the limit handed to the source merge.
+    from apps.timeline import sources
+
+    seen = {}
+    real = sources.gather
+
+    def spy(**kw):
+        seen["limit"] = kw["limit"]
+        return real(**kw)
+
+    monkeypatch.setattr(sources, "gather", spy)
+    resp = client.get("/api/timeline/?limit=99999")
     assert resp.status_code == 200
-    assert resp.json()["limit"] == 100
+    assert seen["limit"] == 200

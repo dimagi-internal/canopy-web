@@ -117,7 +117,7 @@ def main() -> int:
     ap.add_argument("--base", default=DEFAULT_BASE)
     ap.add_argument("--token", default=None)
     ap.add_argument("--act", default=None, metavar="TEXT", nargs="?", const=(
-        "Close the insights I am looking at right now."),
+        "Summarise the inbox items I am looking at right now."),
         help="declare a page selection, ask for it, and assert the agent USED it")
     ap.add_argument("--send", default=None, metavar="TEXT",
                     help="also start a real conversation (enqueues a turn)")
@@ -221,10 +221,11 @@ def act_on_the_page(base, token, agents, text, wait_s=420) -> tuple[bool, str]:
     and the agent reads the declaration and acts on the RIGHT ROWS.
 
     It asserts the agent USED the page state — not that a turn completed, not
-    that a reply arrived, not that a tool returned 200. A reply saying "I have
-    closed them" while the agent in fact called `clear_insights` with no filter
-    is the failure this exists to catch, and it is indistinguishable from
-    success in every other check we have.
+    that a reply arrived, not that a tool returned 200. A reply that sounds right
+    while the agent in fact read the WHOLE inbox (`list_items` with no ids)
+    rather than the rows on screen is the failure this exists to catch, and it
+    is indistinguishable from success in every other check we have. The default
+    ask only reads, so a live run changes nothing.
     """
     if not isinstance(agents, list) or not agents:
         return False, "no agent available"
@@ -242,27 +243,27 @@ def act_on_the_page(base, token, agents, text, wait_s=420) -> tuple[bool, str]:
     # one the agent could genuinely act on. Inventing ids would test the plumbing
     # against data that does not exist, which is the shape of a green run that
     # means nothing.
-    status, insights, _ = call(base, "/api/insights/?limit=5", token)
+    status, inbox, _ = call(base, "/api/items/?limit=5", token)
     # `items` is this API's page key; `results` is a guess that cost a red run.
     # Both are accepted rather than one being assumed, because a check that
     # fails on the SHAPE of a healthy response reports the feature broken when
     # it is not — which is a false alarm, and false alarms are how a live check
     # stops being trusted.
-    if isinstance(insights, list):
-        rows = insights
+    if isinstance(inbox, list):
+        rows = inbox
     else:
-        payload = insights or {}
+        payload = inbox or {}
         rows = payload.get("items") or payload.get("results") or []
     ids = [r["id"] for r in rows[:3] if isinstance(r, dict) and "id" in r]
     if not ids:
-        return False, "no insights visible to this token; nothing to select"
+        return False, "no open inbox items visible to this token; nothing to select"
 
     # Declare the view exactly as the widget does (PUT /page-state).
     status, _st, _ = call(
         base, f"/api/canopy-sessions/{sid}/page-state", token, method="PUT",
-        body={"state": {"surface": "the insights feed", "path": "/insights",
-                        "backing_tool": "list_insights", "visible_ids": ids,
-                        "visible_count": len(ids)}},
+        body={"state": {"surface": "the fleet inbox", "path": "/supervisor",
+                        "backing_tool": "list_items", "resource": "item://",
+                        "visible_ids": ids, "visible_count": len(ids)}},
     )
     if status != 200:
         return False, f"page-state declare returned {status}"

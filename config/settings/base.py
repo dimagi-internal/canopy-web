@@ -397,7 +397,7 @@ AGENT_RUNS_DRIVE_ROOTS = env.json("AGENT_RUNS_DRIVE_ROOTS", default={})
 # Personal Access Token (apps/tokens) — minting a PAT requires logging in,
 # which is exactly the intended access gate, so no separate OAuth flow is
 # needed. See apps/mcp/server.py.
-# Per-user write rate limit for mutating MCP tools (e.g. clear_insights).
+# Per-user write rate limit for mutating MCP tools (e.g. delete_project).
 MCP_WRITE_LIMIT = env.int("MCP_WRITE_LIMIT", default=10)
 MCP_WRITE_WINDOW_SECONDS = env.int("MCP_WRITE_WINDOW_SECONDS", default=60)
 
@@ -499,8 +499,8 @@ CANOPY_HOST_SIGNING_KEY = env("CANOPY_HOST_SIGNING_KEY", default="").replace("\\
 # The dedicated user canopy's LIVE PROBE acts as at canopy's own MCP (the probe
 # of the `canopy-web` Connected site; apps/tokens/live_probe.py). Non-secret. Empty
 # = the probe endpoint 404s. The user is created by tokens/0026_probe_user: a
-# non-admin with no password, no email and no membership, so `list_insights`
-# runs as a real account and reads nothing.
+# non-admin with no password, no email and no membership, so the probe's
+# `list_items` runs as a real account and reads nothing.
 CANOPY_HOST_PROBE_USERNAME = env("CANOPY_HOST_PROBE_USERNAME", default="")
 
 GITHUB_APP_CLIENT_ID = env("GITHUB_APP_CLIENT_ID", default="")

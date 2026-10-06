@@ -721,13 +721,15 @@ Three doors, and picking the wrong one is the commonest mistake:
 | **writing** server data | your server / MCP tool | audited, rate-limited, revocable, survives the tab closing |
 | something that **only exists in a browser** | page action | scroll to a row, open a drawer, fill a form, apply a filter |
 
-canopy got this wrong itself and it is worth learning from: `dismissInsights`
-was a page action until 2026-09-16. It was a *data mutation wearing a page
-action's clothes* — unaudited, dead the moment the tab closed, capped by a
-20-second wait, and a second implementation of a delete the REST API already
-had. It existed only because nothing could tell the page its data had changed.
-Once pages could be told their data changed (§5a), the reason was gone; it is
-now the server tool `dismiss_insights(ids)` and the page action is deleted.
+canopy got this wrong itself and it is worth learning from: its first page
+action (2026-09) was a "dismiss these rows" on a feed. It was a *data mutation
+wearing a page action's clothes* — unaudited, dead the moment the tab closed,
+capped by a 20-second wait, and a second implementation of a delete the REST API
+already had. It existed only because nothing could tell the page its data had
+changed. Once pages could be told their data changed (§5a), the reason was gone;
+it became a server tool and the page action was deleted. The inbox shows the
+right shape today: dismissing is the server tool `dismiss_item`, and the page
+hears about it through `item://` (§5a).
 
 **If your action's last line is an HTTP call to your own backend, it is not a
 page action.** Put it in your MCP server and let §5a refresh the page.
@@ -1009,7 +1011,6 @@ with the SDK's own pieces (`apps/tokens/self_host.py`: `HostConfig`,
 
 | Page (route) | Page key | Scope | Tools the grant unlocks |
 |---|---|---|---|
-| `/insights` | `insights` | `insights:read` | `list_insights` |
 | `/w/:ws/agents/:slug/inbox` | `agent.inbox` | `items:read` | `list_items` |
 | `/w/:ws/agents/:slug/skills/history` | `agent.skill_history` | `skills:read` | `skill_history`, `skill_revision_diff` |
 

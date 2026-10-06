@@ -1,6 +1,6 @@
 # Canopy Web
 
-Collaborative web workspace for the canopy agent ecosystem — portfolio insights, first-class AI agents, live multiplayer agent chat, demo-driven development (DDD), walkthroughs, and shareouts.
+Collaborative web workspace for the canopy agent ecosystem — first-class AI agents, live multiplayer agent chat, demo-driven development (DDD), walkthroughs, and shareouts.
 
 Canopy Web is both a **product** (a workbench for supervising a fleet of AI agents and sharing the work they produce) and a **framework harvest**: its generic apps (agents, runs, turns, workspaces, realtime, chat sessions) are being extracted as the reusable substrate under the wider canopy ecosystem. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the framework/product boundary — the repo's one structural invariant.
 
