@@ -319,6 +319,40 @@ def test_the_credentials_refresh_sees_the_runners_env(box):
     assert "GOG_KEYRING_PASSWORD=kp" in lines, "no keyring password → every mailbox reads as dead"
 
 
+def test_a_moved_box_calls_its_new_address_not_runner_envs(box):
+    # runner.env is re-rendered from the stack parameter (the OLD address) on every
+    # start; the runner records a move in base_url.override. The timer must read
+    # the override too, or it calls the address canopy has left every 30 minutes.
+    (box.home / "base_url.override").write_text("https://new.example\n")
+    sha = box.seed_repo(GOOD_RUNNER)
+    seen = box.root / "bootstrap-env.txt"
+    stub = box.repo / "runner" / "ec2" / "bootstrap_agents.sh"
+    stub.write_text(
+        "#!/bin/bash\n"
+        f'printf "%s\\n" "CANOPY_BASE_URL=${{CANOPY_BASE_URL:-}}" '
+        f'"CANOPY_WEB_API_URL=${{CANOPY_WEB_API_URL:-}}" > "{seen}"\n'
+    )
+    stub.chmod(0o755)
+    box.stamp(sha)
+    box.expect(sha)
+    r = box.run()
+    assert r.returncode == 0, r.stderr
+    assert "https://new.example/api/harness/runners/" in box.curl_log.read_text()
+    assert "labs.example" not in box.curl_log.read_text()
+    lines = seen.read_text().splitlines()
+    assert "CANOPY_BASE_URL=https://new.example" in lines
+    assert "CANOPY_WEB_API_URL=https://new.example" in lines
+
+
+def test_an_override_that_is_not_https_is_ignored(box):
+    (box.home / "base_url.override").write_text("http://evil.example\n")
+    sha = box.seed_repo(GOOD_RUNNER)
+    box.stamp(sha)
+    box.expect(sha)
+    box.run("--check")
+    assert "https://labs.example/canopy/api/harness/runners/" in box.curl_log.read_text()
+
+
 # --- the updater itself ships by deploy -------------------------------------
 #
 # The shim reads update_runner.sh from the clone's origin/main WITHOUT fetching;
