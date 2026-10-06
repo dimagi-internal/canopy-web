@@ -64,7 +64,7 @@ function Bubble({ cell, hue, leader, arcs }: { cell: HuddleCell; hue: string; le
   return (
     <div className="flex flex-col gap-2">
       {critique && (
-        <figure className="ml-6 rounded-2xl rounded-tr-sm border border-border bg-muted/50 px-3 py-2">
+        <figure className="ml-6 rounded-2xl rounded-tr-sm border border-border bg-muted px-3 py-2">
           <figcaption className="mb-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             {leader} asked
           </figcaption>
@@ -164,9 +164,15 @@ function Bubble({ cell, hue, leader, arcs }: { cell: HuddleCell; hue: string; le
 
 type Drawn = { key: string; d: string; state: ArcState; label: string; x0: number; y0: number; ends: [string, string] }
 
-/** The co-sign arcs, laid over the grid. Positions are measured from the DOM
- * (`data-anchor`), so they follow the layout — re-measured whenever the grid
- * changes size (a bubble expanding, the window resizing, new data). */
+/** The co-sign arcs. Positions are measured from the DOM (`data-anchor`), so
+ * they follow the layout — re-measured whenever the grid changes size (a bubble
+ * expanding, the window resizing, new data).
+ *
+ * Arcs never cross text at rest: they are drawn BENEATH the cards (which are
+ * opaque), so only the stretches running through the gutters show — enough to
+ * see what connects to what. Pointing at a proposal or an answer redraws just
+ * its arcs in a second layer ABOVE the cards, so the trace reads end to end
+ * while you ask for it, and gets out of the way when you stop. */
 function ArcLayer({ arcs, host, focus }: {
   arcs: Arc[]
   host: React.RefObject<HTMLDivElement | null>
@@ -226,27 +232,41 @@ function ArcLayer({ arcs, host, focus }: {
   }, [measure, host])
 
   if (drawn.length === 0) return null
+  const lit = focus === null ? [] : drawn.filter((a) => a.ends.includes(focus))
+  return (
+    <>
+      <ArcSvg drawn={drawn} box={box} layer="under" opacity={(a) => (focus === null ? 0.7 : lit.includes(a) ? 0 : 0.25)} />
+      {lit.length > 0 && <ArcSvg drawn={lit} box={box} layer="over" opacity={() => 1} />}
+    </>
+  )
+}
+
+function ArcSvg({ drawn, box, layer, opacity }: {
+  drawn: Drawn[]
+  box: { w: number; h: number }
+  layer: 'under' | 'over'
+  opacity: (a: Drawn) => number
+}) {
+  const over = layer === 'over'
   return (
     <svg
       aria-hidden
-      className="pointer-events-none absolute left-0 top-0 z-20 overflow-visible"
+      data-arc-layer={layer}
+      className={'pointer-events-none absolute left-0 top-0 overflow-visible ' + (over ? 'z-30' : 'z-0')}
       width={box.w}
       height={box.h}
     >
       <defs>
         {(Object.keys(ARC_COLOR) as ArcState[]).map((s) => (
-          <marker key={s} id={`huddle-arrow-${s}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <marker key={s} id={`huddle-arrow-${layer}-${s}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill={ARC_COLOR[s]} />
           </marker>
         ))}
       </defs>
       {drawn.map((a) => {
-        // At rest every arc is quiet enough to read through; pointing at a
-        // proposal or an answer lifts its arcs and fades the rest.
-        const lit = focus !== null && a.ends.includes(focus)
-        const opacity = focus === null ? 0.55 : lit ? 1 : 0.1
+        const lit = over
         return (
-          <g key={a.key} data-arc={a.state} style={{ opacity, transition: 'opacity 150ms ease' }}>
+          <g key={a.key} data-arc={over ? undefined : a.state} style={{ opacity: opacity(a), transition: 'opacity 150ms ease' }}>
             <title>{a.label}</title>
             <path
               d={a.d}
@@ -255,7 +275,7 @@ function ArcLayer({ arcs, host, focus }: {
               strokeWidth={lit ? 2.75 : 1.75}
               strokeLinecap="round"
               strokeDasharray={a.state === 'pending' ? '5 5' : undefined}
-              markerEnd={`url(#huddle-arrow-${a.state})`}
+              markerEnd={`url(#huddle-arrow-${layer}-${a.state})`}
             />
             <circle cx={a.x0} cy={a.y0} r={lit ? 4.5 : 3.5} fill={ARC_COLOR[a.state]} />
           </g>
@@ -309,7 +329,7 @@ export function HuddleGrid({ huddle, showArcs = true }: { huddle: Huddle; showAr
           <div
             key={m}
             data-anchor={`head-${m}`}
-            className="flex items-center gap-2.5 rounded-xl border border-border bg-card/60 px-3 py-2"
+            className="relative z-10 flex items-center gap-2.5 rounded-xl border border-border bg-card px-3 py-2"
             style={{ borderTopWidth: 3, borderTopColor: memberHue(i) }}
           >
             <MemberAvatar slug={m} hue={memberHue(i)} />
@@ -340,7 +360,7 @@ export function HuddleGrid({ huddle, showArcs = true }: { huddle: Huddle; showAr
             ...cols.map((m, i) => {
               const c = cellAt(huddle, m, r)
               return (
-                <div key={`${m}-${r}`} data-anchor={`${m}-${r}`} data-cell={`${m}-${r}`} className="min-w-0">
+                <div key={`${m}-${r}`} data-anchor={`${m}-${r}`} data-cell={`${m}-${r}`} className="relative z-10 min-w-0">
                   {c ? (
                     <Bubble cell={c} hue={memberHue(i)} leader={huddle.leader} arcs={arcs} />
                   ) : (

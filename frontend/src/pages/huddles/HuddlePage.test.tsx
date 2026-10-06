@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -55,10 +55,23 @@ vi.mock('@/components/activity/TurnTranscript', () => ({ TurnTranscript: () => <
 const { HuddlePage } = await import('./HuddlePage')
 afterEach(cleanup)
 
-function renderAt() {
-  return render(<MemoryRouter initialEntries={['/w/connect/huddles/work-fleet-20261006']}>
+function renderAt({ open = true } = {}) {
+  const r = render(<MemoryRouter initialEntries={['/w/connect/huddles/work-fleet-20261006']}>
     <Routes><Route path="/w/:workspace/huddles/:id" element={<HuddlePage />} /></Routes></MemoryRouter>)
+  // The conversation is collapsed by default; these tests read the grid.
+  if (open) void screen.findByRole('button', { name: /show the full conversation/i }).then((b) => fireEvent.click(b))
+  return r
 }
+
+it('leads with the outcome and keeps the conversation collapsed until asked', async () => {
+  renderAt({ open: false })
+  const toggle = await screen.findByRole('button', { name: /show the full conversation — 4 rounds, 5 replies/i })
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  expect(screen.getByText('What was decided')).toBeTruthy()
+  expect(screen.queryByText('Shipped the Gates trip roster')).toBeNull()
+  fireEvent.click(toggle)
+  expect(await screen.findByText('Shipped the Gates trip roster')).toBeTruthy()
+})
 
 it('renders one column per member and the rendered reply, not raw JSON', async () => {
   renderAt()
@@ -83,10 +96,13 @@ it("shows the leader's critique above the round it shaped", async () => {
   expect(await screen.findByText('Is Q4 realistic?')).toBeTruthy()
 })
 
-it('lists outputs with live status', async () => {
-  renderAt()
-  expect((await screen.findAllByText('Joint Q4 brief')).length).toBeGreaterThan(0)
-  expect(screen.getAllByText('suggested').length).toBeGreaterThan(0)
+it('lists outputs under their proposal, with live status in plain words', async () => {
+  const { container } = renderAt({ open: false })
+  await screen.findByText('What was decided')
+  const card = container.querySelector('[data-outcome="filed"]')
+  expect(card?.textContent).toContain('Joint Q4 brief')
+  expect(card?.textContent).toContain('medium · 80% confident')
+  expect(card?.textContent).toContain('awaiting your accept / decline')
   expect(screen.getByRole('link', { name: /T41/ }).getAttribute('href')).toBe('/w/connect/agents/eva/work')
 })
 

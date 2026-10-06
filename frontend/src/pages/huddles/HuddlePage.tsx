@@ -1,26 +1,23 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { WorkbenchSkeleton, WorkbenchSubHeader } from 'canopy-ui'
-import { getHuddle, type Huddle, type HuddleOutput } from '@/api/huddles'
+import { WorkbenchSkeleton } from 'canopy-ui'
+import { getHuddle, type Huddle } from '@/api/huddles'
 import { relativeTime } from '@/components/activity/turnLog'
 import { ArcLegend, HuddleGrid, MemberAvatar } from './HuddleGrid'
-import { columns, countdown, memberHue, roundName, roundsToShow } from './huddleModel'
+import { HuddleOutcome, Linkified } from './HuddleOutcome'
+import { columns, countdown, roundName, roundsToShow } from './huddleModel'
 
 /**
- * One huddle: the conversation as a grid (members × rounds) with the co-sign
- * arcs, then what it produced — board tasks, with their LIVE status — then the
- * leader's close. Polls while the huddle is in flight; everything on it is
- * derived server-side from turns and tasks (apps/huddles).
+ * One huddle, outcome first: what was decided — each filed proposal with the
+ * board tasks it became (LIVE status), each held one with why — then the
+ * conversation that got there (members × rounds, with the co-sign arcs) and the
+ * leader's emailed close, both collapsed: someone arriving from the email reads
+ * the outcome; the grid is there to check how it was reached. Polls while the
+ * huddle is in flight; everything on it is derived server-side from turns and
+ * tasks (apps/huddles).
  */
 
 const POLL_MS = 15_000
-
-const TASK_STATUS: Record<string, string> = {
-  suggested: 'bg-special/10 text-special border-special/30',
-  in_progress: 'bg-info/10 text-info border-info/30',
-  done: 'bg-success/10 text-success border-success/30',
-  declined: 'bg-destructive/10 text-destructive border-destructive/30',
-}
 
 function Pill({ className, children }: { className: string; children: React.ReactNode }) {
   return (
@@ -75,40 +72,11 @@ function Stepper({ huddle }: { huddle: Huddle }) {
   )
 }
 
-function Outputs({ huddle }: { huddle: Huddle }) {
-  const cols = columns(huddle)
-  const hueOf = (slug: string) => memberHue(Math.max(0, cols.indexOf(slug)))
-  if (huddle.outputs.length === 0) {
-    return (
-      <p className="rounded-xl border border-dashed border-border p-4 text-[13px] text-muted-foreground">
-        Nothing filed yet. When {huddle.leader} files the huddle, each agreed piece of work lands on its lead&apos;s
-        board as a suggested task — and its status shows here as it moves.
-      </p>
-    )
-  }
-  return (
-    <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
-      {huddle.outputs.map((o: HuddleOutput) => (
-        <li key={`${o.agent}-${o.task_id}`} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-          <MemberAvatar slug={o.agent} hue={hueOf(o.agent)} size="sm" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[14px] font-medium text-foreground">{o.title}</div>
-            <div className="mt-0.5 text-[12px] text-muted-foreground">
-              {o.agent}&apos;s board
-              {o.project && <> · project {o.project}</>}
-              {o.assigned && <> · ball with {o.assigned}</>}
-            </div>
-          </div>
-          <Pill className={TASK_STATUS[o.status] ?? 'bg-muted text-muted-foreground border-border'}>
-            {o.status.replace('_', ' ')}
-          </Pill>
-          <Link to={o.url} className="text-[12px] text-primary underline-offset-2 hover:underline">
-            {o.ext_id} on the board →
-          </Link>
-        </li>
-      ))}
-    </ul>
-  )
+/** "3 rounds, 12 replies" — sized so the toggle says what it hides. */
+function conversationSize(h: Huddle): string {
+  const rounds = new Set(h.cells.map((c) => c.round)).size
+  const replies = h.cells.filter((c) => c.block).length
+  return `${rounds} round${rounds === 1 ? '' : 's'}, ${replies} repl${replies === 1 ? 'y' : 'ies'}`
 }
 
 export function HuddlePage() {
@@ -117,6 +85,7 @@ export function HuddlePage() {
   const [error, setError] = useState('')
   const [now, setNow] = useState(() => new Date())
   const [showArcs, setShowArcs] = useState(true)
+  const [showConversation, setShowConversation] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -194,34 +163,50 @@ export function HuddlePage() {
         </div>
       </header>
 
-      {/* The conversation breaks out of the page column: it is as wide as the
-          team, and a fleet of five does not fit the reading width. */}
-      <section className="relative left-1/2 w-[min(calc(100vw-3rem),1800px)] -translate-x-1/2">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-foreground">The conversation</h2>
-        <div className="flex flex-wrap items-center gap-4">
-          {showArcs && <ArcLegend />}
-          {showArcs && <span className="hidden text-[11px] text-foreground-subtle lg:inline">hover a proposal or answer to trace it</span>}
-          <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-muted-foreground">
-            <input type="checkbox" checked={showArcs} onChange={(e) => setShowArcs(e.target.checked)} className="accent-[var(--primary)]" />
-            co-sign arcs
-          </label>
-        </div>
-      </div>
-      <HuddleGrid huddle={huddle} showArcs={showArcs} />
-      </section>
-
-      <section className="mt-10">
-        <WorkbenchSubHeader title="What it produced" count={huddle.outputs.length} />
-        <Outputs huddle={huddle} />
-      </section>
+      <HuddleOutcome huddle={huddle} />
 
       {huddle.summary && (
-        <section className="mt-10">
-          <WorkbenchSubHeader title={`${huddle.leader}'s close`} />
-          <div className="whitespace-pre-wrap rounded-xl border border-border bg-card p-4 text-[13px] leading-relaxed text-foreground-secondary">
-            {huddle.summary}
+        <details data-close className="mt-6 text-[13px]">
+          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+            The email {huddle.leader} sent
+          </summary>
+          <div className="mt-2 whitespace-pre-wrap break-words rounded-xl border border-border bg-card p-4 leading-relaxed text-foreground-secondary">
+            <Linkified text={huddle.summary} />
           </div>
+        </details>
+      )}
+
+      <section className="mt-10 border-t border-border pt-6">
+        <button
+          type="button"
+          onClick={() => setShowConversation(!showConversation)}
+          aria-expanded={showConversation}
+          aria-controls="huddle-conversation"
+          className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-[13px] font-medium text-foreground hover:border-primary/50 hover:text-primary"
+        >
+          <span aria-hidden className={'inline-block transition-transform ' + (showConversation ? 'rotate-90' : '')}>▸</span>
+          {showConversation ? 'Hide the conversation' : `Show the full conversation — ${conversationSize(huddle)}`}
+        </button>
+        {!showConversation && (
+          <p className="mt-2 text-[12px] text-muted-foreground">
+            How the team got here: each member&apos;s report, proposals, and co-sign answers, round by round.
+          </p>
+        )}
+      </section>
+
+      {/* The conversation breaks out of the page column: it is as wide as the
+          team, and a fleet of five does not fit the reading width. */}
+      {showConversation && (
+        <section id="huddle-conversation" className="relative left-1/2 mt-4 w-[min(calc(100vw-3rem),1800px)] -translate-x-1/2">
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+            {showArcs && <ArcLegend />}
+            {showArcs && <span className="hidden text-[11px] text-foreground-subtle lg:inline">hover a proposal or answer to trace it</span>}
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-muted-foreground">
+              <input type="checkbox" checked={showArcs} onChange={(e) => setShowArcs(e.target.checked)} className="accent-[var(--primary)]" />
+              co-sign arcs
+            </label>
+          </div>
+          <HuddleGrid huddle={huddle} showArcs={showArcs} />
         </section>
       )}
       {error && <p className="mt-4 text-[12px] text-warning">Live refresh paused: {error}</p>}
