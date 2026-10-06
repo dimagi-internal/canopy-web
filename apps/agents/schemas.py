@@ -493,6 +493,10 @@ class AgentTurnIn(StrictModel):
     # cloud agent has none, and is joined on `cli_session_id` instead.
     session_key: str = Field(default="", max_length=200)
     emdash_task_id: str = LEGACY_SESSION_KEY
+    # Structured provenance for the row — e.g. a huddle's anchor turn
+    # (`{"kind": "huddle", "huddle": "<id>", ...}`, canopy `huddle`). MERGED into
+    # the row's origin_ref: a re-post adds keys, it never drops the dispatch's own.
+    origin_ref: dict = Field(default_factory=dict)
 
     _legacy_key = model_validator(mode="after")(adopt_legacy_session_key)
 

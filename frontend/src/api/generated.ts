@@ -10578,6 +10578,10 @@ export interface components {
              * @default
              */
             readonly emdash_task_id: string;
+            /** Origin Ref */
+            readonly origin_ref?: {
+                readonly [key: string]: unknown;
+            };
         };
         /** AgentWorkProductOut */
         readonly AgentWorkProductOut: {
@@ -22660,6 +22664,8 @@ export interface operations {
                 readonly agent?: string | null;
                 readonly status?: string | null;
                 readonly limit?: number;
+                readonly huddle?: string | null;
+                readonly parent_turn?: string | null;
             };
             readonly header?: never;
             readonly path?: never;

@@ -308,10 +308,13 @@ def upsert_turn(agent: Agent, data, initiator=None) -> Turn:
         "cli_session_id": data.cli_session_id,
         "reported_at": timezone.now(),
     }
+    extra_ref = dict(getattr(data, "origin_ref", None) or {})
     turn = _claim_dispatch_row(agent, data)
     if turn is not None:
         for key, value in fields.items():
             setattr(turn, key, value)
+        if extra_ref:
+            turn.origin_ref = {**(turn.origin_ref or {}), **extra_ref}
         # The agent's own timings are better than the runner's: `started_at` from
         # the harness is when the SESSION was created, `ended_at` only the agent
         # knows. Never overwrite a known dispatch time with a null.
@@ -334,6 +337,7 @@ def upsert_turn(agent: Agent, data, initiator=None) -> Turn:
         session_key=getattr(data, "session_key", "") or "",
         started_at=_aware(data.started_at),
         finished_at=_aware(data.ended_at),
+        origin_ref=extra_ref,
         **fields,
     )
 
