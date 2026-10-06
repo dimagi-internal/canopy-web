@@ -7,9 +7,8 @@ NEW = "https://canopy.dimagi.com"
 
 
 def _setup(cloud_runner, monkeypatch, tmp_path, *, base=OLD, rows=({"id": "r-1"},), in_flight=()):
-    env = tmp_path / "runner.env"
-    env.write_text(f"CANOPY_BASE_URL={base}\nCANOPY_TOKEN=t\n")
-    monkeypatch.setattr(cloud_runner, "RUNNER_ENV_FILE", str(env))
+    env = tmp_path / "base_url.override"
+    monkeypatch.setattr(cloud_runner, "BASE_URL_OVERRIDE_FILE", str(env))
     monkeypatch.setattr(cloud_runner, "BASE_URL", base)
     monkeypatch.setattr(cloud_runner, "_in_flight_ids", lambda: list(in_flight))
     monkeypatch.setattr(cloud_runner.urllib.request, "urlopen",
@@ -22,8 +21,7 @@ def _setup(cloud_runner, monkeypatch, tmp_path, *, base=OLD, rows=({"id": "r-1"}
 def test_moves_and_restarts(cloud_runner, monkeypatch, tmp_path):
     env, restarts = _setup(cloud_runner, monkeypatch, tmp_path)
     assert cloud_runner.maybe_rebase(NEW, "r-1")
-    assert f"CANOPY_BASE_URL={NEW}" in env.read_text()
-    assert "CANOPY_TOKEN=t" in env.read_text()
+    assert env.read_text().strip() == NEW
     assert restarts
 
 
@@ -36,4 +34,24 @@ def test_stays_unless_every_guard_holds(cloud_runner, monkeypatch, tmp_path):
     assert not cloud_runner.maybe_rebase(NEW, "r-1")
     env, restarts = _setup(cloud_runner, monkeypatch, tmp_path, in_flight=("t-1",))
     assert not cloud_runner.maybe_rebase(NEW, "r-1")
-    assert f"CANOPY_BASE_URL={OLD}" in env.read_text() and not restarts
+    assert not env.exists() and not restarts
+
+
+def test_a_moved_box_starts_on_its_new_address_whatever_runner_env_says(cloud_runner, monkeypatch, tmp_path):
+    """runner.env is re-rendered from the stack parameter on every start; the
+    override file is what survives, so the move does not undo itself."""
+    override = tmp_path / "base_url.override"
+    override.write_text(NEW + "\n")
+    monkeypatch.setattr(cloud_runner, "BASE_URL_OVERRIDE_FILE", str(override))
+    monkeypatch.setenv("CANOPY_BASE_URL", OLD)
+    monkeypatch.setenv("CANOPY_WEB_API_URL", OLD)
+    assert cloud_runner._initial_base_url() == NEW
+    import os
+    assert os.environ["CANOPY_BASE_URL"] == NEW          # bootstrap_agents.sh reads this
+    assert os.environ["CANOPY_WEB_API_URL"] == NEW       # the canopy CLI reads this
+
+
+def test_no_override_means_the_env_address(cloud_runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(cloud_runner, "BASE_URL_OVERRIDE_FILE", str(tmp_path / "absent"))
+    monkeypatch.setenv("CANOPY_BASE_URL", NEW)
+    assert cloud_runner._initial_base_url() == NEW

@@ -80,7 +80,32 @@ import urllib.error
 import urllib.request
 import uuid
 
-BASE_URL = os.environ.get("CANOPY_BASE_URL", "").rstrip("/")
+#: Where a box that MOVED records its new address (maybe_rebase). Not runner.env:
+#: the unit's ExecStartPre (canopy-fetch-env) re-renders that from the stack
+#: parameter on EVERY start, so a rewrite there was undone by the very restart
+#: that applied it — a restart loop (2026-10-06). Nothing re-renders this file.
+BASE_URL_OVERRIDE_FILE = os.environ.get("CANOPY_BASE_URL_OVERRIDE_FILE",
+                                        "/opt/canopy-runner/base_url.override")
+
+
+def _initial_base_url() -> str:
+    """The env's address, unless this box has moved (BASE_URL_OVERRIDE_FILE). A
+    moved box also exports the new address to its children (bootstrap_agents.sh,
+    the canopy CLI), which read CANOPY_BASE_URL / CANOPY_WEB_API_URL themselves."""
+    env = os.environ.get("CANOPY_BASE_URL", "").rstrip("/")
+    try:
+        moved = pathlib.Path(BASE_URL_OVERRIDE_FILE).read_text().strip().rstrip("/")
+    except Exception:  # noqa: BLE001 — no file is the normal case
+        moved = ""
+    if not moved.startswith("https://"):
+        return env
+    os.environ["CANOPY_BASE_URL"] = moved
+    if os.environ.get("CANOPY_WEB_API_URL", "").rstrip("/") in ("", env):
+        os.environ["CANOPY_WEB_API_URL"] = moved
+    return moved
+
+
+BASE_URL = _initial_base_url()
 TOKEN = os.environ.get("CANOPY_TOKEN", "")
 RUNNER_NAME = os.environ.get("RUNNER_NAME") or f"cloud-{socket.gethostname()}"
 
@@ -591,16 +616,14 @@ def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
 
 #: Addresses canopy has left (it moved to canopy.dimagi.com on 2026-10-05).
 FORMER_BASES = frozenset({"https://labs.connect.dimagi.com/canopy"})
-RUNNER_ENV_FILE = os.environ.get("CANOPY_RUNNER_ENV_FILE", "/opt/canopy-runner/runner.env")
 
 
 def maybe_rebase(advertised: str, runner_id: str) -> bool:
-    """Move this box off an address canopy has left: rewrite CANOPY_BASE_URL in
-    runner.env and restart. Same guards as the laptop runner's rebase.py — only
-    off a FORMER address, only to https, only once the new address answers as
-    THIS runner, only while idle. The boot script re-renders runner.env from the
-    stack parameter, so a reboot can put the old address back; the first
-    heartbeat after it moves the box again. Returns True when a restart started."""
+    """Move this box off an address canopy has left: record the new address in
+    BASE_URL_OVERRIDE_FILE and restart; `_initial_base_url` reads it on start.
+    Same guards as the laptop runner's rebase.py — only off a FORMER address,
+    only to https, only once the new address answers as THIS runner, only while
+    idle. Returns True when a restart started."""
     target = (advertised or "").rstrip("/")
     current = BASE_URL.rstrip("/")
     if current not in FORMER_BASES or not target.startswith("https://") or target == current:
@@ -619,16 +642,12 @@ def maybe_rebase(advertised: str, runner_id: str) -> bool:
         _log(f"rebase: {target} does not know runner {str(runner_id)[:8]}; staying on {current}")
         return False
     try:
-        env = pathlib.Path(RUNNER_ENV_FILE)
-        lines = env.read_text().splitlines()
-        out = [f"CANOPY_BASE_URL={target}" if ln.startswith("CANOPY_BASE_URL=") else ln for ln in lines]
-        if out == lines:
-            return False
-        env.write_text("\n".join(out) + "\n")
+        pathlib.Path(BASE_URL_OVERRIDE_FILE).write_text(target + "\n")
     except Exception as exc:  # noqa: BLE001
-        _log(f"rebase: could not rewrite {RUNNER_ENV_FILE} ({exc}); staying on {current}")
+        _log(f"rebase: could not write {BASE_URL_OVERRIDE_FILE} ({exc}); staying on {current}")
         return False
-    _log(f"rebase: canopy moved to {target}; runner.env updated from {current}; restarting")
+    _log(f"rebase: canopy moved to {target}; recorded in {BASE_URL_OVERRIDE_FILE} "
+         f"(was {current}); restarting")
     try:
         subprocess.run(["sudo", "-n", "systemctl", "restart", "canopy-runner.service"],
                        capture_output=True, timeout=30, check=True)
