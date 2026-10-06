@@ -40,6 +40,9 @@ concurrency:
 jobs:
   release:
     name: Tag + GitHub Release
+    # main only: `workflow_dispatch` can be started from ANY branch, and without
+    # this a branch's unreviewed code would be tagged and released as the SDK.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -64,7 +67,7 @@ jobs:
 
       - name: Install uv
         if: steps.v.outputs.release == 'true'
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
       # Its own suite is the gate before a host can pin it.
       - name: Test

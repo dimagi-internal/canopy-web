@@ -1,0 +1,32 @@
+# gitleaks config for the CI secret scan (ci.yml → "Secret scan (PR diff)").
+#
+# The default ruleset, plus two narrow allowlists for what is KNOWN to be fake.
+# Keep them narrow: an allowlisted path is a place a real secret can hide.
+title = "canopy-web"
+
+[extend]
+useDefault = true
+
+# Deliberately fake secrets — the redaction tests feed a GitHub PAT, a JWT and a
+# PEM private key to the scrubber to prove it removes them. They have to look
+# real, so every specific rule fires on them.
+[[allowlists]]
+description = "Fake secrets that the session-transcript redaction tests scrub"
+paths = ['''^apps/session_sharing/tests/test_redact\.py$''']
+
+# `generic-api-key` is a keyword-plus-entropy heuristic, and in this repo it
+# fires on identifiers, not credentials: `idempotency_key="..."`,
+# `session_key="..."`, and migration dependency tuples like
+# `("tokens", "0016_delegated_assurance")`. Silenced for THAT rule only, and only
+# in tests, migrations and docs — every specific rule (GitHub, AWS, Slack,
+# Anthropic, private keys, …) still applies there.
+[[allowlists]]
+description = "generic-api-key false positives on *_key= identifiers in tests, migrations and docs"
+targetRules = ["generic-api-key"]
+paths = [
+  '''(^|/)tests?/''',
+  '''(^|/)test_[^/]*\.py$''',
+  '''\.test\.tsx?$''',
+  '''(^|/)migrations/''',
+  '''^docs/''',
+]

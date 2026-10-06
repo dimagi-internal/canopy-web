@@ -30,9 +30,9 @@ on:
     paths: ['frontend/packages/canopy-ui/package.json']
   workflow_dispatch:
 
+# Read-only by default; only the publish job (main only) gets the write grants.
 permissions:
-  contents: write   # the release tag
-  id-token: write   # required for OIDC Trusted Publishing
+  contents: read
 
 # Two merges in quick succession must not race to publish.
 concurrency:
@@ -63,8 +63,13 @@ jobs:
   publish:
     name: Publish to npmjs
     needs: check
-    if: needs.check.outputs.publish == 'true'
+    # main only: `workflow_dispatch` can be started from ANY branch, and without
+    # this a branch's unreviewed code would publish to npm under our name.
+    if: github.ref == 'refs/heads/main' && needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # the release tag
+      id-token: write   # required for OIDC Trusted Publishing
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v6

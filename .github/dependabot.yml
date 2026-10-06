@@ -30,3 +30,20 @@ updates:
     labels:
       - "dependencies"
     open-pull-requests-limit: 2
+
+  # Third-party actions are pinned to commit SHAs (a moving tag is a
+  # supply-chain hole: whoever moves the tag runs code next to our OIDC role and
+  # publish tokens). A pin nobody updates rots, so Dependabot moves them — ONE
+  # grouped PR a week, in keeping with the no-noise rule above.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+    open-pull-requests-limit: 2

@@ -32,13 +32,13 @@ the arrow's direction and enforce it in CI.
 | `harness` | **framework** | Agent-execution harness: runner registry, turn lifecycle + lease/claim, turn-event ledger (/api/harness). |
 | `workspaces` | **framework** | Multi-tenancy: `Workspace` + members (owner/editor/viewer) + email invites (ported from ace-web, domain-agnostic — no Drive coupling). The tenant that owns agents + runs. Distinct from the retired co-authoring app that used to be `apps/workspace` (singular). |
 | `api` | **framework** (composition root) | The single NinjaAPI that wires every app's router. The one seam allowed to import all apps. |
-| `common` | **framework** | Shared infra: anthropic client, auth flow, middleware, auth-domains. |
+| `common` | **framework** | Shared infra: auth flow (allauth adapter, allowed domains), middleware, CSRF, request context/timing, email (SES), field encryption, Redis client. |
 | `timeline` | **framework** | Generic activity-log aggregation; reads other apps' events via a string registry (no hard product imports). |
 | `tokens` | **framework** | Personal Access Token management + bearer auth. |
 | `session_sharing` | **framework** | Shared Claude transcript storage + the public `/share/:token` viewer (renamed from `sessions` to free that name for the live-session harness). |
 | `issues` | **framework** | GitHub issue provenance / evidence capture. |
-| `mcp` | **framework** | MCP server infra + audit + rate-limit. (Individual *tools* may be product — see carve-outs.) |
-| `system` | **framework** | System metadata / AI-backend status. |
+| `mcp` | **framework** | MCP server infra + audit + rate-limit; every REST route is generated as a tool (`api_tools.py`), so no product tool module lives here. |
+| `system` | **framework** | The `/system` capability catalog (read live from the canopy plugin) + the anonymous aggregate counts for the public site (`/api/system/public-stats`). |
 | `push` | **framework** | Web Push subscription registry (VAPID keypair + `PushSubscription` rows). Agent-agnostic — any agent's board could trigger a send; observes `agents` (never the reverse), same direction `harness` takes. |
 | `realtime` | **framework** | WebSocket transport (Django Channels + Redis): live-tails the `harness` `TurnEvent` ledger (`turn.{id}`), pushes `/supervisor` runner-status + waiting-count deltas, carries the runner control channel (`ws/runner/{id}/`), and hosts cross-app viewer presence (`ws/presence/` — one socket per tab, Redis roster with 60s field TTL in `presence_store.py`, `PresencePreference` opt-out re-checked on every enter; badge UI shared via `canopy-ui/presence`, PR #500). Fan-out mirrors `push` (signal/`post_save` → `on_commit` → `group_send`); observes `harness`/`push`/`agents`, never the reverse. Wave 4 (`docs/superpowers/specs/2026-07-16-realtime-chat-cloud-runner-program-design.md`). |
 | `canopy_sessions` | **framework** | Live, multiplayer chat sessions — the interactive front-door to a durable `harness` Turn. A `Session` "send" enqueues a session-target Turn; the assistant stream lands in the `TurnEvent` ledger and is projected into `Message` rows. SP3 adds co-edited `Draft` + `SessionParticipant` + cache-backed presence and a per-session `SessionConsumer` (`ws/canopy-sessions/{id}/`) over the `realtime` transport. Agent-agnostic (opaque `metadata` for product linkage). Named `canopy_sessions` — plain `sessions` collides with the `django.contrib.sessions` label (and `session_sharing` already owns the shared-transcript name). The route is mounted at `/api/canopy-sessions` (renamed from the historical `/api/chat`, to match the app label); the WS protocol strings (`chat.<verb>`) and the Channels group name (`chat.{id}`) are unchanged. Wave 4 SP2–SP3. |
@@ -78,9 +78,11 @@ The boundary holds everywhere except these documented, intentional places:
   string literal (a lazy `import_module`, a registry path, product logic parked in
   a framework file). This is the gate that catches what the import-check is blind
   to — e.g. the DDD run-id grammar that had been living in `apps/common/ddd.py`
-  and now sits in `apps/runs`. Seam #3 is the one allowlisted exception.
+  and now sits in `apps/runs`. Seam #2 is the one allowlisted exception.
 
-It also fails if a **new** app isn't classified into a tier here.
+It also fails if a **new** app isn't classified into a tier here, and if a
+carve-out names a file that no longer exists (a dead allowlist entry is a hole
+waiting for a new file of that name).
 
 Adding a new app? Put it in `FRAMEWORK` or `PRODUCT` in both this doc and that
 test. Need framework code to touch product? Don't — move the code to a product

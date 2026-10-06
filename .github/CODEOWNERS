@@ -1,0 +1,10 @@
+# ADVISORY ONLY. The `main protection` ruleset has require_code_owner_review
+# OFF, so this requests a review from the owner on changes to the paths that
+# hold deploy credentials, infrastructure, the cloud runner and the published
+# SDK — it never blocks a merge. Turning code-owner review ON would make every
+# agent-authored PR touching these paths wait on a human; decide that on
+# purpose, not as a side effect of editing this file.
+/.github/    @jjackson
+/deploy/     @jjackson
+/runner/ec2/ @jjackson
+/sdk/        @jjackson
