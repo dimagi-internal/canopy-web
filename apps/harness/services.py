@@ -141,6 +141,7 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
                         origin_ref, routing) -> tuple[Turn, bool]:
     """Write an email turn from a BLOCKED contact as already cancelled."""
     from . import initiator as who
+    from . import provenance
 
     existing = Turn.objects.filter(idempotency_key=idempotency_key).first()
     if existing is not None:
@@ -150,6 +151,7 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
         with transaction.atomic():
             turn = Turn.objects.create(
                 **who.for_contact(contact, via="email").fields(),
+                **provenance.creation_fields(),
                 agent=agent,
                 origin=origin,
                 idempotency_key=idempotency_key,
@@ -166,6 +168,7 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
             return replay, False
         raise
     logger.info("email turn %s refused: contact %s is blocked", turn.pk, contact.pk)
+    provenance.log_created(turn)
     return turn, True
 
 
@@ -220,6 +223,8 @@ def enqueue_turn(
     capability: str | None = None,
     requested_turn_mode: str = "",
     requested_turn_mode_by=None,
+    parent=None,
+    provenance_extra: dict | None = None,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -228,7 +233,13 @@ def enqueue_turn(
     workspace: it has no agent/session to derive tenancy from, and claim_next_turn
     fails it closed without one, so accepting it here would silently queue a turn
     nothing can ever run. Session turns derive tenancy from session.workspace.
+
+    `parent` (a dict of turn_id/session_id/task/host/claude_session_id, or `turn`/
+    `session` instances) and `provenance_extra` feed `provenance.creation_fields`;
+    the request's own provenance and X-Canopy-Parent-* headers are read there.
     """
+    from . import provenance
+
     # One chokepoint for the retired spellings, because not every producer comes
     # through a request schema: TurnSpec.from_dict parses origin as a free string
     # out of Item JSON written before this deploy. The input schemas normalize too
@@ -338,6 +349,7 @@ def enqueue_turn(
         with transaction.atomic():
             turn = Turn.objects.create(
                 **initiator.fields(),
+                **provenance.creation_fields(parent=parent, **(provenance_extra or {})),
                 agent=agent,
                 project=project,
                 chat_session=session,
@@ -373,6 +385,8 @@ def enqueue_turn(
         from apps.push import services as push_services
 
         push_services.cancel_session_finish_push(session.pk)
+
+    provenance.log_created(turn)
 
     # Tell whoever is watching that this ask now exists and where it stands.
     # Post-commit for the same reason `turn_events_appended` is: a subscriber
@@ -2376,7 +2390,7 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn, bool]:
     return turn, created
 
 
-def run_schedule_now(schedule) -> Turn:
+def run_schedule_now(schedule, *, clicked_by=None) -> Turn:
     """Manual off-cycle trigger. Supersedes any still-open occurrence first,
     exactly as fire_schedule does — you only ever owe the newest, however it was
     launched. Run now is the designed remediation for an unfinished slot, so it
@@ -2390,7 +2404,13 @@ def run_schedule_now(schedule) -> Turn:
     time). The manual flag lives in origin_ref rather than in origin because WHO
     fired it is not a different SOURCE: both route as scheduler work, which is
     the point of naming the source.
+
+    `clicked_by` is the person who pressed Run now. The initiator stays the
+    schedule (system, accountable = its creator) because that is whose work it
+    is; who pressed the button is recorded in `provenance.clicked_by`.
     """
+    clicked = ({"id": clicked_by.pk, "email": clicked_by.email}
+               if getattr(clicked_by, "is_authenticated", False) else None)
     with transaction.atomic():
         supersede_open_turns(schedule, reason="superseded by a manual run")
         turn, _ = enqueue_turn(
@@ -2402,6 +2422,7 @@ def run_schedule_now(schedule) -> Turn:
                         "schedule_name": schedule.name},
             routing=schedule.routing,
             initiator=_schedule_initiator(schedule, manual=True),
+            provenance_extra={"clicked_by": clicked},
         )
     return turn
 
@@ -2571,16 +2592,21 @@ def _thread_session(agent, project, workspace, thread_key):
         existing = None
     if existing is not None:
         return existing
+    from . import provenance
+
     home = workspace or (agent.workspace if agent else None)
     if home is None:
         raise ValueError("a new thread session needs an agent or a workspace")
-    return Session.objects.create(
+    session = Session.objects.create(
+        **provenance.creation_fields(thread_key=thread_key[:200]),
         agent=agent,
         project=project or "",
         workspace=home,
         origin=Session.ORIGIN_RUNNER,
         title=thread_key[:200],
     )
+    provenance.log_created(session)
+    return session
 
 
 #: How an email thread names its Session. Namespaced like `emdash:<task>` so the
@@ -2627,8 +2653,11 @@ def email_thread_session(agent, thread_id: str, subject: str = ""):
     )
     if existing is not None:
         return existing
+    from . import provenance
+
     workspace = agent.workspace  # NOT NULL: an agent always has its one home
-    return Session.objects.create(
+    session = Session.objects.create(
+        **provenance.creation_fields(source="email"),
         agent=agent,
         workspace=workspace,
         origin=Session.ORIGIN_RUNNER,
@@ -2640,6 +2669,8 @@ def email_thread_session(agent, thread_id: str, subject: str = ""):
             "source": "email",
         },
     )
+    provenance.log_created(session)
+    return session
 
 
 def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = "", workspace=None) -> dict:
@@ -2949,6 +2980,8 @@ def replace_reported_sessions(
     session on its next turn)."""
     from apps.canopy_sessions.models import RunnerBinding, Session
 
+    from . import provenance as _provenance
+
     # Record that this runner PARTICIPATES in the wholesale report — the observer
     # session staleness is derived against (see Runner.sessions_reported_at and
     # canopy_sessions.staleness.unseen_q). Stamped BEFORE the early-outs and
@@ -3067,7 +3100,13 @@ def replace_reported_sessions(
                     workspace=(owner.workspace if owner else workspace),
                     origin=Session.ORIGIN_RUNNER,
                     title=s.emdash_task,
+                    # Discovered, not created: the runner REPORTED a task it
+                    # found in emdash. Recorded so the log says so.
+                    **_provenance.creation_fields(
+                        discovered={"runner": str(runner.pk), "host": runner.host,
+                                    "project": project, "task": s.emdash_task}),
                 )
+                _provenance.log_created(session)
                 binding = RunnerBinding(session=session, session_key=s.emdash_task)
                 binding.emdash_project = project
                 binding.thread_key = f"emdash:{s.emdash_task}"

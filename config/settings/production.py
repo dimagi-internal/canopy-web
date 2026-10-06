@@ -54,19 +54,26 @@ CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h and h != "*"]
 # DATABASE_URL format: postgres://USER:PASSWORD@//cloudsql/PROJECT:REGION:INSTANCE/DBNAME
 # django-environ handles the //cloudsql/ socket path automatically
 
-# Logging
+# Logging — real JSON, one object per line (apps/common/log_format.py). The
+# previous formatter was a %-format string shaped like JSON: a message with a
+# quote broke the line, and it carried no timestamp, logger name or request id.
+# Everything propagates to root at INFO, as before (base.LOGGING's per-app
+# WARNING loggers are deliberately NOT inherited: they would silence INFO lines
+# production has always emitted).
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {"()": "apps.common.request_context.RequestIdLogFilter"},
+    },
     "formatters": {
-        "json": {
-            "format": '{"severity":"%(levelname)s","message":"%(message)s","module":"%(module)s"}',
-        },
+        "json": {"()": "apps.common.log_format.JsonFormatter"},
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "json",
+            "filters": ["request_id"],
         },
     },
     "root": {

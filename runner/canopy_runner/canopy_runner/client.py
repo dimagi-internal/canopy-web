@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -33,6 +34,27 @@ def _emdash_plan(payload: dict | None) -> dict:
     plan = dict(payload or {})
     plan["emdash_task_id"] = plan.get("session_key") or plan.get("emdash_task_id") or ""
     return plan
+
+
+#: What the runner says it is on every request, so canopy-web's provenance
+#: (TURN_CREATED / SESSION_CREATED lines, `Turn.provenance.client`) can tell a
+#: runner's own calls from a person's or a script's on the same account.
+CLIENT_NAME = "canopy-runner"
+
+
+def user_agent() -> str:
+    from . import provenance
+
+    try:
+        host = socket.gethostname()
+    except OSError:
+        host = "unknown"
+    return f"{CLIENT_NAME}/{provenance.version()} host={host}"
+
+
+def _identify(req) -> None:
+    req.add_header("User-Agent", user_agent())
+    req.add_header("X-Canopy-Client", CLIENT_NAME)
 
 class ClientError(Exception):
     """A control-plane call failed.
@@ -96,6 +118,7 @@ class Client:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Authorization", f"Bearer {self.token}")
+        _identify(req)
         if data is not None:
             req.add_header("Content-Type", "application/json")
         try:
@@ -132,6 +155,7 @@ class Client:
         url = f"{self.base_url}/api/canopy-sessions/attachments/{attachment_id}/content"
         req = urllib.request.Request(url, method="GET")
         req.add_header("Authorization", f"Bearer {self.token}")
+        _identify(req)
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
                 raw = resp.read()

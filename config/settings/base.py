@@ -129,6 +129,9 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "apps.tokens.middleware.BearerTokenAuthMiddleware",  # PAT bearer auth (after AuthenticationMiddleware, before LoginRequired)
+    # Request provenance (id, client, credential, parent turn/session) — after
+    # the auth middleware, which says how the request authenticated.
+    "apps.common.request_context.RequestContextMiddleware",
     "apps.api.tenancy.WorkspaceResolveMiddleware",  # resolve /api/w/{ws}/ + flat-route compat shim (needs request.user)
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -592,9 +595,13 @@ if DEBUG:
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        # Stamps `request_id` on every record (apps/common/request_context.py).
+        "request_id": {"()": "apps.common.request_context.RequestIdLogFilter"},
+    },
     "formatters": {
         "verbose": {
-            "format": "{levelname} {asctime} {name} {message}",
+            "format": "{levelname} {asctime} {name} [{request_id}] {message}",
             "style": "{",
         },
     },
@@ -602,6 +609,7 @@ LOGGING = {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "verbose",
+            "filters": ["request_id"],
         },
     },
     "loggers": {
@@ -616,6 +624,14 @@ LOGGING = {
         # subscription pruned). Low volume, and the only way to answer "am I
         # getting notifications?" from the logs rather than from someone's phone.
         "apps.push": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # Provenance (apps/harness/provenance.py): one TURN_CREATED /
+        # SESSION_CREATED line per creation, saying who, with what credential,
+        # from which program and under which parent turn. INFO, always on.
+        "canopy": {
             "handlers": ["console"],
             "level": "INFO",
             "propagate": False,

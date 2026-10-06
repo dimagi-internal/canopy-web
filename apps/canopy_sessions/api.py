@@ -188,6 +188,13 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "turn_mode": turn_mode,
         "turn_origin": turn_origin,
         "feed_status": feed_status,
+        # What made this session (apps/harness/provenance.py).
+        "created_by": session.created_by.email if session.created_by_id else None,
+        "provenance": session.provenance or {},
+        "parent_turn_id": session.parent_turn_id,
+        "parent_session_id": session.parent_session_id,
+        "parent_task": session.parent_task,
+        "parent_claude_session": session.parent_claude_session,
     }
 
 
@@ -212,7 +219,7 @@ def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool 
     session = get_object_or_404(
         _site_scoped(request, access.readable_sessions(request.user,
                                                        workspace_slugs=_visible_slugs(request)))
-        .select_related("agent", "runner_binding", "runner_binding__runner")
+        .select_related("agent", "runner_binding", "runner_binding__runner", "created_by")
         .annotate(_last_msg_at=Max("messages__created_at")),
         pk=session_id,
     )
@@ -280,6 +287,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     session = services.create_session(
         workspace=workspace, created_by=request.user, agent=agent,
         project=payload.project, title=payload.title, metadata=metadata,
+        parent=payload.parent,
     )
     return _out(session)
 
@@ -313,7 +321,7 @@ def list_sessions(
         # The same authority every other session surface reads — see
         # apps/canopy_sessions/access.py — narrowed to the acting site's agents.
         _site_scoped(request, access.readable_sessions(request.user, workspace_slugs=slugs))
-        .select_related("agent", "runner_binding", "runner_binding__runner")
+        .select_related("agent", "runner_binding", "runner_binding__runner", "created_by")
     )
     # Embedder filters (Task 9): an embedder (e.g. ace-web) narrows the shared
     # session list to the sessions it cares about, keyed on the opaque
@@ -415,7 +423,7 @@ def reset_sessions(request: HttpRequest, payload: ResetIn):
     readable = _site_scoped(
         request, access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request)))
     rows = [
-        s for s in readable.select_related("runner_binding", "runner_binding__runner")
+        s for s in readable.select_related("runner_binding", "runner_binding__runner", "created_by")
         .order_by("created_at")
         if access.can_write(request.user, s)
     ]
@@ -704,6 +712,7 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
             client_id=payload.client_id[:100], placement=payload.placement,
             origin=payload.origin,
             initiator=who.for_request(request, via=who.channel(request, "chat")),
+            parent=payload.parent,
         )
     except ValueError as exc:
         raise HttpError(422, str(exc))

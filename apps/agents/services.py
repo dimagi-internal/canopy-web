@@ -281,7 +281,7 @@ def _claim_dispatch_row(agent: Agent, data) -> Turn | None:
     return None
 
 
-def upsert_turn(agent: Agent, data) -> Turn:
+def upsert_turn(agent: Agent, data, *, initiator=None) -> Turn:
     """Attach an agent's close-out report to the turn it was dispatched as.
 
     Idempotent per (agent, cli_session_id). When no dispatch row can be matched —
@@ -290,6 +290,10 @@ def upsert_turn(agent: Agent, data) -> Turn:
     dropped on the floor. That row carries origin=api and status=done because it is,
     from the harness's point of view, a turn that has already finished; it has no
     idempotency of its own to enforce, so the key is synthesized from the session.
+
+    `initiator` is who POSTED the report (`initiator.for_request`) — recorded on
+    a report-only row, which has no dispatch to have recorded it. A matched
+    dispatch row keeps the initiator it was enqueued with.
     """
     fields = {
         "report_title": data.title,
@@ -316,7 +320,9 @@ def upsert_turn(agent: Agent, data) -> Turn:
         turn.save()
         return turn
 
-    return Turn.objects.create(
+    from apps.harness import provenance
+
+    turn = Turn.objects.create(
         agent=agent,
         origin=Turn.ORIGIN_API,
         status=Turn.DONE,
@@ -324,8 +330,12 @@ def upsert_turn(agent: Agent, data) -> Turn:
         session_key=getattr(data, "session_key", "") or "",
         started_at=_aware(data.started_at),
         finished_at=_aware(data.ended_at),
+        **(initiator.fields() if initiator is not None else {}),
+        **provenance.creation_fields(report_only=True),
         **fields,
     )
+    provenance.log_created(turn)
+    return turn
 
 
 def list_turns(agent: Agent, limit: int = 100) -> list[Turn]:

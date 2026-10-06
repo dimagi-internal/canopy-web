@@ -215,6 +215,14 @@ def _log(msg: str) -> None:
     print(f"[cloud-runner] {msg}", flush=True)
 
 
+def _user_agent() -> str:
+    try:
+        sha = (build_info().get("sha") or "")[:12] or "unknown"
+    except Exception:  # noqa: BLE001 — an identity header must never fail a request
+        sha = "unknown"
+    return f"canopy-cloud-runner/{sha} host={socket.gethostname()}"
+
+
 def _api(method: str, path: str, body: dict | None = None, *,
          prefix: str = "/api/harness") -> tuple[int, dict | None]:
     """Call canopy-web. `prefix` defaults to the harness router this runner lives
@@ -224,6 +232,10 @@ def _api(method: str, path: str, body: dict | None = None, *,
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {TOKEN}")
     req.add_header("Content-Type", "application/json")
+    # Say what is calling, so canopy-web's provenance can tell the runner's own
+    # requests from a person's or a script's on the same account.
+    req.add_header("User-Agent", _user_agent())
+    req.add_header("X-Canopy-Client", "canopy-cloud-runner")
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             raw = resp.read()
@@ -4046,6 +4058,30 @@ def _write_envelope(turn: dict) -> dict:
     return {"CANOPY_CALLER": str(path)}
 
 
+def _provenance_env(turn: dict) -> dict:
+    """The parent ids a session's own canopy calls send back (canopy#768): the
+    canopy CLI reads `CANOPY_TURN_ID` / `CANOPY_SESSION_ID` / `CANOPY_EMDASH_TASK`
+    first and turns them into `X-Canopy-Parent-*` headers, so a turn or session
+    created from inside this one records it as its parent on canopy-web. Without
+    them a script run in a cloud session is indistinguishable from the web UI.
+
+    `CANOPY_EMDASH_TASK` only when the conversation IS an emdash task (a thread
+    keyed `emdash:<task>`): the cloud runner drives claude itself, so there is
+    usually no task to name, and inventing one would name nothing."""
+    out = {}
+    turn_id = str(turn.get("id") or "")
+    if re.fullmatch(r"[0-9a-fA-F-]{8,64}", turn_id):
+        out["CANOPY_TURN_ID"] = turn_id
+    session_id = _chat_session_id(turn)
+    if session_id and re.fullmatch(r"[0-9a-fA-F-]{8,64}", str(session_id)):
+        out["CANOPY_SESSION_ID"] = str(session_id)
+    thread = str((turn.get("origin_ref") or {}).get("thread_key") or "")
+    if thread.startswith("emdash:") and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}",
+                                                      thread[len("emdash:"):]):
+        out["CANOPY_EMDASH_TASK"] = thread[len("emdash:"):]
+    return out
+
+
 def _native_settings(turn: dict, cwd: pathlib.Path, caller_path: str) -> str | None:
     """A confined turn's capability as Claude Code's OWN permission rules, passed
     with `--settings` — the second layer under profile_guard (canopy_runner's
@@ -4117,7 +4153,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # own git pull needs it), its caller envelope and, for a chat, that
         # chat's key.
         per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
-                    **_chat_key_env(turn), **ONE_SHOT_TURN_ENV}
+                    **_provenance_env(turn), **_chat_key_env(turn), **ONE_SHOT_TURN_ENV}
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(_turn_agent_slug(turn)))

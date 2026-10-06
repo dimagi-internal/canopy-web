@@ -9,7 +9,7 @@ import uuid
 from ninja import Schema
 from pydantic import AliasChoices, Field, field_validator
 
-from apps.harness.schemas import Origin, normalize_origin
+from apps.harness.schemas import Origin, ParentIn, normalize_origin
 
 
 class SessionCreateIn(Schema):
@@ -24,6 +24,9 @@ class SessionCreateIn(Schema):
     # session's FIRST send (as long as the session is still unbound) — see
     # services.send_message.
     runner_id: uuid.UUID | None = None
+    # What this session was created FROM (a script inside another session). The
+    # X-Canopy-Parent-* headers carry the same; this wins where both are given.
+    parent: ParentIn | None = None
 
 
 class SendIn(Schema):
@@ -41,6 +44,8 @@ class SendIn(Schema):
     # `ace_web` here — without it, a delegated run enqueues as `canopy_web_chat`
     # and an `ace_web` routing rule has nothing to match.
     origin: Origin | None = None
+    # What this send was made FROM — see SessionCreateIn.parent.
+    parent: ParentIn | None = None
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
@@ -209,6 +214,14 @@ class SessionOut(Schema):
     # `zdr`), so placement offers only runners whose `flags` include every one.
     # A malformed stored value comes back as an entry no runner can declare.
     runner_requirements: list[str] = []
+    # Who created it, and what made it (apps/harness/provenance.py): credential,
+    # client, user agent, request id, MCP tool; plus the parent it came from.
+    created_by: str | None = None
+    provenance: dict = {}
+    parent_turn_id: uuid.UUID | None = None
+    parent_session_id: uuid.UUID | None = None
+    parent_task: str = ""
+    parent_claude_session: str = ""
 
 
 class SessionDetailOut(SessionOut):

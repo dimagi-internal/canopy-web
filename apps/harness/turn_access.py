@@ -25,7 +25,9 @@ from __future__ import annotations
 from apps.workspaces import permissions as perms
 
 #: Fields blanked on a turn whose content the caller may not read.
-REDACTED_FIELDS = {"prompt": "", "origin_ref": {}, "result_note": "", "share_token": ""}
+# `provenance` too: it is a log (the caller's IP, user agent, token label).
+REDACTED_FIELDS = {"prompt": "", "origin_ref": {}, "result_note": "", "share_token": "",
+                   "provenance": {}}
 
 
 def _workspace_of(turn) -> str | None:

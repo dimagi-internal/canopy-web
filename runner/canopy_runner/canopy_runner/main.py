@@ -522,6 +522,10 @@ def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
         return "idle"
     if turn is None:
         return "idle"
+    from . import turn_log
+
+    # Who asked, with which credential, from which program, under which parent.
+    logger.info(turn_log.claim_line(turn))
     # Hold the in-flight marker across the WHOLE claim→execute window, not just the
     # per-tick count: the auto-updater restarts this daemon, and an agent turn is
     # routed synchronously inside this call. Restarting here would leave the turn

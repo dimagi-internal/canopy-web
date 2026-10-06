@@ -34,6 +34,24 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def pat_credential(token) -> dict:
+    """WHICH token, not just whose. A person holds several (a CLI, a scratch
+    script, an MCP client's OAuth login); recording only `auth_method=pat` made a
+    script's turns indistinguishable from the web UI's. `apps/harness/provenance.py`
+    copies this onto every turn and session the request creates."""
+    oauth = bool(getattr(token, "oauth_grant_id", None))
+    return {"type": "oauth" if oauth else "pat", "id": token.pk,
+            "label": (token.label or "")[:200]}
+
+
+def _session_credential(request) -> None:
+    """A request no token touched: canopy's own browser session, or nobody."""
+    if getattr(request, "auth_credential", None) is None:
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False):
+            request.auth_credential = {"type": "session", "id": None, "label": ""}
+
+
 class BearerTokenAuthMiddleware:
     def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
         self.get_response = get_response
@@ -42,6 +60,7 @@ class BearerTokenAuthMiddleware:
         refused = self._authenticate(request)
         if refused is not None:
             return refused
+        _session_credential(request)
         return self.get_response(request)
 
     @staticmethod
@@ -67,6 +86,7 @@ class BearerTokenAuthMiddleware:
                 # initiator records (apps/harness/initiator.py). Absent means
                 # canopy's own session did it.
                 request.auth_method = "pat"
+                request.auth_credential = pat_credential(token)
                 request._dont_enforce_csrf_checks = True
                 return
 
@@ -83,6 +103,8 @@ class BearerTokenAuthMiddleware:
             # anything the request itself carries.
             request.runner_requirements = tuple(ctok.runner_requirements or ())
             request.auth_method = "contact"
+            request.auth_credential = {"type": "contact", "id": ctok.pk,
+                                       "label": getattr(ctok.app, "name", "") or ""}
             request._dont_enforce_csrf_checks = True
             return
 
@@ -131,6 +153,8 @@ class BearerTokenAuthMiddleware:
         if not already_signed_in:
             request.user = dtok.user
             request.auth_method = dtok.assurance or "delegated"
+            request.auth_credential = {"type": "delegated", "id": dtok.pk,
+                                       "label": getattr(dtok.app, "name", "") or ""}
 
         # Safe with or without a session, and required with one: the frame
         # authenticates by header and holds no CSRF cookie for canopy, so its
@@ -161,6 +185,11 @@ def _authenticate_mcp_call(request: HttpRequest) -> bool:
     if user is not None:
         request.user = user
         request.auth_method = principal.get("auth_method") or "pat"
+    # Which credential the MCP client presented, and which tool this request is
+    # (`apps/mcp/api_tools._principal`), for the turn/session provenance.
+    request.auth_credential = dict(principal.get("credential") or {})
+    request.mcp_tool = principal.get("tool") or ""
+    request.mcp_outer = dict(principal.get("outer") or {})
     request.via_mcp = True
     request._dont_enforce_csrf_checks = True
     return True

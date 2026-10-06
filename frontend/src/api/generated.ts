@@ -8369,8 +8369,25 @@ export interface components {
             readonly error: string;
         };
         /**
+         * CredentialOut
+         * @description WHICH credential made a request: `pat` / `oauth` (a PersonalToken: id +
+         *     label), `contact`, `delegated`, `caller_token`, `session`.
+         */
+        readonly CredentialOut: {
+            /** Type */
+            readonly type: string;
+            /** Id */
+            readonly id?: number | string | null;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+        };
+        /**
          * InitiatorOut
-         * @description Who asked for this turn, and how that was established.
+         * @description Who asked for this turn, and how that was established — and with which
+         *     credential, from which program, under which parent turn/session.
          */
         readonly InitiatorOut: {
             /** Kind */
@@ -8383,6 +8400,10 @@ export interface components {
             readonly contact?: components["schemas"]["InitiatorPersonOut"] | null;
             /** Agent */
             readonly agent?: string | null;
+            readonly credential?: components["schemas"]["CredentialOut"] | null;
+            /** Client */
+            readonly client?: string | null;
+            readonly parent?: components["schemas"]["ParentOut"] | null;
         };
         /** InitiatorPersonOut */
         readonly InitiatorPersonOut: {
@@ -8392,6 +8413,17 @@ export interface components {
             readonly email: string;
             /** Name */
             readonly name: string;
+        };
+        /** ParentOut */
+        readonly ParentOut: {
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Task */
+            readonly task?: string | null;
+            /** Claude Session Id */
+            readonly claude_session_id?: string | null;
         };
         /** TurnOut */
         readonly TurnOut: {
@@ -8452,6 +8484,29 @@ export interface components {
             readonly session_id: string;
             /** Result Note */
             readonly result_note: string;
+            /**
+             * Provenance
+             * @default {}
+             */
+            readonly provenance: {
+                readonly [key: string]: unknown;
+            };
+            /** Parent Turn Id */
+            readonly parent_turn_id?: string | null;
+            /** Parent Session Id */
+            readonly parent_session_id?: string | null;
+            /**
+             * Parent Task
+             * @default
+             */
+            readonly parent_task: string;
+            /**
+             * Parent Claude Session
+             * @default
+             */
+            readonly parent_claude_session: string;
+            /** Raised From Task Id */
+            readonly raised_from_task_id?: number | null;
             /**
              * Content Hidden
              * @default false
@@ -9576,6 +9631,29 @@ export interface components {
              * @default []
              */
             readonly runner_requirements: readonly string[];
+            /** Created By */
+            readonly created_by?: string | null;
+            /**
+             * Provenance
+             * @default {}
+             */
+            readonly provenance: {
+                readonly [key: string]: unknown;
+            };
+            /** Parent Turn Id */
+            readonly parent_turn_id?: string | null;
+            /** Parent Session Id */
+            readonly parent_session_id?: string | null;
+            /**
+             * Parent Task
+             * @default
+             */
+            readonly parent_task: string;
+            /**
+             * Parent Claude Session
+             * @default
+             */
+            readonly parent_claude_session: string;
             /** Messages */
             readonly messages: readonly components["schemas"]["MessageOut"][];
             /** Menu */
@@ -14135,6 +14213,29 @@ export interface components {
             /** Result Note */
             readonly result_note: string;
             /**
+             * Provenance
+             * @default {}
+             */
+            readonly provenance: {
+                readonly [key: string]: unknown;
+            };
+            /** Parent Turn Id */
+            readonly parent_turn_id?: string | null;
+            /** Parent Session Id */
+            readonly parent_session_id?: string | null;
+            /**
+             * Parent Task
+             * @default
+             */
+            readonly parent_task: string;
+            /**
+             * Parent Claude Session
+             * @default
+             */
+            readonly parent_claude_session: string;
+            /** Raised From Task Id */
+            readonly raised_from_task_id?: number | null;
+            /**
              * Content Hidden
              * @default false
              */
@@ -14545,6 +14646,26 @@ export interface components {
              */
             readonly kind: string;
         };
+        /**
+         * ParentIn
+         * @description What this request was made FROM — the turn/session a script or agent was
+         *     running inside. Optional and never refused: an id canopy cannot resolve is
+         *     recorded verbatim on the new row's `provenance.parent_unresolved`. The same
+         *     fields ride the `X-Canopy-Parent-Turn` / `-Session` / `-Task` / `-Host` and
+         *     `X-Canopy-Claude-Session` headers; this object wins where both are given.
+         */
+        readonly ParentIn: {
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Task */
+            readonly task?: string | null;
+            /** Host */
+            readonly host?: string | null;
+            /** Claude Session Id */
+            readonly claude_session_id?: string | null;
+        };
         /** TurnIn */
         readonly TurnIn: {
             /**
@@ -14586,6 +14707,7 @@ export interface components {
             readonly runner_id?: string | null;
             /** Turn Mode */
             readonly turn_mode?: ("auto" | "manual") | null;
+            readonly parent?: components["schemas"]["ParentIn"] | null;
         };
         /** EmdashSessionOut */
         readonly EmdashSessionOut: {
@@ -14925,6 +15047,29 @@ export interface components {
              * @default []
              */
             readonly runner_requirements: readonly string[];
+            /** Created By */
+            readonly created_by?: string | null;
+            /**
+             * Provenance
+             * @default {}
+             */
+            readonly provenance: {
+                readonly [key: string]: unknown;
+            };
+            /** Parent Turn Id */
+            readonly parent_turn_id?: string | null;
+            /** Parent Session Id */
+            readonly parent_session_id?: string | null;
+            /**
+             * Parent Task
+             * @default
+             */
+            readonly parent_task: string;
+            /**
+             * Parent Claude Session
+             * @default
+             */
+            readonly parent_claude_session: string;
         };
         /** SessionCreateIn */
         readonly SessionCreateIn: {
@@ -14949,6 +15094,7 @@ export interface components {
             };
             /** Runner Id */
             readonly runner_id?: string | null;
+            readonly parent?: components["schemas"]["ParentIn"] | null;
         };
         /**
          * ResetOut
@@ -15137,6 +15283,7 @@ export interface components {
             readonly placement?: string | null;
             /** Origin */
             readonly origin?: ("api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill") | null;
+            readonly parent?: components["schemas"]["ParentIn"] | null;
         };
         /**
          * TurnOutMinimal

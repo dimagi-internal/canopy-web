@@ -117,8 +117,13 @@ def for_request(request, *, via: str) -> Initiator:
     """The asker behind an HTTP request, graded by how it authenticated.
 
     `request.auth_method` is stamped by `BearerTokenAuthMiddleware`; a request it
-    did not touch was authenticated by canopy's own session.
+    did not touch was authenticated by canopy's own session. An MCP tool call
+    (dispatched in-process to the route) is `mcp:<tool>` rather than the route's
+    own channel — "chat" would hide that an MCP client sent it.
     """
+    if getattr(request, "via_mcp", False):
+        tool = getattr(request, "mcp_tool", "") or ""
+        via = f"mcp:{tool}" if tool else "mcp"
     contact = getattr(request, "contact", None)
     if contact is not None:
         return for_contact(contact, via=via)
@@ -139,14 +144,20 @@ def for_scope(scope, *, via: str) -> Initiator:
 def channel(request, default: str) -> str:
     """The channel a request came through. An app-delegated or contact token
     means an embedding host's widget, and names the host — "chat" would hide
-    that the person was on connect-labs rather than in canopy."""
-    app = getattr(request, "delegated_app", None)
+    that the person was on connect-labs rather than in canopy. Takes a request
+    or a WebSocket scope (`RealtimeAuthMiddleware` stamps `delegated_app`)."""
+    if isinstance(request, dict):
+        app = request.get("delegated_app")
+    else:
+        app = getattr(request, "delegated_app", None)
     return f"widget:{app.name}" if app is not None else default
 
 
 def describe(turn) -> dict:
     """The initiator as the API and the runner see it. Names, not ids alone:
-    the agent is going to read this and address a person."""
+    the agent is going to read this and address a person. Carries the turn's
+    provenance too — which credential, which program, which parent — so the
+    runner's CLAIM line and the agent can say what made the turn."""
     user = getattr(turn, "initiator_user", None)
     contact = getattr(turn, "initiator_contact", None)
     out: dict = {
@@ -168,4 +179,17 @@ def describe(turn) -> dict:
         }
     if turn.initiator_agent:
         out["agent"] = turn.initiator_agent
+    prov = getattr(turn, "provenance", None) or {}
+    if prov.get("credential"):
+        out["credential"] = prov["credential"]
+    if prov.get("client"):
+        out["client"] = prov["client"]
+    parent = {k: v for k, v in {
+        "turn_id": str(turn.parent_turn_id) if getattr(turn, "parent_turn_id", None) else "",
+        "session_id": str(turn.parent_session_id) if getattr(turn, "parent_session_id", None) else "",
+        "task": getattr(turn, "parent_task", "") or "",
+        "claude_session_id": getattr(turn, "parent_claude_session", "") or "",
+    }.items() if v}
+    if parent:
+        out["parent"] = parent
     return out

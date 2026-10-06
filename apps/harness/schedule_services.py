@@ -289,7 +289,7 @@ def run_schedule_now(
     schedule = _resolve_schedule(
         user, agent_slug, schedule_id, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
     )
-    services.run_schedule_now(schedule)
+    services.run_schedule_now(schedule, clicked_by=user)
     return schedule
 
 

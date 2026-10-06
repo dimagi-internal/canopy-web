@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
-               native_permissions, readiness, session_naming, transcript)
+               native_permissions, readiness, session_naming, transcript, turn_log)
 from .client import ClientError
 from .tail import TailReader
 
@@ -257,8 +257,8 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
         return f"failed:{turn_id}"
 
     # Delivered — either the empty-line fast path, or a cleared-then-sent collision.
-    logger.info("REUSE  turn=%s agent=%s thread=%s -> existing session '%s' (no new claude session)",
-                turn_id, agent, thread_key, task)
+    logger.info("REUSE  turn=%s agent=%s thread=%s -> existing session '%s' (no new claude session) %s",
+                turn_id, agent, thread_key, task, turn_log.summary(turn))
     _post_events_best_effort(client, turn_id, [{"kind": "status",
         "payload": {"status": "reused_session", "task": task, "thread_key": thread_key}}])
     client.record_session(runner_id, turn.get("agent_slug") or "", thread_key,
@@ -675,12 +675,13 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             return f"failed:{turn_id}"
         if host is not None:
             host.add_rider(turn_id, prompt)
-            logger.info("chat turn=%s delivered mid-turn into turn=%s (task=%s, agent=%s)",
-                        turn_id, host.turn_id, task, target)
+            logger.info("chat turn=%s delivered mid-turn into turn=%s (task=%s, agent=%s) %s",
+                        turn_id, host.turn_id, task, target, turn_log.summary(turn))
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
                 "status": "delivered_midturn", "task": task, "rides_turn": host.turn_id}}])
             return f"rode:{turn_id}:{task}"
-        logger.info("chat turn=%s reused emdash task=%s (agent=%s)", turn_id, task, target)
+        logger.info("chat turn=%s reused emdash task=%s (agent=%s) %s",
+                    turn_id, task, target, turn_log.summary(turn))
     else:
         name = _task_name(target, turn)
         if not _confine(client, turn, name):
@@ -706,7 +707,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             runner_id, agent_slug, thread_key, project=project, workspace=workspace,
             emdash_task_id=task, summary=None,
         )
-        logger.info("chat turn=%s created emdash task=%s (agent=%s)", turn_id, task, target)
+        logger.info("chat turn=%s created emdash task=%s (agent=%s) %s",
+                    turn_id, task, target, turn_log.summary(turn))
 
     # The chat's key was left under the task name before delivery (emdash may
     # have renamed the task, so again under the real one); once the transcript
@@ -847,7 +849,8 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
             return f"failed:{turn_id}"
     _native_confine(cfg, client, turn, task)
     logger.info("CREATE turn=%s agent=%s thread=%s -> new session '%s' rehydrated=%s "
-                "(NEW claude session = tokens)", turn_id, agent, thread_key, task, bool(summary))
+                "(NEW claude session = tokens) %s", turn_id, agent, thread_key, task, bool(summary),
+                turn_log.summary(turn))
     _post_events_best_effort(client, turn_id, [{"kind": "status",
         "payload": {"status": "created_session", "task": task, "thread_key": thread_key,
                     "rehydrated": bool(summary)}}])

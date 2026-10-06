@@ -61,6 +61,29 @@ def without_tools(frame: dict) -> dict | None:
 log = logging.getLogger(__name__)
 
 
+def _socket_provenance(scope) -> dict:
+    """The provenance of a send made over the chat socket: the handshake's user
+    agent and address, `client=websocket`, and how the socket authenticated.
+    A fresh request id per send, so the TURN_CREATED line can be found."""
+    from apps.common import request_context as rc
+
+    headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+               for k, v in (scope.get("headers") or [])}
+    client = scope.get("client") or ("", 0)
+    forwarded = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    method = scope.get("auth_method") or "session"
+    app = scope.get("delegated_app")
+    cred = {"type": method, "id": None, "label": getattr(app, "name", "") or ""}
+    return {
+        "request_id": uuid.uuid4().hex,
+        "ip": rc.clean(forwarded or (client[0] if client else ""), 64),
+        "user_agent": rc.clean(headers.get("user-agent", "")),
+        "client": "websocket",
+        "credential": cred,
+        "parent": {},
+    }
+
+
 class SessionConsumer(AsyncJsonWebsocketConsumer):
     #: Set at connect from the query string. Not a header: a browser cannot set
     #: headers on a WebSocket handshake, and the subprotocol field is already
@@ -388,10 +411,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # union — a socket without them never lifts a floor already set.
         chat_services.add_runner_requirements(self.session,
                                               self.scope.get("runner_requirements", ()))
-        msg, turn = chat_services.send_message(
-            session=self.session, text=text, user=self.user, client_id=client_id,
-            initiator=who.for_scope(self.scope, via="chat"),
-        )
+        # A socket has no HTTP request, so no RequestContextMiddleware: the
+        # provenance the turn records is built from the socket's handshake.
+        from apps.common import request_context
+
+        token = request_context.set_current(_socket_provenance(self.scope))
+        try:
+            msg, turn = chat_services.send_message(
+                session=self.session, text=text, user=self.user, client_id=client_id,
+                initiator=who.for_scope(self.scope, via=who.channel(self.scope, "chat")),
+            )
+        finally:
+            request_context.reset(token)
         chat_services.maybe_execute_inline(turn)
         return str(msg.pk)
 

@@ -438,19 +438,25 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
         "slack_channel": inbound.channel_id,
         "slack_thread_ts": inbound.reply_thread_ts,
     }
+    slack_prov = {"slack": {"team": inbound.team_id, "channel": inbound.channel_id,
+                            "thread_ts": inbound.reply_thread_ts}}
     if principal.user is not None:
         return session_services.create_session(
             workspace=agent.workspace, created_by=principal.user, agent=agent,
-            title=title[:200], metadata=metadata,
+            title=title[:200], metadata=metadata, provenance_extra=slack_prov,
         ), True
     # No `created_by`, exactly like a widget contact's session (tokens.contact_api):
     # null is what keeps it out of every member's list.
     if not getattr(settings, "CHAT_STUB_EXECUTOR", True):
         metadata[session_services.TRANSCRIPT_SOURCED] = True
-    return Session.objects.create(
+    from apps.harness import provenance
+
+    session = Session.objects.create(
         workspace=agent.workspace, agent=agent, contact=principal.contact,
-        title=title[:200], metadata=metadata,
-    ), True
+        title=title[:200], metadata=metadata, **provenance.creation_fields(**slack_prov),
+    )
+    provenance.log_created(session)
+    return session, True
 
 
 def handle_message(inbound: Inbound) -> Outcome:
@@ -846,6 +852,8 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
             # Idempotent per lost turn: a double click re-asks once.
             client_id=f"requeue:{turn.pk}", origin=turn.origin,
             initiator=who.for_user(user, via=via, assurance=""),
+            # The lost turn is what this one re-asks.
+            parent={"turn": turn},
         )
         asked.append(again)
     return closed, asked

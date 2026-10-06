@@ -247,7 +247,39 @@ def _principal() -> dict:
     user_id = claims.get("user_id")
     if user_id is None:
         raise ToolError("This tool acts as a canopy user; sign in with a personal access token.")
-    return {"user_id": int(user_id), "auth_method": claims.get("auth_method") or "pat"}
+    return {"user_id": int(user_id), "auth_method": claims.get("auth_method") or "pat",
+            "credential": credential_from_claims(claims), "outer": outer_request()}
+
+
+def credential_from_claims(claims: dict) -> dict:
+    """The credential an MCP caller presented, as `request.auth_credential` shapes it."""
+    cred = dict(claims.get("credential") or {})
+    if not cred:
+        cred = {"type": claims.get("auth_method") or "pat", "id": claims.get("token_id"),
+                "label": ""}
+    return cred
+
+
+def outer_request() -> dict:
+    """What the MCP CLIENT's own HTTP request said about itself — user agent,
+    X-Canopy-Client and the parent headers — since the in-process request a tool
+    call becomes carries none of it. Best-effort: {} outside an HTTP transport."""
+    try:
+        from fastmcp.server.dependencies import get_http_headers
+
+        headers = {k.lower(): v for k, v in (get_http_headers(include_all=True) or {}).items()}
+    except Exception:  # noqa: BLE001 — provenance never fails a tool call
+        return {}
+    from apps.common import request_context as rc
+
+    parent = {k: rc.clean(headers.get(h.lower(), "")) for k, h in rc.PARENT_HEADERS.items()}
+    forwarded = (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return {
+        "user_agent": rc.clean(headers.get("user-agent", "")),
+        "client": rc.clean(headers.get(rc.HEADER_CLIENT.lower(), "")),
+        "ip": rc.clean(forwarded, 64),
+        "parent": {k: v for k, v in parent.items() if v},
+    }
 
 
 class CanopyAPITool(OpenAPITool):
@@ -259,7 +291,7 @@ class CanopyAPITool(OpenAPITool):
     async def run(self, arguments: dict[str, Any]):
         args = dict(arguments)
         workspace = args.pop(WORKSPACE_ARG, None) if self.adds_workspace else None
-        principal = _principal()
+        principal = {**_principal(), "tool": self.name}
         method = self._route.method.upper()
         # The path with its ids filled in, so the audit row names WHICH agent or
         # schedule a write touched; body values stay out (they can hold secrets).

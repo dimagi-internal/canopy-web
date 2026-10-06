@@ -42,7 +42,8 @@ def check_page(
 ) -> tuple[bool, str]:
     """Navigate to URL+path with Bearer PAT, assert text expectations, screenshot."""
     context = browser.new_context(
-        extra_http_headers={"Authorization": f"Bearer {pat}"},
+        extra_http_headers={"Authorization": f"Bearer {pat}",
+                            "X-Canopy-Client": "smoke_deployed"},
     )
     page: Page = context.new_page()
     console_errors: list[str] = []

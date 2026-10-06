@@ -37,6 +37,7 @@ import uuid
 
 from asgiref.sync import sync_to_async
 from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.providers.base import Provider
 from fastmcp.tools.base import Tool, ToolResult
 
@@ -121,17 +122,53 @@ class AgentCapabilityTool(Tool):
 
         user_id = current_user_id()
         wait = _wait(arguments.get("wait_seconds"))
+        # Not a REST route, so no RequestContextMiddleware: install the
+        # provenance (credential, MCP client, this tool) the turn records.
+        from apps.common import request_context
+
+        claims = _claims()
+        token = request_context.set_current(_tool_provenance(claims, self.name))
         try:
             session_id, turn_id = await sync_to_async(invoke, thread_sensitive=True)(
-                user_id, self.agent_slug, self.capability, arguments or {})
+                user_id, self.agent_slug, self.capability, arguments or {},
+                assurance=claims.get("auth_method") or "pat")
         except InvocationError as exc:
             await write_audit(user_id=user_id, tool=self.name, args_summary=str(exc)[:200],
                               ok=False, error=str(exc))
             raise ToolError(str(exc)) from exc
+        finally:
+            request_context.reset(token)
         await write_audit(user_id=user_id, tool=self.name,
                           args_summary=f"conversation={session_id} turn={turn_id}", ok=True)
         state = await wait_for_reply(turn_id, wait)
         return ToolResult(structured_content={"conversation_id": session_id, **state})
+
+
+def _claims() -> dict:
+    try:
+        tok = get_access_token()
+    except Exception:  # noqa: BLE001 — no request context
+        return {}
+    return dict((tok.claims or {}) if tok is not None else {})
+
+
+def _tool_provenance(claims: dict, tool: str) -> dict:
+    from apps.mcp.api_tools import credential_from_claims, outer_request
+
+    outer = outer_request()
+    ctx = {
+        "request_id": uuid.uuid4().hex,
+        "ip": outer.get("ip", ""),
+        "user_agent": outer.get("user_agent", ""),
+        "client": outer.get("client") or "mcp",
+        "credential": credential_from_claims(claims),
+        "via_mcp": True,
+        "mcp_tool": tool,
+        "parent": dict(outer.get("parent") or {}),
+    }
+    if claims.get("turn_id") and not ctx["parent"].get("turn_id"):
+        ctx["parent"]["turn_id"] = str(claims["turn_id"])
+    return ctx
 
 
 def to_mcp_tool(name: str, agent, capability: str, cap: dict) -> AgentCapabilityTool:
@@ -182,7 +219,8 @@ def _check_inputs(cap: dict, arguments: dict) -> dict:
     return out
 
 
-def invoke(user_id, agent_slug: str, capability: str, arguments: dict) -> tuple[str, str]:
+def invoke(user_id, agent_slug: str, capability: str, arguments: dict,
+           *, assurance: str = "pat") -> tuple[str, str]:
     """Send the caller's request as a turn of the agent. Returns (conversation, turn)."""
     from django.contrib.auth import get_user_model
 
@@ -243,7 +281,9 @@ def invoke(user_id, agent_slug: str, capability: str, arguments: dict) -> tuple[
     _msg, turn = chat.send_message(
         session=session, text=prompt, user=user, client_id=uuid.uuid4().hex,
         origin=Turn.ORIGIN_API, capability=capability,
-        initiator=who.for_user(user, via=f"mcp:{capability}", assurance=who.PAT),
+        # How the caller actually authenticated (a PAT, an OAuth login, a
+        # confined session's caller token) — not assumed to be a PAT.
+        initiator=who.for_user(user, via=f"mcp:{capability}", assurance=assurance or who.PAT),
     )
     if turn is None:
         raise InvocationError("the message could not be sent")

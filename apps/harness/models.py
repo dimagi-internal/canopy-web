@@ -521,6 +521,26 @@ class Turn(models.Model):
         related_name="turns_initiated",
     )
     initiator_agent = models.CharField(max_length=64, blank=True, default="")
+    # WHAT MADE THIS TURN, and under which parent — `apps/harness/provenance.py`.
+    # The initiator says WHO; this says with which credential (token id + label),
+    # from which program (`X-Canopy-Client`, user agent), on which request, via
+    # which MCP tool. Written once at creation, never edited. A parent id that
+    # could not be resolved is kept here verbatim (`parent_unresolved`) rather
+    # than refused: provenance is a record, not a gate.
+    provenance = models.JSONField(default=dict, blank=True)
+    # The turn whose session created this one (a script run inside a Claude
+    # session, a confined session's caller token, a requeue of a lost turn).
+    parent_turn = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="child_turns",
+    )
+    parent_session = models.ForeignKey(
+        "canopy_sessions.Session", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="child_turns",
+    )
+    # The emdash task (laptop) the creating session ran in, and its Claude Code
+    # session id — for a parent canopy has no row for.
+    parent_task = models.CharField(max_length=200, blank=True, default="")
+    parent_claude_session = models.CharField(max_length=100, blank=True, default="")
     # THE MODE THIS TURN RUNS IN (manual | auto), decided once at CLAIM by
     # `apps/harness/turn_mode.py` — a routing rule's mode where one matches, else
     # the agent's own `turn_mode`. "" until claimed, and always "" for a project

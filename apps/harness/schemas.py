@@ -507,6 +507,21 @@ class SessionReportOut(Schema):
     count: int
 
 
+class ParentIn(Schema):
+    """What this request was made FROM — the turn/session a script or agent was
+    running inside. Optional and never refused: an id canopy cannot resolve is
+    recorded verbatim on the new row's `provenance.parent_unresolved`. The same
+    fields ride the `X-Canopy-Parent-Turn` / `-Session` / `-Task` / `-Host` and
+    `X-Canopy-Claude-Session` headers; this object wins where both are given."""
+
+    turn_id: str | None = None
+    session_id: str | None = None
+    # The emdash task the creating session runs in (laptop), and its host.
+    task: str | None = None
+    host: str | None = None
+    claude_session_id: str | None = None
+
+
 class TurnIn(Schema):
     # Exactly one of agent_slug / project. Enforced in the view (422) rather than
     # by a validator so the error matches the rest of the harness's shape.
@@ -529,6 +544,7 @@ class TurnIn(Schema):
     # PAT; anyone else gets a 403. Refused on a project turn and on email, which a
     # runner posts on a stranger's behalf. Omit to let the rules decide.
     turn_mode: Literal["auto", "manual"] | None = None
+    parent: ParentIn | None = None
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
@@ -539,8 +555,25 @@ class InitiatorPersonOut(Schema):
     name: str
 
 
+class CredentialOut(Schema):
+    """WHICH credential made a request: `pat` / `oauth` (a PersonalToken: id +
+    label), `contact`, `delegated`, `caller_token`, `session`."""
+
+    type: str
+    id: int | str | None = None
+    label: str = ""
+
+
+class ParentOut(Schema):
+    turn_id: str | None = None
+    session_id: str | None = None
+    task: str | None = None
+    claude_session_id: str | None = None
+
+
 class InitiatorOut(Schema):
-    """Who asked for this turn, and how that was established."""
+    """Who asked for this turn, and how that was established — and with which
+    credential, from which program, under which parent turn/session."""
 
     kind: str
     via: str
@@ -548,6 +581,9 @@ class InitiatorOut(Schema):
     user: InitiatorPersonOut | None = None
     contact: InitiatorPersonOut | None = None
     agent: str | None = None
+    credential: CredentialOut | None = None
+    client: str | None = None
+    parent: ParentOut | None = None
 
 
 class TurnOut(Schema):
@@ -586,6 +622,16 @@ class TurnOut(Schema):
     rides_turn_id: uuid.UUID | None = None
     session_id: str
     result_note: str
+    # What made this turn (apps/harness/provenance.py): credential, client,
+    # user agent, ip, request id, MCP tool, and any parent id that did not
+    # resolve. Written once at creation. Blanked with the content below.
+    provenance: dict = {}
+    parent_turn_id: uuid.UUID | None = None
+    parent_session_id: uuid.UUID | None = None
+    parent_task: str = ""
+    parent_claude_session: str = ""
+    # The ask whose approval dispatched this turn.
+    raised_from_task_id: int | None = None
     # True when `prompt`, `origin_ref` and `result_note` were blanked because
     # the caller may not read this turn's content (apps/harness/turn_access.py).
     content_hidden: bool = False

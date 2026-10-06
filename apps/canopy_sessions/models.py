@@ -147,6 +147,22 @@ class Session(models.Model):
     retention_floor_index = models.PositiveIntegerField(default=0)
     #: When retention last removed content from this session. Null = never.
     content_purged_at = models.DateTimeField(null=True, blank=True)
+    #: WHAT MADE THIS SESSION and under which parent — the same record a Turn
+    #: carries (`apps/harness/provenance.py`): credential, client, user agent,
+    #: request id, MCP tool. Written once at creation.
+    provenance = models.JSONField(default=dict, blank=True)
+    parent_turn = models.ForeignKey(
+        "harness.Turn", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="child_sessions",
+    )
+    #: The session this one came from: a transfer's source, the old session a
+    #: reused name forked from, or the session a script ran inside.
+    parent_session = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="child_sessions",
+    )
+    parent_task = models.CharField(max_length=200, blank=True, default="")
+    parent_claude_session = models.CharField(max_length=100, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -163,6 +163,9 @@ def dispatch(item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
             origin_ref=origin_ref,
             routing=spec.routing,
             initiator=_dispatch_initiator(item),
+            # The turn that RAISED this ask is what this work descends from.
+            parent=({"turn": item.raised_by}
+                    if _is_task(item) and getattr(item, "raised_by_id", None) else None),
         )
         if _is_task(item):
             if turn.raised_from_task_id is None:

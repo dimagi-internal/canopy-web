@@ -20,6 +20,19 @@ import urllib.request
 
 URL = os.environ.get("CANOPY_URL", "").rstrip("/")
 PAT = os.environ.get("CANOPY_PAT", "")
+
+
+def _provenance_headers(client: str) -> dict:
+    """What this script is (`X-Canopy-Client`), and — when run inside a canopy
+    turn — which turn/session it runs in (canopy#768 env names), so the turns it
+    creates are findable in canopy-web's TURN_CREATED log and `provenance`."""
+    headers = {"X-Canopy-Client": client, "User-Agent": f"{client}/1 (canopy-web scripts/qa)"}
+    for env, header in (("CANOPY_TURN_ID", "X-Canopy-Parent-Turn"),
+                        ("CANOPY_SESSION_ID", "X-Canopy-Parent-Session"),
+                        ("CANOPY_EMDASH_TASK", "X-Canopy-Parent-Task")):
+        if os.environ.get(env, "").strip():
+            headers[header] = os.environ[env].strip()
+    return headers
 TASK = "smoke-loop"
 PROJECT = "smoke"
 THREAD = f"emdash:{TASK}"
@@ -28,6 +41,8 @@ THREAD = f"emdash:{TASK}"
 def _req(method: str, path: str, body: dict | None = None) -> tuple[int, object]:
     data = json.dumps(body).encode() if body is not None else None
     r = urllib.request.Request(f"{URL}{path}", data=data, method=method)
+    for key, value in _provenance_headers("smoke_mobile_loop").items():
+        r.add_header(key, value)
     r.add_header("Authorization", f"Bearer {PAT}")
     if data is not None:
         r.add_header("Content-Type", "application/json")
@@ -79,7 +94,7 @@ def main() -> int:
                         {"project": PROJECT, "origin": "manual",
                          "idempotency_key": f"smoke-{int(time.time())}",
                          "prompt": "smoke: continue this session",
-                         "origin_ref": {"thread_key": THREAD}})
+                         "origin_ref": {"thread_key": THREAD, "e2e": "smoke_mobile_loop"}})
         turn_id = turn.get("id") if isinstance(turn, dict) else None
         check("dispatch continue", st in (200, 201) and bool(turn_id), f"HTTP {st} {turn}")
 

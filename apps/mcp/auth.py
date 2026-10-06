@@ -83,11 +83,19 @@ class CanopyPATVerifier(TokenVerifier):
                 claims={"sub": f"turn:{grant.turn.pk}",
                         "user_id": grant.user.pk if grant.user is not None else None,
                         "auth_method": "caller_token", "turn_id": str(grant.turn.pk),
+                        # The turn the token was minted for is the PARENT of
+                        # anything this session creates (apps/harness/provenance.py).
+                        "credential": {"type": "caller_token", "id": str(grant.turn.pk),
+                                       "label": f"turn {grant.turn.pk}",
+                                       "turn_id": str(grant.turn.pk)},
                         "turn_ids": sorted(grant.turn_ids), "tool_globs": grant.tool_globs},
             )
-        user, _pat = await sync_to_async(_lookup_user, thread_sensitive=True)(token)
+        user, pat = await sync_to_async(_lookup_user, thread_sensitive=True)(token)
         if user is None:
             return None
+        from apps.tokens.middleware import pat_credential
+
+        credential = pat_credential(pat)
 
         return AccessToken(
             token=token,
@@ -98,5 +106,9 @@ class CanopyPATVerifier(TokenVerifier):
                 "user_id": user.pk,
                 "email": getattr(user, "email", "") or "",
                 "auth_method": "pat",
+                # WHICH token — an OAuth login and a hand-minted PAT are both
+                # PersonalTokens, and both are recorded on what they create.
+                "token_id": pat.pk,
+                "credential": credential,
             },
         )
