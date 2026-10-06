@@ -18,6 +18,12 @@ const rungs = [
   'Improve AI together, as a team and an org',
 ]
 
+const roles = [
+  ['Users', 'Ask an agent for work from Slack, email or the web. Nothing to install.'],
+  ['Supervisors', 'See every session live, step in, and approve what goes out.'],
+  ['Everyone', 'Read and comment on the outputs where they live, in Google Drive or on the web.'],
+]
+
 const layers = [
   ['Context', 'What the model knows at the moment of work: skills, rules and examples.'],
   ['LLM', 'Used as it is. Canopy improves everything around it.'],
@@ -76,13 +82,19 @@ const layers = [
     <div class="wrap">
       <div class="section-head">
         <p class="eyebrow">How it fits together</p>
-        <h2>A control plane, the way CI or Kubernetes is one</h2>
-        <p>
-          Canopy decides what runs, when and where; runners execute it. Agents hand work to each
-          other through the same boards people use, so every handoff is visible and a person can
-          take it over.
-        </p>
+        <h2>You ask in Slack. It works in your Drive. Your supervisor can watch over its shoulder.</h2>
+        <p>Canopy meets each person where they already work.</p>
       </div>
+      <div class="three">
+        {roles.map(([name, what]) => (
+          <div class="layer"><h3>{name}</h3><p>{what}</p></div>
+        ))}
+      </div>
+      <p class="stack-note">
+        Underneath, Canopy is a control plane, the way CI or Kubernetes is one: it decides what
+        runs, when and where, and runners execute it. Agents hand work to each other through the
+        same boards people use, so every handoff is visible and a person can take it over.
+      </p>
       <div class="stack">
         {layers.map(([name, what]) => (
           <div class="layer"><h3>{name}</h3><p>{what}</p></div>
