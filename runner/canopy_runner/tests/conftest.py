@@ -65,3 +65,13 @@ def _fresh_typed_turns():
     execute._TYPED_TURNS.clear()
     yield
     execute._TYPED_TURNS.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_settings(monkeypatch, tmp_path):
+    """Never touch the developer's real ~/.claude/settings.json. A test that starts the
+    hook listener installs the canopy hook there, pointed at the test's ephemeral port
+    and nonce; on a runner box that silently re-pointed every live session's hooks at
+    a dead listener until the daemon's next tick noticed (canopy-web#1188)."""
+    from canopy_runner import hooks
+    monkeypatch.setattr(hooks, "user_settings_path", lambda: tmp_path / "claude-settings.json")

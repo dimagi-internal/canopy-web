@@ -80,6 +80,18 @@ def maybe_report_hooks(now_fn=time.monotonic) -> None:
     )
 
 
+def user_settings_path() -> Path:
+    """The account-wide Claude Code settings this runner points its hooks from.
+
+    One function, not two inline `Path.home()` literals, so a test suite can
+    redirect it: the runner's own suite used to start a listener on an ephemeral
+    port and write THAT into the developer's real settings.json, which on a runner
+    box re-pointed every live session's hooks at a dead port until the daemon's
+    next tick repaired it (canopy-web#1188: the "hook config no longer pointed"
+    warnings that line up with test runs)."""
+    return Path.home() / ".claude" / "settings.json"
+
+
 def ensure_hook_config(settings_path=None) -> bool:
     """Re-point the hook config at the live listener if it has drifted. Returns
     True if it was repaired.
@@ -107,7 +119,7 @@ def ensure_hook_config(settings_path=None) -> bool:
     listener = _hook_listener
     if listener is None or listener.port <= 0:
         return False
-    path = settings_path or (Path.home() / ".claude" / "settings.json")
+    path = settings_path or user_settings_path()
     if hook_install.is_current(path, port=listener.port, nonce=listener.nonce):
         return False
     if not hook_install.install(path, port=listener.port, nonce=listener.nonce):
@@ -563,7 +575,7 @@ def start_hook_listener(cfg: Config, client: Client):
     must not leave a curl pointing at a port nothing is listening on.
     """
     global _hook_listener
-    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path = user_settings_path()
     if cfg.hook_port <= 0:
         if hook_install.remove(settings_path):
             logger.info("hook listener disabled; removed canopy's hook from %s",
