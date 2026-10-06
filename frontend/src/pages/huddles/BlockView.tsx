@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { anchorKey, normAnswer, type Answer, type Arc, type Block } from './huddleModel'
+import { anchorKey, normAnswer, normResolution, type Arc, type ArcState, type Block } from './huddleModel'
 
 /**
  * A member's ```huddle reply, rendered as what it SAYS — never the raw JSON.
@@ -12,15 +12,22 @@ import { anchorKey, normAnswer, type Answer, type Arc, type Block } from './hudd
 const ENVELOPE = new Set(['huddle', 'round', 'member'])
 const KNOWN = [
   'worked_on', 'priorities', 'projects', 'offers', 'needs',
-  'proposals', 'critique_answers', 'answers', 'feedback',
+  'proposals', 'critique_answers', 'answers', 'resolutions', 'feedback',
 ] as const
 
-export const ANSWER_STYLE: Record<Answer, { pill: string; label: string }> = {
+export const ANSWER_STYLE: Record<ArcState, { pill: string; label: string }> = {
   'co-sign': { pill: 'bg-success/15 text-success border-success/40', label: 'co-sign' },
   amend: { pill: 'bg-warning/15 text-warning border-warning/40', label: 'amend' },
   decline: { pill: 'bg-destructive/15 text-destructive border-destructive/40', label: 'decline' },
   pending: { pill: 'bg-muted text-muted-foreground border-border border-dashed', label: 'pending' },
+  'amend-accepted': { pill: 'bg-success/15 text-success border-success/40', label: 'amend accepted' },
+  'amend-rejected': { pill: 'bg-destructive/15 text-destructive border-destructive/40', label: 'amend rejected' },
 }
+
+const RESOLUTION_PILL = {
+  accept: 'bg-success/15 text-success border-success/40',
+  reject: 'bg-destructive/15 text-destructive border-destructive/40',
+} as const
 
 function asList(v: unknown): unknown[] {
   return Array.isArray(v) ? v : []
@@ -70,7 +77,7 @@ function Lines({ items }: { items: unknown[] }) {
   )
 }
 
-export function AnswerPill({ answer, title }: { answer: Answer; title?: string }) {
+export function AnswerPill({ answer, title }: { answer: ArcState; title?: string }) {
   const s = ANSWER_STYLE[answer]
   return (
     <span
@@ -102,18 +109,23 @@ type ProposalRow = {
   success_measure?: unknown; ask_of_partners?: unknown
 }
 
-function Proposal({ p, member, arcs }: { p: ProposalRow; member: string; arcs: Arc[] }) {
+/** `anchored` is false for a revised copy (a round-4 accept), so the arcs keep
+ * ending on the round-2 card where the proposal was made. */
+function Proposal({ p, member, arcs, anchored = true }: { p: ProposalRow; member: string; arcs: Arc[]; anchored?: boolean }) {
   const lead = text(p.lead) || member
   const title = text(p.title)
   const partners = asList(p.with).map(text).filter((m) => m && m !== lead)
   const project = p.project && typeof p.project === 'object' ? (p.project as { name?: unknown; new?: unknown }) : null
   const confidence = typeof p.confidence === 'number' ? Math.round(p.confidence * 100) : null
   const asks = p.ask_of_partners && typeof p.ask_of_partners === 'object' ? (p.ask_of_partners as Record<string, unknown>) : {}
-  const stateOf = (partner: string): Answer =>
+  const stateOf = (partner: string): ArcState =>
     arcs.find((a) => a.partner === partner && a.lead === lead && a.title.toLowerCase() === title.toLowerCase())?.state ?? 'pending'
 
   return (
-    <article data-proposal data-anchor={anchorKey.proposal(lead, title)} className="rounded-lg border border-border bg-background/60 p-3">
+    <article
+      data-proposal={anchored ? '' : 'revised'}
+      data-anchor={anchored ? anchorKey.proposal(lead, title) : undefined}
+      className="rounded-lg border border-border bg-background/60 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <h5 className="text-[13px] font-semibold leading-snug text-foreground">{title || 'Untitled proposal'}</h5>
         <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -239,6 +251,37 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
                     {text(a.lead) && <span className="text-[11px] text-muted-foreground">lead {text(a.lead)}</span>}
                   </div>
                   {text(a.note) && <p className="pl-1 text-[12px] italic text-muted-foreground">“{text(a.note)}”</p>}
+                </li>
+              )
+            })}
+          </ul>
+        </Section>
+      )}
+      {has('resolutions') && (
+        <Section label="Resolves the amends">
+          <ul className="space-y-2">
+            {asList(block.resolutions).map((raw, i) => {
+              const r = (raw ?? {}) as Record<string, unknown>
+              const verdict = normResolution(r.resolution)
+              const revised = verdict === 'accept' && r.proposal && typeof r.proposal === 'object'
+                ? (r.proposal as ProposalRow) : null
+              return (
+                <li key={i} data-resolution={verdict ?? 'unknown'} className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {verdict && (
+                      <span className={`inline-flex h-5 items-center rounded-full border px-2 text-[11px] font-medium ${RESOLUTION_PILL[verdict]}`}>
+                        {verdict}
+                      </span>
+                    )}
+                    <span className="text-[13px] font-medium text-foreground">{text(r.title)}</span>
+                  </div>
+                  {text(r.note) && <p className="pl-1 text-[12px] italic text-muted-foreground">“{text(r.note)}”</p>}
+                  {revised && (
+                    <div className="pt-1">
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Revised proposal</div>
+                      <Proposal p={revised} member={member} arcs={arcs} anchored={false} />
+                    </div>
+                  )}
                 </li>
               )
             })}

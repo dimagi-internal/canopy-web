@@ -6,7 +6,7 @@ import { curve } from '@/pages/topology/topologyMap'
 import { BlockView } from './BlockView'
 import {
   anchorKey, arcsFor, cellAt, cellState, columns, critiqueFrom, initial, memberHue, roundName, roundsToShow,
-  type Answer, type Arc, type Block,
+  type Arc, type ArcState, type Block,
 } from './huddleModel'
 
 /**
@@ -17,11 +17,23 @@ import {
  * page holds no huddle state of its own.
  */
 
-const ARC_COLOR: Record<Answer, string> = {
+const ARC_COLOR: Record<ArcState, string> = {
   'co-sign': 'var(--success)',
   amend: 'var(--warning)',
   decline: 'var(--destructive)',
   pending: 'var(--muted-foreground)',
+  // A round-4 resolution: an accepted amend is a co-sign, a rejected one holds.
+  'amend-accepted': 'var(--success)',
+  'amend-rejected': 'var(--destructive)',
+}
+
+const ARC_LABEL: Record<ArcState, string> = {
+  'co-sign': 'co-signed',
+  amend: 'amended',
+  decline: 'declined',
+  pending: 'not answered',
+  'amend-accepted': 'amend accepted',
+  'amend-rejected': 'amend rejected',
 }
 
 export function MemberAvatar({ slug, hue, size = 'md' }: { slug: string; hue: string; size?: 'sm' | 'md' }) {
@@ -150,7 +162,7 @@ function Bubble({ cell, hue, leader, arcs }: { cell: HuddleCell; hue: string; le
   )
 }
 
-type Drawn = { key: string; d: string; state: Answer; x0: number; y0: number; ends: [string, string] }
+type Drawn = { key: string; d: string; state: ArcState; label: string; x0: number; y0: number; ends: [string, string] }
 
 /** The co-sign arcs, laid over the grid. Positions are measured from the DOM
  * (`data-anchor`), so they follow the layout — re-measured whenever the grid
@@ -190,7 +202,7 @@ function ArcLayer({ arcs, host, focus }: {
       const c = curve(from, to)
       if (!c) continue
       const m = /^M ([\d.-]+) ([\d.-]+)/.exec(c.d)
-      out.push({ key: a.key, d: c.d, state: a.state, x0: Number(m?.[1] ?? 0), y0: Number(m?.[2] ?? 0), ends })
+      out.push({ key: a.key, d: c.d, state: a.state, label: `${a.partner} → ${a.lead}: ${a.title} — ${ARC_LABEL[a.state]}`, x0: Number(m?.[1] ?? 0), y0: Number(m?.[2] ?? 0), ends })
     }
     setBox({ w: el.scrollWidth, h: el.scrollHeight })
     setDrawn(out)
@@ -222,7 +234,7 @@ function ArcLayer({ arcs, host, focus }: {
       height={box.h}
     >
       <defs>
-        {(Object.keys(ARC_COLOR) as Answer[]).map((s) => (
+        {(Object.keys(ARC_COLOR) as ArcState[]).map((s) => (
           <marker key={s} id={`huddle-arrow-${s}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill={ARC_COLOR[s]} />
           </marker>
@@ -235,6 +247,7 @@ function ArcLayer({ arcs, host, focus }: {
         const opacity = focus === null ? 0.55 : lit ? 1 : 0.1
         return (
           <g key={a.key} data-arc={a.state} style={{ opacity, transition: 'opacity 150ms ease' }}>
+            <title>{a.label}</title>
             <path
               d={a.d}
               fill="none"
@@ -255,13 +268,13 @@ function ArcLayer({ arcs, host, focus }: {
 export function ArcLegend() {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-      {(Object.keys(ARC_COLOR) as Answer[]).map((s) => (
+      {(Object.keys(ARC_COLOR) as ArcState[]).map((s) => (
         <span key={s} className="inline-flex items-center gap-1.5">
           <svg width="22" height="6" aria-hidden>
             <line x1="1" y1="3" x2="21" y2="3" stroke={ARC_COLOR[s]} strokeWidth="2" strokeLinecap="round"
               strokeDasharray={s === 'pending' ? '4 3' : undefined} />
           </svg>
-          {s === 'co-sign' ? 'co-signed' : s === 'amend' ? 'amended' : s === 'decline' ? 'declined' : 'not answered'}
+          {ARC_LABEL[s]}
         </span>
       ))}
     </div>

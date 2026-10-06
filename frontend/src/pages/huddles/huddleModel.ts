@@ -13,8 +13,13 @@ export type Block = Record<string, unknown>
 
 /** Round titles per huddle type. Unknown types just get "Round N". */
 const ROUND_NAMES: Record<string, Record<number, string>> = {
-  work: { 1: 'Report', 2: 'Roundtable', 3: 'Co-sign' },
+  work: { 1: 'Report', 2: 'Roundtable', 3: 'Co-sign', 4: 'Resolve' },
 }
+
+/** The rounds a type always runs, shown before they start. Any round past these
+ * (work's round 4 "resolve" only runs when a partner answered `amend`) is shown
+ * once it is dispatched or has a cell. */
+const ALWAYS_ROUNDS: Record<string, number> = { work: 3 }
 
 export function roundName(type: string, round: number): string {
   return ROUND_NAMES[type]?.[round] ?? `Round ${round}`
@@ -23,9 +28,9 @@ export function roundName(type: string, round: number): string {
 /** Rounds the grid shows: every type round up to the furthest one dispatched,
  * so a work huddle in round 1 still shows what is coming. */
 export function roundsToShow(h: Pick<Huddle, 'type' | 'rounds_dispatched' | 'cells'>): number[] {
-  const known = Object.keys(ROUND_NAMES[h.type] ?? {}).map(Number)
+  const always = ALWAYS_ROUNDS[h.type] ?? Math.max(0, ...Object.keys(ROUND_NAMES[h.type] ?? {}).map(Number))
   const seen = h.cells.map((c) => c.round)
-  const top = Math.max(h.rounds_dispatched, ...known, ...seen, 1)
+  const top = Math.max(h.rounds_dispatched, always, ...seen, 1)
   return Array.from({ length: top }, (_, i) => i + 1)
 }
 
@@ -68,12 +73,26 @@ export function normAnswer(raw: unknown): Answer {
 
 const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/\W+/g, ' ').trim()
 
+/** An arc's state: the partner's answer, or — for an `amend` the lead resolved
+ * in round 4 — whether the lead accepted the amend (now a co-sign) or rejected
+ * it (the proposal stays held). */
+export type ArcState = Answer | 'amend-accepted' | 'amend-rejected'
+
+export type Resolution = 'accept' | 'reject'
+
+export function normResolution(raw: unknown): Resolution | null {
+  const s = String(raw ?? '').toLowerCase().replace(/[^a-z]/g, '')
+  if (s.startsWith('accept')) return 'accept'
+  if (s.startsWith('reject')) return 'reject'
+  return null
+}
+
 export type Arc = {
   key: string
   title: string
   lead: string
   partner: string
-  state: Answer
+  state: ArcState
   note: string
   /** `data-anchor` ids: a cell is `<member>-<round>`, a column head `head-<member>`. */
   from: string
@@ -82,6 +101,7 @@ export type Arc = {
 
 type Proposal = { title?: unknown; lead?: unknown; with?: unknown }
 type AnswerRow = { title?: unknown; lead?: unknown; answer?: unknown; note?: unknown }
+type ResolutionRow = { title?: unknown; lead?: unknown; resolution?: unknown; note?: unknown }
 
 function list<T>(v: unknown): T[] {
   return Array.isArray(v) ? (v as T[]) : []
@@ -92,7 +112,8 @@ function list<T>(v: unknown): T[] {
  * round-2 cell where the proposal was made, coloured by the partner's answer.
  * A partner who has not answered yet gets a dashed `pending` arc from its column
  * head; an answer to a proposal we cannot see (its round-2 cell hidden or not
- * replied) still draws, to the lead's column head.
+ * replied) still draws, to the lead's column head. An `amend` the lead then
+ * resolved in round 4 becomes `amend-accepted` / `amend-rejected`.
  */
 export function arcsFor(h: Pick<Huddle, 'cells'>): Arc[] {
   const arcs = new Map<string, Arc>()
@@ -131,6 +152,21 @@ export function arcsFor(h: Pick<Huddle, 'cells'>): Arc[] {
         key, title: prev?.title ?? title, lead: prev?.lead ?? lead, partner: c.member,
         state: normAnswer(a.answer), note: String(a.note ?? ''), from: `${c.member}-3`, to,
       })
+    }
+  }
+  for (const c of h.cells) {
+    if (c.round !== 4 || !c.block) continue
+    for (const r of list<ResolutionRow>((c.block as Block).resolutions)) {
+      const verdict = normResolution(r.resolution)
+      if (!verdict) continue
+      // Only the proposal's own lead can resolve an amend to it.
+      const lead = String(r.lead || c.member)
+      if (lead !== c.member) continue
+      for (const a of arcs.values()) {
+        if (a.lead === lead && a.state === 'amend' && norm(a.title) === norm(r.title)) {
+          a.state = verdict === 'accept' ? 'amend-accepted' : 'amend-rejected'
+        }
+      }
     }
   }
   return [...arcs.values()].filter((a) => a.from !== a.to)
