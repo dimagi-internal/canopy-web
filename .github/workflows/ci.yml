@@ -30,7 +30,7 @@ jobs:
     name: Backend tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # The dimagi-canopy version-bump guard below diffs a PR's merge
           # commit against its first parent (the base it was merged onto),
@@ -38,7 +38,7 @@ jobs:
           fetch-depth: 2
 
       - name: Install uv
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
 
@@ -98,7 +98,7 @@ jobs:
       # backend change at all, all slipped past it. Costs ~10s on a 2-minute
       # job: the uv env above is reused, and only the codegen package is
       # fetched.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
 
@@ -266,7 +266,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # base..head needs both ends in the clone.
           fetch-depth: 0
@@ -296,12 +296,12 @@ jobs:
     name: Frontend build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # The canopy-ui version-bump guard below diffs against the PR base.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: 'npm'
@@ -323,7 +323,7 @@ jobs:
       # signed-out visitors. Built here so a broken page fails the PR, not the deploy.
       # Astro needs Node 22; the SPA above still builds on 20, so the site gets
       # its own toolchain rather than moving the whole job.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
