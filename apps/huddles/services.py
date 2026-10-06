@@ -33,6 +33,8 @@ from apps.harness import turn_access
 from apps.harness.models import Turn, TurnTranscript
 
 _FENCE = re.compile(r"```huddle[ \t]*\r?\n(.*?)\r?\n[ \t]*```", re.S)
+#: A ```json or unlabelled fence — accepted when its object carries a "huddle" key.
+_LOOSE_FENCE = re.compile(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n[ \t]*```", re.S)
 #: A round's members must reply within this of the earliest round-1 dispatch.
 DEADLINE = dt.timedelta(minutes=90)
 #: A member may close out a moment before the anchor's own row lands.
@@ -40,26 +42,60 @@ _CLOSEOUT_SLACK = dt.timedelta(minutes=5)
 _HUDDLE_TAIL = re.compile(r"/huddles/([^/?#]+)/?$")
 
 
+def _parse_obj(raw: str) -> tuple[dict | None, str]:
+    try:
+        b = json.loads(raw)
+    except ValueError as e:
+        return None, f"reply block is not valid JSON: {e}"
+    if not isinstance(b, dict):
+        return None, "reply block is not a JSON object"
+    return b, ""
+
+
+def _names(b: dict, huddle: str, round_no: int) -> bool:
+    try:
+        rnd = int(b.get("round") or 0)
+    except (TypeError, ValueError):
+        rnd = 0
+    return str(b.get("huddle")) == huddle and rnd == round_no
+
+
+def _loose_candidates(text: str) -> list[str]:
+    """Where a member's reply lands when it skips the ```huddle label — newest
+    (last) first: a ```json / unlabelled fence, then the whole text as one object."""
+    out = list(reversed(_LOOSE_FENCE.findall(text)))
+    whole = text.strip()
+    if whole.startswith("{") and whole.endswith("}"):
+        out.append(whole)
+    return out
+
+
 def extract_block(text: str, huddle: str, round_no: int) -> tuple[dict | None, str]:
     """The LAST ```huddle block in `text` that names this huddle and round.
 
+    Members sometimes file the reply without the label — a ```json or bare
+    ``` fence, or the whole close-out as a bare JSON object. Those are accepted
+    too (an object with a "huddle" key, same huddle/round rule), but a labelled
+    ```huddle block always wins.
+
     Returns (block, "") on a match, else (None, why) — `why` is "" when there was
     no block at all, so "not replied yet" and "replied wrongly" stay distinct."""
+    text = text or ""
     err = ""
-    for raw in reversed(_FENCE.findall(text or "")):
-        try:
-            b = json.loads(raw)
-        except ValueError as e:
-            err = err or f"reply block is not valid JSON: {e}"
+    for raw in reversed(_FENCE.findall(text)):
+        b, perr = _parse_obj(raw)
+        if b is None:
+            err = err or perr
             continue
-        if not isinstance(b, dict):
-            err = err or "reply block is not a JSON object"
+        if _names(b, huddle, round_no):
+            return b, ""
+        err = err or f"block names huddle {b.get('huddle')!r} round {b.get('round')!r}"
+    for raw in _loose_candidates(text):
+        b, _ = _parse_obj(raw)
+        # Unlabelled JSON is only a reply if it says so; anything else is prose.
+        if b is None or "huddle" not in b:
             continue
-        try:
-            rnd = int(b.get("round") or 0)
-        except (TypeError, ValueError):
-            rnd = 0
-        if str(b.get("huddle")) == huddle and rnd == round_no:
+        if _names(b, huddle, round_no):
             return b, ""
         err = err or f"block names huddle {b.get('huddle')!r} round {b.get('round')!r}"
     return None, err

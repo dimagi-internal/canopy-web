@@ -122,6 +122,38 @@ def test_extract_block_checks_huddle_and_round():
     assert extract_block("", "h1", 1) == (None, "")
 
 
+def test_extract_block_accepts_bare_json_summary():
+    from apps.huddles.services import extract_block
+    text = '{"huddle": "h1", "round": 2, "member": "ace", "worked_on": ["y"]}'
+    b, err = extract_block(text, "h1", 2)
+    assert b["member"] == "ace" and err == ""
+
+
+def test_extract_block_accepts_json_fence():
+    from apps.huddles.services import extract_block
+    text = 'done.\n```json\n{"huddle": "h1", "round": 1, "member": "eva"}\n```\n'
+    b, err = extract_block(text, "h1", 1)
+    assert b["member"] == "eva" and err == ""
+    b, _ = extract_block(text.replace("```json", "```"), "h1", 1)
+    assert b["member"] == "eva"
+    # A JSON fence without a "huddle" key is just prose, not a reply.
+    assert extract_block('```json\n{"a": 1}\n```', "h1", 1) == (None, "")
+
+
+def test_extract_block_bare_json_other_round_not_matched():
+    from apps.huddles.services import extract_block
+    text = '{"huddle": "h1", "round": 2, "member": "ace"}'
+    b, err = extract_block(text, "h1", 1)
+    assert b is None and "round 2" in err
+
+
+def test_extract_block_fenced_huddle_wins_over_loose_json():
+    from apps.huddles.services import extract_block
+    loose = '\n```json\n{"huddle": "h1", "round": 1, "member": "eva", "worked_on": ["loose"]}\n```'
+    b, _ = extract_block(BLOCK + loose, "h1", 1)
+    assert b["worked_on"] == ["x"]
+
+
 def test_detail_reads_reply_from_closeout_row(owner, agents):
     anchor, r1 = _huddle(agents)
     Turn.objects.create(agent=agents["eva"], idempotency_key="co", cli_session_id="s-eva",
