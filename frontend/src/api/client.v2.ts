@@ -127,6 +127,8 @@ const WS_SCOPED_API_PREFIXES = [
   // must be pinned too, or one of the two calls would be tenant-scoped and the
   // other not.
   "/api/items",
+  // Huddles are derived from one tenant's turns; /w/:ws/huddles reads that tenant.
+  "/api/huddles",
 ];
 
 // A request header a caller sets to pin the tenant explicitly when the page it

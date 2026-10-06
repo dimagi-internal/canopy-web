@@ -49,6 +49,8 @@ export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
     { to: 'inbox', label: 'Inbox', count: waiting },
     { to: 'turns', label: 'Turns' },
     { to: 'schedules', label: 'Schedules' },
+    // The huddles it led or joined — the tasks they produced are on Work.
+    { to: 'huddles', label: 'Huddles' },
     // Work products carries Status reports (what a "sync" actually is: a
     // periodic self-review of this work), and Skills carries its own history.
     { to: 'work-products', label: 'Work products' },

@@ -5390,6 +5390,52 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/huddles/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List huddles
+         * @description Huddles the caller can see, newest first: one per leader-filed anchor turn, with
+         *     its type, team, leader, members, how many rounds have been dispatched, whether it
+         *     has been filed (`finished`) and how many board tasks it produced. `agent` keeps the
+         *     huddles that agent led or was a member of.
+         */
+        readonly get: operations["list_huddles"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/huddles/{huddle_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get one huddle
+         * @description One huddle: a cell per (member, round) — the latest attempt's status and, when
+         *     you may read that turn's content, its prompt and the member's parsed reply block
+         *     (from its close-out, else its transcript) — plus the board tasks it produced, with
+         *     their live status. 404 when no anchor turn you can see names this huddle.
+         */
+        readonly get: operations["get_huddle"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/push/vapid-public-key": {
         readonly parameters: {
             readonly query?: never;
@@ -10578,6 +10624,10 @@ export interface components {
              * @default
              */
             readonly emdash_task_id: string;
+            /** Origin Ref */
+            readonly origin_ref?: {
+                readonly [key: string]: unknown;
+            };
         };
         /** AgentWorkProductOut */
         readonly AgentWorkProductOut: {
@@ -14869,6 +14919,191 @@ export interface components {
              * @default
              */
             readonly summary: string;
+        };
+        /** HuddleSummaryOut */
+        readonly HuddleSummaryOut: {
+            /** Id */
+            readonly id: string;
+            /**
+             * Type
+             * @default
+             */
+            readonly type: string;
+            /**
+             * Team
+             * @default
+             */
+            readonly team: string;
+            /**
+             * Leader
+             * @default
+             */
+            readonly leader: string;
+            /**
+             * Members
+             * @default []
+             */
+            readonly members: readonly string[];
+            /** Anchor Turn Id */
+            readonly anchor_turn_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Finished
+             * @default false
+             */
+            readonly finished: boolean;
+            /**
+             * Outcome Count
+             * @default 0
+             */
+            readonly outcome_count: number;
+            /**
+             * Rounds Dispatched
+             * @default 0
+             */
+            readonly rounds_dispatched: number;
+        };
+        /** HuddleCellOut */
+        readonly HuddleCellOut: {
+            /** Member */
+            readonly member: string;
+            /** Round */
+            readonly round: number;
+            /**
+             * Attempt
+             * @default 1
+             */
+            readonly attempt: number;
+            /** Turn Id */
+            readonly turn_id: string;
+            /** Status */
+            readonly status: string;
+            /** Created At */
+            readonly created_at?: string | null;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /**
+             * Content Hidden
+             * @default false
+             */
+            readonly content_hidden: boolean;
+            /**
+             * Prompt
+             * @default
+             */
+            readonly prompt: string;
+            /** Block */
+            readonly block?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Reply Source
+             * @default none
+             */
+            readonly reply_source: string;
+            /**
+             * Reply Error
+             * @default
+             */
+            readonly reply_error: string;
+            /**
+             * Has Transcript
+             * @default false
+             */
+            readonly has_transcript: boolean;
+        };
+        /** HuddleOut */
+        readonly HuddleOut: {
+            /** Id */
+            readonly id: string;
+            /**
+             * Type
+             * @default
+             */
+            readonly type: string;
+            /**
+             * Team
+             * @default
+             */
+            readonly team: string;
+            /**
+             * Leader
+             * @default
+             */
+            readonly leader: string;
+            /**
+             * Members
+             * @default []
+             */
+            readonly members: readonly string[];
+            /** Anchor Turn Id */
+            readonly anchor_turn_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Finished
+             * @default false
+             */
+            readonly finished: boolean;
+            /**
+             * Outcome Count
+             * @default 0
+             */
+            readonly outcome_count: number;
+            /**
+             * Rounds Dispatched
+             * @default 0
+             */
+            readonly rounds_dispatched: number;
+            /**
+             * Summary
+             * @default
+             */
+            readonly summary: string;
+            /** Deadline At */
+            readonly deadline_at?: string | null;
+            /**
+             * Cells
+             * @default []
+             */
+            readonly cells: readonly components["schemas"]["HuddleCellOut"][];
+            /**
+             * Outputs
+             * @default []
+             */
+            readonly outputs: readonly components["schemas"]["HuddleOutputOut"][];
+        };
+        /** HuddleOutputOut */
+        readonly HuddleOutputOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Task Id */
+            readonly task_id: number;
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Assigned
+             * @default
+             */
+            readonly assigned: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /** Url */
+            readonly url: string;
         };
         /** VapidKeyOut */
         readonly VapidKeyOut: {
@@ -22660,6 +22895,8 @@ export interface operations {
                 readonly agent?: string | null;
                 readonly status?: string | null;
                 readonly limit?: number;
+                readonly huddle?: string | null;
+                readonly parent_turn?: string | null;
             };
             readonly header?: never;
             readonly path?: never;
@@ -23090,6 +23327,51 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerDrillOut"];
+                };
+            };
+        };
+    };
+    readonly list_huddles: {
+        readonly parameters: {
+            readonly query?: {
+                readonly agent?: string | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["HuddleSummaryOut"][];
+                };
+            };
+        };
+    };
+    readonly get_huddle: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly huddle_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HuddleOut"];
                 };
             };
         };

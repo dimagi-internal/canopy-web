@@ -279,6 +279,22 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Filter by agent, trigger or status', 'Expand a turn to see its raw event ledger'],
   },
   {
+    path: '/w/:workspace/huddles',
+    title: 'Huddles',
+    audience: 'Anyone following how the fleet works as a team',
+    what: 'Every huddle in this workspace — a team of agents syncing in rounds, led by one of them — with its type, team, leader, members, rounds dispatched and outcomes filed. Derived from turns; nothing is stored for it.',
+    needsFirst: 'A team leader running `canopy huddle plan`.',
+    actions: ['Open a huddle', 'See which huddles are still in flight'],
+  },
+  {
+    path: '/w/:workspace/huddles/:id',
+    title: 'Huddle',
+    audience: 'Anyone following how the fleet works as a team',
+    what: "One huddle as a conversation: a column per member, a row per round, each reply rendered as a bubble with the leader's critique above the round it shaped, co-sign arcs tying joint proposals to each partner's answer, and the board tasks it produced with their live status.",
+    needsFirst: 'A huddle whose rounds have been dispatched.',
+    actions: ["Read each member's reply", 'Open a round prompt or transcript', 'Follow an outcome to its board'],
+  },
+  {
     path: '/w/:workspace/agents/:slug/inbox',
     title: 'Agent inbox',
     audience: 'The person(s) who own this agent',
@@ -298,6 +314,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     audience: 'The person(s) who own this agent',
     what: "The agent's full turn ledger — every packaged unit of work it has done, with what it advanced, what it did, its deliverables, and optionally a transcript link.",
     actions: ['Browse past turns', 'Open a turn\'s transcript'],
+  },
+  {
+    path: '/w/:workspace/agents/:slug/huddles',
+    title: 'Agent huddles',
+    audience: 'The person(s) who own this agent',
+    what: 'The huddles this agent led or was a member of — each with its rounds, members and how many outcomes it filed.',
+    needsFirst: 'A huddle this agent took part in.',
+    actions: ['Open a huddle to read the conversation'],
   },
   {
     path: '/w/:workspace/agents/:slug/schedules',

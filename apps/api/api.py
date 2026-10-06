@@ -200,6 +200,7 @@ from apps.slack.api import router as slack_config_router  # noqa: E402
 from apps.feedback.api import router as feedback_router  # noqa: E402
 from apps.storyboards.api import router as storyboards_router  # noqa: E402
 from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
+from apps.huddles.api import router as huddles_router  # noqa: E402
 from apps.harness.api_schedules import router as schedules_router  # noqa: E402
 from apps.harness.items_api import (  # noqa: E402
     agent_items_router,
@@ -263,6 +264,7 @@ api.add_router("/timeline", timeline_router)
 api.add_router("/system", system_router)
 api.add_router("/share", session_share_router)
 api.add_router("/harness", harness_router)
+api.add_router("/huddles", huddles_router)
 api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)
 api.add_router("/session-secrets", session_secrets_router)

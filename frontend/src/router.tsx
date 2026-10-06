@@ -82,6 +82,16 @@ const AgentWorkProductsSection = lazySection(() =>
 const AgentSkillsSection = lazySection(() =>
   import('./pages/agents/AgentSkillsSection').then((m) => ({ default: m.AgentSkillsSection })),
 )
+const AgentHuddlesSection = lazySection(() =>
+  import('./pages/agents/AgentHuddlesSection').then((m) => ({ default: m.AgentHuddlesSection })),
+)
+// Huddles: the conversation grid is its own chunk (it is the heaviest page here).
+const HuddlesPage = lazySection(() =>
+  import('./pages/huddles/HuddlesPage').then((m) => ({ default: m.HuddlesPage })),
+)
+const HuddlePage = lazySection(() =>
+  import('./pages/huddles/HuddlePage').then((m) => ({ default: m.HuddlePage })),
+)
 const AgentHistorySection = lazySection(() =>
   import('./pages/agents/AgentHistorySection').then((m) => ({ default: m.AgentHistorySection })),
 )
@@ -282,6 +292,9 @@ export const routeTable: RouteObject[] = [
         ),
       },
       { path: '/w/:workspace/activity', element: <ActivityPage /> },
+      // A team of agents syncing in rounds (canopy `huddle`), derived from turns.
+      { path: '/w/:workspace/huddles', element: <LazySection><HuddlesPage /></LazySection> },
+      { path: '/w/:workspace/huddles/:id', element: <LazySection><HuddlePage /></LazySection> },
       {
         path: '/w/:workspace/agents/:slug',
         element: <AgentWorkspacePage />,
@@ -303,6 +316,7 @@ export const routeTable: RouteObject[] = [
           { path: 'items', element: <WorkRedirect /> },
           { path: 'turns', element: <LazySection><AgentTurnsSection /></LazySection> },
           { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
+          { path: 'huddles', element: <LazySection><AgentHuddlesSection /></LazySection> },
           // Syncs are Status reports, a section of Work products now — a "sync"
           // could be anything; this is a periodic self-review of the work.
           { path: 'syncs', element: <Navigate to="../work-products#status-reports" replace /> },
@@ -339,6 +353,7 @@ export const routeTable: RouteObject[] = [
       { path: '/shareouts/*', element: <TenantRedirect to="shareouts" /> },
       { path: '/walkthroughs', element: <TenantRedirect to="walkthroughs" /> },
       { path: '/storyboards', element: <TenantRedirect to="storyboards" /> },
+      { path: '/huddles/*', element: <TenantRedirect to="huddles" /> },
       { path: '/agents/*', element: <TenantRedirect to="agents" /> },
       { path: '/ddd/*', element: <TenantRedirect to="ddd" /> },
       { path: '/ddd-plans', element: <Navigate to="/" replace /> },

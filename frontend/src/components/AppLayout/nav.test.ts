@@ -25,7 +25,7 @@ describe('NAV_GROUPS', () => {
     const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))
     expect(labels.sort()).toEqual(
       [
-        'Activity', 'Agents', 'Chats', 'DDD', 'Guide',
+        'Activity', 'Agents', 'Chats', 'DDD', 'Guide', 'Huddles',
         'Projects', 'Schedule', 'Settings', 'Shareouts', 'Storyboards',
         'System', 'Timeline', 'Walkthroughs',
       ].sort(),
@@ -54,7 +54,7 @@ describe('resolveNavGroups', () => {
   it('leaves global items on their absolute path', () => {
     const fleet = resolveNavGroups(authed).find((g) => g.label === 'Fleet')!
     expect(fleet.items.map((i) => i.href)).toEqual([
-      '/w/connect/agents', '/activity', '/schedules',
+      '/w/connect/agents', '/activity', '/w/connect/huddles', '/schedules',
     ])
   })
 
@@ -125,7 +125,7 @@ describe('isNavGroupActive', () => {
   it('marks exactly one group for any given route', () => {
     for (const pathname of [
       '/w/connect', '/w/connect/chat',
-      '/w/connect/agents', '/activity', '/schedules', '/w/connect/ddd',
+      '/w/connect/agents', '/activity', '/schedules', '/w/connect/ddd', '/w/connect/huddles',
       '/w/connect/walkthroughs', '/w/connect/storyboards', '/w/connect/shareouts', '/w/connect/timeline',
       '/w/connect/settings', '/w/connect/settings/slack', '/system',
     ]) {

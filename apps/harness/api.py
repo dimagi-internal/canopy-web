@@ -1830,13 +1830,12 @@ def _check_access(request, payload: TurnIn, agent, initiator) -> None:
         raise HttpError(403, d.reason or f"{agent.slug} does not take work from you")
 
 
-@router.get("/turns/", response=list[TurnOut])
-def list_turns(
-    request: HttpRequest,
-    agent: str | None = None,
-    status: str | None = None,
-    limit: int = 100,
-):
+def visible_turns_qs(request: HttpRequest):
+    """Every turn this caller may see LISTED — the exact tenant + site filter
+    `list_turns` applies, newest first. Shared so a derived view over turns (the
+    huddles API) can never show a turn `/api/harness/turns/` would not. Content
+    is a separate gate: rows still go through `turn_access` before their prompt
+    or transcript is read."""
     ws = getattr(request, "workspace_slug", None)
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
     qs = Turn.objects.select_related(
@@ -1845,30 +1844,6 @@ def list_turns(
         # A chat turn's session and its agent are read per row by TurnOut.
         "chat_session", "chat_session__agent",
     ).order_by("-created_at")
-    if agent:
-        # Resolve the TARGET before filtering. The tenant filter below would
-        # otherwise express a permission denial as an empty list — 200 [] — which
-        # is indistinguishable from "this agent has never run", while the sibling
-        # route /api/agents/<slug>/tasks/ answers the same denial with 404.
-        #
-        # That divergence is load-bearing, not cosmetic: agents legitimately hold
-        # different permission sets, so a fleet survey routinely asks about agents
-        # it cannot see, and every one of them read back as healthy-and-idle. Ada's
-        # `conduct` reads this endpoint per agent to spot stuck turns.
-        # (`agent_health` is incidentally safe — it resolves /api/agents/<slug>/
-        # first, which already 404s.)
-        #
-        # 404 rather than 403, and the same 404 for a typo, so the endpoint cannot
-        # be used to enumerate which tenants' agents exist (see _agent_or_404).
-        target = _agent_or_404(request, agent)
-        # An email or Slack thread targets a SESSION, not the agent (enqueue_turn
-        # converts it — the XOR check constraint allows only one), so the agent
-        # sits on `chat_session.agent`. Filtering on `agent` alone dropped every
-        # one of them: `?agent=ace` listed no ACE email turn after 2026-09-10, for
-        # every caller, and hal's routing audit read that as "0 turns" (#1087).
-        qs = qs.filter(Q(agent=target) | Q(agent__isnull=True, chat_session__agent=target))
-    if status:
-        qs = qs.filter(status__in=status.split(","))
     # Tenant filter, split by target kind (agent / project / session) — mirrors
     # claim_next_turn's tenant_q (services.py) and _turn_or_404 (this module).
     #
@@ -1898,6 +1873,49 @@ def list_turns(
     site_q = _site_turn_q(request)
     if site_q is not None:
         qs = qs.filter(site_q)
+    return qs
+
+
+@router.get("/turns/", response=list[TurnOut])
+def list_turns(
+    request: HttpRequest,
+    agent: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+    huddle: str | None = None,
+    parent_turn: uuid.UUID | None = None,
+):
+    qs = visible_turns_qs(request)
+    if agent:
+        # Resolve the TARGET before filtering. The tenant filter below would
+        # otherwise express a permission denial as an empty list — 200 [] — which
+        # is indistinguishable from "this agent has never run", while the sibling
+        # route /api/agents/<slug>/tasks/ answers the same denial with 404.
+        #
+        # That divergence is load-bearing, not cosmetic: agents legitimately hold
+        # different permission sets, so a fleet survey routinely asks about agents
+        # it cannot see, and every one of them read back as healthy-and-idle. Ada's
+        # `conduct` reads this endpoint per agent to spot stuck turns.
+        # (`agent_health` is incidentally safe — it resolves /api/agents/<slug>/
+        # first, which already 404s.)
+        #
+        # 404 rather than 403, and the same 404 for a typo, so the endpoint cannot
+        # be used to enumerate which tenants' agents exist (see _agent_or_404).
+        target = _agent_or_404(request, agent)
+        # An email or Slack thread targets a SESSION, not the agent (enqueue_turn
+        # converts it — the XOR check constraint allows only one), so the agent
+        # sits on `chat_session.agent`. Filtering on `agent` alone dropped every
+        # one of them: `?agent=ace` listed no ACE email turn after 2026-09-10, for
+        # every caller, and hal's routing audit read that as "0 turns" (#1087).
+        qs = qs.filter(Q(agent=target) | Q(agent__isnull=True, chat_session__agent=target))
+    if status:
+        qs = qs.filter(status__in=status.split(","))
+    # A huddle's turns (canopy `huddle`): its anchor and every round carry
+    # `origin_ref.huddle`; a round's `parent_turn` is the anchor.
+    if huddle:
+        qs = qs.filter(origin_ref__huddle=huddle)
+    if parent_turn:
+        qs = qs.filter(parent_turn_id=parent_turn)
     limit = max(1, min(limit, 200))  # clamp; default 100 keeps existing callers unchanged
     from . import turn_access
 

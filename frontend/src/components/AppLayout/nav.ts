@@ -50,6 +50,8 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { path: 'agents', label: 'Agents', tenant: true },
       { path: '/activity', label: 'Activity', tenant: false },
+      // The fleet syncing as a team: what each agent is on, and what they agree to push.
+      { path: 'huddles', label: 'Huddles', tenant: true },
       { path: '/schedules', label: 'Schedule', tenant: false },
     ],
   },
