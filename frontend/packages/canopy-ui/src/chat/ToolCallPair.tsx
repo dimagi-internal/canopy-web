@@ -50,7 +50,7 @@ export function ToolCallPair({ use, result, forceOpen }: Props) {
           {name}
         </span>
         {preview && (
-          <span className="truncate text-xs italic text-muted-foreground">
+          <span className="truncate font-mono text-xs text-muted-foreground">
             · {preview}
           </span>
         )}
