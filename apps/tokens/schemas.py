@@ -147,6 +147,12 @@ class EmbedSelfOut(StrictModel):
     agent: str
 
 
+class WsTicketOut(StrictModel):
+    #: Put on the socket URL as `?ticket=`; good for one socket, for `expires_in` seconds.
+    ticket: str
+    expires_in: int
+
+
 class EmbedSelfTokenOut(StrictModel):
     """`POST /api/embed/token` — a delegated token for the caller.
 

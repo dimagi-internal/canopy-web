@@ -33,6 +33,26 @@ export function buildSessionWsUrl(
   token: string | null,
   location?: WsLocation,
 ): string {
+  return sessionUrl(base, sessionId, token ? `?token=${encodeURIComponent(token)}` : '', location)
+}
+
+/** The session socket URL carrying a one-time TICKET instead of the token.
+ *
+ *  Prefer this: a URL is written to access logs, and a ticket found in one is
+ *  already spent. Mint the ticket with `POST /api/embed/ws-ticket` (a site's
+ *  delegated token) or `POST /api/contact/ws-ticket` (a contact), presenting the
+ *  token as a Bearer header, and fetch a fresh one for every connection —
+ *  reconnects included, since each works once. */
+export function buildSessionWsUrlWithTicket(
+  base: string,
+  sessionId: string,
+  ticket: string,
+  location?: WsLocation,
+): string {
+  return sessionUrl(base, sessionId, `?ticket=${encodeURIComponent(ticket)}`, location)
+}
+
+function sessionUrl(base: string, sessionId: string, query: string, location?: WsLocation): string {
   const isAbsolute = /^https?:\/\//i.test(base)
 
   let origin: string
@@ -56,6 +76,5 @@ export function buildSessionWsUrl(
   // should not be opening a socket. Left as a tokenless URL rather than thrown,
   // matching ace-web: the connect will fail loudly at the server instead of
   // turning a race into an exception in a render path.
-  const query = token ? `?token=${encodeURIComponent(token)}` : ''
   return `${origin}${pathPrefix}/ws/canopy-sessions/${encodeURIComponent(sessionId)}/${query}`
 }

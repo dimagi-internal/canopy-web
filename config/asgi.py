@@ -27,7 +27,6 @@ from django.core.asgi import get_asgi_application  # noqa: E402
 _django_asgi_app = get_asgi_application()
 
 from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
-from channels.security.websocket import AllowedHostsOriginValidator  # noqa: E402
 from starlette.applications import Starlette  # noqa: E402
 from starlette.middleware import Middleware  # noqa: E402
 from starlette.routing import Mount  # noqa: E402
@@ -35,6 +34,7 @@ from starlette.routing import Mount  # noqa: E402
 from apps.canopy_sessions.routing import websocket_urlpatterns as chat_ws_urlpatterns  # noqa: E402
 from apps.mcp.server import build_http_app  # noqa: E402
 from apps.realtime.channels_auth import RealtimeAuthMiddleware  # noqa: E402
+from apps.realtime.origin import OriginValidator  # noqa: E402
 from apps.realtime.routing import websocket_urlpatterns as realtime_ws_urlpatterns  # noqa: E402
 
 _websocket_urlpatterns = realtime_ws_urlpatterns + chat_ws_urlpatterns
@@ -50,7 +50,8 @@ _mcp_app = build_http_app()
 _django_with_ws = ProtocolTypeRouter(
     {
         "http": _django_asgi_app,
-        "websocket": AllowedHostsOriginValidator(
+        # Origins, not hosts: ALLOWED_HOSTS is `*` here (apps/realtime/origin.py).
+        "websocket": OriginValidator(
             RealtimeAuthMiddleware(URLRouter(_websocket_urlpatterns))
         ),
     }

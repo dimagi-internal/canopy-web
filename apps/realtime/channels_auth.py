@@ -188,11 +188,39 @@ def _delegated_runner_requirements(scope) -> tuple[str, ...]:
     return tuple(token.runner_requirements or ()) if token is not None else ()
 
 
+@database_sync_to_async
+def _redeem_ticket(scope):
+    """`?ticket=` swapped for the token it stands for (apps/tokens/ws_ticket.py).
+
+    Returns the scope with `token=<raw>` in place of the ticket, so everything
+    below resolves a ticketed socket exactly as it would the token — identity,
+    connected site, runner requirements, assurance. An unknown, expired or spent
+    ticket is simply dropped: the socket then has no token and is refused by the
+    consumer's existing check. The rewritten query string lives only in this
+    in-process scope; it is never logged, because the request line was.
+    """
+    from urllib.parse import parse_qsl, urlencode
+
+    pairs = parse_qsl((scope.get("query_string") or b"").decode("latin1"), keep_blank_values=True)
+    if not any(k == "ticket" for k, _ in pairs):
+        return scope
+    from apps.tokens import ws_ticket
+
+    kept = [(k, v) for k, v in pairs if k not in ("ticket", "token")]
+    raw = ws_ticket.redeem(next(v for k, v in pairs if k == "ticket"))
+    if raw:
+        kept.append(("token", raw))
+    scope = dict(scope)
+    scope["query_string"] = urlencode(kept).encode("latin1")
+    return scope
+
+
 class RealtimeAuthMiddleware:
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        scope = await _redeem_ticket(scope)
         # WHICH door authenticated this socket, alongside who — the "how sure are
         # we" grade a turn's initiator carries (apps/harness/initiator.py). A PAT
         # and an app-delegated token resolve to the same user and are not the

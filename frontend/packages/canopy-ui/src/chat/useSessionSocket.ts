@@ -69,8 +69,13 @@ export interface UseSessionSocketOptions {
    * App-injected WebSocket URL builder. The kit never imports app routing/base
    * helpers; the container passes one (e.g. canopy's `wsUrl`). Called with the
    * relative path `ws/canopy-sessions/${sessionId}/`.
+   *
+   * May return a Promise: it is called before EVERY connection, reconnects
+   * included, so a container can fetch a one-time ticket each time and keep
+   * its token off the URL (canopy-client's `sessionSocketTicketUrl`). A
+   * rejected promise is treated like a dropped connection and retried.
    */
-  wsUrl: (path: string) => string;
+  wsUrl: (path: string) => string | Promise<string>;
   /**
    * Optional side-effect callback fired when the server broadcasts a
    * `session.title_updated` (replaces ace's `notifySessionsUpdated`). The kit
@@ -238,6 +243,7 @@ export function useSessionSocket({
   const draftDebounceRef = useRef<number | null>(null);
   const pendingDraftBodyRef = useRef<string | null>(null);
   const closedByUserRef = useRef(false);
+  const generationRef = useRef(0);
   const onTitleUpdatedRef = useRef(onTitleUpdated);
   const onUnknownEventRef = useRef(onUnknownEvent);
   // A ref, like the callbacks above: `connect` is a stable callback with empty
@@ -426,11 +432,36 @@ export function useSessionSocket({
 
   const connect = useCallback(() => {
     if (closedByUserRef.current) return;
+    // Which mount this attempt belongs to. An async URL may resolve after the
+    // hook re-mounted for another session; it must not open a socket then.
+    const generation = generationRef.current;
     // A half-read tool call from the previous connection must not be completed
     // by an ARGS event from this one — the ids are per-stream.
     resetAguiState();
     const path = `ws/canopy-sessions/${sessionId}/`;
     const built = wsUrl(path);
+    if (typeof built !== "string") {
+      // An async builder (a fresh one-time ticket per connection). If it fails,
+      // retry on the same backoff a dropped socket uses; if the hook was torn
+      // down meanwhile, open nothing.
+      built.then(
+        (url) => {
+          if (!closedByUserRef.current && generation === generationRef.current) openSocket(url);
+        },
+        () => {
+          if (closedByUserRef.current || generation !== generationRef.current) return;
+          const attempt = reconnectAttemptRef.current;
+          reconnectAttemptRef.current = attempt + 1;
+          window.setTimeout(connect,
+            RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)]);
+        },
+      );
+      return;
+    }
+    openSocket(built);
+
+    // Declared inside `connect` so it shares exactly this render's handlers.
+    function openSocket(built: string) {
     const ws = new WebSocket(
       protocolRef.current === "ag-ui" ? withAguiProtocol(built) : built,
     );
@@ -506,6 +537,7 @@ export function useSessionSocket({
     ws.onerror = () => {
       // onclose will fire next; nothing to do here.
     };
+    }
   }, [applyEvent, rescueSend, send, sessionId, wsUrl]);
 
   useEffect(() => {
@@ -513,6 +545,7 @@ export function useSessionSocket({
     reconnectAttemptRef.current = 0;
     connect();
     return () => {
+      generationRef.current += 1;
       closedByUserRef.current = true;
       if (heartbeatTimerRef.current != null) {
         window.clearInterval(heartbeatTimerRef.current);
