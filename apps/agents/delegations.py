@@ -380,6 +380,15 @@ def requested_by(turn) -> str:
 
 def github_token_for_turn(turn) -> dict:
     """The token, and the git identity to commit with, for one turn."""
+    if turn.capability:
+        # A CALLER's turn (confined to a capability of the agent's interface) is
+        # never lent the owner's GitHub identity: no published capability needs it,
+        # and in a session a stranger steers it is the most valuable thing on the
+        # box. The runner does not ask for one either; this is the server's half,
+        # so a runner that did would still get nothing.
+        raise DelegationError(
+            f"this turn is confined to the caller capability '{turn.capability}', and a "
+            f"caller's turn is never given its agent owner's GitHub identity")
     agent = turn_agent(turn)
     if agent is None:
         raise DelegationError("this turn runs as no agent, so it has no GitHub identity")

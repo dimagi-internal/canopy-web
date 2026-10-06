@@ -270,6 +270,30 @@ def test_an_expired_delegation_is_refused(agent, owner, github, runner):
     assert "expired" in r.content.decode()
 
 
+def test_a_callers_confined_turn_is_never_given_the_owners_identity(agent, owner, github, runner):
+    # Lent, live, and the runner holds the turn — the only thing that differs from
+    # the success case above is that a caller is steering it.
+    _lend(agent, owner, github)
+    turn = _turn(agent, runner=runner, capability="ask")
+    r = _as_runner(runner).post(_token_url(runner, turn))
+    assert r.status_code == 409, r.content
+    assert "confined to the caller capability 'ask'" in r.content.decode()
+    assert "github_pat_olive" not in r.content.decode()
+    # The same turn, run in the agent's full profile, still gets it.
+    Turn.objects.filter(pk=turn.pk).update(capability="")
+    assert _as_runner(runner).post(_token_url(runner, turn)).status_code == 200
+
+
+def test_a_confined_chat_turn_is_refused_too(agent, owner, github):
+    from apps.canopy_sessions.models import Session
+
+    _lend(agent, owner, github)
+    session = Session.objects.create(agent=agent, workspace=agent.workspace, created_by=owner)
+    turn = Turn(chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, capability="connect")
+    with pytest.raises(delegations.DelegationError, match="confined"):
+        delegations.github_token_for_turn(turn)
+
+
 def test_a_turn_with_no_agent_has_no_github_identity(agent, owner, github):
     _lend(agent, owner, github)
     turn = Turn(project="canopy-web", origin=Turn.ORIGIN_API)

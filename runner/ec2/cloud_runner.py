@@ -835,10 +835,15 @@ def _agent_env(slug: str | None) -> dict:
     prefixes, shell interpolation) is not part of the format and is skipped
     rather than guessed at.
     """
+    extra = getattr(_TURN_ENV, "extra", None) or {}
+    confined = getattr(_TURN_ENV, "confined", None)
+    if confined is not None:
+        # A caller's turn: an allowlist, not the layering below — no agent .env,
+        # no 1Password key (so no credentials/resolve call), no canopy PAT.
+        return _confined_env(slug, confined, extra)
     env = _child_safe_env()
     for key in _GITHUB_ENV_KEYS:
         env.pop(key, None)
-    extra = getattr(_TURN_ENV, "extra", None) or {}
     if not slug:
         return {**env, **extra}
     # WHICH agent this is, as a variable Claude Code will actually hand on. It
@@ -3987,6 +3992,63 @@ class ConfineError(RuntimeError):
     pass
 
 
+# What a confined session may inherit from this process. An ALLOWLIST, not a strip
+# list: this process holds the runner owner's canopy PAT (CANOPY_TOKEN), every
+# agent turn used to get its agent's 1Password key and its whole ~/.<slug>/.env
+# (CANOPY_WEB_PAT among it) and the owner's GitHub token — and profile_guard was the
+# only thing between a prompt-injected caller session and all of them. A variable
+# nobody listed here is one a confined session does not get.
+#
+# Claude's own login stays: the session cannot run without it. Everything else is
+# locale, paths and TLS — what a process needs to start, never to act as anyone.
+_CONFINED_ENV_KEEP = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TZ", "TMPDIR",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+    "CANOPY_BASE_URL", "CLAUDE_CONFIG_DIR",
+    *_CLAUDE_AUTH_VARS,
+})
+_CONFINED_ENV_KEEP_PREFIXES = ("LC_",)
+
+#: The one secret a capability may need from this process: the password to gog's
+#: `file` keyring, without which an `ask` capability can neither read the caller's
+#: thread nor reply to it. Given ONLY to a capability whose own bash allowlist runs
+#: the mail path (`_capability_uses_mail`) — derived from the declaration, so no live
+#: interface has to change. Note what it opens: the box's one gog keyring, which
+#: holds every agent's mailbox token on this box (the agent's identity comes from
+#: its repo's config/agent.json, not from here).
+_CONFINED_MAIL_ENV = ("GOG_KEYRING_PASSWORD", "GOG_KEYRING_BACKEND", "GOG_HOME")
+#: A bash rule that runs the mail path: `canopy email …` or an agent's own
+#: `bin/<slug>-email` shim over it.
+_MAIL_RULE = re.compile(r"^(?:canopy\s+email\s|(?:\./)?bin/[A-Za-z0-9_-]+-email(?:\s|$))")
+#: Per-turn variables that are credentials. A confined turn's extra never carries
+#: them (`_run_turn` does not build them for it); dropped again here so a future
+#: caller of `_TURN_ENV.extra` cannot reintroduce one.
+_CONFINED_EXTRA_DENY = frozenset({*_GITHUB_ENV_KEYS, "CANOPY_CHAT_KEY"})
+
+
+def _capability_uses_mail(cap: dict) -> bool:
+    return any(_MAIL_RULE.match(str(rule).strip()) for rule in (cap.get("bash") or []))
+
+
+def _confined_env(slug: str | None, cap: dict, extra: dict) -> dict:
+    """A caller's turn environment: the allowlist above, the mail keyring only if
+    the capability sends mail, which agent and turn this is, and the per-turn
+    pointers (CANOPY_PROFILE, CANOPY_CALLER, …). Never the agent's `.env`, never
+    its 1Password key, never a GitHub token, never this process's canopy PAT —
+    the session reaches canopy's MCP with its caller token, from its profile."""
+    src = _child_safe_env()
+    env = {k: v for k, v in src.items()
+           if k in _CONFINED_ENV_KEEP or k.startswith(_CONFINED_ENV_KEEP_PREFIXES)}
+    if _capability_uses_mail(cap):
+        env.update({k: src[k] for k in _CONFINED_MAIL_ENV if k in src})
+    if slug:
+        env["CANOPY_AGENT"] = slug  # a name, not a secret — see `_agent_env`
+    env.update({k: v for k, v in extra.items() if k not in _CONFINED_EXTRA_DENY})
+    return env
+
+
 def _capability(turn: dict) -> dict | None:
     env = turn.get("caller_context") or {}
     if env.get("profile") not in CONFINED_PROFILES:
@@ -4182,17 +4244,26 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
     try:
-        # What this turn alone carries: its GitHub identity (first — the cwd's
-        # own git pull needs it), its caller envelope and, for a chat, that
-        # chat's key.
-        per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
-                    **_chat_key_env(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV}
+        confined = _capability(turn) is not None
+        # Decided FIRST, before any environment is built: a confined (caller's)
+        # turn's env is an allowlist (`_confined_env`), so nothing below — the
+        # cwd's own git pull included — can hand it a credential.
+        _TURN_ENV.confined = _capability(turn) if confined else None
+        if confined:
+            # No GitHub identity (canopy refuses one for a caller's turn anyway),
+            # no chat key, no repo worktrees: only what says who and which turn.
+            per_turn = {**_write_envelope(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV}
+        else:
+            # What this turn alone carries: its GitHub identity (first — the cwd's
+            # own git pull needs it), its caller envelope and, for a chat, that
+            # chat's key.
+            per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
+                        **_chat_key_env(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV}
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(_turn_agent_slug(turn)))
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")
-        confined = _capability(turn) is not None
         if not confined:
             # A caller's confined turn gets no repo checkouts; everyone else may ask.
             _TURN_ENV.extra.update(_repo_worktree_env(turn, turn_id))
@@ -4251,6 +4322,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _SESSION_HOOKS.pop(turn_id, None)
         _TURN_ENV.extra = {}
         _TURN_ENV.settings = None
+        _TURN_ENV.confined = None
         if cli_session_id:
             # Never let bookkeeping cost us the finish below — an exception here
             # used to strand the turn exactly like a dead socket did (#448).
