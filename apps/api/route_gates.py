@@ -433,6 +433,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_history": ("integrations",),
     "sync": ("integrations",),
     "declare_agent": ("own",),
+    # --- apps/beta_requests/api.py
+    "submit_beta_request": ("anonymous",),  # the public site's closed-beta form; grants nothing
     # --- apps/system/api.py
     "overview": ("authenticated",),  # canopy plugin catalog, not tenant data
     "public_stats": ("anonymous",),

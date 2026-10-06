@@ -24,6 +24,18 @@ RUN VITE_BASE_PATH="$VITE_BASE_PATH" \
     npm run build
 
 
+# ─── Stage 1b: build the public product site (site/, Astro) ─────────
+# Static HTML served at / to signed-out visitors (config/public_site.py). Its own
+# stage and lockfile: it shares nothing with the SPA, which is what lets it move
+# to its own host later.
+FROM node:22-slim AS site-build
+WORKDIR /app/site
+COPY site/package*.json ./
+RUN npm ci
+COPY site/ ./
+RUN npm run build
+
+
 # ─── Stage 2: Python runtime ─────────────────────────────────────────
 FROM python:3.12-slim
 
@@ -56,6 +68,8 @@ COPY . .
 
 # Built SPA from stage 1
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
+# Built public site from stage 1b
+COPY --from=site-build /app/site/dist ./site/dist
 
 # Collect static assets so WhiteNoise can serve them.
 # SECRET_KEY/DATABASE_URL aren't used by collectstatic; dummy values keep Django happy.

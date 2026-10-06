@@ -7,6 +7,9 @@ __pycache__
 *.pyc
 frontend/node_modules
 frontend/dist
+site/node_modules
+site/dist
+site/.astro
 node_modules
 .pytest_cache
 .ruff_cache

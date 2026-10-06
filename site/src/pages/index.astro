@@ -1,0 +1,253 @@
+---
+// The home page. Its story is the Canopy section of Jonathan's IDM AI talk
+// (Claude Design deck "IDM AI Talk (Dimagi brand)"), including the claims that
+// talk's own notes say not to make: no fleet-wide kill switch, no spend limits,
+// and manual-mode approval is procedure rather than a code-enforced pop-up.
+// Every number carries the date it was true.
+import Base from '../layouts/Base.astro'
+import Mark from '../components/Mark.astro'
+import { GITHUB_URL, SIGN_IN_URL } from '../site'
+
+const rungs = [
+  'Use AI to do things I already know how to do',
+  'Use AI to do things I don’t know how to do',
+  'Use AI to teach me how to do new things',
+  'Improve the AI itself',
+  'Help others use my improved AI',
+  'Improve AI together, as a team and an org',
+]
+
+const layers = [
+  ['Context', 'What the model knows at the moment of work: skills, rules and examples.'],
+  ['LLM', 'Used as it is. Canopy improves everything around it.'],
+  ['Harness', 'The software that lets the model act. Claude Code is one.'],
+  ['Runner', 'Where the harness executes: someone’s laptop, or a cloud machine.'],
+  ['Interactions', 'Email, Slack, web chat, and the applications people already use.'],
+]
+
+const fleet = [
+  ['Eva', 'sales, fundraising, chief of staff'],
+  ['Echo', 'Connect marketing'],
+  ['ACE', 'Connect programme setup'],
+  ['Hal', 'engineering'],
+  ['Ada', 'coordinates the others'],
+  ['Fizzy', 'workstream tracking'],
+]
+---
+<Base
+  title="Canopy — the open source control plane for agent oversight"
+  description="Give an agent deep expertise, let people use it, and let a person step in to verify before it answers. Open source, by Dimagi."
+>
+  <section class="hero">
+    <Mark class="hero-mark" />
+    <div class="wrap" style="position:relative">
+      <p class="eyebrow">Open source · by Dimagi</p>
+      <h1>The open source control plane for <em>agent oversight</em></h1>
+      <p class="lede">
+        Give an agent deep expertise, let people use it where they already work, and let a
+        person step in to verify before it answers. When they do, the fix improves the agent
+        itself, so the next person gets the better version too.
+      </p>
+      <div class="actions">
+        <button class="btn btn-primary" type="button" data-beta-open>Request access</button>
+        <a class="btn btn-ghost" href={GITHUB_URL}>View on GitHub</a>
+      </div>
+      <p class="beta-note">Canopy is in a closed beta. Already a member? <a href={SIGN_IN_URL} style="color:var(--on-dark)">Sign in</a>.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">The problem</p>
+        <h2>Most AI tools are built for one person and one chat</h2>
+        <p>
+          That covers the first steps of getting better with AI. Nearly everything that matters
+          to an organisation comes after: improving the AI itself, and then improving it together,
+          so a mistake one person fixes stays fixed for everyone.
+        </p>
+      </div>
+      <div class="ladder" role="list">
+        {rungs.map((label, i) => (
+          <div class={`rung${i >= 3 ? ' us' : ''}`} role="listitem">
+            <b>{i + 1}</b>
+            <span>{label}</span>
+          </div>
+        ))}
+      </div>
+      <div class="ladder-legend" aria-hidden="true"><span>Me and AI</span><span>Us and AI · where Canopy works</span></div>
+    </div>
+  </section>
+
+  <section class="section section-dark">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">How it fits together</p>
+        <h2>A control plane, the way CI or Kubernetes is one</h2>
+        <p>
+          Canopy decides what runs, when and where; runners execute it. Agents hand work to each
+          other through the same boards people use, so every handoff is visible and a person can
+          take it over.
+        </p>
+      </div>
+      <div class="stack">
+        {layers.map(([name, what]) => (
+          <div class="layer"><h3>{name}</h3><p>{what}</p></div>
+        ))}
+      </div>
+      <div class="bands">
+        <div class="band band-guard"><b>Guardrails &amp; verification</b><span>Hooks that make the wrong path impossible, and checks anchored outside the model’s own work.</span></div>
+        <div class="band band-loop"><b>The learning loop</b><span>People see each other’s sessions, and AI reviews those sessions to propose improvements to the system.</span></div>
+      </div>
+      <p class="stack-note">The bands are not layers: guardrails show up in the context, the harness, the runner and every interaction.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">What makes it different</p>
+        <h2>Oversight that teaches, and agents that keep the lesson</h2>
+      </div>
+      <div class="three">
+        <article class="card">
+          <h3>Multiplayer sessions</h3>
+          <p>
+            Several people and an agent in one live conversation. Each person has their own box,
+            every message shows who wrote it, and the agent’s steps stream to everyone. An expert
+            can watch and step in mid-task; others learn by watching.
+          </p>
+          <p class="fact">Embeddable in another application</p>
+        </article>
+        <article class="card">
+          <h3>Agents that improve as they run</h3>
+          <p>
+            A correction changes the agent’s skills and rules, not just one reply, and stays fixed
+            for every run after. Canopy shows each skill’s history, so the improvement is visible.
+          </p>
+          <p class="fact">ACE: 162 skills, 2,480 revisions · 2 Oct 2026</p>
+        </article>
+        <article class="card">
+          <h3>Hard limits live in code</h3>
+          <p>
+            A person sets each agent to manual or auto; the agent cannot change it. Rules are enforced
+            by hooks, each pinned by a test. Each agent has its own identity and secrets, and callers
+            are not trusted by default.
+          </p>
+          <p class="fact">Every rule came from something that went wrong</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-stone">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Who it’s for</p>
+        <h2>Built for everyone around the agent, not only its builder</h2>
+      </div>
+      <div class="people">
+        <div class="person">
+          <h3>Agent builders and reviewers</h3>
+          <p>Build the agents, write their skills and rules, review what they did, and approve the fixes.</p>
+        </div>
+        <div class="person">
+          <h3>People who ask for work</h3>
+          <p>Reach an agent by email, Slack, web chat or an application, with nothing to install.</p>
+        </div>
+        <div class="person">
+          <h3>Learners and viewers</h3>
+          <p>See how the person and the agent work together, and learn what you can do yourself.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap split">
+      <div>
+        <p class="eyebrow">What needs a person</p>
+        <h2 style="font-size:clamp(28px,3.6vw,38px);font-weight:600;margin-top:12px">Every decision that needs a person, in one place</h2>
+        <ul class="ticks">
+          <li>Agents bring proposals, not surprises: implement, skip or defer.</li>
+          <li>One review can roll a fix out to several agents at once.</li>
+          <li>A question waits for an answer before the agent acts.</li>
+          <li>It works on a phone, so the person is not the bottleneck.</li>
+        </ul>
+      </div>
+      <div>
+        <div class="inbox" aria-label="Illustration of the Supervisor inbox">
+          <div class="item">
+            <small>Review · from a session review</small>
+            <p>Block dry-run writes for every agent that has the tool</p>
+            <div class="acts"><span>Implement</span><span>Skip</span><span>Defer</span></div>
+          </div>
+          <div class="item">
+            <small>Question · waiting on you</small>
+            <p>Which funder contact should this draft go to?</p>
+            <div class="acts"><span>Answer</span></div>
+          </div>
+          <div class="item">
+            <small>Review · draft reply</small>
+            <p>Reply to the partner thread is ready to send</p>
+            <div class="acts"><span>Approve</span><span>Edit</span></div>
+          </div>
+        </div>
+        <p class="inbox-caption">An illustration of the Supervisor inbox, with example items.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-stone">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">In use at Dimagi</p>
+        <h2>A working fleet, honestly sized</h2>
+        <p>Canopy runs Dimagi’s own agents today: a handful of agents and a growing group of people, not yet the whole organisation.</p>
+      </div>
+      <div class="figures" id="live-figures" hidden>
+        <div class="figure"><b data-stat="agents">—</b><span>agents</span></div>
+        <div class="figure"><b data-stat="skills">—</b><span>skills</span></div>
+        <div class="figure"><b data-stat="turns_executed">—</b><span>turns run</span></div>
+        <div class="figure"><b data-stat="runners_online">—</b><span>runners online now</span></div>
+      </div>
+      <div class="fleet">
+        {fleet.map(([name, role]) => (
+          <span class="agent"><Mark class="brand-mark" /><b>{name}</b><span>{role}</span></span>
+        ))}
+      </div>
+      <p class="honest">Some of the agents in Dimagi’s fleet, October 2026. The figures above are live.</p>
+    </div>
+  </section>
+
+  <section class="cta">
+    <div class="wrap">
+      <h2>Help us build oversight that makes AI better for everyone</h2>
+      <p>Canopy is open source and in a closed beta. Read the code, or ask to try it.</p>
+      <div class="actions">
+        <button class="btn btn-primary" type="button" data-beta-open>Request access</button>
+        <a class="btn btn-ghost" href={GITHUB_URL}>View on GitHub</a>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<script>
+  // Live counts, because prose about a fleet goes stale within a month. The same
+  // anonymous aggregate the app's /about page reads; the section reads fine without it.
+  import { API_BASE } from '../site'
+
+  type Stats = Record<string, number>
+  const box = document.getElementById('live-figures')
+  fetch(`${API_BASE}/api/system/public-stats`)
+    .then((r) => (r.ok ? (r.json() as Promise<Stats>) : null))
+    .then((stats) => {
+      if (!stats || !box) return
+      box.querySelectorAll<HTMLElement>('[data-stat]').forEach((el) => {
+        const v = stats[el.dataset.stat ?? '']
+        if (typeof v === 'number') el.textContent = v.toLocaleString('en')
+      })
+      box.hidden = false
+    })
+    .catch(() => {})
+</script>

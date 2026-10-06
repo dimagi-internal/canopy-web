@@ -12,6 +12,7 @@ from django.http import JsonResponse
 from django.shortcuts import redirect
 
 from apps.common.script_prefix import self_full_path
+from config import public_site
 
 PUBLIC_PATH_PREFIXES = (
     "/accounts/",            # allauth login/logout/callback
@@ -87,6 +88,7 @@ PUBLIC_PATH_PREFIXES = (
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
     "/api/slack/",            # Slack webhooks — self-enforce via the Slack signing secret (apps/slack/views.py)
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
+    "/api/beta-requests",        # auth=None — the public site's closed-beta form; grants nothing
     # NOTE: "/about" is NOT here. Every other entry above ends in "/" (or is a
     # full path), so prefix-matching it is safe; "/about" alone would also
     # admit any future "/about-billing" or "/aboutus" route as a side effect.
@@ -232,6 +234,7 @@ class LoginRequiredMiddleware:
             request.user.is_authenticated
             or _is_public(request.path)
             or _is_about(request.path)
+            or public_site.is_public_path(request.path)
             or _is_walkthrough_link(request)
             or _is_review_link(request.path)
             or _is_share_link(request.path)

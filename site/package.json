@@ -1,0 +1,18 @@
+{
+  "name": "canopy-site",
+  "private": true,
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "description": "canopy.dimagi.com — the public product site. Static; served by canopy-web for now, liftable to its own host.",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "engines": {
+    "node": "^20.19.1 || >=22.12.0"
+  },
+  "dependencies": {
+    "astro": "6.4.8"
+  }
+}

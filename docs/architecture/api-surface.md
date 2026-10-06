@@ -470,6 +470,9 @@ Authoring: `python manage.py import_storyboard storyboard.yaml --workspace <slug
 
 Push needs BOTH keys: either one empty → the endpoints 503 (`_push_configured`) and sends are skipped. Gated on both deliberately — the endpoints once checked only the public key, so a public-key-only deployment accepted subscriptions and silently never sent. Also set `VAPID_SUBJECT` (a `mailto:` URL, rides as `vapid_claims.sub`).
 
+### Beta requests (`apps/beta_requests`) — the public site's closed-beta form
+- `POST /api/beta-requests` — anonymous (`auth=None`, allowlisted in `apps/common/middleware.py`). `{email, reason, website}`; `website` is a honeypot (answered `ok`, nothing kept). The row is written FIRST and the email to `CANOPY_BETA_REQUESTS_TO` (Reply-To the requester) is best-effort, its outcome kept in `notify_result` (`sent`/`not_configured`/`failed`/`skipped`), so an SES failure never loses a request. A repeat from the same address within 24h is kept but not re-mailed, 5 per client address per hour (counted from the table, so it holds across tasks), and the response is identical for a first request and a repeat so the form cannot be used to learn who has asked. Grants nothing and creates no user: deliberately not a `WorkspaceAccessRequest`, which needs an account and grants a membership. Read them in Django admin.
+
 ### System (`apps/system`)
 - `GET /api/system/overview` — Capability catalog: the canopy plugin's skills/agents/commands, read live from the plugin.
 - `GET /api/system/{kind}/{name}` — Capability detail for one skill/agent/command. Drives the `/system` Workflows view.
