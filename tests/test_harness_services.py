@@ -123,13 +123,13 @@ def test_local_only_never_claimed_by_cloud():
     assert services.claim_next_turn(r) is None
 
 
-def test_local_only_is_claimable_by_a_desktop_runner():
-    """A desktop runner (the Claude app's Code tab on a laptop) is a local box: a
-    local_only turn that an emdash runner could take, it can take too."""
+def test_the_session_runtime_does_not_change_routing():
+    """A laptop runner switched to the Claude desktop runtime is the same box to the
+    router: a local_only turn it could take on emdash, it can take on Claude desktop."""
     a = _agent()
     t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board",
                                  idempotency_key="k1", routing="local_only")
-    r = _runner(a, kind=Runner.DESKTOP)
+    r = _runner(a, engine=Runner.ENGINE_CLAUDE_DESKTOP)
     claimed = services.claim_next_turn(r)
     assert claimed is not None and claimed.pk == t.pk
 

@@ -52,6 +52,7 @@ from .schemas import (
     RunnerAdminIn,
     RunnerAdminOut,
     RunnerFlagsIn,
+    RunnerEngineIn,
     RunnerCredentialStatusOut,
     RunnerMintClaimOut,
     RunnerMintCodeIn,
@@ -834,6 +835,43 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
     # Per (caller, runner), as list_runners stamps them: RunnerOut defaults both
     # to True, so an unstamped reply would show an admin who is not the owner
     # controls that then 404.
+    out.can_manage = out.owner_id in (request.user.id, None)
+    out.can_administer = services.can_administer_runner(request.user, out)
+    return out
+
+
+@router.put("/runners/{runner_id}/engine", response=RunnerOut,
+            summary="Choose the session runtime a laptop runner opens new sessions in")
+def set_runner_engine(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerEngineIn):
+    """Set the runtime (`emdash` or `claude-desktop`) a laptop runner opens new
+    sessions in. Takes effect on the runner's next heartbeat; sessions already
+    running stay where they are."""
+    # canopy-web#1188. The runner reads `engine` off its heartbeat response, so a
+    # flip needs no restart and no shell on the box, and is safe while sessions are
+    # live: a thread already running in one runtime keeps its own session, and
+    # routing is the same either way. Owner or runner admins, like flags — it
+    # changes how the box works, not whose memberships it speaks with. A cloud
+    # runner has one runtime (Claude headless) and refuses rather than ignoring it.
+    runner = _runner_admin_or_404(request, runner_id)
+    if payload.engine not in dict(Runner.ENGINE_CHOICES):
+        raise HttpError(422, f"unknown runtime '{payload.engine}' — one of: "
+                             + ", ".join(dict(Runner.ENGINE_CHOICES)))
+    if runner.kind == Runner.CLOUD:
+        raise HttpError(422, "a cloud runner runs Claude headless; it has no session runtime to choose")
+    if runner.engine != payload.engine:
+        before = runner.engine
+        runner.engine = payload.engine
+        runner.save(update_fields=["engine"])
+        if runner.workspace_id:
+            from apps.events import services as events
+
+            events.record([{
+                "source": "harness.runners", "kind": "runner.engine_changed", "level": "info",
+                "summary": f"{request.user.email} switched {runner.name} from {before} to {payload.engine}",
+                "payload": {"runner": str(runner.pk), "from": before, "to": payload.engine,
+                            "by": request.user.email},
+            }], workspace=runner.workspace)
+    out = Runner.objects.prefetch_related("declared_flags").get(pk=runner.pk)
     out.can_manage = out.owner_id in (request.user.id, None)
     out.can_administer = services.can_administer_runner(request.user, out)
     return out

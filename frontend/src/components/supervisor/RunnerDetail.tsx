@@ -6,6 +6,7 @@ import { AgentRouting } from '@/components/agents/AgentRouting'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
 import { RunnerCredentials } from '@/components/supervisor/RunnerCredentials'
 import { RunnerAdmins } from '@/components/supervisor/RunnerAdmins'
+import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
 import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
 
@@ -185,6 +186,7 @@ export function RunnerDetail({
         {row('agents', (caps.agents ?? []).join(', ') || '—')}
         {row('projects', (caps.projects ?? []).join(', ') || '—')}
         {row('kind', runner.kind ?? '')}
+        {runner.kind !== 'cloud' && row('runtime', runner.engine === 'claude-desktop' ? 'Claude desktop' : 'emdash')}
         {row('owner', runner.owner_email ?? '—')}
         {/* host only matters for emdash (per-macOS-account session reuse); cloud
             runners report no host, so skip the empty row entirely. */}
@@ -205,6 +207,12 @@ export function RunnerDetail({
         onChanged={onChanged}
         agentWorkspace={agentWorkspace ?? ((slug) => agents?.find((a) => a.slug === slug)?.workspace ?? undefined)}
       />
+
+      {/* Session runtime (canopy-web#1188): emdash or the Claude desktop app. A
+          laptop runner's owner flips it here instead of in a shell on the box. */}
+      {(runner.can_administer || runner.can_manage) && runner.kind !== 'cloud' && onChanged && (
+        <RunnerEngine runner={runner} onChange={onChanged} />
+      )}
 
       {/* Pause — the one control this view offers on the runner itself, and the
           only way to park a box from a phone (the alternative is the local

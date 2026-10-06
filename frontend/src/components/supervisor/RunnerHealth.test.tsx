@@ -17,7 +17,7 @@ const { RunnerStatus } = await import('./RunnerStatus')
 
 function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
   return {
-    id: 'r1', name: 'cloud-ec2-1', kind: 'cloud', status: 'online', status_note: '',
+    id: 'r1', name: 'cloud-ec2-1', kind: 'cloud', engine: 'emdash', status: 'online', status_note: '',
     ready: true, ready_note: '', paused: false, paused_note: '', paused_at: null,
     last_heartbeat_at: '2026-09-22T12:00:00Z', capabilities: {}, host: '',
     code_branch: '', code_version: '', code_sha: '', expected_code_sha: '',

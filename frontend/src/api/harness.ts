@@ -59,6 +59,18 @@ export async function unpauseRunner(runnerId: string): Promise<RunnerOut> {
   return toRunner(unwrap(res, 'unpauseRunner'))
 }
 
+// The session runtime a laptop runner opens NEW sessions in (canopy-web#1188).
+// The runner picks it up off its next heartbeat; live sessions stay where they are.
+export type RunnerEngine = 'emdash' | 'claude-desktop'
+
+export async function setRunnerEngine(runnerId: string, engine: RunnerEngine): Promise<RunnerOut> {
+  const res = await apiV2.PUT('/api/harness/runners/{runner_id}/engine', {
+    params: { path: { runner_id: runnerId } },
+    body: { engine },
+  })
+  return toRunner(unwrap(res, 'setRunnerEngine'))
+}
+
 // Ask a box to refresh itself (re-run its bootstrap: plugins, the canopy CLI,
 // Claude Code, agent provisioning) at its next idle moment. Durable: the box
 // reads `refresh_pending` off its own heartbeat, so this survives a dropped
