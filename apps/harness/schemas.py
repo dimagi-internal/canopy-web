@@ -48,7 +48,7 @@ def normalize_origin(value: str) -> str:
 
 class RunnerIn(Schema):
     name: str
-    kind: str  # emdash|cloud|remote
+    kind: str  # emdash|cloud|remote|desktop
     capabilities: dict = {}
     host: str = ""  # macOS user@hostname — load-bearing for session reuse across accounts
     workspace: str = ""  # tenant slug; defaults to the owner's default workspace
