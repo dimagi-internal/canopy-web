@@ -32,6 +32,7 @@ const NOT_DOCUMENTABLE = new Set([
   '/w/:workspace/settings/runners',
   '/w/:workspace/settings/agent-access',
   '/',
+  '/app', // the server-loadable door into the app; redirects to the default workspace
   '/timeline',
   '/shareouts/*',
   '/walkthroughs',

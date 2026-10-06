@@ -331,6 +331,10 @@ export const routeTable: RouteObject[] = [
 
       // --- Legacy flat paths → active workspace (or new viewer) ---
       { path: '/', element: <RootRedirect /> },
+      // The public site owns a full page load of `/` (config/public_site.py); `/app`
+      // is the server-loadable door into the app — the site's Sign in, and where a
+      // login with no `next` lands.
+      { path: '/app', element: <RootRedirect /> },
       { path: '/timeline', element: <TenantRedirect to="timeline" /> },
       { path: '/shareouts/*', element: <TenantRedirect to="shareouts" /> },
       { path: '/walkthroughs', element: <TenantRedirect to="walkthroughs" /> },
