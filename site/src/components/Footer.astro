@@ -1,18 +1,48 @@
 ---
-import { GITHUB_URL, LICENSE_URL, SIGN_IN_URL } from '../site'
+// The shared Dimagi product-site footer (open-chat-studio-prelogin's Footer.astro).
+import Logo from './Logo.astro'
+import { GITHUB_URL, LICENSE_URL, PRIVACY_POLICY_URL, SIGN_IN_URL, TERMS_URL } from '../site'
+
+// Rendered at build time, so the year is baked in; every merge rebuilds.
+const year = new Date().getFullYear()
 ---
-<footer class="site-footer">
-  <div class="wrap">
-    <div class="foot-by">
-      <strong>canopy</strong>
-      <span>An open source control plane for agents, built by <a href="https://dimagi.com">Dimagi</a>.</span>
-      <span>© {new Date().getFullYear()} Dimagi Inc. Released under the <a href={LICENSE_URL}>BSD 3-Clause License</a>.</span>
+<footer>
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <Logo />
+        <p>The open source control plane for agents.</p>
+      </div>
+      <div class="footer-col">
+        <h2>Canopy</h2>
+        <ul>
+          <li><a href="/">Overview</a></li>
+          <li><a href="/how-it-works">How it works</a></li>
+          <li><a href={SIGN_IN_URL}>Sign In</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h2>Open source</h2>
+        <ul>
+          <li><a href={GITHUB_URL} target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href={LICENSE_URL} target="_blank" rel="noopener">BSD 3-Clause License</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h2>Dimagi</h2>
+        <ul>
+          <li><a href="https://dimagi.com/" target="_blank" rel="noopener">About Dimagi</a></li>
+          <li><a href="https://dimagi.com/blog/" target="_blank" rel="noopener">Blog</a></li>
+          <li><a href="https://www.dimagi.com/podcast/" target="_blank" rel="noopener">Podcast</a></li>
+        </ul>
+      </div>
     </div>
-    <nav class="foot-links" aria-label="Footer">
-      <a href="/how-it-works">How it works</a>
-      <a href={GITHUB_URL}>GitHub</a>
-      <a href={SIGN_IN_URL}>Sign in</a>
-      <a href="https://dimagi.com">dimagi.com</a>
-    </nav>
+    <div class="footer-bottom">
+      <span>&copy; {year} DIMAGI, INC.</span>
+      <span style="display:flex;gap:24px;flex-wrap:wrap;">
+        <a href={PRIVACY_POLICY_URL} target="_blank" rel="noopener">PRIVACY</a>
+        <a href={TERMS_URL} target="_blank" rel="noopener">TERMS</a>
+      </span>
+    </div>
   </div>
 </footer>

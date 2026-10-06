@@ -6,7 +6,7 @@ import { API_BASE } from '../site'
 <dialog class="beta" id="beta-dialog" aria-labelledby="beta-title" data-api={API_BASE}>
   <button class="beta-close" type="button" data-beta-close aria-label="Close">×</button>
   <div class="beta-body" data-state="form">
-    <h2 id="beta-title">Canopy is currently in closed access for Dimagi and its partners.</h2>
+    <h2 id="beta-title">Canopy is currently in <em>closed access</em> for Dimagi and its partners.</h2>
     <p>Enter your email to request access.</p>
     <form novalidate>
       <label>
@@ -22,16 +22,16 @@ import { API_BASE } from '../site'
       </div>
       <p class="error" role="alert" hidden></p>
       <div class="row">
-        <button class="btn btn-outline" type="button" data-beta-close>Cancel</button>
-        <button class="btn btn-dark" type="submit">Request access</button>
+        <button class="btn btn-ghost" type="button" data-beta-close>Cancel</button>
+        <button class="btn btn-primary" type="submit">Request access</button>
       </div>
     </form>
   </div>
   <div class="beta-body done" data-state="done" hidden>
-    <h2>Thanks, your request is in.</h2>
+    <h2>Thanks, your request <em>is in</em>.</h2>
     <p>We will be in touch by email.</p>
     <div class="row" style="margin-top:22px">
-      <button class="btn btn-dark" type="button" data-beta-close>Close</button>
+      <button class="btn btn-primary" type="button" data-beta-close>Close</button>
     </div>
   </div>
 </dialog>

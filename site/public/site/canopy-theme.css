@@ -1,0 +1,118 @@
+/* ============================================================
+   Canopy — theme over the shared Dimagi product-site stylesheet
+   (styles.css, vendored unchanged). Same role as Open Chat
+   Studio's ocs-theme.css: load AFTER styles.css and the page's
+   own inline <style>, and change colour, never type or spacing,
+   so canopy keeps the scale and rhythm every Dimagi site shares.
+
+   Palette (from assets/brand, the mark's greens):
+   - Canopy green  #1F6B4A  nav, footer, accents, <em> on light
+   - Leaf          #3FA374  the mark; hover and highlight
+   - Pale leaf     #E6F3EC  hero and tinted surfaces
+   - Ink           #180F60  inherited from styles.css: the Dimagi
+                            navy every product site keeps
+   ============================================================ */
+
+:root {
+  --indigo: #1F6B4A;
+  --indigo-deep: #154A33;
+  --indigo-soft: #E6F3EC;
+  --indigo-300: #3FA374;
+  --indigo-400: #1F6B4A;
+  --indigo-500: #1F6B4A;
+  --indigo-600: #154A33;
+  --sky: #8FDDB2;
+  --sky-tint: #EEF7F2;
+  --paper-cool: #EEF7F2;
+
+  --canopy-green: #1F6B4A;
+  --canopy-leaf: #3FA374;
+  --canopy-pale: #E6F3EC;
+
+  /* Solid emphasis, not a gradient (the Dimagi brand guide's 2026 rule). */
+  --grad-text: linear-gradient(90deg, #1F6B4A 0%, #1F6B4A 100%);
+  --grad-text-on-dark: linear-gradient(90deg, #8FDDB2 0%, #8FDDB2 100%);
+  --grad: linear-gradient(135deg, #154A33 0%, #1F6B4A 55%, #3FA374 100%);
+  --grad-deep: linear-gradient(135deg, #07231A 0%, #0E3526 55%, #180F60 100%);
+}
+
+/* ── Chrome: nav bar and footer in the product colour ───────── */
+.nav-wrap { background: var(--canopy-green); }
+footer { background: var(--canopy-green); }
+.nav-wrap .btn-primary { background: #fff; color: var(--canopy-green); }
+.nav-wrap .btn-primary:hover { background: var(--canopy-pale); color: var(--indigo-deep); }
+@media (max-width: 980px) {
+  .nav-links { background: var(--canopy-green) !important; }
+  /* Ported from SureAdhere's newer copy of the shared sheet (sureadhere.dimagi.com
+     assets/styles.css): keep the logo full-size and move the CTAs out of the cramped
+     bar into the open menu. The OCS copy vendored here predates this fix. */
+  nav.primary { flex-wrap: wrap; height: auto; min-height: 76px; }
+  .logo { flex-shrink: 0; }
+  .nav-cta {
+    order: 3; flex-basis: 100%; display: none;
+    flex-direction: column; align-items: stretch; gap: 10px; padding: 4px 0 16px;
+  }
+  .nav-cta.is-open { display: flex; }
+  .nav-cta .btn { width: 100%; justify-content: center; }
+}
+
+@media (min-width: 981px) {
+  .footer-grid { grid-template-columns: 1.4fr repeat(3, 1fr); }
+}
+
+/* The mark + wordmark, drawn in white on the bar (no raster logo). */
+.logo .logo-mark-svg { width: 38px; height: auto; color: #fff; }
+.logo .logo-word { display: flex; flex-direction: column; line-height: 1; }
+.logo .logo-name { font-size: 21px; font-weight: 600; letter-spacing: -0.02em; color: #fff; }
+.logo .logo-by { font-size: 10px; font-weight: 500; letter-spacing: 0.04em; color: rgba(255,255,255,0.72); margin-top: 3px; }
+.footer-brand .logo .logo-mark-svg { width: 44px; }
+
+/* ── Buttons: the teal hovers in styles.css become canopy green ─ */
+.btn-primary:hover, .btn-on-dark:hover { background: var(--canopy-green); color: #fff; }
+
+/* ── Hero: pale leaf with soft glows, like the sibling heroes ── */
+.hero {
+  background:
+    radial-gradient(800px 380px at 100% 0%, rgba(63,163,116,0.22), transparent 65%),
+    radial-gradient(700px 320px at 0% 100%, rgba(31,107,74,0.10), transparent 65%),
+    var(--canopy-pale);
+}
+.hero::before, .hero::after { display: none; }
+
+/* ── Dark sections: green glows instead of teal ─────────────── */
+.section.dark::before {
+  background:
+    radial-gradient(50% 80% at 100% 50%, rgba(63,163,116,0.32), transparent 65%),
+    radial-gradient(40% 70% at 0% 50%, rgba(143,221,178,0.12), transparent 70%);
+}
+.eyebrow.on-dark { color: rgba(143,221,178,0.9); }
+.eyebrow.on-dark::before { background: rgba(143,221,178,0.75); }
+
+/* ── Request-access dialog, in the system's tokens ──────────── */
+dialog.beta {
+  width: min(520px, calc(100vw - 32px)); padding: 0; border: none;
+  border-radius: var(--radius-lg); background: var(--paper-2); color: var(--ink);
+  box-shadow: 0 30px 80px -20px rgba(10, 6, 32, 0.45);
+}
+dialog.beta::backdrop { background: rgba(10, 6, 32, 0.55); }
+.beta-body { padding: 36px; }
+.beta-body h2 { font-size: 28px; font-weight: 300; line-height: 1.15; padding-right: 32px; }
+.beta-body > p { margin: 10px 0 0; color: var(--muted); }
+.beta form { display: grid; gap: 16px; margin-top: 24px; }
+.beta label { display: grid; gap: 6px; font-weight: 500; font-size: 14px; color: var(--ink); }
+.beta input, .beta textarea {
+  font: 400 16px/1.5 var(--sans); color: var(--ink); background: #fff;
+  border: 1px solid var(--rule); border-radius: var(--radius-sm); padding: 11px 13px; width: 100%;
+}
+.beta input:focus, .beta textarea:focus { outline: 2px solid var(--canopy-leaf); outline-offset: 1px; border-color: transparent; }
+.beta textarea { min-height: 120px; resize: vertical; }
+.beta .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+.beta .row { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 4px; }
+.beta .error { color: #B3261E; font-size: 14px; margin: 0; }
+.beta .done h2 em { font-weight: 600; }
+.beta-close {
+  position: absolute; top: 14px; right: 14px; width: 36px; height: 36px; border-radius: 50%;
+  border: none; background: transparent; color: var(--muted); font-size: 22px; cursor: pointer;
+}
+.beta-close:hover { background: var(--paper-warm); }
+[hidden] { display: none !important; }

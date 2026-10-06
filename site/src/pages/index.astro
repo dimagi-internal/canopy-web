@@ -5,8 +5,12 @@
 // and manual-mode approval is procedure rather than a code-enforced pop-up.
 // No fleet roster, live counts or figures from Dimagi's own agents, on purpose:
 // the page describes the product, not who at Dimagi runs it.
+//
+// Built on the shared Dimagi product-site system (public/site/styles.css, the
+// same sheet as Connect, SureAdhere and Open Chat Studio): its .hero, .section,
+// .section-head, .eyebrow, .btn and type scale. The few layouts the system has no
+// class for live in the inline <style> below and use only its tokens.
 import Base from '../layouts/Base.astro'
-import Mark from '../components/Mark.astro'
 import { GITHUB_URL, SIGN_IN_URL } from '../site'
 
 const rungs = [
@@ -31,37 +35,142 @@ const layers = [
   ['Runner', 'Where the harness executes: someone’s laptop, or a cloud machine.'],
   ['Interactions', 'Email, Slack, web chat, and the applications people already use.'],
 ]
-
 ---
 <Base
-  title="Canopy — the open source control plane for agents"
+  title="Canopy by Dimagi: the open source control plane for agents"
   description="Give an agent deep expertise, let people use it, and let a person step in to verify before it answers. Open source, by Dimagi."
+  activeNav="home"
 >
-  <section class="hero">
-    <Mark class="hero-mark" />
-    <div class="wrap" style="position:relative">
-      <p class="eyebrow">Open source · by Dimagi</p>
-      <h1>The open source control plane for <em>agents</em></h1>
-      <p class="lede">
-        Give an agent deep expertise, let people use it where they already work, and let a
-        person step in to verify before it answers.
-      </p>
-      <div class="actions">
-        <button class="btn btn-primary" type="button" data-beta-open>Request access</button>
-        <a class="btn btn-ghost" href={GITHUB_URL}>View on GitHub</a>
+  <style is:inline slot="head">
+  .hero-canopy .hero-ctas { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .hero-note { margin: 22px 0 0; font-size: 14px; color: var(--muted); }
+  .hero-note a { color: var(--indigo); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
+
+  /* The Supervisor inbox, drawn as the hero's product visual. */
+  .inbox { background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px; display: grid; gap: 10px; box-shadow: 0 24px 64px -24px rgba(10,6,32,0.28); }
+  .inbox-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
+  .inbox-head span { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--muted); letter-spacing: 0.06em; }
+  .inbox-item { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; background: var(--paper); }
+  .inbox-item small { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-soft); }
+  .inbox-item p { margin: 6px 0 0; font-size: 15px; font-weight: 500; color: var(--ink); line-height: 1.4; }
+  .inbox-acts { display: flex; gap: 6px; margin-top: 12px; }
+  .inbox-acts span { font-size: 12.5px; font-weight: 500; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink); }
+  .inbox-acts span:first-child { background: var(--indigo); border-color: var(--indigo); color: #fff; }
+  .inbox-caption { margin: 12px 0 0; font-size: 13px; color: var(--muted); text-align: center; }
+
+  .section-head--center { max-width: 760px; margin: 0 auto 64px; text-align: center; }
+  .section-head--center .section-lede { margin: 0 auto; }
+
+  /* The six-step ladder. */
+  .ladder { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; align-items: end; }
+  .rung { background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius) var(--radius) 6px 6px; padding: 20px; display: flex; flex-direction: column; gap: 8px; }
+  .rung b { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--muted-soft); }
+  .rung span { font-size: 15px; font-weight: 500; line-height: 1.35; color: var(--ink); }
+  .rung.us { background: var(--indigo); border-color: var(--indigo); }
+  .rung.us b { color: rgba(255,255,255,0.7); }
+  .rung.us span { color: #fff; }
+  .rung:nth-child(1) { min-height: 150px; } .rung:nth-child(2) { min-height: 180px; }
+  .rung:nth-child(3) { min-height: 210px; } .rung:nth-child(4) { min-height: 240px; }
+  .rung:nth-child(5) { min-height: 270px; } .rung:nth-child(6) { min-height: 300px; }
+  .ladder-legend { display: grid; grid-template-columns: 1fr 1fr; margin-top: 16px; font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+  .ladder-legend span:last-child { text-align: right; color: var(--indigo); }
+
+  /* Cards on the dark section. */
+  .tiles { display: grid; gap: 16px; }
+  .tiles-3 { grid-template-columns: repeat(3, 1fr); }
+  .tiles-5 { grid-template-columns: repeat(5, 1fr); margin-top: 32px; }
+  .tile { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: var(--radius); padding: 26px; }
+  .tile h3 { color: #fff; font-size: 21px; font-weight: 400; }
+  .tile p { margin: 10px 0 0; color: rgba(255,255,255,0.70); font-size: 15px; line-height: 1.55; }
+  .dark-note { margin: 56px 0 0; max-width: 760px; color: rgba(255,255,255,0.70); font-size: 17px; }
+  .bands { display: grid; gap: 12px; margin-top: 16px; }
+  .band { display: grid; grid-template-columns: 280px 1fr; gap: 24px; align-items: center; border-radius: var(--radius); padding: 20px 26px; }
+  .band b { font-weight: 500; font-size: 17px; }
+  .band span { font-size: 15px; line-height: 1.5; }
+  .band-guard { background: var(--canopy-leaf); color: #fff; }
+  .band-loop { background: rgba(255,255,255,0.92); color: var(--ink); }
+
+  /* Light cards. */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .card { background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 36px; display: flex; flex-direction: column; gap: 14px; }
+  .card h3 { font-size: 24px; font-weight: 400; }
+  .card p { margin: 0; color: var(--muted); font-size: 16px; line-height: 1.6; }
+  .card .card-fact { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--line); font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--indigo); }
+
+  .people { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+  .person { border-top: 2px solid var(--indigo); padding-top: 24px; }
+  .person b { font-family: var(--mono); font-size: 12px; color: var(--indigo); }
+  .person h3 { margin-top: 12px; font-size: 24px; font-weight: 400; }
+  .person p { margin: 10px 0 0; color: var(--muted); font-size: 16px; }
+
+  .points { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px 48px; max-width: 920px; margin: 0 auto; list-style: none; padding: 0; }
+  .points li { position: relative; padding-left: 34px; font-size: 18px; color: var(--ink); line-height: 1.5; }
+  .points li::before { content: ''; position: absolute; left: 2px; top: 0.45em; width: 14px; height: 8px; border-left: 2px solid var(--indigo); border-bottom: 2px solid var(--indigo); transform: rotate(-45deg); }
+
+  @media (max-width: 980px) {
+    .ladder { grid-template-columns: 1fr 1fr; align-items: stretch; }
+    .rung { min-height: 0 !important; border-radius: var(--radius); }
+    .ladder-legend { display: none; }
+    .tiles-3, .tiles-5, .cards, .people { grid-template-columns: 1fr 1fr; }
+    .band { grid-template-columns: 1fr; gap: 4px; }
+    .points { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 600px) {
+    .section { padding: 72px 0; }
+    .tiles-3, .tiles-5, .cards, .people { grid-template-columns: 1fr; }
+    .card { padding: 28px; }
+  }
+  </style>
+
+  <section class="hero hero-canopy">
+    <div class="container">
+      <div class="hero-grid">
+        <div>
+          <span class="eyebrow">Canopy by Dimagi</span>
+          <h1 class="hero-title">The open source control plane for <em>agents</em></h1>
+          <p class="hero-sub">
+            Give an agent deep expertise, let people use it where they already work, and let a
+            person step in to verify before it answers.
+          </p>
+          <div class="hero-ctas">
+            <button class="btn btn-primary btn-arrow" type="button" data-beta-open>Request access</button>
+            <a class="btn btn-ghost" href={GITHUB_URL}>View on GitHub</a>
+          </div>
+          <p class="hero-note">Access is currently closed to Dimagi and its partners. Already have access? <a href={SIGN_IN_URL}>Sign in</a>.</p>
+        </div>
+        <div>
+          <div class="inbox" aria-label="Illustration of the Supervisor inbox">
+            <div class="inbox-head">Waiting on you <span>3 items</span></div>
+            <div class="inbox-item">
+              <small>Review · from a session review</small>
+              <p>Block dry-run writes for every agent that has the tool</p>
+              <div class="inbox-acts"><span>Implement</span><span>Skip</span><span>Defer</span></div>
+            </div>
+            <div class="inbox-item">
+              <small>Question · waiting on you</small>
+              <p>Which funder contact should this draft go to?</p>
+              <div class="inbox-acts"><span>Answer</span></div>
+            </div>
+            <div class="inbox-item">
+              <small>Review · draft reply</small>
+              <p>Reply to the partner thread is ready to send</p>
+              <div class="inbox-acts"><span>Approve</span><span>Edit</span></div>
+            </div>
+          </div>
+          <p class="inbox-caption">An illustration of the Supervisor inbox, with example items.</p>
+        </div>
       </div>
-      <p class="beta-note">Access is currently closed to Dimagi and its partners. Already have access? <a href={SIGN_IN_URL} style="color:var(--on-dark)">Sign in</a>.</p>
     </div>
   </section>
 
   <section class="section">
-    <div class="wrap">
-      <div class="section-head">
-        <p class="eyebrow">The problem</p>
-        <h2>Most AI tools are built for one person and one chat</h2>
-        <p>
+    <div class="container">
+      <div class="section-head section-head--center">
+        <span class="eyebrow">The problem</span>
+        <h2 class="section-title">Most AI tools are built for <em>one person and one chat</em></h2>
+        <p class="section-lede">
           That covers the first steps of getting better with AI. Nearly everything that matters
-          to an organisation comes after: improving the AI itself, and then improving it together,
+          to an organization comes after: improving the AI itself, and then improving it together,
           so an improvement one person makes is available to everyone.
         </p>
       </div>
@@ -77,43 +186,43 @@ const layers = [
     </div>
   </section>
 
-  <section class="section section-dark">
-    <div class="wrap">
+  <section class="section dark">
+    <div class="container">
       <div class="section-head">
-        <p class="eyebrow">How it fits together</p>
-        <h2>You ask in Slack. It works in your Drive. Your supervisor can watch over its shoulder.</h2>
-        <p>Canopy meets each person where they already work.</p>
+        <span class="eyebrow on-dark">How it fits together</span>
+        <h2 class="section-title">You ask in Slack. It works in your Drive. <em>Your supervisor can watch over its shoulder.</em></h2>
+        <p class="section-lede">Canopy meets each person where they already work.</p>
       </div>
-      <div class="three">
+      <div class="tiles tiles-3">
         {roles.map(([name, what]) => (
-          <div class="layer"><h3>{name}</h3><p>{what}</p></div>
+          <div class="tile"><h3>{name}</h3><p>{what}</p></div>
         ))}
       </div>
-      <p class="stack-note">
+      <p class="dark-note">
         Underneath, Canopy is a control plane, the way CI or Kubernetes is one: it decides what
         runs, when and where, and runners execute it. Agents hand work to each other through the
         same boards people use, so every handoff is visible and a person can take it over.
       </p>
-      <div class="stack">
+      <div class="tiles tiles-5">
         {layers.map(([name, what]) => (
-          <div class="layer"><h3>{name}</h3><p>{what}</p></div>
+          <div class="tile"><h3>{name}</h3><p>{what}</p></div>
         ))}
       </div>
       <div class="bands">
         <div class="band band-guard"><b>Guardrails &amp; verification</b><span>Hooks that make the wrong path impossible, and checks anchored outside the model’s own work.</span></div>
         <div class="band band-loop"><b>The learning loop</b><span>People see each other’s sessions, and AI reviews those sessions to propose improvements to the system.</span></div>
       </div>
-      <p class="stack-note">The bands are not layers: guardrails show up in the context, the harness, the runner and every interaction.</p>
+      <p class="dark-note">The bands are not layers: guardrails show up in the context, the harness, the runner and every interaction.</p>
     </div>
   </section>
 
   <section class="section">
-    <div class="wrap">
-      <div class="section-head">
-        <p class="eyebrow">What makes it different</p>
-        <h2>Oversight that teaches, and agents that keep the lesson</h2>
+    <div class="container">
+      <div class="section-head section-head--center">
+        <span class="eyebrow">What makes it different</span>
+        <h2 class="section-title">Oversight that teaches, and <em>agents that keep the lesson</em></h2>
       </div>
-      <div class="three">
+      <div class="cards">
         <article class="card">
           <h3>Multiplayer sessions</h3>
           <p>
@@ -121,7 +230,7 @@ const layers = [
             every message shows who wrote it, and the agent’s steps stream to everyone. An expert
             can watch and step in mid-task; others learn by watching.
           </p>
-          <p class="fact">Embeddable in another application</p>
+          <p class="card-fact">Embeddable in another application</p>
         </article>
         <article class="card">
           <h3>Agents that improve as they run</h3>
@@ -129,7 +238,7 @@ const layers = [
             An improvement changes the agent’s skills and rules, not just one reply, and is there
             for every run after. Canopy shows each skill’s history, so the improvement is visible.
           </p>
-          <p class="fact">Every skill’s history, replayable</p>
+          <p class="card-fact">Every skill’s history, replayable</p>
         </article>
         <article class="card">
           <h3>Hard limits live in code</h3>
@@ -138,28 +247,31 @@ const layers = [
             by hooks, each pinned by a test. Each agent has its own identity and secrets, and callers
             are not trusted by default.
           </p>
-          <p class="fact">Every rule came from something that went wrong</p>
+          <p class="card-fact">Confined agents are given only what they need</p>
         </article>
       </div>
     </div>
   </section>
 
-  <section class="section section-stone">
-    <div class="wrap">
-      <div class="section-head">
-        <p class="eyebrow">Who it’s for</p>
-        <h2>Built for everyone around the agent, not only its builder</h2>
+  <section class="section warm">
+    <div class="container">
+      <div class="section-head section-head--center">
+        <span class="eyebrow">Who it’s for</span>
+        <h2 class="section-title">Built for everyone around the agent, <em>not only its builder</em></h2>
       </div>
       <div class="people">
         <div class="person">
+          <b>01</b>
           <h3>Agent builders and reviewers</h3>
           <p>Build the agents, write their skills and rules, review what they did, and approve the fixes.</p>
         </div>
         <div class="person">
+          <b>02</b>
           <h3>People who ask for work</h3>
           <p>Reach an agent by email, Slack, web chat or an application, with nothing to install.</p>
         </div>
         <div class="person">
+          <b>03</b>
           <h3>Learners and viewers</h3>
           <p>See how the person and the agent work together, and learn what you can do yourself.</p>
         </div>
@@ -168,39 +280,17 @@ const layers = [
   </section>
 
   <section class="section">
-    <div class="wrap split">
-      <div>
-        <p class="eyebrow">What needs a person</p>
-        <h2 style="font-size:clamp(28px,3.6vw,38px);font-weight:600;margin-top:12px">Every decision that needs a person, in one place</h2>
-        <ul class="ticks">
-          <li>Agents bring proposals, not surprises: implement, skip or defer.</li>
-          <li>One review can roll a fix out to several agents at once.</li>
-          <li>A question waits for an answer before the agent acts.</li>
-          <li>It works on a phone, so the person is not the bottleneck.</li>
-        </ul>
+    <div class="container">
+      <div class="section-head section-head--center">
+        <span class="eyebrow">What needs a person</span>
+        <h2 class="section-title">Every decision that needs a person, <em>in one place</em></h2>
       </div>
-      <div>
-        <div class="inbox" aria-label="Illustration of the Supervisor inbox">
-          <div class="item">
-            <small>Review · from a session review</small>
-            <p>Block dry-run writes for every agent that has the tool</p>
-            <div class="acts"><span>Implement</span><span>Skip</span><span>Defer</span></div>
-          </div>
-          <div class="item">
-            <small>Question · waiting on you</small>
-            <p>Which funder contact should this draft go to?</p>
-            <div class="acts"><span>Answer</span></div>
-          </div>
-          <div class="item">
-            <small>Review · draft reply</small>
-            <p>Reply to the partner thread is ready to send</p>
-            <div class="acts"><span>Approve</span><span>Edit</span></div>
-          </div>
-        </div>
-        <p class="inbox-caption">An illustration of the Supervisor inbox, with example items.</p>
-      </div>
+      <ul class="points">
+        <li>Agents bring proposals, not surprises: implement, skip or defer.</li>
+        <li>One review can roll a fix out to several agents at once.</li>
+        <li>A question waits for an answer before the agent acts.</li>
+        <li>It works on a phone, so the person is not the bottleneck.</li>
+      </ul>
     </div>
   </section>
-
 </Base>
-
