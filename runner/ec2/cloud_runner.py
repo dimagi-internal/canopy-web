@@ -2392,6 +2392,16 @@ def ensure_updater_clone() -> bool:
     the `updater_clone` check, so a box that cannot update says so."""
     repo = pathlib.Path(CANOPY_WEB_REPO_DIR)
     if (repo / ".git").is_dir():
+        # Move origin/main, which is what the shim runs. The updater fetches the
+        # deployed commit BY SHA, which never moves origin/main, so a box kept
+        # running whatever update_runner.sh main held when it was last fetched by
+        # name — cloud-ec2-2 ran 2026-10-05's for a day, missing #1231. The runner
+        # restarts on every update, so this keeps the updater current too.
+        try:
+            subprocess.run(["git", "-C", str(repo), "fetch", "--quiet", "origin", "main"],
+                           check=True, timeout=120, capture_output=True)
+        except Exception as exc:  # noqa: BLE001 — a stale updater beats no runner
+            _log(f"warn: could not refresh origin/main in {repo}: {exc}")
         _set_check("updater_clone", "ok", f"{repo}")
         return True
     if repo.exists() and any(repo.iterdir()):

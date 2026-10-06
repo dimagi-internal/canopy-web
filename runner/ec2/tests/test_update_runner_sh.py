@@ -353,6 +353,23 @@ def test_an_override_that_is_not_https_is_ignored(box):
     assert "https://labs.example/canopy/api/harness/runners/" in box.curl_log.read_text()
 
 
+def test_every_run_moves_origin_main_so_the_shim_runs_the_newest_updater(box):
+    # fetch_commit fetches the deployed commit BY SHA, which leaves origin/main
+    # where it was — and origin/main is what the shim runs. cloud-ec2-2 ran a
+    # day-old updater because of it (2026-10-06).
+    upstream = box.root / "upstream"
+    subprocess.run(["git", "clone", "-q", str(box.repo), str(upstream)], check=True)
+    _git(upstream, "checkout", "-q", "-B", "main")  # CI's git may default to master
+    _git(box.repo, "remote", "add", "origin", str(upstream))
+    _git(box.repo, "fetch", "-q", "origin")
+    (upstream / "marker").write_text("new\n")
+    _git(upstream, "add", "-A")
+    _git(upstream, "commit", "-q", "-m", "newer main")
+    newest = _git(upstream, "rev-parse", "HEAD")
+    box.run()
+    assert _git(box.repo, "rev-parse", "origin/main") == newest
+
+
 # --- the updater itself ships by deploy -------------------------------------
 #
 # The shim reads update_runner.sh from the clone's origin/main WITHOUT fetching;
