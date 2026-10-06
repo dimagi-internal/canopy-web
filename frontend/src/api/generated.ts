@@ -1095,6 +1095,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/beta-requests": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Request access to the closed beta (anonymous)
+         * @description Ask to join canopy's closed beta.
+         *
+         *     Records the request and notifies the team that runs the beta, who reply by
+         *     email. Granting access is a separate, ordinary workspace invite.
+         */
+        readonly post: operations["submit_beta_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/embed/agents": {
         readonly parameters: {
             readonly query?: never;
@@ -8087,6 +8110,26 @@ export interface components {
             readonly storyboard_title: string;
             /** Capability */
             readonly capability: string;
+        };
+        /** BetaRequestOut */
+        readonly BetaRequestOut: {
+            /** Ok */
+            readonly ok: boolean;
+        };
+        /** BetaRequestIn */
+        readonly BetaRequestIn: {
+            /**
+             * Email
+             * Format: email
+             */
+            readonly email: string;
+            /** Reason */
+            readonly reason: string;
+            /**
+             * Website
+             * @default
+             */
+            readonly website: string;
         };
         /**
          * EmbedAgentOut
@@ -17243,6 +17286,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["NarrativeReadOut"];
+                };
+            };
+        };
+    };
+    readonly submit_beta_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BetaRequestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BetaRequestOut"];
                 };
             };
         };

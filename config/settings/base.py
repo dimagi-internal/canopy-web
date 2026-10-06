@@ -101,6 +101,7 @@ INSTALLED_APPS = [
     "apps.harness",
     "apps.feedback",
     "apps.storyboards",
+    "apps.beta_requests",
     "apps.realtime",
     "apps.canopy_sessions",
     "apps.events",
@@ -123,7 +124,7 @@ MIDDLEWARE = [
     "apps.common.legacy_prefix.LegacyPrefixMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "config.static_middleware.CanopyWhiteNoiseMiddleware",  # WhiteNoise, minus `/` (see module)
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -220,6 +221,9 @@ WHITENOISE_ADD_HEADERS_FUNCTION = add_cache_headers
 
 # Frontend SPA build output (served by catch-all view; WhiteNoise handles assets)
 FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
+
+# The public product site (site/, Astro) — see config/public_site.py.
+SITE_DIST_DIR = BASE_DIR / "site" / "dist"
 
 # --- Dogfooding the embedded widget inside canopy-web itself ----------------
 # The name of a registered AppCredential whose agents canopy-web offers on its
@@ -571,6 +575,9 @@ elif DEBUG:
 else:
     EMAIL_BACKEND = "apps.common.email.NotConfiguredEmailBackend"
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Canopy <noreply@localhost>")
+# Who reads closed-beta requests from the public site's sign-up form
+# (apps/beta_requests). Empty = record them without mailing anyone.
+CANOPY_BETA_REQUESTS_TO = env("CANOPY_BETA_REQUESTS_TO", default="jjackson@dimagi.com")
 # Django mails ADMINS on every unhandled 500 once a real backend is live;
 # connect-labs learned that the hard way (a message every two minutes into
 # DeliveryDelay on a fresh domain). Errors go to CloudWatch; never mail them.

@@ -77,6 +77,7 @@ EXCLUDED: dict[str, str] = {
     "health": "health check",
     "contact_token": _HOST,
     "public_stats": _ANON,
+    "submit_beta_request": _ANON,
     "google_callback": "OAuth redirect target; Google's browser redirect calls it",
     "create_token": "minting credentials from a credential; mint a PAT in the web app",
     # Runner protocol.

@@ -1,0 +1,15 @@
+---
+// The canopy mark, generated into src/assets/mark.svg by assets/brand/generate.py.
+import mark from '../assets/mark.svg?raw'
+
+interface Props {
+  class?: string
+  label?: string
+}
+const { class: className, label } = Astro.props
+const svg = mark.replace(
+  '<svg ',
+  `<svg class="${className ?? ''}" ${label ? `role="img" aria-label="${label}"` : 'aria-hidden="true"'} `,
+)
+---
+<Fragment set:html={svg} />

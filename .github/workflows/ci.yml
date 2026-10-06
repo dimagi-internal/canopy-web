@@ -268,6 +268,20 @@ jobs:
         working-directory: frontend
         run: npm run test
 
+      # The public product site (site/, Astro) — static pages served at / to
+      # signed-out visitors. Built here so a broken page fails the PR, not the deploy.
+      # Astro needs Node 22; the SPA above still builds on 20, so the site gets
+      # its own toolchain rather than moving the whole job.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: site/package-lock.json
+
+      - name: Build the public site
+        working-directory: site
+        run: npm ci && npm run build
+
       # A published package whose source moved without its version moving is a
       # SILENT failure, the same class as the stale generated.ts guard above:
       # everything here goes green, the `<pkg>-v*` tag never gets pushed, and

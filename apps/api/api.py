@@ -200,6 +200,7 @@ from apps.inbound.api import router as inbound_router  # noqa: E402
 from apps.slack.api import router as slack_config_router  # noqa: E402
 from apps.feedback.api import router as feedback_router  # noqa: E402
 from apps.storyboards.api import router as storyboards_router  # noqa: E402
+from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.harness.api_schedules import router as schedules_router  # noqa: E402
 from apps.harness.items_api import (  # noqa: E402
     agent_items_router,
@@ -225,6 +226,7 @@ api.add_router("/events", events_router)
 api.add_router("/inbound", inbound_router)
 api.add_router("/slack-config", slack_config_router)
 api.add_router("/storyboards", storyboards_router)
+api.add_router("", beta_requests_router)
 api.add_router("/embed", embed_router)
 # The contact surface. `/api/contact/` is the ONLY prefix a contact token can
 # reach — see apps/tokens/contact_api.py and the allowlist in

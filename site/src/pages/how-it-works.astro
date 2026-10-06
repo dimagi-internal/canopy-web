@@ -1,0 +1,72 @@
+---
+// The inner-page template: a short dark hero, then prose. A new page is a copy of
+// this file with new words; the layout, header, footer and beta form come with it.
+import Base from '../layouts/Base.astro'
+import { GITHUB_URL } from '../site'
+---
+<Base
+  title="How Canopy works"
+  description="How Canopy runs AI agents under human oversight: agents, runners, front doors, and the loop that turns a correction into a better agent."
+>
+  <section class="page-hero">
+    <div class="wrap">
+      <p class="eyebrow">How it works</p>
+      <h1>Agents do the work. People stay in the loop.</h1>
+      <p>
+        Canopy is the control plane around AI agents: it decides what runs, when and where, keeps
+        the record of what happened, and puts every decision that needs a person in front of one.
+      </p>
+    </div>
+  </section>
+
+  <article class="prose">
+    <h2>An agent is a repository</h2>
+    <p>
+      Each agent’s expertise lives in its own git repository: a persona, a turn procedure, and
+      skills, the rules, examples and judgment that make someone good at a job, written down.
+      Canopy holds the running instance: who owns it, who may use it, its credentials, its board
+      of work and its history. Two instances can share one definition; changing a skill changes
+      the agent everywhere it runs.
+    </p>
+
+    <h2>Runners execute, Canopy decides</h2>
+    <p>
+      A runner is a laptop or a cloud machine that starts Claude Code sessions for an agent, the
+      way a CI runner is the machine that runs a build. Each agent has an ordered list of runners;
+      if the first is offline or out of capacity, the next one takes the work. People who use an
+      agent install nothing.
+    </p>
+
+    <h2>Front doors people already use</h2>
+    <dl>
+      <dt>Email</dt><dd>Each agent can have its own mailbox, and answers in the thread.</dd>
+      <dt>Slack</dt><dd>Mention an agent, or use its slash command; it replies in the thread.</dd>
+      <dt>Web chat</dt><dd>Multiplayer sessions where several people and the agent share one conversation, live.</dd>
+      <dt>Your application</dt><dd>An embeddable widget puts an agent inside another product, acting on what the visitor is looking at.</dd>
+      <dt>MCP</dt><dd>Every Canopy API is also an MCP tool, so an AI assistant can drive Canopy as the person signed in.</dd>
+    </dl>
+
+    <h2>Who is asking decides what the agent may do</h2>
+    <p>
+      Every turn records who asked and how sure Canopy is of it. An agent’s owner and admins reach
+      all of it; anyone else reaches only what the agent publishes for them, and with nothing
+      published, nothing at all. A person sets each agent to manual or auto. In manual mode, nothing
+      goes out until a person has seen it.
+    </p>
+
+    <h2>A correction improves the agent</h2>
+    <p>
+      Sessions are recorded and shared, so people learn by watching each other work with an agent.
+      AI reviews those sessions for what went wrong, and proposes a change to the agent’s skills or
+      rules. A person approves it from the Supervisor inbox, and the fix reaches every agent it
+      applies to. The mistake is fixed once, not corrected every time.
+    </p>
+
+    <h2>Open source</h2>
+    <p>
+      Canopy is developed in the open by Dimagi under the BSD 3-Clause License.
+      <a href={GITHUB_URL}>Read the code on GitHub</a>, or
+      <a href="#request-access" data-beta-open>request access to the beta</a>.
+    </p>
+  </article>
+</Base>

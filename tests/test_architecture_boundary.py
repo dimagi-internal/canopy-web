@@ -27,7 +27,7 @@ APPS = ROOT / "apps"
 FRAMEWORK = {"agents", "agent_runs", "workspaces", "api", "common", "timeline", "tokens", "session_sharing", "issues", "mcp", "system", "harness", "push", "realtime", "canopy_sessions", "feedback", "events", "inbound", "contacts",
              "slack", "retention"}
 PRODUCT = {"projects",
-           "walkthroughs", "reviews", "shareouts", "runs", "storyboards"}
+           "walkthroughs", "reviews", "shareouts", "runs", "storyboards", "beta_requests"}
 
 # The ONE composition root allowed to import every app — it wires each app's
 # router into the single NinjaAPI (analogous to a Django URLconf). A framework

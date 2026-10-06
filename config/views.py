@@ -8,6 +8,7 @@ from django.http import FileResponse, HttpResponse, JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET
 
+from config import public_site
 from config.static_cache import REVALIDATE
 
 
@@ -37,6 +38,10 @@ def spa_view(request):
     asset hashes up to each browser's heuristics. Same `no-cache` as WhiteNoise
     now sends, so both doors agree; see config/static_cache.py.
     """
+    site_page = public_site.serve(request)
+    if site_page is not None:
+        return site_page
+
     index_path: Path = settings.FRONTEND_DIST_DIR / "index.html"
     if not index_path.exists():
         return HttpResponse(

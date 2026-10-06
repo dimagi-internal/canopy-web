@@ -1,0 +1,104 @@
+---
+// Every "Request access" button opens this. The request goes to canopy-web
+// (POST /api/beta-requests), which keeps it and emails the team that runs the beta.
+import { API_BASE } from '../site'
+---
+<dialog class="beta" id="beta-dialog" aria-labelledby="beta-title" data-api={API_BASE}>
+  <button class="beta-close" type="button" data-beta-close aria-label="Close">×</button>
+  <div class="beta-body" data-state="form">
+    <h2 id="beta-title">Canopy is currently in a closed beta.</h2>
+    <p>Enter your email to request access.</p>
+    <form novalidate>
+      <label>
+        Email
+        <input type="email" name="email" autocomplete="email" required maxlength="254" />
+      </label>
+      <label>
+        Why do you want access?
+        <textarea name="reason" required maxlength="2000"></textarea>
+      </label>
+      <div class="hp" aria-hidden="true">
+        <label>Website <input type="text" name="website" tabindex="-1" autocomplete="off" /></label>
+      </div>
+      <p class="error" role="alert" hidden></p>
+      <div class="row">
+        <button class="btn btn-outline" type="button" data-beta-close>Cancel</button>
+        <button class="btn btn-dark" type="submit">Request access</button>
+      </div>
+    </form>
+  </div>
+  <div class="beta-body done" data-state="done" hidden>
+    <h2>Thanks, your request is in.</h2>
+    <p>If there is room in the beta, we will be in touch by email.</p>
+    <div class="row" style="margin-top:22px">
+      <button class="btn btn-dark" type="button" data-beta-close>Close</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  const dialog = document.getElementById('beta-dialog') as HTMLDialogElement
+  const form = dialog.querySelector('form') as HTMLFormElement
+  const error = dialog.querySelector('.error') as HTMLParagraphElement
+  const formState = dialog.querySelector('[data-state="form"]') as HTMLElement
+  const doneState = dialog.querySelector('[data-state="done"]') as HTMLElement
+  const submit = form.querySelector('button[type="submit"]') as HTMLButtonElement
+  const api = dialog.dataset.api ?? ''
+
+  function open() {
+    formState.hidden = false
+    doneState.hidden = true
+    error.hidden = true
+    dialog.showModal()
+    ;(form.elements.namedItem('email') as HTMLInputElement).focus()
+  }
+
+  function fail(message: string) {
+    error.textContent = message
+    error.hidden = false
+  }
+
+  document.querySelectorAll('[data-beta-open]').forEach((el) =>
+    el.addEventListener('click', (e) => {
+      e.preventDefault()
+      open()
+    }),
+  )
+  dialog.querySelectorAll('[data-beta-close]').forEach((el) =>
+    el.addEventListener('click', () => dialog.close()),
+  )
+  // A click on the backdrop lands on the dialog element itself.
+  dialog.addEventListener('click', (e) => {
+    if (e.target === dialog) dialog.close()
+  })
+  if (location.hash === '#request-access') open()
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault()
+    error.hidden = true
+    const data = new FormData(form)
+    const email = String(data.get('email') ?? '').trim()
+    const reason = String(data.get('reason') ?? '').trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Enter a valid email address.')
+    if (!reason) return fail('Tell us a little about why you want access.')
+
+    submit.disabled = true
+    try {
+      const resp = await fetch(`${api}/api/beta-requests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, reason, website: String(data.get('website') ?? '') }),
+      })
+      if (resp.status === 429) return fail('Too many requests from this network. Try again in an hour.')
+      if (resp.status === 400 || resp.status === 422) return fail('Check your email address and try again.')
+      if (!resp.ok) return fail('Something went wrong sending your request. Try again in a moment.')
+      form.reset()
+      formState.hidden = true
+      doneState.hidden = false
+    } catch {
+      fail('Could not reach Canopy. Check your connection and try again.')
+    } finally {
+      submit.disabled = false
+    }
+  })
+</script>
