@@ -218,6 +218,9 @@ class RunnerOut(Schema):
     # Asked to refresh and has not bootstrapped since. The runner reads this off
     # its own heartbeat reply — the durable request, not a frame.
     refresh_pending: bool | None = None
+    # canopy's canonical address. A runner still configured with an address
+    # canopy has left reads it off its heartbeat reply and moves itself there.
+    canonical_base_url: str | None = None
 
     @staticmethod
     def resolve_health_checks(obj) -> dict[str, HealthCheck] | None:
@@ -254,6 +257,12 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_refresh_pending(obj) -> bool:
         return obj.refresh_pending()
+
+    @staticmethod
+    def resolve_canonical_base_url(obj) -> str:
+        from django.conf import settings
+
+        return (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").rstrip("/")
 
     @staticmethod
     def resolve_expected_code_sha(obj) -> str:

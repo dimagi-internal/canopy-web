@@ -282,13 +282,16 @@ Resources:
       Port: !Ref ContainerPort
       Protocol: HTTP
       TargetType: ip
-      HealthCheckPath: /canopy/health/
+      # At the root since 2026-10-06. It was /canopy/health/, the OLD address's
+      # prefix — which would have failed every task the day the old address stops
+      # answering. canopy has served at the root since the move.
+      HealthCheckPath: /health/
       # Measured 2026-09-08: a deploy took 12.9 minutes, of which 10.3 was this
       # ECS rolling replace — the image build was 26 SECONDS. Two ALB defaults
       # were the whole cost, and neither buys anything at this scale.
       #
       # 30s x 2 checks meant a healthy new task still waited ~60s to be admitted.
-      # /canopy/health/ is cheap, and a task that is up answers it immediately.
+      # /health/ is cheap, and a task that is up answers it immediately.
       HealthCheckIntervalSeconds: 5
       HealthyThresholdCount: 2
       HealthCheckTimeoutSeconds: 4

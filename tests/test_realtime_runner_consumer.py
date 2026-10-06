@@ -555,7 +555,8 @@ async def test_ws_heartbeat_records_health_and_acks_refresh():
                    "checked_at": 1790000000, "bootstrapped_at": 1789990000},
     })
     ack = await comm.receive_json_from(timeout=2)
-    assert ack == {"type": "heartbeat.ack", "refresh_pending": False}
+    assert ack == {"type": "heartbeat.ack", "refresh_pending": False,
+                   "canonical_base_url": "http://localhost:8000"}
     fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
     assert fresh.health["checks"][0]["name"] == "transcripts"
 

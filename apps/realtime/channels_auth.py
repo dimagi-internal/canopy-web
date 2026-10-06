@@ -211,6 +211,15 @@ def _redeem_ticket(scope):
     return scope
 
 
+@database_sync_to_async
+def _note_legacy_socket(scope):
+    from apps.common import legacy_traffic
+
+    user = scope.get("user")
+    ua = (_header(scope, b"user-agent") or b"").decode("latin1")
+    legacy_traffic.note(path=scope.get("path", ""), user=user, client=ua, protocol="ws")
+
+
 class RealtimeAuthMiddleware:
     def __init__(self, app):
         self.app = app
@@ -267,4 +276,9 @@ class RealtimeAuthMiddleware:
             scope["contact"] is not None or delegated_app is not None
             or (user is not None and await _delegated_app(scope) is not None)
         )
+        from config.asgi_prefix import SCOPE_KEY
+
+        if scope.get(SCOPE_KEY):
+            # A socket on the OLD address (apps/common/legacy_traffic.py).
+            await _note_legacy_socket(scope)
         return await self.app(scope, receive, send)

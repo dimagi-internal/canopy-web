@@ -629,6 +629,13 @@ def run_once(cfg: Config, client: Client) -> str:
     # runtime) rides the heartbeat response; adopting it here is the whole flip.
     desktop.observe(me)
 
+    # canopy moved address and this box is still on the old one: rewrite
+    # runner.json and exit, so launchd brings it back on the new one (rebase.py).
+    from . import rebase
+
+    if rebase.observe(me, cfg, idle=not _active_turn_ids(), client_cls=Client):
+        raise SystemExit(0)
+
     # Before the reports: an in-flight reply is the freshest thing on this box, and
     # finishing a turn here frees the session for the next message. Runs even while
     # CDP is down — the transcript keeps growing whether or not we can drive emdash.
