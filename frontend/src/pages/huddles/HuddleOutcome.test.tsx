@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
 import live from './__fixtures__/work-fleet-20261006.json'
@@ -57,5 +57,7 @@ it("tucks the leader's email into a disclosure, with its links live", async () =
   expect(close.textContent).toContain("The email ada sent")
   const link = within(close).getByRole('link', { name: 'https://canopy.dimagi.com/w/dimagi/huddles/work-fleet-20261006' })
   expect(link.getAttribute('href')).toBe('https://canopy.dimagi.com/w/dimagi/huddles/work-fleet-20261006')
+  const toggle = screen.getByRole('button', { name: 'Hide the conversation' })
+  fireEvent.click(toggle)
   expect(screen.getByRole('button', { name: 'Show the full conversation — 3 rounds, 12 replies' })).toBeTruthy()
 })
