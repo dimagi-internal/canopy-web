@@ -54,6 +54,14 @@ codesign --force --sign - "$APP" 2>/dev/null || echo "  (codesign skipped)"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
   -f "$APP" 2>/dev/null || true
 
+# Quit the copy that is already running, so the launch below starts THIS build.
+# `open` on a running app only brings that instance forward, so without this a
+# rebuild replaced the bundle on disk while the menu bar kept the old binary and
+# its old icons in memory — until the next login. Seen 2026-10-06: every account
+# had the new mark installed and none showed it. Matched by this bundle's own
+# executable path, so another account's menu-bar app is never touched.
+pkill -f "$APP/Contents/MacOS/CanopyRunner" 2>/dev/null && sleep 1 || true
+
 # Auto-start on login (the durable fix for "the menu-bar icon disappeared"). A user
 # LaunchAgent that `open`s the app at login — `open` is idempotent, so it activates an
 # already-running instance rather than spawning a duplicate, and the app respects Quit
@@ -89,4 +97,6 @@ else
   echo "==> auto-start skipped (CANOPY_MENUBAR_AUTOSTART=0)"
 fi
 
+# With auto-start off nothing above relaunches it; bring back the copy we quit.
+[ "${CANOPY_MENUBAR_AUTOSTART:-1}" = "1" ] || open "$APP" 2>/dev/null || true
 echo "==> done. Launch from Spotlight: 'Canopy Runner'  (or: open \"$APP\")"
