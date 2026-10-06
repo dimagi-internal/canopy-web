@@ -53,7 +53,7 @@ never bounded a page that lies — the read-only scopes above do.)
 
 **Probed like any other host.** `/oauth/probe` is the SDK's `ProbeHandler` for
 canopy's own client only: a real ID-JAG for the dedicated `canopy-probe` user
-(`CANOPY_HOST_PROBE_USERNAME`; no membership, so `list_insights` reads nothing),
+(`CANOPY_HOST_PROBE_USERNAME`; no membership, so `list_items` reads nothing),
 which `live_probe.py` redeems and uses exactly as it does for a connected site.
 
 **Off until configured.** Needs `CANOPY_HOST_SIGNING_KEY` (Ed25519 or P-256 PEM;
@@ -83,7 +83,6 @@ log = logging.getLogger(__name__)
 #: token's reach is decided. Read-only tools only: a scope that could write is a
 #: decision for a later version, taken on purpose.
 SCOPE_TOOLS: dict[str, tuple[str, ...]] = {
-    "insights:read": ("list_insights",),
     "items:read": ("list_items",),
     "skills:read": ("skill_history", "skill_revision_diff"),
 }
@@ -94,7 +93,6 @@ SCOPE_TOOLS: dict[str, tuple[str, ...]] = {
 #: `backing_tool` among its scope's tools — a hint that tells the agent where to
 #: read the rows on screen. What a grant reaches is its scopes' tools, here.
 PAGE_SCOPES: dict[str, tuple[str, ...]] = {
-    "insights": ("insights:read",),               # /insights — backing_tool list_insights
     "agent.inbox": ("items:read",),               # /w/:ws/agents/:slug/inbox — list_items
     "agent.skill_history": ("skills:read",),      # /w/:ws/agents/:slug/skills/history — skill_history
 }
@@ -132,16 +130,25 @@ def probe_endpoint() -> str:
 
 #: canopy-web's own probe: the one read-only call the live probe makes as the
 #: dedicated probe user, and a tool outside that scope the MCP must refuse.
-PROBE_SCOPE = "insights:read"
-PROBE_TOOL = "list_insights"
-PROBE_DENIED_TOOL = "list_items"
-PROBE_PAGE = "insights"
+#:
+#: `list_items` (the fleet inbox, `items:read`, page `agent.inbox`): cheap, it
+#: takes a `limit`, needs no path argument, and is scoped by the caller's
+#: workspace memberships (`_visible_agent_workspace_ids`), so for the
+#: membershipless probe user it is a real query that returns nothing. It was
+#: `list_insights` until the Insights feed was retired (2026-10).
+#: The denied tool is `skill_history`: a real, read-only tool in ANOTHER page's
+#: scope (`skills:read`), so the refusal proves scope separation between two
+#: granted scopes, not merely that an unknown name is unknown.
+PROBE_SCOPE = "items:read"
+PROBE_TOOL = "list_items"
+PROBE_DENIED_TOOL = "skill_history"
+PROBE_PAGE = "agent.inbox"
 
 
 def probe_user():
     """The dedicated probe user (`CANOPY_HOST_PROBE_USERNAME`, created by
     `tokens/0026_probe_user`), or None — which turns the probe off. It must be
-    active, and it holds no membership, so `list_insights` runs as a real user
+    active, and it holds no membership, so `list_items` runs as a real user
     and returns nothing: the call is meaningful (the whole chain ran, as that
     user, within its scope) without the probe reading anyone's data."""
     from django.contrib.auth import get_user_model

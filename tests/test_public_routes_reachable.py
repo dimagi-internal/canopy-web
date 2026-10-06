@@ -86,7 +86,7 @@ def test_a_public_surface_is_allowlisted(path):
 # admitted everything would make every test above pass for the wrong reason.
 GATED_PATHS = [
     "/supervisor",
-    "/insights",
+    "/activity",
     "/settings",
     "/sessions",
     "/w/dimagi",

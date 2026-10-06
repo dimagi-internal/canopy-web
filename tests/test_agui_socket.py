@@ -201,7 +201,7 @@ async def test_one_canopy_frame_can_become_several_ag_ui_events(consumer):
 
     await consumer.send_json(
         {"event": "chat.tool_use",
-         "data": {"tool_message_id": "t9", "block": {"name": "list_insights", "input": {}}}}
+         "data": {"tool_message_id": "t9", "block": {"name": "list_items", "input": {}}}}
     )
 
     assert [f["type"] for f in consumer.sent] == [
@@ -277,7 +277,7 @@ def test_the_default_is_canopys_own_protocol():
 
 
 _TOOL_USE = {"event": "chat.tool_use",
-             "data": {"tool_message_id": "t9", "block": {"name": "list_insights", "input": {}}}}
+             "data": {"tool_message_id": "t9", "block": {"name": "list_items", "input": {}}}}
 _TOOL_RESULT = {"event": "chat.tool_result",
                 "data": {"tool_message_id": "t9", "block": {"content": "[{...a page of JSON...}]"}}}
 _SNAPSHOT_WITH_TOOLS = {

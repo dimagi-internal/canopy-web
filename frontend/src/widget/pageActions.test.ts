@@ -27,7 +27,7 @@ function register(name: string, run = vi.fn(), opts = {}) {
 
 describe('declaring', () => {
   it('carries the schema, which is the point', () => {
-    register('dismissInsights', vi.fn(), {
+    register('dismissItems', vi.fn(), {
       description: 'Dismiss things',
       parameters: { type: 'object', properties: { ids: { type: 'array' } }, required: ['ids'] },
     })

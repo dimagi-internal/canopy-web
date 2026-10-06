@@ -34,7 +34,7 @@ READ = "read"
 
 # --- editor: making things --------------------------------------------------------
 
-#: Create, change or delete product content: projects, insights, walkthroughs,
+#: Create, change or delete product content: projects, walkthroughs,
 #: shareouts, reviews, DDD runs and narratives, storyboards, issues, feedback
 #: dispositions, contacts.
 CONTENT_WRITE = "content.write"

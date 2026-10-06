@@ -131,8 +131,8 @@ export function ScheduleEditor({
   async function onDelete() {
     if (!schedule) return
     // Destructive + no undo, and it sits one row away from Cancel/Save.
-    // window.confirm is the repo's idiom for this (NarrativeLanding, RunPackage,
-    // InsightsPage all gate deletes the same way).
+    // window.confirm is the repo's idiom for this (NarrativeLanding and
+    // RunPackage gate deletes the same way).
     if (
       !window.confirm(
         `Delete the schedule "${schedule.name}"?\n\nIt will stop running on its cadence. This cannot be undone.`,

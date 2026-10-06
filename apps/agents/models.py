@@ -546,7 +546,7 @@ class AgentProject(models.Model):
     to own a folder that the Drive layout gives no place to.
 
     Distinct from the workbench's own `Project` (product tier — the list of
-    REPOS: canopy-web, connect-labs, the agent repos, each carrying insights). A
+    REPOS: canopy-web, connect-labs, the agent repos). A
     project HERE is a piece of work with an end — "UNGA 2026 conference
     planning" — and names a repo it touches only as a slug (`repo_slug`), never
     an FK, because framework code may not reach into a product app at all. The

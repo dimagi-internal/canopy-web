@@ -23,7 +23,7 @@ function fakeLink(overrides: Partial<HostLink> = {}): HostLink {
   return {
     waitForInit: async () => init,
     requestToken: async () => ({ token: 'tok', expiresAt: '' }),
-    requestContext: async () => ({ route: '/insights' }),
+    requestContext: async () => ({ route: '/w/connect/agents/echo/inbox' }),
     runAction: async () => undefined,
     actions: (): ActionSpec[] => [],
     onActionsChanged: () => () => undefined,
@@ -325,8 +325,8 @@ describe('the page is declared BEFORE the turn is queued', () => {
   const withPage = () =>
     fakeLink({
       waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
-      actions: () => [{ name: 'dismissInsights' }] as never,
-      pageState: () => ({ visible_ids: [1, 2, 3], backing_tool: 'list_insights' }),
+      actions: () => [{ name: 'dismissItems' }] as never,
+      pageState: () => ({ visible_ids: [1, 2, 3], backing_tool: 'list_items' }),
     })
 
   const order = () =>
@@ -368,13 +368,13 @@ describe('the page is declared BEFORE the turn is queued', () => {
   it('declares the state as it is at send time, not at mount', async () => {
     // `setPageState` pushes on every change, so a filter applied after the panel
     // opened must be what the agent can read.
-    let state: Record<string, unknown> = { visible_ids: [1], backing_tool: 'list_insights' }
+    let state: Record<string, unknown> = { visible_ids: [1], backing_tool: 'list_items' }
     const link = fakeLink({
       waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
       pageState: () => state,
     })
     render(<EmbedApp link={link} app="canopy-web" />)
-    state = { visible_ids: [7, 8, 9], backing_tool: 'list_insights' }
+    state = { visible_ids: [7, 8, 9], backing_tool: 'list_items' }
 
     await say('and now?')
 
@@ -464,7 +464,7 @@ describe('feedback while the agent works', () => {
     // it in the transcript would bury a one-line question under a JSON blob.
     await startChatting()
     await waitFor(() => expect(screen.getByTestId('pending-reply')).toBeTruthy())
-    expect(screen.queryByText(/insights/)).toBeNull()
+    expect(screen.queryByText(/agents\/echo\/inbox/)).toBeNull()
   })
 })
 

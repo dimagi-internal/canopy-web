@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS. The ACL audit of 2026-10-02 did not find one bad gate; it found
 the same mistake made route by route. Product surfaces let a `viewer` approve a
-DDD gate and wipe the insights feed with `{}`; schedules and turns let a viewer
+DDD gate and wipe a whole feed with `{}`; schedules and turns let a viewer
 write a prompt and fire it at the fleet; six tenancy predicates had each grown a
 NULL-means-allow leg. Each was a route whose author never wrote down who may
 call it — the default was simply whatever the helper they reached for happened
@@ -345,11 +345,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_actions": ("member",),
     "create_action": ("content.write",),
     "get_actions_summary": ("member",),
-    # insights: tenant-scoped through the insight's project (not user-scoped any more)
-    "list_insights": ("member",),
-    "clear_insights": ("content.write",),  # scoped by the WRITE set
-    "dismiss_insights": ("content.write",),  # scoped by the WRITE set
-    "dismiss_insight": ("content.write",),  # 404 non-member, 403 viewer
     # --- apps/reviews/api.py
     "list_reviews": ("member",),
     "create_review": ("content.write",),  # creation_workspace + CONTENT_WRITE

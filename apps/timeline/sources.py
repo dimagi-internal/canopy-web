@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 #: (key, label, "module.path", "callable_name"). Order is the rail order.
 _REGISTRY: list[tuple[str, str, str, str]] = [
     ("ddd", "DDD", "apps.runs.timeline", "recent_events"),
-    ("insights", "Insights", "apps.projects.timeline", "insight_events"),
     ("walkthroughs", "Walkthroughs", "apps.walkthroughs.timeline", "recent_events"),
     ("shareouts", "Shareouts", "apps.shareouts.timeline", "recent_events"),
     ("agents", "Agents", "apps.agents.timeline", "recent_events"),

@@ -44,14 +44,14 @@ def test_one_call_declares_both_the_view_and_the_actions():
     session, c = _ctx()
 
     resp = _put(c, session, {
-        "state": {"path": "/insights", "resource": "insight://", "visible_ids": [1, 2]},
-        "tools": [{"name": "scrollToInsight", "description": "Scroll to a row"}],
+        "state": {"path": "/w/w1/agents/echo/inbox", "resource": "item://", "visible_ids": [1, 2]},
+        "tools": [{"name": "scrollToItem", "description": "Scroll to a row"}],
     })
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["state"]["visible_ids"] == [1, 2]
-    assert [t["name"] for t in body["tools"]] == ["scrollToInsight"]
+    assert [t["name"] for t in body["tools"]] == ["scrollToItem"]
 
 
 def test_it_reports_what_was_honoured_rather_than_echoing_the_input():
@@ -72,7 +72,7 @@ def test_fields_canopy_cannot_honour_are_ignored_not_rejected():
     session, c = _ctx()
 
     resp = _put(c, session, {
-        "state": {"path": "/insights"},
+        "state": {"path": "/w/w1/agents/echo/inbox"},
         "tools": [],
         "threadId": "t1", "runId": "r1", "parentRunId": None,
         "messages": [{"id": "m1", "role": "user", "content": "hi"}],
@@ -100,11 +100,11 @@ def test_an_empty_state_does_not_blank_a_page_that_already_declared_one():
     """`tools` and `state` are independent: re-declaring tools must not be read
     as "my screen is now empty"."""
     session, c = _ctx()
-    _put(c, session, {"state": {"path": "/insights", "resource": "insight://"}, "tools": []})
+    _put(c, session, {"state": {"path": "/w/w1/agents/echo/inbox", "resource": "item://"}, "tools": []})
 
     resp = _put(c, session, {"tools": [{"name": "scrollTo"}]})
 
-    assert resp.json()["state"]["path"] == "/insights"
+    assert resp.json()["state"]["path"] == "/w/w1/agents/echo/inbox"
 
 
 def test_another_users_session_is_not_writable():
@@ -128,9 +128,9 @@ def test_a_payload_built_by_the_real_sdk_is_accepted():
     payload = RunAgentInput(
         thread_id=str(session.id),
         run_id="run-1",
-        state={"path": "/insights", "resource": "insight://", "visible_ids": [7]},
+        state={"path": "/w/w1/agents/echo/inbox", "resource": "item://", "visible_ids": [7]},
         messages=[],
-        tools=[Tool(name="scrollToInsight", description="Scroll to a row",
+        tools=[Tool(name="scrollToItem", description="Scroll to a row",
                     parameters={"type": "object", "properties": {}})],
         context=[],
         forwarded_props=None,
@@ -140,4 +140,4 @@ def test_a_payload_built_by_the_real_sdk_is_accepted():
 
     assert resp.status_code == 200, resp.content[:400]
     assert resp.json()["state"]["visible_ids"] == [7]
-    assert [t["name"] for t in resp.json()["tools"]] == ["scrollToInsight"]
+    assert [t["name"] for t in resp.json()["tools"]] == ["scrollToItem"]

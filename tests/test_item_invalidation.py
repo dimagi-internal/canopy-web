@@ -1,6 +1,7 @@
 """The inbox is told when the inbox moves.
 
-The sibling of `test_page_invalidation` at the other resource. It exists because
+The inbox-specific sibling of `test_page_invalidation`, which pins the generic
+machinery on this same resource. It exists because
 `InboxSection` stopped serialising its rows into page state: the page now sends
 ids and a `backing_tool`, which is only better than the old shape if something
 tells the page its set changed. Otherwise the page holds ids of items that were
@@ -42,7 +43,7 @@ def sent(monkeypatch):
     # The dirty set lives on the CONNECTION and is not transactional: an earlier
     # test on this xdist worker that marked a resource inside a rolled-back
     # transaction leaves it there, and this test's first commit would flush it
-    # (seen: a stale `insight://` failing the item test in the merge queue).
+    # (seen: a stale resource from another test failing this one in the merge queue).
     invalidation._dirty_set().clear()
     monkeypatch.setattr(invalidation, "publish", lambda group, msg: out.append((group, msg)))
     return out
@@ -105,9 +106,9 @@ def test_a_fleet_audits_batch_sends_one_notification(sent):
     assert len(sent) == 1
 
 
-def test_a_page_showing_insights_is_not_disturbed_by_an_item(sent):
+def test_a_page_showing_another_resource_is_not_disturbed_by_an_item(sent):
     _user, _ws, session, agent = _world()
-    _showing(session, uri="insight://")
+    _showing(session, uri="walkthrough://")
 
     _item(agent)
 

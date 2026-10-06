@@ -20,11 +20,12 @@ describe('NAV_GROUPS', () => {
     // behind one entry, and Connected sites (which was in no menu) came with
     // them. Everything else still earns its own line — except shared
     // transcripts (/sessions), which are reached by their /share/<token> link
-    // and deliberately have no menu entry.
+    // and deliberately have no menu entry. Insights was retired outright
+    // (2026-10): its job moved to agent tasks and items, reached via Agents.
     const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label))
     expect(labels.sort()).toEqual(
       [
-        'Activity', 'Agents', 'Chats', 'DDD', 'Guide', 'Insights',
+        'Activity', 'Agents', 'Chats', 'DDD', 'Guide',
         'Projects', 'Schedule', 'Settings', 'Shareouts', 'Storyboards',
         'System', 'Timeline', 'Walkthroughs',
       ].sort(),
@@ -47,7 +48,6 @@ describe('resolveNavGroups', () => {
     expect(work.items).toEqual([
       { href: '/w/connect', label: 'Projects' },
       { href: '/w/connect/chat', label: 'Chats' },
-      { href: '/insights', label: 'Insights' },
     ])
   })
 
@@ -62,15 +62,16 @@ describe('resolveNavGroups', () => {
     const groups = resolveNavGroups({ isAuthed: true, active: null })
     const hrefs = groups.flatMap((g) => g.items.map((i) => i.href))
     expect(hrefs.some((h) => h.includes('/w//'))).toBe(false)
-    expect(hrefs).toEqual(['/insights', '/activity', '/schedules', '/system', '/guide'])
+    expect(hrefs).toEqual(['/activity', '/schedules', '/system', '/guide'])
   })
 
   it('drops a group whose items are all tenant-scoped while the workspace is unknown', () => {
-    // Demos is DDD + Walkthroughs + Storyboards, all tenant items — an empty
-    // menu would be a trigger that opens onto nothing.
+    // Demos is DDD + Walkthroughs + Storyboards, and Work is Projects + Chats —
+    // all tenant items. An empty menu would be a trigger that opens onto nothing.
     const labels = resolveNavGroups({ isAuthed: true, active: null }).map((g) => g.label)
     expect(labels).not.toContain('Demos')
-    expect(labels).toEqual(['Work', 'Fleet', 'Workspace'])
+    expect(labels).not.toContain('Work')
+    expect(labels).toEqual(['Fleet', 'Workspace'])
   })
 
   it('shows an anonymous visitor no nav at all', () => {
@@ -123,7 +124,7 @@ describe('isNavGroupActive', () => {
 
   it('marks exactly one group for any given route', () => {
     for (const pathname of [
-      '/w/connect', '/w/connect/chat', '/insights',
+      '/w/connect', '/w/connect/chat',
       '/w/connect/agents', '/activity', '/schedules', '/w/connect/ddd',
       '/w/connect/walkthroughs', '/w/connect/storyboards', '/w/connect/shareouts', '/w/connect/timeline',
       '/w/connect/settings', '/w/connect/settings/slack', '/system',

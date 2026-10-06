@@ -6,10 +6,6 @@ explicitly joined (2026-09-12: auto-join is gone — self-join replaces it,
 see docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md)
 gets the same 404 and empty list an outsider does. Also verifies the
 prefixed /api/w/{ws}/projects/ mount works for a member.
-
-Insights ARE workspace-scoped (they belong to a project, which belongs to a
-workspace) — a member of one workspace must not list, clear, or dismiss another's
-insights. Those cases are at the bottom of this file.
 """
 from __future__ import annotations
 
@@ -113,45 +109,3 @@ def test_prefixed_workspace_mount_404s_for_non_member():
     # Non-member of "dimagi" is rejected by the tenancy middleware.
     resp = _client(outsider).get(f"/api/w/{DEFAULT_WORKSPACE_SLUG}/projects/")
     assert resp.status_code == 404
-
-
-# --- Insight workspace scoping (a member of A must not touch B's insights) ------
-
-
-def _workspace(slug):
-    from apps.workspaces.models import Workspace
-    owner = _user(f"owner-{slug}@{slug}.example")
-    ws, _ = Workspace.objects.get_or_create(
-        slug=slug, defaults={"display_name": slug, "created_by": owner, "access_request_domains": []}
-    )
-    return ws
-
-
-def _insight_in(ws_slug):
-    from apps.projects.models import ProjectContext
-    ws = _workspace(ws_slug)
-    project = Project.objects.create(slug=f"proj-{ws_slug}", name=ws_slug, workspace=ws)
-    return ProjectContext.objects.create(
-        project=project, context_type="insight", content="[ship_gap] secret", source="s"
-    )
-
-
-def test_member_cannot_list_clear_or_dismiss_another_workspaces_insight():
-    from apps.projects.models import ProjectContext
-    insight = _insight_in("connect")
-    jj = _user("jj@dimagi.com", is_superuser=True)  # member of default only, not connect
-
-    # list: the connect insight is not visible
-    listing = _client(jj).get("/api/insights/").json()
-    rows = listing.get("items", listing) if isinstance(listing, dict) else listing
-    assert all(r["id"] != insight.pk for r in rows)
-
-    # clear-all: does not delete it
-    cleared = _client(jj).post("/api/insights/clear/", data=json.dumps({}), content_type="application/json")
-    assert cleared.status_code == 200
-    assert ProjectContext.objects.filter(pk=insight.pk).exists()
-
-    # dismiss by pk: 404, still there
-    dismissed = _client(jj).delete(f"/api/insights/{insight.pk}/")
-    assert dismissed.status_code == 404
-    assert ProjectContext.objects.filter(pk=insight.pk).exists()

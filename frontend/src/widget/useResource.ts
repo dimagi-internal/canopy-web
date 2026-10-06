@@ -6,7 +6,7 @@ import { onResourceChanged } from './pageInvalidation'
  * Re-read `resource` whenever canopy says it changed.
  *
  * ```tsx
- * useResource('insight://', load)
+ * useResource('item://', reload)   // InboxSection
  * ```
  *
  * Pairs with `usePageState`: that one declares WHAT is on screen (including the

@@ -278,7 +278,7 @@ def request_workspace_slugs_at_least(request, minimum: str) -> set[str]:
     or better — the WRITE scope a bulk mutation filters by.
 
     `request_workspace_slugs` answers "what may I read?". A bulk write (clear
-    every insight, delete a narrative across its rows) must not be scoped by
+    every shareout, delete a narrative across its rows) must not be scoped by
     that answer, or a viewer's empty-filter clear wipes the tenant. This is the
     same scope narrowed by role, read through `has_role_at_least` so the ladder
     lives in one place. A pinned `/api/w/{ws}/` request is narrowed too: the

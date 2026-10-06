@@ -1,6 +1,6 @@
 """Per-user write rate limiting for mutating MCP tools.
 
-Mutating tools (e.g. clear_insights) can do real damage, so we cap how
+Mutating tools (e.g. delete_project) can do real damage, so we cap how
 often a single user may call them. The limit is enforced against the
 Django cache: a sliding fixed-window counter keyed by user + bucket.
 

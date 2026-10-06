@@ -16,7 +16,7 @@ describe('isChatRoute', () => {
   it.each([
     '/w/connect/agents/hal/history',
     '/w/connect',
-    '/insights',
+    '/activity',
     '/w/connect/chatbots', // a prefix is not a match
     '/supervisor',
   ])('keeps it on %s', (path) => {

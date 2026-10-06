@@ -1,9 +1,9 @@
-"""Timeline sources for the projects app.
+"""Timeline source for the projects app: ``projects`` (context pushes + skill
+actions).
 
-Two subsystems land here: ``insights`` (the cross-portfolio AI insight cards,
-stored as ``ProjectContext`` rows with ``context_type="insight"``) and
-``projects`` (the other context pushes + skill actions). They're separate filter
-keys, so they're separate callables.
+``ProjectContext`` rows with ``context_type="insight"`` are excluded: they were
+the retired Insights feed's cards (removed 2026-10), and the rows that remain are
+unreachable on purpose rather than resurfaced here.
 
 Each returns *candidates* (newest ``limit`` per component plus cursor-instant
 ties); :func:`apps.timeline.sources.gather` does the final merge/order/slice.
@@ -13,31 +13,6 @@ from __future__ import annotations
 import datetime as dt
 
 from .models import ProjectAction, ProjectContext
-
-
-def insight_events(*, limit: int, before: dt.datetime | None, user) -> list:
-    from apps.timeline.types import ActivityEvent, cursor_page, first_line
-
-    qs = (
-        ProjectContext.objects.filter(context_type="insight")
-        .select_related("project")
-        .order_by("-created_at")
-    )
-    return [
-        ActivityEvent(
-            subsystem="insights",
-            kind="insight",
-            at=c.created_at,
-            title=first_line(c.content) or "Insight",
-            summary=None,
-            project_slug=c.project.slug,
-            actor=c.source or None,
-            href="/insights",
-            id=f"insight:{c.id}",
-            icon="insight",
-        )
-        for c in cursor_page(qs, "created_at", before=before, limit=limit)
-    ]
 
 
 def project_events(

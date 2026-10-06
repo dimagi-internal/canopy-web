@@ -8,11 +8,12 @@ import { notifyPageStateChanged, setPageStateContributor, type PageState } from 
  * ```tsx
  * usePageState(
  *   () => describeSelection({
- *     backingTool: 'list_insights',
- *     ids: insights.map((i) => i.id),
- *     filters: { category: activeFilter },
+ *     backingTool: 'list_items',
+ *     resource: 'item://',
+ *     ids: items.map((i) => i.id),
+ *     filters: { agent: agent.slug, state: 'open' },
  *   }),
- *   [insights, activeFilter],
+ *   [items, agent.slug],
  * )
  * ```
  *

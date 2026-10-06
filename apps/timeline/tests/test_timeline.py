@@ -66,10 +66,10 @@ def test_requires_auth():
 
 def test_merges_across_subsystems(client, owner, ws):
     project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
-    ins = ProjectContext.objects.create(
-        project=project, context_type="insight", content="[ship_gap] ship it", source="x"
+    note = ProjectContext.objects.create(
+        project=project, context_type="note", content="ship it", source="x"
     )
-    _at(ProjectContext, ins.pk, _aware(2026, 6, 10))
+    _at(ProjectContext, note.pk, _aware(2026, 6, 10))
     Shareout.objects.create(
         project=project,
         workspace=ws,
@@ -85,34 +85,48 @@ def test_merges_across_subsystems(client, owner, ws):
 
     body = client.get(BASE).json()
     by_sub = {e["subsystem"] for e in body["events"]}
-    assert {"insights", "shareouts", "walkthroughs"} <= by_sub
+    assert {"projects", "shareouts", "walkthroughs"} <= by_sub
     # newest first
     ats = [e["at"] for e in body["events"]]
     assert ats == sorted(ats, reverse=True)
     # catalog present for the rail
     keys = {s["key"] for s in body["subsystems"]}
-    assert {"ddd", "insights", "walkthroughs", "shareouts", "agents", "sessions"} <= keys
+    assert {"ddd", "projects", "walkthroughs", "shareouts", "agents", "sessions"} <= keys
+    # The Insights feed was retired (2026-10): it is no longer a rail entry.
+    assert "insights" not in keys
 
 
-def test_subsystem_filter(client, owner):
-    project = Project.objects.create(name="Reef", slug="reef")
+def test_subsystem_filter(client, owner, ws):
+    project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
     ProjectContext.objects.create(
-        project=project, context_type="insight", content="an insight", source="x"
+        project=project, context_type="note", content="a note", source="x"
     )
     make_walkthrough(owner, kind="video")  # standalone walkthrough
 
-    body = client.get(BASE, {"subsystem": "insights"}).json()
+    body = client.get(BASE, {"subsystem": "projects"}).json()
     assert body["events"]
-    assert all(e["subsystem"] == "insights" for e in body["events"])
+    assert all(e["subsystem"] == "projects" for e in body["events"])
 
 
-def test_unknown_subsystem_falls_back_to_all(client, owner):
-    project = Project.objects.create(name="Reef", slug="reef")
+def test_unknown_subsystem_falls_back_to_all(client, owner, ws):
+    project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
     ProjectContext.objects.create(
-        project=project, context_type="insight", content="an insight", source="x"
+        project=project, context_type="note", content="a note", source="x"
     )
     body = client.get(BASE, {"subsystem": "bogus"}).json()
     assert body["events"]  # not an empty/error result
+
+
+def test_retired_insight_rows_do_not_surface(client, owner, ws):
+    """The Insights feed was retired but its rows were kept (deleting them is
+    held for approval). They must stay unreachable — not resurface as generic
+    project context on the timeline."""
+    project = Project.objects.create(name="Reef", slug="reef", workspace=ws)
+    ProjectContext.objects.create(
+        project=project, context_type="insight", content="[stale] old card", source="x"
+    )
+    body = client.get(BASE).json()
+    assert not [e for e in body["events"] if "old card" in (e["title"] or "")]
 
 
 def test_before_cursor_paginates(client, owner, ws):

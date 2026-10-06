@@ -25,14 +25,14 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 
 #: The shape a page is supposed to send: what is selected, and where to read it
-#: properly. Note what is NOT here — the insight text, project, category, age.
-#: Those come from `list_insights`, under the caller's own permissions.
-INSIGHTS_VIEW = {
-    "surface": "the insights feed",
-    "path": "/insights",
-    "filters": {"category": "stale", "project": "commcare"},
+#: properly. Note what is NOT here — the item title, body, agent, age.
+#: Those come from `list_items`, under the caller's own permissions.
+INBOX_VIEW = {
+    "surface": "Echo's inbox",
+    "path": "/w/w1/agents/echo/inbox",
+    "filters": {"state": "open", "kind": "review"},
     "visible_ids": [4471, 4472, 4480],
-    "backing_tool": "list_insights",
+    "backing_tool": "list_items",
 }
 
 
@@ -60,14 +60,14 @@ def _put(c, session, state):
 def test_a_page_declares_what_it_shows_and_the_agent_can_read_it_back():
     _user, session, c = _ctx()
 
-    assert _put(c, session, INSIGHTS_VIEW).status_code == 200
+    assert _put(c, session, INBOX_VIEW).status_code == 200
 
     read = c.get(f"/api/canopy-sessions/{session.id}/page-state").json()
     assert read["state"]["visible_ids"] == [4471, 4472, 4480]
     # The backing tool is the whole DRY move: the page says which rows and which
     # tool resolves them, and the agent reads the rows through that tool rather
     # than trusting a copy the page serialised.
-    assert read["state"]["backing_tool"] == "list_insights"
+    assert read["state"]["backing_tool"] == "list_items"
 
 
 def test_a_second_declaration_replaces_the_first_rather_than_merging():
@@ -80,7 +80,7 @@ def test_a_second_declaration_replaces_the_first_rather_than_merging():
     """
     _user, session, c = _ctx()
 
-    _put(c, session, INSIGHTS_VIEW)
+    _put(c, session, INBOX_VIEW)
     _put(c, session, {"surface": "the supervisor inbox", "path": "/supervisor"})
 
     state = c.get(f"/api/canopy-sessions/{session.id}/page-state").json()["state"]
@@ -92,8 +92,8 @@ def test_a_second_declaration_replaces_the_first_rather_than_merging():
 def test_the_version_moves_forward_so_two_snapshots_can_be_told_apart():
     _user, session, c = _ctx()
 
-    first = _put(c, session, INSIGHTS_VIEW).json()
-    second = _put(c, session, {**INSIGHTS_VIEW, "visible_ids": [4471]}).json()
+    first = _put(c, session, INBOX_VIEW).json()
+    second = _put(c, session, {**INBOX_VIEW, "visible_ids": [4471]}).json()
 
     assert second["version"] > first["version"]
 
@@ -102,8 +102,8 @@ def test_the_version_is_assigned_by_the_server_not_accepted_from_the_page():
     """A client that picks its own version numbers can silently go backwards."""
     _user, session, c = _ctx()
 
-    _put(c, session, INSIGHTS_VIEW)
-    out = _put(c, session, {**INSIGHTS_VIEW, "version": 9999}).json()
+    _put(c, session, INBOX_VIEW)
+    out = _put(c, session, {**INBOX_VIEW, "version": 9999}).json()
 
     assert out["version"] == 2
 
@@ -114,16 +114,16 @@ def test_the_version_is_assigned_by_the_server_not_accepted_from_the_page():
 def test_a_page_sending_its_rows_instead_of_its_selection_is_refused():
     """The cap is a design guard, not a resource limit.
 
-    A page that serialises the rows it displays has duplicated `list_insights`,
+    A page that serialises the rows it displays has duplicated `list_items`,
     can go stale between render and send, and has become a second place an ACL
     could be got wrong. Refusing at the point the mistake is made is the only
     moment anyone will notice.
     """
     _user, session, c = _ctx()
     fat = {
-        "path": "/insights",
-        "insights": [
-            {"id": n, "text": "x" * 300, "project": "commcare", "category": "stale"}
+        "path": "/w/w1/agents/echo/inbox",
+        "items": [
+            {"id": n, "title": "x" * 300, "agent": "echo", "kind": "review"}
             for n in range(200)
         ],
     }
@@ -142,7 +142,7 @@ def test_the_cap_is_generous_for_the_shape_we_actually_want():
     toward sending less than the agent needs to act on a full screen."""
     _user, session, c = _ctx()
 
-    response = _put(c, session, {**INSIGHTS_VIEW, "visible_ids": list(range(500))})
+    response = _put(c, session, {**INBOX_VIEW, "visible_ids": list(range(500))})
 
     assert response.status_code == 200
 
@@ -150,7 +150,7 @@ def test_the_cap_is_generous_for_the_shape_we_actually_want():
 def test_a_refused_declaration_leaves_the_previous_view_intact():
     """A rejection must not blank the screen the agent already knew about."""
     _user, session, c = _ctx()
-    _put(c, session, INSIGHTS_VIEW)
+    _put(c, session, INBOX_VIEW)
 
     _put(c, session, {"rows": [{"t": "x" * 400} for _ in range(100)]})
 
@@ -172,7 +172,7 @@ def test_no_page_attached_reads_as_empty_not_as_an_error():
 
 def test_clearing_is_how_a_page_detaches():
     _user, session, c = _ctx()
-    _put(c, session, INSIGHTS_VIEW)
+    _put(c, session, INBOX_VIEW)
 
     session.refresh_from_db()
     page_state.clear_page_state(session)
@@ -199,9 +199,9 @@ def test_another_users_session_is_not_readable():
 def test_the_state_is_stored_as_given_apart_from_the_version():
     _user, session, _c = _ctx()
 
-    stored = page_state.set_page_state(session, INSIGHTS_VIEW)
+    stored = page_state.set_page_state(session, INBOX_VIEW)
 
-    assert json.loads(json.dumps(stored)) == {**INSIGHTS_VIEW, "version": 1}
+    assert json.loads(json.dumps(stored)) == {**INBOX_VIEW, "version": 1}
 
 
 def test_a_non_object_state_is_refused():

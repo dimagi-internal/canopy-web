@@ -39,14 +39,6 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Find the page you need', 'See what a surface needs before it works'],
   },
   {
-    path: '/insights',
-    title: 'Insights',
-    audience: 'Anyone watching the portfolio',
-    what: 'A cross-portfolio feed of AI-generated findings (ship gaps, hygiene, patterns, stale work, opportunities, alignment), filterable by category and project, with per-item dismiss and a bulk clear.',
-    needsFirst: 'An insight-generating skill (e.g. canopy:portfolio-review) run at least once.',
-    actions: ['Filter by category or project', 'Dismiss an insight', 'Clear everything in view'],
-  },
-  {
     path: '/sessions',
     title: 'Shared transcripts',
     audience: 'Anyone who wants to hand someone a transcript link',
@@ -121,8 +113,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace',
     title: 'Project workbench',
     audience: 'Anyone in a workspace',
-    what: 'The workspace home — a tile per project, ranked by how many insights are waiting on it, with the top three surfaced as a hero.',
-    actions: ['Triage an insight inline', 'Open a project'],
+    what: 'The workspace home — a tile per project, most recently updated first, with stale projects tucked behind a toggle. Expand a tile for its summary, hygiene actions and skills.',
+    actions: ['Open a project', 'Show stale projects'],
   },
   {
     path: '/w/:workspace/settings',

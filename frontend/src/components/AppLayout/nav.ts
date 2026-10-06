@@ -40,7 +40,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { path: '', label: 'Projects', tenant: true },
       { path: 'chat', label: 'Chats', tenant: true },
-      { path: '/insights', label: 'Insights', tenant: false },
     ],
   },
   {

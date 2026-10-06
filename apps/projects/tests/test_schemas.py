@@ -2,7 +2,6 @@ import pytest
 
 from apps.projects.schemas import (
     BatchContextIn,
-    InsightOut,
     ProjectCreateIn,
     ProjectListOut,
     ProjectPatchIn,
@@ -34,7 +33,6 @@ def test_project_list_round_trip():
                 "completed_at": "2026-05-25T09:10:00Z",
             }
         },
-        "insight_count": 3,
         "walkthrough_count": 2,
         "created_at": "2026-04-01T00:00:00Z",
         "updated_at": "2026-05-26T09:00:00Z",
@@ -50,7 +48,7 @@ def test_project_list_walkthrough_count_default_zero():
     raw = {
         "id": 1, "name": "x", "slug": "x", "repo_url": "", "deploy_url": "",
         "visibility": "public", "status": "active", "skills": [],
-        "latest_context": {}, "latest_actions": {}, "insight_count": 0,
+        "latest_context": {}, "latest_actions": {},
         "created_at": "2026-04-01T00:00:00Z",
         "updated_at": "2026-05-26T09:00:00Z",
     }
@@ -71,19 +69,6 @@ def test_project_patch_partial():
     obj = ProjectPatchIn(status="archived")
     dumped = obj.model_dump(exclude_unset=True)
     assert dumped == {"status": "archived"}
-
-
-def test_insight_out_round_trip():
-    raw = {
-        "id": 100,
-        "project_slug": "canopy-web",
-        "project_name": "canopy-web",
-        "content": "[ship_gap] Refactor branch open for 8 days",
-        "source": "canopy:portfolio-review",
-        "created_at": "2026-05-26T09:00:00Z",
-    }
-    parsed = InsightOut.model_validate(raw)
-    assert parsed.content.startswith("[ship_gap]")
 
 
 def test_batch_context_in_shape():

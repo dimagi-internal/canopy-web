@@ -94,7 +94,7 @@ export function CanopyWidget() {
   // every route change would close an open conversation mid-sentence. The path
   // is read through a ref instead, so context is always current.
   // Path AND query: the search string is where a filtered view keeps its
-  // state, so dropping it made "/insights?project=x" indistinguishable from
+  // state, so dropping it made "…/agents/echo/work?by=project" indistinguishable from
   // the unfiltered page.
   const pathRef = useRef(location.pathname)
   pathRef.current = location.pathname

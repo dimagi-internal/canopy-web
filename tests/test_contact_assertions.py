@@ -305,7 +305,7 @@ def test_a_contact_sees_itself_and_the_agents_this_site_offers():
 
 @pytest.mark.parametrize("path", [
     "/api/canopy-sessions/",
-    "/api/insights/",
+    "/api/shareouts/",
     "/api/agents/",
     "/api/workspaces/",
     "/api/embed/agents",

@@ -34,7 +34,7 @@ const GLOBAL_SENTINEL = '~global'
  *     the ledger shows who decided it afterwards, so a collision is visible
  *     rather than silent
  *   - a shareouts period, `/walkthrough/:id` — published artifacts, read-only
- *   - `/supervisor`, `/insights`, `/sessions`, `/activity`, `/schedules`,
+ *   - `/supervisor`, `/sessions`, `/activity`, `/schedules`,
  *     `/system`, `/settings` — personal or read-only dashboards
  *
  * Order matters — the first match wins, so more specific patterns (a DDD run

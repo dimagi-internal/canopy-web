@@ -1,4 +1,4 @@
-"""Pydantic schemas for the /api/projects + /api/insights surface."""
+"""Pydantic schemas for the /api/projects surface."""
 from __future__ import annotations
 
 import datetime as dt
@@ -10,6 +10,9 @@ from apps.common.schemas import StrictModel
 
 ProjectVisibility = Literal["public", "private"]
 ProjectStatus = Literal["active", "stale", "archived"]
+# "insight" mirrors the `ProjectContext` choice, which is KEPT although the
+# Insights feed (/insights, /api/insights/) was retired 2026-10: existing rows
+# still come back from the context endpoints, so the output type must name it.
 ProjectContextType = Literal["current_work", "next_step", "summary", "note", "insight"]
 ActionStatus = Literal["started", "completed", "failed"]
 
@@ -90,7 +93,6 @@ class ProjectListOut(StrictModel):
     skills: list[ProjectSkillOut]
     latest_context: dict[str, ProjectContextOut]
     latest_actions: dict[str, ProjectActionLatestOut]
-    insight_count: int = Field(ge=0)
     walkthrough_count: int = Field(ge=0, default=0)  # added by PR #41
     created_by_email: str | None = None  # who registered it (null for pre-attribution rows)
     created_at: dt.datetime
@@ -145,45 +147,3 @@ class BatchContextIn(StrictModel):
 class BatchActionsIn(StrictModel):
     """Body of POST /api/projects/batch-actions/."""
     updates: dict[str, list[ProjectActionCreateIn]]
-
-
-# --- Insights ----------------------------------------------------------
-
-
-class InsightOut(StrictModel):
-    id: int
-    project_slug: str
-    project_name: str
-    content: str
-    source: str
-    created_at: dt.datetime
-
-
-class InsightsClearIn(StrictModel):
-    """Body of POST /api/insights/clear/.
-
-    All fields optional. Provided filters are AND-combined to narrow which
-    insights are deleted. A body with no filters clears every insight in the
-    workspaces where the caller holds the editor role.
-    """
-    source: str | None = None
-    category: str | None = None
-    project: str | None = None  # project slug
-    older_than_days: int | None = None
-
-
-class InsightsClearOut(StrictModel):
-    cleared: int
-
-
-class InsightDismissOut(StrictModel):
-    dismissed: int
-
-
-class InsightsDismissIn(StrictModel):
-    """Body of POST /api/insights/dismiss."""
-    ids: list[int]
-
-
-class InsightsDismissOut(StrictModel):
-    dismissed: list[int]

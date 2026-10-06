@@ -88,7 +88,6 @@ def check_page(
 PAGES = [
     # (path, screenshot_name, must-contain substrings, must-NOT-contain substrings)
     ("/", "dashboard", ["projects"], ["failed to load"]),
-    ("/insights", "insights", ["insights"], ["failed to load"]),
     ("/skills", "skills", ["skills"], ["failed to load"]),
     ("/workspaces", "workspaces", ["workspace"], ["failed to load"]),
     ("/new", "new-collection", ["collection"], ["failed to load"]),

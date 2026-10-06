@@ -3,7 +3,7 @@
 `page_tools.py` was written, documented and unit-tested in full — and never
 imported by `server.py`. Every one of its own tests passed while the feature it
 implements did not exist: an agent asking canopy for its tools got the static
-list and nothing else, so "close all the insights" had no tool to call.
+list and nothing else, so "dismiss the items I'm looking at" had no tool to call.
 
 That is the gap these tests close. They go through `mcp.list_tools()` and
 `mcp.call_tool()` — the same entry points a real MCP client hits — rather than
@@ -30,11 +30,11 @@ User = get_user_model()
 pytestmark = pytest.mark.django_db
 
 DISMISS = {
-    "name": "dismissInsights",
-    "description": "Dismiss insights from the list the user is viewing",
+    "name": "dismissItems",
+    "description": "Dismiss inbox items from the list the user is viewing",
     "inputSchema": {
         "type": "object",
-        "properties": {"ids": {"type": "array", "items": {"type": "integer"}}},
+        "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
         "required": ["ids"],
     },
 }
@@ -76,7 +76,7 @@ def test_an_open_page_puts_its_action_in_the_agents_tool_list():
     with as_user(user):
         tools = async_to_sync(mcp.list_tools)()
 
-    tool = next((t for t in tools if t.name == "page_dismissInsights"), None)
+    tool = next((t for t in tools if t.name == "page_dismissItems"), None)
     assert tool is not None, f"page tools never reached the server: {sorted(t.name for t in tools)}"
     # And with the host's schema, which is the only way the agent knows the
     # call takes `ids`.
@@ -88,7 +88,7 @@ def test_the_static_tools_are_still_there():
     user, _session = _user_with_page()
     with as_user(user):
         names = {t.name for t in async_to_sync(mcp.list_tools)()}
-    assert {"list_insights", "clear_insights"} <= names
+    assert {"list_items", "dismiss_item"} <= names
 
 
 def test_another_users_page_is_not_in_my_tool_list():
@@ -101,12 +101,12 @@ def test_another_users_page_is_not_in_my_tool_list():
 
     # Both users declared the same action, so a leak would be invisible by name
     # alone — assert on the SESSION named in the description instead.
-    tool = next(t for t in mine_names if t == "page_dismissInsights")
+    tool = next(t for t in mine_names if t == "page_dismissItems")
     assert tool  # present for me
     theirs_sessions = Session.objects.exclude(created_by=mine)
     with as_user(mine):
         described = next(
-            t.description for t in async_to_sync(mcp.list_tools)() if t.name == "page_dismissInsights"
+            t.description for t in async_to_sync(mcp.list_tools)() if t.name == "page_dismissItems"
         )
     for session in theirs_sessions:
         assert str(session.id) not in described
@@ -128,14 +128,14 @@ def test_calling_it_queues_a_real_page_action():
             # No page is listening in a test, so it times out — which is the
             # point: it got far enough to WAIT, and then refused out loud.
             async_to_sync(mcp.call_tool)(
-                "page_dismissInsights", {"ids": [1, 2]}
+                "page_dismissItems", {"ids": ["i1", "i2"]}
             )
 
     assert "timeout" in str(exc.value)
     action = PageAction.objects.get()
     assert action.session_id == session.id
-    assert action.name == "dismissInsights"
-    assert action.args == {"ids": [1, 2]}
+    assert action.name == "dismissItems"
+    assert action.args == {"ids": ["i1", "i2"]}
     # And it is recorded as unanswered rather than left pending forever.
     assert action.status == PageAction.EXPIRED
 
@@ -147,7 +147,7 @@ def test_a_refusal_reaches_the_model_as_words_not_an_opaque_error():
 
     with as_user(user):
         with pytest.raises(ToolError) as exc:
-            async_to_sync(mcp.call_tool)("page_dismissInsights", {})
+            async_to_sync(mcp.call_tool)("page_dismissItems", {})
 
     assert "bad_arguments" in str(exc.value)
     assert "ids" in str(exc.value)

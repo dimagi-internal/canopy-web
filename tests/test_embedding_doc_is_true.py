@@ -287,23 +287,22 @@ def test_the_documented_agui_ingress_route_exists(doc):
     assert resolve("/api/canopy-sessions/00000000-0000-0000-0000-000000000000/run-input")
 
 
-def test_the_doc_no_longer_teaches_dismissInsights_as_a_page_action(doc):
-    """§7 uses it as the WORKED EXAMPLE of what not to do, so the name may
-    appear — but never as something a host should register."""
-    assert "widget.registerAction('dismissInsights'" not in doc
-    assert not (REPO / "frontend/src/pages/insightsDismissAction.ts").exists()
+def test_the_doc_does_not_teach_a_dismiss_as_a_page_action(doc):
+    """§7 uses a dismiss-as-page-action as the WORKED EXAMPLE of what not to do,
+    so it may be described — but never shown as something a host registers."""
+    assert "widget.registerAction('dismiss" not in doc
 
 
 def test_the_replacement_server_tool_is_actually_served(doc):
-    """§7 says the mutation moved to `dismiss_insights`. Asserted against the
+    """§7 names `dismiss_item` as the server tool a dismiss belongs in. Asserted against the
     MOUNTED server, not the module — `page_tools.py` had ten passing tests and
     no import."""
     import asyncio
 
     from apps.mcp.server import mcp
 
-    assert "dismiss_insights" in doc
-    assert "dismiss_insights" in {t.name for t in asyncio.run(mcp._list_tools())}
+    assert "dismiss_item" in doc
+    assert "dismiss_item" in {t.name for t in asyncio.run(mcp._list_tools())}
 
 
 def test_the_documented_read_tool_is_actually_served(doc):

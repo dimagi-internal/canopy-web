@@ -16,8 +16,8 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 
 DISMISS = {
-    "name": "dismissInsights",
-    "description": "Dismiss insights from the list the user is viewing",
+    "name": "dismissItems",
+    "description": "Dismiss inbox items from the list the user is viewing",
     "inputSchema": {
         "type": "object",
         "properties": {"ids": {"type": "array", "items": {"type": "integer"}}},
@@ -48,13 +48,13 @@ def test_a_declared_action_becomes_an_mcp_tool_with_its_schema():
     session = _session(user, ws, [DISMISS])
 
     specs = page_tools.page_tool_specs(user)
-    assert [n for n, _s, _sp in specs] == ["page_dismissInsights"]
+    assert [n for n, _s, _sp in specs] == ["page_dismissItems"]
 
     tool = page_tools.to_mcp_tool(*specs[0])
     # The schema is the whole reason a declaration carries one: without it the
     # agent knows the tool exists but not that it takes `ids`.
     assert tool.parameters["required"] == ["ids"]
-    assert "dismissInsights" in tool.name
+    assert "dismissItems" in tool.name
     # The description says where it runs and how it fails, because "the tab is
     # closed" is the outcome an agent most needs to be able to act on.
     assert str(session.id) in tool.description
@@ -62,11 +62,11 @@ def test_a_declared_action_becomes_an_mcp_tool_with_its_schema():
 
 
 def test_tools_are_namespaced_so_a_page_cannot_shadow_a_canopy_tool():
-    """A page declaring `clear_insights` must not intercept calls meant for
+    """A page declaring `dismiss_item` must not intercept calls meant for
     canopy's real one."""
     user, ws = _user()
-    _session(user, ws, [{"name": "clear_insights"}])
-    assert [n for n, _s, _sp in page_tools.page_tool_specs(user)] == ["page_clear_insights"]
+    _session(user, ws, [{"name": "dismiss_item"}])
+    assert [n for n, _s, _sp in page_tools.page_tool_specs(user)] == ["page_dismiss_item"]
 
 
 def test_a_session_with_no_declaration_contributes_nothing():
@@ -100,7 +100,7 @@ def test_two_tabs_with_different_actions_expose_both():
     _session(user, ws, [DISMISS])
     _session(user, ws, [{"name": "recordCount"}])
     names = sorted(n for n, _s, _sp in page_tools.page_tool_specs(user))
-    assert names == ["page_dismissInsights", "page_recordCount"]
+    assert names == ["page_dismissItems", "page_recordCount"]
 
 
 def test_another_users_page_is_not_exposed():
@@ -114,7 +114,7 @@ def test_another_users_page_is_not_exposed():
 def test_a_declaration_with_no_name_is_ignored():
     user, ws = _user()
     _session(user, ws, [{"description": "nameless"}, DISMISS])
-    assert [n for n, _s, _sp in page_tools.page_tool_specs(user)] == ["page_dismissInsights"]
+    assert [n for n, _s, _sp in page_tools.page_tool_specs(user)] == ["page_dismissItems"]
 
 
 def test_a_host_using_parameters_instead_of_inputschema_still_works():

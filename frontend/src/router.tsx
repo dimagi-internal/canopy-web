@@ -13,7 +13,6 @@ import { CredentialsRedirect } from './pages/agents/CredentialsRedirect'
 import { AgentSkillsPage } from './pages/agents/AgentSkillsPage'
 import { WorkRedirect } from './pages/agents/WorkRedirect'
 import { ProjectsPage } from './pages/ProjectsPage'
-import { InsightsPage } from './pages/InsightsPage'
 import { ShareoutsPage } from './pages/ShareoutsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { WalkthroughsPage } from './pages/WalkthroughsPage'
@@ -209,7 +208,6 @@ export const routeTable: RouteObject[] = [
       // --- Personal / global (not tenant-scoped) ---
       { path: '/system', element: <SystemPage /> },
       { path: '/guide', element: <GuidePage /> },
-      { path: '/insights', element: <InsightsPage /> },
       { path: '/sessions', element: <SessionsPage /> },
       { path: '/supervisor', element: <SupervisorPage /> },
       { path: '/schedules', element: <SchedulesPage /> },
@@ -341,6 +339,9 @@ export const routeTable: RouteObject[] = [
       { path: '/ddd/*', element: <TenantRedirect to="ddd" /> },
       { path: '/ddd-plans', element: <Navigate to="/" replace /> },
       { path: '/reviews', element: <Navigate to="/" replace /> },
+      // The Insights feed was retired (superseded by agent tasks/items); old
+      // bookmarks land on the home page rather than the not-found screen.
+      { path: '/insights', element: <Navigate to="/" replace /> },
 
       // Catch-all (LAST): an unmatched path is a bad URL OR a browser still on
       // a pre-deploy bundle (PWA precache) whose router lacks a route this

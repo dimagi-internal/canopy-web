@@ -81,7 +81,7 @@ def test_who_is_asking_answers_about_its_own_conversation_only(w):
 def test_an_unlisted_tool_is_refused_even_by_name(w):
     turn = _email_turn(w["agent"])
     with as_token(caller_tokens.mint(turn)), pytest.raises(Exception, match="not part of"):
-        async_to_sync(mcp.call_tool)("list_insights", {})
+        async_to_sync(mcp.call_tool)("list_shareouts", {})
 
 
 def test_a_members_session_runs_as_the_member(w):
@@ -164,4 +164,4 @@ def test_a_personal_token_is_untouched(w):
 
     raw, _ = PersonalToken.create_for_user(user=w["op"], label="t")
     with as_token(raw):
-        assert len(_names()) > 5 and "list_insights" in _names()
+        assert len(_names()) > 5 and "list_shareouts" in _names()

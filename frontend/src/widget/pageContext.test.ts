@@ -51,7 +51,7 @@ describe('the route layer', () => {
 
   it('covers the personal surfaces', () => {
     expect(describePage('/supervisor').surface).toBe('the supervisor inbox')
-    expect(describePage('/insights').surface).toBe('the cross-portfolio insights feed')
+    expect(describePage('/activity').surface).toBe('the fleet activity log')
   })
 
   it('still says something for a page with no rule', () => {

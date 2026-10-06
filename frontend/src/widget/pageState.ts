@@ -96,7 +96,7 @@ export function onPageStateChanged(fn: (state: PageState) => void): () => void {
 export function describeSelection(input: {
   /** The MCP tool that resolves these ids. */
   backingTool: string
-  /** The MCP resource URI this page is showing, e.g. `insight://`.
+  /** The MCP resource URI this page is showing, e.g. `item://`.
    *
    *  This is what canopy keys INVALIDATION on: when the data behind it changes
    *  — by any actor, through any door — every page declaring this resource is

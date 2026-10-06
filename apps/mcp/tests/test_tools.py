@@ -9,6 +9,7 @@ reads inside the tool.
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 
 import pytest
 from asgiref.sync import async_to_sync
@@ -20,7 +21,8 @@ from mcp.server.auth.middleware.auth_context import (
 )
 
 from apps.mcp.server import mcp
-from apps.projects.models import Project, ProjectContext
+from apps.projects.models import Project
+from apps.shareouts.models import Shareout
 
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.services import ensure_member
@@ -46,7 +48,7 @@ def as_user(user):
 
 
 def _editor():
-    """An editor of the default workspace — clearing insights is the author tier."""
+    """An editor of the default workspace — clearing shareouts is the author tier."""
     user = User.objects.create_user(username="alice", email="alice@dimagi.com")
     ensure_member(a_workspace(), user, WorkspaceMembership.EDITOR)
     return user
@@ -57,78 +59,91 @@ def _project(name, slug):
     return Project.objects.create(name=name, slug=slug, workspace=a_workspace())
 
 
-def _insight(project, content, source="canopy"):
-    return ProjectContext.objects.create(
-        project=project, context_type="insight", content=content, source=source
+_DAY = iter(range(1, 28))
+
+
+def _shareout(user, project, title, source="canopy"):
+    """A shareout the editor posted (an editor clears their own). Each on its own
+    day, so the one-per-period-and-source constraint never trips."""
+    day = next(_DAY)
+    return Shareout.objects.create(
+        project=project, workspace=a_workspace(), created_by=user, title=title,
+        content="c", source=source,
+        period_start=dt.datetime(2026, 9, day, 0, tzinfo=dt.timezone.utc),
+        period_end=dt.datetime(2026, 9, day, 23, tzinfo=dt.timezone.utc),
     )
 
 
 @pytest.mark.django_db
-def test_tools_list_returns_insight_tools():
+def test_tools_list_returns_the_list_and_clear_tools():
     tools = async_to_sync(mcp.list_tools)()
     names = {t.name for t in tools}
-    assert {"list_insights", "clear_insights"} <= names
+    assert {"list_shareouts", "clear_shareouts"} <= names
 
 
 @pytest.mark.django_db
-def test_list_insights_runs_and_returns_rows():
+def test_list_shareouts_runs_and_returns_rows():
     user = _editor()
     proj = _project("Canopy", "canopy")
-    _insight(proj, "[ship_gap] do the thing")
+    _shareout(user, proj, "shipped the thing")
 
     with as_user(user):
-        result = async_to_sync(mcp.call_tool)("list_insights", {})
+        result = async_to_sync(mcp.call_tool)("list_shareouts", {})
 
     rows = result.structured_content["items"]  # the REST route's Page
     assert len(rows) == 1
-    assert rows[0]["content"] == "[ship_gap] do the thing"
+    assert rows[0]["title"] == "shipped the thing"
     assert rows[0]["project_slug"] == "canopy"
 
 
 @pytest.mark.django_db
-def test_clear_insights_respects_project_filter():
+def test_clear_shareouts_respects_project_filter():
     user = _editor()
     keep = _project("Keep", "keep")
     drop = _project("Drop", "drop")
-    _insight(keep, "[a] keep me")
-    _insight(drop, "[b] drop me 1")
-    _insight(drop, "[b] drop me 2")
+    _shareout(user, keep, "keep me")
+    _shareout(user, drop, "drop me 1")
+    _shareout(user, drop, "drop me 2")
 
     with as_user(user):
-        result = async_to_sync(mcp.call_tool)("clear_insights", {"project": "drop"})
+        result = async_to_sync(mcp.call_tool)("clear_shareouts", {"project": "drop"})
 
     assert result.structured_content == {"cleared": 2}
-    remaining = ProjectContext.objects.filter(context_type="insight")
+    remaining = Shareout.objects.all()
     assert remaining.count() == 1
     assert remaining.first().project_id == keep.pk
 
 
 @pytest.mark.django_db
-def test_clear_insights_respects_category_filter():
+def test_clear_shareouts_respects_source_filter():
     user = _editor()
     proj = _project("P", "p")
-    _insight(proj, "[hygiene] x")
-    _insight(proj, "[ship_gap] y")
+    _shareout(user, proj, "x", source="run-a")
+    _shareout(user, proj, "y", source="run-b")
 
     with as_user(user):
-        result = async_to_sync(mcp.call_tool)("clear_insights", {"category": "hygiene"})
+        result = async_to_sync(mcp.call_tool)("clear_shareouts", {"source": "run-a"})
 
     assert result.structured_content == {"cleared": 1}
-    assert ProjectContext.objects.filter(content__startswith="[ship_gap]").exists()
+    assert Shareout.objects.filter(source="run-b").exists()
 
 
 @pytest.mark.django_db
-def test_clear_insights_writes_audit_as_user():
+def test_clear_shareouts_with_no_arguments_runs_and_writes_audit_as_user():
+    """A route whose body fields are ALL optional, called with no arguments —
+    the case `api_tools._ensure_json_body` exists for (without it Ninja answers
+    422 "payload: Field required")."""
     from apps.mcp.models import MCPAuditLog
 
     user = _editor()
     proj = _project("P", "p")
-    _insight(proj, "[a] x")
+    _shareout(user, proj, "x")
 
     with as_user(user):
-        async_to_sync(mcp.call_tool)("clear_insights", {})
+        result = async_to_sync(mcp.call_tool)("clear_shareouts", {})
 
-    log = MCPAuditLog.objects.filter(tool="clear_insights").latest("created_at")
+    assert result.structured_content == {"cleared": 1}
+    log = MCPAuditLog.objects.filter(tool="clear_shareouts").latest("created_at")
     assert log.user_id == user.pk
     assert log.ok is True
 
