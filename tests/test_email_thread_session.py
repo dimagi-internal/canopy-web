@@ -149,4 +149,4 @@ def test_the_session_homes_in_the_agents_own_workspace_never_a_default(agent):
 
 def test_a_thread_session_with_neither_agent_nor_workspace_fails_loudly():
     with pytest.raises(ValueError):
-        services._thread_session(None, "repo", None, "some-thread")
+        services._thread_session(None, "repo", None, "some-thread", runner=None)

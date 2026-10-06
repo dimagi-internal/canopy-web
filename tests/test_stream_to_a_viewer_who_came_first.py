@@ -19,7 +19,7 @@ from apps.canopy_sessions import services as chat_services
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness import services
 from apps.harness.models import Runner
-from apps.workspaces.models import Workspace
+from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -35,7 +35,9 @@ def _world():
     user = get_user_model().objects.create_user("jj", "jj@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=user)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws)
-    runner = Runner.objects.create(name="laptop", workspace=ws, host="jj@mbp", location=Runner.LOCAL)
+    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
+    runner = Runner.objects.create(name="laptop", workspace=ws, host="jj@mbp", location=Runner.LOCAL,
+                                   owner=user)
     chat = Session.objects.create(workspace=ws, created_by=user, agent=agent)
     return agent, runner, chat
 

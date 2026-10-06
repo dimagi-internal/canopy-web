@@ -73,10 +73,20 @@ def test_record_is_idempotent_per_thread():
     assert b.session_key == "echo-2"  # re-pointed at the newest live task
 
 
+def _owned_runner(ws, name="laptop", host="jj@air"):
+    """A paired runner: its owner is the pairing human, a member of `ws`."""
+    from apps.workspaces.models import WorkspaceMembership
+
+    owner = _user(f"owner-{name}-{ws.slug}")
+    WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.EDITOR)
+    return Runner.objects.create(name=name, workspace=ws, host=host, location=Runner.LOCAL,
+                                 owner=owner)
+
+
 def test_record_binds_existing_chat_session_by_uuid_thread_key():
     ws = _ws("w1")
     a = _agent(ws)
-    r = Runner.objects.create(name="laptop", workspace=ws, host="jj@air", location=Runner.LOCAL)
+    r = _owned_runner(ws)
     chat = Session.objects.create(workspace=ws, agent=a, origin=Session.ORIGIN_WEB, title="web chat")
     services.record_session(a, str(chat.id), runner=r, session_key="echo-9")
     # binds the EXISTING web session, does not fork a new runner session
@@ -143,3 +153,63 @@ def test_report_does_not_clobber_agent_thread_reuse():
     assert plan["reuse"] is True
     assert plan["new_thread"] is False
     assert plan["session_key"] == "echo-1234"
+
+
+# --- a session id is not a key to someone else's conversation ---------------------
+#
+# `_thread_session` binds an existing Session named by a UUID thread_key. Before,
+# ANY session id bound, whatever its agent or tenant, re-pointing someone else's
+# chat (its live hint, streams and next turns) at the caller's box.
+
+
+def test_record_refuses_another_agents_session_by_uuid():
+    ws = _ws("w1")
+    echo, hal = _agent(ws, "echo"), _agent(ws, "hal")
+    r = _owned_runner(ws)
+    hals_chat = Session.objects.create(workspace=ws, agent=hal, origin=Session.ORIGIN_WEB, title="hal")
+    with pytest.raises(services.ThreadSessionNotFound):
+        services.record_session(echo, str(hals_chat.id), runner=r, session_key="echo-9")
+    assert not RunnerBinding.objects.filter(session=hals_chat).exists()
+
+
+def test_record_refuses_a_session_in_a_tenant_the_runner_owner_is_not_in():
+    home, other = _ws("w1"), _ws("w2")
+    a = _agent(other, "echo")
+    r = _owned_runner(home)          # owner is a member of w1 only
+    chat = Session.objects.create(workspace=other, agent=a, origin=Session.ORIGIN_WEB, title="x")
+    with pytest.raises(services.ThreadSessionNotFound):
+        services.record_session(a, str(chat.id), runner=r, session_key="echo-9")
+    assert not RunnerBinding.objects.filter(session=chat).exists()
+
+
+def test_record_refuses_an_unowned_runner_binding_a_session_by_uuid():
+    ws = _ws("w1")
+    a = _agent(ws)
+    r = Runner.objects.create(name="stray", workspace=ws, host="h", location=Runner.LOCAL)
+    chat = Session.objects.create(workspace=ws, agent=a, origin=Session.ORIGIN_WEB, title="x")
+    with pytest.raises(services.ThreadSessionNotFound):
+        services.record_session(a, str(chat.id), runner=r, session_key="echo-9")
+
+
+def test_record_refuses_a_project_thread_naming_an_agent_or_other_repo_session():
+    ws = _ws("w1")
+    a = _agent(ws)
+    r = _owned_runner(ws)
+    agent_chat = Session.objects.create(workspace=ws, agent=a, origin=Session.ORIGIN_WEB, title="a")
+    other_repo = Session.objects.create(workspace=ws, project="ace", origin=Session.ORIGIN_WEB,
+                                        title="ace")
+    for chat in (agent_chat, other_repo):
+        with pytest.raises(services.ThreadSessionNotFound):
+            services.record_session(None, str(chat.id), runner=r, project="canopy-web",
+                                    workspace=ws, session_key="t-1")
+        assert not RunnerBinding.objects.filter(session=chat).exists()
+
+
+def test_record_binds_its_own_project_session_by_uuid():
+    ws = _ws("w1")
+    r = _owned_runner(ws)
+    chat = Session.objects.create(workspace=ws, project="canopy-web", origin=Session.ORIGIN_WEB,
+                                  title="repo chat")
+    services.record_session(None, str(chat.id), runner=r, project="canopy-web", workspace=ws,
+                            session_key="t-1")
+    assert RunnerBinding.objects.get(session=chat).session_key == "t-1"

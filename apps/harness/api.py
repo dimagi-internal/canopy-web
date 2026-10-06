@@ -1166,12 +1166,15 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
     runner = _runner_or_404(request, runner_id)
     if payload.project:
         ws = _project_workspace_or_404(request, payload.workspace)
-        services.record_session(
-            None, payload.thread_key, runner=runner, project=payload.project, workspace=ws,
-            session_key=payload.session_key, session_id=payload.session_id,
-            agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
-            title=payload.title,
-        )
+        try:
+            services.record_session(
+                None, payload.thread_key, runner=runner, project=payload.project, workspace=ws,
+                session_key=payload.session_key, session_id=payload.session_id,
+                agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
+                title=payload.title,
+            )
+        except services.ThreadSessionNotFound:
+            raise HttpError(404, "session not found")
         return services.resolve_session(
             None, payload.thread_key, runner, project=payload.project, workspace=ws
         )
@@ -1185,12 +1188,17 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
                 .filter(pk=payload.turn_id, claimed_by=runner).first())
         if turn is not None:
             title = services.turn_session_title(turn, payload.title)
-    services.record_session(
-        agent, payload.thread_key, runner=runner,
-        session_key=payload.session_key, session_id=payload.session_id,
-        agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
-        title=title,
-    )
+    try:
+        services.record_session(
+            agent, payload.thread_key, runner=runner,
+            session_key=payload.session_key, session_id=payload.session_id,
+            agent_task_ext_id=payload.agent_task_ext_id, summary=payload.summary,
+            title=title,
+        )
+    except services.ThreadSessionNotFound:
+        # A session id that is not this agent's, or sits in a tenant the runner's
+        # owner is not in: refused as if it did not exist, and nothing rebound.
+        raise HttpError(404, "session not found")
     if payload.turn_id and payload.session_key:
         services.stamp_turn_session(payload.turn_id, runner, payload.session_key)
     return services.resolve_session(agent, payload.thread_key, runner)
@@ -1627,6 +1635,23 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         if not perms.can(request.user, workspace, perms.AGENT_WORK):
             raise HttpError(403, "running a turn requires the editor role or above")
 
+    if payload.origin == Turn.ORIGIN_EMAIL:
+        # An email turn names its OWN asker from `origin_ref` (the sender and our
+        # receiver's Authentication-Results), and a DMARC-aligned sender who is a
+        # member becomes a VERIFIED user initiator — so whoever may post one may
+        # write that verdict. The one legitimate poster is the runner that read
+        # the mailbox, authenticated as its owner, and a box holds an agent only
+        # when its owner is one of the agent's admins (runner_may_hold_agent). An
+        # editor who is not an admin posting "dmarc=pass" from the owner's address
+        # would otherwise be promoted to the owner. A project turn has no mailbox.
+        if agent is None or not agent.is_admin(request.user):
+            raise HttpError(
+                403,
+                "an email turn is posted by the runner that read the agent's mailbox, "
+                "whose owner is one of the agent's admins; send other work with "
+                "origin=api",
+            )
+
     pinned = None
     if payload.runner_id is not None:
         # The question here is exactly "can the caller SEE this runner?" — a runner
@@ -1644,6 +1669,17 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         )
         if pinned is None:
             raise HttpError(422, f"unknown or retired runner id: {payload.runner_id}")
+        if agent is None and payload.project not in pinned.project_names():
+            # claim_next_turn's pin arm skips target matching, so without this a
+            # pinned repo prompt lands on a box that never declared the repo —
+            # routing's one rule for a project turn (runner_target_q's
+            # `project__in`) is that the box drives that repo. Unpinned project
+            # turns route by declaration as before.
+            raise HttpError(
+                403,
+                f"runner {pinned.name} does not declare the repo {payload.project!r}; "
+                "pin a runner that does, or dispatch without a runner",
+            )
         if agent is not None:
             from apps.agents.services import runner_may_hold_agent
 

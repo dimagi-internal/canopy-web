@@ -29,6 +29,12 @@ def _aware(value):
 
 
 # ---- agents ----
+#: What an agent IS on its boxes: the code they clone and what they install with
+#: it. Changing one on an existing agent is its admins' (agents/api.py upsert).
+DEFINITION_FIELDS = ("repo_url", "repo_ref", "runtime_engine", "runtime_secrets",
+                     "runtime_sources")
+
+
 def upsert_agent(data, *, workspace) -> Agent:
     """Create or update an agent by slug.
 
