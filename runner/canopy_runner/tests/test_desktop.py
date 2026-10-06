@@ -209,6 +209,29 @@ def test_a_chat_turn_runs_to_completion_in_a_new_session(cfg, tmp_path, no_app):
     assert desktop.is_desktop_session(cfg, "sid-1")
 
 
+def test_a_chat_turns_attachments_reach_the_desktop_session(cfg, tmp_path, monkeypatch):
+    """A screenshot sent from the web was dropped on this runtime: the session got
+    the words alone (live 2026-10-06, a supervisor request whose image never
+    arrived). It must be downloaded and named in the prompt, as on emdash."""
+    from canopy_runner import execute
+
+    monkeypatch.setattr(execute, "ATTACHMENT_ROOT", tmp_path / "att")
+
+    class Client(FakeClient):
+        def download_attachment(self, aid, dest):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"png")
+
+    turn = _turn(prompt="see the screenshot", origin_ref={
+        "thread_key": "th", "chat_session_id": "c",
+        "attachments": [{"id": "a1", "filename": "dialog.png"}]})
+    run = desktop.TurnRun(cfg, Client(), "r", turn, "th", {"reuse": False}, reuse="")
+    prompt = run._prompt()
+    assert prompt.startswith("see the screenshot")
+    shot = tmp_path / "att" / "turn-0001-aaaa" / "dialog.png"
+    assert str(shot) in prompt and shot.read_bytes() == b"png"
+
+
 def test_an_agent_turn_finishes_once_delivered(cfg, tmp_path, no_app):
     cfg.desktop_projects = {"hal": str(_repo(tmp_path))}
     turn = _turn(project="", agent_slug="hal", prompt="")

@@ -739,6 +739,13 @@ class TurnRun:
 
     def _prompt(self) -> str:
         prompt = self.turn.get("prompt") or (f"/{self.target}:turn" if not self.chat else "")
+        # The person's attachments, downloaded and named in the prompt — the same
+        # step the emdash path takes (execute.execute_chat_turn). This runtime
+        # skipped it, so a screenshot sent from the web never reached a desktop
+        # session: the agent got the words and nothing else, and could not tell.
+        # Imported here: execute imports this module lazily, and vice versa.
+        from .execute import fetch_attachments, prompt_with_attachments
+        prompt = prompt_with_attachments(prompt, fetch_attachments(self.client, self.turn))
         envelope = caller.write_caller_file(self.turn)
         return caller.with_caller_flag(prompt, envelope) if not self.chat else prompt
 
