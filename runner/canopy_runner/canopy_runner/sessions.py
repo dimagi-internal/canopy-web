@@ -261,6 +261,19 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         annotate_engine_staleness(cfg, sessions)
     except Exception:  # noqa: BLE001
         logger.debug("engine-staleness annotation failed (non-fatal)", exc_info=True)
+    # Claude desktop sessions (desktop.py) are this box's sessions too. Left out,
+    # canopy-web reads them as stale and lists them archived. Added after the
+    # emdash-only staleness annotation, and read fail-soft: a bad desktop index
+    # must never cost the emdash report.
+    # `complete` speaks for the EMDASH read (its limit, its truncation); the desktop
+    # index is always read whole, so it must not tip that verdict.
+    emdash_complete = len(sessions) < cfg.session_report_limit
+    try:
+        from . import desktop
+
+        sessions = sessions + desktop.open_sessions(cfg)
+    except Exception:  # noqa: BLE001
+        logger.warning("desktop session read failed; reporting emdash sessions only", exc_info=True)
     global _REPORT_NOW
     changed = session_changed(cfg, sessions) or bool(_PENDING_CLOSED) or _REPORT_NOW
     _REPORT_NOW = False
@@ -306,7 +319,7 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         # Complete = not cut off by the limit. Only a complete report lets the
         # server read a task's absence as "closed" (emdash deletes closed tasks).
         client.report_sessions(cfg.runner_id, sessions, sorted(set(archived) | closing),
-                               complete=len(sessions) < cfg.session_report_limit)
+                               complete=emdash_complete)
         # Discard only the names this report actually carried (mutate in place —
         # `_PENDING_CLOSED -= closing` would rebind the name, making it local
         # under Python's scoping rules and shadowing the module-level set). A

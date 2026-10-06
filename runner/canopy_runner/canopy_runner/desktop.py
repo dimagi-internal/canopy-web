@@ -130,8 +130,13 @@ def in_flight() -> list[str]:
 
 # ── paths and the session index ─────────────────────────────────────────────
 
+#: Where this runtime keeps its worktrees and session index, unless the config
+#: names `desktop_dir`. A module attribute so a test suite can point it at tmp.
+DEFAULT_DIR: Path | None = None
+
+
 def _root(cfg) -> Path:
-    return Path(getattr(cfg, "desktop_dir", "") or (Path.home() / ".canopy" / "desktop"))
+    return Path(getattr(cfg, "desktop_dir", "") or DEFAULT_DIR or (Path.home() / ".canopy" / "desktop"))
 
 
 def _index_path(cfg) -> Path:
@@ -420,6 +425,53 @@ def stop(cfg, session_key: str, wait: float = STOP_WAIT_SECONDS) -> dict:
     return {"action": "unreadable", "reason": "the session did not answer the stop"}
 
 
+# ── the session report ──────────────────────────────────────────────────────
+
+def _agent_status(channel: Path) -> str:
+    """emdash's vocabulary, from the mod's events: `working` while a model turn
+    runs, `awaiting-input` when it raised a permission ask since that turn
+    started, "" when idle or the session's process is down."""
+    if not channel_alive(channel):
+        return ""
+    started = asked = 0
+    for e in read_events(channel):
+        kind, t = e.get("kind"), e.get("t", 0)
+        if kind == "turn.start":
+            started, asked = t, 0
+        elif kind == "turn.complete":
+            started = 0
+        elif kind == "ask" and started:
+            asked = t
+    if not started:
+        return ""
+    return "awaiting-input" if asked else "working"
+
+
+def open_sessions(cfg) -> list[dict]:
+    """Desktop sessions for the runner's session report, in the same row shape as
+    `emdash.list_open_sessions`. Without this the report only ever named emdash
+    tasks, so canopy-web read every desktop session as stale and listed it as
+    ARCHIVED within minutes of creating it (found live, #1188). A session whose
+    worktree is gone is left out — the report's absence is how canopy-web learns
+    a session closed."""
+    import datetime as dt
+
+    rows = []
+    for sid, entry in _index(cfg).items():
+        wt = Path(entry.get("worktree", ""))
+        if not wt.exists():
+            continue
+        path = transcript_path(sid)
+        try:
+            last = dt.datetime.fromtimestamp((path or wt).stat().st_mtime, tz=dt.timezone.utc)
+        except OSError:
+            continue
+        rows.append({"emdash_task": sid, "project": entry.get("project", ""),
+                     "status": "in_progress", "agent_status": _agent_status(wt / CHANNEL),
+                     "last_interacted_at": last.isoformat()})
+    return sorted(rows, key=lambda r: r["last_interacted_at"], reverse=True)
+
+
 # ── transcript → turn events ────────────────────────────────────────────────
 
 def events_from_record(rec: dict) -> list[dict]:
@@ -577,6 +629,11 @@ class TurnRun:
                 prompt = (f"[Continuing prior work on this thread — context from earlier sessions "
                           f"(a fresh session, possibly a different machine):]\n{summary}\n\n{prompt}")
             sid = seed_session(self.cfg, wt)
+            # The turn's record starts AFTER the seed's "Reply with exactly: ready"
+            # exchange — shipping it made a turn's transcript the seed and nothing
+            # else (found live, #1188).
+            seeded = transcript_path(sid)
+            offset = seeded.stat().st_size if seeded else 0
             (channel / "task.txt").write_text(prompt)
             (channel / "seeded").write_text(sid)
             which = "task"

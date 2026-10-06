@@ -21,6 +21,17 @@ def _isolate_host_pin(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_desktop_runtime(monkeypatch, tmp_path):
+    """The Claude desktop runtime keeps a session index under ~/.canopy/desktop. On a
+    box that has run desktop sessions, a test reading the REAL index sees them: the
+    router starts resolving sessions, the session report grows rows. Point every test
+    at an empty tmp dir and the default runtime."""
+    from canopy_runner import desktop
+    monkeypatch.setattr(desktop, "DEFAULT_DIR", tmp_path / "canopy-desktop")
+    monkeypatch.setattr(desktop, "_current", desktop.EMDASH)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_transcripts(monkeypatch):
     """A reuse send now verifies delivery against the session's transcript, which
     resolves under the developer's real ~/.claude. Default it to "unresolvable" (the
