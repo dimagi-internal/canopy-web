@@ -270,3 +270,47 @@ def test_hidden_content_viewer_gets_status_only(ws, agents):
     assert cell["prompt"] == "" and cell["block"] is None and cell["reply_source"] == "none"
     assert d["summary"] == ""
     assert "report please" not in str(d) and "worked_on" not in str(d)
+
+
+# ── A huddle spans workspaces ────────────────────────────────────────────────
+
+
+def _cross_ws_huddle(owner, agents, ws):
+    """Anchor + eva in `connect` (ws A); ace's round turn, reply and task in `dimagi` (B)."""
+    b = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=owner)
+    WorkspaceMembership.objects.create(user=owner, workspace=b, role=WorkspaceMembership.OWNER)
+    ace = Agent.objects.create(slug="ace", name="Ace", workspace=b)
+    anchor, _ = _huddle(agents)
+    Turn.objects.create(
+        agent=ace, idempotency_key="huddle-h1-ace-r1-a1", parent_turn=anchor,
+        status=Turn.DONE, prompt="report please",
+        report_summary='{"huddle": "h1", "round": 1, "member": "ace", "worked_on": ["z"]}',
+        origin_ref={"kind": "huddle_round", "huddle": "h1", "round": 1, "member": "ace", "attempt": 1})
+    AgentTask.objects.create(agent=ace, ext_id="T9", title="ace task",
+                             source_url="https://x/w/connect/huddles/h1")
+    return b
+
+
+def test_scoped_detail_spans_callers_workspaces(owner, ws, agents):
+    _cross_ws_huddle(owner, agents, ws)
+    c = _client(owner)
+    d = c.get("/api/w/connect/huddles/h1").json()
+    cells = {x["member"]: x for x in d["cells"]}
+    assert set(cells) == {"eva", "ace"}
+    assert cells["ace"]["block"]["worked_on"] == ["z"]
+    assert [(o["ext_id"], o["url"]) for o in d["outputs"]] == [("T9", "/w/dimagi/agents/ace/work")]
+    assert c.get("/api/w/connect/huddles/").json()[0]["outcome_count"] == 1
+
+
+def test_member_of_one_workspace_sees_no_other_workspace(owner, ws, agents):
+    _cross_ws_huddle(owner, agents, ws)
+    only_a = User.objects.create_user("a", "a@example.org", "pw")
+    WorkspaceMembership.objects.create(user=only_a, workspace=ws, role=WorkspaceMembership.OWNER)
+    c = _client(only_a)
+    for path in ("/api/w/connect/huddles/h1", "/api/huddles/h1"):
+        d = c.get(path).json()
+        assert [x["member"] for x in d["cells"]] == ["eva"]
+        assert d["outputs"] == []
+        assert "ace" not in str(d["cells"]) and "worked_on" not in str(d["cells"])
+    assert c.get("/api/w/connect/huddles/").json()[0]["outcome_count"] == 0
+    assert c.get("/api/w/dimagi/huddles/h1").status_code in (403, 404)
