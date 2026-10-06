@@ -309,6 +309,11 @@ case "$MODE" in
     ;;
 esac
 
+# Move origin/main: the shim runs THIS script from it, and fetch_commit fetches the
+# deployed commit by sha, which never moves it. Without this a box ran a day-old
+# updater (cloud-ec2-2, 2026-10-06). Takes effect from the next tick.
+[ -d "$REPO_DIR/.git" ] && git -C "$REPO_DIR" fetch --quiet origin main 2>/dev/null || true
+
 EXPECTED="$(expected_sha)"
 V="$(verdict "$EXPECTED")"
 

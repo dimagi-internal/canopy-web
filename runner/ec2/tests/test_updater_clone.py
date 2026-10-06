@@ -7,6 +7,7 @@ updated. cloud-ec2-1 only did because its clone predated that move.
 """
 from __future__ import annotations
 
+import pathlib
 import subprocess
 
 
@@ -45,6 +46,23 @@ def test_an_existing_clone_is_left_alone(cloud_runner, monkeypatch, tmp_path):
     (repo / ".git").mkdir(parents=True)
     checks = _setup(cloud_runner, monkeypatch, tmp_path, repo)
     assert cloud_runner.ensure_updater_clone() is True
+    assert checks["updater_clone"][0] == "ok"
+
+
+def test_an_existing_clone_has_origin_main_moved_to_the_latest(cloud_runner, monkeypatch, tmp_path):
+    # The shim runs origin/main:update_runner.sh. Fetching a deployed commit by sha
+    # never moves origin/main, so without this the updater itself froze.
+    repo = tmp_path / "opt-canopy-web"
+    checks = _setup(cloud_runner, monkeypatch, tmp_path, repo)
+    origin = pathlib.Path(cloud_runner.CANOPY_WEB_REPO_URL)
+    subprocess.run(["git", "clone", "-q", str(origin), str(repo)], check=True)
+    (origin / "update_runner.sh").write_text("echo v2\n")
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "v2"],
+                   cwd=origin, check=True)
+    assert cloud_runner.ensure_updater_clone() is True
+    shown = subprocess.run(["git", "-C", str(repo), "show", "origin/main:update_runner.sh"],
+                           capture_output=True, text=True)
+    assert shown.stdout == "echo v2\n"
     assert checks["updater_clone"][0] == "ok"
 
 
