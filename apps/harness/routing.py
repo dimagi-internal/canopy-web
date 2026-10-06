@@ -260,7 +260,8 @@ def assignment_rows_for(
 
 def _kind_allows(runner: Runner, routing: str) -> bool:
     if routing == Turn.LOCAL_ONLY:
-        return runner.kind in (Runner.EMDASH, Runner.REMOTE)
+        # A desktop runner is a laptop box like emdash: local_only work is its to take.
+        return runner.kind in (Runner.EMDASH, Runner.REMOTE, Runner.DESKTOP)
     return True
 
 

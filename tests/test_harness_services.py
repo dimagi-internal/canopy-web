@@ -123,6 +123,17 @@ def test_local_only_never_claimed_by_cloud():
     assert services.claim_next_turn(r) is None
 
 
+def test_local_only_is_claimable_by_a_desktop_runner():
+    """A desktop runner (the Claude app's Code tab on a laptop) is a local box: a
+    local_only turn that an emdash runner could take, it can take too."""
+    a = _agent()
+    t, _ = services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board",
+                                 idempotency_key="k1", routing="local_only")
+    r = _runner(a, kind=Runner.DESKTOP)
+    claimed = services.claim_next_turn(r)
+    assert claimed is not None and claimed.pk == t.pk
+
+
 def test_claim_is_exclusive():
     a = _agent()
     services.enqueue_turn(initiator=_BY_CANOPY, agent=a, origin="board", idempotency_key="k1")

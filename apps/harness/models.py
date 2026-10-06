@@ -21,10 +21,12 @@ HEARTBEAT_ONLINE_WINDOW = dt.timedelta(seconds=90)
 
 
 class Runner(models.Model):
-    """A paired executor (laptop emdash daemon, cloud container, remote box)."""
+    """A paired executor (laptop emdash daemon, cloud container, remote box, or a
+    laptop daemon driving the Claude desktop app's Code tab — `desktop`)."""
 
-    EMDASH, CLOUD, REMOTE = "emdash", "cloud", "remote"
-    KIND_CHOICES = [(EMDASH, "Emdash"), (CLOUD, "Cloud"), (REMOTE, "Remote")]
+    EMDASH, CLOUD, REMOTE, DESKTOP = "emdash", "cloud", "remote", "desktop"
+    KIND_CHOICES = [(EMDASH, "Emdash"), (CLOUD, "Cloud"), (REMOTE, "Remote"),
+                    (DESKTOP, "Claude desktop")]
 
     # Environment (first-class; the persistence tier derives from `location`).
     LOCAL = "local"
