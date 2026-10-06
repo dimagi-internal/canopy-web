@@ -30,7 +30,7 @@ cd "$(dirname "$0")"
 # shellcheck source=_lib.sh
 source ./_lib.sh
 
-BASE_URL="https://labs.connect.dimagi.com/canopy"
+BASE_URL="https://canopy.dimagi.com"
 TOKEN_FILE="$HOME/.claude/canopy/workbench-token"
 RUNNER_ID=""
 RUNNER_NAME="$DEFAULT_RUNNER_NAME"
@@ -48,7 +48,7 @@ usage() {
 usage: ./wire.sh [options]
 
   --runner-id <uuid>     skip discovery; wire this specific runner id
-  --base-url <url>       canopy-web base URL (default https://labs.connect.dimagi.com/canopy)
+  --base-url <url>       canopy-web base URL (default https://canopy.dimagi.com)
   --name <name>          Runner.name to match when discovering / retiring (default cloud-ec2-1;
                          --runner-name is the same flag)
   --agents <a,b,c>       only touch these agents' assignment lists (default: every

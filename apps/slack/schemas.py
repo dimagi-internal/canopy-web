@@ -62,6 +62,9 @@ class SlackSyncOut(StrictModel):
     unfit: list[str] = []
     #: Bot scopes newly put on the app — they take effect only on a re-install.
     scopes_added: list[str] = []
+    #: Webhooks (`event_subscriptions`, `interactivity`) moved off an address
+    #: canopy has left.
+    webhooks_moved: list[str] = []
 
 
 class SlackDeclareAgentOut(StrictModel):

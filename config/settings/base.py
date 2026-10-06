@@ -535,8 +535,11 @@ CANOPY_PUBLIC_BASE_URL = env("CANOPY_PUBLIC_BASE_URL", default="http://localhost
 # the default audience a site's visitor assertion must name. Empty = the public
 # base. Separate because connected sites PIN these (ace-web's CANOPY_CLIENT_ID,
 # its assertion audience), so they cannot move when the address people visit
-# does: labs keeps the old address here until each site is re-pointed.
+# does: moving it is a coordinated change with each connected site.
 CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="")
+# Base URLs this deployment was served at before (connectlabs.py). Read by the
+# Slack sync to recognise what it registered there.
+CANOPY_FORMER_BASE_URLS: list[str] = []
 
 # The `provider` of every A2A Agent Card this deployment serves (apps/agents/agent_card.py).
 CANOPY_A2A_PROVIDER_ORGANIZATION = env("CANOPY_A2A_PROVIDER_ORGANIZATION", default="Dimagi")

@@ -355,10 +355,10 @@ option exists precisely so you do not have to.
 ## 4. Add the script tag
 
 ```html
-<script src="https://labs.connect.dimagi.com/canopy/embed/widget.js"></script>
+<script src="https://canopy.dimagi.com/embed/widget.js"></script>
 <script>
   var widget = canopy.init({
-    baseUrl: 'https://labs.connect.dimagi.com/canopy',
+    baseUrl: 'https://canopy.dimagi.com',
     app: 'connect-labs',              // the Name from step 1
     tokenUrl: '/labs/canopy/token',   // the endpoint from step 3
     mode: 'docked',
@@ -1057,9 +1057,9 @@ page picks among read-only views of its own data.
    pages), in **Settings → Connected sites**: JWKS URL
    `{CANOPY_PUBLIC_BASE_URL}/oauth/host/jwks.json`, sign-in issuer
    `{CANOPY_PUBLIC_BASE_URL}`, MCP server `{CANOPY_PUBLIC_BASE_URL}/api/mcp/`.
-   On labs: `https://labs.connect.dimagi.com/canopy/oauth/host/jwks.json`,
-   `https://labs.connect.dimagi.com/canopy`,
-   `https://labs.connect.dimagi.com/canopy/api/mcp/`.
+   On labs (canopy.dimagi.com): `https://canopy.dimagi.com/oauth/host/jwks.json`,
+   `https://canopy.dimagi.com`,
+   `https://canopy.dimagi.com/api/mcp/`.
 3. On each agent, a capability for members naming the site, e.g.
    `sites: [canopy-web]`, `callers: [member]` (a `ceiling:` is optional and only
    narrows). `site_tools`/`site_call` are added to it automatically.

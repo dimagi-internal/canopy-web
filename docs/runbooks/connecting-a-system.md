@@ -96,15 +96,15 @@ AWS_PROFILE=labs aws secretsmanager put-secret-value \
     --secret-id canopy-web/oauth-dpop-key --secret-string "file:///tmp/dpop.pem"
 rm /tmp/client.pem /tmp/dpop.pem
 # 2. restart the service so the container picks them up, then confirm:
-curl -s https://labs.connect.dimagi.com/canopy/oauth/client.json   # the CIMD, not a 503
-curl -s https://labs.connect.dimagi.com/canopy/oauth/jwks.json     # one EdDSA key
+curl -s https://canopy.dimagi.com/oauth/client.json   # the CIMD, not a 503
+curl -s https://canopy.dimagi.com/oauth/jwks.json     # one EdDSA key
 ```
 
 3. On the site's Connected-site row set **Sign-in issuer** (its RFC 8414
    `issuer`, e.g. `https://labs.connect.dimagi.com`) and **MCP server** (its
    RFC 9728 `resource`, e.g. `https://labs.connect.dimagi.com/mcp/`).
 4. The host allowlists canopy's `client_id`
-   (`https://labs.connect.dimagi.com/canopy/oauth/client.json`) and starts
+   (`https://canopy.dimagi.com/oauth/client.json`) and starts
    sending `id_jag` at arrival.
 5. The agent's owner gives the capability that serves the site
    `sites: [<site name>]` + a `ceiling:` (agent → Settings → Callers).
@@ -162,11 +162,11 @@ worktree, with its private key:
 ```python
 # signs as the site, exactly as ace-web does, and asks canopy who that person is
 jwt.encode({"iss": "ace-web", "sub": email,
-            "aud": "https://labs.connect.dimagi.com/canopy",   # canopy's public URL
+            "aud": "https://canopy.dimagi.com",   # canopy's public URL
             "iat": now, "exp": now + 60, "jti": str(uuid.uuid4()),
             "email": email, "email_verified": True},
            private_key_pem, algorithm="EdDSA", headers={"kid": thumbprint})
-# POST it to https://labs.connect.dimagi.com/canopy/api/auth/contact-token
+# POST it to https://canopy.dimagi.com/api/auth/contact-token
 ```
 
 * `200` with `"kind": "user"` — the person has a canopy account, is a member of

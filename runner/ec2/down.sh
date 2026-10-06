@@ -17,7 +17,7 @@ source ./_lib.sh
 PROFILE="${AWS_PROFILE:-labs}"
 REGION="${AWS_REGION:-us-east-1}"
 AWS=(aws --profile "$PROFILE" --region "$REGION")
-BASE_URL="https://labs.connect.dimagi.com/canopy"
+BASE_URL="https://canopy.dimagi.com"
 TOKEN_FILE="$HOME/.claude/canopy/workbench-token"
 NAME="$DEFAULT_RUNNER_NAME"
 STACK_ARG=""
@@ -38,7 +38,7 @@ usage: ./down.sh [options]
                          (Retiring first would delete the rows wire.sh has to copy.)
   --purge-secrets        also delete the canopy/cloud-runner/* secrets. They are SHARED by
                          every runner stack, so this is refused while any other runner stack exists.
-  --base-url <url>       canopy-web (default https://labs.connect.dimagi.com/canopy)
+  --base-url <url>       canopy-web (default https://canopy.dimagi.com)
   -h, --help             this
 USAGE
 }

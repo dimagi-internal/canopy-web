@@ -17,7 +17,7 @@ source ./_lib.sh
 PROFILE="${AWS_PROFILE:-labs}"
 REGION="${AWS_REGION:-us-east-1}"
 AWS=(aws --profile "$PROFILE" --region "$REGION")
-BASE_URL="https://labs.connect.dimagi.com/canopy"
+BASE_URL="https://canopy.dimagi.com"
 NAME="$DEFAULT_RUNNER_NAME"
 STACK_ARG=""
 STANDBY=0
@@ -38,7 +38,7 @@ usage: ./up.sh [options]
                             Agent work reaches it only through assignment rows / drills.
   --volume-size <GiB>       root volume (template default 40)
   --instance-type <type>    EC2 type (template default t3.medium)
-  --base-url <url>          canopy-web (default https://labs.connect.dimagi.com/canopy)
+  --base-url <url>          canopy-web (default https://canopy.dimagi.com)
   --allow-instance-change   proceed when an UPDATE would stop/start or REPLACE the instance
                             (refused by default: on the live stack that is an outage)
   --allow-dirty             publish a seed from uncommitted runner code (its provenance stamp

@@ -34,7 +34,7 @@ func baseURL() -> String {
     guard let data = try? Data(contentsOf: configFile),
           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let url = obj["base_url"] as? String else {
-        return "https://labs.connect.dimagi.com/canopy"
+        return "https://canopy.dimagi.com"
     }
     return url.hasSuffix("/") ? String(url.dropLast()) : url
 }

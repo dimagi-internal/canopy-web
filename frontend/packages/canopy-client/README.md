@@ -38,7 +38,7 @@ that do not compile `node_modules` (e.g. webpack + babel with
 import { createCanopyClient } from 'canopy-client'
 
 const canopy = createCanopyClient({
-  baseUrl: 'https://labs.connect.dimagi.com/canopy',
+  baseUrl: 'https://canopy.dimagi.com',
   // YOUR backend endpoint that mints a short-lived canopy token for the
   // signed-in visitor (it signs an assertion with a key only your server holds,
   // which is why minting is a callback and not something this package does).
