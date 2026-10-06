@@ -11,6 +11,7 @@ describe('navigate-fallback ownership', () => {
   describe('SPA routes get the cached shell', () => {
     const spaPaths = [
       '/',
+      '/app',
       '/supervisor',
       '/insights',
       '/system',

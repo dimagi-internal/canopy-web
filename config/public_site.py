@@ -1,8 +1,11 @@
 """The public product site (``site/``, built by Astro) — which paths it owns.
 
-canopy.dimagi.com answers two audiences at one address: a signed-out visitor gets
-the product site, a signed-in one gets the app. Only ``/`` depends on who is
-asking; every other site page is served to everyone, and only a path that EXISTS
+``/`` is the product site for EVERYONE, signed in or not, and ``/app`` is the door
+into the app (the SPA sends it to your default workspace; signed out, the login
+middleware sends you through Google first). That is deliberate for now (owner,
+2026-10-06): the site is being iterated on and has to be visible while signed in.
+The earlier rule — signed-in ``/`` went straight to the workbench — is one line
+in ``serve`` to restore. Only a path that EXISTS
 in ``site/dist`` is ever the site's, so no app route can be shadowed by it — the
 set is read from the build output rather than hand-listed.
 
@@ -61,17 +64,10 @@ def is_public_path(path: str) -> bool:
 
 
 def serve(request: HttpRequest) -> HttpResponse | None:
-    """The site page for this request, or None to let the app answer.
-
-    ``/`` is the site only for a visitor who is not signed in; a signed-in person
-    lands on their workbench, as before.
-    """
+    """The site page for this request, or None to let the app answer."""
     if request.method not in ("GET", "HEAD"):
         return None
-    path = request.path
-    if (path.rstrip("/") or "/") == "/" and request.user.is_authenticated:
-        return None
-    index = page_file(path)
+    index = page_file(request.path)
     if index is None:
         return None
     response = FileResponse(open(index, "rb"), content_type="text/html; charset=utf-8")

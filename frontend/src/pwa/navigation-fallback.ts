@@ -46,6 +46,7 @@
 /** Known SPA route prefixes — the only navigations that get the cached shell. */
 export const NAVIGATE_FALLBACK_ALLOWLIST: RegExp[] = [
   /^\/(canopy\/)?$/, // root → workbench redirect
+  /^\/(canopy\/)?app\/?$/, // /app → workbench redirect (the public site owns a page load of /)
   /^\/(canopy\/)?w\//, // tenant-scoped surfaces (/w/:workspace/…)
   /^\/(canopy\/)?supervisor/,
   /^\/(canopy\/)?insights/, // retired feed → redirect home (old bookmarks)

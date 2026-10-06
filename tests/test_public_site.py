@@ -56,10 +56,26 @@ def test_signed_out_root_is_the_site(dists, db):
 
 
 @override_settings(REQUIRE_AUTH=True)
-def test_signed_in_root_is_the_app(dists, member):
+def test_signed_in_root_is_the_site_too(dists, member):
+    """For now `/` is the site for everyone (owner, 2026-10-06), so it can be seen
+    while signed in; `/app` is the way into the app."""
     c = Client()
     c.force_login(member)
-    assert _body(c.get("/")) == SPA
+    assert _body(c.get("/")) == SITE_HOME
+
+
+@override_settings(REQUIRE_AUTH=True)
+def test_app_is_the_door_into_the_app(dists, member):
+    c = Client()
+    c.force_login(member)
+    assert _body(c.get("/app")) == SPA
+
+
+@override_settings(REQUIRE_AUTH=True)
+def test_signed_out_app_goes_through_sign_in_and_back(dists, db):
+    resp = Client().get("/app")
+    assert resp.status_code == 302
+    assert resp["Location"].endswith("/accounts/google/login/?next=%2Fapp")
 
 
 @override_settings(REQUIRE_AUTH=True)

@@ -259,7 +259,8 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 LOGIN_URL = "/accounts/google/login/"
-LOGIN_REDIRECT_URL = "/"
+# `/app`, not `/`: `/` is the public site for everyone (config/public_site.py).
+LOGIN_REDIRECT_URL = "/app"
 ACCOUNT_LOGOUT_REDIRECT_URL = "/"
 
 # allauth
