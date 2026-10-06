@@ -55,3 +55,18 @@ def test_no_override_means_the_env_address(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner, "BASE_URL_OVERRIDE_FILE", str(tmp_path / "absent"))
     monkeypatch.setenv("CANOPY_BASE_URL", NEW)
     assert cloud_runner._initial_base_url() == NEW
+
+
+def test_an_agent_env_naming_the_old_address_is_given_the_current_one(cloud_runner, monkeypatch, tmp_path):
+    """An agent .env provisioned before the move names the old address, and is
+    layered over the turn's env — so every CLI call in that agent's turns went
+    to the old address after the box itself had moved (2026-10-06)."""
+    monkeypatch.setattr(cloud_runner.pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(cloud_runner, "BASE_URL", NEW)
+    (tmp_path / ".ace").mkdir()
+    (tmp_path / ".ace" / ".env").write_text(
+        f"CANOPY_WEB_API_URL={OLD}\nCANOPY_WEB_PAT=ace-pat\nOTHER_URL=https://elsewhere.example\n")
+    env = cloud_runner._agent_env("ace")
+    assert env["CANOPY_WEB_API_URL"] == NEW
+    assert env["CANOPY_WEB_PAT"] == "ace-pat"
+    assert env["OTHER_URL"] == "https://elsewhere.example"     # only canopy's address is rewritten
