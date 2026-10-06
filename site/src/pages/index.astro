@@ -37,7 +37,7 @@ const layers = [
 ]
 ---
 <Base
-  title="Canopy by Dimagi: the open source control plane for agents"
+  title="Canopy — the open source control plane for agents"
   description="Give an agent deep expertise, let people use it, and let a person step in to verify before it answers. Open source, by Dimagi."
   activeNav="home"
 >
@@ -46,17 +46,13 @@ const layers = [
   .hero-note { margin: 22px 0 0; font-size: 14px; color: var(--muted); }
   .hero-note a { color: var(--indigo); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
 
-  /* The Supervisor inbox, drawn as the hero's product visual. */
-  .inbox { background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px; display: grid; gap: 10px; box-shadow: 0 24px 64px -24px rgba(10,6,32,0.28); }
-  .inbox-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
-  .inbox-head span { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--muted); letter-spacing: 0.06em; }
-  .inbox-item { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; background: var(--paper); }
-  .inbox-item small { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-soft); }
-  .inbox-item p { margin: 6px 0 0; font-size: 15px; font-weight: 500; color: var(--ink); line-height: 1.4; }
-  .inbox-acts { display: flex; gap: 6px; margin-top: 12px; }
-  .inbox-acts span { font-size: 12.5px; font-weight: 500; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink); }
-  .inbox-acts span:first-child { background: var(--indigo); border-color: var(--indigo); color: #fff; }
-  .inbox-caption { margin: 12px 0 0; font-size: 13px; color: var(--muted); text-align: center; }
+  /* Screenshots of the multiplayer chat (from the IDM talk deck; to be replaced as better ones arrive). */
+  .shot { display: block; width: 100%; height: auto; border-radius: var(--radius); border: 1px solid rgba(10,6,32,0.12); box-shadow: 0 24px 64px -24px rgba(10,6,32,0.45); background: #0a0a0a; }
+  .shot-hero { margin: 0; }
+  .shots-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin: 64px 0 0; }
+  .shots-pair figure { margin: 0; }
+  .shots-pair figcaption { margin: 0 0 12px; font-size: 15px; font-weight: 500; color: var(--ink); }
+  .shots-note { margin: 18px auto 0; max-width: 720px; text-align: center; font-size: 15px; color: var(--muted); }
 
   .section-head--center { max-width: 760px; margin: 0 auto 64px; text-align: center; }
   .section-head--center .section-lede { margin: 0 auto; }
@@ -103,17 +99,13 @@ const layers = [
   .person h3 { margin-top: 12px; font-size: 24px; font-weight: 400; }
   .person p { margin: 10px 0 0; color: var(--muted); font-size: 16px; }
 
-  .points { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px 48px; max-width: 920px; margin: 0 auto; list-style: none; padding: 0; }
-  .points li { position: relative; padding-left: 34px; font-size: 18px; color: var(--ink); line-height: 1.5; }
-  .points li::before { content: ''; position: absolute; left: 2px; top: 0.45em; width: 14px; height: 8px; border-left: 2px solid var(--indigo); border-bottom: 2px solid var(--indigo); transform: rotate(-45deg); }
-
   @media (max-width: 980px) {
     .ladder { grid-template-columns: 1fr 1fr; align-items: stretch; }
     .rung { min-height: 0 !important; border-radius: var(--radius); }
     .ladder-legend { display: none; }
     .tiles-3, .tiles-5, .cards, .people { grid-template-columns: 1fr 1fr; }
+    .shots-pair { grid-template-columns: 1fr; gap: 24px; }
     .band { grid-template-columns: 1fr; gap: 4px; }
-    .points { grid-template-columns: 1fr; }
   }
   @media (max-width: 600px) {
     .section { padding: 72px 0; }
@@ -126,7 +118,7 @@ const layers = [
     <div class="container">
       <div class="hero-grid">
         <div>
-          <span class="eyebrow">Canopy by Dimagi</span>
+          <span class="eyebrow">Open source · by Dimagi</span>
           <h1 class="hero-title">The open source control plane for <em>agents</em></h1>
           <p class="hero-sub">
             Give an agent deep expertise, let people use it where they already work, and let a
@@ -139,25 +131,10 @@ const layers = [
           <p class="hero-note">Access is currently closed to Dimagi and its partners. Already have access? <a href={SIGN_IN_URL}>Sign in</a>.</p>
         </div>
         <div>
-          <div class="inbox" aria-label="Illustration of the Supervisor inbox">
-            <div class="inbox-head">Waiting on you <span>3 items</span></div>
-            <div class="inbox-item">
-              <small>Review · from a session review</small>
-              <p>Block dry-run writes for every agent that has the tool</p>
-              <div class="inbox-acts"><span>Implement</span><span>Skip</span><span>Defer</span></div>
-            </div>
-            <div class="inbox-item">
-              <small>Question · waiting on you</small>
-              <p>Which funder contact should this draft go to?</p>
-              <div class="inbox-acts"><span>Answer</span></div>
-            </div>
-            <div class="inbox-item">
-              <small>Review · draft reply</small>
-              <p>Reply to the partner thread is ready to send</p>
-              <div class="inbox-acts"><span>Approve</span><span>Edit</span></div>
-            </div>
-          </div>
-          <p class="inbox-caption">An illustration of the Supervisor inbox, with example items.</p>
+          <figure class="shot-hero">
+            <img class="shot" src="/site/img/multiplayer-alex.webp" width="1200" height="960"
+                 alt="A Canopy chat: an agent drafting a partner summary, a second person's correction labelled with their name, and their next message appearing live as they type it" />
+          </figure>
         </div>
       </div>
     </div>
@@ -170,7 +147,7 @@ const layers = [
         <h2 class="section-title">Most AI tools are built for <em>one person and one chat</em></h2>
         <p class="section-lede">
           That covers the first steps of getting better with AI. Nearly everything that matters
-          to an organization comes after: improving the AI itself, and then improving it together,
+          to an organisation comes after: improving the AI itself, and then improving it together,
           so an improvement one person makes is available to everyone.
         </p>
       </div>
@@ -250,6 +227,19 @@ const layers = [
           <p class="card-fact">Confined agents are given only what they need</p>
         </article>
       </div>
+      <div class="shots-pair">
+        <figure>
+          <figcaption>Alex’s screen</figcaption>
+          <img class="shot" src="/site/img/multiplayer-alex.webp" width="1200" height="960" loading="lazy"
+               alt="Alex's screen: the chat with an agent, Robin's correction labelled with Robin's name, Robin shown as present, and Robin's message appearing live as Robin types it" />
+        </figure>
+        <figure>
+          <figcaption>Robin’s screen, at the same moment</figcaption>
+          <img class="shot" src="/site/img/multiplayer-robin.webp" width="1200" height="960" loading="lazy"
+               alt="Robin's screen at the same moment: the same conversation, Alex's request labelled with Alex's name, and Alex's message appearing live" />
+        </figure>
+      </div>
+      <p class="shots-note">One live conversation: each person sees who else is there, who wrote each message, and what the other is typing.</p>
     </div>
   </section>
 
@@ -279,18 +269,4 @@ const layers = [
     </div>
   </section>
 
-  <section class="section">
-    <div class="container">
-      <div class="section-head section-head--center">
-        <span class="eyebrow">What needs a person</span>
-        <h2 class="section-title">Every decision that needs a person, <em>in one place</em></h2>
-      </div>
-      <ul class="points">
-        <li>Agents bring proposals, not surprises: implement, skip or defer.</li>
-        <li>One review can roll a fix out to several agents at once.</li>
-        <li>A question waits for an answer before the agent acts.</li>
-        <li>It works on a phone, so the person is not the bottleneck.</li>
-      </ul>
-    </div>
-  </section>
 </Base>
