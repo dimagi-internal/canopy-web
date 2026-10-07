@@ -9,6 +9,7 @@ import {
   anchorKey, arcsFor, cellAt, cellState, columns, critiqueFrom, initial, leaderAsks, memberHue, roundAsk, roundName,
   roundsToShow, type Arc, type ArcState, type Block, type LeaderAsk,
 } from './huddleModel'
+import { ANSWER_WORDS, possessive, who } from './plainWords'
 
 /**
  * The conversation, read like a sequence diagram: time runs top to bottom, one
@@ -33,13 +34,13 @@ const ARC_COLOR: Record<ArcState, string> = {
   'amend-rejected': 'var(--destructive)',
 }
 
-const ARC_LABEL: Record<ArcState, string> = {
-  'co-sign': 'co-signed',
-  amend: 'amended',
-  decline: 'declined',
-  pending: 'not answered',
-  'amend-accepted': 'amend accepted',
-  'amend-rejected': 'amend rejected',
+const ARC_LABEL: Record<ArcState, string> = ANSWER_WORDS
+
+/** A turn's raw status, in words — only shown while it is not done. */
+function cellStatusWords(status: string): string {
+  if (['queued', 'claimed', 'running'].includes(status)) return 'working…'
+  if (['failed', 'lost', 'error', 'expired', 'cancelled', 'canceled', 'missed'].includes(status)) return "didn't finish"
+  return status.replace(/_/g, ' ')
 }
 
 export function MemberAvatar({ slug, hue, size = 'md' }: { slug: string; hue: string; size?: 'sm' | 'md' }) {
@@ -89,13 +90,13 @@ function Footer({ cell }: { cell: HuddleCell }) {
         {cell.prompt && (
           <button type="button" onClick={() => setOpen(open === 'prompt' ? '' : 'prompt')}
             className="text-muted-foreground hover:text-foreground" aria-expanded={open === 'prompt'}>
-            {open === 'prompt' ? 'Hide prompt' : 'Prompt'}
+            {open === 'prompt' ? 'Hide the question' : 'The exact question'}
           </button>
         )}
         {cell.has_transcript && (
           <button type="button" onClick={() => setOpen(open === 'transcript' ? '' : 'transcript')}
             className="text-muted-foreground hover:text-foreground" aria-expanded={open === 'transcript'}>
-            {open === 'transcript' ? 'Hide transcript' : 'Transcript'}
+            {open === 'transcript' ? 'Hide the session' : 'The whole session'}
           </button>
         )}
       </div>
@@ -136,7 +137,7 @@ function LeaderAskedLink({ cell, leader }: { cell: HuddleCell; leader: string })
     <div className="mb-2">
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
         className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
-        {open ? `Hide what ${leader} asked` : `${leader} asked${asks.length ? ` (${asks.length})` : ''} ›`}
+        {open ? `Hide what ${who(leader)} asked` : `${who(leader)} asked${asks.length ? ` (${asks.length})` : ''} ›`}
       </button>
       {open && (
         <figure className="mt-1 rounded-xl rounded-tr-sm border border-border bg-muted px-3 py-2">
@@ -153,13 +154,9 @@ function CardHead({ name, hue, cell, expanded }: { name: string; hue: string; ce
   return (
     <div className="mb-1 flex min-w-0 items-center gap-1.5">
       <MemberAvatar slug={name} hue={hue} size="sm" />
-      <span className="truncate text-[12px] font-semibold text-foreground">{name}</span>
+      <span className="truncate text-[12px] font-semibold text-foreground">{who(name)}</span>
       {cell && cell.status !== 'done' && (
-        <span className={`inline-flex h-4 items-center rounded-full border px-1.5 text-[10px] font-medium ${statusToken(cell.status)}`}>{cell.status}</span>
-      )}
-      {cell && cell.attempt > 1 && <span className="text-[10px] text-muted-foreground">attempt {cell.attempt}</span>}
-      {cell?.reply_source === 'transcript' && (
-        <span className="text-[10px] text-muted-foreground" title="No close-out was filed; read from the turn's transcript">from transcript</span>
+        <span className={`inline-flex h-4 items-center rounded-full border px-1.5 text-[10px] font-medium ${statusToken(cell.status)}`}>{cellStatusWords(cell.status)}</span>
       )}
       <span aria-hidden className={'ml-auto shrink-0 text-[10px] text-muted-foreground transition-transform ' + (expanded ? 'rotate-90' : '')}>▸</span>
     </div>
@@ -179,7 +176,7 @@ function MemberCard({ cell, hue, leader, arcs, expanded, onToggle }: {
   if (!expanded) {
     return (
       <button type="button" data-card={k} data-cell-state={state} aria-expanded={false} onClick={onToggle}
-        aria-label={`${cell.member}, round ${cell.round} — expand`}
+        aria-label={`${who(cell.member)}, step ${cell.round} — expand`}
         className={frame + ' cursor-pointer transition-colors hover:border-primary/50 focus-visible:outline-2 focus-visible:outline-primary'}
         style={style}>
         <CardHead name={cell.member} hue={hue} cell={cell} expanded={false} />
@@ -192,7 +189,7 @@ function MemberCard({ cell, hue, leader, arcs, expanded, onToggle }: {
 
   return (
     <div data-card={k} data-cell-state={state} data-expanded className={frame} style={style}>
-      <button type="button" aria-expanded onClick={onToggle} aria-label={`${cell.member}, round ${cell.round} — collapse`} className="block w-full text-left">
+      <button type="button" aria-expanded onClick={onToggle} aria-label={`${who(cell.member)}, step ${cell.round} — collapse`} className="block w-full text-left">
         <CardHead name={cell.member} hue={hue} cell={cell} expanded />
       </button>
       {cell.round > 1 && state === 'replied' && <LeaderAskedLink cell={cell} leader={leader} />}
@@ -214,10 +211,10 @@ function MemberCard({ cell, hue, leader, arcs, expanded, onToggle }: {
       {(state === 'no-reply' || state === 'failed') && (
         <div className="space-y-1">
           <p className={'text-[13px] ' + (state === 'failed' ? 'text-destructive' : 'text-muted-foreground')}>
-            {state === 'failed' ? 'The turn ended without a reply.' : 'No reply block.'}
+            {state === 'failed' ? "It didn't finish, so there's no answer." : 'No answer.'}
           </p>
           {cell.reply_error && <p className="font-mono text-[11px] text-warning">{cell.reply_error}</p>}
-          {!cell.has_transcript && <p className="text-[11px] text-muted-foreground">Transcript no longer available.</p>}
+          {!cell.has_transcript && <p className="text-[11px] text-muted-foreground">The session is no longer kept.</p>}
         </div>
       )}
       <Footer cell={cell} />
@@ -245,16 +242,16 @@ function LeaderCard({ huddle, round, members, expanded, onToggle }: {
   const head = (
     <>
       <div className="flex items-baseline gap-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Round {round}</span>
+        <span className="shrink-0 whitespace-nowrap text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Step {round}</span>
         <span className="text-[13px] font-semibold text-foreground">{roundName(huddle.type, round)}</span>
         {live && <span className="size-1.5 animate-pulse rounded-full bg-info" aria-label="in flight" />}
-        <span className="ml-auto text-[10px] text-muted-foreground">{inRound.length === 0 ? 'not started' : `${replied}/${inRound.length} replied`}</span>
+        <span className="ml-auto shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">{inRound.length === 0 ? 'not started' : `${replied} of ${inRound.length} answered`}</span>
         <span aria-hidden className={'shrink-0 text-[10px] text-muted-foreground transition-transform ' + (expanded ? 'rotate-90' : '')}>▸</span>
       </div>
       <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] leading-5">
         <MemberAvatar slug={huddle.leader} hue={LEADER_HUE} size="sm" />
         <span className="min-w-0 truncate text-foreground-secondary">
-          <span className="font-medium text-foreground">{huddle.leader}</span> asks: {roundAsk(huddle.type, round)}
+          <span className="font-medium text-foreground">{who(huddle.leader)}</span> asks: {roundAsk(huddle.type, round)}
         </span>
       </div>
     </>
@@ -264,18 +261,18 @@ function LeaderCard({ huddle, round, members, expanded, onToggle }: {
 
   if (!expanded) {
     return (
-      <button type="button" data-card={k} aria-expanded={false} onClick={onToggle} aria-label={`${huddle.leader}, round ${round} — expand`}
+      <button type="button" data-card={k} aria-expanded={false} onClick={onToggle} aria-label={`${who(huddle.leader)}, step ${round} — expand`}
         className={frame + 'cursor-pointer transition-colors hover:border-primary/50'} style={style}>
         {head}
         {asked.slice(0, 5).map((a) => (
           <div key={a.m} data-ask={`${a.m}-${round}`} className="flex min-w-0 items-center gap-1.5 text-[12px] leading-5">
-            <span className="shrink-0 text-muted-foreground">→ asked <span className="font-medium text-foreground-secondary">{a.m}</span> {a.asks.length} question{a.asks.length === 1 ? '' : 's'}</span>
+            <span className="shrink-0 text-muted-foreground">→ asked <span className="font-medium text-foreground-secondary">{who(a.m)}</span> {a.asks.length} question{a.asks.length === 1 ? '' : 's'}</span>
             <span className="min-w-0 truncate italic text-muted-foreground" title={a.asks[0].text}>“{a.asks[0].text}”</span>
           </div>
         ))}
-        {asked.length > 5 && <div className="text-[12px] leading-5 text-muted-foreground">+{asked.length - 5} more members asked</div>}
+        {asked.length > 5 && <div className="text-[12px] leading-5 text-muted-foreground">+{asked.length - 5} more asked</div>}
         {plain.length > 0 && (
-          <div className="truncate text-[12px] leading-5 text-muted-foreground">→ sent to {plain.join(', ')}</div>
+          <div className="truncate text-[12px] leading-5 text-muted-foreground">→ sent to {plain.map(who).join(', ')}</div>
         )}
       </button>
     )
@@ -283,17 +280,17 @@ function LeaderCard({ huddle, round, members, expanded, onToggle }: {
 
   return (
     <div data-card={k} data-expanded className={frame} style={style}>
-      <button type="button" aria-expanded onClick={onToggle} aria-label={`${huddle.leader}, round ${round} — collapse`} className="block w-full text-left">
+      <button type="button" aria-expanded onClick={onToggle} aria-label={`${who(huddle.leader)}, step ${round} — collapse`} className="block w-full text-left">
         {head}
       </button>
       <div className="mt-2 space-y-3">
         {asks.map((a) => (
           <section key={a.m} className="space-y-1">
             <h4 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              To {a.m}{a.asks.length ? ` — ${a.asks.length} question${a.asks.length === 1 ? '' : 's'}` : ''}
+              To {who(a.m)}{a.asks.length ? ` — ${a.asks.length} question${a.asks.length === 1 ? '' : 's'}` : ''}
             </h4>
             {a.asks.length > 0 ? <AskList asks={a.asks} /> : (
-              <p className="text-[12px] text-muted-foreground">{round === 1 ? 'The round’s ask, with ' + huddle.leader + '’s survey of them.' : 'No questions of its own.'}</p>
+              <p className="text-[12px] text-muted-foreground">{round === 1 ? 'The same question as everyone.' : 'No questions of its own.'}</p>
             )}
             {a.cell && <Footer cell={{ ...a.cell, has_transcript: false }} />}
           </section>
@@ -358,7 +355,7 @@ function FlowLayer({ arcs, host, focus, rounds, members, showArcs, version }: {
       const fr = rect(fromEl), fc = rect(cardOf(fromEl)), tr = rect(toEl), tc = rect(cardOf(toEl))
       if (!fr || !fc || !tr || !tc) continue
       const { d, start } = flowArc(fr, fc, tr, tc)
-      out.push({ key: a.key, d, state: a.state, label: `${a.partner} → ${a.lead}: ${a.title} — ${ARC_LABEL[a.state]}`, x0: start.x, y0: start.y, ends })
+      out.push({ key: a.key, d, state: a.state, label: `${who(a.partner)} on ${possessive(a.lead)} idea “${a.title}”: ${ARC_LABEL[a.state]}`, x0: start.x, y0: start.y, ends })
     }
 
     const ex: Exchange[] = []
@@ -465,16 +462,16 @@ function ArcSvg({ drawn, box, layer, opacity }: {
   )
 }
 
-export function ArcLegend() {
+export function ArcLegend({ leader = 'ada' }: { leader?: string }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
       <span className="inline-flex items-center gap-1.5">
         <svg width="22" height="6" aria-hidden><line x1="1" y1="3" x2="21" y2="3" stroke="var(--muted-foreground)" strokeOpacity="0.6" strokeWidth="1.25" /></svg>
-        ask
+        {possessive(leader)} question
       </span>
       <span className="inline-flex items-center gap-1.5">
         <svg width="22" height="6" aria-hidden><line x1="1" y1="3" x2="21" y2="3" stroke="var(--muted-foreground)" strokeOpacity="0.6" strokeWidth="1.25" strokeDasharray="3 3" /></svg>
-        reply
+        answer
       </span>
       {(Object.keys(ARC_COLOR) as ArcState[]).map((s) => (
         <span key={s} className="inline-flex items-center gap-1.5">
@@ -526,7 +523,7 @@ export function HuddleGrid({ huddle, showArcs = true }: { huddle: Huddle; showAr
       <MemberCard cell={c} hue={memberHue(i)} leader={huddle.leader} arcs={arcs}
         expanded={open.has(cardKey.member(m, r))} onToggle={() => toggle(cardKey.member(m, r))} />
     ) : (
-      <Placeholder text={r > huddle.rounds_dispatched ? 'not started' : `not sent to ${m}`} />
+      <Placeholder text={r > huddle.rounds_dispatched ? 'not started' : `not sent to ${who(m)}`} />
     )
   }
 
@@ -578,8 +575,8 @@ export function HuddleGrid({ huddle, showArcs = true }: { huddle: Huddle; showAr
             style={{ borderTopWidth: 3, borderTopColor: LEADER_HUE }}>
             <MemberAvatar slug={huddle.leader} hue={LEADER_HUE} />
             <div className="min-w-0">
-              <div className="truncate text-[14px] font-semibold text-foreground">{huddle.leader}</div>
-              <div className="text-[11px] text-muted-foreground">leads · asks each round</div>
+              <div className="truncate text-[14px] font-semibold text-foreground">{who(huddle.leader)}</div>
+              <div className="text-[11px] text-muted-foreground">asks the questions</div>
             </div>
           </div>
           {cols.map((m, i) => (
@@ -591,9 +588,9 @@ export function HuddleGrid({ huddle, showArcs = true }: { huddle: Huddle; showAr
             >
               <MemberAvatar slug={m} hue={memberHue(i)} />
               <div className="min-w-0">
-                <div className="truncate text-[14px] font-semibold text-foreground">{m}</div>
+                <div className="truncate text-[14px] font-semibold text-foreground">{who(m)}</div>
                 <div className="text-[11px] text-muted-foreground">
-                  {`${huddle.cells.filter((c) => c.member === m && c.block).length} of ${rounds.length} rounds replied`}
+                  {`answered ${huddle.cells.filter((c) => c.member === m && c.block).length} of ${rounds.length} steps`}
                 </div>
               </div>
             </div>

@@ -26,7 +26,7 @@ it('renders round-4 resolutions: pill, title, note, and the revised proposal on 
   expect(screen.queryByText(/"resolutions"/)).toBeNull()
 
   const accept = container.querySelector('[data-resolution="accept"]') as HTMLElement
-  expect(accept.textContent).toContain('accept')
+  expect(accept.textContent).toContain('Changes agreed')
   expect(accept.textContent).toContain('Pipeline sheet')
   expect(accept.textContent).toContain('weekly is fine')
   expect(accept.querySelector('.text-success')).toBeTruthy()
@@ -34,10 +34,10 @@ it('renders round-4 resolutions: pill, title, note, and the revised proposal on 
   const revised = accept.querySelector('[data-proposal="revised"]') as HTMLElement
   expect(revised.textContent).toContain('weekly cadence now')
   expect(revised.getAttribute('data-anchor')).toBeNull()
-  expect(revised.querySelector('[data-partner-state="amend-accepted"]')?.textContent).toContain('amend accepted')
+  expect(revised.querySelector('[data-partner-state="amend-accepted"]')?.textContent).toContain('Changes agreed')
 
   const reject = container.querySelector('[data-resolution="reject"]') as HTMLElement
-  expect(reject.textContent).toContain('reject')
+  expect(reject.textContent).toContain('Changes not agreed')
   expect(reject.textContent).toContain('Funder map')
   expect(reject.textContent).toContain('needs to stay daily')
   expect(reject.querySelector('.text-destructive')).toBeTruthy()
@@ -50,6 +50,6 @@ it("shows an accepted amend on the lead's original proposal card", () => {
       arcs={[arc('Pipeline sheet', 'amend-accepted')]} />,
   )
   const pill = container.querySelector('[data-answer="amend-accepted"]') as HTMLElement
-  expect(pill.textContent).toBe('amend accepted')
+  expect(pill.textContent).toBe('Changes agreed')
   expect(pill.className).toContain('text-success')
 })

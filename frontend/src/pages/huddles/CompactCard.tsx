@@ -4,6 +4,7 @@ import {
   answerLines, critiqueAnswered, proposalLines, reportSummary, resolutionLines,
   type Arc, type ArcState, type Block,
 } from './huddleModel'
+import { resolutionWords, who } from './plainWords'
 
 /**
  * A member's reply, compact: two to four single lines that say what the reply
@@ -47,7 +48,7 @@ export function CompactReply({ block, member, leader, round, arcs }: {
     const { stats, top } = reportSummary(block)
     return (
       <div data-compact="report" className="space-y-0.5">
-        <Line className="font-medium text-foreground-secondary">{stats || 'reported'}</Line>
+        <Line className="font-medium text-foreground-secondary">{stats || 'answered'}</Line>
         {top && (
           <p className="line-clamp-2 text-[12px] leading-snug text-foreground" title={top}>
             <span className="text-muted-foreground">Top priority: </span>{top}
@@ -61,7 +62,7 @@ export function CompactReply({ block, member, leader, round, arcs }: {
     const shown = answers.slice(0, 4)
     return (
       <div data-compact="answers" className="space-y-0.5">
-        {shown.length === 0 && <Line className="italic text-muted-foreground">no joint work to answer</Line>}
+        {shown.length === 0 && <Line className="italic text-muted-foreground">nothing to answer</Line>}
         {shown.map((a, i) => (
           <Line key={i} anchor={a.anchor}>
             <AnswerPill answer={a.answer} />
@@ -69,7 +70,7 @@ export function CompactReply({ block, member, leader, round, arcs }: {
           </Line>
         ))}
         {more(answers.length - shown.length)}
-        {props.length > 0 && <Line className="text-muted-foreground">revised {props.length} proposal{props.length === 1 ? '' : 's'}</Line>}
+        {props.length > 0 && <Line className="text-muted-foreground">updated {props.length} idea{props.length === 1 ? '' : 's'}</Line>}
       </div>
     )
   }
@@ -77,12 +78,12 @@ export function CompactReply({ block, member, leader, round, arcs }: {
   if (resolutions.length || round === 4) {
     return (
       <div data-compact="resolutions" className="space-y-0.5">
-        {resolutions.length === 0 && <Line className="italic text-muted-foreground">nothing to resolve</Line>}
+        {resolutions.length === 0 && <Line className="italic text-muted-foreground">no changes to settle</Line>}
         {resolutions.slice(0, 4).map((r, i) => (
           <Line key={i}>
             {r.verdict && (
               <span className={`inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[11px] font-medium ${RESOLUTION_PILL[r.verdict]}`}>
-                {r.verdict}
+                {resolutionWords(r.verdict)}
               </span>
             )}
             <span className="min-w-0 truncate text-foreground" title={r.title}>{r.title}</span>
@@ -100,21 +101,21 @@ export function CompactReply({ block, member, leader, round, arcs }: {
   const shown = props.slice(0, 3)
   return (
     <div data-compact="proposals" className="space-y-0.5">
-      {shown.length === 0 && <Line className="italic text-muted-foreground">no proposals</Line>}
+      {shown.length === 0 && <Line className="italic text-muted-foreground">no ideas</Line>}
       {shown.map((p, i) => (
         <Line key={i} anchor={p.anchor}>
           <span aria-hidden className="text-muted-foreground">▸</span>
           <span className="min-w-0 flex-1 truncate font-medium text-foreground" title={p.title}>{p.title}</span>
           {p.partners.length > 0 ? (
             <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted/60 px-1.5 text-[10px] text-foreground-secondary">
-              with {p.partners.join(', ')}
+              with {p.partners.map(who).join(', ')}
               {p.partners.map((m) => {
                 const st = stateOf(p.lead, p.title, m)
-                return <span key={m} title={`${m}: ${ANSWER_STYLE[st].label}`} data-partner-dot={st} className={`size-1.5 rounded-full ${DOT[st]}`} />
+                return <span key={m} title={`${who(m)}: ${ANSWER_STYLE[st].label}`} data-partner-dot={st} className={`size-1.5 rounded-full ${DOT[st]}`} />
               })}
             </span>
           ) : (
-            <span className="shrink-0 text-[10px] text-muted-foreground">solo</span>
+            <span className="shrink-0 text-[10px] text-muted-foreground">on its own</span>
           )}
         </Line>
       ))}
@@ -133,14 +134,14 @@ export function CompactStatus({ cell, state }: { cell: HuddleCell; state: string
           <span className="absolute inline-flex size-full animate-ping rounded-full bg-info/60" />
           <span className="relative inline-flex size-2 rounded-full bg-info" />
         </span>
-        Waiting for {cell.member}…
+        Waiting for {who(cell.member)}…
       </Line>
     )
   }
-  if (state === 'hidden') return <Line className="text-muted-foreground">Ran — content hidden from you</Line>
+  if (state === 'hidden') return <Line className="text-muted-foreground">Answered — hidden from you</Line>
   return (
     <Line className={state === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>
-      {state === 'failed' ? 'Ended without a reply' : 'No reply block'}
+      {state === 'failed' ? "Didn't finish" : 'No answer'}
     </Line>
   )
 }

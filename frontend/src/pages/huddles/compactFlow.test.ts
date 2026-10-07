@@ -37,9 +37,9 @@ describe('leaderAsks — the questions the leader sent, out of the real prompts'
   })
 
   it("names each round's ask", () => {
-    expect(roundAsk('work', 1)).toBe('report: work + priorities')
-    expect(roundAsk('work', 4)).toBe('resolve amends')
-    expect(roundAsk('other', 2)).toBe('round 2')
+    expect(roundAsk('work', 1)).toBe('what are you working on?')
+    expect(roundAsk('work', 4)).toBe('agree to the changes?')
+    expect(roundAsk('other', 2)).toBe('step 2')
   })
 })
 
@@ -55,7 +55,7 @@ describe('compact summaries', () => {
     const lines = proposalLines(cell('eva', 2).block as Block, 'eva')
     expect(lines.map((l) => [l.lead, l.partners])).toEqual([['eva', ['ace', 'echo']], ['hal', ['eva']]])
     expect(lines[1].anchor).toBe(anchorKey.proposal('hal', 'Diagnose chrome-sales MCP connect failures on cloud-ec2-2'))
-    expect(critiqueAnswered(cell('eva', 2).block as Block, 'ada')).toBe("answered 3 of ada's questions")
+    expect(critiqueAnswered(cell('eva', 2).block as Block, 'ada')).toBe("answered 3 of Ada's questions")
   })
 
   it('round 3: one row per answer; round 4: verdict + title', () => {
