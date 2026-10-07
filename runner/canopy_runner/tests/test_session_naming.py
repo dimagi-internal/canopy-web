@@ -47,6 +47,12 @@ def test_board_task_title_wins():
     assert sn.build_task_name("ace", t) == "c-retry-the-backoff-on-429-1234"
 
 
+def test_a_turn_queued_before_the_rename_still_names_by_item_title():
+    # Remove with the `item_title` fallback in session_naming (one release).
+    t = _turn(origin_ref={"item_title": "Retry the backoff on 429", "thread_id": "abcd1234"})
+    assert sn.build_task_name("ace", t) == "c-retry-the-backoff-on-429-1234"
+
+
 def test_schedule_name_beats_its_own_slash_command():
     """A cron turn carries both. "Weekly manager report" is what the human named
     it; `/echo:manager-report` is how it is spelled to the agent."""
