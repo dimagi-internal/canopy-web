@@ -239,7 +239,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
         </Section>
       )}
       {has('answers') && (
-        <Section label="Who's in">
+        <Section label="Agreement">
           <ul className="space-y-2">
             {asList(block.answers).map((raw, i) => {
               const a = (raw ?? {}) as Record<string, unknown>

@@ -86,7 +86,7 @@ describe('By agent (Full conversation)', () => {
     expect(screen.getByRole('button', { name: 'By agent' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByRole('button', { name: /^(A\s*)?Ace$/ }).getAttribute('aria-pressed')).toBe('true')
     expect(container.querySelector('[data-thread="ace"]')).toBeTruthy()
-    for (const r of ["Step 1 · What everyone's working on", 'Step 2 · Ideas', "Step 3 · Who's in"]) {
+    for (const r of ["Step 1 · What everyone's working on", 'Step 2 · Ideas', "Step 3 · Agreement"]) {
       expect(screen.getByRole('heading', { name: r })).toBeTruthy()
     }
   })
@@ -205,12 +205,14 @@ describe('By idea and the switcher', () => {
     expect([...seq.querySelectorAll('[data-lane]')].map((n) => n.getAttribute('data-lane'))).toEqual(['you', 'ada', 'ace', 'echo', 'eva', 'hal'])
     // Steps in order, the result last.
     expect([...seq.querySelectorAll('[data-step]')].map((n) => n.getAttribute('aria-label'))).toEqual([
-      "What everyone's working on", 'Ideas', "Who's in", 'The result',
+      "What everyone's working on", 'Ideas', "Agreement", 'The result',
     ])
     // Each step opens with the leader asking, then the answers.
     const step2 = [...seq.querySelectorAll('[data-step="2"] [data-message]')]
     expect(step2[0].getAttribute('data-kind')).toBe('ask')
     expect(step2.slice(1).every((n) => n.getAttribute('data-kind') === 'reply')).toBe(true)
+    // A step-3 answer names whose idea it answers: the agents answer each other, through Ada.
+    expect(seq.querySelector('[data-message="reply-echo-3"]')?.textContent).toContain("on Eva's idea “IDM talk: live demo from Ace, story slide from Echo”")
     expect(seq.querySelector('[data-message="result"]')?.textContent).toMatch(/Ada → you · 3 ideas sent to you to decide · 2 parked/i)
     // No engine words, and a click opens the full text.
     expect(seq.textContent).not.toMatch(/co-?sign|\bamend|roundtable/i)

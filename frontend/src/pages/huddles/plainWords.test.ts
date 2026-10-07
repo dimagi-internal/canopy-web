@@ -10,7 +10,7 @@ const clean = (s: string) => ENGINE_TERMS.every((re) => !re.test(s))
 describe('every engine term has a plain word', () => {
   it('steps, not rounds', () => {
     expect([1, 2, 3, 4].map((r) => stepName('work', r))).toEqual([
-      "What everyone's working on", 'Ideas', "Who's in", 'Settling changes',
+      "What everyone's working on", 'Ideas', "Agreement", 'Settling changes',
     ])
     expect(stepHeading('work', 2)).toBe('Step 2 · Ideas')
     expect(stepHeading('health', 2)).toBe('Step 2')

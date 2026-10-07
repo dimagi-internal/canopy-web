@@ -17,7 +17,8 @@ import { andList, stepAsk, stepName, trimPriority, VERDICT_WORDS, who } from './
 
 export const YOU = 'you'
 
-export type AnswerChip = { answer: Answer; title: string }
+/** One answer in step 3, and whose idea it answers (when that is a teammate). */
+export type AnswerChip = { answer: Answer; title: string; lead: string }
 
 export type Message = {
   key: string
@@ -63,7 +64,7 @@ export function replyLabel(block: Block, member: string, round: number): { label
   if (round === 3) {
     const answers = answerLines(block, member)
     if (!answers.length) return { label: 'Nothing to answer' }
-    return { label: '', chips: answers.map((a) => ({ answer: a.answer, title: a.title })) }
+    return { label: '', chips: answers.map((a) => ({ answer: a.answer, title: a.title, lead: a.lead })) }
   }
   const rs = list<Record<string, unknown>>(block.resolutions)
   return {

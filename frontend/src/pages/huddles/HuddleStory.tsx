@@ -16,7 +16,7 @@ import {
  * The Story: the huddle told top to bottom for someone seeing one for the
  * first time — three numbered steps, then the result, in plain sentences.
  * Each idea keeps one letter and one colour from step 2 (where it was
- * suggested) through step 3 (who's in) to the result, so a reader can follow
+ * suggested) through step 3 (agreement) to the result, so a reader can follow
  * one idea down the page. Every line opens to the full words; agent prose is
  * shown with the engine's terms translated (deJargon) — the verbatim record is
  * the Full conversation view.
