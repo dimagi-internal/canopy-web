@@ -89,60 +89,60 @@ def test_a_task_is_filed_into_a_project_by_its_ext_id(client, agent):
     _create(client)
     r = client.post(
         "/api/agents/eva/tasks/",
-        {"ext_id": "T1", "title": "Book the room", "project": "P1"},
+        [{"ext_id": "T1", "title": "Book the room", "project": "P1"}],
         content_type="application/json",
     )
 
     assert r.status_code == 201, r.content
-    assert r.json()["project_ext_id"] == "P1"
-    assert r.json()["project_name"] == "UNGA 2026 conference planning"
+    assert r.json()[0]["project_ext_id"] == "P1"
+    assert r.json()[0]["project_name"] == "UNGA 2026 conference planning"
 
 
 def test_a_task_without_a_project_is_fine(client, agent):
     """Plenty of work is a one-off. Forcing a project would produce one project
     per task — what the Drive layout warns against."""
-    r = client.post("/api/agents/eva/tasks/", {"ext_id": "T1", "title": "Reply to Beth"},
+    r = client.post("/api/agents/eva/tasks/", [{"ext_id": "T1", "title": "Reply to Beth"}],
                     content_type="application/json")
 
-    assert r.json()["project_ext_id"] is None
+    assert r.json()[0]["project_ext_id"] is None
 
 
 def test_an_unknown_project_reference_keeps_the_task(client, agent):
     """A typo must not cost the agent the work it just recorded; the response
     says plainly that it was filed nowhere."""
-    r = client.post("/api/agents/eva/tasks/", {"ext_id": "T1", "title": "x", "project": "P9"},
+    r = client.post("/api/agents/eva/tasks/", [{"ext_id": "T1", "title": "x", "project": "P9"}],
                     content_type="application/json")
 
     assert r.status_code == 201
-    assert r.json()["project_ext_id"] is None
+    assert r.json()[0]["project_ext_id"] is None
 
 
 def test_patching_moves_a_task_between_projects_and_out_again(client, agent):
     _create(client)
     _create(client, name="Other")
-    task_id = client.post("/api/agents/eva/tasks/", {"ext_id": "T1", "title": "x",
-                                                     "project": "P1"},
-                          content_type="application/json").json()["id"]
+    ref = client.post("/api/agents/eva/tasks/", [{"ext_id": "T1", "title": "x",
+                                                  "project": "P1"}],
+                      content_type="application/json").json()[0]["ext_id"]
 
-    moved = client.patch(f"/api/agents/eva/tasks/{task_id}/", {"project": "P2"},
+    moved = client.patch(f"/api/agents/eva/tasks/{ref}/", {"project": "P2"},
                          content_type="application/json").json()
     assert moved["project_ext_id"] == "P2"
 
     # Empty string files it out; the task itself survives.
-    out = client.patch(f"/api/agents/eva/tasks/{task_id}/", {"project": ""},
+    out = client.patch(f"/api/agents/eva/tasks/{ref}/", {"project": ""},
                        content_type="application/json").json()
     assert out["project_ext_id"] is None
-    assert AgentTask.objects.get(pk=task_id).title == "x"
+    assert AgentTask.objects.get(agent=agent, ext_id=ref).title == "x"
 
 
 def test_patching_something_else_leaves_the_project_alone(client, agent):
     """Omitted and empty must differ, or every title edit would unfile a task."""
     _create(client)
-    task_id = client.post("/api/agents/eva/tasks/", {"ext_id": "T1", "title": "x",
-                                                     "project": "P1"},
-                          content_type="application/json").json()["id"]
+    ref = client.post("/api/agents/eva/tasks/", [{"ext_id": "T1", "title": "x",
+                                                  "project": "P1"}],
+                      content_type="application/json").json()[0]["ext_id"]
 
-    patched = client.patch(f"/api/agents/eva/tasks/{task_id}/", {"title": "y"},
+    patched = client.patch(f"/api/agents/eva/tasks/{ref}/", {"title": "y"},
                            content_type="application/json").json()
 
     assert (patched["title"], patched["project_ext_id"]) == ("y", "P1")
@@ -156,7 +156,7 @@ def test_the_list_counts_tasks_without_a_query_per_project(client, agent,
         [("P1", "in_progress"), ("P1", "done"), ("P2", "suggested")]
     ):
         client.post("/api/agents/eva/tasks/",
-                    {"ext_id": f"T{i}", "title": "t", "project": project, "status": status},
+                    [{"ext_id": f"T{i}", "title": "t", "project": project, "status": status}],
                     content_type="application/json")
 
     listed = {p["ext_id"]: p for p in client.get("/api/agents/eva/projects/").json()}
@@ -169,7 +169,7 @@ def test_closing_a_project_keeps_its_tasks(client, agent):
     """History is the point of a finished project; deleting its tasks with it
     would throw away what the work was."""
     _create(client)
-    client.post("/api/agents/eva/tasks/", {"ext_id": "T1", "title": "x", "project": "P1"},
+    client.post("/api/agents/eva/tasks/", [{"ext_id": "T1", "title": "x", "project": "P1"}],
                 content_type="application/json")
 
     done = client.patch("/api/agents/eva/projects/P1/", {"status": "done"},
@@ -210,32 +210,3 @@ def test_reading_needs_membership_and_writing_needs_more(agent):
     assert vc.get("/api/agents/eva/projects/").status_code == 200
     assert vc.post("/api/agents/eva/projects/", {"name": "nope"},
                    content_type="application/json").status_code == 403
-
-
-def test_sync_files_a_task_into_a_project(client, agent):
-    """`canopy agent add` upserts through tasks/sync, so a project named there
-    has to stick or the CLI could never file anything."""
-    _create(client)
-
-    client.post("/api/agents/eva/tasks/sync",
-                {"tasks": [{"ext_id": "T1", "title": "Book the room", "project": "P1"}]},
-                content_type="application/json")
-
-    assert AgentTask.objects.get(ext_id="T1").project.ext_id == "P1"
-
-
-def test_a_sync_that_names_no_project_leaves_the_filing_alone(client, agent):
-    """The trap: a wholesale sync defaulting `project` to "" would unfile every
-    task it touches — so editing a title from the CLI would quietly empty the
-    project it belongs to."""
-    _create(client)
-    client.post("/api/agents/eva/tasks/sync",
-                {"tasks": [{"ext_id": "T1", "title": "Book the room", "project": "P1"}]},
-                content_type="application/json")
-
-    client.post("/api/agents/eva/tasks/sync",
-                {"tasks": [{"ext_id": "T1", "title": "Book the big room"}]},
-                content_type="application/json")
-
-    task = AgentTask.objects.get(ext_id="T1")
-    assert (task.title, task.project.ext_id) == ("Book the big room", "P1")

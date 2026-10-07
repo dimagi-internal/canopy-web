@@ -43,7 +43,7 @@ from fastmcp.tools.base import Tool, ToolResult
 log = logging.getLogger(__name__)
 
 #: Prefix on every page-derived tool name. Namespaced so a host cannot shadow
-#: a canopy tool — a page declaring `dismiss_item` must not be able to
+#: a canopy tool — a page declaring `act_on_task` must not be able to
 #: intercept calls meant for the real one.
 TOOL_PREFIX = "page_"
 

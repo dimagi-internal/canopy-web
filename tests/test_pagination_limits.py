@@ -55,7 +55,6 @@ def agent(workspace):
     "/api/agents/",
     "/api/agents/echo/syncs/",
     "/api/agents/echo/turns/",
-    "/api/agents/echo/work-products/",
     "/api/agents/echo/runs/",
     "/api/agents/echo/schedules/",
     "/api/issues/",

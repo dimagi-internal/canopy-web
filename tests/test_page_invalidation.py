@@ -65,7 +65,7 @@ def _world():
 
 def _showing(session, uri=ITEM_RESOURCE):
     page_state.set_page_state(session, {"path": "/w/w1/agents/echo/inbox", "resource": uri,
-                                        "backing_tool": "list_items"})
+                                        "backing_tool": "list_tasks"})
 
 
 def _an_item(agent, title="review the deploy"):
@@ -215,10 +215,10 @@ def test_only_active_sessions_are_notified(sent):
 # --- the composition that replaced a page action -------------------------------
 
 
-def test_the_server_side_dismiss_invalidates_the_page(sent):
-    """A server tool (`dismiss_item`, here through its REST route — the MCP tool
+def test_the_server_side_decline_invalidates_the_page(sent):
+    """A server tool (`act_on_task`, here through its REST route — the MCP tool
     IS that route) changes the row; the receiver on the row is what tells the
-    page. Without it the tool would dismiss the item and leave the page
+    page. Without it the tool would decline the task and leave the page
     displaying it, which is the exact bug page actions were invented to dodge."""
     user, _ws, session, agent = _world()
     item = _an_item(agent)
@@ -227,7 +227,8 @@ def test_the_server_side_dismiss_invalidates_the_page(sent):
 
     client = Client()
     client.force_login(user)
-    resp = client.post(f"/api/items/{item.uuid}/dismiss", data={}, content_type="application/json")
+    resp = client.post(f"/api/agents/{agent.slug}/tasks/{item.ext_id}/actions",
+                       data={"action": "decline"}, content_type="application/json")
 
     assert resp.status_code == 200, resp.content
     assert [m["uri"] for _g, m in sent] == [ITEM_RESOURCE]

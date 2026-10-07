@@ -56,8 +56,8 @@ def test_a_viewer_cannot_write_an_agents_runs(gap):
     assert r.status_code == 403, r.content
 
 
-def test_a_viewer_cannot_mark_a_command_applied(gap):
-    r = _post(gap["viewer"], "/api/agents/gapbot/commands/1/apply", {"result_note": ""})
+def test_a_viewer_cannot_mark_a_task_action_applied(gap):
+    r = _post(gap["viewer"], "/api/agents/gapbot/actions/1/applied", {"result_note": ""})
     assert r.status_code == 403, r.content
 
 

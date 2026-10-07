@@ -5,7 +5,7 @@ feed, and you are pushed only about the feed (Jonathan, 2026-10-05) — so an it
 never pushes. Its agent's waiting COUNT is still snapshotted, coalesced to one
 recompute per agent per transaction, because the live Inbox badge reads it.
 (That a task change marks its agent dirty at all is pinned in
-test_push_items.py; what DOES push is pinned in test_supervisor_feed.py.)
+test_push_tasks.py; what DOES push is pinned in test_supervisor_feed.py.)
 
 The send mechanics — prune a dead subscription, keep one on a transient
 failure, log — and `agent_audience` are pinned here on `send_to_user` directly."""
@@ -106,15 +106,15 @@ def test_a_new_open_item_moves_the_badge_but_does_not_push(agent, sub):
 
 def test_clearing_an_item_lowers_the_count(agent, sub):
     item = _item(agent, "i1")
-    agent_services.dismiss_ask(item, by="jj@dimagi.com")
+    agent_services.act(item, action="decline", by="jj@dimagi.com", actor_workspace_ids=set())
     assert _count(agent) == 0
 
 
 def test_a_batch_of_items_is_one_recompute_per_agent(agent, sub):
     with patch("apps.push.services.refresh_agent_waiting", wraps=push_services.refresh_agent_waiting) as refresh:
-        agent_services.raise_asks(
-            agent=agent,
-            payloads=[{"title": f"a{i}", "idempotency_key": f"a{i}"} for i in range(10)],
+        agent_services.create_tasks(
+            agent,
+            [{"title": f"a{i}", "idempotency_key": f"a{i}", "ask_kind": "review"} for i in range(10)],
         )
     assert refresh.call_count == 1
     assert _count(agent) == 10

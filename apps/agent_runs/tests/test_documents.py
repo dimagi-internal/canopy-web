@@ -153,7 +153,8 @@ class TestDiscovery:
         assert [(r["agent_slug"], r["project"]["name"]) for r in found] == [("hal", "Sophie RUTF procurement")]
         RunDocOut.model_validate(found[0])
         assert "state" not in found[0]
-        projects = c.get(f"{URL}projects/?repo_slug=connect-labs").json()
+        # Projects across agents are the fleet route now (`/api/agent-runs/projects/` is gone).
+        projects = c.get("/api/projects/?repo_slug=connect-labs").json()
         assert {(p["agent_slug"], p["name"]) for p in projects} == {
             ("hal", "Sophie RUTF procurement"), ("ace", "Nutrition demo"),
         }

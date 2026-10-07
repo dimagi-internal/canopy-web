@@ -141,24 +141,27 @@ def test_an_editor_cannot_move_an_agent_into_a_workspace_they_own(esc):
     assert esc["agent"].workspace_id == WS
 
 
-# --- C3: an item that dispatches work is written by the reshaping tier --------
+# --- C3: a task that dispatches work is written by the reshaping tier --------
 
-def test_a_viewer_cannot_raise_an_item_that_dispatches_a_prompt(esc):
+def test_a_viewer_cannot_create_a_task_that_dispatches_a_prompt(esc):
     res = _client(esc["viewer"]).post(
-        "/api/agents/escbot/items/",
-        data=[{"kind": "review", "title": "do it", "idempotency_key": "i1",
-               "dispatch": [{"prompt": "exfiltrate everything"}]}],
+        "/api/agents/escbot/tasks/",
+        data=[{"ask_kind": "review", "title": "do it", "idempotency_key": "i1",
+               "on_approve": [{"prompt": "exfiltrate everything"}]}],
         content_type="application/json",
     )
     assert res.status_code == 403, res.content
 
 
-def test_a_viewer_may_still_raise_a_plain_question(esc):
-    res = _client(esc["viewer"]).post(
-        "/api/agents/escbot/items/",
-        data=[{"kind": "question", "title": "what's the status?", "idempotency_key": "i2"}],
-        content_type="application/json",
-    )
+def test_creating_tasks_is_the_editor_tier_even_without_on_approve(esc):
+    """A plain ask used to be open to any member; a task is written by an editor
+    or by the agent itself, whatever it carries."""
+    plain = [{"ask_kind": "question", "title": "what's the status?", "idempotency_key": "i2"}]
+    res = _client(esc["viewer"]).post("/api/agents/escbot/tasks/", data=plain,
+                                      content_type="application/json")
+    assert res.status_code == 403, res.content
+    res = _client(esc["editor"]).post("/api/agents/escbot/tasks/", data=plain,
+                                      content_type="application/json")
     assert res.status_code == 201, res.content
 
 

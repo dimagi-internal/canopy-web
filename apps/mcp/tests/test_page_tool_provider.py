@@ -88,7 +88,7 @@ def test_the_static_tools_are_still_there():
     user, _session = _user_with_page()
     with as_user(user):
         names = {t.name for t in async_to_sync(mcp.list_tools)()}
-    assert {"list_items", "dismiss_item"} <= names
+    assert {"list_tasks", "act_on_task"} <= names
 
 
 def test_another_users_page_is_not_in_my_tool_list():
