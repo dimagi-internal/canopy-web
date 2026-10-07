@@ -1,13 +1,12 @@
 // Shared presentational pieces for the Agent Workspace sections. Extracted
 // verbatim from the old single-column AgentWorkspacePage so the lazy-loaded
-// section routes (overview / syncs / work-products / skills) can share them.
+// section routes (projects / tasks / turns / skills …) can share them.
 // Styling is preserved exactly as it was inline on the page.
 
 import type {
   AgentSkillOut,
   AgentSyncOut,
   AgentTurnOut,
-  AgentWorkProductOut,
 } from '@/api/agents'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
@@ -142,7 +141,7 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
   const body = turnBody(turn)
   const duration = turnDuration(turn)
   return (
-    <div className="bg-card border border-border rounded-xl hover:border-primary/40 transition-colors">
+    <div id={turn.id} className="scroll-mt-6 bg-card border border-border rounded-xl hover:border-primary/40 transition-colors">
       <div className="flex items-start justify-between gap-3 p-5 pb-0">
         <button
           type="button"
@@ -247,41 +246,6 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
         )}
       </div>
     </div>
-  )
-}
-
-export function WorkProductCard({ wp }: { wp: AgentWorkProductOut }) {
-  return (
-    <a
-      href={wp.url}
-      target="_blank"
-      rel="noreferrer"
-      className="group block bg-card border border-border rounded-xl p-4 hover:border-primary/40 hover:bg-accent transition-colors"
-    >
-      <div className="flex items-start gap-2">
-        <h3 className="text-[14px] font-semibold text-foreground leading-snug group-hover:text-primary transition-colors min-w-0 flex-1">
-          {wp.title}
-        </h3>
-        <span className="text-primary/70 text-xs shrink-0">↗</span>
-      </div>
-      {wp.kind && (
-        <span className="inline-block mt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-          {wp.kind}
-        </span>
-      )}
-      {wp.description && (
-        <p className="text-[12px] text-muted-foreground leading-relaxed mt-2 line-clamp-3">{wp.description}</p>
-      )}
-      {wp.tags && wp.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-2">
-          {wp.tags.map((t) => (
-            <span key={t} className="text-[10px] text-muted-foreground bg-muted border border-border px-1.5 py-0.5 rounded">
-              {t}
-            </span>
-          ))}
-        </div>
-      )}
-    </a>
   )
 }
 

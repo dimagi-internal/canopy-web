@@ -16,7 +16,7 @@ pytestmark = pytest.mark.django_db
 def test_route_shape_folds_ids():
     assert route_shape("/canopy/api/harness/runners/117ee3fb-979c-41d3-988f-58420bc422f3/claim") == \
         "/canopy/api/harness/runners/<id>/claim"
-    assert route_shape("/api/items/42/decide") == "/api/items/<n>/decide"
+    assert route_shape("/api/agents/eva/actions/42/applied") == "/api/agents/eva/actions/<n>/applied"
 
 
 def test_logs_a_slow_request_and_not_a_fast_one(monkeypatch, caplog):

@@ -228,7 +228,7 @@ def test_outputs_are_tasks_pointing_at_the_huddle(owner, agents):
     out = d["outputs"]
     assert [o["ext_id"] for o in out] == ["T41"]
     assert out[0]["project"] == "P3" and out[0]["status"] == "suggested"
-    assert out[0]["url"] == "/w/connect/agents/eva/work"
+    assert out[0]["url"] == "/w/connect/agents/eva/tasks"
     assert out[0]["next_action"] == "BLOCKED on creds: provision the SF key on the runner"
     assert out[0]["updated_at"]
     assert _client(owner).get("/api/huddles/").json()[0]["outcome_count"] == 1
@@ -301,7 +301,7 @@ def test_scoped_detail_spans_callers_workspaces(owner, ws, agents):
     cells = {x["member"]: x for x in d["cells"]}
     assert set(cells) == {"eva", "ace"}
     assert cells["ace"]["block"]["worked_on"] == ["z"]
-    assert [(o["ext_id"], o["url"]) for o in d["outputs"]] == [("T9", "/w/dimagi/agents/ace/work")]
+    assert [(o["ext_id"], o["url"]) for o in d["outputs"]] == [("T9", "/w/dimagi/agents/ace/tasks")]
     assert c.get("/api/w/connect/huddles/").json()[0]["outcome_count"] == 1
 
 

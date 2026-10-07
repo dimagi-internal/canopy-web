@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 
-from . import cdp_control, session_target, sessions
+from . import cdp_control, desktop, session_target, sessions
 
 logger = logging.getLogger(__name__)
 
@@ -38,23 +38,23 @@ def close_session(session_key: str, *, project: str = "", cdp_port: int = 9222,
     Returns the CDP action — "deleted", or "absent" when the task was already gone
     (a double-tap, or a human who deleted it in emdash a moment earlier). Both
     queue the signal: the task is gone either way, and the server may not know.
+    A Claude desktop session (pass `cfg` to recognise one) is closed by its own
+    runtime and returns "closed" (see desktop.close).
 
     Raises CloseRefused, touching nothing, when the project cannot be resolved
     (see session_target) — never a delete by name alone. Raises CDPError if the
     delete could not be completed. The caller logs either and moves on.
-
-    A Claude desktop session (keyed by its session id) is closed by its own
-    runtime. Looking it up in emdash found nothing, read as "already gone": canopy
-    was told it closed while it kept running, and the next report reopened it.
     """
-    if cfg is not None:
-        from . import desktop
-
-        if desktop.is_desktop_session(cfg, session_key):
-            action = desktop.close(cfg, session_key)
-            sessions.request_close_report(session_key)
-            logger.info("closed desktop session %s (%s)", session_key, action)
-            return action
+    if cfg is not None and desktop.is_desktop_session(cfg, session_key):
+        # A Claude desktop session has no emdash task: it is open for as long as the
+        # runner's desktop index names it (desktop.open_sessions). Looking for an
+        # emdash task found none, called it "already gone", and the next report
+        # named it open again. desktop.close stops its turn, marks it closed (no
+        # longer reported or reused) and removes a worktree that holds no work.
+        action = desktop.close(cfg, session_key)
+        sessions.request_close_report(session_key)
+        logger.info("closed desktop session %s (%s)", session_key, action)
+        return action
     target = session_target.resolve(emdash_db, session_key, project)
     if target.reason == session_target.ABSENT:
         sessions.request_close_report(session_key)

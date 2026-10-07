@@ -26,13 +26,13 @@ pytestmark = pytest.mark.django_db
 
 #: The shape a page is supposed to send: what is selected, and where to read it
 #: properly. Note what is NOT here — the item title, body, agent, age.
-#: Those come from `list_items`, under the caller's own permissions.
+#: Those come from `list_tasks`, under the caller's own permissions.
 INBOX_VIEW = {
     "surface": "Echo's inbox",
     "path": "/w/w1/agents/echo/inbox",
     "filters": {"state": "open", "kind": "review"},
     "visible_ids": [4471, 4472, 4480],
-    "backing_tool": "list_items",
+    "backing_tool": "list_tasks",
 }
 
 
@@ -67,7 +67,7 @@ def test_a_page_declares_what_it_shows_and_the_agent_can_read_it_back():
     # The backing tool is the whole DRY move: the page says which rows and which
     # tool resolves them, and the agent reads the rows through that tool rather
     # than trusting a copy the page serialised.
-    assert read["state"]["backing_tool"] == "list_items"
+    assert read["state"]["backing_tool"] == "list_tasks"
 
 
 def test_a_second_declaration_replaces_the_first_rather_than_merging():
@@ -114,7 +114,7 @@ def test_the_version_is_assigned_by_the_server_not_accepted_from_the_page():
 def test_a_page_sending_its_rows_instead_of_its_selection_is_refused():
     """The cap is a design guard, not a resource limit.
 
-    A page that serialises the rows it displays has duplicated `list_items`,
+    A page that serialises the rows it displays has duplicated `list_tasks`,
     can go stale between render and send, and has become a second place an ACL
     could be got wrong. Refusing at the point the mistake is made is the only
     moment anyone will notice.

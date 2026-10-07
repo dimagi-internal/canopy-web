@@ -1,7 +1,8 @@
 # E2E tests (Playwright)
 
 Browser tests for the agent workspace (`/agents/echo`) — board grouping, the
-section panels, and the action loop (accept / decline / dispatch / mark-done).
+section panels, and the five task actions (approve / decline / reply / dispatch / done),
+including acting from the fleet's Waiting on you on `/supervisor`.
 
 ```bash
 cd frontend && npm run test:e2e

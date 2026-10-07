@@ -184,7 +184,7 @@ def _from_prompt_body(prompt: str) -> str:
 def subject_for(turn: dict, target: str = "") -> str:
     """The meaningful half of the name — first rung that yields something, wins.
 
-    Ordered by how deliberately a human chose the words. A board item's title and a
+    Ordered by how deliberately a human chose the words. A board task's title and a
     schedule's name were TYPED by someone to name this exact work, so they outrank
     the brief's slash command, which is only how the work is spelled to the agent
     (`/echo:manager-report` vs "Weekly manager report" — same turn, and the second
@@ -192,7 +192,11 @@ def subject_for(turn: dict, target: str = "") -> str:
     """
     ref = turn.get("origin_ref") or {}
     for candidate in (
-        ref.get("item_title"),                                  # a board card someone wrote
+        # A board card someone wrote. `item_title` is the pre-Projects & Tasks
+        # spelling: turns queued before that deploy still carry it in their
+        # origin_ref. Remove the fallback one release after it ships, once no
+        # queued turn can predate it.
+        ref.get("task_title") or ref.get("item_title"),
         ref.get("schedule_name"),                               # "Weekly manager report"
         _REPLY_NOISE.sub("", (ref.get("subject") or "").strip()),   # an email thread
         _from_slash_command(turn.get("prompt"), target),        # /canopy:issue-triage

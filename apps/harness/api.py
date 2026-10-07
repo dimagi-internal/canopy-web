@@ -1862,6 +1862,8 @@ def visible_turns_qs(request: HttpRequest, *, all_memberships: bool = False):
         "pinned_runner", "requested_turn_mode_by",
         # A chat turn's session and its agent are read per row by TurnOut.
         "chat_session", "chat_session__agent",
+        # TurnOut.raised_from_task_ext_id.
+        "raised_from_task",
     ).order_by("-created_at")
     # Tenant filter, split by target kind (agent / project / session) — mirrors
     # claim_next_turn's tenant_q (services.py) and _turn_or_404 (this module).

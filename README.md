@@ -6,7 +6,7 @@ Canopy Web is both a **product** (a workbench for supervising a fleet of AI agen
 
 ## What's inside
 
-- **Agent supervision** — first-class `Agent` entities with task boards, packaged turns, schedules, an Items inbox ("what needs *you*"), and a cross-fleet `/supervisor` surface (installable as a phone PWA with push notifications).
+- **Agent supervision** — first-class `Agent` entities with task boards, packaged turns, schedules, projects and tasks with a **Waiting on you** filter ("what needs *you*"), and a cross-fleet `/supervisor` surface (installable as a phone PWA with push notifications).
 - **Execution control plane** — paired runners (laptop emdash daemons, cloud containers) heartbeat against `/api/harness`, claim queued turns, and stream results back over an append-only event ledger. Routing is an explicit per-agent runner cascade with per-source rules.
 - **Live multiplayer chat** — durable, workspace-tenanted chat sessions with an agent: co-edited draft, presence, streamed replies (including live tool calls), driven over WebSockets by the shared `canopy-ui/chat` kit.
 - **Demo-driven development (DDD)** — narrative → version → run → package (video + deck + narrative), with review gates, public storyboards (`/storyboard/:slug`), and a scene-by-scene reviewer surface.

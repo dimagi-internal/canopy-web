@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
-import { ItemAge } from './ItemAge'
+import { TaskAge } from './TaskAge'
 
 afterEach(cleanup)
 
@@ -14,48 +14,48 @@ afterEach(cleanup)
 
 const NOW = new Date('2026-08-12T18:00:00Z')
 
-const text = () => screen.getByTestId('item-age').textContent ?? ''
+const text = () => screen.getByTestId('task-age').textContent ?? ''
 
-describe('ItemAge', () => {
+describe('TaskAge', () => {
   it('shows how old a card is, which is the question being asked', () => {
-    render(<ItemAge createdAt="2026-08-10T18:00:00Z" now={NOW} />)
+    render(<TaskAge createdAt="2026-08-10T18:00:00Z" now={NOW} />)
     expect(text()).toContain('2d ago')
   })
 
   it('reads "just now" for a card posted this minute', () => {
-    render(<ItemAge createdAt="2026-08-12T17:59:30Z" now={NOW} />)
+    render(<TaskAge createdAt="2026-08-12T17:59:30Z" now={NOW} />)
     expect(text()).toContain('just now')
   })
 
   it('carries the absolute timestamp on hover, for when the exact day matters', () => {
-    render(<ItemAge createdAt="2026-08-10T18:00:00Z" now={NOW} />)
-    const title = screen.getByTestId('item-age').getAttribute('title') ?? ''
+    render(<TaskAge createdAt="2026-08-10T18:00:00Z" now={NOW} />)
+    const title = screen.getByTestId('task-age').getAttribute('title') ?? ''
     expect(title).toMatch(/2026/)
     expect(title).toMatch(/Aug/)
   })
 
-  it('adds the decision age on a card that has been decided', () => {
-    render(<ItemAge createdAt="2026-08-10T18:00:00Z" decidedAt="2026-08-12T15:00:00Z" now={NOW} />)
+  it('adds the closed age on a card whose ask has been closed', () => {
+    render(<TaskAge createdAt="2026-08-10T18:00:00Z" closedAt="2026-08-12T15:00:00Z" now={NOW} />)
     expect(text()).toContain('2d ago')
-    expect(text()).toContain('decided 3h ago')
+    expect(text()).toContain('closed 3h ago')
   })
 
-  it('shows only the created age when the item is still open', () => {
-    render(<ItemAge createdAt="2026-08-10T18:00:00Z" decidedAt={null} now={NOW} />)
-    expect(text()).not.toContain('decided')
+  it('shows only the created age when the ask is still open', () => {
+    render(<TaskAge createdAt="2026-08-10T18:00:00Z" closedAt={null} now={NOW} />)
+    expect(text()).not.toContain('closed')
   })
 
   it('renders nothing rather than "NaNd ago" when the date is unusable', () => {
-    const empty = render(<ItemAge createdAt="" now={NOW} />)
+    const empty = render(<TaskAge createdAt="" now={NOW} />)
     expect(empty.container.innerHTML).toBe('')
     cleanup()
-    const bad = render(<ItemAge createdAt="not-a-date" now={NOW} />)
+    const bad = render(<TaskAge createdAt="not-a-date" now={NOW} />)
     expect(bad.container.innerHTML).toBe('')
   })
 
-  it('drops an unusable decided_at without losing the created age', () => {
-    render(<ItemAge createdAt="2026-08-10T18:00:00Z" decidedAt="not-a-date" now={NOW} />)
+  it('drops an unusable ask_closed_at without losing the created age', () => {
+    render(<TaskAge createdAt="2026-08-10T18:00:00Z" closedAt="not-a-date" now={NOW} />)
     expect(text()).toContain('2d ago')
-    expect(text()).not.toContain('decided')
+    expect(text()).not.toContain('closed')
   })
 })

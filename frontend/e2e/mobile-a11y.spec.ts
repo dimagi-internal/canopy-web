@@ -6,7 +6,10 @@ import { test, expect } from '@playwright/test'
 //
 // Runs on the mobile project (see playwright.config testMatch).
 
-const SURFACES = ['/supervisor', '/w/dimagi/agents/ada/items', '/w/dimagi/agents/ada/inbox']
+// A batch view rather than `?waiting=me`: the desktop specs act on these asks, and
+// a batch keeps every card (and so its reply box and buttons) whatever ran first.
+const ADA_BATCH = '/w/dimagi/agents/ada/tasks?batch=fleet-audit-2026-07-14'
+const SURFACES = ['/supervisor?tab=waiting', ADA_BATCH, '/w/dimagi/agents/ada/tasks?waiting=me']
 
 test.describe('mobile', () => {
   // Gate is the real 3:1 bar.
@@ -75,24 +78,28 @@ test.describe('mobile', () => {
     }
   })
 
-  test('decision controls are thumb-sized', async ({ page }) => {
-    // Measured 25-27px tall on the deployed app — the implement/skip/defer/answer row
-    // is the surface the product exists for and was the least tappable thing on it.
-    // 44px is the floor Apple and Google both publish.
-    await page.goto('/w/dimagi/agents/ada/items')
+  test('task action controls are thumb-sized', async ({ page }) => {
+    // Measured 25-27px tall on the deployed app — the action row on a card is the
+    // surface the product exists for and was the least tappable thing on it.
+    // 44px is the floor Apple and Google both publish. Phone width only: from
+    // `sm` up the row is deliberately compact (`sm:min-h-0`), and the desktop
+    // project runs this file too.
+    test.skip(test.info().project.name !== 'mobile', 'a phone-width check')
+    await page.goto(ADA_BATCH)
     await page.waitForTimeout(1500)
     const small = await page.evaluate(() => {
       const out: string[] = []
+      // Every button and reply box on a task card (cards carry `data-status`).
       document
-        .querySelectorAll('[data-testid^="item-implement-"], [data-testid^="item-skip-"], [data-testid^="item-defer-"], [data-testid^="item-answer-"]')
+        .querySelectorAll('[data-status] button, [data-status] input')
         .forEach((el) => {
           const r = el.getBoundingClientRect()
           if (r.height > 0 && r.height < 44) {
-            out.push(`${el.getAttribute('data-testid')} ${Math.round(r.width)}x${Math.round(r.height)}`)
+            out.push(`${el.textContent || el.getAttribute('aria-label')} ${Math.round(r.width)}x${Math.round(r.height)}`)
           }
         })
       return out
     })
-    expect(small, 'decision controls under 44px on a phone').toEqual([])
+    expect(small, 'task action controls under 44px on a phone').toEqual([])
   })
 })

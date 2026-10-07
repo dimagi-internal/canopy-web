@@ -20,7 +20,7 @@ class ActivityEvent:
     that subsystem. ``id`` is ``"<kind>:<pk>"`` — unique per event, used for
     React keys and as the seed for a future canonical object address.
     ``href`` is the real in-app URL to open (``external=True`` for off-site URLs
-    like an agent work product, which open in a new tab).
+    like a project link, which open in a new tab).
     """
 
     subsystem: str

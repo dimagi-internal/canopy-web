@@ -10,7 +10,7 @@ There are five tiers. Each contains the one below it.
 | Tier | Enforced as | Can |
 |---|---|---|
 | **Link reader** | *no account* — a link you were sent | Read what was shared: a storyboard, a narrative, a walkthrough, a session transcript, the public explainer. |
-| **Viewer** | workspace member, `viewer` | Interact with an agent through what its published interface offers members (none published → nothing): chat, answer a blocked question, decide an item, read the board. Read the turns you started. Cannot change what an agent *is*, or anything else. |
+| **Viewer** | workspace member, `viewer` | Interact with an agent through what its published interface offers members (none published → nothing): chat, answer a blocked question, approve or decline a task, read the board. Read the turns you started. Cannot change what an agent *is*, or anything else. |
 | **Editor** | workspace member, `editor` | Create and edit agents, run turns (the agent's whole profile, **always `manual`** unless you are its admin), edit schedules, route work (never in `auto`), **delete an agent**; create and change every product surface (projects, walkthroughs, shareouts, reviews, DDD, storyboards, issues). |
 | **Admin** | workspace member, `admin` | Run the workspace: read every LOG (the event log, every turn's prompt / ledger / transcript / caller context, runner drills, connected-site health); invite, re-role and remove members **below admin**; the integrations (inbound mailboxes + push config, Slack history + sync, Test connection). Holds no keys. |
 | **Owner** | workspace member, `owner` | The keys: make admins and owners, the shared vault, every agent's credentials (a workspace owner is every agent's admin), the Slack app itself, registering or changing a connected site, deleting or moving the workspace. |
@@ -147,7 +147,7 @@ recur and the routes that deliberately sit off the ladder.
 - `_get_agent_or_404` — membership. Interaction and reads. A non-member gets 404, never 403,
   so the API never confirms an agent exists to someone who cannot see it.
 - `_agent_for_write` — `AGENT_WORK` (editor and above). Reshaping: upsert, runner assignment,
-  runner rules, turn mode, syncs, turns, work products, skills, task create/patch. Setting
+  runner rules, turn mode, syncs, turns, skills, project create/patch, task create/patch. Setting
   `auto` — on a routing rule, an actor route or the agent's switch — additionally needs
   `Agent.is_admin` (`_refuse_auto_unless_admin`, 2026-10-04).
 - `_agent_for_admin` — `Agent.is_admin`: the agent's owner, a workspace owner, or an explicit
@@ -175,11 +175,12 @@ Lists blank the content and set `content_hidden`; detail routes and the live tur
 
 Deliberately off the ladder:
 
-- **`POST /{slug}/tasks/{id}/commands` branches on `kind`.** `comment`, `accept` and
-  `decline` decide an item already on the board (the User tier); `edit`, `reassign`, `done`
-  and `dispatch` reshape or queue work and take `AGENT_WORK`. `tests/test_agent_acl_gates.py`
-  asserts the two tiers partition `KIND_CHOICES`. Raising an ITEM that carries a `dispatch`
-  spec takes `AGENT_WORK` too, because deciding it (the User tier) runs the prompt.
+- **`POST /{slug}/tasks/{ref}/actions` branches on `action`.** `approve`, `decline` and
+  `reply` answer a task already on the board (the User tier); `dispatch` and `done` reshape or
+  queue work and take `AGENT_WORK` (`_EDITOR_ACTIONS`). `tests/test_agent_acl_gates.py`
+  asserts the two tiers partition `AgentTaskAction.ACTION_CHOICES`. Creating a task (which may
+  carry `on_approve`) takes `AGENT_WORK` too — or the agent's own login — because approving it
+  (the User tier) runs the prompt.
 - **`POST /{slug}/bootstrap-report`** is gated on running the agent (`caller_runs_agent`),
   strictly tighter than any role.
 - **`POST /api/agents/` (upsert)** takes the slug in the body, so it spells resolve-then-

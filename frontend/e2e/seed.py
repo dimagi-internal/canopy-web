@@ -1,5 +1,5 @@
-"""E2E seed: a user + an authenticated session + the echo agent with a spread of
-tasks and one pending command. Writes the session key to .auth/session.txt for
+"""E2E seed: a user + an authenticated session + the echo agent with a project,
+a spread of tasks and one pending action. Writes the session key to .auth/session.txt for
 Playwright to use as a cookie. Run via `manage.py shell -c` from the repo root."""
 import datetime as dt
 import os
@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.sessions.backends.db import SessionStore
 
 from apps.agents.models import (
-    Agent, AgentSkill, AgentSync, AgentTask, AgentTaskCommand, AgentWorkProduct,
+    Agent, AgentProject, AgentSkill, AgentSync, AgentTask, AgentTaskAction,
 )
 from apps.reviews.models import ReviewRequest
 from apps.workspaces import services as wsvc
@@ -31,7 +31,14 @@ a, _ = Agent.objects.update_or_create(slug="echo", defaults=dict(
     name="Echo", email="echo@dimagi-ai.com", description="Marketing agent for Connect.",
     persona="Email-driven marketing agent.", workspace=ws))
 a.tasks.all().delete()
-a.commands.all().delete()
+a.task_actions.all().delete()
+a.projects.all().delete()
+# A project with the deliverable the agent recorded on it — project links are
+# where a work product used to live.
+p1 = AgentProject.objects.create(
+    agent=a, ext_id="P1", name="Connect stories",
+    outcome="Three publishable field stories for the Connect site.",
+    links=[{"label": "Demo story RUWOYD", "url": "https://docs.google.com/document/d/wp1/edit"}])
 
 
 def t(**k):
@@ -46,32 +53,27 @@ t(ext_id="t2", title="Brand-voice loop", next_action="Propose a draft to edits d
   status="suggested", owner="Amie", assigned="Echo", confidence="low",
   rationale="Learn the house voice from edits.", position=1)
 t(ext_id="t3", title="PRIDE cholera story", next_action="Run the interview",
-  status="in_progress", owner="Matt", assigned="Sarvesh", position=2)
+  status="in_progress", owner="Matt", assigned="Sarvesh", position=2, project=p1)
 t(ext_id="t4", title="Ideas backlog upkeep", next_action="Append new ideas",
-  status="in_progress", owner="Matt", assigned="Echo", position=3)
+  status="in_progress", owner="Matt", assigned="Echo", position=3, project=p1)
 t(ext_id="t5", title="Agent workspace shipped", next_action="", status="done",
   owner="Jonathan", assigned="Echo", position=4)
-AgentTaskCommand.objects.create(agent=a, task=a.tasks.get(ext_id="t4"), kind="dispatch",
-                                status="pending", created_by="jonathan@dimagi.com")
-# An applied command carries the outcome Echo recorded — surfaced on the card's
+AgentTaskAction.objects.create(agent=a, task=a.tasks.get(ext_id="t4"), action="dispatch",
+                               status="pending", by="jonathan@dimagi.com")
+# An applied action carries the outcome Echo recorded — surfaced on the card's
 # "last:" line and in the activity stream.
-AgentTaskCommand.objects.create(
-    agent=a, task=a.tasks.get(ext_id="t5"), kind="done", status="applied",
-    created_by="jonathan@dimagi.com", result_note="Shipped the agent workspace board.",
+AgentTaskAction.objects.create(
+    agent=a, task=a.tasks.get(ext_id="t5"), action="done", status="applied",
+    by="jonathan@dimagi.com", result_note="Shipped the agent workspace board.",
     applied_at=dt.datetime(2026, 6, 17, 14, 30, tzinfo=dt.timezone.utc))
 
 a.syncs.all().delete()
-a.work_products.all().delete()
 a.skills.all().delete()
 AgentSync.objects.create(
     agent=a, period_start=dt.datetime(2026, 6, 3, tzinfo=dt.timezone.utc),
     period_end=dt.datetime(2026, 6, 17, tzinfo=dt.timezone.utc), title="Manager sync 1",
     summary="First two weeks.", doc_url="https://docs.google.com/document/d/syncdoc/edit",
     self_grades={"work": "C+", "skills": "B-"}, source="manager-sync")
-AgentWorkProduct.objects.create(
-    agent=a, title="Demo story RUWOYD", kind="story",
-    url="https://docs.google.com/document/d/wp1/edit", description="A 5/5 demo story.",
-    tags=["story"], source="story-draft")
 AgentSkill.objects.create(
     agent=a, name="email-communicator", description="Send and receive email as Echo.",
     url="https://github.com/dimagi-internal/echo/blob/main/skills/email-communicator/SKILL.md")
@@ -95,8 +97,7 @@ _runner = Runner.objects.create(
 # harness.EmdashSession was absorbed into canopy_sessions: the session itself, plus a
 # RunnerBinding holding the live runner pointer (`emdash_task` → `session_key`). This
 # seed still imported the deleted model, which raised at import time and took the WHOLE
-# e2e suite down — every spec, not just the supervisor one. That is why nothing caught
-# the items view growing to 32 cards.
+# e2e suite down — every spec, not just the supervisor one.
 _session = CanopySession.objects.create(
     workspace=ws, project="canopy-web",
     status=CanopySession.ACTIVE, origin=CanopySession.ORIGIN_RUNNER,
@@ -134,35 +135,34 @@ fleet_audit = ReviewRequest.objects.create(
     },
 )
 
-# Ada's fleet audit as ASKS ON A TASK — the surface that replaces the borrowed
-# DDD review page (and, since #948, the borrowed `harness.Item` model itself:
-# the ask lives on `AgentTask.{ask_kind,ask_body,...}` now — see CLAUDE.md
-# "Item ⊕ Turn"). Two open asks in her queue, both dispatching to another
-# agent (the manager case: target_agent != self). hal must exist for dispatch
-# to resolve.
+# Ada's fleet audit as ASKS ON TASKS — an ask is a property of a task
+# (`AgentTask.{ask_kind,ask_body,ask_closed_at}`), not a model of its own. Open
+# asks in her queue, each running work on another agent when approved (the
+# manager case: `on_approve` target_agent != self). hal must exist for that to
+# resolve.
 ada_agent, _ = Agent.objects.update_or_create(slug="ada", defaults=dict(
     name="Ada", email="ada@dimagi-ai.com", description="Fleet conductor.",
     persona="Conducts the fleet.", workspace=ws))
 Agent.objects.update_or_create(slug="hal", defaults=dict(
     name="Hal", email="hal@dimagi-ai.com", description="Inbox agent.",
     persona="Triages email.", workspace=ws))
-# Narrowed to this batch's own rows, not `ada_agent.tasks.all().delete()`: unlike
-# the old dedicated Item model, AgentTask is the SAME table ordinary board tasks
-# live in, so an unscoped delete here would also wipe any of Ada's non-ask tasks.
+# Narrowed to this batch's own rows, not `ada_agent.tasks.all().delete()`:
+# AgentTask is the SAME table ordinary board tasks live in, so an unscoped delete
+# here would also wipe any of Ada's non-ask tasks.
 ada_agent.tasks.filter(origin="api", batch_key__startswith="fleet-audit").delete()
 AgentTask.objects.create(
     agent=ada_agent, ext_id="fa-hal-inbox", ask_kind=AgentTask.ASK_REVIEW,
     origin="api", batch_key=FLEET_AUDIT_BATCH,
     idempotency_key="fa-hal-inbox", title="hal: discard 81 junk/stale unread emails",
     ask_body="All 81 are automated or older than 1 week.",
-    dispatch=[{"target_agent": "hal", "prompt": "/hal:turn", "origin": "email"}],
+    on_approve=[{"target_agent": "hal", "prompt": "/hal:turn", "origin": "email"}],
 )
 AgentTask.objects.create(
     agent=ada_agent, ext_id="fa-lily", ask_kind=AgentTask.ASK_REVIEW,
     origin="api", batch_key=FLEET_AUDIT_BATCH,
     idempotency_key="fa-lily", title="hal: ONE buried HUMAN email — Lily Olson",
     ask_body="A real person who never got an answer.",
-    dispatch=[{"target_agent": "hal", "prompt": "/hal:turn --thread lily", "origin": "email"}],
+    on_approve=[{"target_agent": "hal", "prompt": "/hal:turn --thread lily", "origin": "email"}],
 )
 # A QUESTION ask — the other kind. Its card is the only thing that renders the
 # answer input, and without one seeded the placeholder-contrast guard had nothing
@@ -173,7 +173,7 @@ AgentTask.objects.create(
     origin="api", batch_key=FLEET_AUDIT_BATCH,
     idempotency_key="fa-question", title="hal: should the 81 be archived or deleted?",
     ask_body="Archiving is reversible; deleting is not.",
-    dispatch=[{"target_agent": "hal", "prompt": "/hal:turn", "origin": "email"}],
+    on_approve=[{"target_agent": "hal", "prompt": "/hal:turn", "origin": "email"}],
 )
 # A settled card from an OLDER sitting. Tasks are never deleted, so this is what
 # accumulates: the unfiltered view must keep it out of the way of the open ones.
@@ -182,7 +182,7 @@ AgentTask.objects.create(
     agent=ada_agent, ext_id="fa-old-settled", ask_kind=AgentTask.ASK_REVIEW,
     origin="api", batch_key="fleet-audit-2026-06-30",
     idempotency_key="fa-old-settled", title="hal: an old finding nobody needs to see again",
-    ask_body="Long since dismissed.", ask_dismissed=True, decided_at=_tz.now(),
+    ask_body="Long since declined.", status=AgentTask.DECLINED, ask_closed_at=_tz.now(),
 )
 
 # ── Multiplayer: a SECOND human, and one chat session they both open ──────────
@@ -281,6 +281,6 @@ with open("frontend/e2e/.auth/session2.txt", "w") as f:
 with open("frontend/e2e/.auth/mp-session-id.txt", "w") as f:
     f.write(str(mp_session.id))
 
-print(f"seeded: {a.tasks.count()} tasks, {a.commands.filter(status='pending').count()} pending; "
+print(f"seeded: {a.tasks.count()} tasks, {a.task_actions.filter(status='pending').count()} pending; "
       f"fleet-audit review {str(fleet_audit.id)[:8]}; session {session_key[:8]}; "
       f"mp session {str(mp_session.id)[:8]} + 2nd user {mp_session_key[:8]}")

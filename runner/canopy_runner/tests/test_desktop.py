@@ -174,9 +174,32 @@ def no_app(monkeypatch):
     monkeypatch.setattr(desktop, "ensure_app", lambda: True)
     monkeypatch.setattr(desktop, "open_session", opened.append)
     monkeypatch.setattr(desktop, "prepare_settings", lambda cfg, wt: None)
-    monkeypatch.setattr(desktop, "seed_session", lambda cfg, wt: "sid-1")
+    monkeypatch.setattr(desktop, "seed_session",
+                        lambda cfg, wt, name="": SEEDED_NAMES.append(name) or "sid-1")
     monkeypatch.setattr(desktop.caller, "write_caller_file", lambda turn: None)
+    SEEDED_NAMES.clear()
     return opened
+
+
+#: The title each seeded session was given, in order (the no_app fixture's seed stub).
+SEEDED_NAMES: list[str] = []
+
+
+def test_seed_names_the_session_so_the_app_titles_it(cfg, tmp_path, monkeypatch):
+    """`--name` is what the app reads for the sidebar title; without it every
+    runner session showed up as "General coding session"."""
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"] = argv
+        return SimpleNamespace(stdout=json.dumps({"session_id": "sid-7"}), stderr="")
+
+    monkeypatch.setattr(desktop.subprocess, "run", fake_run)
+    assert desktop.seed_session(cfg, tmp_path, "c-fix-the-login-ab12") == "sid-7"
+    i = seen["argv"].index("--name")
+    assert seen["argv"][i + 1] == "c-fix-the-login-ab12"
+    desktop.seed_session(cfg, tmp_path)
+    assert "--name" not in seen["argv"]
 
 
 def _channel_of(cfg, name_part: str) -> Path:
@@ -207,6 +230,8 @@ def test_a_chat_turn_runs_to_completion_in_a_new_session(cfg, tmp_path, no_app):
     assert client.of("finish")[0][1] == ("turn-0001-aaaa", "all done")
     assert client.of("finish")[0][2] == {"status": "done", "emdash_task_id": "sid-1"}
     assert desktop.is_desktop_session(cfg, "sid-1")
+    # Titled like emdash names it: the canopy prefix, then a subject from the prompt.
+    assert SEEDED_NAMES and SEEDED_NAMES[0].startswith("c-do-it")
 
 
 def test_a_chat_turns_attachments_reach_the_desktop_session(cfg, tmp_path, monkeypatch):
@@ -584,3 +609,24 @@ def test_a_turn_on_a_closed_sessions_thread_opens_a_new_desktop_session(cfg, tmp
     for th in list(desktop.IN_FLIGHT.values()):
         th.join(5)
     assert started == [""]
+
+
+def test_closing_a_desktop_session_drops_it_from_the_report(cfg, tmp_path, monkeypatch):
+    """There is no emdash task to delete, so the old close found none, said "already
+    gone", and the next report named the session open again — retried every tick,
+    forever, with the session stuck on the feed (2026-10-07)."""
+    from canopy_runner import close, sessions
+
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    desktop._remember(cfg, "sid-close", wt, "hal")
+    monkeypatch.setattr(desktop, "transcript_path", lambda sid, claude_home=None: None)
+    monkeypatch.setattr(close.cdp_control, "close_task",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no emdash delete")))
+    sessions._PENDING_CLOSED.clear()
+    assert [r["emdash_task"] for r in desktop.open_sessions(cfg)] == ["sid-close"]
+
+    assert close.close_session("sid-close", project="hal", cfg=cfg) == "closed"
+    assert desktop.open_sessions(cfg) == []
+    assert sessions._PENDING_CLOSED == {"sid-close"}
+    assert wt.exists()  # not a git checkout git can vouch for: never removed

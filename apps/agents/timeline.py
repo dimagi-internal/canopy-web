@@ -1,8 +1,7 @@
 """Timeline source for the agents subsystem.
 
-Three ``kind``s merge under ``agents``: ``sync`` (a periodic manager sync),
-``work_product`` (a deliverable — links off-site to the doc/form), and ``task``
-(a board task as it first appears).
+Two ``kind``s merge under ``agents``: ``sync`` (a periodic manager sync) and
+``task`` (a task as it first appears).
 
 Returns *candidates* (newest ``limit`` per component plus cursor-instant ties);
 :func:`apps.timeline.sources.gather` does the final merge/order/slice.
@@ -11,7 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from .models import AgentSync, AgentTask, AgentWorkProduct
+from .models import AgentSync, AgentTask
 
 
 def recent_events(
@@ -37,22 +36,6 @@ def recent_events(
                 href=f"/agents/{s.agent.slug}/syncs",
                 id=f"sync:{s.id}",
                 icon="sync",
-            )
-        )
-
-    wps = _scope(AgentWorkProduct.objects.select_related("agent")).order_by("-created_at")
-    for w in cursor_page(wps, "created_at", before=before, limit=limit):
-        events.append(
-            ActivityEvent(
-                subsystem="agents",
-                kind="work_product",
-                at=w.created_at,
-                title=f"{w.agent.name}: {w.title}",
-                summary=w.kind or None,
-                href=w.url,
-                external=True,
-                id=f"workproduct:{w.id}",
-                icon="doc",
             )
         )
 

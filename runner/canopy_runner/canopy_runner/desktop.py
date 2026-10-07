@@ -237,11 +237,15 @@ def close(cfg, sid: str) -> str:
             logger.warning("desktop close %s: stop failed; closing anyway", sid, exc_info=True)
     _mark_closed(cfg, sid)
     if wt.exists():
-        dirty = _git(wt, "status", "--porcelain", "--untracked-files=normal", check=False)
         # The runtime's own files are excluded from status (make_worktree), so
-        # anything listed here is the session's work.
-        if dirty:
-            logger.info("desktop close %s: worktree %s has uncommitted changes — kept", sid, wt)
+        # anything listed is the session's work. A status that FAILED (not a
+        # checkout, a broken one) prints nothing too — it vouches for nothing, so
+        # it keeps the worktree exactly like a dirty one.
+        st = subprocess.run(["git", "-C", str(wt), "status", "--porcelain", "--untracked-files=normal"],
+                            capture_output=True, text=True, timeout=120)
+        if st.returncode != 0 or st.stdout.strip():
+            logger.info("desktop close %s: worktree %s kept (%s)", sid, wt,
+                        "uncommitted changes" if st.returncode == 0 else "git status failed")
         else:
             # From the main checkout, not from inside the worktree being removed.
             common = _git(wt, "rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
@@ -417,9 +421,15 @@ def ensure_mod() -> None:
                    capture_output=True, text=True, timeout=120)
 
 
-def seed_session(cfg, wt: Path) -> str:
+def seed_session(cfg, wt: Path, name: str = "") -> str:
     cli = _cli()
     argv = [str(cli), "-p", SEED_PROMPT, "--output-format", "json"]
+    if name:
+        # The session's title in the app's sidebar. `--name` writes a
+        # `custom-title` record the app adopts on import; without it every session
+        # was titled from the seed prompt alone, and all came out as "General
+        # coding session". Same name emdash shows: c-/cx- + subject + disc.
+        argv += ["--name", name]
     model = getattr(cfg, "desktop_model", "")
     if model:
         argv += ["--model", model]
@@ -856,7 +866,7 @@ class TurnRun:
             if summary:
                 prompt = (f"[Continuing prior work on this thread — context from earlier sessions "
                           f"(a fresh session, possibly a different machine):]\n{summary}\n\n{prompt}")
-            sid = seed_session(self.cfg, wt)
+            sid = seed_session(self.cfg, wt, name)
             # The turn's record starts AFTER the seed's "Reply with exactly: ready"
             # exchange — shipping it made a turn's transcript the seed and nothing
             # else (found live, #1188).

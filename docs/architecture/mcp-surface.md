@@ -86,7 +86,7 @@ MultiAuth(
   plain bearer is a 401). Tools run AS the visitor (`user_id` = their canopy
   user, `sub` = `delegated:<id>`, `auth_method: delegated`) — their own ACL —
   and `DelegatedScopeMiddleware` lists and allows only the tools their scopes
-  map to (`self_host.SCOPE_TOOLS`: `items:read` → `list_items`, `skills:read` → `skill_history` +
+  map to (`self_host.SCOPE_TOOLS`: `tasks:read` → `list_fleet_tasks`, `skills:read` → `skill_history` +
   `skill_revision_diff`); resources and prompts are closed to it. So a
   member's delegated token reaches at most their own ACL ∩ a read-only scope.
   A DPoP request to a canopy that is not configured as a host is a 401.

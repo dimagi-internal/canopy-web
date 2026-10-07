@@ -3,9 +3,10 @@
 You are pushed about what lands on your supervisor FEED, and only that
 (Jonathan, 2026-10-05): a session asking you something, or a session that
 finished and is waiting for your next prompt — each sent only to someone the
-feed rule (`canopy_sessions.feed`) puts it in front of. Inbox items (open asks,
-tasks parked on a person) are not on the feed and no longer push; their count
-is still snapshotted per agent, because the live Inbox badge reads it.
+feed rule (`canopy_sessions.feed`) puts it in front of. Tasks waiting on you
+(open asks, tasks parked on a person) are not on the feed and no longer push;
+their count is still snapshotted per agent, because the live Waiting on you
+badge reads it.
 """
 from __future__ import annotations
 
@@ -118,10 +119,10 @@ def send_to_user(user, title: str, body: str, url: str, count: int | None = None
 
 
 def refresh_agent_waiting(agent: Agent) -> None:
-    """Recompute and store this agent's waiting_count — the Inbox badge's source.
+    """Recompute and store this agent's waiting_count — the Waiting on you badge's source.
 
     Saving the snapshot is what moves the badge live (`realtime.signals`
-    fans a `supervisor.waiting` frame out on it). It does NOT push: Inbox items
+    fans a `supervisor.waiting` frame out on it). It does NOT push: waiting tasks
     are not on the supervisor feed, and you are pushed only about the feed.
     """
     # Everything on this agent that needs a human — `agents.services.waiting_q`,
@@ -201,12 +202,12 @@ def mark_dirty(agent_id: int) -> None:
 
 # --- A blocked agent asking a question ---------------------------------------
 #
-# Deliberately not routed through the item snapshot above. An agent going from
+# Deliberately not routed through the waiting-task snapshot above. An agent going from
 # "working" to "waiting on a human" is a discrete edge, observed once, and the notification can carry the
-# actual question rather than a tally. It is also not an `Item` and must not
-# become one — `Item`'s decisions are implement/skip/defer and `implement`
-# dispatches a Turn, whereas answering a dialog is a KEYSTROKE into a live
-# session. An inbox row whose buttons enqueue a turn would be wrong in a way
+# actual question rather than a tally. It is also not a task ask and must not
+# become one — a task's `approve` can dispatch a Turn, whereas answering a
+# dialog is a KEYSTROKE into a live session. A Waiting-on-you card whose
+# buttons enqueue a turn would be wrong in a way
 # that runs code.
 #
 # Why it matters at all: rendering the menu perfectly still requires somebody to

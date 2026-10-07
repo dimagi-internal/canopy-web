@@ -201,10 +201,7 @@ from apps.storyboards.api import router as storyboards_router  # noqa: E402
 from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.huddles.api import router as huddles_router  # noqa: E402
 from apps.harness.api_schedules import router as schedules_router  # noqa: E402
-from apps.harness.items_api import (  # noqa: E402
-    agent_items_router,
-    items_router,
-)
+from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
 from apps.canopy_sessions.secrets_api import router as session_secrets_router  # noqa: E402
@@ -251,10 +248,9 @@ api.add_router("/agents", agent_google_router)  # start the Google mailbox mint
 # new agent — the barrier this feature exists to remove.
 api.add_router("/oauth", google_oauth_router)
 api.add_router("/agents", schedules_router)  # recurring turns, under the agents namespace
-# Items — the supervisor's queue (the dual of Turn). The collection is
-# agent-scoped ("whose queue?"), the resource is not (an item id is global).
-api.add_router("/agents", agent_items_router)
-api.add_router("/items", items_router)
+# Fleet-wide task and project lists (/api/tasks/, /api/projects/) — the
+# per-agent filters across every agent the caller can see.
+api.add_router("", fleet_tasks_router)
 api.add_router("/workspaces", workspaces_router)
 # Tenant-admin surface, same prefix and shape as members/invites (apps/tokens).
 api.add_router("/workspaces", connected_apps_router)

@@ -146,95 +146,91 @@ def test_viewer_succeeds_on_a_get(acl):
     assert res.status_code == 200, res.content
 
 
-def _command(client, task, kind, payload=None):
+def _act(client, task, action, comment=""):
     return client.post(
-        f"/api/agents/aclbot/tasks/{task.id}/commands",
-        data={"kind": kind, "payload": payload or {}},
+        f"/api/agents/aclbot/tasks/{task.ext_id}/actions",
+        data={"action": action, "comment": comment},
         content_type="application/json",
     )
 
 
 @pytest.fixture
 def task(acl):
-    return AgentTask.objects.create(agent=acl["agent"], ext_id="t1", title="Task 1")
+    return AgentTask.objects.create(agent=acl["agent"], ext_id="T1", title="Task 1",
+                                    ask_kind=AgentTask.ASK_REVIEW)
 
 
-@pytest.mark.parametrize("kind,payload", [
-    ("comment", {"note": "looks fine"}),
-    ("accept", {}),
-    ("decline", {"reason": "not now"}),
+@pytest.mark.parametrize("action,comment", [
+    ("reply", "looks fine"),
+    ("approve", ""),
+    ("decline", "not now"),
 ])
-def test_viewer_may_still_decide_an_item(acl, task, kind, payload):
+def test_viewer_may_still_answer_a_task(acl, task, action, comment):
     """The interaction tier, and the reason this endpoint is not simply gated.
 
-    Commenting on a task and accepting or declining one are DECIDING an item
-    that is already on the board — exactly what the User tier exists for
-    ("decide an item, read the board"). Gating these would take the one thing a
-    viewer is for away from them.
+    Approving, declining or replying to a task answers what is already on the
+    board — exactly what the User tier exists for. Gating these would take the
+    one thing a viewer is for away from them.
     """
     acl["client"].force_login(acl["viewer"])
-    assert _command(acl["client"], task, kind, payload).status_code == 201
+    assert _act(acl["client"], task, action, comment).status_code == 200
 
 
-@pytest.mark.parametrize("kind,payload", [
-    ("edit", {"title": "rewritten by a viewer"}),
-    ("reassign", {"assignee": "someone-else"}),
-    ("done", {}),
-    ("dispatch", {}),
-])
-def test_viewer_refused_on_a_reshaping_command(acl, task, kind, payload):
-    """The bypass this closes, and it was a door beside a gate that already existed.
-
-    `PATCH /tasks/{id}/` is gated at `_agent_for_write`, and `kind: "edit"`
-    reaches the SAME mutation through `services.create_command` — it sets
-    title/next_action/plan/owner/assigned on the task and saves. So a viewer
-    refused on the PATCH could perform it verbatim through the command queue.
-    `done` rewrites status, `reassign` moves who holds the task, and `dispatch`
-    queues fresh agent work.
-
-    This is pinned per kind rather than once, because the gate is a membership
-    test on a SET: adding a kind to `AgentTaskCommand.KIND_CHOICES` without
-    adding it to `_RESHAPING_COMMAND_KINDS` silently lands it at the
-    interaction tier, and a parametrized test is what makes that visible.
-    """
+@pytest.mark.parametrize("action", ["done", "dispatch"])
+def test_viewer_refused_on_a_reshaping_action(acl, task, action):
+    """`done` rewrites status and `dispatch` queues fresh agent work — reshapes,
+    so editor. Pinned per action because the gate is a membership test on a SET:
+    an action added to the model without a tier decision must be visible here."""
     acl["client"].force_login(acl["viewer"])
-    res = _command(acl["client"], task, kind, payload)
+    res = _act(acl["client"], task, action)
     assert res.status_code == 403, res.content
     task.refresh_from_db()
-    assert task.title == "Task 1", "the refused command mutated the task anyway"
+    assert task.status == "suggested", "the refused action changed the task anyway"
+    assert not task.actions.exists()
 
 
-def test_editor_may_edit_via_a_command(acl, task):
+def test_viewer_refused_on_patch(acl, task):
+    """Field edits (what `edit`/`reassign` commands used to do) are a PATCH, editor-gated."""
+    acl["client"].force_login(acl["viewer"])
+    res = acl["client"].patch("/api/agents/aclbot/tasks/T1/", data={"title": "rewritten"},
+                              content_type="application/json")
+    assert res.status_code == 403
+    task.refresh_from_db()
+    assert task.title == "Task 1"
+
+
+def test_editor_may_patch_and_mark_done(acl, task):
     """The other half: the gate must not break the tier it belongs to."""
     acl["client"].force_login(acl["editor"])
-    assert _command(acl["client"], task, "edit", {"title": "retitled"}).status_code == 201
+    assert acl["client"].patch("/api/agents/aclbot/tasks/T1/", data={"title": "retitled"},
+                               content_type="application/json").status_code == 200
+    assert _act(acl["client"], task, "done").status_code == 200
     task.refresh_from_db()
-    assert task.title == "retitled"
+    assert task.title == "retitled" and task.status == "done"
 
 
-def test_non_member_gets_404_on_a_reshaping_command(acl, task):
-    """Resolve-then-authorize survives the kind branch."""
+def test_non_member_gets_404_on_a_reshaping_action(acl, task):
+    """Resolve-then-authorize survives the action branch."""
     acl["client"].force_login(acl["nonmember"])
-    assert _command(acl["client"], task, "edit", {"title": "x"}).status_code == 404
+    assert _act(acl["client"], task, "done").status_code == 404
 
 
-def test_every_command_kind_is_deliberately_tiered():
-    """No kind may be left untiered by accident.
+def test_every_action_is_deliberately_tiered():
+    """No action may be left untiered by accident.
 
-    The gate reads a set of RESHAPING kinds and treats everything else as
-    interaction — which fails OPEN for a kind nobody classified. This asserts
-    the two tiers partition `KIND_CHOICES`, so adding a kind forces a decision
-    here rather than defaulting it to the viewer tier in silence.
+    The gate reads a set of EDITOR actions and treats everything else as
+    interaction — which fails OPEN for an action nobody classified. This asserts
+    the two tiers partition the model's choices.
     """
-    from apps.agents.api import _RESHAPING_COMMAND_KINDS
-    from apps.agents.models import AgentTaskCommand
+    from apps.agents.api import _EDITOR_ACTIONS
+    from apps.agents.models import AgentTaskAction
 
-    all_kinds = {k for k, _ in AgentTaskCommand.KIND_CHOICES}
-    interaction = {AgentTaskCommand.ACCEPT, AgentTaskCommand.DECLINE, AgentTaskCommand.COMMENT}
-    assert _RESHAPING_COMMAND_KINDS | interaction == all_kinds, (
-        f"unclassified command kinds: {all_kinds - (_RESHAPING_COMMAND_KINDS | interaction)}"
+    all_actions = {a for a, _ in AgentTaskAction.ACTION_CHOICES}
+    interaction = {AgentTaskAction.APPROVE, AgentTaskAction.DECLINE, AgentTaskAction.REPLY}
+    assert _EDITOR_ACTIONS | interaction == all_actions, (
+        f"unclassified actions: {all_actions - (_EDITOR_ACTIONS | interaction)}"
     )
-    assert not (_RESHAPING_COMMAND_KINDS & interaction)
+    assert not (_EDITOR_ACTIONS & interaction)
 
 
 # --- non-member: 404, never 403, on an owner endpoint --------------------------

@@ -4,15 +4,15 @@ The other half of `page_state.py`. That module lets a page say what it is
 showing; this one makes the saying *stay true*, by notifying every attached page
 when the data behind it changes — **whoever changed it, through whatever door**.
 
-**The bug.** Ask canopy "close the ones I'm looking at" on an agent's inbox
+**The bug.** Ask canopy "close the ones I'm looking at" on an agent's task list
 and what you see used to depend on which tool the agent picked: a page action
-made the rows vanish in front of you, while a server-side tool (`dismiss_item`)
-removed them and left the page displaying rows that no longer existed until you
+made the rows vanish in front of you, while a server-side tool (an action on the
+task) removed them and left the page displaying rows that no longer existed until you
 reloaded. Same sentence, two outcomes. And the same staleness arrives with no
-agent involved at all — the fleet raising an item while you watch the inbox, a
+agent involved at all — the fleet raising a task while you watch the list, a
 scheduled turn, a second tab, a colleague. The agent only made it easy to notice.
 
-**The vocabulary is MCP's.** A resource URI (`item://`), and a notification
+**The vocabulary is MCP's.** A resource URI (`task://`), and a notification
 carrying the URI and nothing else, after which the receiver re-reads. That is
 `notifications/resources/updated` exactly, and re-reading rather than patching is
 deliberate: the refetch goes through the normal tool where authorization applies,

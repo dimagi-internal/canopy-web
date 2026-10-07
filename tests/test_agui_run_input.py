@@ -44,7 +44,7 @@ def test_one_call_declares_both_the_view_and_the_actions():
     session, c = _ctx()
 
     resp = _put(c, session, {
-        "state": {"path": "/w/w1/agents/echo/inbox", "resource": "item://", "visible_ids": [1, 2]},
+        "state": {"path": "/w/w1/agents/echo/tasks", "resource": "task://", "visible_ids": [1, 2]},
         "tools": [{"name": "scrollToItem", "description": "Scroll to a row"}],
     })
 
@@ -72,7 +72,7 @@ def test_fields_canopy_cannot_honour_are_ignored_not_rejected():
     session, c = _ctx()
 
     resp = _put(c, session, {
-        "state": {"path": "/w/w1/agents/echo/inbox"},
+        "state": {"path": "/w/w1/agents/echo/tasks"},
         "tools": [],
         "threadId": "t1", "runId": "r1", "parentRunId": None,
         "messages": [{"id": "m1", "role": "user", "content": "hi"}],
@@ -100,11 +100,11 @@ def test_an_empty_state_does_not_blank_a_page_that_already_declared_one():
     """`tools` and `state` are independent: re-declaring tools must not be read
     as "my screen is now empty"."""
     session, c = _ctx()
-    _put(c, session, {"state": {"path": "/w/w1/agents/echo/inbox", "resource": "item://"}, "tools": []})
+    _put(c, session, {"state": {"path": "/w/w1/agents/echo/tasks", "resource": "task://"}, "tools": []})
 
     resp = _put(c, session, {"tools": [{"name": "scrollTo"}]})
 
-    assert resp.json()["state"]["path"] == "/w/w1/agents/echo/inbox"
+    assert resp.json()["state"]["path"] == "/w/w1/agents/echo/tasks"
 
 
 def test_another_users_session_is_not_writable():
@@ -128,7 +128,7 @@ def test_a_payload_built_by_the_real_sdk_is_accepted():
     payload = RunAgentInput(
         thread_id=str(session.id),
         run_id="run-1",
-        state={"path": "/w/w1/agents/echo/inbox", "resource": "item://", "visible_ids": [7]},
+        state={"path": "/w/w1/agents/echo/tasks", "resource": "task://", "visible_ids": [7]},
         messages=[],
         tools=[Tool(name="scrollToItem", description="Scroll to a row",
                     parameters={"type": "object", "properties": {}})],
