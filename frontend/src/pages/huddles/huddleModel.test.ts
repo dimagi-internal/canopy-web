@@ -83,9 +83,9 @@ it('normalises answers', () => {
 })
 
 it('names rounds by type and always shows the type rounds', () => {
-  expect(roundName('work', 2)).toBe('Roundtable')
-  expect(roundName('health', 2)).toBe('Round 2')
-  expect(roundName('work', 4)).toBe('Resolve')
+  expect(roundName('work', 2)).toBe('Ideas')
+  expect(roundName('health', 2)).toBe('Step 2')
+  expect(roundName('work', 4)).toBe('Settling changes')
   expect(roundsToShow({ type: 'work', rounds_dispatched: 1, cells: [] })).toEqual([1, 2, 3])
   // Round 4 (resolve) is conditional: shown only once it is dispatched.
   expect(roundsToShow({ type: 'work', rounds_dispatched: 3, cells: [] })).toEqual([1, 2, 3])
@@ -153,8 +153,8 @@ describe('outcomeOf — the live work-fleet-20261006 huddle', async () => {
   it('says why each held one is held, naming who amended', () => {
     const idm = o.held.find((p) => p.lead === 'eva')!
     expect(idm.hold).toEqual({ kind: 'amend', who: ['echo'] })
-    expect(holdWords(idm, 'ada').why).toBe("echo co-signed with conditions; eva (the lead) hasn't resolved them.")
-    expect(holdWords(idm, 'ada').clear).toMatch(/round 4 would/)
+    expect(holdWords(idm, 'ada').why).toBe("Echo said yes with changes, and Eva (who suggested it) hasn't confirmed them yet.")
+    expect(holdWords(idm, 'ada').clear).toBe("Eva agreeing to Echo's changes would send it to you.")
     const pride = o.held.find((p) => p.lead === 'echo')!
     expect(pride.hold).toMatchObject({ kind: 'amend', who: expect.arrayContaining(['eva', 'ace']) })
   })
@@ -177,7 +177,7 @@ describe('outcomeOf — round 4', () => {
       { title: 'Funder map', lead: 'eva', resolution: 'reject' },
     ] }),
   ]
-  const task = { agent: 'eva', task_id: 1, ext_id: 'T1', title: 'Pipeline sheet', status: 'suggested', assigned: 'eva', project: '', url: '/b' }
+  const task = { agent: 'eva', task_id: 1, ext_id: 'T1', title: 'Pipeline sheet', status: 'suggested', assigned: 'eva', project: '', url: '/b', next_action: '' }
 
   it('treats an accepted amend as filed and a rejected one as held', () => {
     const o = outcomeOf({ cells, members: ['eva', 'hal'], outputs: [task], finished: true })
@@ -218,9 +218,9 @@ describe('taskProposalKey', () => {
 
 describe('plain words', () => {
   it('spells out size, confidence and task status', () => {
-    expect(sizeWords('S', 0.6)).toBe('small · 60% confident')
-    expect(sizeWords('M', null)).toBe('medium')
-    expect(taskStatusWords({ status: 'suggested', assigned: 'eva' })).toBe('awaiting your accept / decline')
-    expect(taskStatusWords({ status: 'in_progress', assigned: 'eva' })).toBe('in progress · waiting on eva')
+    expect(sizeWords('S', 0.6)).toBe("small job · 60% sure it's worth it")
+    expect(sizeWords('M', null)).toBe('medium job')
+    expect(taskStatusWords({ status: 'suggested', assigned: 'eva' })).toBe('waiting for your yes/no')
+    expect(taskStatusWords({ status: 'in_progress', assigned: 'eva' })).toBe('in progress')
   })
 })

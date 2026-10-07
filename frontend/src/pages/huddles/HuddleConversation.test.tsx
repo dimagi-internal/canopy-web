@@ -79,22 +79,23 @@ describe('the model', () => {
   })
 })
 
-describe('By agent (the default view)', () => {
+describe('By agent (Full conversation)', () => {
   it("opens on the first member's thread and reads it top to bottom", async () => {
-    const { container } = renderAt()
+    const { container } = renderAt('?view=agent')
+    expect(screen.getByRole('button', { name: 'Full conversation' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByRole('button', { name: 'By agent' }).getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('button', { name: /ace/ }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: /^(A\s*)?Ace$/ }).getAttribute('aria-pressed')).toBe('true')
     expect(container.querySelector('[data-thread="ace"]')).toBeTruthy()
-    for (const r of ['Round 1 · Report', 'Round 2 · Roundtable', 'Round 3 · Co-sign']) {
+    for (const r of ["Step 1 · What everyone's working on", 'Step 2 · Ideas', "Step 3 · Who's in"]) {
       expect(screen.getByRole('heading', { name: r })).toBeTruthy()
     }
   })
 
   it("shows ada's real round-2 questions to eva, each followed by eva's answer", () => {
-    const { container } = renderAt('?with=eva')
+    const { container } = renderAt('?view=agent&with=eva')
     const rows = container.querySelectorAll('[data-round="2"] [data-qa-row]')
     expect(rows).toHaveLength(3)
-    expect(rows[1].textContent).toContain('ada asked: The IDM deck (T40, due 10/9) has open demo picks and charts')
+    expect(rows[1].textContent).toContain('Ada asked: The IDM deck (T40, due 10/9) has open demo picks and charts')
     expect(rows[1].textContent).toContain('Ace: pick 1-2 existing demos (Spark cascade run 20261004-1706')
     // ada's own bubble lists the same questions in full.
     const ask = container.querySelector('[data-bubble="leader-2"]') as HTMLElement
@@ -108,7 +109,7 @@ describe('By agent (the default view)', () => {
   })
 
   it("round 3 pairs each critique with eva's answer, then teammates' answers to her proposals", () => {
-    const { container } = renderAt('?with=eva')
+    const { container } = renderAt('?view=agent&with=eva')
     const order = [...container.querySelectorAll('[data-round="3"] [data-bubble]')].map((b) => b.getAttribute('data-bubble'))
     expect(order).toEqual([
       'leader-3', 'leader-3-critique-0', 'eva-3-answer-0', 'leader-3-critique-1', 'eva-3-answer-1',
@@ -118,16 +119,16 @@ describe('By agent (the default view)', () => {
   })
 
   it("puts teammates' answers to eva's proposals in eva's thread", () => {
-    const { container } = renderAt('?with=eva')
+    const { container } = renderAt('?view=agent&with=eva')
     const echo = container.querySelector('[data-bubble="inbound-echo"]') as HTMLElement
-    expect(echo.textContent).toContain("echo on your proposal ‘IDM talk: live demo from Ace, story slide from Echo’")
+    expect(echo.textContent).toContain("Echo on your idea ‘IDM talk: live demo from Ace, story slide from Echo’")
     expect(echo.querySelector('[data-answer="amend"]')).toBeTruthy()
     expect(echo.textContent).toContain('the slide uses ONLY already-public material')
     expect(container.querySelector('[data-bubble="inbound-ace"] [data-answer="co-sign"]')).toBeTruthy()
   })
 
   it('renders full text — no ellipsis truncation of long replies', () => {
-    const { container } = renderAt('?with=eva')
+    const { container } = renderAt('?view=agent&with=eva')
     const note = (cell('eva', 3).block as { answers: { note: string }[] }).answers[0].note
     expect(note.length).toBeGreaterThan(300)
     expect(container.querySelector('[data-bubble="eva-3-answer-0"]')?.textContent).toContain(note)
@@ -136,40 +137,64 @@ describe('By agent (the default view)', () => {
   })
 
   it('switching member updates ?with=, and ?with= picks the member', () => {
-    renderAt('?with=hal')
-    expect(screen.getByRole('button', { name: /hal/ }).getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(screen.getByRole('button', { name: /echo/ }))
+    renderAt('?view=agent&with=hal')
+    expect(screen.getByRole('button', { name: /^(H\s*)?Hal$/ }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: /^(E\s*)?Echo$/ }))
     expect(screen.getByTestId('where').textContent).toContain('with=echo')
-    expect(screen.getByRole('button', { name: /echo/ }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: /^(E\s*)?Echo$/ }).getAttribute('aria-pressed')).toBe('true')
   })
 })
 
-describe('By proposal and the switcher', () => {
+describe('By idea and the switcher', () => {
   it('pitch → critique → responses → outcome, per proposal', () => {
     renderAt('?view=proposal')
-    expect(screen.getByRole('button', { name: 'By proposal' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'By idea' }).getAttribute('aria-pressed')).toBe('true')
     const thread = document.querySelector('[data-proposal-thread="IDM talk: live demo from Ace, story slide from Echo"]') as HTMLElement
     const order = [...thread.querySelectorAll('[data-bubble]')].map((b) => b.getAttribute('data-bubble'))
     expect(order).toEqual(['pitch', 'critique', 'reply-ace', 'reply-echo'])
     expect(thread.querySelector('[data-bubble="critique"]')?.textContent).toContain('Strongest proposal: hard date')
-    expect(thread.querySelector('[data-outcome-footer="held"]')?.textContent).toMatch(/Held/)
+    expect(thread.querySelector('[data-outcome-footer="held"]')?.textContent).toMatch(/Parked/)
     const filed = document.querySelector('[data-proposal-thread="Pre-flight one live demo for the IDM talk"] [data-outcome-footer="filed"]') as HTMLElement
-    expect(within(filed).getByRole('link', { name: "T9 on ace's board" }).getAttribute('href')).toBe('/w/connect/agents/ace/work')
-    expect(within(filed).getByRole('link', { name: "T45 on eva's board" })).toBeTruthy()
+    expect(within(filed).getByRole('link', { name: "on Ace's board" }).getAttribute('href')).toBe('/w/connect/agents/ace/work')
+    expect(within(filed).getByRole('link', { name: "on Eva's board" })).toBeTruthy()
+    // Declined by the reader, said plainly; no ticket ids in the words.
+    expect(filed.textContent).toContain('you said no')
+    expect(filed.textContent).not.toMatch(/\bT9\b|\bT45\b/)
+    // A task that reads "in progress" but is stuck says so.
+    const diag = document.querySelector('[data-proposal-thread="Diagnose chrome-sales MCP connect failures on cloud-ec2-2"] [data-task="T50"]') as HTMLElement
+    expect(diag.textContent).toMatch(/in progress — Stuck: The Salesforce credentials and the Google Drive key must be installed on the cloud runner/)
   })
 
   it('names a lead the proposer picked', () => {
     renderAt('?view=proposal')
     const t = document.querySelector('[data-proposal-thread="Diagnose chrome-sales MCP connect failures on cloud-ec2-2"]') as HTMLElement
-    expect(t.textContent).toContain('proposed by eva, naming hal as lead')
+    expect(t.textContent).toContain('suggested by Eva, with Hal leading')
     expect(t.querySelector('[data-bubble="reply-hal"]')?.textContent).toContain('could not see the title')
   })
 
-  it('the switcher writes ?view= and Map shows the grid', async () => {
+  it('opens on the Story; the switcher writes ?view= and back', async () => {
     const { container } = renderAt()
-    fireEvent.click(screen.getByRole('button', { name: 'Map' }))
+    expect(screen.getByRole('button', { name: 'Story' }).getAttribute('aria-pressed')).toBe('true')
+    expect(container.querySelector('[data-story]')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }))
     expect(screen.getByTestId('where').textContent).toContain('view=map')
-    expect(screen.getByRole('button', { name: 'Map' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Diagram' }).getAttribute('aria-pressed')).toBe('true')
     expect(container.querySelector('[data-card="eva-1"]')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Full conversation' }))
+    expect(screen.getByTestId('where').textContent).toContain('view=agent')
+    fireEvent.click(screen.getByRole('button', { name: 'By idea' }))
+    expect(screen.getByTestId('where').textContent).toContain('view=proposal')
+    // From the Diagram, Full conversation opens By agent; Story drops ?view= (the default).
+    fireEvent.click(screen.getByRole('button', { name: 'Diagram' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Full conversation' }))
+    expect(screen.getByTestId('where').textContent).toContain('view=agent')
+    fireEvent.click(screen.getByRole('button', { name: 'Story' }))
+    expect(screen.getByTestId('where').textContent).not.toContain('view=')
+    expect(container.querySelector('[data-story]')).toBeTruthy()
+  })
+
+  it('a ?view= link opens that view', () => {
+    renderAt('?view=map')
+    expect(screen.getByRole('button', { name: 'Diagram' }).getAttribute('aria-pressed')).toBe('true')
   })
 })

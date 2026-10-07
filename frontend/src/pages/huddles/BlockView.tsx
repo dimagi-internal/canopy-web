@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { anchorKey, normAnswer, normResolution, type Arc, type ArcState, type Block } from './huddleModel'
+import { ANSWER_WORDS, resolutionWords, sizePlain, who } from './plainWords'
 
 /**
  * A member's ```huddle reply, rendered as what it SAYS — never the raw JSON.
@@ -16,12 +17,12 @@ const KNOWN = [
 ] as const
 
 export const ANSWER_STYLE: Record<ArcState, { pill: string; label: string }> = {
-  'co-sign': { pill: 'bg-success/15 text-success border-success/40', label: 'co-sign' },
-  amend: { pill: 'bg-warning/15 text-warning border-warning/40', label: 'amend' },
-  decline: { pill: 'bg-destructive/15 text-destructive border-destructive/40', label: 'decline' },
-  pending: { pill: 'bg-muted text-muted-foreground border-border border-dashed', label: 'pending' },
-  'amend-accepted': { pill: 'bg-success/15 text-success border-success/40', label: 'amend accepted' },
-  'amend-rejected': { pill: 'bg-destructive/15 text-destructive border-destructive/40', label: 'amend rejected' },
+  'co-sign': { pill: 'bg-success/15 text-success border-success/40', label: ANSWER_WORDS['co-sign'] },
+  amend: { pill: 'bg-warning/15 text-warning border-warning/40', label: ANSWER_WORDS.amend },
+  decline: { pill: 'bg-destructive/15 text-destructive border-destructive/40', label: ANSWER_WORDS.decline },
+  pending: { pill: 'bg-muted text-muted-foreground border-border border-dashed', label: ANSWER_WORDS.pending },
+  'amend-accepted': { pill: 'bg-success/15 text-success border-success/40', label: ANSWER_WORDS['amend-accepted'] },
+  'amend-rejected': { pill: 'bg-destructive/15 text-destructive border-destructive/40', label: ANSWER_WORDS['amend-rejected'] },
 }
 
 const RESOLUTION_PILL = {
@@ -128,26 +129,25 @@ function Proposal({ p, member, arcs, anchored = true }: { p: ProposalRow; member
       className="rounded-lg border border-border bg-background/60 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <h5 className="text-[13px] font-semibold leading-snug text-foreground">{title || 'Untitled proposal'}</h5>
-        <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-          {text(p.effort) && <span className="rounded border border-border px-1.5 font-mono">{text(p.effort)}</span>}
-          {confidence !== null && <span>{confidence}% sure</span>}
+        <div className="shrink-0 text-[11px] text-muted-foreground">
+          {sizePlain(text(p.effort), confidence === null ? null : confidence / 100)}
         </div>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <Chip tone="lead">{lead} leads</Chip>
+        <Chip tone="lead">led by {who(lead)}</Chip>
         {partners.map((m) => {
           const st = stateOf(m)
           return (
             <span key={m} data-partner-state={st} className="inline-flex items-center gap-1">
-              <Chip>with {m}</Chip>
-              <AnswerPill answer={st} title={`${m}: ${ANSWER_STYLE[st].label}`} />
+              <Chip>{partners.length ? 'together with' : 'with'} {who(m)}</Chip>
+              <AnswerPill answer={st} title={`${who(m)}: ${ANSWER_STYLE[st].label}`} />
             </span>
           )
         })}
       </div>
       {(text(p.priority) || project) && (
         <p className="mt-2 text-[12px] leading-snug text-muted-foreground">
-          {text(p.priority) && <>Serves <span className="text-foreground-secondary">“{text(p.priority)}”</span></>}
+          {text(p.priority) && <>For the priority <span className="text-foreground-secondary">“{text(p.priority)}”</span></>}
           {project?.name ? (
             <>
               {text(p.priority) ? ' · ' : ''}project <span className="text-foreground-secondary">{text(project.name)}</span>
@@ -166,7 +166,7 @@ function Proposal({ p, member, arcs, anchored = true }: { p: ProposalRow; member
         <dl className="mt-2 space-y-0.5 text-[12px]">
           {Object.entries(asks).map(([m, ask]) => (
             <div key={m} className="flex gap-1.5">
-              <dt className="shrink-0 font-medium text-foreground-secondary">Asks {m}:</dt>
+              <dt className="shrink-0 font-medium text-foreground-secondary">Needs from {who(m)}:</dt>
               <dd className="text-muted-foreground">{text(ask)}</dd>
             </div>
           ))}
@@ -189,7 +189,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
   }
 
   if (!KNOWN.some(has) && rest.length === 0) {
-    return <p className="text-[12px] italic text-muted-foreground">Replied — nothing to add this round.</p>
+    return <p className="text-[12px] italic text-muted-foreground">Answered — nothing to add at this step.</p>
   }
 
   return (
@@ -215,7 +215,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
       {has('offers') && <Section label="Can offer"><Lines items={asList(block.offers)} /></Section>}
       {has('needs') && <Section label="Needs"><Lines items={asList(block.needs)} /></Section>}
       {has('proposals') && (
-        <Section label="Proposes">
+        <Section label="Ideas">
           <div className="space-y-2">
             {asList(block.proposals).map((p, i) => (
               <Proposal key={i} p={(p ?? {}) as ProposalRow} member={member} arcs={arcs} />
@@ -224,7 +224,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
         </Section>
       )}
       {has('critique_answers') && (
-        <Section label="Answers the critique">
+        <Section label="Answers to the questions">
           <ul className="space-y-1.5">
             {asList(block.critique_answers).map((raw, i) => {
               const a = (raw ?? {}) as Record<string, unknown>
@@ -239,7 +239,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
         </Section>
       )}
       {has('answers') && (
-        <Section label="Answers">
+        <Section label="Who's in">
           <ul className="space-y-2">
             {asList(block.answers).map((raw, i) => {
               const a = (raw ?? {}) as Record<string, unknown>
@@ -248,7 +248,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
                   <div className="flex flex-wrap items-center gap-2">
                     <AnswerPill answer={normAnswer(a.answer)} />
                     <span className="text-[13px] font-medium text-foreground">{text(a.title)}</span>
-                    {text(a.lead) && <span className="text-[11px] text-muted-foreground">lead {text(a.lead)}</span>}
+                    {text(a.lead) && <span className="text-[11px] text-muted-foreground">led by {who(text(a.lead))}</span>}
                   </div>
                   {text(a.note) && <p className="pl-1 text-[12px] italic text-muted-foreground">“{text(a.note)}”</p>}
                 </li>
@@ -258,7 +258,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
         </Section>
       )}
       {has('resolutions') && (
-        <Section label="Resolves the amends">
+        <Section label="Settling the changes">
           <ul className="space-y-2">
             {asList(block.resolutions).map((raw, i) => {
               const r = (raw ?? {}) as Record<string, unknown>
@@ -270,7 +270,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
                   <div className="flex flex-wrap items-center gap-2">
                     {verdict && (
                       <span className={`inline-flex h-5 items-center rounded-full border px-2 text-[11px] font-medium ${RESOLUTION_PILL[verdict]}`}>
-                        {verdict}
+                        {resolutionWords(verdict)}
                       </span>
                     )}
                     <span className="text-[13px] font-medium text-foreground">{text(r.title)}</span>
@@ -278,7 +278,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
                   {text(r.note) && <p className="pl-1 text-[12px] italic text-muted-foreground">“{text(r.note)}”</p>}
                   {revised && (
                     <div className="pt-1">
-                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Revised proposal</div>
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">The idea, with the changes</div>
                       <Proposal p={revised} member={member} arcs={arcs} anchored={false} />
                     </div>
                   )}
@@ -289,7 +289,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
         </Section>
       )}
       {has('feedback') && (
-        <Section label="Feedback on the huddle">
+        <Section label="Notes on how this went">
           <p className="text-[12px] italic leading-snug text-muted-foreground">{text(block.feedback)}</p>
         </Section>
       )}

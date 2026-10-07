@@ -8,12 +8,14 @@
  * state — an arc is drawn only from what blocks actually say.
  */
 import type { Huddle, HuddleCell, HuddleOutput } from '@/api/huddles'
+import { holdSentence, sizePlain, stepAsk, stepName, taskStatusPlain } from './plainWords'
 
 export type Block = Record<string, unknown>
 
-/** Round titles per huddle type. Unknown types just get "Round N". */
+/** The engine's rounds per huddle type (its own names stay in the engine; the
+ * page shows them as plain steps — see plainWords). */
 const ROUND_NAMES: Record<string, Record<number, string>> = {
-  work: { 1: 'Report', 2: 'Roundtable', 3: 'Co-sign', 4: 'Resolve' },
+  work: { 1: 'report', 2: 'roundtable', 3: 'co-sign', 4: 'resolve' },
 }
 
 /** The rounds a type always runs, shown before they start. Any round past these
@@ -21,8 +23,9 @@ const ROUND_NAMES: Record<string, Record<number, string>> = {
  * once it is dispatched or has a cell. */
 const ALWAYS_ROUNDS: Record<string, number> = { work: 3 }
 
+/** The round's name as the page shows it: a plain step name. */
 export function roundName(type: string, round: number): string {
-  return ROUND_NAMES[type]?.[round] ?? `Round ${round}`
+  return stepName(type, round)
 }
 
 /** Rounds the grid shows: every type round up to the furthest one dispatched,
@@ -336,57 +339,21 @@ export function outcomeOf(h: Pick<Huddle, 'cells' | 'members' | 'outputs' | 'fin
   return out
 }
 
-/** Plain words for the proposal's shorthand. */
-const EFFORT: Record<string, string> = { s: 'small', m: 'medium', l: 'large', xs: 'tiny', xl: 'very large' }
-
+/** Plain words for the proposal's shorthand: "small job · 60% sure it's worth it". */
 export function sizeWords(effort: string, confidence: number | null): string {
-  const size = EFFORT[effort.trim().toLowerCase()] ?? effort.trim()
-  const sure = confidence === null ? '' : `${Math.round((confidence <= 1 ? confidence * 100 : confidence))}% confident`
-  return [size, sure].filter(Boolean).join(' · ')
+  return sizePlain(effort, confidence)
 }
 
 /** A board task's status, as the person reading the huddle has to act on it.
  * `suggested` is the board's inbox: a task waiting for its owner to Accept or
  * Decline (TasksBoard). In progress, `assigned` is who the next step waits on. */
 export function taskStatusWords(o: Pick<HuddleOutput, 'status' | 'assigned'>): string {
-  switch (o.status) {
-    case 'suggested': return 'awaiting your accept / decline'
-    case 'in_progress': return o.assigned ? `in progress · waiting on ${o.assigned}` : 'in progress'
-    case 'done': return 'done'
-    case 'declined': return 'declined'
-    default: return o.status.replace(/_/g, ' ')
-  }
+  return taskStatusPlain(o.status)
 }
 
-const and = (who: string[]) =>
-  who.length <= 1 ? (who[0] ?? '') : `${who.slice(0, -1).join(', ')} and ${who[who.length - 1]}`
-
-/** Why a proposal is held (or not settled yet), and what would clear it. */
-export function holdWords(p: Pick<ProposalOutcome, 'hold' | 'lead' | 'verdict'>, leader: string): { why: string; clear: string } {
-  const h = p.hold
-  if (!h) return { why: '', clear: '' }
-  const who = and(h.who)
-  const open = p.verdict === 'open'
-  switch (h.kind) {
-    case 'declined':
-      return { why: `${who} declined to take part.`, clear: 'Nothing in this huddle — it would take a new proposal in a later one.' }
-    case 'amend-rejected':
-      return { why: `${who} co-signed only with changes, and ${p.lead} (the lead) rejected them in round 4.`, clear: 'It stays held; it can be re-proposed in a later huddle.' }
-    case 'amend':
-      return {
-        why: `${who} co-signed with conditions; ${p.lead} (the lead) ${open ? 'has not resolved them yet' : "hasn't resolved them"}.`,
-        clear: open ? `Round 4: ${p.lead} accepts the conditions (then it files) or rejects them.` : `A round 4 would — ${p.lead} accepting the conditions files it.`,
-      }
-    case 'pending':
-      return open
-        ? { why: `Waiting on ${who} to co-sign.`, clear: `${who}'s round-3 answer.` }
-        : { why: `${who} never answered.`, clear: `A co-sign from ${who} in a later huddle.` }
-    case 'gate':
-      return {
-        why: `Every partner co-signed, but ${leader} held it at filing (a filing rule — stated priority, project, critique answered, or the cap).`,
-        clear: `See ${leader}'s email below for which rule.`,
-      }
-  }
+/** Why a proposal is parked (or not settled yet), and what would clear it. */
+export function holdWords(p: Pick<ProposalOutcome, 'hold' | 'lead' | 'verdict'> & { proposedBy?: string }, leader: string): { why: string; clear: string } {
+  return holdSentence(p.hold, { lead: p.lead, proposedBy: p.proposedBy, leader, open: p.verdict === 'open' })
 }
 
 // ── the leader's critique ────────────────────────────────────────────────────
@@ -430,18 +397,9 @@ export function countdown(iso: string | null | undefined, now: Date): string {
 
 // ── the leader's side of the conversation ───────────────────────────────────
 
-/** What the leader asks of everyone in a round, in one line. */
-const ROUND_ASKS: Record<string, Record<number, string>> = {
-  work: {
-    1: 'report: work + priorities',
-    2: "roundtable: propose, given everyone's reports",
-    3: 'co-sign the joint work naming you',
-    4: 'resolve amends',
-  },
-}
-
+/** What the leader asks of everyone in a round, in a few plain words. */
 export function roundAsk(type: string, round: number): string {
-  return ROUND_ASKS[type]?.[round] ?? roundName(type, round).toLowerCase()
+  return stepAsk(type, round)
 }
 
 /** One question the leader put to a member. `about` names the proposal it is
@@ -555,5 +513,23 @@ export function resolutionLines(b: Block): { title: string; verdict: Resolution 
 /** "answered 3 of ada's questions" — round 2's `critique_answers`. */
 export function critiqueAnswered(b: Block, leader: string): string {
   const n = list<unknown>(b.critique_answers).length
-  return n ? `answered ${n} of ${leader}'s question${n === 1 ? '' : 's'}` : ''
+  return n ? `answered ${n} of ${leader.charAt(0).toUpperCase() + leader.slice(1)}'s question${n === 1 ? '' : 's'}` : ''
+}
+
+// ── idea colour ──────────────────────────────────────────────────────────────
+
+/** One colour and letter per idea, so a reader can follow an idea down the
+ * Story from step 2 to its answers to what became of it. Mid-lightness hues
+ * that read on both themes, distinct from the answer colours. */
+const IDEA_HUES = [
+  'oklch(0.62 0.16 262)', 'oklch(0.66 0.15 195)', 'oklch(0.62 0.18 320)',
+  'oklch(0.68 0.14 75)', 'oklch(0.6 0.15 25)', 'oklch(0.64 0.12 150)',
+]
+
+export function ideaHue(index: number): string {
+  return IDEA_HUES[index % IDEA_HUES.length]
+}
+
+export function ideaLetter(index: number): string {
+  return String.fromCharCode(65 + (index % 26))
 }

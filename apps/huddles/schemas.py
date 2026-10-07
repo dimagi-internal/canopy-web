@@ -47,6 +47,10 @@ class HuddleOutputOut(StrictModel):
     assigned: str = ""
     project: str = ""
     url: str
+    # The task's single next step, as its agent wrote it — where a task that
+    # reads "in progress" says it is actually stuck ("BLOCKED on creds …").
+    next_action: str = ""
+    updated_at: dt.datetime | None = None
 
 
 class HuddleOut(HuddleSummaryOut):

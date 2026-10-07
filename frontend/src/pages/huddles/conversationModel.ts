@@ -10,6 +10,7 @@ import {
   cellAt, columns, leaderAsks, normAnswer, normResolution, outcomeOf,
   type Answer, type Block, type LeaderAsk, type ProposalOutcome, type Resolution,
 } from './huddleModel'
+import { stepAskSentence } from './plainWords'
 
 const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/\W+/g, ' ').trim()
 const str = (v: unknown) => (v === null || v === undefined ? '' : typeof v === 'string' ? v : String(v))
@@ -17,16 +18,17 @@ function list<T>(v: unknown): T[] {
   return Array.isArray(v) ? (v as T[]) : []
 }
 
+// ── which view ───────────────────────────────────────────────────────────────
+
+export type ConversationView = 'story' | 'agent' | 'proposal' | 'map'
+
+/** `?view=`: story (the default) · agent / proposal (the full conversation) · map. */
+export function readView(raw: string | null): ConversationView {
+  return raw === 'agent' || raw === 'proposal' || raw === 'map' ? raw : 'story'
+}
+
 // ── the leader's ask, in plain words ─────────────────────────────────────────
 
-const PLAIN_ASKS: Record<string, Record<number, string>> = {
-  work: {
-    1: "Tell the team what you've been working on and what you think the priorities are right now.",
-    2: "Here's what everyone reported. Propose work — on your own or with teammates — and answer my questions.",
-    3: 'Teammates proposed work with you — co-sign, amend or decline each one.',
-    4: 'A partner asked for changes to your proposal — accept or reject them.',
-  },
-}
 
 /** The first paragraph of a prompt after its header line — the ask, for a
  * huddle type this page has no plain line for. */
@@ -37,7 +39,7 @@ function firstParagraph(prompt: string): string {
 }
 
 export function plainAsk(type: string, round: number, prompt: string): string {
-  return PLAIN_ASKS[type]?.[round] ?? firstParagraph(prompt)
+  return stepAskSentence(type, round) || firstParagraph(prompt)
 }
 
 // ── matching answers to proposals ────────────────────────────────────────────

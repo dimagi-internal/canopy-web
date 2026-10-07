@@ -14535,6 +14535,13 @@ export interface components {
             readonly project: string;
             /** Url */
             readonly url: string;
+            /**
+             * Next Action
+             * @default
+             */
+            readonly next_action: string;
+            /** Updated At */
+            readonly updated_at?: string | null;
         };
         /** VapidKeyOut */
         readonly VapidKeyOut: {

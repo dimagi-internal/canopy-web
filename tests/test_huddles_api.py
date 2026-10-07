@@ -220,6 +220,7 @@ def test_outputs_are_tasks_pointing_at_the_huddle(owner, agents):
     p = AgentProject.objects.create(agent=agents["eva"], ext_id="P3", name="Q4 pipeline")
     AgentTask.objects.create(agent=agents["eva"], ext_id="T41", title="Q4 brief", project=p,
                              status="suggested", assigned="eva",
+                             next_action="BLOCKED on creds: provision the SF key on the runner",
                              source_url="https://x/w/connect/huddles/h1")
     AgentTask.objects.create(agent=agents["eva"], ext_id="T42", title="other",
                              source_url="https://x/w/connect/huddles/h10")
@@ -228,6 +229,8 @@ def test_outputs_are_tasks_pointing_at_the_huddle(owner, agents):
     assert [o["ext_id"] for o in out] == ["T41"]
     assert out[0]["project"] == "P3" and out[0]["status"] == "suggested"
     assert out[0]["url"] == "/w/connect/agents/eva/work"
+    assert out[0]["next_action"] == "BLOCKED on creds: provision the SF key on the runner"
+    assert out[0]["updated_at"]
     assert _client(owner).get("/api/huddles/").json()[0]["outcome_count"] == 1
 
 
