@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# canopy's own outbound-email identity: mail comes from canopy.dimagi.com, the
+# address people know canopy by, not from the shared labs domain.
+#
+# Before this stack canopy sent as noreply@labs.connect.dimagi.com, borrowing
+# the identity connect-labs stood up (connect-labs infra/labs-email.yml). That
+# stack still owns everything shared — the `labs-jj-email` configuration set,
+# its bounce/complaint SNS topic, account-level production access — and this one
+# reuses it rather than duplicating it. It adds only what is canopy's:
+#   * the SES domain identity canopy.dimagi.com, with Easy DKIM
+#   * a policy letting the shared ECS task role send AS that identity
+#
+# Deployed by hand with an admin login, not by the Deploy to Labs workflow:
+# canopy-web's deploy role holds no ses:* or iam:CreatePolicy, and this stack
+# changes about once.
+#
+#   aws cloudformation deploy --profile labs --stack-name canopy-web-email \
+#     --template-file deploy/aws/canopy-email.cfn.yaml --capabilities CAPABILITY_NAMED_IAM
+#
+# DNS is the step this stack cannot do: dimagi.com is a Cloudflare zone, in no
+# AWS account. The identity stays unverified, and SES refuses every send from
+# it, until the three DKIM CNAMEs in the Outputs are published there. Switch
+# DEFAULT_FROM_EMAIL (canopy-web.cfn.yaml) only after `aws sesv2
+# get-email-identity --email-identity canopy.dimagi.com` says SUCCESS.
+#
+# dimagi.com publishes DMARC p=quarantine, and a subdomain inherits it. DKIM
+# alignment is what passes it: the default MAIL FROM is amazonses.com, which
+# does not align, and canopy.dimagi.com cannot carry an SPF TXT anyway — it is a
+# CNAME to the ALB, and a CNAME must be alone at its name (RFC 1034).
+
+Description: >-
+  canopy's SES sending identity (canopy.dimagi.com, Easy DKIM) and the policy
+  letting the shared ECS task role send as it through labs-jj-email.
+
+Parameters:
+  SendingDomain:
+    Type: String
+    Default: canopy.dimagi.com
+  TaskRoleName:
+    Type: String
+    Default: labs-jj-ecs-task-role
+    Description: Shared ECS task role canopy-web runs as. Referenced, never owned.
+  ConfigurationSetName:
+    Type: String
+    Default: labs-jj-email
+    Description: Owned by connect-labs infra/labs-email.yml; matches CANOPY_SES_CONFIGURATION_SET.
+
+Resources:
+  EmailIdentity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref SendingDomain
+      DkimAttributes:
+        SigningEnabled: true
+      DkimSigningAttributes:
+        NextSigningKeyLength: RSA_2048_BIT
+      # Off for the reason labs-email.yml gives: feedback would go to a no-reply
+      # address. Bounces reach the configuration set's SNS topic instead.
+      FeedbackAttributes:
+        EmailForwardingEnabled: false
+      ConfigurationSetAttributes:
+        ConfigurationSetName: !Ref ConfigurationSetName
+
+  SendEmailPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: canopy-ses-send
+      Description: Lets the labs ECS tasks send mail as canopy.dimagi.com.
+      Roles:
+        - !Ref TaskRoleName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: SendAsCanopy
+            Effect: Allow
+            Action:
+              - ses:SendEmail
+              - ses:SendRawEmail
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${SendingDomain}'
+              - !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${ConfigurationSetName}'
+
+Outputs:
+  # Already fully qualified: publish name -> value exactly, appending nothing.
+  DkimRecord1:
+    Value: !Sub
+      - '${Name} CNAME ${Value}'
+      - Name: !GetAtt EmailIdentity.DkimDNSTokenName1
+        Value: !GetAtt EmailIdentity.DkimDNSTokenValue1
+  DkimRecord2:
+    Value: !Sub
+      - '${Name} CNAME ${Value}'
+      - Name: !GetAtt EmailIdentity.DkimDNSTokenName2
+        Value: !GetAtt EmailIdentity.DkimDNSTokenValue2
+  DkimRecord3:
+    Value: !Sub
+      - '${Name} CNAME ${Value}'
+      - Name: !GetAtt EmailIdentity.DkimDNSTokenName3
+        Value: !GetAtt EmailIdentity.DkimDNSTokenValue3

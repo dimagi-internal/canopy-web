@@ -27,6 +27,7 @@ import { TopologyMapPage } from './pages/topology/TopologyMapPage'
 import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
 import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage'
 import { AccessRequestPage } from './pages/AccessRequestPage'
+import { BetaRequestPage, BetaRequestsPage } from './pages/BetaRequestsPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
 import { SlackSettingsPage } from '@/pages/SlackSettingsPage'
@@ -225,6 +226,10 @@ export const routeTable: RouteObject[] = [
       { path: '/activity', element: <ActivityPage /> },
       { path: '/settings', element: <SettingsPage /> },
       { path: '/new-workspace', element: <FirstRunPage alwaysOfferForm /> },
+      // Requests for access to Canopy itself (the public site's form) — they
+      // name no workspace, so they live outside /w/:workspace.
+      { path: '/beta-requests', element: <BetaRequestsPage /> },
+      { path: '/beta-requests/:requestId', element: <BetaRequestPage /> },
       // --- Public viewers (root; self-enforce visibility) ---
       { path: '/walkthrough/:id', element: <WalkthroughViewerPage /> },
       { path: '/review/:id', element: <ReviewPage /> },

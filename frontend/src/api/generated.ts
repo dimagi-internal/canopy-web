@@ -814,16 +814,83 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * List requests for access to Canopy (reviewers)
+         * @description Newest first; `status` filters to pending, invited or declined. Only the
+         *     person requests are mailed to, and superusers, may read them.
+         */
+        readonly get: operations["list_beta_requests"];
         readonly put?: never;
         /**
          * Request access to Canopy (anonymous)
          * @description Ask for access to canopy, which is currently closed to Dimagi and its partners.
          *
-         *     Records the request and notifies the person who grants access, who replies by
-         *     email. Granting access is a separate, ordinary workspace invite.
+         *     Records the request and emails the person who grants access a link to the
+         *     request's page, where they invite the asker to a workspace or decline.
          */
         readonly post: operations["submit_beta_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/beta-requests/{request_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** One request for access to Canopy (reviewers) */
+        readonly get: operations["get_beta_request"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/beta-requests/{request_id}/invite": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve: invite the requester to a workspace (reviewers)
+         * @description Invites the requester to `workspace` at `role` and emails them the link —
+         *     the same invite as Settings → Members, so the caller needs `members.manage`
+         *     there and may grant only below their own role (owners: any).
+         *     `email_status` says whether the invite email went out. 409 if the request
+         *     was already answered.
+         */
+        readonly post: operations["invite_beta_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/beta-requests/{request_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline a request for access to Canopy (reviewers)
+         * @description Closes the request. Emails nobody — reply to the notification email to
+         *     tell them why. 409 if it was already answered.
+         */
+        readonly post: operations["decline_beta_request"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -7538,6 +7605,47 @@ export interface components {
              * @default
              */
             readonly website: string;
+        };
+        /** BetaRequestDetailOut */
+        readonly BetaRequestDetailOut: {
+            /** Id */
+            readonly id: number;
+            /** Email */
+            readonly email: string;
+            /** Reason */
+            readonly reason: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Status */
+            readonly status: string;
+            /** Workspace */
+            readonly workspace?: string | null;
+            /** Workspace Name */
+            readonly workspace_name?: string | null;
+            /**
+             * Role
+             * @default
+             */
+            readonly role: string;
+            /** Decided By */
+            readonly decided_by?: string | null;
+            /** Decided At */
+            readonly decided_at?: string | null;
+            /** Email Status */
+            readonly email_status?: string | null;
+        };
+        /** BetaRequestInviteIn */
+        readonly BetaRequestInviteIn: {
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            readonly role: "viewer" | "editor" | "admin";
         };
         /**
          * EmbedAgentOut
@@ -16801,6 +16909,28 @@ export interface operations {
             };
         };
     };
+    readonly list_beta_requests: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["BetaRequestDetailOut"][];
+                };
+            };
+        };
+    };
     readonly submit_beta_request: {
         readonly parameters: {
             readonly query?: never;
@@ -16821,6 +16951,76 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["BetaRequestOut"];
+                };
+            };
+        };
+    };
+    readonly get_beta_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BetaRequestDetailOut"];
+                };
+            };
+        };
+    };
+    readonly invite_beta_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BetaRequestInviteIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BetaRequestDetailOut"];
+                };
+            };
+        };
+    };
+    readonly decline_beta_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BetaRequestDetailOut"];
                 };
             };
         };

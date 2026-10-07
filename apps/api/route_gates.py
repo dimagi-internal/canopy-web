@@ -57,6 +57,8 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``contact`` — the ``/api/contact/`` surface, for contact principals.
 * ``signed-link`` — a signed token in the URL is the authority (drill report,
   invite token, OAuth state).
+* ``beta-reviewer`` — ``apps/beta_requests/services.may_review``: a superuser or
+  the ``CANOPY_BETA_REQUESTS_TO`` address (a beta request names no workspace).
 * ``host`` — a connected-site / machine protocol endpoint (assertion,
   jwt-bearer, Pub/Sub push).
 """
@@ -68,7 +70,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "members.manage", "integrations", "runners.route", "retention.manage", "own",
     "agent-admin", "agent-owner", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
-    "contact", "signed-link", "host",
+    "contact", "signed-link", "host", "beta-reviewer",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -418,6 +420,10 @@ GATES: dict[str, tuple[str, ...]] = {
     "declare_agent": ("own",),
     # --- apps/beta_requests/api.py
     "submit_beta_request": ("anonymous",),  # the public site's request-access form; grants nothing
+    "list_beta_requests": ("beta-reviewer",),
+    "get_beta_request": ("beta-reviewer",),
+    "invite_beta_request": ("beta-reviewer", "members.manage"),  # reviewer, AND may invite at that role there
+    "decline_beta_request": ("beta-reviewer",),
     # --- apps/system/api.py
     "overview": ("authenticated",),  # canopy plugin catalog, not tenant data
     "public_stats": ("anonymous",),

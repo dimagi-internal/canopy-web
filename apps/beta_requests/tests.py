@@ -42,6 +42,9 @@ def test_anonymous_request_is_kept_and_mailed(client, db):
     assert msg.to == ["jj@example.org"]
     assert msg.reply_to == ["ada@example.org"]
     assert "We run CHWs" in msg.body
+    # The email links to the page where the decision is made, not to a settings tour.
+    assert f"/beta-requests/{req.pk}" in msg.body
+    assert "Settings → Members" not in msg.body
 
 
 def test_grants_nothing(client, db):
@@ -91,3 +94,98 @@ def test_no_reader_configured_still_keeps_it(client, db):
 def test_invalid_input_is_refused(client, db, body):
     assert _post(client, **body).status_code in (400, 422)
     assert not BetaRequest.objects.exists()
+
+
+
+# ---- answering a request: /beta-requests/:id ---------------------------------
+
+REVIEWER = "jj@example.org"
+
+
+def _signed_in(email: str, *, ws=None, role: str = "owner") -> Client:
+    from apps.workspaces.testing import a_member, a_user
+
+    user = a_member(ws, email=email, role=role) if ws is not None else a_user(email)
+    c = Client()
+    c.force_login(user)
+    return c
+
+
+@pytest.fixture
+def pending(db):
+    return BetaRequest.objects.create(email="ada@example.org", reason="CHW oversight")
+
+
+@pytest.fixture
+def ws(db):
+    from apps.workspaces.testing import a_workspace
+
+    return a_workspace("partners")
+
+
+@override_settings(CANOPY_BETA_REQUESTS_TO=REVIEWER)
+def test_only_the_reviewer_can_read_a_request(pending, ws):
+    assert _signed_in(REVIEWER).get(f"/api/beta-requests/{pending.pk}").json()["email"] == "ada@example.org"
+    # A workspace owner who is not the reviewer cannot even learn it exists.
+    other = _signed_in("someone@dimagi.com", ws=ws)
+    assert other.get(f"/api/beta-requests/{pending.pk}").status_code == 404
+    assert other.get("/api/beta-requests").status_code == 404
+    assert Client().get(f"/api/beta-requests/{pending.pk}").status_code in (401, 404)
+
+
+@override_settings(CANOPY_BETA_REQUESTS_TO=REVIEWER)
+def test_approve_invites_them_to_the_chosen_workspace(pending, ws):
+    from apps.workspaces.models import WorkspaceInvite
+
+    c = _signed_in(REVIEWER, ws=ws)
+    resp = c.post(f"/api/beta-requests/{pending.pk}/invite", {"workspace": "partners", "role": "editor"},
+                  content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert body["status"] == "invited"
+    assert body["workspace"] == "partners"
+    assert body["email_status"] == "sent"
+
+    inv = WorkspaceInvite.objects.get()
+    assert (inv.workspace_id, inv.email, inv.role) == ("partners", "ada@example.org", "editor")
+    [msg] = mail.outbox
+    assert msg.to == ["ada@example.org"]
+    assert f"/invite/{inv.token}" in msg.body
+
+    again = c.post(f"/api/beta-requests/{pending.pk}/invite", {"workspace": "partners", "role": "editor"},
+                   content_type="application/json")
+    assert again.status_code == 409
+
+
+@override_settings(CANOPY_BETA_REQUESTS_TO=REVIEWER)
+def test_approve_needs_invite_rights_in_that_workspace(pending, ws):
+    from apps.workspaces.testing import a_workspace
+
+    a_workspace("elsewhere")
+    viewer = _signed_in(REVIEWER, ws=ws, role="viewer")
+    url = f"/api/beta-requests/{pending.pk}/invite"
+    assert viewer.post(url, {"workspace": "partners", "role": "viewer"},
+                       content_type="application/json").status_code == 403
+    assert viewer.post(url, {"workspace": "elsewhere", "role": "viewer"},
+                       content_type="application/json").status_code == 404
+    pending.refresh_from_db()
+    assert pending.status == "pending"
+
+
+@override_settings(CANOPY_BETA_REQUESTS_TO=REVIEWER)
+def test_an_admin_cannot_grant_admin(pending, ws):
+    admin = _signed_in(REVIEWER, ws=ws, role="admin")
+    resp = admin.post(f"/api/beta-requests/{pending.pk}/invite", {"workspace": "partners", "role": "admin"},
+                      content_type="application/json")
+    assert resp.status_code == 403
+
+
+@override_settings(CANOPY_BETA_REQUESTS_TO=REVIEWER)
+def test_decline_closes_it_and_emails_nobody(pending):
+    c = _signed_in(REVIEWER)
+    resp = c.post(f"/api/beta-requests/{pending.pk}/decline")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "declined"
+    assert resp.json()["decided_by"] == REVIEWER
+    assert not mail.outbox
+    assert [r["id"] for r in c.get("/api/beta-requests?status=pending").json()] == []
