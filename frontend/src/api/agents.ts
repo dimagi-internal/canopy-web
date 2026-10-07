@@ -71,7 +71,11 @@ function unwrap<T>(
 ): T {
   if (res.error !== undefined || res.data === undefined) {
     const err = res.error as { detail?: unknown } | undefined
-    const detail = typeof err?.detail === 'string' ? err.detail : ''
+    // Ninja sends a string detail for HttpError, and a list of
+    // `{loc, msg, type}` for a schema validation 422 — show the first `msg`.
+    const raw = err?.detail
+    const first = Array.isArray(raw) ? (raw[0] as { msg?: unknown } | undefined)?.msg : raw
+    const detail = typeof first === 'string' ? first : ''
     throw new AgentApiError(
       `${what} failed: ${JSON.stringify(res.error ?? 'no data')}`,
       res.response?.status ?? 0,

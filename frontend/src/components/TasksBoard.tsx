@@ -1,4 +1,4 @@
-import { useMemo, useState, type JSX } from 'react'
+import { useMemo, useRef, useState, type JSX } from 'react'
 import {
   actOnTask,
   AgentApiError,
@@ -122,15 +122,15 @@ function ConfidenceDot({ confidence }: { confidence: string }): JSX.Element | nu
   return null
 }
 
-// The "ball is in the agent's court" affordance: Echo + a pulsing dot.
-function EchoWorking(): JSX.Element {
+// The "ball is in the agent's court" affordance: the agent's name + a pulsing dot.
+function EchoWorking({ name }: { name: string }): JSX.Element {
   return (
     <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary">
       <span className="relative flex h-2 w-2">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
         <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
       </span>
-      Echo
+      {name}
     </span>
   )
 }
@@ -300,6 +300,7 @@ function TaskActions({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [reply, setReply] = useState('')
+  const inFlight = useRef(false)
 
   const actions = availableActions(task, canEdit)
   if (actions.length === 0) return null
@@ -310,20 +311,24 @@ function TaskActions({
   const replyLabel = isQuestion ? (runs ? 'Answer & run' : 'Answer') : 'Reply'
 
   async function run(action: TaskAction, comment?: string) {
-    if (busy) return
+    // A ref, not `busy`: state is stale inside a double-click's second handler.
+    if (inFlight.current) return
+    inFlight.current = true
     setBusy(true)
     setError(null)
     try {
       await actOnTask(task.agent_slug, task.ext_id, action, comment)
       setReply('')
       onChanged?.()
-      // On success we leave `busy` true: the board is about to refetch and this
-      // card will be replaced, so re-enabling would only flash.
     } catch (e) {
       setError(errorText(e))
-      setBusy(false)
       // 409: the ask was closed elsewhere — the card is stale, so refetch it.
       if (e instanceof AgentApiError && e.status === 409) onChanged?.()
+    } finally {
+      // The card stays mounted (keyed by ext_id) after a reply/dispatch, so it
+      // must come back enabled — a second reply is a normal thing to do.
+      inFlight.current = false
+      setBusy(false)
     }
   }
 
@@ -336,6 +341,7 @@ function TaskActions({
             value={reply}
             disabled={busy}
             placeholder={isQuestion ? 'Type an answer…' : 'Reply to the agent…'}
+            aria-label={isQuestion ? 'Answer' : 'Reply'}
             onChange={(e) => setReply(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && reply.trim()) run('reply', reply.trim())
@@ -441,7 +447,7 @@ export function TaskCard({
       {/* Whose court: the single ball signal — Echo working, or waiting on a human. */}
       {task.status === 'in_progress' && !askOpen && (
         <div className="mt-1.5">
-          {echo ? <EchoWorking /> : <WaitingChip who={task.assigned.trim()} />}
+          {echo ? <EchoWorking name={agentDisplayName(task.agent_slug)} /> : <WaitingChip who={task.assigned.trim()} />}
         </div>
       )}
 
@@ -572,11 +578,12 @@ function PendingActionRow({ action }: { action: TaskActionOut }): JSX.Element {
   )
 }
 
-// "N queued for Echo" — actions the agent will drain on its next turn. Click to
-// reveal *which* actions are pending, not just the number.
+// "N queued for <agent>" — actions the agent will drain on its next turn. Click
+// to reveal *which* actions are pending, not just the number.
 function QueuedForEcho({ pending }: { pending: TaskActionOut[] }): JSX.Element | null {
   const [open, setOpen] = useState(false)
   if (pending.length === 0) return null
+  const name = agentDisplayName(pending[0].agent_slug)
   return (
     <div className="flex flex-col items-end gap-1.5">
       <button
@@ -587,7 +594,7 @@ function QueuedForEcho({ pending }: { pending: TaskActionOut[] }): JSX.Element |
         title="Actions queued for the agent to act on next turn"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-        {pending.length} queued for Echo
+        {pending.length} queued for {name}
         <span aria-hidden className="text-primary/70">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
@@ -723,7 +730,7 @@ export function TasksBoard({
       {echoWorking.length > 0 && (
         <section>
           <SectionHeader
-            label="Echo working"
+            label={`${agentDisplayName(echoWorking[0].agent_slug)} working`}
             count={echoWorking.length}
             dotClass="bg-primary"
           />

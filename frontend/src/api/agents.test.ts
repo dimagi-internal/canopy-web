@@ -33,4 +33,13 @@ describe('task client', () => {
     expect(err).toBeInstanceOf(AgentApiError)
     expect(err).toMatchObject({ status: 409, detail: 'This ask is already closed.' })
   })
+  it('a validation 422 (detail is a list) surfaces the first msg', async () => {
+    POST.mockResolvedValueOnce({
+      data: undefined,
+      error: { detail: [{ loc: ['body', 'comment'], msg: 'A reply needs text.', type: 'value_error' }] },
+      response: new Response(null, { status: 422 }),
+    } as never)
+    const err = await actOnTask('eva', 'T2', 'reply', '').catch((e: unknown) => e)
+    expect(err).toMatchObject({ status: 422, detail: 'A reply needs text.' })
+  })
 })

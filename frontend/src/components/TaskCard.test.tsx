@@ -132,6 +132,38 @@ describe('TaskCard', () => {
     expect(onChanged).not.toHaveBeenCalled()
   })
 
+  it('replies twice on the same card — it comes back enabled after a success', async () => {
+    actOnTask.mockResolvedValue({ task: {}, action: {}, turn_ids: [] })
+    render(<TaskCard task={task({ ask_kind: '', ask_open: false })} onChanged={() => {}} canEdit={false} />)
+    const input = screen.getByRole('textbox', { name: 'Reply' }) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'first' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }))
+    await waitFor(() => expect(input.disabled).toBe(false))
+    expect(input.value).toBe('')
+    fireEvent.change(input, { target: { value: 'second' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }))
+    await waitFor(() => expect(actOnTask).toHaveBeenCalledTimes(2))
+    expect(actOnTask).toHaveBeenLastCalledWith('eva', 'T2', 'reply', 'second')
+  })
+
+  it('a double-click posts once', async () => {
+    let resolve: (v: unknown) => void = () => {}
+    actOnTask.mockReturnValue(new Promise((r) => (resolve = r)))
+    render(<TaskCard task={task({ ask_kind: 'review' })} canEdit={false} />)
+    const approve = screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement
+    fireEvent.click(approve)
+    fireEvent.click(approve)
+    resolve({ task: {}, action: {}, turn_ids: [] })
+    await waitFor(() => expect(approve.disabled).toBe(false))
+    expect(actOnTask).toHaveBeenCalledTimes(1)
+  })
+
+  it('names the task’s own agent, not Echo, on the working chip', () => {
+    render(<TaskCard task={task({ ask_kind: '', ask_open: false, agent_slug: 'hal' })} canEdit={false} />)
+    expect(screen.getByTestId('task-T2').textContent).toContain('Hal')
+    expect(screen.getByTestId('task-T2').textContent).not.toContain('Echo')
+  })
+
   it('tags the agent when asked to', () => {
     render(<TaskCard task={task()} canEdit={false} showAgent />)
     expect(screen.getByTestId('task-T2').textContent).toContain('eva')
