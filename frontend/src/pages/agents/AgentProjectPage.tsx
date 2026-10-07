@@ -7,6 +7,7 @@ import { TaskCard } from '@/components/TasksBoard'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { ProjectStatusOptions, StatusChip } from '@/pages/agents/projectParts'
 import { Section } from '@/pages/agents/sectionLayout'
+import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
 // ONE PROJECT — always the same four sections in the same order (Header, Tasks,
@@ -57,6 +58,10 @@ export function AgentProjectPage(): JSX.Element {
   }, [agent.slug, agent.name, ref])
 
   useEffect(() => reload(), [reload])
+  // A task on this project moved (here, on the Tasks page, or by the agent).
+  useResource(TASK_RESOURCE, () => {
+    reload()
+  })
 
   const fresh = data?.key === key ? data : null
   const detail = fresh?.detail ?? null

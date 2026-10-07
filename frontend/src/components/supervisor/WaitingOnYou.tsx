@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { listFleetTasks, type TaskOut } from '@/api/agents'
 import { TaskCard } from '@/components/TasksBoard'
+import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 
 // The fleet's "Waiting on you" — every task across the agents you can see with an
 // open ask, or parked on you. The same filter as an agent's Tasks page
@@ -30,6 +31,8 @@ export function WaitingOnYou({
   canEdit: (task: TaskOut) => boolean
   onChanged: () => void
 }): JSX.Element {
+  // Any task moving anywhere may add to or settle this queue.
+  useResource(TASK_RESOURCE, onChanged)
   if (tasks.length === 0) {
     return (
       <p

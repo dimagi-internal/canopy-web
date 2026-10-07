@@ -16,15 +16,17 @@ import { ProjectGroupHeader } from '@/pages/agents/projectParts'
 import { QuickTurn } from '@/pages/agents/QuickTurn'
 import { describeSelection } from '@/widget/pageState'
 import { usePageState } from '@/widget/usePageState'
-import { useResource } from '@/widget/useResource'
+import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton, WorkbenchSubHeader } from 'canopy-ui'
 
-// The resource canopy marks dirty whenever any task row moves
-// (`apps/harness/signals.py::TASK_RESOURCE`). The string is the server's, so it
-// is the one this page listens on.
-const TASK_RESOURCE = 'task://'
+const CHIP = 'min-h-11 rounded-full border px-3 py-1 sm:min-h-8'
+const CHIP_ON = 'border-primary bg-primary text-primary-foreground'
+const CHIP_OFF = 'border-border text-foreground hover:bg-muted'
+
 
 type View = 'waiting' | 'open' | 'done'
+
+const ACTIONS_LIMIT = 50
 
 // What the page is showing IS the URL: `?waiting=me`, `?view=done`,
 // `?project=P2|none`, `?by=project`, `?batch=<key>`. A link to "what is waiting
@@ -78,7 +80,10 @@ export function AgentTasksSection(): JSX.Element {
     const stamp = `${slug}|${JSON.stringify(filters)}`
     void Promise.all([
       listTasks(slug, filters).catch(() => [] as TaskOut[]),
-      listTaskActions(slug).catch(() => [] as TaskActionOut[]),
+      // The board needs the agent's queue (pending — the server puts it first)
+      // and enough recent history for "last:" lines and Activity; not every
+      // action the agent has ever had.
+      listTaskActions(slug, { limit: ACTIONS_LIMIT }).catch(() => [] as TaskActionOut[]),
     ]).then(([tasks, actions]) => {
       if (!cancelled) setData({ key: stamp, tasks, actions })
     })
@@ -134,10 +139,15 @@ export function AgentTasksSection(): JSX.Element {
     setParams(next, { replace: true })
   }
 
+  // `?batch=` without `waiting=me` shows the whole batch, decided or not — so
+  // neither Open nor Done describes it, and its own chip is the pressed one.
+  const batchView = Boolean(batch) && view !== 'waiting'
+
   const chooseView = (v: View) =>
     update((next) => {
       next.delete('waiting')
       next.delete('view')
+      next.delete('batch')
       if (v === 'waiting') next.set('waiting', 'me')
       if (v === 'done') next.set('view', 'done')
     })
@@ -163,18 +173,26 @@ export function AgentTasksSection(): JSX.Element {
             <button
               key={chip.view}
               type="button"
-              aria-pressed={view === chip.view}
+              aria-pressed={!batchView && view === chip.view}
               onClick={() => chooseView(chip.view)}
               data-testid={`filter-${chip.view}`}
-              className={`min-h-11 rounded-full border px-3 py-1 sm:min-h-8 ${
-                view === chip.view
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border text-foreground hover:bg-muted'
-              }`}
+              className={`${CHIP} ${!batchView && view === chip.view ? CHIP_ON : CHIP_OFF}`}
             >
               {chip.label}
             </button>
           ))}
+          {batch && (
+            <button
+              type="button"
+              aria-pressed={batchView}
+              onClick={() => update((next) => next.delete('batch'))}
+              title="Showing one batch — click to clear it"
+              data-testid="filter-batch"
+              className={`${CHIP} ${batchView ? CHIP_ON : CHIP_OFF}`}
+            >
+              Batch {batch} ×
+            </button>
+          )}
         </div>
 
         <div className="inline-flex items-center gap-1.5 text-muted-foreground">
@@ -220,6 +238,7 @@ export function AgentTasksSection(): JSX.Element {
         <ByProject
           slug={agent.slug}
           projects={groups}
+          selected={project}
           tasks={tasks}
           actions={actions}
           canEdit={canEdit}
@@ -235,6 +254,7 @@ export function AgentTasksSection(): JSX.Element {
 function ByProject({
   slug,
   projects,
+  selected,
   tasks,
   actions,
   canEdit,
@@ -242,6 +262,9 @@ function ByProject({
 }: {
   slug: string
   projects: ProjectOut[]
+  /** The project the filter names — shown even when empty, so the filter
+   *  visibly took. Every other project with nothing in this view is hidden. */
+  selected: string
   tasks: TaskOut[]
   actions: TaskActionOut[]
   canEdit: boolean
@@ -277,6 +300,7 @@ function ByProject({
     <div className="space-y-6">
       {projects.map((p) => {
         const mine = tasks.filter((t) => t.project_ext_id === p.ext_id)
+        if (mine.length === 0 && p.ext_id !== selected) return null
         return (
           <section key={p.ext_id} data-testid={`project-${p.ext_id}`}>
             <ProjectGroupHeader project={p} tasks={mine} slug={slug} onChanged={onChanged} />
@@ -298,7 +322,7 @@ function ByProject({
         </section>
       )}
 
-      {projects.length === 0 && loose.length === 0 && (
+      {tasks.length === 0 && !projects.some((p) => p.ext_id === selected) && (
         <p className="text-[13px] text-muted-foreground">No tasks here.</p>
       )}
     </div>

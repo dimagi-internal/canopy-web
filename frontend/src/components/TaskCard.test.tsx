@@ -8,7 +8,7 @@ vi.mock('@/api/agents', async (orig) => ({
   actOnTask: (...a: unknown[]) => actOnTask(...a),
 }))
 
-const { availableActions, TaskCard } = await import('./TasksBoard')
+const { availableActions, TaskCard, TasksBoard } = await import('./TasksBoard')
 const { AgentApiError } = await import('@/api/agents')
 
 afterEach(() => {
@@ -19,12 +19,17 @@ afterEach(() => {
 const t = (o: object) => ({ status: 'suggested', ask_kind: '', ask_open: false, on_approve: [], ...o }) as never
 
 describe('availableActions', () => {
-  it('open review', () => expect(availableActions(t({ ask_kind: 'review', ask_open: true }), false)).toEqual(['approve', 'decline']))
+  it('open review', () =>
+    expect(availableActions(t({ ask_kind: 'review', ask_open: true }), false)).toEqual(['reply', 'approve', 'decline']))
   it('open question', () => expect(availableActions(t({ ask_kind: 'question', ask_open: true }), false)).toEqual(['reply', 'decline']))
-  it('live task, editor', () => expect(availableActions(t({ status: 'in_progress' }), true)).toEqual(['reply', 'dispatch', 'done']))
-  it('live task, viewer', () => expect(availableActions(t({ status: 'suggested' }), false)).toEqual(['reply']))
+  it('in-progress task, editor', () => expect(availableActions(t({ status: 'in_progress' }), true)).toEqual(['reply', 'dispatch', 'done']))
+  it('in-progress task, viewer', () => expect(availableActions(t({ status: 'in_progress' }), false)).toEqual(['reply']))
+  it('suggested task with no ask, viewer', () =>
+    expect(availableActions(t({ status: 'suggested' }), false)).toEqual(['reply', 'approve', 'decline']))
+  it('suggested task whose ask is closed is a plain suggestion', () =>
+    expect(availableActions(t({ status: 'suggested', ask_kind: 'question', ask_open: false }), false)).toEqual(['reply', 'approve', 'decline']))
   it('open review, editor', () =>
-    expect(availableActions(t({ ask_kind: 'review', ask_open: true }), true)).toEqual(['approve', 'decline', 'dispatch', 'done']))
+    expect(availableActions(t({ ask_kind: 'review', ask_open: true }), true)).toEqual(['reply', 'approve', 'decline', 'dispatch', 'done']))
   it('finished', () => expect(availableActions(t({ status: 'done' }), true)).toEqual([]))
   it('declined', () => expect(availableActions(t({ status: 'declined' }), true)).toEqual([]))
 })
@@ -84,10 +89,25 @@ describe('TaskCard', () => {
     expect(buttons()).toContain('Answer & run')
   })
 
-  it('offers Approve & run / Decline on an open review with a follow-up, and no reply box', () => {
+  it('offers Reply, Approve & run and Decline on an open review with a follow-up', () => {
     render(<TaskCard task={task({ ask_kind: 'review', on_approve: [{ prompt: 'go' }] })} canEdit={false} />)
-    expect(buttons()).toEqual(['Approve & run', 'Decline'])
-    expect(screen.queryByTestId('task-reply-T2')).toBeNull()
+    expect(buttons()).toEqual(['Reply', 'Approve & run', 'Decline'])
+    expect(screen.getByTestId('task-reply-T2')).toBeTruthy()
+  })
+
+  it('a suggested task with no ask can be approved or declined by a viewer', () => {
+    render(<TaskCard task={task({ status: 'suggested', ask_kind: '', ask_open: false })} canEdit={false} />)
+    expect(buttons()).toEqual(['Reply', 'Approve', 'Decline'])
+  })
+
+  it('decline sends the reply box text as the reason, or nothing', async () => {
+    actOnTask.mockResolvedValue({ task: {}, action: {}, turn_ids: [] })
+    render(<TaskCard task={task({ ask_kind: 'review' })} onChanged={() => {}} canEdit={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Decline' }))
+    await waitFor(() => expect(actOnTask).toHaveBeenLastCalledWith('eva', 'T2', 'decline', undefined))
+    fireEvent.change(screen.getByTestId('task-reply-T2'), { target: { value: 'duplicate of T1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Decline' }))
+    await waitFor(() => expect(actOnTask).toHaveBeenLastCalledWith('eva', 'T2', 'decline', 'duplicate of T1'))
   })
 
   it('a live task offers Reply, and editors also get Dispatch and Done', () => {
@@ -158,6 +178,17 @@ describe('TaskCard', () => {
     expect(actOnTask).toHaveBeenCalledTimes(1)
   })
 
+  it('a task assigned to its own agent is the agent working, not a human wait', () => {
+    render(<TaskCard task={task({ ask_kind: '', ask_open: false, assigned: 'Eva' })} canEdit={false} />)
+    expect(screen.getByTestId('task-T2').textContent).toContain('Eva')
+    expect(screen.getByTestId('task-T2').textContent).not.toContain('Waiting on')
+  })
+
+  it('a task assigned to someone else waits on them', () => {
+    render(<TaskCard task={task({ ask_kind: '', ask_open: false, assigned: 'echo' })} canEdit={false} />)
+    expect(screen.getByTestId('task-T2').textContent).toContain('Waiting on echo')
+  })
+
   it('names the task’s own agent, not Echo, on the working chip', () => {
     render(<TaskCard task={task({ ask_kind: '', ask_open: false, agent_slug: 'hal' })} canEdit={false} />)
     expect(screen.getByTestId('task-T2').textContent).toContain('Hal')
@@ -167,5 +198,24 @@ describe('TaskCard', () => {
   it('tags the agent when asked to', () => {
     render(<TaskCard task={task()} canEdit={false} showAgent />)
     expect(screen.getByTestId('task-T2').textContent).toContain('eva')
+  })
+})
+
+describe('TasksBoard sections', () => {
+  it('on eva’s board a task assigned eva is “Eva working”, not “Waiting on a human”', () => {
+    render(
+      <TasksBoard
+        tasks={[
+          task({ ext_id: 'T5', ask_kind: '', ask_open: false, assigned: 'eva' }),
+          task({ ext_id: 'T6', ask_kind: '', ask_open: false, assigned: 'Jonathan' }),
+        ]}
+        canEdit={false}
+      />,
+    )
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Eva working')
+    const waiting = screen.getByText('Waiting on a human').closest('section')!
+    expect(waiting.textContent).toContain('Waiting on Jonathan')
+    expect(waiting.querySelector('[data-testid="task-T5"]')).toBeNull()
   })
 })

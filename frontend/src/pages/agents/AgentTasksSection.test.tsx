@@ -135,6 +135,38 @@ describe('AgentTasksSection', () => {
       expect(listTasks).toHaveBeenCalledWith('eva', { batch: 'fleet-audit-2026-07-14' }))
   })
 
+  it('under ?batch= the batch chip is the pressed one, and Open clears it', async () => {
+    show('/w/connect/agents/eva/tasks?batch=b1')
+    await waitFor(() => expect(listTasks).toHaveBeenCalledWith('eva', { batch: 'b1' }))
+    expect(screen.getByTestId('filter-open').getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByTestId('filter-batch').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('filter-batch').textContent).toContain('b1')
+    fireEvent.click(screen.getByTestId('filter-open'))
+    await waitFor(() =>
+      expect(listTasks).toHaveBeenLastCalledWith('eva', { status: 'suggested,in_progress' }))
+    expect(screen.getByTestId('where').textContent).toBe('/w/connect/agents/eva/tasks')
+    expect(screen.queryByTestId('filter-batch')).toBeNull()
+  })
+
+  it('fetches the queue and recent actions, not every action', async () => {
+    show('/w/connect/agents/eva/tasks')
+    await waitFor(() => expect(listTaskActions).toHaveBeenCalledWith('eva', { limit: 50 }))
+  })
+
+  it('grouped, a project with nothing in this view is hidden unless it is the filter', async () => {
+    listProjects.mockResolvedValue([project(), project({ id: 3, ext_id: 'P3', name: 'Idle' })])
+    listTasks.mockResolvedValue([task({ ext_id: 'T1', project_ext_id: 'P2' })])
+    show('/w/connect/agents/eva/tasks?by=project')
+    await waitFor(() => expect(screen.getByTestId('project-P2')).toBeTruthy())
+    expect(screen.queryByTestId('project-P3')).toBeNull()
+
+    cleanup()
+    listTasks.mockResolvedValue([])
+    show('/w/connect/agents/eva/tasks?by=project&project=P3')
+    await waitFor(() => expect(screen.getByTestId('project-P3')).toBeTruthy())
+    expect(screen.queryByTestId('project-P2')).toBeNull()
+  })
+
   it('groups by project on ?by=project', async () => {
     listProjects.mockResolvedValue([project()])
     listTasks.mockResolvedValue([

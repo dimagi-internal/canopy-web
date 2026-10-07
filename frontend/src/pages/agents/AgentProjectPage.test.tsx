@@ -74,6 +74,16 @@ afterEach(() => {
 })
 
 describe('AgentProjectPage', () => {
+  it('re-reads the project when canopy says a task moved', async () => {
+    const { resourceChanged } = await import('@/widget/pageInvalidation')
+    getProject.mockResolvedValue(detail())
+    show()
+    await screen.findByRole('heading', { name: 'Connect Enterprise' })
+    expect(getProject).toHaveBeenCalledTimes(1)
+    resourceChanged('task://')
+    await waitFor(() => expect(getProject).toHaveBeenCalledTimes(2))
+  })
+
   it('renders the header then Tasks, Activity, Links — in that order', async () => {
     getProject.mockResolvedValue(detail())
     show()

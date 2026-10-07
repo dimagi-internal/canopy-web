@@ -11,12 +11,13 @@ import { TaskAge } from '@/components/TaskAge'
 
 // ── "Who has the ball" model ───────────────────────────────────────────────
 // The board is organized by whose court the next action sits in, not by equal
-// status columns. `assigned` names who the next step waits on: the agent
-// ("Echo") or a human. Empty or case-insensitive 'echo' means the agent.
+// status columns. `assigned` names who the next step waits on: the agent or a
+// human. Empty, or the board's own agent slug (any case), means the agent —
+// every agent's board renders this, so 'eva' on Eva's board is Eva.
 
-function isEcho(assigned: string): boolean {
-  const a = (assigned || '').trim().toLowerCase()
-  return a === '' || a === 'echo'
+function isAgent(task: TaskOut): boolean {
+  const a = (task.assigned || '').trim().toLowerCase()
+  return a === '' || a === (task.agent_slug || '').toLowerCase()
 }
 
 function headline(task: TaskOut): string {
@@ -72,13 +73,17 @@ export function agentDisplayName(slug: string): string {
 
 // ── The five actions ─────────────────────────────────────────────────────────
 // A card offers exactly the actions that apply (spec § "Tasks page"):
-//   open review   → approve · decline
-//   open question → reply (the answer) · decline
-//   any live task → reply
-//   editors, live → + dispatch · done
-//   done/declined → nothing
+//   any live task          → reply
+//   open review            → + approve · decline
+//   open question          → reply is the answer · + decline
+//   suggested, asks nothing → + approve · decline (a suggestion IS the
+//                             question "should I do this?"; the server allows
+//                             both on a live plain task — ruling R6)
+//   editors, live          → + dispatch · done
+//   done/declined          → nothing
 // Viewers may approve/decline/reply; dispatch/done need edit (403 otherwise),
-// so they are not offered to a viewer at all.
+// so they are not offered to a viewer at all. Decline takes the text in the
+// reply box, when there is any, as its reason.
 
 function isLive(task: TaskOut): boolean {
   return task.status === 'suggested' || task.status === 'in_progress'
@@ -87,11 +92,10 @@ function isLive(task: TaskOut): boolean {
 // eslint-disable-next-line react-refresh/only-export-components -- the card's action rule, exported for its tests
 export function availableActions(task: TaskOut, canEdit: boolean): TaskAction[] {
   if (!isLive(task)) return []
-  const kind = (task.ask_kind || '').trim()
-  let actions: TaskAction[]
-  if (task.ask_open && kind === 'review') actions = ['approve', 'decline']
-  else if (task.ask_open && kind === 'question') actions = ['reply', 'decline']
-  else actions = ['reply']
+  const kind = task.ask_open ? (task.ask_kind || '').trim() : ''
+  let actions: TaskAction[] = ['reply']
+  if (kind === 'review' || (!kind && task.status === 'suggested')) actions = [...actions, 'approve', 'decline']
+  else if (kind === 'question') actions = [...actions, 'decline']
   if (canEdit) actions = [...actions, 'dispatch', 'done']
   return actions
 }
@@ -340,7 +344,13 @@ function TaskActions({
             type="text"
             value={reply}
             disabled={busy}
-            placeholder={isQuestion ? 'Type an answer…' : 'Reply to the agent…'}
+            placeholder={
+              isQuestion
+                ? 'Type an answer…'
+                : has('decline')
+                  ? 'Reply, or a reason to decline…'
+                  : 'Reply to the agent…'
+            }
             aria-label={isQuestion ? 'Answer' : 'Reply'}
             onChange={(e) => setReply(e.target.value)}
             onKeyDown={(e) => {
@@ -370,7 +380,14 @@ function TaskActions({
             </button>
           )}
           {has('decline') && (
-            <button type="button" disabled={busy} onClick={() => run('decline')} className={BTN_QUIET}>
+            <button
+              type="button"
+              disabled={busy}
+              // The reply box doubles as the optional reason: no second field.
+              onClick={() => run('decline', reply.trim() || undefined)}
+              title="Decline — anything typed above is sent as the reason"
+              className={BTN_QUIET}
+            >
               Decline
             </button>
           )}
@@ -417,7 +434,7 @@ export function TaskCard({
   const head = headline(task)
   const outcome = (task.title || '').trim()
   const showOutcome = outcome && outcome !== head
-  const echo = isEcho(task.assigned)
+  const echo = isAgent(task)
   const isSuggested = task.status === 'suggested'
   const isDone = task.status === 'done'
   const hasRationale = Boolean((task.rationale || '').trim())
@@ -673,8 +690,8 @@ export function TasksBoard({
 }): JSX.Element {
   const suggested = tasks.filter((t) => t.status === 'suggested').sort(byPosition)
   const inProgress = tasks.filter((t) => t.status === 'in_progress')
-  const waitingHuman = inProgress.filter((t) => !isEcho(t.assigned)).sort(byPosition)
-  const echoWorking = inProgress.filter((t) => isEcho(t.assigned)).sort(byPosition)
+  const waitingHuman = inProgress.filter((t) => !isAgent(t)).sort(byPosition)
+  const echoWorking = inProgress.filter((t) => isAgent(t)).sort(byPosition)
   const done = tasks.filter((t) => t.status === 'done').sort(byPosition)
   const declined = tasks.filter((t) => t.status === 'declined').sort(byPosition)
 

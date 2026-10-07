@@ -305,12 +305,17 @@ export async function patchProject(
   return unwrap(res, 'patchProject') as ProjectOut
 }
 
+/** At most `limit` rows (server default 200). Unfiltered, the server puts the
+ *  pending rows first, so a short page is "the whole queue + recent history". */
 export async function listTaskActions(
   slug: string,
-  status?: 'pending' | 'applied',
+  opts: { status?: 'pending' | 'applied'; limit?: number } = {},
 ): Promise<TaskActionOut[]> {
+  const query: { status?: string; limit?: number } = {}
+  if (opts.status) query.status = opts.status
+  if (opts.limit) query.limit = opts.limit
   const res = await apiV2.GET('/api/agents/{slug}/actions/', {
-    params: { path: { slug }, query: status ? { status } : {} },
+    params: { path: { slug }, query },
   })
   return Array.from(unwrap(res, 'listTaskActions')) as TaskActionOut[]
 }

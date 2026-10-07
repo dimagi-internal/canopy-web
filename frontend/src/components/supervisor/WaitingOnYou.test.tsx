@@ -47,6 +47,14 @@ function task(over: object = {}) {
 }
 
 describe('WaitingOnYou', () => {
+  it('re-reads when canopy says a task moved', async () => {
+    const { resourceChanged } = await import('@/widget/pageInvalidation')
+    const onChanged = vi.fn()
+    render(<WaitingOnYou tasks={[]} canEdit={() => false} onChanged={onChanged} />)
+    expect(resourceChanged('task://')).toBe(1)
+    expect(onChanged).toHaveBeenCalledTimes(1)
+  })
+
   it('loads the fleet waiting-on-me filter', async () => {
     listFleetTasks.mockResolvedValue([])
     await loadWaitingOnYou()
