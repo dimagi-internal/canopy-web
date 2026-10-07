@@ -197,7 +197,7 @@ def _record_email_contact(agent, origin_ref):
     )
 
 
-def _member_behind_email(agent, contact):
+def _member_behind_email(agent, contact, subject: str = ""):
     """The canopy user who sent this email, when that can be PROVEN — else None.
 
     Why: an email sender is otherwise always a contact, so once an agent
@@ -217,6 +217,14 @@ def _member_behind_email(agent, contact):
       * the contact is not already linked to someone else.
 
     On success the contact is linked (`promote_to_user`), which grants nothing.
+
+    Failing that, a SYSTEM ACCOUNT of the agent's workspace bound to this
+    address and subject (`workspaces.system_accounts.account_for_inbound`) —
+    the same alignment requirement, and the binding is per workspace, because
+    an automated address is shared: `no-reply@sns.amazonaws.com` sends every
+    AWS customer's alarms. Its contact is NOT linked to it: the contact is the
+    shared address, and linking it would make the binding look like proof of
+    the address rather than a workspace's decision about some of its mail.
     """
     from apps.contacts import services as contacts
     from apps.contacts.models import Contact
@@ -225,7 +233,14 @@ def _member_behind_email(agent, contact):
         return None
     user = contacts.user_for_verified_email(contact.email)
     if user is None:
-        return None
+        from apps.workspaces.system_accounts import account_for_inbound
+
+        account = account_for_inbound(agent.workspace_id, contact.email, subject)
+        # Still a member: removing it from the workspace is how an admin who
+        # does not know about `disabled` switches it off.
+        if account is None or not wsvc.is_member(account.user, agent.workspace_id):
+            return None
+        return account.user
     if contact.user_id is not None and contact.user_id != user.pk:
         return None
     # A question about the SENDER's membership, asked through the one authorizer.
@@ -402,7 +417,8 @@ def enqueue_turn(
             # recording it as the initiator is exactly the confusion this field
             # exists to end. No recordable sender -> unknown, honestly.
             from . import initiator as who
-            member = _member_behind_email(agent, email_contact)
+            member = _member_behind_email(
+                agent, email_contact, str((origin_ref or {}).get("subject") or ""))
             if member is not None:
                 # A MEMBER of the agent's workspace, proven by THIS message's DMARC
                 # alignment. The contact rides along so its profile still reaches

@@ -203,6 +203,21 @@ class CustomAccountAdapter(DefaultAccountAdapter):
     def is_open_for_signup(self, request):
         return False
 
+    def pre_login(self, request, user, **kwargs):
+        """Refuse a SYSTEM ACCOUNT at the one hook every allauth login passes
+        through (social or local). It has no social account and an unusable
+        password, so no flow should reach here with one — this makes "cannot
+        sign in" a rule rather than a coincidence of how it was created.
+        """
+        from apps.workspaces.system_accounts import is_system_user
+
+        if is_system_user(user):
+            from django.http import HttpResponseForbidden
+
+            raise ImmediateHttpResponse(
+                HttpResponseForbidden("This is a system account. It cannot sign in."))
+        return super().pre_login(request, user, **kwargs)
+
     def is_safe_url(self, url):
         # allauth's own check trusts every host in ALLOWED_HOSTS, and labs runs
         # with ALLOWED_HOSTS=["*"] (the ALB health-checks by IP) — so any

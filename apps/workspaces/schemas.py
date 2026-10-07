@@ -132,6 +132,9 @@ class MemberOut(StrictModel):
     # An owner of a PARENT workspace, listed because they own this one too.
     # There is no row here to change or remove — the grant lives on the parent.
     inherited: bool = False
+    # A SYSTEM ACCOUNT (an automated sender that cannot sign in), not a person —
+    # managed under /system-accounts/, and never above editor.
+    system: bool = False
 
 
 class MemberRoleUpdateIn(StrictModel):
@@ -365,3 +368,54 @@ class RunnerOrderIn(StrictModel):
     workspace's repo turns go back to any runner that declares the repo."""
 
     runners: list[RunnerOrderRowIn]
+
+
+# ---- system accounts (apps/workspaces/system_accounts.py) ----
+SystemRole = Literal["editor", "viewer"]
+
+
+class SystemSenderIn(StrictModel):
+    """Bind an inbound address to the account, in this workspace only."""
+    address: EmailStr = Field(max_length=254)
+    # A Python regex `re.search`ed against the subject; blank matches every subject.
+    # Narrow a SHARED address (no-reply@sns.amazonaws.com sends every AWS
+    # customer's alarms) to your own mail, e.g. `^(ALARM|OK): "labs-`.
+    subject_pattern: str = Field(default="", max_length=300)
+
+
+class SystemSenderOut(StrictModel):
+    id: int
+    address: str
+    subject_pattern: str
+    created_at: dt.datetime
+
+
+class SystemAccountCreateIn(StrictModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
+    # Its standing in the workspace, as for a person. Editor (the default) makes
+    # its turns run in an agent's whole profile, manual only — the editor tier.
+    role: SystemRole = "editor"
+    senders: list[SystemSenderIn] = Field(default_factory=list, max_length=20)
+
+
+class SystemAccountUpdateIn(StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    role: SystemRole | None = None
+    # True stops it resolving at once (its mail is a contact again); its past
+    # turns keep its name. False re-enables it.
+    disabled: bool | None = None
+
+
+class SystemAccountOut(StrictModel):
+    id: int
+    user_id: int
+    name: str
+    description: str
+    role: str | None
+    disabled: bool
+    disabled_at: dt.datetime | None
+    created_at: dt.datetime
+    created_by_email: str | None
+    senders: list[SystemSenderOut]

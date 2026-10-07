@@ -172,6 +172,14 @@ def describe(turn) -> dict:
             "email": user.email,
             "name": user.get_full_name() or user.email,
         }
+        # A SYSTEM ACCOUNT is a user with a member's standing and no person
+        # behind it (apps/workspaces/system_accounts.py) — the agent must know
+        # it is reading an automated sender, and not address it as someone.
+        from apps.workspaces.system_accounts import describe as describe_system
+
+        system = describe_system(user)
+        if system is not None:
+            out["system_account"] = system
     if contact is not None:
         out["contact"] = {
             "id": contact.pk,

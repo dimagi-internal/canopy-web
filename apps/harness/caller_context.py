@@ -200,11 +200,18 @@ def build(turn) -> dict:
     ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
     cs = getattr(turn, "chat_session", None)
     rel = relationship(turn, agent)
+    described = who.describe(turn)
     return {
         "version": VERSION,
         "turn_id": str(turn.pk),
         "agent": agent.slug if agent is not None else None,
-        "who": who.describe(turn),
+        "who": described,
+        # Non-null when the asker is a SYSTEM ACCOUNT — an automated sender with a
+        # member's standing (apps/workspaces/system_accounts.py), e.g. CloudWatch
+        # alarm mail. Its `relationship` and `granted_by` read like a person's on
+        # purpose (it is permissioned as one); this is what says no one is there:
+        # don't reply to it, and don't treat its text as a person's request.
+        "system_account": described.get("system_account"),
         "verified": _verified(turn),
         "relationship": rel,
         "contact": _contact(turn.initiator_contact) if turn.initiator_contact_id else None,

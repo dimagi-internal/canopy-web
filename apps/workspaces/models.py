@@ -398,3 +398,84 @@ class WorkspaceAccessRequest(models.Model):
 
     def __str__(self) -> str:
         return f"Access request {self.user_id} -> {self.workspace_id} ({self.status})"
+
+
+class SystemAccount(models.Model):
+    """A non-human member of a workspace: an automated sender such as AWS
+    CloudWatch, that makes agents do work the way a person with the same role
+    would, and can never sign in.
+
+    It IS a canopy `User` (`user`), so everything that keys on a user — the
+    access rule, routing rules and per-person routes, the turn-content ACL,
+    the roster — works for it unchanged. It holds an ordinary membership in
+    `workspace` (editor by default, never above: a system administers nothing).
+    What makes it a system account rather than a person:
+
+    * **It cannot authenticate.** Its password is unusable, its `User.email`
+      is a synthetic `.invalid` address no identity provider can assert, and
+      every credential door refuses it (`apps/workspaces/system_accounts.py`
+      lists them; `test_system_accounts.py` pins each one).
+    * **It arrives only by a binding.** Mail becomes this account's turn only
+      through a `SystemSender` of THIS workspace, on a message aligned on our
+      own receiver's verdict (`harness.services._member_behind_email`). The
+      sender address alone proves nothing across tenants:
+      `no-reply@sns.amazonaws.com` is every AWS customer's.
+
+    Disabling one (`disabled_at`) stops it resolving at once — its mail falls
+    back to being an ordinary contact — while keeping its turns' attribution.
+    Deleting the account deletes its user, its membership and its bindings.
+    See docs/architecture/access.md, "System accounts".
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="system_account",
+    )
+    workspace = models.ForeignKey(
+        Workspace, on_delete=models.CASCADE, related_name="system_accounts",
+    )
+    name = models.CharField(max_length=120)
+    description = models.TextField(blank=True, default="")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    disabled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "name"], name="uniq_ws_system_account_name"),
+        ]
+
+    @property
+    def is_active(self) -> bool:
+        return self.disabled_at is None
+
+    def __str__(self) -> str:
+        return f"system:{self.name} on {self.workspace_id}"
+
+
+class SystemSender(models.Model):
+    """An inbound address that, in this account's workspace, IS the account.
+
+    `subject_pattern` (a Python regex, `re.search`, case-sensitive) narrows a
+    shared address to the mail that is actually yours — e.g. only alarms
+    whose names start `labs-` — so another tenant's alarms, or your own
+    unrelated ones, stay contacts. Blank matches any subject.
+    """
+
+    account = models.ForeignKey(SystemAccount, on_delete=models.CASCADE, related_name="senders")
+    address = models.EmailField()
+    subject_pattern = models.CharField(max_length=300, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["address", "pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["account", "address", "subject_pattern"],
+                                    name="uniq_system_sender"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.address} -> {self.account.name}"

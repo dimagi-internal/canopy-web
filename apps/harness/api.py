@@ -1859,6 +1859,8 @@ def visible_turns_qs(request: HttpRequest, *, all_memberships: bool = False):
     slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
     qs = Turn.objects.select_related(
         "agent", "claimed_by", "initiator_user", "initiator_contact",
+        # TurnOut.initiator names a system account (initiator.describe).
+        "initiator_user__system_account",
         "pinned_runner", "requested_turn_mode_by",
         # A chat turn's session and its agent are read per row by TurnOut.
         "chat_session", "chat_session__agent",

@@ -436,6 +436,16 @@ GATES: dict[str, tuple[str, ...]] = {
     "remove_member": ("members.manage",),  # + may_manage_member
     "set_member_role": ("members.manage",),  # + may_manage_member
     "create_invite": ("members.manage",),
+    # System accounts (apps/workspaces/system_accounts.py): listed to members
+    # like the member list; managed like an editor is (members.manage +
+    # may_manage_member at the account's role).
+    "list_system_accounts": ("member",),
+    "get_system_account": ("member",),
+    "create_system_account": ("members.manage",),  # + may_manage_member
+    "update_system_account": ("members.manage",),  # + may_manage_member
+    "delete_system_account": ("members.manage",),  # + may_manage_member
+    "add_system_sender": ("members.manage",),  # + may_manage_member
+    "remove_system_sender": ("members.manage",),  # + may_manage_member
     "list_invites": ("member",),  # tokens only to members.manage
     "revoke_invite": ("members.manage",),
     "reissue_invite": ("members.manage",),

@@ -143,6 +143,60 @@ Asked in this order; the first row that matches decides.
   OR a runner admin**, consistent with actor routes, which already required the
   runner admin.
 
+## System accounts
+
+A **system account** is a non-human workspace member: an automated sender, such
+as AWS CloudWatch alarm mail or CI, that makes agents do work the way a person
+with the same role would, and **can never sign in** (`apps/workspaces/system_accounts.py`,
+canopy-web#1253). Owner decision, 2026-10-07: *"alarms should be allowed for sure
+… it's basically the same as a user with edit."*
+
+It is a real `User` with a `SystemAccount` row and an ordinary membership, so it
+goes down the decision table above like anyone else. That is the point: routing
+rules, per-person routes, the roster, turn-content ACLs and turn mode all apply
+unchanged.
+
+* **Role:** `editor` by default, which is row 4, the editor tier: the whole agent,
+  always `manual`. `viewer` is allowed (rows 5–7: what the interface offers
+  members). **Never admin or owner**, here or through the member-role route
+  (`MemberError("system_role")`). A system administers nothing.
+* **Never authenticates:** unusable password; a synthetic `@system.canopy.invalid`
+  `User.email` that no identity provider can assert and
+  `user_for_verified_email` never resolves; allauth `pre_login` refuses it;
+  `PersonalToken.create_for_user` refuses it; `PersonalToken.lookup` (bearer and
+  MCP, including OAuth access tokens) and `DelegatedToken.lookup` never resolve
+  one. `tests/test_system_accounts.py` pins each door.
+* **How mail becomes it:** a `SystemSender` binds an address, with an optional
+  subject regex, to the account **in its own workspace only**. An email turn's
+  sender resolves to the account when all of these hold
+  (`harness.services._member_behind_email`):
+  - THIS message is aligned (DMARC, or DKIM signed by the From: domain) on our
+    own receiver's verdict;
+  - no human account provably holds the address;
+  - exactly one enabled account in the agent's workspace has a binding for the
+    address whose pattern `re.search`es the subject (two is ambiguous, so neither);
+  - the account is still a member there.
+
+  Otherwise the sender is an ordinary contact. The binding is per workspace because
+  an automated address is shared: `no-reply@sns.amazonaws.com` sends every AWS
+  customer's alarms. Narrow it with a subject pattern (e.g. `^(ALARM|OK): "labs-`).
+* **The agent is told:** the envelope's `system_account` (and `who.system_account`)
+  is non-null for one. Its `relationship` and `granted_by` read like a member's on
+  purpose, since it is permissioned as one. This field is what says no person is
+  there: don't reply to it, and don't read its text as someone's request.
+* **Managing:** `…/workspaces/{slug}/system-accounts/` (and `…/senders/`). Members
+  read; `members.manage` writes, at a role below your own, as for a person.
+  Workspace Settings → Members → System accounts. Every change goes to the event
+  log (`workspaces.system_accounts`). Disable to switch one off and keep its name
+  on past turns; delete removes its user, membership and bindings.
+* **Why not a new initiator kind:** every gate already answers "what may this
+  user do here". A parallel kind would have to be taught to each of them, and
+  would drift.
+* **A refusal points here:** a verified contact refused by an interface is told
+  that, if it is automated, a workspace admin can bind it as a system account.
+  Before this existed, Hal's alarms were cancelled at enqueue for nine days and
+  nothing said so.
+
 ## Runner roles
 
 A runner has its own two-step ladder, separate from both of the above. Being a
@@ -191,6 +245,9 @@ VERSION 2): `who`, `verified` (THIS message), `relationship` (the agent role),
 * **`ship_grant`** — when ANOTHER agent's verified login that is this agent's
   owner or admin dispatched the turn at it, push / PR / merge in this agent's OWN
   repo are pre-approved even in `manual`. Nothing else is.
+* **`system_account`** — `{id, name, description, workspace}` when the asker is
+  a system account (an automated sender, see "System accounts"); null for a
+  person. The same object is in `who.system_account`.
 
 Readers accept both spellings: `relationship: caller` means `contact`, `profile:
 restricted` means `confined` (`normalize_relationship`, `normalize_profile`; the
