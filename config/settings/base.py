@@ -570,6 +570,21 @@ CANOPY_A2A_PROVIDER_URL = env("CANOPY_A2A_PROVIDER_URL", default="https://www.di
 # See docs/superpowers/specs/2026-10-05-content-retention-design.md.
 CANOPY_RETENTION_ENFORCE = env.bool("CANOPY_RETENTION_ENFORCE", default=False)
 
+# --- Auto-debug: a failed turn starts a debugger turn (apps/harness/auto_debug.py) ---
+# ON by default (Jonathan, 2026-10-07): a turn that ends FAILED immediately
+# enqueues a turn to the agent named by CANOPY_AUTO_DEBUG_AGENT (the fleet
+# conductor) to investigate, learn and fix. Set CANOPY_AUTO_DEBUG=false to stop
+# it outright; with no agent of that slug it does nothing either. The caps are
+# fleet-wide, over rolling windows, and count only auto-debug turns: past them a
+# failure is recorded HELD instead of starting a turn, and rides along in the
+# next turn the caps allow. LOST (lease expired) turns are opt-in separately —
+# a laptop closing its lid is not a bug, and it would be the noisiest source.
+CANOPY_AUTO_DEBUG = env.bool("CANOPY_AUTO_DEBUG", default=True)
+CANOPY_AUTO_DEBUG_AGENT = env("CANOPY_AUTO_DEBUG_AGENT", default="ada")
+CANOPY_AUTO_DEBUG_MAX_PER_HOUR = env.int("CANOPY_AUTO_DEBUG_MAX_PER_HOUR", default=3)
+CANOPY_AUTO_DEBUG_MAX_PER_DAY = env.int("CANOPY_AUTO_DEBUG_MAX_PER_DAY", default=10)
+CANOPY_AUTO_DEBUG_LOST = env.bool("CANOPY_AUTO_DEBUG_LOST", default=False)
+
 # --- Outbound email (apps/common/email.py) ---
 # OFF unless CANOPY_EMAIL_ENABLED is set: sending needs a verified SES identity
 # and ses:SendEmail on the task role, which live in AWS, not here. Off means

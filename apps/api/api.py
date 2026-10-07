@@ -201,6 +201,7 @@ from apps.storyboards.api import router as storyboards_router  # noqa: E402
 from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.huddles.api import router as huddles_router  # noqa: E402
 from apps.harness.api_schedules import router as schedules_router  # noqa: E402
+from apps.harness.api_investigations import router as investigations_router  # noqa: E402
 from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
@@ -258,6 +259,8 @@ api.add_router("/timeline", timeline_router)
 api.add_router("/system", system_router)
 api.add_router("/share", session_share_router)
 api.add_router("/harness", harness_router)
+# What the fleet's debugger agent reads and closes (apps/harness/auto_debug.py).
+api.add_router("/harness/failure-investigations", investigations_router)
 api.add_router("/huddles", huddles_router)
 api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)

@@ -1321,3 +1321,37 @@ class CloseOut(Schema):
 
 class CloseSyncOut(Schema):
     closes: list[CloseOut] = []
+
+
+InvestigationStatus = Literal["open", "held", "debugger_failed", "resolved", "escalated"]
+
+
+class FailureInvestigationOut(Schema):
+    """One kind of turn failure and what the debugger agent did about it."""
+
+    id: int
+    workspace_slug: str
+    fingerprint: str
+    status: str
+    normalized_note: str
+    sample_note: str
+    occurrences: int
+    first_seen: dt.datetime
+    last_seen: dt.datetime
+    turn_ids: list[str]
+    agents: list[str]
+    runners: list[str]
+    recurred_after_resolve: bool
+    debug_turn_id: uuid.UUID | None
+    triggers: int
+    resolved_at: dt.datetime | None
+    resolution_note: str
+
+    @staticmethod
+    def resolve_workspace_slug(obj) -> str:
+        return obj.workspace_id
+
+
+class ResolveInvestigationIn(Schema):
+    note: str = Field(min_length=1, max_length=10000,
+                      description="What was wrong and what you changed to fix it.")

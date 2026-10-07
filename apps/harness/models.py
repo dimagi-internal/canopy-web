@@ -1247,3 +1247,79 @@ class RunnerDrill(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["runner", "agent"], name="one_drill_row_per_runner_agent"),
         ]
+
+
+class FailureInvestigation(models.Model):
+    """One KIND of turn failure, and what the fleet's debugger agent did about it.
+
+    Jonathan, 2026-10-07: an ACE Slack turn ended FAILED with the runner's
+    "Couldn't confirm your message was delivered…" note, Slack showed "❌ ace
+    could not finish this", and nothing in the fleet looked at it until a human
+    did. A board task would have waited for a turn to read it; the ask was that a
+    failure IMMEDIATELY starts a turn of the conductor agent (`ada`) to
+    investigate, learn and fix — `apps/harness/auto_debug.py` is that hook, and
+    this row is its memory.
+
+    Keyed on a FINGERPRINT of the failure (the result note with every quoted
+    string, id, number, path and name normalized away), not on the turn: the same
+    breakage on three agents is one thing to fix, so it is one row whose
+    `occurrences` grows — never three turns. The row is also what keeps the
+    feedback loop from running away: a repeat only counts, a fix that did not hold
+    escalates once and then only counts, and a fleet-wide cap holds anything over
+    the limit here (`held`) instead of starting a turn.
+    """
+
+    OPEN = "open"                        # a debug turn has it (or is about to)
+    HELD = "held"                        # wanted a turn; the rate cap said no
+    DEBUGGER_FAILED = "debugger_failed"  # the debug turn itself failed
+    RESOLVED = "resolved"                # the debugger says it is fixed
+    ESCALATED = "escalated"              # came back after a fix — Jonathan's now
+    STATUS_CHOICES = [
+        (OPEN, "Open"), (HELD, "Held by the rate cap"),
+        (DEBUGGER_FAILED, "Debug turn failed"), (RESOLVED, "Resolved"),
+        (ESCALATED, "Escalated"),
+    ]
+
+    #: The debugger agent's workspace. Every failure it hears about is in this
+    #: workspace or below it (auto_debug refuses the rest), so this is the tenant
+    #: the evidence belongs to — NOT NULL, the nullable-tenant-FK bug class.
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="failure_investigations",
+    )
+    fingerprint = models.CharField(max_length=64, unique=True)
+    normalized_note = models.TextField(blank=True, default="")
+    #: The latest raw note, verbatim — what the debugger actually reads.
+    sample_note = models.TextField(blank=True, default="")
+    first_seen = models.DateTimeField()
+    last_seen = models.DateTimeField()
+    occurrences = models.PositiveIntegerField(default=1)
+    #: The most recent failed turns (ids, newest last), capped — evidence, not a log.
+    turn_ids = models.JSONField(default=list, blank=True)
+    agents = models.JSONField(default=list, blank=True)
+    runners = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=OPEN)
+    #: It recurred after being resolved: the next (or this) debug turn is framed
+    #: "the fix did not hold — escalate to Jonathan", and the row ends ESCALATED.
+    recurred_after_resolve = models.BooleanField(default=False)
+    #: The latest debug turn that carries this investigation (its own, or one it
+    #: rode along in while held).
+    debug_turn = models.ForeignKey(
+        Turn, on_delete=models.SET_NULL, null=True, blank=True, related_name="investigations",
+    )
+    #: Debug turns started for it so far — the `n` in its idempotency key.
+    triggers = models.PositiveSmallIntegerField(default=0)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolution_note = models.TextField(blank=True, default="")
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-last_seen"]
+        indexes = [models.Index(fields=["status", "-last_seen"])]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"investigation:{self.pk}:{self.status}:{self.fingerprint[:8]}"
