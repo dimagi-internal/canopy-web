@@ -92,7 +92,7 @@ the same way a project is.
 
 They matter to the **agent** (so it knows where a project stands), not as a human
 gallery — things are shared by direct link. A project's deliverables live in its
-existing `links` field (`[{title, url}]`), written by the agent. `AgentWorkProduct` —
+existing `links` field (`[{label, url}]`), written by the agent. `AgentWorkProduct` —
 model, table, routes, page, card, count, CLI verb — is deleted outright.
 `Turn.work_product_urls` is unaffected (turn provenance, not this table).
 
