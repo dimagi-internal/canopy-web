@@ -1,7 +1,11 @@
-"""Record a request for access and tell the person who answers them.
+"""Record a request for access, tell the person who answers them, and act on the answer.
 
 The order is the point: the row is written FIRST and the mail is best-effort, so a
-request survives an SES outage and can still be read in Django admin.
+request survives an SES outage and can still be read on its page or in Django admin.
+
+The email is a doorbell, not the place the decision is made: it links to the
+request's page in canopy, where the reviewer picks a workspace and a role and
+canopy sends the invite (`invite`), or declines it (`decline`).
 """
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ from html import escape
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
+from django.db import transaction
 from django.utils import timezone
 
 from .models import BetaRequest
@@ -28,6 +33,30 @@ IP_LIMIT = 5
 
 class TooManyRequests(Exception):
     pass
+
+
+class NotPending(Exception):
+    """The request was already answered."""
+
+
+def may_review(user) -> bool:
+    """Who may read and answer beta requests: a superuser, or the person the
+    requests are mailed to (`CANOPY_BETA_REQUESTS_TO`). A request names no
+    workspace, so no workspace role can stand in — and its reason is often
+    about the asker's organisation, which other tenants' admins have no business
+    reading. Sending the invite additionally needs `members.manage` in the
+    chosen workspace (the API checks it, as for any invite)."""
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if user.is_superuser:
+        return True
+    to = (getattr(settings, "CANOPY_BETA_REQUESTS_TO", "") or "").strip().lower()
+    return bool(to) and (user.email or "").strip().lower() == to
+
+
+def request_link(req: BetaRequest) -> str:
+    """Absolute link to the request's page — the one the email carries."""
+    return f"{settings.CANOPY_PUBLIC_BASE_URL.rstrip('/')}/beta-requests/{req.pk}"
 
 
 def submit(*, email: str, reason: str, client_ip: str | None, user_agent: str) -> BetaRequest:
@@ -53,19 +82,24 @@ def _notify(req: BetaRequest) -> str:
     to = getattr(settings, "CANOPY_BETA_REQUESTS_TO", "")
     if not to:
         return "not_configured"
+    link = request_link(req)
     subject = f"Canopy access request: {req.email}"
     text = (
         f"{req.email} asked for access to Canopy.\n\n"
         f"Why they want access:\n{req.reason}\n\n"
-        "Reply to this email to answer them. To let them in, invite them to a "
-        "workspace from its Settings → Members."
+        f"Approve or decline — pick the workspace and role, and Canopy emails them the invite:\n{link}\n\n"
+        f"Replying to this email writes to {req.email}, if you want to ask them something first.\n"
     )
     reason_html = escape(req.reason).replace("\n", "<br>")
     html = (
         f"<p><b>{escape(req.email)}</b> asked for access to Canopy.</p>"
         f"<p><b>Why they want access:</b><br>{reason_html}</p>"
-        "<p style=\"color:#6b6b6b\">Reply to this email to answer them. To let them in, "
-        "invite them to a workspace from its Settings → Members.</p>"
+        f'<p><a href="{escape(link)}" style="display:inline-block;padding:10px 18px;'
+        f"background:#c2410c;color:#ffffff;border-radius:6px;text-decoration:none;"
+        f'font-weight:600">Approve or decline</a></p>'
+        "<p style=\"color:#78716c;font-size:13px\">Pick the workspace and role there, and "
+        f"Canopy emails them the invite. Replying to this email writes to {escape(req.email)}, "
+        f"if you want to ask them something first.<br>{escape(link)}</p>"
     )
     message = EmailMultiAlternatives(subject=subject, body=text, to=[to], reply_to=[req.email])
     message.attach_alternative(html, "text/html")
@@ -74,3 +108,41 @@ def _notify(req: BetaRequest) -> str:
     except Exception:  # noqa: BLE001 — a mail failure must never lose the request
         log.exception("beta-request email failed: request=%s", req.pk)
         return "failed"
+
+
+def invite(req: BetaRequest, *, workspace, role: str, by) -> tuple[BetaRequest, str]:
+    """Approve: invite the requester to `workspace` at `role` and email them the
+    link. Returns the request and the invite email's status (`sent` |
+    `throttled` | `not_configured` | `failed` — the invite exists either way).
+    The caller has checked `by` may invite at `role` there."""
+    from apps.workspaces import services as ws_services
+
+    with transaction.atomic():
+        locked = BetaRequest.objects.select_for_update().get(pk=req.pk)
+        if locked.status != BetaRequest.PENDING:
+            raise NotPending()
+        inv = ws_services.create_invite(workspace=workspace, email=locked.email, role=role, invited_by=by)
+        locked.status = BetaRequest.INVITED
+        locked.workspace = workspace
+        locked.role = role
+        locked.invite = inv
+        locked.decided_by = by
+        locked.decided_at = timezone.now()
+        locked.save(update_fields=["status", "workspace", "role", "invite", "decided_by", "decided_at"])
+    # After the commit: a mail failure must not undo the decision, and the
+    # invite's link can still be copied from the workspace's Members page.
+    return locked, ws_services.email_invite(invite=inv)
+
+
+def decline(req: BetaRequest, *, by) -> BetaRequest:
+    """Close the request without letting them in. Emails nobody: a reviewer who
+    wants to tell them why replies to the notification email."""
+    with transaction.atomic():
+        locked = BetaRequest.objects.select_for_update().get(pk=req.pk)
+        if locked.status != BetaRequest.PENDING:
+            raise NotPending()
+        locked.status = BetaRequest.DECLINED
+        locked.decided_by = by
+        locked.decided_at = timezone.now()
+        locked.save(update_fields=["status", "decided_by", "decided_at"])
+    return locked

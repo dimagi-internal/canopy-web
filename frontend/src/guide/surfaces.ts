@@ -101,6 +101,20 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Watch the cut', 'Edit narration, features or personas', 'Reorder the build sequence', 'Approve, redraft, or submit findings decisions'],
   },
   {
+    path: '/beta-requests',
+    title: 'Requests for access to Canopy',
+    audience: 'The person access requests are emailed to',
+    what: "Everyone who asked for access through the public site's form, newest first, with whether each was invited or declined. Nobody else can see them.",
+    actions: ['Open a request'],
+  },
+  {
+    path: '/beta-requests/:requestId',
+    title: 'Request for access to Canopy',
+    audience: 'The person access requests are emailed to (the link in the notification email)',
+    what: 'One request: who asked and why. Approve by picking a workspace you administer and a role — Canopy emails them the ordinary workspace invite — or decline, which emails nobody.',
+    actions: ['Approve and invite to a workspace', 'Decline'],
+  },
+  {
     path: '/invite/:token',
     title: 'Accept invite',
     audience: 'Someone invited to a workspace',

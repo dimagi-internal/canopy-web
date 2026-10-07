@@ -68,6 +68,12 @@ const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
       ['/share/:token', '/storyboard/:slug', '/narrative/:slug', '/walkthrough/:id',
        '/review/:id', '/invite/:token'].includes(p) || p.startsWith('/ddd-release/'),
   },
+  {
+    // Requests for access to Canopy itself, answered from the notification
+    // email's link. In no menu: one person reads them.
+    label: 'Requests for access to Canopy',
+    match: (p) => p === '/beta-requests' || p.startsWith('/beta-requests/'),
+  },
 ]
 
 export function guideGroups(surfaces: SurfaceDescriptor[] = SURFACES): GuideGroup[] {
