@@ -509,7 +509,7 @@ CANOPY_HOST_SIGNING_KEY = env("CANOPY_HOST_SIGNING_KEY", default="").replace("\\
 # of the `canopy-web` Connected site; apps/tokens/live_probe.py). Non-secret. Empty
 # = the probe endpoint 404s. The user is created by tokens/0026_probe_user: a
 # non-admin with no password, no email and no membership, so the probe's
-# `list_items` runs as a real account and reads nothing.
+# `list_fleet_tasks` runs as a real account and reads nothing.
 CANOPY_HOST_PROBE_USERNAME = env("CANOPY_HOST_PROBE_USERNAME", default="")
 
 GITHUB_APP_CLIENT_ID = env("GITHUB_APP_CLIENT_ID", default="")

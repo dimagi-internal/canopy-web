@@ -728,7 +728,7 @@ capped by a 20-second wait, and a second implementation of a delete the REST API
 already had. It existed only because nothing could tell the page its data had
 changed. Once pages could be told their data changed (§5a), the reason was gone;
 it became a server tool and the page action was deleted. The inbox shows the
-right shape today: dismissing is the server tool `dismiss_item`, and the page
+right shape today: declining is the server tool `act_on_task`, and the page
 hears about it through `item://` (§5a).
 
 **If your action's last line is an HTTP call to your own backend, it is not a
@@ -1011,7 +1011,7 @@ with the SDK's own pieces (`apps/tokens/self_host.py`: `HostConfig`,
 
 | Page (route) | Page key | Scope | Tools the grant unlocks |
 |---|---|---|---|
-| `/w/:ws/agents/:slug/inbox` | `agent.inbox` | `items:read` | `list_items` |
+| `/w/:ws/agents/:slug/tasks` | `agent.tasks` | `tasks:read` | `list_fleet_tasks` |
 | `/w/:ws/agents/:slug/skills/history` | `agent.skill_history` | `skills:read` | `skill_history`, `skill_revision_diff` |
 
 All read-only. Each of those pages declares its selection with `usePageState`

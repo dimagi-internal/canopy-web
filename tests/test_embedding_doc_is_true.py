@@ -294,15 +294,15 @@ def test_the_doc_does_not_teach_a_dismiss_as_a_page_action(doc):
 
 
 def test_the_replacement_server_tool_is_actually_served(doc):
-    """§7 names `dismiss_item` as the server tool a dismiss belongs in. Asserted against the
+    """§7 names `act_on_task` as the server tool a decline belongs in. Asserted against the
     MOUNTED server, not the module — `page_tools.py` had ten passing tests and
     no import."""
     import asyncio
 
     from apps.mcp.server import mcp
 
-    assert "dismiss_item" in doc
-    assert "dismiss_item" in {t.name for t in asyncio.run(mcp._list_tools())}
+    assert "act_on_task" in doc
+    assert "act_on_task" in {t.name for t in asyncio.run(mcp._list_tools())}
 
 
 def test_the_documented_read_tool_is_actually_served(doc):
