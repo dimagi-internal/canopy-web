@@ -185,34 +185,75 @@ def _remember(cfg, sid: str, wt: Path, project: str) -> None:
         tmp.replace(path)
 
 
-def forget(cfg, sid: str) -> bool:
-    """Drop `sid` from the index, so the session report stops naming it — closing a
-    desktop session. There is no emdash task to delete, and `open_sessions` reports
-    every indexed session whose worktree exists, so without this a close from the
-    web was retried every poll tick forever (5,103 times on one session, 2026-10-07)
-    while the session stayed on the feed. The worktree is left on disk: it may hold
-    uncommitted work, and nothing reads it once the session is unindexed."""
-    with _lock:
-        data = _index(cfg)
-        if data.pop(sid or "", None) is None:
-            return False
-        path = _index_path(cfg)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(path)
-        return True
-
-
 def worktree_for(cfg, sid: str) -> Path | None:
     entry = _index(cfg).get(sid or "")
-    if not entry:
+    if not entry or entry.get("closed_at"):
         return None
     wt = Path(entry["worktree"])
     return wt if wt.exists() else None
 
 
 def is_desktop_session(cfg, sid: str) -> bool:
-    return bool(sid) and sid in _index(cfg)
+    """A live desktop session of this runner's. A CLOSED one is not: nothing may
+    be delivered into it, and the next turn on its thread starts a fresh one."""
+    entry = _index(cfg).get(sid or "") if sid else None
+    return bool(entry) and not entry.get("closed_at")
+
+
+def _mark_closed(cfg, sid: str) -> None:
+    with _lock:
+        data = _index(cfg)
+        if sid not in data:
+            return
+        data[sid]["closed_at"] = int(time.time())
+        path = _index_path(cfg)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(path)
+
+
+def close(cfg, sid: str) -> str:
+    """Close a desktop session from the web — this runtime's half of canopy's close
+    (`close.close_session` is the emdash half, which deletes the emdash task).
+
+    Stop its running turn, retire it from the session report (the report's absence
+    is how canopy-web learns it closed), and remove its worktree when that loses
+    nothing. Returns "closed", or "absent" for a session already closed.
+
+    The worktree is removed only when it has no uncommitted changes, and its branch
+    is always kept: emdash's delete is a human's explicit act in emdash, this one
+    is a tap on a phone, and committed-or-kept is the line that tap cannot cross.
+    The session stays in the app's own sidebar — the app offers no way to archive
+    it from outside — but it no longer runs, is reported, or takes turns."""
+    entry = _index(cfg).get(sid)
+    if not entry or entry.get("closed_at"):
+        return "absent"
+    wt = Path(entry.get("worktree", ""))
+    if wt.exists() and channel_alive(wt / CHANNEL):
+        try:
+            res = stop(cfg, sid)
+            logger.info("desktop close %s: stop -> %s", sid, res.get("action"))
+        except Exception:  # noqa: BLE001 — a failed stop must not keep it open
+            logger.warning("desktop close %s: stop failed; closing anyway", sid, exc_info=True)
+    _mark_closed(cfg, sid)
+    if wt.exists():
+        # The runtime's own files are excluded from status (make_worktree), so
+        # anything listed is the session's work. A status that FAILED (not a
+        # checkout, a broken one) prints nothing too — it vouches for nothing, so
+        # it keeps the worktree exactly like a dirty one.
+        st = subprocess.run(["git", "-C", str(wt), "status", "--porcelain", "--untracked-files=normal"],
+                            capture_output=True, text=True, timeout=120)
+        if st.returncode != 0 or st.stdout.strip():
+            logger.info("desktop close %s: worktree %s kept (%s)", sid, wt,
+                        "uncommitted changes" if st.returncode == 0 else "git status failed")
+        else:
+            # From the main checkout, not from inside the worktree being removed.
+            common = _git(wt, "rev-parse", "--path-format=absolute", "--git-common-dir", check=False)
+            repo = Path(common).parent if common else wt
+            _git(repo, "worktree", "remove", "--force", str(wt), check=False)
+            logger.info("desktop close %s: worktree %s (branch kept)", sid,
+                        "removed" if not wt.exists() else "could not be removed")
+    return "closed"
 
 
 def transcript_path(sid: str, claude_home: Path | None = None) -> Path | None:
@@ -645,7 +686,7 @@ def open_sessions(cfg) -> list[dict]:
     rows = []
     for sid, entry in _index(cfg).items():
         wt = Path(entry.get("worktree", ""))
-        if not wt.exists():
+        if entry.get("closed_at") or not wt.exists():
             continue
         path = transcript_path(sid)
         try:
@@ -715,6 +756,10 @@ def maybe_execute(cfg, client, runner_id: str, turn: dict, thread_key: str) -> s
                                   project=turn.get("project") or "",
                                   workspace=turn.get("workspace_slug") or "")
     key = plan.get("emdash_task_id") if plan.get("reuse") else ""
+    if key and (_index(cfg).get(key) or {}).get("closed_at"):
+        # The thread's session was closed from the web: start a new DESKTOP
+        # session, not hand an id emdash never had to the emdash backend.
+        key = ""
     if key and is_desktop_session(cfg, key):
         run = TurnRun(cfg, client, runner_id, turn, thread_key, plan, reuse=key)
     elif key or _current != CLAUDE_DESKTOP:

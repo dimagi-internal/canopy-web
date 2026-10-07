@@ -559,6 +559,58 @@ def test_a_helper_that_timed_out_does_not_open_twice(monkeypatch):
     assert len(calls) == 1
 
 
+# ── closing a session from the web ──────────────────────────────────────────
+
+def _desktop_session(cfg, tmp_path, sid="sid-c1"):
+    repo = _repo(tmp_path)
+    wt = desktop.make_worktree(cfg, repo, "HEAD", "c-close-me-ab12")
+    desktop._remember(cfg, sid, wt, "scratch")
+    return repo, wt
+
+
+def test_close_retires_a_desktop_session_and_keeps_its_branch(cfg, tmp_path, monkeypatch):
+    """Close used to look the id up in emdash, find nothing, call it 'already
+    gone' — and the session kept running and came back on the next report."""
+    from canopy_runner import close as close_mod, sessions
+
+    monkeypatch.setattr(sessions, "_PENDING_CLOSED", set())
+    repo, wt = _desktop_session(cfg, tmp_path)
+    assert [r["emdash_task"] for r in desktop.open_sessions(cfg)] == ["sid-c1"]
+
+    assert close_mod.close_session("sid-c1", cfg=cfg, emdash_db="/nonexistent") == "closed"
+    assert desktop.open_sessions(cfg) == []          # no longer reported as open
+    assert not desktop.is_desktop_session(cfg, "sid-c1")
+    assert desktop.worktree_for(cfg, "sid-c1") is None
+    assert "sid-c1" in sessions._PENDING_CLOSED      # canopy is told on the next report
+    assert not wt.exists()                           # clean worktree: removed
+    branches = subprocess.run(["git", "-C", str(repo), "branch", "--list", "canopy-desktop/*"],
+                              capture_output=True, text=True).stdout
+    assert "c-close-me-ab12" in branches             # but the branch is kept
+    assert desktop.close(cfg, "sid-c1") == "absent"  # a double tap is a no-op
+
+
+def test_close_keeps_a_worktree_holding_uncommitted_work(cfg, tmp_path):
+    _, wt = _desktop_session(cfg, tmp_path)
+    (wt / "notes.txt").write_text("not committed")
+    assert desktop.close(cfg, "sid-c1") == "closed"
+    assert (wt / "notes.txt").read_text() == "not committed"
+    assert desktop.open_sessions(cfg) == []
+
+
+def test_a_turn_on_a_closed_sessions_thread_opens_a_new_desktop_session(cfg, tmp_path, monkeypatch):
+    _desktop_session(cfg, tmp_path)
+    desktop.close(cfg, "sid-c1")
+    monkeypatch.setattr(desktop, "_current", desktop.CLAUDE_DESKTOP)
+    started = []
+    monkeypatch.setattr(desktop.TurnRun, "run", lambda self: started.append(self.reuse))
+    client = FakeClient(plan={"reuse": True, "emdash_task_id": "sid-c1"})
+    action = desktop.maybe_execute(cfg, client, "r", _turn(), "th")
+    assert action and action.startswith("desktop:create:")  # not handed to emdash
+    for th in list(desktop.IN_FLIGHT.values()):
+        th.join(5)
+    assert started == [""]
+
+
 def test_closing_a_desktop_session_drops_it_from_the_report(cfg, tmp_path, monkeypatch):
     """There is no emdash task to delete, so the old close found none, said "already
     gone", and the next report named the session open again — retried every tick,
@@ -574,7 +626,7 @@ def test_closing_a_desktop_session_drops_it_from_the_report(cfg, tmp_path, monke
     sessions._PENDING_CLOSED.clear()
     assert [r["emdash_task"] for r in desktop.open_sessions(cfg)] == ["sid-close"]
 
-    assert close.close_session("sid-close", project="hal", cfg=cfg) == "forgotten"
+    assert close.close_session("sid-close", project="hal", cfg=cfg) == "closed"
     assert desktop.open_sessions(cfg) == []
     assert sessions._PENDING_CLOSED == {"sid-close"}
-    assert wt.exists()  # may hold uncommitted work
+    assert wt.exists()  # not a git checkout git can vouch for: never removed
