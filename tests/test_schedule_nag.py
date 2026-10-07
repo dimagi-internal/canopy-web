@@ -118,6 +118,47 @@ def test_approving_the_nag_re_runs_the_schedule(agent, schedule):
     assert _open_nags(agent) == []  # approved -> out of the inbox
 
 
+def test_resolving_skips_a_nag_a_person_already_closed(agent, schedule):
+    """A person approved the nag before the later occurrence finished: resolving
+    must leave their decision alone and count nothing."""
+    from apps.harness.schedule_turns import resolve_schedule_nags
+
+    turn, _ = hsvc.fire_schedule(schedule, SLOT)
+    _claimed_long_ago(turn, minutes=200)
+    hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
+    nag = _open_nags(agent)[0]
+    agent_services.act(nag, action="approve", by="jj@dimagi.com", actor_workspace_ids=set())
+
+    assert resolve_schedule_nags(schedule.id) == 0
+    nag.refresh_from_db()
+    assert nag.status == AgentTask.IN_PROGRESS
+    assert list(nag.actions.values_list("action", flat=True)) == [AgentTaskAction.APPROVE]
+
+
+def test_resolving_survives_a_nag_closed_mid_sweep(agent, schedule, monkeypatch):
+    """The race: the open-nag read is unlocked, so a person can close the nag
+    between that read and act()'s lock. act() raises ClosedAskError; the sweep runs
+    inside finish_turn for an unrelated turn and must swallow it, not fail."""
+    from apps.harness.schedule_turns import resolve_schedule_nags
+
+    turn, _ = hsvc.fire_schedule(schedule, SLOT)
+    _claimed_long_ago(turn, minutes=200)
+    hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
+    nag = _open_nags(agent)[0]
+
+    real_act = agent_services.act
+
+    def person_got_there_first(task, **kw):
+        real_act(AgentTask.objects.get(pk=task.pk), action="decline", by="jj@dimagi.com",
+                 actor_workspace_ids=set())
+        return real_act(task, **kw)
+
+    monkeypatch.setattr(agent_services, "act", person_got_there_first)
+
+    assert resolve_schedule_nags(schedule.id) == 0
+    assert list(nag.actions.values_list("by", flat=True)) == ["jj@dimagi.com"]
+
+
 def test_a_schedule_that_opts_out_of_the_inbox_channel_does_not_nag(agent, schedule):
     schedule.notify = ["carrier_pigeon"]  # no "inbox" channel
     schedule.save()

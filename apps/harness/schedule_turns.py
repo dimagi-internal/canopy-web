@@ -338,6 +338,13 @@ def resolve_schedule_nags(schedule_id: int) -> int:
         .exclude(ask_kind="")
     )
     for task in open_nags:
-        agent_services.act(task, action="decline", by="system:schedule", actor_workspace_ids=set())
+        # The read above is unlocked: a person may approve/decline the nag before
+        # act() takes its lock. That is a closed nag, not an error — and this runs
+        # inside finish_turn for an unrelated turn, which must not fail over it.
+        try:
+            agent_services.act(task, action="decline", by="system:schedule",
+                               actor_workspace_ids=set())
+        except agent_services.ClosedAskError:
+            continue
         count += 1
     return count

@@ -65,6 +65,38 @@ def test_bad_on_approve_rolls_back_and_ask_stays_open(world):
     assert not task.actions.exists() and not Turn.objects.exists()
 
 
+def test_bad_second_on_approve_rolls_back_the_first_turn(world):
+    """The first spec IS enqueued before the second one raises — the rollback has
+    to take that turn with it, or the work runs once and the ask stays open."""
+    u, ws, agent = world
+    task = _review(agent, on_approve=[{"prompt": "/eva:turn go"},
+                                      {"prompt": "x", "target_agent": "nobody"}])
+    with pytest.raises(ValueError):
+        _act(task, u, ws, "approve")
+    task.refresh_from_db()
+    assert task.ask_is_open and task.status == AgentTask.SUGGESTED
+    assert Turn.objects.count() == 0 and not task.actions.exists()
+
+
+@pytest.mark.parametrize("finished", [AgentTask.DONE, AgentTask.DECLINED])
+@pytest.mark.parametrize("action", ["approve", "decline"])
+def test_approve_or_decline_on_a_finished_plain_task_is_refused(world, finished, action):
+    u, ws, agent = world
+    task = services.create_tasks(agent, [{"title": "shipped", "status": finished}])[0]
+    with pytest.raises(services.ClosedAskError):
+        _act(task, u, ws, action)
+    task.refresh_from_db()
+    assert task.status == finished and not task.actions.exists()
+
+
+@pytest.mark.parametrize("live", [AgentTask.SUGGESTED, AgentTask.IN_PROGRESS])
+def test_approve_on_a_live_plain_task_is_allowed(world, live):
+    u, ws, agent = world
+    task = services.create_tasks(agent, [{"title": "work", "status": live}])[0]
+    task, row, _ = _act(task, u, ws, "approve")
+    assert task.status == AgentTask.IN_PROGRESS and row.action == AgentTaskAction.APPROVE
+
+
 def test_second_approve_on_closed_ask_is_refused(world):
     u, ws, agent = world
     task = _review(agent)
@@ -118,7 +150,7 @@ def test_unknown_action_is_refused(world):
 def test_dispatch_is_pending_and_done_closes(world):
     u, ws, agent = world
     t = _review(agent)
-    _t, row, _ = _act(t, u, ws, "dispatch")
+    t, row, _ = _act(t, u, ws, "dispatch")
     assert row.status == AgentTaskAction.PENDING and t.ask_is_open
     t, _row, _ = _act(t, u, ws, "done")
     assert t.status == AgentTask.DONE and not t.ask_is_open

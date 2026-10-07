@@ -697,9 +697,13 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
 
     task = (AgentTask.objects.select_for_update(of=("self",))
             .select_related("agent", "project").get(pk=task.pk))
-    if action in (AgentTaskAction.APPROVE, AgentTaskAction.DECLINE) and task.ask_kind \
-            and not task.ask_is_open:
-        raise ClosedAskError(f"{task.agent.slug}/{task.ext_id} has no open ask")
+    if action in (AgentTaskAction.APPROVE, AgentTaskAction.DECLINE):
+        if task.ask_kind and not task.ask_is_open:
+            raise ClosedAskError(f"{task.agent.slug}/{task.ext_id} has no open ask")
+        # A plain task with nothing to ask is approvable/declinable only while it
+        # is live — approving a finished one would quietly re-open it.
+        if not task.ask_kind and task.status not in LIVE_STATUSES:
+            raise ClosedAskError(f"{task.agent.slug}/{task.ext_id} is already {task.status}")
 
     closes, status, follow_up = _EFFECT[action]
     if action == AgentTaskAction.REPLY:
