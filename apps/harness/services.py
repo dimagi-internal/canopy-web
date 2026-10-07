@@ -896,6 +896,16 @@ def finish_turn(
         RunnerDrill.objects.filter(
             turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
         ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=summary, finished_at=now)
+    # A turn that has really ENDED failed — not requeued sessionless, not a rider
+    # sent back to wait (both returned above) — starts a debugger turn
+    # (apps/harness/auto_debug.py: deduplicated by fingerprint, capped fleet-wide,
+    # and never for a drill, a human's stop, or a debug turn of its own). Jonathan
+    # 2026-10-07, after an ACE Slack turn failed and nothing looked at it.
+    # on_turn_failed never raises: a debug turn is never worth a failed finish.
+    if status == Turn.FAILED:
+        from . import auto_debug
+
+        auto_debug.on_turn_failed(turn)
     return turn
 
 

@@ -213,6 +213,11 @@ GATES: dict[str, tuple[str, ...]] = {
     "start_runner_drill": ("runner-admin", "agent-admin"),  # agent admin of each drilled agent unless runner owner
     "list_runner_drills": ("runner-admin", "logs.read"),
     "report_drill": ("signed-link", "runner"),  # ?t= link, the drilled agent's own login, or the owner
+    # --- apps/harness/api_investigations.py — auto_debug.can_handle: the workspace's
+    # log readers, the debugger agent's admins, or the debugger's own login (Agent.user)
+    "list_failure_investigations": ("logs.read", "agent-admin"),
+    "get_failure_investigation": ("logs.read", "agent-admin"),
+    "resolve_failure_investigation": ("logs.read", "agent-admin"),
     # --- apps/harness/api_schedules.py
     "schedule_week": ("member",),
     "list_schedules": ("member",),

@@ -95,6 +95,15 @@ def sweep_expired_leases() -> int:
                 RunnerDrill.objects.filter(
                     turn=turn, outcome=RunnerDrill.OUTCOME_PENDING
                 ).update(outcome=RunnerDrill.OUTCOME_FAIL, summary=summary, finished_at=now)
+            # finish_turn's auto-debug hook, mirrored for the same reason as the
+            # drill hook above: this update bypasses finish_turn. It acts on LOST
+            # only when CANOPY_AUTO_DEBUG_LOST is on (default off — a laptop that
+            # slept mid-turn is the commonest LOST and is not a bug). Never raises.
+            if status == Turn.LOST:
+                from . import auto_debug
+
+                turn.refresh_from_db()
+                auto_debug.on_turn_failed(turn)
     return count
 
 

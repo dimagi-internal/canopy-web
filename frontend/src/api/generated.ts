@@ -5166,6 +5166,72 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/failure-investigations/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List failure investigations
+         * @description Turn failures canopy grouped by fingerprint and handed to the debugger
+         *     agent, newest first. `status`: open (a debug turn has it), held (the rate cap
+         *     stopped its turn; it rides along in the next one), debugger_failed (its debug
+         *     turn failed), resolved, escalated (it came back after a fix).
+         */
+        readonly get: operations["list_failure_investigations"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/failure-investigations/{investigation_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get one failure investigation
+         * @description One investigation: the normalized failure, its latest raw note, the recent
+         *     failed turns, the agents and runners it hit, and its debug turn.
+         */
+        readonly get: operations["get_failure_investigation"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/failure-investigations/{investigation_id}/resolve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Resolve a failure investigation
+         * @description Mark the failure fixed, saying what was changed. If the same failure comes
+         *     back afterwards, canopy sends it to the debugger once more framed as an
+         *     escalation (the fix did not hold), then only counts further repeats.
+         */
+        readonly post: operations["resolve_failure_investigation"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/huddles/": {
         readonly parameters: {
             readonly query?: never;
@@ -14445,6 +14511,71 @@ export interface components {
              */
             readonly summary: string;
         };
+        /**
+         * FailureInvestigationOut
+         * @description One kind of turn failure and what the debugger agent did about it.
+         */
+        readonly FailureInvestigationOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace Slug */
+            readonly workspace_slug: string;
+            /** Fingerprint */
+            readonly fingerprint: string;
+            /** Status */
+            readonly status: string;
+            /** Normalized Note */
+            readonly normalized_note: string;
+            /** Sample Note */
+            readonly sample_note: string;
+            /** Occurrences */
+            readonly occurrences: number;
+            /**
+             * First Seen
+             * Format: date-time
+             */
+            readonly first_seen: string;
+            /**
+             * Last Seen
+             * Format: date-time
+             */
+            readonly last_seen: string;
+            /** Turn Ids */
+            readonly turn_ids: readonly string[];
+            /** Agents */
+            readonly agents: readonly string[];
+            /** Runners */
+            readonly runners: readonly string[];
+            /** Recurred After Resolve */
+            readonly recurred_after_resolve: boolean;
+            /** Debug Turn Id */
+            readonly debug_turn_id: string | null;
+            /** Triggers */
+            readonly triggers: number;
+            /** Resolved At */
+            readonly resolved_at: string | null;
+            /** Resolution Note */
+            readonly resolution_note: string;
+        };
+        /** Page[FailureInvestigationOut] */
+        readonly Page_FailureInvestigationOut_: {
+            /** Items */
+            readonly items: readonly components["schemas"]["FailureInvestigationOut"][];
+            /** Total */
+            readonly total: number;
+            /** Offset */
+            readonly offset: number;
+            /** Limit */
+            readonly limit: number;
+        };
+        /** ResolveInvestigationIn */
+        readonly ResolveInvestigationIn: {
+            /**
+             * Note
+             * @description What was wrong and what you changed to fix it.
+             */
+            readonly note: string;
+        };
         /** HuddleSummaryOut */
         readonly HuddleSummaryOut: {
             /** Id */
@@ -22488,6 +22619,78 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerDrillOut"];
+                };
+            };
+        };
+    };
+    readonly list_failure_investigations: {
+        readonly parameters: {
+            readonly query?: {
+                readonly status?: ("open" | "held" | "debugger_failed" | "resolved" | "escalated") | null;
+                readonly limit?: number;
+                readonly offset?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Page_FailureInvestigationOut_"];
+                };
+            };
+        };
+    };
+    readonly get_failure_investigation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly investigation_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FailureInvestigationOut"];
+                };
+            };
+        };
+    };
+    readonly resolve_failure_investigation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly investigation_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ResolveInvestigationIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FailureInvestigationOut"];
                 };
             };
         };
