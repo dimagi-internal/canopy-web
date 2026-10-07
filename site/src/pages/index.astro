@@ -65,9 +65,9 @@ const layers = [
   .rung.us { background: var(--indigo); border-color: var(--indigo); }
   .rung.us b { color: rgba(255,255,255,0.7); }
   .rung.us span { color: #fff; }
-  .rung:nth-child(1) { min-height: 150px; } .rung:nth-child(2) { min-height: 180px; }
-  .rung:nth-child(3) { min-height: 210px; } .rung:nth-child(4) { min-height: 240px; }
-  .rung:nth-child(5) { min-height: 270px; } .rung:nth-child(6) { min-height: 300px; }
+  .r1 { min-height: 150px; } .r2 { min-height: 180px; } .r3 { min-height: 210px; }
+  .r4 { min-height: 240px; } .r5 { min-height: 270px; } .r6 { min-height: 300px; }
+  .rung-group { display: none; }
   .ladder-legend { display: grid; grid-template-columns: 1fr 1fr; margin-top: 16px; font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
   .ladder-legend span:last-child { text-align: right; color: var(--indigo); }
 
@@ -100,12 +100,24 @@ const layers = [
   .person p { margin: 10px 0 0; color: var(--muted); font-size: 16px; }
 
   @media (max-width: 980px) {
-    .ladder { grid-template-columns: 1fr 1fr; align-items: stretch; }
-    .rung { min-height: 0 !important; border-radius: var(--radius); }
-    .ladder-legend { display: none; }
     .tiles-3, .tiles-5, .cards, .people { grid-template-columns: 1fr 1fr; }
     .shots-pair { grid-template-columns: 1fr; gap: 24px; }
     .band { grid-template-columns: 1fr; gap: 4px; }
+  }
+  /* Phones: the ladder turns on its side. Each step is a row that grows longer
+     than the one before, so the bars still climb, and the two groups get their
+     labels back inline. A 2x3 grid of equal boxes lost the idea of a ladder. */
+  @media (max-width: 760px) {
+    .ladder { grid-template-columns: 1fr; gap: 8px; align-items: start; }
+    .rung { flex-direction: row; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 6px var(--radius) var(--radius) 6px; min-height: 84px; }
+    .rung b { align-self: center; }
+    .rung span { font-size: 15px; }
+    .r1 { width: 52%; } .r2 { width: 62%; } .r3 { width: 71%; }
+    .r4 { width: 81%; } .r5 { width: 90%; } .r6 { width: 100%; }
+    .rung-group { display: block; margin: 14px 0 2px; font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+    .rung-group:first-child { margin-top: 0; }
+    .rung-group.us { color: var(--indigo); }
+    .ladder-legend { display: none; }
   }
   @media (max-width: 600px) {
     .section { padding: 72px 0; }
@@ -153,10 +165,14 @@ const layers = [
       </div>
       <div class="ladder" role="list">
         {rungs.map((label, i) => (
-          <div class={`rung${i >= 3 ? ' us' : ''}`} role="listitem">
-            <b>{i + 1}</b>
-            <span>{label}</span>
-          </div>
+          <>
+            {i === 0 && <div class="rung-group" aria-hidden="true">Me and AI</div>}
+            {i === 3 && <div class="rung-group us" aria-hidden="true">Us and AI · where Canopy works</div>}
+            <div class={`rung r${i + 1}${i >= 3 ? ' us' : ''}`} role="listitem">
+              <b>{i + 1}</b>
+              <span>{label}</span>
+            </div>
+          </>
         ))}
       </div>
       <div class="ladder-legend" aria-hidden="true"><span>Me and AI</span><span>Us and AI · where Canopy works</span></div>
