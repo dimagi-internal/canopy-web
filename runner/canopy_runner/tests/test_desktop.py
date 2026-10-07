@@ -532,3 +532,24 @@ def test_a_helper_that_timed_out_does_not_open_twice(monkeypatch):
     calls = _record_runs(monkeypatch, [subprocess.TimeoutExpired("osascript", 18)])
     desktop.open_session("sid-9")
     assert len(calls) == 1
+
+
+def test_closing_a_desktop_session_drops_it_from_the_report(cfg, tmp_path, monkeypatch):
+    """There is no emdash task to delete, so the old close found none, said "already
+    gone", and the next report named the session open again — retried every tick,
+    forever, with the session stuck on the feed (2026-10-07)."""
+    from canopy_runner import close, sessions
+
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    desktop._remember(cfg, "sid-close", wt, "hal")
+    monkeypatch.setattr(desktop, "transcript_path", lambda sid, claude_home=None: None)
+    monkeypatch.setattr(close.cdp_control, "close_task",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no emdash delete")))
+    sessions._PENDING_CLOSED.clear()
+    assert [r["emdash_task"] for r in desktop.open_sessions(cfg)] == ["sid-close"]
+
+    assert close.close_session("sid-close", project="hal", cfg=cfg) == "forgotten"
+    assert desktop.open_sessions(cfg) == []
+    assert sessions._PENDING_CLOSED == {"sid-close"}
+    assert wt.exists()  # may hold uncommitted work
