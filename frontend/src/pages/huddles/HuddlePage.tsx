@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { getHuddle, type Huddle } from '@/api/huddles'
 import { relativeTime } from '@/components/activity/turnLog'
-import { ArcLegend, HuddleGrid, MemberAvatar } from './HuddleGrid'
+import { HuddleConversation } from './HuddleConversation'
+import { MemberAvatar } from './HuddleGrid'
 import { HuddleOutcome, Linkified } from './HuddleOutcome'
 import { columns, countdown, roundName, roundsToShow } from './huddleModel'
 
@@ -11,8 +12,8 @@ import { columns, countdown, roundName, roundsToShow } from './huddleModel'
  * One huddle, outcome first: what was decided — each filed proposal with the
  * board tasks it became (LIVE status), each held one with why — then the
  * conversation that got there (members × rounds, with the co-sign arcs) and the
- * leader's emailed close. The conversation is open but compact — each card a
- * few lines, expanding in place — so the flow reads at a glance under the outcome. Polls while the
+ * leader's emailed close. The conversation opens as a readable transcript (by
+ * agent or by proposal), with the rounds × members map one switch away. Polls while the
  * huddle is in flight; everything on it is derived server-side from turns and
  * tasks (apps/huddles).
  */
@@ -84,7 +85,6 @@ export function HuddlePage() {
   const [huddle, setHuddle] = useState<Huddle | null>(null)
   const [error, setError] = useState('')
   const [now, setNow] = useState(() => new Date())
-  const [showArcs, setShowArcs] = useState(true)
   // Open by default: the cards start compact, so the whole flow fits under the
   // outcome instead of the ~7,500px wall it used to be.
   const [showConversation, setShowConversation] = useState(true)
@@ -193,24 +193,14 @@ export function HuddlePage() {
         </button>
         {!showConversation && (
           <p className="mt-2 text-[12px] text-muted-foreground">
-            How the team got here: each member&apos;s report, proposals, and co-sign answers, round by round.
+            How the team got here: what the leader asked each member, what they said back, and how they answered each other&apos;s proposals.
           </p>
         )}
       </section>
 
-      {/* The conversation breaks out of the page column: it is as wide as the
-          team, and a fleet of five does not fit the reading width. */}
       {showConversation && (
-        <section id="huddle-conversation" className="relative left-1/2 mt-4 w-[min(calc(100vw-3rem),1800px)] -translate-x-1/2">
-          <div className="mb-3 hidden flex-wrap items-center justify-end gap-x-4 gap-y-2 md:flex">
-            {showArcs && <ArcLegend />}
-            {showArcs && <span className="hidden text-[11px] text-foreground-subtle lg:inline">hover a proposal or answer to trace it</span>}
-            <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-muted-foreground">
-              <input type="checkbox" checked={showArcs} onChange={(e) => setShowArcs(e.target.checked)} className="accent-[var(--primary)]" />
-              co-sign arcs
-            </label>
-          </div>
-          <HuddleGrid huddle={huddle} showArcs={showArcs} />
+        <section id="huddle-conversation" aria-label="The conversation" className="mt-4">
+          <HuddleConversation huddle={huddle} />
         </section>
       )}
       {error && <p className="mt-4 text-[12px] text-warning">Live refresh paused: {error}</p>}
