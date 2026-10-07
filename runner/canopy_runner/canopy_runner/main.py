@@ -1065,7 +1065,7 @@ def make_control_handler(cfg: Config, waker, client=None):
                 close.close_session(str(msg["session_key"]),
                                     project=str(msg.get("project") or ""),
                                     cdp_port=cfg.cdp_port,
-                                    emdash_db=getattr(cfg, "emdash_db", None))
+                                    emdash_db=getattr(cfg, "emdash_db", None), cfg=cfg)
             except Exception:  # noqa: BLE001
                 logger.warning("close failed for %s", msg.get("session_key"),
                                exc_info=True)

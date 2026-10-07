@@ -194,7 +194,7 @@ def drain_closes(cfg: Config, client: Client) -> None:
             continue
         try:
             close_mod.close_session(session_key, project=c.get("project") or "",
-                                    cdp_port=cfg.cdp_port, emdash_db=cfg.emdash_db)
+                                    cdp_port=cfg.cdp_port, emdash_db=cfg.emdash_db, cfg=cfg)
             logger.info("closed %s from the poll tick", session_key)
         except Exception:  # noqa: BLE001
             # Left set: the server clears it when the task stops being reported,

@@ -31,7 +31,7 @@ _warned: set[str] = set()
 
 
 def close_session(session_key: str, *, project: str = "", cdp_port: int = 9222,
-                  emdash_db: str | None = None) -> str:
+                  emdash_db: str | None = None, cfg=None) -> str:
     """Delete `session_key`'s emdash task — the one under `project` — and queue its
     closing signal.
 
@@ -42,7 +42,19 @@ def close_session(session_key: str, *, project: str = "", cdp_port: int = 9222,
     Raises CloseRefused, touching nothing, when the project cannot be resolved
     (see session_target) — never a delete by name alone. Raises CDPError if the
     delete could not be completed. The caller logs either and moves on.
+
+    A Claude desktop session (keyed by its session id) is closed by its own
+    runtime. Looking it up in emdash found nothing, read as "already gone": canopy
+    was told it closed while it kept running, and the next report reopened it.
     """
+    if cfg is not None:
+        from . import desktop
+
+        if desktop.is_desktop_session(cfg, session_key):
+            action = desktop.close(cfg, session_key)
+            sessions.request_close_report(session_key)
+            logger.info("closed desktop session %s (%s)", session_key, action)
+            return action
     target = session_target.resolve(emdash_db, session_key, project)
     if target.reason == session_target.ABSENT:
         sessions.request_close_report(session_key)
