@@ -117,15 +117,6 @@ class RunDocDetailOut(RunDocOut):
     state: dict
 
 
-class AgentProjectRefOut(StrictModel):
-    agent_slug: str
-    ext_id: str
-    name: str
-    outcome: str
-    repo_slug: str
-    status: str
-
-
 # ---- helpers ----------------------------------------------------------------
 
 
@@ -281,28 +272,6 @@ def list_run_docs(
     elif active is False:
         qs = qs.exclude(status__in=[RUNNING, ""])
     return [_out(r) for r in qs.order_by("-created_at")[: max(1, min(limit, 500))]]
-
-
-@router.get("/projects/", response=list[AgentProjectRefOut], summary="Agent projects across agents")
-def list_agent_projects(
-    request: HttpRequest, repo_slug: str | None = None, status: str = "active"
-) -> list[AgentProjectRefOut]:
-    """Every visible agent's projects (optionally touching ``repo_slug``) — the
-    choices a runner offers when a narrative is not yet bound to a project."""
-    from apps.agents.models import AgentProject
-
-    qs = AgentProject.objects.select_related("agent").filter(agent__in=_visible_agents(request))
-    if repo_slug:
-        qs = qs.filter(repo_slug=repo_slug)
-    if status:
-        qs = qs.filter(status=status)
-    return [
-        AgentProjectRefOut(
-            agent_slug=p.agent.slug, ext_id=p.ext_id, name=p.name,
-            outcome=p.outcome, repo_slug=p.repo_slug, status=p.status,
-        )
-        for p in qs.order_by("agent__slug", "-updated_at")
-    ]
 
 
 @router.post("/", response={201: RunDocDetailOut}, summary="Start (or adopt) a run document")

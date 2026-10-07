@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import datetime as dt
-import uuid as uuid_mod
 import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import AliasChoices, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 from apps.common.schemas import StrictModel
@@ -17,6 +16,7 @@ from apps.common.schemas import StrictModel
 from apps.harness.schemas import (
     LEGACY_SESSION_KEY,
     RoutableSource,
+    TurnSpecIn,
     adopt_legacy_session_key,
 )
 
@@ -360,7 +360,6 @@ class AgentDetailOut(AgentOut):
     is_admin: bool = False
     can_manage_admins: bool = False
     sync_count: int = 0
-    work_product_count: int = 0
     skill_count: int = 0
     task_count: int = 0
     turn_count: int = 0
@@ -545,32 +544,6 @@ class AgentTurnOut(StrictModel):
     has_transcript: bool = False
 
 
-# ---- Work products ----
-class AgentWorkProductIn(StrictModel):
-    title: str = Field(min_length=1, max_length=200)
-    kind: str = Field(default="", max_length=40)
-    url: str = Field(min_length=1, max_length=500)
-    description: str = ""
-    tags: list[str] = Field(default_factory=list)
-    source: str = Field(default="", max_length=100)
-
-
-class AgentWorkProductBatchIn(StrictModel):
-    work_products: list[AgentWorkProductIn] = Field(min_length=1)
-
-
-class AgentWorkProductOut(StrictModel):
-    id: int
-    agent_slug: str
-    title: str
-    kind: str
-    url: str
-    description: str
-    tags: list[str] = Field(default_factory=list)
-    source: str
-    created_at: dt.datetime
-
-
 # ---- Skill catalog ----
 class AgentSkillIn(StrictModel):
     name: str = Field(min_length=1, max_length=120)
@@ -600,7 +573,7 @@ class AgentSkillOut(StrictModel):
     updated_at: dt.datetime
 
 
-# ---- tasks (source: a Google Sheet; rendered as a board) ----
+# ---- projects and tasks ----
 class AgentTaskLink(StrictModel):
     label: str = Field(min_length=1, max_length=200)
     url: str = Field(min_length=1, max_length=500)
@@ -652,7 +625,14 @@ class AgentProjectOut(StrictModel):
 
 
 class AgentTaskIn(StrictModel):
-    ext_id: str = Field(min_length=1, max_length=64)
+    """One task to create. `POST /tasks/` takes a LIST of these.
+
+    `idempotency_key` makes a create safe to retry: a key already seen returns
+    the task it made instead of making another. `ext_id` is assigned (T1, T2 …)
+    when omitted — pass it only to mirror an id the agent already uses.
+    """
+
+    ext_id: str = Field(default="", max_length=64)
     #: The project this task belongs to, by its `ext_id` ("P3") or numeric id.
     #: Empty means a one-off, which plenty of work legitimately is.
     project: str = Field(default="", max_length=64)
@@ -661,6 +641,8 @@ class AgentTaskIn(StrictModel):
     status: str = "suggested"  # normalized server-side
     owner: str = Field(default="", max_length=120)
     assigned: str = Field(default="", max_length=120)
+    #: Who the next step waits on, by email — a member of the agent's workspace.
+    waiting_on_email: str = Field(default="", max_length=254)
     confidence: str = Field(default="", max_length=10)
     score: str = Field(default="", max_length=8)
     review: str = ""
@@ -671,35 +653,44 @@ class AgentTaskIn(StrictModel):
     links: list[AgentTaskLink] = Field(default_factory=list)
     notes: str = ""
     position: int = 0
-    source: str = Field(default="", max_length=100)
-
-
-class AgentTaskSyncIn(StrictModel):
-    """Full replacement of the agent's task board from the source sheet."""
-
-    tasks: list[AgentTaskIn] = Field(default_factory=list)
+    #: What the task asks a person, if anything: `review` ("should I do
+    #: this?") or `question` ("I need an answer"). Blank asks nothing.
+    ask_kind: Literal["", "review", "question"] = ""
+    ask_body: str = ""
+    #: The turns that run when the task is approved (or its question answered).
+    on_approve: list[TurnSpecIn] = Field(default_factory=list)
+    batch_key: str = Field(default="", max_length=64)
+    idempotency_key: str = Field(default="", max_length=128)
+    origin: str = Field(default="", max_length=32)
+    origin_ref: dict = Field(default_factory=dict)
+    #: The turn that raised this task, if any.
+    raised_by: uuid.UUID | None = None
 
 
 class AgentTaskOut(StrictModel):
-    id: int
+    """A task, addressed by `(agent_slug, ext_id)` — there is no other id."""
+
     agent_slug: str
     ext_id: str
     project_ext_id: str | None = None
     project_name: str | None = None
-    # The ask, where the task carries one (what an `Item` used to be). Blank
-    # `ask_kind` means the task asks nothing and is simply work in flight.
-    #: The ask's public id — what `/api/items/{id}/` addresses, and what a
-    #: migrated Item kept. Lets a client tell "this task's ask" and "that item"
-    #: apart as the same thing, which is what stops the inbox counting it twice.
-    uuid: uuid_mod.UUID
-    ask_kind: str = ""
-    ask_state: str = ""
-    waiting_on_email: str | None = None
     title: str
     next_action: str
     status: Literal["suggested", "in_progress", "done", "declined"]
     owner: str
     assigned: str
+    waiting_on_email: str | None = None
+    # The ask, where the task carries one. Blank `ask_kind` means the task asks
+    # nothing and is simply work in flight. Open until an action closes it.
+    ask_kind: str = ""
+    ask_body: str = ""
+    ask_open: bool = Field(default=False,
+                           validation_alias=AliasChoices("ask_is_open", "ask_open"))
+    ask_closed_at: dt.datetime | None = None
+    on_approve: list[dict] = Field(default_factory=list)
+    dispatched_at: dt.datetime | None = None
+    batch_key: str = ""
+    origin: str = ""
     confidence: str
     score: str
     review: str
@@ -710,6 +701,7 @@ class AgentTaskOut(StrictModel):
     links: list[AgentTaskLink] = Field(default_factory=list)
     notes: str
     position: int
+    created_at: dt.datetime
     updated_at: dt.datetime
 
 
@@ -741,44 +733,60 @@ class AgentTaskPatch(StrictModel):
     links: list[AgentTaskLink] | None = None
 
 
-# ---- task commands (the board's action queue) ----
-class AgentTaskCommandIn(StrictModel):
-    kind: Literal["accept", "decline", "dispatch", "reassign", "edit", "comment", "done"]
-    payload: dict = Field(default_factory=dict)  # reason / assignee / next_action / note
-    created_by: str = Field(default="", max_length=200)
+# ---- actions: everything a person does TO a task ----
+class AgentTaskActionIn(StrictModel):
+    #: approve · decline · reply (a reply needs a comment) · dispatch · done.
+    #: Field changes are a PATCH, not an action.
+    action: Literal["approve", "decline", "reply", "dispatch", "done"]
+    comment: str = ""
 
 
-class AgentCommandApplyIn(StrictModel):
+class AgentTaskActionOut(StrictModel):
+    id: int
+    agent_slug: str
+    task_ext_id: str
+    action: str
+    comment: str
+    by: str
+    #: `pending` until the agent has carried it out (its queue), then `applied`.
+    status: str
+    applied_at: dt.datetime | None = None
+    result_note: str
+    created_at: dt.datetime
+
+
+class AgentTaskDetailOut(AgentTaskOut):
+    #: Everything done to the task, newest first — "who approved this and why"
+    #: is the closing row.
+    actions: list[AgentTaskActionOut] = Field(default_factory=list)
+
+
+class ActOut(StrictModel):
+    task: AgentTaskOut
+    action: AgentTaskActionOut
+    #: Turns the action started (an approve or answer running `on_approve`).
+    turn_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class ActionAppliedIn(StrictModel):
     result_note: str = ""
 
 
-class AgentTaskCommandOut(StrictModel):
-    id: int
-    agent_slug: str
-    task_id: int | None = None
-    task_ext_id: str
-    task_title: str
-    kind: str
-    payload: dict = Field(default_factory=dict)
+class TurnBriefOut(StrictModel):
+    id: uuid.UUID
     status: str
-    created_by: str
-    result_note: str
+    #: The turn's title if it reported one, else the start of its prompt. Blank
+    #: when the caller may not read the turn's content (a turn's content is a log).
+    prompt_preview: str = ""
     created_at: dt.datetime
-    applied_at: dt.datetime | None = None
+    task_ext_ids: list[str] = Field(default_factory=list)
 
 
-class CommandResultOut(StrictModel):
-    """Returned when the UI posts a command: the queued command + the (maybe
-    immediately-updated) task."""
-
-    command: AgentTaskCommandOut
-    task: AgentTaskOut | None = None
-
-
-# The supervisor inbox is a pure query over AgentTask — `waiting_q()`: an open
-# ask, or a live task parked on a person — served by apps/harness/items_api.py.
-# No projection DTO lives here. (It read harness.Item until #873 moved every row
-# onto the task; that model is a tombstone.)
+class AgentProjectDetailOut(AgentProjectOut):
+    #: The project's tasks, live ones first.
+    tasks: list[AgentTaskOut] = Field(default_factory=list)
+    #: The agent's latest turns that worked on any of those tasks.
+    recent_turns: list[TurnBriefOut] = Field(default_factory=list)
 
 
 # ---- shared ----

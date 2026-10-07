@@ -105,8 +105,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "delete_sync": ("agent.work",),
     "agents_list_turns": ("member", "turn-content"),  # content redacted per turn_access
     "create_turn": ("agent.work",),
-    "list_work_products": ("member",),
-    "add_work_products": ("agent.work",),
     "list_skills": ("member",),
     "replace_skills": ("agent.work",),
     "get_skill_history": ("member",),  # may auto-sync (clone) on read
@@ -118,13 +116,15 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_project": ("member",),
     "patch_project": ("agent.work",),
     "list_tasks": ("member",),
-    "list_waiting_tasks": ("member",),
-    "sync_tasks": ("agent.work",),
-    "create_task": ("agent.work",),
+    "create_tasks": ("agent.work",),  # or the agent's own login
+    "get_task": ("member",),
     "patch_task": ("agent.work",),
-    "post_command": ("member", "agent.work"),  # comment/accept/decline = member; edit/reassign/done/dispatch = editor
-    "list_commands": ("member",),
-    "apply_command": ("agent.work",),
+    "act_on_task": ("member", "agent.work"),  # approve/decline/reply = member; dispatch/done = editor
+    "list_task_actions": ("member",),
+    "mark_task_action_applied": ("agent.work",),  # or the agent's own login
+    # --- apps/agents/fleet_api.py  (fleet-wide lists, scoped to visible agents)
+    "list_fleet_tasks": ("member",),
+    "list_fleet_projects": ("member",),
     "set_agent_credentials": ("agent-admin",),
     "agent_credential_status": ("member",),
     "resolve_agent_credentials": ("runner-holds-agent",),  # bearer only
@@ -221,13 +221,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "update_schedule": ("agent.work",),
     "delete_schedule": ("agent.work",),
     "run_schedule_now": ("agent.work",),
-    # --- apps/harness/items_api.py (asks; an item is a property of an AgentTask)
-    "list_agent_items": ("member",),
-    "create_items": ("member", "agent.work"),  # any member; a `dispatch` ask needs agent.work or the agent's own login
-    "list_items": ("member",),
-    "get_item": ("member",),
-    "decide_item": ("member",),
-    "dismiss_item": ("member",),
     # --- apps/canopy_sessions/api.py  (access.py: tenant, then four legs; write = owner/editor role)
     "create_session": ("member",),  # wsvc.current_workspace; any member may start a chat
     "canopy_sessions_list_sessions": ("session-acl",),  # readable_sessions
@@ -330,7 +323,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "embed_ws_ticket": ("self",),  # a one-time socket ticket standing for the caller's own delegated token  # mints a 15-min DelegatedToken for the caller
     # --- apps/agent_runs/documents.py  (run docs; mounted with agent_runs)
     "list_run_docs": ("member",),
-    "list_agent_projects": ("member",),
     "get_run_doc": ("member",),
     "create_run_doc": ("agent.work",),
     "put_run_doc_state": ("agent.work",),
@@ -466,16 +458,13 @@ GATES: dict[str, tuple[str, ...]] = {
 #: whose gate includes plain "member" must be here, with the reason a viewer may
 #: do it — or the route must be gated and its entry above changed.
 VIEWER_MAY_MUTATE: dict[str, str] = {
-    "post_command": "comment/accept/decline decide an item already on the board (interaction tier); reshaping kinds require agent.work",
+    "act_on_task": "approve/decline/reply answer what is already on the board (interaction tier); dispatch/done require agent.work",
     "check_agent_github": "re-probes the stored token against GitHub and records the result; grants and changes nothing",
     "delete_agent_github": "withdraws only the caller's OWN GitHub delegation",
     "pair_runner": "pairing grants nothing by itself: a box serves only workspaces where its owner holds agent.work (runner_tenant_slugs)",
     "resolve_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "record_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "preview_cron": "POST but read-only: computes next fire times, writes nothing",
-    "create_items": "raising a plain ask is interaction; an ask carrying `dispatch` needs agent.work",
-    "decide_item": "deciding an ask is what the viewer (interaction) tier is for",
-    "dismiss_item": "dismissing an ask is deciding it; the viewer tier",
     "create_session": "starting a chat with an agent is the interaction tier a viewer holds",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
 }
