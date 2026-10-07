@@ -5,12 +5,12 @@
    own inline <style>, and change colour, never type or spacing,
    so canopy keeps the scale and rhythm every Dimagi site shares.
 
-   Palette "Forest" (from assets/brand, the mark's greens):
-   - Forest        #123526  nav bar
-   - Forest deep   #0E241A  dark sections and footer
+   Palette "Forest, dark hero" (from assets/brand, the mark's greens):
+   - Forest deep   #0E241A  nav, hero and dark sections (#0B1F16 footer)
    - Canopy green  #1F6B4A  primary buttons, accents, <em> on light
-   - Leaf          #3FA374  the mark; the nav's Request access
-   - Pale leaf     #E8F2EC  hero and tinted surfaces
+   - Leaf          #3FA374  the mark; Request access on dark
+   - Mint          #8FDDB2  <em> and eyebrows on dark
+   - Pale leaf     #E8F2EC  tinted surfaces
    - Ink           #132A20  green-black text and headings
    - Paper         #F7FAF8  page ground, with green-grey lines
 
@@ -45,7 +45,6 @@
   --sky-tint: #EEF7F2;
   --paper-cool: #EEF7F2;
 
-  --canopy-forest: #123526;
   --canopy-forest-deep: #0E241A;
   --canopy-green: #1F6B4A;
   --canopy-leaf: #3FA374;
@@ -59,12 +58,12 @@
 }
 
 /* ── Chrome: nav bar and footer in the product colour ───────── */
-.nav-wrap { background: var(--canopy-forest); }
-footer { background: var(--canopy-forest-deep); }
+.nav-wrap { background: var(--canopy-forest-deep); border-bottom: 1px solid rgba(255,255,255,0.08); }
+footer { background: #0B1F16; }
 .nav-wrap .btn-primary { background: var(--canopy-leaf); color: #0B1F16; }
 .nav-wrap .btn-primary:hover { background: var(--sky); color: #0B1F16; }
 @media (max-width: 980px) {
-  .nav-links { background: var(--canopy-forest) !important; }
+  .nav-links { background: var(--canopy-forest-deep) !important; }
   /* Ported from SureAdhere's newer copy of the shared sheet (sureadhere.dimagi.com
      assets/styles.css): keep the logo full-size and move the CTAs out of the cramped
      bar into the open menu. The OCS copy vendored here predates this fix. */
@@ -94,13 +93,26 @@ footer { background: var(--canopy-forest-deep); }
 .btn-primary:hover { background: var(--indigo-deep); color: #fff; }
 .btn-on-dark:hover { background: var(--canopy-green); color: #fff; }
 
-/* ── Hero: pale leaf with one soft glow ─────────────────────── */
+/* ── Hero: dark forest with one leaf glow ───────────────────────
+   Dark hero, light body — like the sibling Dimagi sites, but in
+   canopy's own green rather than their navy (owner, 2026-10-07). */
 .hero {
+  --grad-text: linear-gradient(90deg, #8FDDB2 0%, #8FDDB2 100%);
   background:
-    radial-gradient(800px 380px at 100% 0%, rgba(63,163,116,0.16), transparent 65%),
-    var(--canopy-pale);
+    radial-gradient(900px 420px at 100% 0%, rgba(63,163,116,0.22), transparent 65%),
+    var(--canopy-forest-deep);
+  color: #F0F6F2;
 }
 .hero::before, .hero::after { display: none; }
+.hero h1.hero-title { color: #F0F6F2; }
+.hero .hero-sub, .hero .hero-note { color: #A8BDB1; }
+.hero .hero-note a { color: var(--sky); }
+.hero .eyebrow { color: var(--sky); }
+.hero .eyebrow::before { background: var(--sky); }
+.hero .btn-primary { background: var(--canopy-leaf); color: #0B1F16; }
+.hero .btn-primary:hover { background: var(--sky); color: #0B1F16; }
+.hero .btn-ghost { color: #F0F6F2; border-color: rgba(255,255,255,0.30); }
+.hero .btn-ghost:hover { background: #F0F6F2; color: var(--ink); border-color: #F0F6F2; }
 
 /* ── Dark sections: deep forest with one leaf glow ─────────── */
 .section.dark { background: var(--canopy-forest-deep); }
