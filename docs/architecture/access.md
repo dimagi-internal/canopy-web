@@ -248,6 +248,15 @@ VERSION 2): `who`, `verified` (THIS message), `relationship` (the agent role),
 * **`system_account`** — `{id, name, description, workspace}` when the asker is
   a system account (an automated sender, see "System accounts"); null for a
   person. The same object is in `who.system_account`.
+* **`unproven_member`** — `{email, role, this_message_grade, needs, note}` when an
+  email turn's sender stayed a `contact` although the address belongs to exactly
+  one canopy user who is a member of the agent's workspace (the lookup member
+  linking uses, `harness.services.address_holder`): THIS message graded below
+  `needs` (`dmarc` | `dkim_aligned`, `Contact.EMAIL_ALIGNED`), so it could not be
+  tied to their account. It tells the agent (and the owner) "your own member,
+  whose domain's mail authentication needs fixing", not "a stranger". It grants
+  nothing and changes no other field; null otherwise, including for a blocked
+  contact and any non-email turn (canopy-web#1265).
 
 Readers accept both spellings: `relationship: caller` means `contact`, `profile:
 restricted` means `confined` (`normalize_relationship`, `normalize_profile`; the

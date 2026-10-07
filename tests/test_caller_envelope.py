@@ -650,3 +650,77 @@ def test_version_2_renames_and_readers_accept_both():
     assert caller_context.normalize_profile("restricted") == "confined"
     assert caller_context.normalize_profile("confined") == "confined"
     assert caller_context.normalize_profile("full") == "full"
+
+
+# --- unproven_member: a member's mail that could not be tied to them (#1265) -------
+
+DKIM_ONLY = [{"name": "Authentication-Results",
+              "value": ("mx.google.com; dkim=pass header.i=@mail-provider.example; "
+                        "spf=pass smtp.mailfrom=llo-foo.org")}]
+
+
+@pytest.fixture()
+def editor(ctx):
+    from allauth.account.models import EmailAddress
+
+    _o, ws, _agent = ctx
+    u = User.objects.create_user("fatima", "fatima@llo-foo.org", "pw")
+    EmailAddress.objects.create(user=u, email=u.email, verified=True, primary=True)
+    WorkspaceMembership.objects.create(user=u, workspace=ws, role=WorkspaceMembership.EDITOR)
+    return u
+
+
+def test_a_member_whose_mail_is_only_dkim_is_named_but_stays_a_contact(ctx, editor):
+    _o, _ws, agent = ctx
+    turn = _email(agent, headers=DKIM_ONLY)
+    assert turn.initiator_assurance == Contact.AUTH_DKIM
+    env = caller_context.build(turn)
+    assert env["relationship"] == caller_context.CONTACT        # nothing granted
+    assert env["verified"] is False
+    um = env["unproven_member"]
+    assert um["email"] == "fatima@llo-foo.org"
+    assert um["role"] == WorkspaceMembership.EDITOR
+    assert um["this_message_grade"] == Contact.AUTH_DKIM
+    assert um["needs"] == [Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED]
+    assert "DKIM" in um["note"] and "not their access" in um["note"]
+
+
+def test_a_member_whose_mail_is_aligned_resolves_as_a_member_with_no_note(ctx, editor):
+    _o, _ws, agent = ctx
+    env = caller_context.build(_email(agent, headers=HDRS))
+    assert env["relationship"] == caller_context.MEMBER
+    assert env["unproven_member"] is None
+
+
+def test_a_non_member_with_dkim_mail_gets_no_note(ctx):
+    from allauth.account.models import EmailAddress
+
+    _o, _ws, agent = ctx
+    u = User.objects.create_user("fatima", "fatima@llo-foo.org", "pw")
+    EmailAddress.objects.create(user=u, email=u.email, verified=True, primary=True)
+    env = caller_context.build(_email(agent, headers=DKIM_ONLY))
+    assert env["relationship"] == caller_context.CONTACT
+    assert env["unproven_member"] is None
+
+
+def test_an_unknown_address_gets_no_note(ctx):
+    _o, _ws, agent = ctx
+    assert caller_context.build(_email(agent, headers=DKIM_ONLY))["unproven_member"] is None
+
+
+def test_a_non_email_turn_gets_no_note(ctx, editor):
+    _o, _ws, agent = ctx
+    t, _ = services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="api-1",
+                                 initiator=who.for_user(editor, via="chat", assurance=who.SESSION))
+    assert caller_context.build(t)["unproven_member"] is None
+
+
+def test_a_blocked_member_address_gets_no_note(ctx, editor):
+    _o, ws, agent = ctx
+    c = contacts.record_inbound_sender(workspace=ws, address="fatima@llo-foo.org")
+    from django.utils import timezone
+
+    Contact.objects.filter(pk=c.pk).update(blocked_at=timezone.now(), blocked_reason="spam")
+    turn = _email(agent, headers=DKIM_ONLY)
+    assert turn.status == Turn.CANCELLED
+    assert caller_context.build(turn)["unproven_member"] is None
