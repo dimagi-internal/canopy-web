@@ -42,8 +42,8 @@ def test_legacy_stamped_names_are_still_recognised():
 
 # --- the ladder -------------------------------------------------------------
 
-def test_board_item_title_wins():
-    t = _turn(origin_ref={"item_title": "Retry the backoff on 429", "thread_id": "abcd1234"})
+def test_board_task_title_wins():
+    t = _turn(origin_ref={"task_title": "Retry the backoff on 429", "thread_id": "abcd1234"})
     assert sn.build_task_name("ace", t) == "c-retry-the-backoff-on-429-1234"
 
 
@@ -150,7 +150,7 @@ def test_long_subjects_truncate_on_a_word_boundary():
 
 
 def test_names_are_lowercase_slug_safe():
-    t = _turn(origin_ref={"item_title": "Ship  the  “Fix”: réponse (v2)!", "thread_id": "aaaa0001"})
+    t = _turn(origin_ref={"task_title": "Ship  the  “Fix”: réponse (v2)!", "thread_id": "aaaa0001"})
     name = sn.build_task_name("ace", t)
     assert name == "c-ship-the-fix-r-ponse-v2-0001"
 

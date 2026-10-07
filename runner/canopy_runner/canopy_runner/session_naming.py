@@ -192,7 +192,7 @@ def subject_for(turn: dict, target: str = "") -> str:
     """
     ref = turn.get("origin_ref") or {}
     for candidate in (
-        ref.get("item_title"),                                  # a board card someone wrote
+        ref.get("task_title"),                                  # a board card someone wrote
         ref.get("schedule_name"),                               # "Weekly manager report"
         _REPLY_NOISE.sub("", (ref.get("subject") or "").strip()),   # an email thread
         _from_slash_command(turn.get("prompt"), target),        # /canopy:issue-triage
