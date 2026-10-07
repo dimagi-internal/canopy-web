@@ -56,7 +56,7 @@ const { HuddlePage } = await import('./HuddlePage')
 afterEach(cleanup)
 
 function renderAt({ expandAll = true } = {}) {
-  const r = render(<MemoryRouter initialEntries={['/w/connect/huddles/work-fleet-20261006']}>
+  const r = render(<MemoryRouter initialEntries={['/w/connect/huddles/work-fleet-20261006?view=map']}>
     <Routes><Route path="/w/:workspace/huddles/:id" element={<HuddlePage />} /></Routes></MemoryRouter>)
   // The conversation opens compact; these tests read the full replies.
   if (expandAll) void screen.findByRole('button', { name: 'Expand all' }).then((b) => fireEvent.click(b))
