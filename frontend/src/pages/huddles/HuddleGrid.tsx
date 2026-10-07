@@ -7,7 +7,7 @@ import { CompactReply, CompactStatus } from './CompactCard'
 import { askPath, flowArc, replyPath, type Rect } from './flowGeometry'
 import {
   anchorKey, arcsFor, cellAt, cellState, columns, critiqueFrom, initial, leaderAsks, memberHue, roundAsk, roundName,
-  roundsToShow, type Arc, type ArcState, type Block, type LeaderAsk,
+  roundsToShow, stepWindow, type Arc, type ArcState, type Block, type LeaderAsk,
 } from './huddleModel'
 import { ANSWER_WORDS, possessive, who } from './plainWords'
 
@@ -18,21 +18,19 @@ import { ANSWER_WORDS, possessive, who } from './plainWords'
  * starts COMPACT (two to four lines), so a whole round fits on one screen row;
  * a card expands in place to the full reply.
  *
- * Lines: a light ask arrow from the leader's round card to each member, and a
- * reply arrow back; the strong coloured arcs tie a joint proposal's line (round
- * 2) to each partner's answer row (round 3). Everything is read from the
+ * The diagram's job is the ORDER of the flow, so it draws only two kinds of
+ * line — the leader's question going out and each answer coming back — and
+ * each step's row carries when it happened. Who's in on an idea is already a
+ * labelled pill on the answer card; the links between an idea and its answers
+ * appear only while you point at one, in a single colour, so there is no
+ * colour key to remember (Jonathan, 2026-10-07: "the number of different
+ * colored lines aren't going to be recallable"). Everything is read from the
  * derived API — the page holds no huddle state of its own.
  */
 
-const ARC_COLOR: Record<ArcState, string> = {
-  'co-sign': 'var(--success)',
-  amend: 'var(--warning)',
-  decline: 'var(--destructive)',
-  pending: 'var(--muted-foreground)',
-  // A round-4 resolution: an accepted amend is a co-sign, a rejected one holds.
-  'amend-accepted': 'var(--success)',
-  'amend-rejected': 'var(--destructive)',
-}
+/** The one colour a traced idea's links are drawn in — the answer itself is
+ * the pill's words, not the line's colour. */
+const TRACE_COLOR = 'var(--primary)'
 
 const ARC_LABEL: Record<ArcState, string> = ANSWER_WORDS
 
@@ -236,6 +234,7 @@ function LeaderCard({ huddle, round, members, expanded, onToggle }: {
     return { m, cell: c, asks: c ? leaderAsks(c.prompt, huddle.leader) : [] }
   })
   const asked = asks.filter((a) => a.asks.length > 0)
+  const when = stepWindow(inRound)
   const plain = asks.filter((a) => a.asks.length === 0).map((a) => a.m)
   const k = cardKey.leader(round)
 
@@ -248,6 +247,7 @@ function LeaderCard({ huddle, round, members, expanded, onToggle }: {
         <span className="ml-auto shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">{inRound.length === 0 ? 'not started' : `${replied} of ${inRound.length} answered`}</span>
         <span aria-hidden className={'shrink-0 text-[10px] text-muted-foreground transition-transform ' + (expanded ? 'rotate-90' : '')}>▸</span>
       </div>
+      {when && <div data-step-time className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">{when}</div>}
       <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] leading-5">
         <MemberAvatar slug={huddle.leader} hue={LEADER_HUE} size="sm" />
         <span className="min-w-0 truncate text-foreground-secondary">
@@ -308,17 +308,15 @@ type Exchange = { key: string; d: string; kind: 'ask' | 'reply' }
  * cards, `data-cell` grid cells) — re-measured whenever the grid changes size
  * (a card expanding or collapsing, the window resizing, new data).
  *
- * Nothing runs across text: the exchange arrows keep to the gutters between
- * rows; the co-sign arcs leave each card at its edge, level with the row, and
- * run BENEATH the (opaque) cards in between. Pointing at a proposal or an
- * answer redraws just its arcs in a layer ABOVE the cards, end to end. */
-function FlowLayer({ arcs, host, focus, rounds, members, showArcs, version }: {
+ * At rest only the question-and-answer arrows show, kept to the gutters
+ * between rows. Pointing at an idea or an answer draws that idea's links —
+ * idea to each teammate's answer — above the cards, in one colour. */
+function FlowLayer({ arcs, host, focus, rounds, members, version }: {
   arcs: Arc[]
   host: React.RefObject<HTMLDivElement | null>
   focus: string | null
   rounds: number[]
   members: string[]
-  showArcs: boolean
   /** Bumps when cards expand / collapse. */
   version: string
 }) {
@@ -397,8 +395,7 @@ function FlowLayer({ arcs, host, focus, rounds, members, showArcs, version }: {
     }
   }, [measure, host, version])
 
-  const arcsShown = showArcs ? drawn : []
-  const lit = focus === null ? [] : arcsShown.filter((a) => a.ends.includes(focus))
+  const lit = focus === null ? [] : drawn.filter((a) => a.ends.includes(focus))
   return (
     <>
       <svg aria-hidden data-arc-layer="exchange" className="pointer-events-none absolute left-0 top-0 z-0 overflow-visible" width={box.w} height={box.h}>
@@ -413,58 +410,36 @@ function FlowLayer({ arcs, host, focus, rounds, members, showArcs, version }: {
             opacity={0.45} markerEnd="url(#huddle-exchange-head)" />
         ))}
       </svg>
-      {arcsShown.length > 0 && (
-        <ArcSvg drawn={arcsShown} box={box} layer="under" opacity={(a) => (focus === null ? 0.85 : lit.includes(a) ? 0 : 0.25)} />
-      )}
-      {lit.length > 0 && <ArcSvg drawn={lit} box={box} layer="over" opacity={() => 1} />}
+      {lit.length > 0 && <TraceSvg drawn={lit} box={box} />}
     </>
   )
 }
 
-function ArcSvg({ drawn, box, layer, opacity }: {
-  drawn: Drawn[]
-  box: { w: number; h: number }
-  layer: 'under' | 'over'
-  opacity: (a: Drawn) => number
-}) {
-  const over = layer === 'over'
+function TraceSvg({ drawn, box }: { drawn: Drawn[]; box: { w: number; h: number } }) {
   return (
-    <svg
-      aria-hidden
-      data-arc-layer={layer}
-      className={'pointer-events-none absolute left-0 top-0 overflow-visible ' + (over ? 'z-30' : 'z-0')}
-      width={box.w}
-      height={box.h}
-    >
+    <svg aria-hidden data-arc-layer="trace" className="pointer-events-none absolute left-0 top-0 z-30 overflow-visible" width={box.w} height={box.h}>
       <defs>
-        {(Object.keys(ARC_COLOR) as ArcState[]).map((s) => (
-          <marker key={s} id={`huddle-arrow-${layer}-${s}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill={ARC_COLOR[s]} />
-          </marker>
-        ))}
+        <marker id="huddle-trace-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill={TRACE_COLOR} />
+        </marker>
       </defs>
       {drawn.map((a) => (
-        <g key={a.key} data-arc={over ? undefined : a.state} style={{ opacity: opacity(a), transition: 'opacity 150ms ease' }}>
+        <g key={a.key} data-arc={a.state}>
           <title>{a.label}</title>
-          <path
-            d={a.d}
-            fill="none"
-            stroke={ARC_COLOR[a.state]}
-            strokeWidth={over ? 2.75 : 2}
-            strokeLinecap="round"
-            strokeDasharray={a.state === 'pending' ? '5 5' : undefined}
-            markerEnd={`url(#huddle-arrow-${layer}-${a.state})`}
-          />
-          <circle cx={a.x0} cy={a.y0} r={over ? 4.5 : 3.5} fill={ARC_COLOR[a.state]} />
+          <path d={a.d} fill="none" stroke={TRACE_COLOR} strokeWidth={2.5} strokeLinecap="round"
+            strokeDasharray={a.state === 'pending' ? '5 5' : undefined} markerEnd="url(#huddle-trace-head)" />
+          <circle cx={a.x0} cy={a.y0} r={4} fill={TRACE_COLOR} />
         </g>
       ))}
     </svg>
   )
 }
 
-export function ArcLegend({ leader = 'ada' }: { leader?: string }) {
+/** The whole key: time runs down, a question goes out, an answer comes back. */
+export function FlowLegend({ leader = 'ada' }: { leader?: string }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+    <div data-legend className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+      <span>Time runs top to bottom, one step per row</span>
       <span className="inline-flex items-center gap-1.5">
         <svg width="22" height="6" aria-hidden><line x1="1" y1="3" x2="21" y2="3" stroke="var(--muted-foreground)" strokeOpacity="0.6" strokeWidth="1.25" /></svg>
         {possessive(leader)} question
@@ -473,15 +448,7 @@ export function ArcLegend({ leader = 'ada' }: { leader?: string }) {
         <svg width="22" height="6" aria-hidden><line x1="1" y1="3" x2="21" y2="3" stroke="var(--muted-foreground)" strokeOpacity="0.6" strokeWidth="1.25" strokeDasharray="3 3" /></svg>
         answer
       </span>
-      {(Object.keys(ARC_COLOR) as ArcState[]).map((s) => (
-        <span key={s} className="inline-flex items-center gap-1.5">
-          <svg width="22" height="6" aria-hidden>
-            <line x1="1" y1="3" x2="21" y2="3" stroke={ARC_COLOR[s]} strokeWidth="2" strokeLinecap="round"
-              strokeDasharray={s === 'pending' ? '4 3' : undefined} />
-          </svg>
-          {ARC_LABEL[s]}
-        </span>
-      ))}
+      <span className="hidden text-foreground-subtle lg:inline">point at an idea to see who answered it</span>
     </div>
   )
 }
@@ -494,7 +461,7 @@ function Placeholder({ text }: { text: string }) {
   )
 }
 
-export function HuddleGrid({ huddle, showArcs = true }: { huddle: Huddle; showArcs?: boolean }) {
+export function HuddleGrid({ huddle }: { huddle: Huddle }) {
   const host = useRef<HTMLDivElement | null>(null)
   const phone = useIsPhone()
   const [focus, setFocus] = useState<string | null>(null)
@@ -606,7 +573,7 @@ export function HuddleGrid({ huddle, showArcs = true }: { huddle: Huddle; showAr
               </div>
             )),
           ])}
-          <FlowLayer arcs={arcs} host={host} focus={focus} rounds={rounds} members={cols} showArcs={showArcs}
+          <FlowLayer arcs={arcs} host={host} focus={focus} rounds={rounds} members={cols}
             version={[...open].sort().join(',')} />
         </div>
       </div>
