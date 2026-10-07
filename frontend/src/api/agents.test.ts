@@ -7,7 +7,7 @@ const POST = vi.fn(async () => ({
   response: new Response(),
 }))
 vi.mock('./client.v2', () => ({ apiV2: { GET, POST }, WORKSPACE_HEADER: 'X-Workspace' }))
-const { listTasks, actOnTask } = await import('./agents')
+const { listTasks, actOnTask, AgentApiError } = await import('./agents')
 
 describe('task client', () => {
   it('passes filters as query params', async () => {
@@ -22,5 +22,15 @@ describe('task client', () => {
       params: { path: { slug: 'eva', ref: 'T2' } },
       body: { action: 'reply', comment: 'Tuesday' },
     })
+  })
+  it('a failed act carries the HTTP status and detail (409 → the card refetches)', async () => {
+    POST.mockResolvedValueOnce({
+      data: undefined,
+      error: { detail: 'This ask is already closed.' },
+      response: new Response(null, { status: 409 }),
+    } as never)
+    const err = await actOnTask('eva', 'T2', 'approve').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(AgentApiError)
+    expect(err).toMatchObject({ status: 409, detail: 'This ask is already closed.' })
   })
 })

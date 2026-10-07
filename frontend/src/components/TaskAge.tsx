@@ -1,9 +1,9 @@
 import type { JSX } from 'react'
 import { relativeTime } from '@/components/activity/turnLog'
 
-// How old an Item is — read from ONE place by both card surfaces (the shared inbox
-// ItemCard and the batch view's own card), for the same reason the bands are shared:
-// two renderers of the same object drift.
+// How old a task is — read from ONE place by every surface that renders a
+// TaskCard (the agent board, the fleet "Waiting on you" queue, a project page),
+// because two renderers of the same object drift.
 //
 // Jonathan, 2026-08-12, looking at a queue of undecided cards: "everything needs to
 // have a date displayed on the card, I can't tell if these are recent or just old
@@ -32,24 +32,25 @@ function absolute(iso: string): string {
   })
 }
 
-export function ItemAge({
+export function TaskAge({
   createdAt,
-  decidedAt,
+  closedAt,
   now = new Date(),
 }: {
   createdAt: string
-  decidedAt?: string | null
-  /** Injected in tests; defaulted so neither card surface has to thread it through. */
+  /** When the task's ask was closed (`ask_closed_at`); null while it is open. */
+  closedAt?: string | null
+  /** Injected in tests; defaulted so no card surface has to thread it through. */
   now?: Date
 }): JSX.Element | null {
   const created = age(createdAt, now)
   if (!created) return null
-  const decided = age(decidedAt, now)
+  const closed = age(closedAt, now)
 
   return (
-    <span data-testid="item-age" title={absolute(createdAt)} className="whitespace-nowrap">
+    <span data-testid="task-age" title={absolute(createdAt)} className="whitespace-nowrap">
       {created}
-      {decided && <span className="text-foreground-subtle"> · decided {decided}</span>}
+      {closed && <span className="text-foreground-subtle"> · closed {closed}</span>}
     </span>
   )
 }

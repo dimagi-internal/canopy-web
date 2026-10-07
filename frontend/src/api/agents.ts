@@ -51,9 +51,32 @@ export interface ListAgentsParams {
 // openapi-fetch returns { data, error }. Every call here is a read or a command
 // post whose failure is a bug, not a user-facing state — so unwrap and throw. A
 // 401 never reaches here: apiV2's middleware redirects to login first.
-function unwrap<T>(res: { data?: T; error?: unknown }, what: string): T {
+//
+// The thrown error carries the HTTP status and the server's `detail`, because a
+// few failures ARE user-facing on a task card: acting on an already-closed ask
+// (409 — the card refetches) and an empty reply (422).
+export class AgentApiError extends Error {
+  status: number
+  detail: string
+  constructor(message: string, status: number, detail: string) {
+    super(message)
+    this.status = status
+    this.detail = detail
+  }
+}
+
+function unwrap<T>(
+  res: { data?: T; error?: unknown; response?: { status: number } },
+  what: string,
+): T {
   if (res.error !== undefined || res.data === undefined) {
-    throw new Error(`${what} failed: ${JSON.stringify(res.error ?? 'no data')}`)
+    const err = res.error as { detail?: unknown } | undefined
+    const detail = typeof err?.detail === 'string' ? err.detail : ''
+    throw new AgentApiError(
+      `${what} failed: ${JSON.stringify(res.error ?? 'no data')}`,
+      res.response?.status ?? 0,
+      detail,
+    )
   }
   return res.data
 }

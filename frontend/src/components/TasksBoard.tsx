@@ -1,11 +1,13 @@
-import { useMemo, useState, type JSX, type ReactNode } from 'react'
+import { useMemo, useState, type JSX } from 'react'
 import {
-  postTaskCommand,
-  type AgentCommandKind,
-  type AgentCommandOut,
-  type AgentTaskOut,
+  actOnTask,
+  AgentApiError,
+  type TaskAction,
+  type TaskActionOut,
+  type TaskOut,
 } from '@/api/agents'
-import { decideItem, type ItemDecision } from '@/api/items'
+import { Markdown } from '@/components/Markdown'
+import { TaskAge } from '@/components/TaskAge'
 
 // ── "Who has the ball" model ───────────────────────────────────────────────
 // The board is organized by whose court the next action sits in, not by equal
@@ -17,7 +19,7 @@ function isEcho(assigned: string): boolean {
   return a === '' || a === 'echo'
 }
 
-function headline(task: AgentTaskOut): string {
+function headline(task: TaskOut): string {
   return (task.next_action || '').trim() || (task.title || '').trim()
 }
 
@@ -28,7 +30,7 @@ function formatDue(s: string): string {
   })
 }
 
-// A short, human "when" for command timestamps: "Jun 17, 2:30 PM".
+// A short, human "when" for action timestamps: "Jun 17, 2:30 PM".
 function formatWhen(s: string): string {
   const d = new Date(s)
   if (Number.isNaN(d.getTime())) return ''
@@ -40,19 +42,17 @@ function formatWhen(s: string): string {
   })
 }
 
-// A command's kind read as a past-tense verb for activity rows.
-const KIND_VERB: Record<string, string> = {
-  accept: 'accepted',
+// An action read as a past-tense verb for activity rows.
+const ACTION_VERB: Record<string, string> = {
+  approve: 'approved',
   decline: 'declined',
+  reply: 'replied to',
   dispatch: 'dispatched',
-  reassign: 'reassigned',
-  edit: 'edited',
-  comment: 'commented on',
   done: 'completed',
 }
 
-function kindVerb(kind: string): string {
-  return KIND_VERB[kind] ?? kind
+function actionVerb(action: string): string {
+  return ACTION_VERB[action] ?? action
 }
 
 function isPastDue(due: string): boolean {
@@ -61,6 +61,39 @@ function isPastDue(due: string): boolean {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   return d.getTime() < today.getTime()
+}
+
+/** `jarvis` → `Jarvis`. Slugs are lowercase `[a-z0-9-]`, so capitalising the
+ *  first letter is the agent's display name in every case the fleet has. */
+// eslint-disable-next-line react-refresh/only-export-components -- tested pure helper beside its only caller
+export function agentDisplayName(slug: string): string {
+  return slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : 'Agent'
+}
+
+// ── The five actions ─────────────────────────────────────────────────────────
+// A card offers exactly the actions that apply (spec § "Tasks page"):
+//   open review   → approve · decline
+//   open question → reply (the answer) · decline
+//   any live task → reply
+//   editors, live → + dispatch · done
+//   done/declined → nothing
+// Viewers may approve/decline/reply; dispatch/done need edit (403 otherwise),
+// so they are not offered to a viewer at all.
+
+function isLive(task: TaskOut): boolean {
+  return task.status === 'suggested' || task.status === 'in_progress'
+}
+
+// eslint-disable-next-line react-refresh/only-export-components -- the card's action rule, exported for its tests
+export function availableActions(task: TaskOut, canEdit: boolean): TaskAction[] {
+  if (!isLive(task)) return []
+  const kind = (task.ask_kind || '').trim()
+  let actions: TaskAction[]
+  if (task.ask_open && kind === 'review') actions = ['approve', 'decline']
+  else if (task.ask_open && kind === 'question') actions = ['reply', 'decline']
+  else actions = ['reply']
+  if (canEdit) actions = [...actions, 'dispatch', 'done']
+  return actions
 }
 
 // ── Small primitives ────────────────────────────────────────────────────────
@@ -103,53 +136,6 @@ function EchoWorking(): JSX.Element {
 }
 
 // The "ball is in a human's court" affordance: an amber waiting chip.
-// THE ASK, on the card.
-//
-// An item stopped being its own model on 2026-09-20 (#871/#873): the ask moved
-// onto the task, the rows were migrated, and `/items/` became a view of tasks.
-// The board was never told — it read none of `ask_kind`/`ask_state`, so a task
-// blocking on a human decision rendered as ordinary work in flight and could
-// only be decided on Inbox or Items. That is the exact failure the merge was
-// meant to end, left in place because the UI half never shipped.
-function AskOnCard({ task, onChanged }: { task: AgentTaskOut; onChanged?: () => void }): JSX.Element | null {
-  const [busy, setBusy] = useState<ItemDecision | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const kind = (task.ask_kind || '').trim()
-  if (!kind || task.ask_state !== 'open') return null
-
-  const decide = (decision: ItemDecision) => {
-    setBusy(decision)
-    setError(null)
-    decideItem(task.uuid, decision)
-      .then(() => onChanged?.())
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'could not record that'))
-      .finally(() => setBusy(null))
-  }
-
-  return (
-    <div className="mt-2 rounded-md border border-warning/30 bg-warning/5 p-2" data-testid={`ask-${task.ext_id}`}>
-      <span className="inline-flex items-center gap-1 rounded border border-warning/30 bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-warning">
-        asks you · {kind}
-      </span>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {(['implement', 'skip', 'defer'] as const).map((d) => (
-          <button
-            key={d}
-            type="button"
-            disabled={busy !== null}
-            onClick={() => decide(d)}
-            data-testid={`ask-${d}-${task.ext_id}`}
-            className="min-h-8 rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-muted disabled:opacity-40"
-          >
-            {busy === d ? '…' : d}
-          </button>
-        ))}
-      </div>
-      {error && <p className="mt-1 text-[11px] text-destructive">{error}</p>}
-    </div>
-  )
-}
-
 function WaitingChip({ who }: { who: string }): JSX.Element {
   return (
     <span className="inline-flex items-center gap-1 rounded border border-warning/30 bg-warning/15 px-1.5 py-0.5 text-[11px] font-medium text-warning">
@@ -217,8 +203,8 @@ function SourceChip({ url }: { url: string }): JSX.Element | null {
 }
 
 // A muted "Why: …" rationale line — expandable when long. Lets a human validate
-// a suggested task before accepting it. When `sourceUrl` is set, the grounded
-// source Echo read is linked inline right after the rationale — the trust signal.
+// a suggested task before acting on it. When `sourceUrl` is set, the grounded
+// source the agent read is linked inline right after the rationale — the trust signal.
 function RationaleLine({
   rationale,
   sourceUrl,
@@ -259,11 +245,11 @@ function RationaleLine({
   )
 }
 
-// The outcome of the most recent command Echo applied to this task — surfaces
-// `result_note` + `applied_at` that the API already stores but nothing rendered.
-function LastActivityLine({ command }: { command: AgentCommandOut }): JSX.Element {
-  const note = (command.result_note || '').trim() || `${kindVerb(command.kind)}`
-  const when = command.applied_at ? formatWhen(command.applied_at) : ''
+// The outcome of the most recent action the agent applied to this task —
+// surfaces `result_note` + `applied_at`.
+function LastActivityLine({ action }: { action: TaskActionOut }): JSX.Element {
+  const note = (action.result_note || '').trim() || actionVerb(action.action)
+  const when = action.applied_at ? formatWhen(action.applied_at) : ''
   return (
     <p
       className="mt-1.5 text-[11px] leading-snug text-muted-foreground/90"
@@ -276,162 +262,151 @@ function LastActivityLine({ command }: { command: AgentCommandOut }): JSX.Elemen
   )
 }
 
-// ── Actions ──────────────────────────────────────────────────────────────────
-// Secondary, muted affordances that POST a command to the queue. Deliberately
-// quieter than the next-action headline.
-
-// A small text button used for muted in-card actions.
-function ActionButton({
-  children,
-  onClick,
-  disabled,
-  tone = 'muted',
-}: {
-  children: ReactNode
-  onClick: () => void
-  disabled?: boolean
-  tone?: 'muted' | 'primary' | 'destructive'
-}): JSX.Element {
-  const toneClass =
-    tone === 'primary'
-      ? 'text-primary hover:text-primary/80'
-      : tone === 'destructive'
-        ? 'text-destructive/90 hover:text-destructive'
-        : 'text-muted-foreground hover:text-foreground'
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${toneClass}`}
-    >
-      {children}
-    </button>
-  )
+/** Where approving (or answering) sends the work — the one place a cross-agent
+ *  fan-out is visible on the card. An empty target means the task's own agent. */
+function onApproveHint(task: TaskOut): string {
+  const targets = (task.on_approve ?? [])
+    .map((d) => (d as { target_agent?: string }).target_agent || task.agent_slug)
+    .filter((v, i, a) => a.indexOf(v) === i)
+  return targets.length ? `runs on ${targets.join(', ')}` : ''
 }
 
-// Hosts a card's command-posting state: in-flight lock, error surfacing, and a
-// decline reason input. Renders the actions appropriate to the task's status.
+// ── The action row ──────────────────────────────────────────────────────────
+//
+// `min-h-11 sm:min-h-0` on every control: measured on a Pixel 7 against the
+// deployed app, the old decision row rendered 25-27px tall — well under the 44px
+// both Apple and Google publish as the minimum. Desktop keeps the compact size
+// from `sm:` up.
+const BTN =
+  'min-h-11 sm:min-h-0 rounded-md border border-border px-3 py-1 text-[12px] text-foreground transition-colors hover:bg-muted disabled:opacity-50'
+const BTN_QUIET =
+  'min-h-11 sm:min-h-0 rounded-md px-3 py-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50'
+
+function errorText(e: unknown): string {
+  if (e instanceof AgentApiError && e.detail) return e.detail
+  if (e instanceof AgentApiError && e.status === 409) return 'Someone already acted on this.'
+  return e instanceof Error ? e.message : 'Action failed'
+}
+
 function TaskActions({
   task,
+  canEdit,
   onChanged,
 }: {
-  task: AgentTaskOut
+  task: TaskOut
+  canEdit: boolean
   onChanged?: () => void
 }): JSX.Element | null {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [declining, setDeclining] = useState(false)
-  const [reason, setReason] = useState('')
+  const [reply, setReply] = useState('')
 
-  async function run(kind: AgentCommandKind, payload?: Record<string, unknown>) {
+  const actions = availableActions(task, canEdit)
+  if (actions.length === 0) return null
+  const has = (a: TaskAction) => actions.includes(a)
+
+  const runs = (task.on_approve ?? []).length > 0
+  const isQuestion = task.ask_open && (task.ask_kind || '').trim() === 'question'
+  const replyLabel = isQuestion ? (runs ? 'Answer & run' : 'Answer') : 'Reply'
+
+  async function run(action: TaskAction, comment?: string) {
     if (busy) return
     setBusy(true)
     setError(null)
     try {
-      await postTaskCommand(task.agent_slug, task.id, kind, payload)
+      await actOnTask(task.agent_slug, task.ext_id, action, comment)
+      setReply('')
       onChanged?.()
+      // On success we leave `busy` true: the board is about to refetch and this
+      // card will be replaced, so re-enabling would only flash.
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Action failed')
+      setError(errorText(e))
       setBusy(false)
+      // 409: the ask was closed elsewhere — the card is stale, so refetch it.
+      if (e instanceof AgentApiError && e.status === 409) onChanged?.()
     }
-    // On success we leave `busy` true: the board is about to refetch and this
-    // card will be replaced, so re-enabling would only flash.
   }
-
-  const isSuggested = task.status === 'suggested'
-  const isInProgress = task.status === 'in_progress'
-  if (!isSuggested && !isInProgress) return null
 
   return (
     <div className="mt-2.5 border-t border-border/60 pt-2">
-      {isSuggested && !declining && (
-        <div className="flex items-center gap-3">
-          <ActionButton tone="primary" disabled={busy} onClick={() => run('accept')}>
-            Accept
-          </ActionButton>
-          {/* One-click decline: no reason required (the reason only ever feeds the
-              agent as context). Use "＋ reason" when you actually want to steer it. */}
-          <ActionButton tone="muted" disabled={busy} onClick={() => run('decline', { reason: '' })}>
-            Decline
-          </ActionButton>
+      {has('reply') && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={reply}
+            disabled={busy}
+            placeholder={isQuestion ? 'Type an answer…' : 'Reply to the agent…'}
+            onChange={(e) => setReply(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && reply.trim()) run('reply', reply.trim())
+            }}
+            // `basis-full` gives the field the whole row on a phone and pushes the
+            // buttons below; from `sm` up they share a line.
+            className="min-h-11 w-full min-w-0 basis-full rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground disabled:opacity-50 sm:min-h-0 sm:w-auto sm:flex-1 sm:basis-auto dark:placeholder:text-foreground-secondary"
+            data-testid={`task-reply-${task.ext_id}`}
+          />
           <button
             type="button"
-            disabled={busy}
-            onClick={() => {
-              setError(null)
-              setDeclining(true)
-            }}
-            className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
-            title="Decline with a reason for the agent"
+            disabled={busy || !reply.trim()}
+            onClick={() => run('reply', reply.trim())}
+            className={BTN}
           >
-            ＋ reason
+            {replyLabel}
           </button>
         </div>
       )}
 
-      {isSuggested && declining && (
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="text"
-            autoFocus
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Reason (optional)"
-            disabled={busy}
-            className="h-7 min-w-0 flex-1 rounded border border-border bg-muted px-2 text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-primary/50"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') run('decline', { reason: reason.trim() })
-              if (e.key === 'Escape') setDeclining(false)
-            }}
-          />
-          <ActionButton
-            tone="destructive"
-            disabled={busy}
-            onClick={() => run('decline', { reason: reason.trim() })}
-          >
-            Confirm decline
-          </ActionButton>
-          <ActionButton tone="muted" disabled={busy} onClick={() => setDeclining(false)}>
-            Cancel
-          </ActionButton>
+      {(has('approve') || has('decline') || has('dispatch') || has('done')) && (
+        <div className={`flex flex-wrap items-center gap-2 ${has('reply') ? 'mt-2' : ''}`}>
+          {has('approve') && (
+            <button type="button" disabled={busy} onClick={() => run('approve')} className={BTN}>
+              {runs ? 'Approve & run' : 'Approve'}
+            </button>
+          )}
+          {has('decline') && (
+            <button type="button" disabled={busy} onClick={() => run('decline')} className={BTN_QUIET}>
+              Decline
+            </button>
+          )}
+          {has('dispatch') && (
+            <button type="button" disabled={busy} onClick={() => run('dispatch')} className={BTN}>
+              {/* Every agent's board renders this card, so the name comes from the task. */}
+              {agentDisplayName(task.agent_slug)}, do this now
+            </button>
+          )}
+          {has('done') && (
+            <button type="button" disabled={busy} onClick={() => run('done')} className={BTN_QUIET}>
+              Mark done
+            </button>
+          )}
         </div>
       )}
 
-      {isInProgress && (
-        <div className="flex items-center gap-3">
-          <ActionButton tone="primary" disabled={busy} onClick={() => run('dispatch')}>
-            {/* Every agent's board renders this card, so the name comes from the
-                task — it was hardcoded to the first agent the board was built for. */}
-            {agentDisplayName(task.agent_slug)}, do this now
-          </ActionButton>
-          <ActionButton tone="muted" disabled={busy} onClick={() => run('done')}>
-            Mark done
-          </ActionButton>
-        </div>
-      )}
-
-      {error && <p className="mt-1.5 text-[10px] text-destructive">{error}</p>}
+      {error && <p className="mt-1.5 text-[11px] text-destructive">{error}</p>}
     </div>
   )
 }
 
-/** `jarvis` → `Jarvis`. Slugs are lowercase `[a-z0-9-]`, so capitalising the
- *  first letter is the agent's display name in every case the fleet has. */
-export function agentDisplayName(slug: string): string {
-  return slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : 'Agent'
-}
-
 // ── Card ────────────────────────────────────────────────────────────────────
 
+// THE card. Every surface that shows a task — the agent board, the fleet
+// "Waiting on you" queue, a project page — renders this one, so an ask is
+// decidable in place wherever the task appears. (ItemCard, its Inbox-only twin,
+// is gone: an item stopped being its own model in #871/#873.)
 export function TaskCard({
   task,
   onChanged,
+  canEdit,
+  showAgent = false,
   lastApplied,
 }: {
-  task: AgentTaskOut
+  task: TaskOut
   onChanged?: () => void
-  lastApplied?: AgentCommandOut
+  canEdit: boolean
+  /** Tag the card with its agent — for fleet-wide surfaces. */
+  showAgent?: boolean
+  /** The latest applied action on this task, when the caller has it. */
+  lastApplied?: TaskActionOut
 }): JSX.Element {
   const head = headline(task)
   const outcome = (task.title || '').trim()
@@ -440,6 +415,11 @@ export function TaskCard({
   const isSuggested = task.status === 'suggested'
   const isDone = task.status === 'done'
   const hasRationale = Boolean((task.rationale || '').trim())
+  const askKind = (task.ask_kind || '').trim()
+  const askOpen = Boolean(askKind) && task.ask_open
+  const meta = [showAgent ? task.agent_slug : '', askOpen ? onApproveHint(task) : '']
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <div data-testid={`task-${task.ext_id}`} data-status={task.status}
@@ -451,14 +431,33 @@ export function TaskCard({
         </p>
       </div>
 
+      {/* Age is never conditional — an undecided card with no date on it cannot be
+          triaged (Jonathan, 2026-08-12). */}
+      <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] leading-snug text-muted-foreground">
+        <TaskAge createdAt={task.created_at} closedAt={task.ask_closed_at} />
+        {meta && <span>· {meta}</span>}
+      </p>
+
       {/* Whose court: the single ball signal — Echo working, or waiting on a human. */}
-      {!isSuggested && !isDone && task.status === 'in_progress' && (
+      {task.status === 'in_progress' && !askOpen && (
         <div className="mt-1.5">
           {echo ? <EchoWorking /> : <WaitingChip who={task.assigned.trim()} />}
         </div>
       )}
 
-      <AskOnCard task={task} onChanged={onChanged} />
+      {/* THE ASK, on the card: what the agent needs from a person. */}
+      {askOpen && (
+        <div className="mt-2 rounded-md border border-warning/30 bg-warning/5 p-2" data-testid={`ask-${task.ext_id}`}>
+          <span className="inline-flex items-center gap-1 rounded border border-warning/30 bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-warning">
+            asks you · {askKind}
+          </span>
+          {task.ask_body && (
+            <Markdown className="mt-1.5 text-[12px] leading-snug text-foreground-secondary">
+              {task.ask_body}
+            </Markdown>
+          )}
+        </div>
+      )}
 
       {/* Secondary line: the outcome, only when it differs from the headline. */}
       {showOutcome && (
@@ -469,8 +468,8 @@ export function TaskCard({
           grounded source links inline with the rationale when both are present. */}
       <RationaleLine rationale={task.rationale} sourceUrl={task.source_url} />
 
-      {/* What Echo last did on this task — the stored command outcome. */}
-      {lastApplied && <LastActivityLine command={lastApplied} />}
+      {/* What the agent last did on this task — the stored action outcome. */}
+      {lastApplied && <LastActivityLine action={lastApplied} />}
 
       {(task.owner ||
         task.due ||
@@ -496,7 +495,7 @@ export function TaskCard({
         </p>
       )}
 
-      <TaskActions task={task} onChanged={onChanged} />
+      <TaskActions task={task} canEdit={canEdit} onChanged={onChanged} />
     </div>
   )
 }
@@ -536,43 +535,46 @@ function SectionHeader({
 function CardGrid({
   tasks,
   onChanged,
+  canEdit,
   lastByTask,
 }: {
-  tasks: AgentTaskOut[]
+  tasks: TaskOut[]
   onChanged?: () => void
-  lastByTask?: Map<number, AgentCommandOut>
+  canEdit: boolean
+  lastByTask?: Map<string, TaskActionOut>
 }): JSX.Element {
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
       {tasks.map((t) => (
         <TaskCard
-          key={t.id}
+          key={t.ext_id}
           task={t}
           onChanged={onChanged}
-          lastApplied={lastByTask?.get(t.id)}
+          canEdit={canEdit}
+          lastApplied={lastByTask?.get(t.ext_id)}
         />
       ))}
     </div>
   )
 }
 
-// One pending command, shown when the "N queued for Echo" badge is expanded:
-// what's actually waiting (kind · task · who · when) rather than just a count.
-function PendingCommandRow({ command }: { command: AgentCommandOut }): JSX.Element {
-  const who = (command.created_by || '').split('@')[0] || 'someone'
+// One pending action, shown when the "N queued" badge is expanded: what's
+// actually waiting (action · task · who · when) rather than just a count.
+function PendingActionRow({ action }: { action: TaskActionOut }): JSX.Element {
+  const who = (action.by || '').split('@')[0] || 'someone'
   return (
     <li className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground">
-      <span className="font-medium text-foreground">{kindVerb(command.kind)}</span>
-      {command.task_title && <span className="truncate text-muted-foreground/90">{command.task_title}</span>}
+      <span className="font-medium text-foreground">{actionVerb(action.action)}</span>
+      {action.task_ext_id && <span className="truncate text-muted-foreground/90">{action.task_ext_id}</span>}
       <span className="text-muted-foreground/60">· {who}</span>
-      <span className="text-muted-foreground/60">· {formatWhen(command.created_at)}</span>
+      <span className="text-muted-foreground/60">· {formatWhen(action.created_at)}</span>
     </li>
   )
 }
 
-// "N queued for Echo" — accept/dispatch commands Echo will drain on its next
-// turn. Click to reveal *which* commands are pending, not just the number.
-function QueuedForEcho({ pending }: { pending: AgentCommandOut[] }): JSX.Element | null {
+// "N queued for Echo" — actions the agent will drain on its next turn. Click to
+// reveal *which* actions are pending, not just the number.
+function QueuedForEcho({ pending }: { pending: TaskActionOut[] }): JSX.Element | null {
   const [open, setOpen] = useState(false)
   if (pending.length === 0) return null
   return (
@@ -582,7 +584,7 @@ function QueuedForEcho({ pending }: { pending: AgentCommandOut[] }): JSX.Element
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         className="inline-flex items-center gap-1.5 rounded border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:border-primary/50 hover:bg-primary/15"
-        title="Commands queued for Echo to act on next turn"
+        title="Actions queued for the agent to act on next turn"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-primary" />
         {pending.length} queued for Echo
@@ -590,8 +592,8 @@ function QueuedForEcho({ pending }: { pending: AgentCommandOut[] }): JSX.Element
       </button>
       {open && (
         <ul className="w-full max-w-sm space-y-1 rounded-md border border-border bg-card p-2.5">
-          {pending.map((c) => (
-            <PendingCommandRow key={c.id} command={c} />
+          {pending.map((a) => (
+            <PendingActionRow key={a.id} action={a} />
           ))}
         </ul>
       )}
@@ -599,12 +601,12 @@ function QueuedForEcho({ pending }: { pending: AgentCommandOut[] }): JSX.Element
   )
 }
 
-// A compact, collapsible activity stream of recent commands across the agent —
-// reuses the commands the board already fetched. Newest first (API order).
-function AgentActivity({ commands }: { commands: AgentCommandOut[] }): JSX.Element | null {
+// A compact, collapsible activity stream of recent actions across the agent —
+// reuses the actions the board already fetched. Newest first (API order).
+function AgentActivity({ actions }: { actions: TaskActionOut[] }): JSX.Element | null {
   const [open, setOpen] = useState(false)
-  if (commands.length === 0) return null
-  const recent = commands.slice(0, 12)
+  if (actions.length === 0) return null
+  const recent = actions.slice(0, 12)
   return (
     <section className="border-t border-border/60 pt-4">
       <button
@@ -616,26 +618,26 @@ function AgentActivity({ commands }: { commands: AgentCommandOut[] }): JSX.Eleme
         <span aria-hidden className="text-muted-foreground/70">{open ? '▾' : '▸'}</span>
         Activity
         <span className="font-normal lowercase tracking-normal text-muted-foreground/70">
-          {commands.length}
+          {actions.length}
         </span>
       </button>
       {open && (
         <ul className="mt-2.5 space-y-1.5" data-testid="agent-activity">
-          {recent.map((c) => {
-            const who = (c.created_by || '').split('@')[0] || 'someone'
-            const when = c.applied_at || c.created_at
+          {recent.map((a) => {
+            const who = (a.by || '').split('@')[0] || 'someone'
+            const when = a.applied_at || a.created_at
             return (
-              <li key={c.id} className="flex flex-wrap items-baseline gap-x-1.5 text-[11px] leading-snug">
+              <li key={a.id} className="flex flex-wrap items-baseline gap-x-1.5 text-[11px] leading-snug">
                 <span className="text-muted-foreground/60">{formatWhen(when)}</span>
                 <span className="font-medium text-foreground">{who}</span>
-                <span className="text-muted-foreground">{kindVerb(c.kind)}</span>
-                {c.task_title && <span className="truncate text-muted-foreground/90">{c.task_title}</span>}
-                {c.status === 'pending' && (
+                <span className="text-muted-foreground">{actionVerb(a.action)}</span>
+                {a.task_ext_id && <span className="truncate text-muted-foreground/90">{a.task_ext_id}</span>}
+                {a.status === 'pending' && (
                   <span className="rounded bg-primary/10 px-1 text-[10px] font-medium text-primary">queued</span>
                 )}
-                {c.result_note && (
-                  <span className="basis-full truncate pl-1 text-muted-foreground/80" title={c.result_note}>
-                    → {c.result_note}
+                {a.result_note && (
+                  <span className="basis-full truncate pl-1 text-muted-foreground/80" title={a.result_note}>
+                    → {a.result_note}
                   </span>
                 )}
               </li>
@@ -647,18 +649,20 @@ function AgentActivity({ commands }: { commands: AgentCommandOut[] }): JSX.Eleme
   )
 }
 
-function byPosition(a: AgentTaskOut, b: AgentTaskOut): number {
+function byPosition(a: TaskOut, b: TaskOut): number {
   return a.position - b.position
 }
 
 export function TasksBoard({
   tasks,
+  actions = [],
   onChanged,
-  commands = [],
+  canEdit,
 }: {
-  tasks: AgentTaskOut[]
+  tasks: TaskOut[]
+  actions?: TaskActionOut[]
   onChanged?: () => void
-  commands?: AgentCommandOut[]
+  canEdit: boolean
 }): JSX.Element {
   const suggested = tasks.filter((t) => t.status === 'suggested').sort(byPosition)
   const inProgress = tasks.filter((t) => t.status === 'in_progress')
@@ -667,24 +671,28 @@ export function TasksBoard({
   const done = tasks.filter((t) => t.status === 'done').sort(byPosition)
   const declined = tasks.filter((t) => t.status === 'declined').sort(byPosition)
 
-  const pending = useMemo(() => commands.filter((c) => c.status === 'pending'), [commands])
-  // Latest applied command per task — `commands` arrives newest-first, so the
+  const pending = useMemo(() => actions.filter((a) => a.status === 'pending'), [actions])
+  // Latest applied action per task — `actions` arrives newest-first, so the
   // first applied one we see for a task is its most recent outcome.
   const lastByTask = useMemo(() => {
-    const m = new Map<number, AgentCommandOut>()
-    for (const c of commands) {
-      if (c.status === 'applied' && c.task_id != null && !m.has(c.task_id)) {
-        m.set(c.task_id, c)
+    const m = new Map<string, TaskActionOut>()
+    for (const a of actions) {
+      if (a.status === 'applied' && a.task_ext_id && !m.has(a.task_ext_id)) {
+        m.set(a.task_ext_id, a)
       }
     }
     return m
-  }, [commands])
+  }, [actions])
 
   if (tasks.length === 0) {
     return (
       <p className="text-[13px] text-muted-foreground">No tasks yet — nothing on the board.</p>
     )
   }
+
+  const grid = (list: TaskOut[]) => (
+    <CardGrid tasks={list} onChanged={onChanged} canEdit={canEdit} lastByTask={lastByTask} />
+  )
 
   return (
     <div className="space-y-7">
@@ -701,14 +709,14 @@ export function TasksBoard({
             count={suggested.length}
             dotClass="bg-muted-foreground"
           />
-          <CardGrid tasks={suggested} onChanged={onChanged} lastByTask={lastByTask} />
+          {grid(suggested)}
         </section>
       )}
 
       {waitingHuman.length > 0 && (
         <section className="rounded-xl border border-warning/25 bg-warning/5 p-3">
           <SectionHeader label="Waiting on a human" count={waitingHuman.length} accent />
-          <CardGrid tasks={waitingHuman} onChanged={onChanged} lastByTask={lastByTask} />
+          {grid(waitingHuman)}
         </section>
       )}
 
@@ -719,14 +727,14 @@ export function TasksBoard({
             count={echoWorking.length}
             dotClass="bg-primary"
           />
-          <CardGrid tasks={echoWorking} onChanged={onChanged} lastByTask={lastByTask} />
+          {grid(echoWorking)}
         </section>
       )}
 
       {done.length > 0 && (
         <section>
           <SectionHeader label="Done" count={done.length} dotClass="bg-primary/40" />
-          <CardGrid tasks={done} onChanged={onChanged} lastByTask={lastByTask} />
+          {grid(done)}
         </section>
       )}
 
@@ -736,7 +744,7 @@ export function TasksBoard({
           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
             {declined.map((t) => (
               <div
-                key={t.id}
+                key={t.ext_id}
                 data-testid={`task-${t.ext_id}`}
                 data-status={t.status}
                 className="rounded-md border border-border bg-card/50 px-3 py-1.5 text-[11px] text-muted-foreground"
@@ -752,7 +760,7 @@ export function TasksBoard({
         </section>
       )}
 
-      <AgentActivity commands={commands} />
+      <AgentActivity actions={actions} />
     </div>
   )
 }
