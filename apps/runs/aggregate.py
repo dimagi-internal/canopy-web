@@ -20,6 +20,7 @@ from apps.runs.ddd import (
     narrative_slug_from_run_id,
 )
 from apps.reviews.models import ReviewRequest
+from apps.reviews.titles import narrative_title, phase_words
 from apps.walkthroughs.models import Walkthrough
 
 # ---------------------------------------------------------------------------
@@ -211,16 +212,14 @@ def _review_has_narrative(r: ReviewRequest) -> bool:
 
 
 def _title_from_review(r: ReviewRequest) -> str | None:
-    rj = r.request_json if isinstance(r.request_json, dict) else {}
-    narrative = (rj.get("narrative") or "").strip()
-    if narrative:
-        first = narrative.splitlines()[0].strip()
-        return first[:140] if first else None
-    narration = rj.get("narration") or []
-    if narration and isinstance(narration[0], dict):
-        t = (narration[0].get("title") or "").strip()
-        return t or None
-    return None
+    # The slug the title falls back to is the review's narrative — the stored column,
+    # else derived from the run id, exactly as the reviews API resolves it. Passing
+    # only the column left legacy rows to the clipped-sentence fallback, which then
+    # read as a real title to every consumer that dedupes title against lede.
+    slug = (r.narrative_slug or "").strip() or (
+        None if is_run_child_gate(r.gate) else narrative_slug_from_run_id(r.run_id)
+    )
+    return narrative_title(r.request_json, slug)
 
 
 def _run_record(run_id: str, workspace_slugs: set[str] | None) -> dict | None:
@@ -251,7 +250,7 @@ def _run_record(run_id: str, workspace_slugs: set[str] | None) -> dict | None:
 
 
 def _phase_label(r: ReviewRequest) -> str:
-    return f"{r.gate} · {r.status}"
+    return phase_words(r.gate, r.status)
 
 
 def _scene_count(r: ReviewRequest | None) -> int:

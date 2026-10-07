@@ -110,7 +110,8 @@ def test_build_run_uses_latest_review_with_narrative():
     run = aggregate.build_run(rid)
     assert run["narrative"]["story"].startswith("A field worker opens the app.")
     assert run["narrative"]["title"] == "A field worker opens the app."
-    assert run["phase"] == "narrative-agreement · pending"
+    # Plain words, not the raw gate id + status (canopy-web#1271).
+    assert run["phase"] == "Narrative agreement · awaiting a decision"
 
 
 def test_build_run_dedupes_links_across_artifacts():

@@ -419,6 +419,34 @@ interface SceneCardProps {
    *  "Edited" badge + a sky-tinted border so the reviewer sees at a glance which
    *  beats they've touched. */
   isEdited?: boolean
+  /** A suggester (share-link guest, or someone who can't decide) edits the WORDS
+   *  and nothing else: no scores, build chips, features, grounding or delete —
+   *  that scaffolding is for whoever approves the build plan (canopy-web#1267). */
+  suggestOnly?: boolean
+}
+
+/**
+ * Group scenes into the demo's cuts for "The demo" summary. A DDD scene title
+ * names its cut before an em dash — "Cut 3 · Deliver — the proposed spot,
+ * before" — and consecutive scenes sharing that prefix are one cut. A narrative
+ * whose titles carry no cut prefix stays one cohesive paragraph, as before.
+ */
+export function groupScenesByCut<T extends { title: string }>(
+  scenes: T[],
+): Array<{ cut: string | null; scenes: T[] }> {
+  const cutOf = (t: string) => {
+    const i = (t ?? '').indexOf(' — ')
+    return i > 0 ? t.slice(0, i).trim() : null
+  }
+  if (!scenes.some((s) => cutOf(s.title))) return [{ cut: null, scenes }]
+  const groups: Array<{ cut: string | null; scenes: T[] }> = []
+  for (const s of scenes) {
+    const cut = cutOf(s.title)
+    const last = groups[groups.length - 1]
+    if (last && last.cut === cut) last.scenes.push(s)
+    else groups.push({ cut, scenes: [s] })
+  }
+  return groups
 }
 
 function StatusBadge({ status, frontier: frontierOverride }: { status?: string; frontier?: boolean }) {
@@ -460,6 +488,7 @@ function SceneCard({
   onEditGap,
   defaultOpen,
   isEdited,
+  suggestOnly = false,
 }: SceneCardProps) {
   if (scene.deleted) return null
 
@@ -496,7 +525,7 @@ function SceneCard({
           )}
           {persona && <PersonaChip persona={persona} />}
           <span className="text-sm font-medium text-foreground">{scene.title}</span>
-          {(grounding?.status || (gaps && gaps.length > 0)) && (
+          {!suggestOnly && (grounding?.status || (gaps && gaps.length > 0)) && (
             <StatusBadge
               frontier={(grounding?.status ?? 'grounded') !== 'grounded' || (gaps?.length ?? 0) > 0}
             />
@@ -519,13 +548,13 @@ function SceneCard({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {sceneActionability != null && (
+          {!suggestOnly && sceneActionability != null && (
             <ScoreBadge
               score={sceneActionability.score}
               tooltip="Scene actionability score (AI buildability estimate)"
             />
           )}
-          {!readOnly && (
+          {!readOnly && !suggestOnly && (
             <button
               type="button"
               onClick={onDeleteScene}
@@ -556,7 +585,10 @@ function SceneCard({
       </div>
 
       {/* Collapsed-by-default details. A one-line buildability summary stays visible
-          so a reviewer can judge what they're approving without expanding all scenes. */}
+          so a reviewer can judge what they're approving without expanding all scenes.
+          A suggester is not approving a build, so none of it renders for them. */}
+      {!suggestOnly && (
+        <>
       {!open && activeFeatures.length > 0 && (
         <p className="text-xs text-muted-foreground">
           <span className="text-muted-foreground">Builds: </span>
@@ -677,6 +709,8 @@ function SceneCard({
             </div>
           ))}
         </div>
+      )}
+        </>
       )}
         </>
       )}
@@ -935,7 +969,7 @@ function ExternalSuggestions({ suggestions }: { suggestions: ReviewSuggestion[] 
   return (
     <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3">
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-amber-500">
-        External suggestions ({suggestions.length})
+        Suggested edits ({suggestions.length})
       </h2>
       <ol className="space-y-3">
         {suggestions.map((s, i) => {
@@ -1070,6 +1104,9 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
   const [error, setError] = useState<string | null>(null)
   // Set once an external reviewer's suggestions land (they don't resolve the gate).
   const [suggested, setSuggested] = useState(false)
+  // Set once a decider saves edits without deciding (mode 'save').
+  const [saved, setSaved] = useState(false)
+  const viaShareLink = !!shareToken && review.visibility === 'link'
   const [auditOpen, setAuditOpen] = useState(false)
 
   const req = review.request_json
@@ -1134,9 +1171,14 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
   }
 
   // Submit — builds payload from op-buffer projection
-  const handleSubmit = useCallback(async () => {
+  // mode 'save': a decider keeps their wording edits WITHOUT deciding — they land as
+  // a suggestion, exactly like a guest's. Before this, "Submit — approve & build"
+  // was the only way to keep an edit, so fixing a word locked the build plan
+  // (canopy-web#1266).
+  const handleSubmit = useCallback(async (mode: 'decide' | 'save' = 'decide') => {
     setBusy(true)
     setError(null)
+    setSaved(false)
     try {
       // Build edited_scenes from effectiveScenes (op-buffer projection)
       const editedScenes: ReviewSubmittedScene[] = effectiveScenes.map((scene) => ({
@@ -1199,10 +1241,12 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
       if (Object.keys(editedPersonas!).length > 0) payload.edited_personas = editedPersonas
       if (Object.keys(wbDelta!).length > 0) payload.edited_why_brief = wbDelta
 
-      if (canSuggest && shareToken) {
-        // External reviewer: land the edits as a SUGGESTION — never resolve the gate.
-        await suggestReview(review.id, payload, shareToken)
-        setSuggested(true)
+      if (canSuggest || mode === 'save') {
+        // Land the edits as a SUGGESTION — never resolve the gate. A share-link
+        // guest authenticates with the token; a signed-in member with a session.
+        await suggestReview(review.id, payload, viaShareLink ? shareToken : null)
+        if (canSuggest) setSuggested(true)
+        else setSaved(true)
       } else {
         const updated = await submitReview(review.id, payload, shareToken)
         onResolved(updated)
@@ -1212,7 +1256,7 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
     } finally {
       setBusy(false)
     }
-  }, [effectiveScenes, effectivePersonas, effectiveWhyBrief, overallFeedback, buildOrder, choices, review.id, review.request_json, shareToken, canSuggest, onResolved])
+  }, [effectiveScenes, effectivePersonas, effectiveWhyBrief, overallFeedback, buildOrder, choices, review.id, review.request_json, shareToken, viaShareLink, canSuggest, onResolved])
 
   // An external suggester sends language edits without resolving the gate, so they
   // are NOT gated on filling in the gate decisions.
@@ -1238,8 +1282,8 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
     <div className="max-w-4xl mx-auto py-8 px-4 space-y-8">
       {canSuggest && (
         <div className="rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-sm text-foreground-secondary">
-          You're reviewing as a guest. Edit any narration wording, then{' '}
-          <strong>Send suggestions</strong> — your notes go to the team; you're not approving anything.
+          You can suggest wording here. Edit any narration, then{' '}
+          <strong>Send suggestions</strong> — the team is notified; you're not approving anything.
         </div>
       )}
       {review.suggestions.length > 0 && <ExternalSuggestions suggestions={review.suggestions} />}
@@ -1258,9 +1302,11 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
                     ? 'Findings review'
                     : `Review: ${req.gate}`}
             </h1>
-            <p className="text-sm text-muted-foreground mt-0.5">{req.run_id}</p>
+            {/* The narrative's name, not the run id — "chlorine-dispenser-walkthroughs-
+                2026-10-07-002" told a first-time reviewer nothing (canopy-web#1271). */}
+            <p className="text-sm text-muted-foreground mt-0.5">{review.title || req.run_id}</p>
           </div>
-          {overallScore != null && (
+          {!canSuggest && overallScore != null && (
             <div className="mt-0.5">
               <ScoreBadge
                 score={overallScore}
@@ -1327,7 +1373,9 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
             {videoElement}
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            This tab shows the rendered demo cut. Spec/yaml history lives in git — not version-controlled here.
+            {canSuggest
+              ? 'The recorded demo appears here once it has been rendered.'
+              : 'This tab shows the rendered demo cut. Spec/yaml history lives in git — not version-controlled here.'}
           </p>
         </section>
       )}
@@ -1349,7 +1397,7 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
             The demo
           </h2>
           {req.narrative?.trim() && (
-            <p className="text-[15px] leading-relaxed text-foreground-secondary">
+            <div className="space-y-3">
               {(() => {
                 // v2 (gap-flexible-scene-length): iterate the per-scene
                 // narration items from the request. Each item's `text` is the
@@ -1358,44 +1406,63 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
                 // work without breaking the click-to-scroll mapping.
                 const liveScenes = effectiveScenes.filter((s) => !s.deleted)
                 if (liveScenes.length === 0) {
-                  return req.narrative.trim()
-                }
-                return liveScenes.map((scene, i) => {
-                  const sceneId = scene.id
-                  const isEdited = editedSceneIds.has(sceneId)
-                  const stateCls = isEdited
-                    ? 'underline decoration-info/60 hover:decoration-info'
-                    : 'hover:underline hover:decoration-foreground-secondary/70'
                   return (
-                    <span key={sceneId}>
-                      {i > 0 && ' '}
-                      <span
-                        className={[
-                          'transition-colors decoration-1 underline-offset-4',
-                          'cursor-pointer',
-                          stateCls,
-                        ].join(' ')}
-                        onClick={() => {
-                          const el = document.getElementById(`scene-${sceneId}`)
-                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                        }}
-                        title={`Jump to scene ${i + 1}`}
-                      >
-                        {scene.narration}
-                      </span>
-                    </span>
+                    <p className="text-[15px] leading-relaxed text-foreground-secondary">
+                      {req.narrative.trim()}
+                    </p>
                   )
-                })
+                }
+                // One paragraph per cut. Joining every beat into a single <p> ran a
+                // seven-cut demo together as ~450 unbroken words (canopy-web#1270).
+                let n = 0
+                return groupScenesByCut(liveScenes).map((group, gi) => (
+                  <div key={gi}>
+                    {group.cut && (
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">
+                        {group.cut}
+                      </p>
+                    )}
+                    <p className="text-[15px] leading-relaxed text-foreground-secondary">
+                      {group.scenes.map((scene, i) => {
+                        const sceneId = scene.id
+                        const sceneNo = ++n
+                        const isEdited = editedSceneIds.has(sceneId)
+                        const stateCls = isEdited
+                          ? 'underline decoration-info/60 hover:decoration-info'
+                          : 'hover:underline hover:decoration-foreground-secondary/70'
+                        return (
+                          <span key={sceneId}>
+                            {i > 0 && ' '}
+                            <span
+                              className={[
+                                'transition-colors decoration-1 underline-offset-4',
+                                'cursor-pointer',
+                                stateCls,
+                              ].join(' ')}
+                              onClick={() => {
+                                const el = document.getElementById(`scene-${sceneId}`)
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                              }}
+                              title={`Jump to scene ${sceneNo}`}
+                            >
+                              {scene.narration}
+                            </span>
+                          </span>
+                        )
+                      })}
+                    </p>
+                  </div>
+                ))
               })()}
-            </p>
+            </div>
           )}
-          {(effectiveWhyBrief.problem || !readOnly) && (
+          {(effectiveWhyBrief.problem || (!readOnly && !canSuggest)) && (
             <div className="pt-1">
               <FieldLabel>The problem we're solving</FieldLabel>
               <AutoTextarea
                 className={inputCls(readOnly) + ' resize-none min-h-[3rem]'}
                 value={effectiveWhyBrief.problem ?? ''}
-                readOnly={readOnly}
+                readOnly={readOnly || canSuggest}
                 rows={3}
                 placeholder="The core problem this whole demo exists to solve"
                 onChange={(e) =>
@@ -1415,19 +1482,22 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
         </section>
       )}
 
-      {/* Personas — visible + editable */}
-      <PersonasSection
-        personas={personas}
-        readOnly={readOnly}
-        onEdit={(key, field, value) =>
-          dispatch({ type: 'APPEND_OP', op: { op: 'edit-persona', key, field, value } })
-        }
-      />
+      {/* Personas — visible + editable. A suggester already sees the cast above;
+          the editable persona form is build-plan input, not wording. */}
+      {!canSuggest && (
+        <PersonasSection
+          personas={personas}
+          readOnly={readOnly}
+          onEdit={(key, field, value) =>
+            dispatch({ type: 'APPEND_OP', op: { op: 'edit-persona', key, field, value } })
+          }
+        />
+      )}
 
       {/* Narrative verdict decision now lives at the bottom, next to Submit (single decision zone). */}
 
       {/* Other decisions */}
-      {otherDecisions.length > 0 && (
+      {!canSuggest && otherDecisions.length > 0 && (
         <section>
           <h2 className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider mb-3">
             {readOnly ? 'Additional decisions (submitted)' : 'Additional decisions'}
@@ -1447,7 +1517,7 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
       )}
 
       {/* What approving does — the next-action + engage-vs-delegate summary */}
-      {!readOnly && liveScenes.length > 0 && resolvedChoice('narrative-verdict') !== 'redraft' && (
+      {!readOnly && !canSuggest && liveScenes.length > 0 && resolvedChoice('narrative-verdict') !== 'redraft' && (
         <section className="rounded-lg border border-info/30 bg-info/[0.06] p-4">
           <h2 className="text-sm font-semibold text-info mb-2">If you approve, running DDD next will…</h2>
           <ul className="space-y-1 text-sm text-foreground-secondary">
@@ -1501,11 +1571,17 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
           <h2 className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider mb-1">
             {readOnly ? 'Scenes (submitted)' : 'Scenes — the story, beat by beat'}
           </h2>
-          <p className="text-xs text-muted-foreground mb-3">
-            <span className="text-success">Existing feature</span> = backed by shipped code ·{' '}
-            <span className="text-warning">New feature</span> = intended, not built yet. Each scene = one beat of the demo.
-            Per-scene numbers are AI actionability estimates (1–5; passes at ≥4).
-          </p>
+          {canSuggest ? (
+            <p className="text-xs text-muted-foreground mb-3">
+              Each scene is one beat of the demo. Change any wording below.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground mb-3">
+              <span className="text-success">Existing feature</span> = backed by shipped code ·{' '}
+              <span className="text-warning">New feature</span> = intended, not built yet. Each scene = one beat of the demo.
+              Per-scene numbers are AI actionability estimates (1–5; passes at ≥4).
+            </p>
+          )}
           <div className="space-y-4">
             {effectiveScenes.map((scene) => (
               <SceneCard
@@ -1513,6 +1589,7 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
                 scene={scene}
                 sceneNumber={sceneNumberById.get(scene.id)}
                 isEdited={editedSceneIds.has(scene.id)}
+                suggestOnly={canSuggest}
                 defaultOpen={
                   expandAll ||
                   sceneIsFrontier(scene) ||
@@ -1567,7 +1644,7 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
             ))}
 
             {/* Add scene */}
-            {!readOnly && (
+            {!readOnly && !canSuggest && (
               <button
                 type="button"
                 onClick={() => {
@@ -1625,8 +1702,9 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
         </section>
       )}
 
-      {/* Build sequence — independent of the video order */}
-      {effectiveScenes.filter((s) => !s.deleted).length > 0 && (
+      {/* Build sequence — independent of the video order. Engineering's tackle
+          order; a suggester is editing words, not planning the build. */}
+      {!canSuggest && effectiveScenes.filter((s) => !s.deleted).length > 0 && (
         <BuildSequenceSection
           effectiveScenes={effectiveScenes}
           buildOrder={buildOrder}
@@ -1749,7 +1827,7 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
         <div className="flex flex-col items-end gap-1">
           <p className="text-sm text-success">✓ Thanks — your suggestions were sent.</p>
           <span className="text-[11px] text-muted-foreground">
-            The team will review your wording. You can keep editing and send more.
+            The team has been notified and will review your wording. You can keep editing and send more.
           </span>
         </div>
       ) : (
@@ -1762,9 +1840,31 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
               . Approving commits to building these as intended — they are not yet verified.
             </p>
           )}
+          {!canSuggest && (
+            <div className="flex flex-col items-end gap-0.5 mb-2">
+              <button
+                type="button"
+                onClick={() => void handleSubmit('save')}
+                disabled={busy || !isDirty}
+                className={[
+                  'px-4 py-1.5 rounded border text-sm transition-colors',
+                  busy || !isDirty
+                    ? 'border-input text-muted-foreground cursor-not-allowed'
+                    : 'border-muted-foreground text-foreground hover:bg-muted/50',
+                ].join(' ')}
+              >
+                Save edits without deciding
+              </button>
+              <span className="text-[11px] text-muted-foreground">
+                {saved
+                  ? '✓ Saved as a suggestion — nothing was approved.'
+                  : 'Keeps your wording as a suggestion. Nothing is approved or built.'}
+              </span>
+            </div>
+          )}
           <button
             type="button"
-            onClick={() => void handleSubmit()}
+            onClick={() => void handleSubmit('decide')}
             disabled={!canSubmit}
             className={[
               'px-6 py-2 rounded font-medium text-sm transition-colors',
@@ -1862,14 +1962,16 @@ export function ReviewPage() {
 
   const isResolved = review.status === 'resolved'
 
-  // An external (non-dimagi) reviewer holding the share token can SUGGEST edits on a
-  // link-visibility review — the editor is live for them, but their action sends
-  // suggestions (never resolves the gate).
+  // Anyone who may NOT decide gets the suggest-only editor: their action sends
+  // suggestions (never resolves the gate). Keyed on the server's `can_decide`, not
+  // on "is anyone signed in" — that handed a signed-in non-editor (say, a Dimagi
+  // reviewer opening the guest link) an approve button the server then refused
+  // with a 403, losing their edits (canopy-web#1268).
+  const viaShareLink = !!shareToken && review.visibility === 'link'
   const canSuggest =
-    auth.status !== 'authenticated' &&
-    !!shareToken &&
-    review.visibility === 'link' &&
-    !isResolved
+    !isResolved &&
+    !review.can_decide &&
+    (viaShareLink || auth.status === 'authenticated')
 
   // Product-findings reviews are run-children with their own first-class
   // surface — they don't use the narrative editor machinery. Branch before the
@@ -1904,7 +2006,7 @@ export function ReviewPage() {
         // Resolving the gate requires a Dimagi login; read-only once resolved. An
         // external share-token holder may edit to SUGGEST (canSuggest), so the editor
         // is live for them even though they're not authenticated.
-        readOnly={isResolved || (auth.status !== 'authenticated' && !canSuggest)}
+        readOnly={isResolved || (!review.can_decide && !canSuggest)}
         canSuggest={canSuggest}
         onResolved={(updated) => setReview(updated)}
       />
