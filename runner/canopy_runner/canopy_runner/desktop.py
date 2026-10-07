@@ -362,9 +362,15 @@ def ensure_mod() -> None:
                    capture_output=True, text=True, timeout=120)
 
 
-def seed_session(cfg, wt: Path) -> str:
+def seed_session(cfg, wt: Path, name: str = "") -> str:
     cli = _cli()
     argv = [str(cli), "-p", SEED_PROMPT, "--output-format", "json"]
+    if name:
+        # The session's title in the app's sidebar. `--name` writes a
+        # `custom-title` record the app adopts on import; without it every session
+        # was titled from the seed prompt alone, and all came out as "General
+        # coding session". Same name emdash shows: c-/cx- + subject + disc.
+        argv += ["--name", name]
     model = getattr(cfg, "desktop_model", "")
     if model:
         argv += ["--model", model]
@@ -797,7 +803,7 @@ class TurnRun:
             if summary:
                 prompt = (f"[Continuing prior work on this thread — context from earlier sessions "
                           f"(a fresh session, possibly a different machine):]\n{summary}\n\n{prompt}")
-            sid = seed_session(self.cfg, wt)
+            sid = seed_session(self.cfg, wt, name)
             # The turn's record starts AFTER the seed's "Reply with exactly: ready"
             # exchange — shipping it made a turn's transcript the seed and nothing
             # else (found live, #1188).
