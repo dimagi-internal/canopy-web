@@ -11,13 +11,15 @@ export type AgentOut = Schemas['AgentOut']
 export type AgentDetailOut = Schemas['AgentDetailOut']
 export type AgentTurnOut = Schemas['AgentTurnOut']
 export type AgentSyncOut = Schemas['AgentSyncOut']
-export type AgentWorkProductOut = Schemas['AgentWorkProductOut']
 export type AgentSkillOut = Schemas['AgentSkillOut']
-export type AgentTaskOut = Schemas['AgentTaskOut']
-export type AgentProjectOut = Schemas['AgentProjectOut']
 export type AgentTaskLink = Schemas['AgentTaskLink']
-export type AgentCommandOut = Schemas['AgentTaskCommandOut']
-export type PostCommandResult = Schemas['CommandResultOut']
+export type TaskOut = Schemas['AgentTaskOut']
+export type TaskDetailOut = Schemas['AgentTaskDetailOut']
+export type TaskActionOut = Schemas['AgentTaskActionOut']
+export type TaskAction = Schemas['AgentTaskActionIn']['action']
+export type TaskStatus = TaskOut['status']
+export type ProjectOut = Schemas['AgentProjectOut']
+export type ProjectDetailOut = Schemas['AgentProjectDetailOut']
 export type AgentRunnerOut = Schemas['AgentRunnerOut']
 export type AgentRunnerRuleOut = Schemas['AgentRunnerRuleOut']
 // The routable source union, straight off the generated request schema — the
@@ -30,8 +32,6 @@ export type RuleTurnMode = NonNullable<Schemas['AgentRunnerRuleIn']['turn_mode']
 // toggle can't drift from the server's accepted values.
 export type TurnMode = Schemas['TurnModeIn']['turn_mode']
 
-export type AgentTaskStatus = AgentTaskOut['status']
-export type AgentCommandKind = Schemas['AgentTaskCommandIn']['kind']
 
 // Stays hand-declared, deliberately: openapi-typescript emits a CONCRETE alias
 // per payload (Page_AgentOut_, Page_AgentSyncOut_, …), never a generic, so
@@ -143,24 +143,6 @@ export async function listAgentTurns(
   }
 }
 
-export async function listAgentWorkProducts(
-  slug: string,
-  params: ListAgentsParams = {},
-): Promise<Page<AgentWorkProductOut>> {
-  const res = await apiV2.GET('/api/agents/{slug}/work-products/', {
-    params: { path: { slug }, query: { limit: params.limit } },
-  })
-  const page = toPage(unwrap(res, 'listAgentWorkProducts'))
-  // tags degrades the same way one level down (see toPage's comment).
-  return {
-    ...page,
-    items: page.items.map((w) => ({
-      ...w,
-      tags: w.tags ? Array.from(w.tags) : undefined,
-    })),
-  }
-}
-
 export async function listAgentSkills(slug: string): Promise<AgentSkillOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/skills/', { params: { path: { slug } } })
   return Array.from(unwrap(res, 'listAgentSkills'))
@@ -185,49 +167,93 @@ export async function syncSkillHistory(slug: string): Promise<SkillHistoryOut> {
   return unwrap(res, 'syncSkillHistory') as unknown as SkillHistoryOut
 }
 
-// Plain array, not paginated.
-export async function listAgentTasks(slug: string): Promise<AgentTaskOut[]> {
-  const res = await apiV2.GET('/api/agents/{slug}/tasks/', { params: { path: { slug } } })
-  const items = Array.from(unwrap(res, 'listAgentTasks'))
-  // links degrades the same way (see toPage's comment); rebuild it.
-  return items.map((t) => ({ ...t, links: t.links ? Array.from(t.links) : undefined }))
+export interface TaskFilters {
+  project?: string
+  status?: string
+  waiting?: 'me'
+  ask?: 'open' | 'closed'
+  batch?: string
 }
 
-export async function listWaitingTasks(slug: string): Promise<AgentTaskOut[]> {
-  const res = await apiV2.GET('/api/agents/{slug}/tasks/waiting/', {
-    params: { path: { slug } },
+// Drop unset filters so they never reach the query string as `key=undefined`.
+function definedOnly<T extends object>(f: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(f).filter(([, v]) => v !== undefined && v !== ''),
+  ) as Partial<T>
+}
+
+// A task is addressed by (agent slug, ext_id); `ref` is the ext_id.
+export async function listTasks(slug: string, f: TaskFilters = {}): Promise<TaskOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/tasks/', {
+    params: { path: { slug }, query: definedOnly(f) },
   })
-  const items = Array.from(unwrap(res, 'listWaitingTasks'))
-  return items.map((t) => ({ ...t, links: t.links ? Array.from(t.links) : [] }) as AgentTaskOut)
+  return Array.from(unwrap(res, 'listTasks')) as TaskOut[]
 }
 
-export async function listAgentProjects(
+// Every task the caller can see across the fleet; `agent` narrows to one slug.
+export async function listFleetTasks(f: TaskFilters & { agent?: string } = {}): Promise<TaskOut[]> {
+  const res = await apiV2.GET('/api/tasks/', { params: { query: definedOnly(f) } })
+  return Array.from(unwrap(res, 'listFleetTasks')) as TaskOut[]
+}
+
+export async function getTask(slug: string, ref: string): Promise<TaskDetailOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/tasks/{ref}/', {
+    params: { path: { slug, ref } },
+  })
+  return unwrap(res, 'getTask') as TaskDetailOut
+}
+
+export type ActResult = Schemas['ActOut']
+
+export async function actOnTask(
   slug: string,
-  status = '',
-): Promise<AgentProjectOut[]> {
+  ref: string,
+  action: TaskAction,
+  comment?: string,
+): Promise<ActResult> {
+  const res = await apiV2.POST('/api/agents/{slug}/tasks/{ref}/actions', {
+    params: { path: { slug, ref } },
+    body: { action, comment: comment ?? '' },
+  })
+  return unwrap(res, 'actOnTask') as ActResult
+}
+
+export async function patchTask(
+  slug: string,
+  ref: string,
+  body: Schemas['AgentTaskPatch'],
+): Promise<TaskOut> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/tasks/{ref}/', {
+    params: { path: { slug, ref } },
+    body,
+  })
+  return unwrap(res, 'patchTask') as TaskOut
+}
+
+export async function listProjects(slug: string, status?: string): Promise<ProjectOut[]> {
   const res = await apiV2.GET('/api/agents/{slug}/projects/', {
     params: { path: { slug }, query: status ? { status } : {} },
   })
-  const items = Array.from(unwrap(res, 'listAgentProjects'))
-  // `links` degrades to a readonly tuple through the generated types, the same
-  // way tasks do (see `toPage`); rebuild it so callers can treat it as an array.
-  return items.map(
-    (p) => ({ ...p, links: p.links ? Array.from(p.links) : [] }) as AgentProjectOut,
-  )
+  return Array.from(unwrap(res, 'listProjects')) as ProjectOut[]
 }
 
-export async function createAgentProject(
+export async function getProject(slug: string, ref: string): Promise<ProjectDetailOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/projects/{ref}/', {
+    params: { path: { slug, ref } },
+  })
+  return unwrap(res, 'getProject') as ProjectDetailOut
+}
+
+export async function createProject(
   slug: string,
-  body: { name: string; outcome?: string; drive_folder_url?: string; repo_slug?: string },
-): Promise<AgentProjectOut> {
+  body: { name: string; outcome: string },
+): Promise<ProjectOut> {
   const res = await apiV2.POST('/api/agents/{slug}/projects/', {
     params: { path: { slug } },
-    // The generated request type spells out every field; the server defaults
-    // them all but the schema does not mark them optional, so they are filled
-    // here rather than each caller repeating them.
+    // The generated request type spells out every defaulted field as required
+    // (Ninja emits required-with-default); fill them here, not at each caller.
     body: {
       ext_id: '',
-      outcome: '',
       status: 'active',
       owner_note: '',
       drive_folder_id: '',
@@ -237,54 +263,29 @@ export async function createAgentProject(
       ...body,
     },
   })
-  return unwrap(res, 'createAgentProject') as AgentProjectOut
+  return unwrap(res, 'createProject') as ProjectOut
 }
 
-export async function patchAgentProject(
+export async function patchProject(
   slug: string,
   ref: string,
-  body: Partial<{ name: string; outcome: string; status: string; drive_folder_url: string }>,
-): Promise<AgentProjectOut> {
+  body: Schemas['AgentProjectPatch'],
+): Promise<ProjectOut> {
   const res = await apiV2.PATCH('/api/agents/{slug}/projects/{ref}/', {
     params: { path: { slug, ref } },
     body,
   })
-  return unwrap(res, 'patchAgentProject') as AgentProjectOut
+  return unwrap(res, 'patchProject') as ProjectOut
 }
 
-export async function postTaskCommand(
+export async function listTaskActions(
   slug: string,
-  taskId: number,
-  kind: AgentCommandKind,
-  payload?: Record<string, unknown>,
-): Promise<PostCommandResult> {
-  const res = await apiV2.POST('/api/agents/{slug}/tasks/{task_id}/commands', {
-    params: { path: { slug, task_id: taskId } },
-    // created_by is server-filled from request.user.email. The generated type
-    // marks it required (Ninja emits required-with-default), so send "" and let
-    // the server's `payload.created_by or request.user.email` take over — the
-    // wart stops here rather than reaching every call site.
-    body: { kind, payload: payload ?? {}, created_by: '' },
+  status?: 'pending' | 'applied',
+): Promise<TaskActionOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/actions/', {
+    params: { path: { slug }, query: status ? { status } : {} },
   })
-  const data = unwrap(res, 'postTaskCommand')
-  // task.links degrades the same way (see toPage's comment); rebuild it.
-  return {
-    ...data,
-    task: data.task
-      ? { ...data.task, links: data.task.links ? Array.from(data.task.links) : undefined }
-      : data.task,
-  }
-}
-
-export async function listAgentCommands(slug: string, status?: string): Promise<AgentCommandOut[]> {
-  const res = await apiV2.GET('/api/agents/{slug}/commands', {
-    params: { path: { slug }, query: { status } },
-  })
-  return Array.from(unwrap(res, 'listAgentCommands'))
-}
-
-export async function listPendingCommands(slug: string): Promise<AgentCommandOut[]> {
-  return listAgentCommands(slug, 'pending')
+  return Array.from(unwrap(res, 'listTaskActions')) as TaskActionOut[]
 }
 
 // The ordered runner-assignment API (the routing-matrix UI's read/write
