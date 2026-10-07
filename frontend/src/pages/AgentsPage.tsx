@@ -116,8 +116,8 @@ export function AgentsPage() {
       <div className="mb-6">
         <h1 className="text-xl font-semibold text-foreground">Agents</h1>
         <p className="text-[13px] text-muted-foreground mt-1">
-          Each agent's workspace — its syncs, work products, and skill catalog. Pick one to open
-          its workspace.
+          Each agent's workspace — its projects, tasks, turns and skill catalog. Pick one to
+          open its workspace.
         </p>
       </div>
 

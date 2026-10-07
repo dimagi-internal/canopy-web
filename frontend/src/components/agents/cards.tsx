@@ -1,6 +1,6 @@
 // Shared presentational pieces for the Agent Workspace sections. Extracted
 // verbatim from the old single-column AgentWorkspacePage so the lazy-loaded
-// section routes (overview / syncs / work-products / skills) can share them.
+// section routes (projects / tasks / turns / skills …) can share them.
 // Styling is preserved exactly as it was inline on the page.
 
 import type {

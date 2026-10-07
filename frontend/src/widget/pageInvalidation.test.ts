@@ -91,7 +91,7 @@ describe('a failing refetch cannot break the conversation', () => {
 describe('declaring the resource is what makes any of it fire', () => {
   it('carries the resource into the page state', () => {
     const state = describeSelection({
-      backingTool: 'list_items',
+      backingTool: 'list_fleet_tasks',
       resource: 'task://',
       ids: [1, 2],
     })
@@ -102,7 +102,7 @@ describe('declaring the resource is what makes any of it fire', () => {
   it('omits it when a page does not declare one', () => {
     // Legal, and means "describe me to the agent, but I will not refresh
     // myself" — a worse page, not a broken one.
-    const state = describeSelection({ backingTool: 'list_items', ids: [1] })
+    const state = describeSelection({ backingTool: 'list_fleet_tasks', ids: [1] })
 
     expect(state).not.toHaveProperty('resource')
   })
