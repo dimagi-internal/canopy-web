@@ -3,7 +3,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 # canopy's own outbound-email identity: mail comes from canopy.dimagi.com, the
 # address people know canopy by, not from the shared labs domain.
 #
-# Before this stack canopy sent as noreply@labs.connect.dimagi.com, borrowing
+# Before this stack canopy sent from labs.connect.dimagi.com, borrowing
 # the identity connect-labs stood up (connect-labs infra/labs-email.yml). That
 # stack still owns everything shared — the `labs-jj-email` configuration set,
 # its bounce/complaint SNS topic, account-level production access — and this one
@@ -21,8 +21,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 # DNS is the step this stack cannot do: dimagi.com is a Cloudflare zone, in no
 # AWS account. The identity stays unverified, and SES refuses every send from
 # it, until the three DKIM CNAMEs in the Outputs are published there. They were
-# published and verified on 2026-10-07, and DEFAULT_FROM_EMAIL
-# (config/settings/connectlabs.py) moved to noreply@canopy.dimagi.com then.
+# published and verified on 2026-10-07, when DEFAULT_FROM_EMAIL
+# (config/settings/connectlabs.py — the one place the sender is named) moved
+# onto this domain.
 #
 # dimagi.com publishes DMARC p=quarantine, and a subdomain inherits it. DKIM
 # alignment is what passes it: the default MAIL FROM is amazonses.com, which
