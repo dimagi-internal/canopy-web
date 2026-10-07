@@ -401,8 +401,11 @@ def list_sessions(
     elif state == "archived":
         rows = rows.filter(Q(status=Session.ARCHIVED) | unseen)
 
+    # Every row says which mode drove it — the list shows it on each card, so an
+    # auto session that just ran and a manual one waiting on you can be told apart.
+    rows = services.with_driving_turn(rows)
     if reply:
-        rows = services.with_driving_turn(services.with_last_reply(rows))
+        rows = services.with_last_reply(rows)
     out = [_out(s, reply=reply, viewer=request.user) for s in rows]
     # Waiting first, then running, then genuinely-most-recent. Sorting by
     # created_at made a dead repo and a live one interleave arbitrarily (both

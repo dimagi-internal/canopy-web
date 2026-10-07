@@ -8,6 +8,7 @@ import { relativeTime } from '@/components/activity/turnLog'
 import { CLOSE_POLL_MS, closeIntent, closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { NewChatMenu } from '@/components/chat/NewChatMenu'
+import { TurnModeBadge } from '@/components/chat/TurnModeBadge'
 import { CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, sourceKey } from './feedRules'
 
 const POLL_MS = 20_000
@@ -360,6 +361,7 @@ function FeedCard({
             >
               {source}
             </span>
+            <TurnModeBadge mode={s.turn_mode} testId={`feed-mode-${s.id}`} />
             <span className="truncate">
               {[workspace, s.runner_name, age].filter(Boolean).join(' · ')}
             </span>

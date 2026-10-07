@@ -10,6 +10,7 @@ import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
 import { closeIntent, closeResultMessage, settleClosing } from './closeAction'
 import { parkedReason, parkedSummary, partitionByRunnerReachability, repoChoices } from './runnerEligibility'
 import { NewChatMenu } from './NewChatMenu'
+import { TurnModeBadge } from './TurnModeBadge'
 import { TransferSessionMenu } from './TransferSessionMenu'
 import type { TransferResult } from '@/api/chat'
 
@@ -395,7 +396,10 @@ export function ChatSessionsPanel({
                           the sixth read "6h ago", and the column could not be
                           scanned without reading each value to learn which
                           question it was answering. Status always; age alongside. */}
-                      <span className="text-muted-foreground">{relativeTime(s.last_activity_at, now)}</span>
+                      <span className="flex items-center gap-1 text-muted-foreground">
+                        <TurnModeBadge mode={s.turn_mode} testId={`session-mode-${s.id}`} />
+                        {relativeTime(s.last_activity_at, now)}
+                      </span>
                       {s.runner_name && (
                         <span className="text-muted-foreground">
                           {s.runner_name}

@@ -168,5 +168,5 @@ def test_a_chat_carries_the_mode_of_its_newest_claimed_send(world):
                         idempotency_key=uuid.uuid4().hex)
     row = _row(world, s)
     assert (row["turn_mode"], row["turn_origin"]) == ("manual", "canopy_web_chat")
-    # Feed-only, like the reply.
-    assert _row(world, s, query="")["turn_mode"] == ""
+    # On every row, not only the feed's: the sessions list labels each card with it.
+    assert _row(world, s, query="")["turn_mode"] == "manual"
