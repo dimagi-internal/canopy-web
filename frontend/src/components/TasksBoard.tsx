@@ -79,6 +79,7 @@ export function agentDisplayName(slug: string): string {
 //   suggested, asks nothing → + approve · decline (a suggestion IS the
 //                             question "should I do this?"; the server allows
 //                             both on a live plain task — ruling R6)
+//   ask closed             → reply only (approve/decline would 409)
 //   editors, live          → + dispatch · done
 //   done/declined          → nothing
 // Viewers may approve/decline/reply; dispatch/done need edit (403 otherwise),
@@ -92,10 +93,13 @@ function isLive(task: TaskOut): boolean {
 // eslint-disable-next-line react-refresh/only-export-components -- the card's action rule, exported for its tests
 export function availableActions(task: TaskOut, canEdit: boolean): TaskAction[] {
   if (!isLive(task)) return []
-  const kind = task.ask_open ? (task.ask_kind || '').trim() : ''
+  const kind = (task.ask_kind || '').trim()
   let actions: TaskAction[] = ['reply']
-  if (kind === 'review' || (!kind && task.status === 'suggested')) actions = [...actions, 'approve', 'decline']
-  else if (kind === 'question') actions = [...actions, 'decline']
+  // A CLOSED ask is not "no ask": the server refuses approve/decline on it
+  // (ClosedAskError, 409) — e.g. a suggested question someone already answered.
+  if (task.ask_open && kind === 'review') actions = [...actions, 'approve', 'decline']
+  else if (task.ask_open && kind === 'question') actions = [...actions, 'decline']
+  else if (!kind && task.status === 'suggested') actions = [...actions, 'approve', 'decline']
   if (canEdit) actions = [...actions, 'dispatch', 'done']
   return actions
 }

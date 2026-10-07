@@ -26,8 +26,10 @@ describe('availableActions', () => {
   it('in-progress task, viewer', () => expect(availableActions(t({ status: 'in_progress' }), false)).toEqual(['reply']))
   it('suggested task with no ask, viewer', () =>
     expect(availableActions(t({ status: 'suggested' }), false)).toEqual(['reply', 'approve', 'decline']))
-  it('suggested task whose ask is closed is a plain suggestion', () =>
-    expect(availableActions(t({ status: 'suggested', ask_kind: 'question', ask_open: false }), false)).toEqual(['reply', 'approve', 'decline']))
+  it('suggested task whose ask is closed offers no approve/decline (the server 409s them)', () =>
+    expect(availableActions(t({ status: 'suggested', ask_kind: 'question', ask_open: false }), false)).toEqual(['reply']))
+  it('suggested task whose ask is closed, editor', () =>
+    expect(availableActions(t({ status: 'suggested', ask_kind: 'review', ask_open: false }), true)).toEqual(['reply', 'dispatch', 'done']))
   it('open review, editor', () =>
     expect(availableActions(t({ ask_kind: 'review', ask_open: true }), true)).toEqual(['reply', 'approve', 'decline', 'dispatch', 'done']))
   it('finished', () => expect(availableActions(t({ status: 'done' }), true)).toEqual([]))
