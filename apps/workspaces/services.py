@@ -452,8 +452,8 @@ class MemberError(Exception):
     """Raised by `set_member_role` / `remove_member` for any reason a member
     mutation can't proceed.
 
-    `.code` is a closed set (`not_found`, `last_owner`, `invalid_role`) an
-    HTTP layer maps to a status — same shape as `InviteError` below.
+    `.code` is a closed set (`not_found`, `last_owner`, `invalid_role`,
+    `system_role` — a system account above editor) an HTTP layer maps to a status — same shape as `InviteError` below.
     """
 
     def __init__(self, code: str):
@@ -558,6 +558,12 @@ def set_member_role(*, workspace: Workspace, user_id, role: str, by=None) -> Wor
 
     def _mutate(m: WorkspaceMembership) -> WorkspaceMembership:
         if role != m.role:
+            from .system_accounts import ROLES as SYSTEM_ROLES
+            from .system_accounts import is_system_user
+
+            if role not in SYSTEM_ROLES and is_system_user(m.user):
+                # A system administers nothing (system_accounts.py).
+                raise MemberError("system_role")
             if is_last_owner(m):
                 raise MemberError("last_owner")
             was_owner = m.role == WorkspaceMembership.OWNER

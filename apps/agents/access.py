@@ -98,8 +98,15 @@ def _refusal(agent, iface: dict, classes: set[str], requested: str | None) -> st
         doors = ", ".join(f"'{n}'" for n in offered)
         return (f"{agent.slug} offers {what} to you; you may use capability {doors} "
                 "(e.g. on a thread, or its MCP tool)")
+    hint = ""
+    if "contact:verified" in classes:
+        # A verified sender nobody listed is, far more often than a stranger, an
+        # automated one someone subscribed on purpose — CloudWatch alarms went
+        # unanswered for nine days this way (canopy-web#1253). Say what fixes it.
+        hint = ("; if this is an automated sender (alarms, CI, a monitor), a workspace admin "
+                "can bind its address to a system account under Settings → System accounts")
     return (f"{agent.slug} offers {what} to you (see its declared interface); ask {owner} "
-            "to list you in it")
+            f"to list you in it{hint}")
 
 
 def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str | None = None,

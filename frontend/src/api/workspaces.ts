@@ -383,3 +383,82 @@ export async function deleteRetentionRule(slug: string, ruleId: number): Promise
     throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to delete the rule'))
   }
 }
+
+// ---- system accounts (apps/workspaces/system_accounts.py) ----
+// Non-human members (e.g. CloudWatch alarm mail) that cannot sign in. Aligned
+// mail from a bound sender address, in this workspace, becomes their turn.
+export type SystemAccountOut = components['schemas']['SystemAccountOut']
+export type SystemSenderOut = components['schemas']['SystemSenderOut']
+export type SystemAccountCreateIn = components['schemas']['SystemAccountCreateIn']
+export type SystemAccountUpdateIn = components['schemas']['SystemAccountUpdateIn']
+export type SystemRole = NonNullable<SystemAccountCreateIn['role']>
+
+export async function listSystemAccounts(slug: string): Promise<SystemAccountOut[]> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/system-accounts/', {
+    params: { path: { slug } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load system accounts'))
+  }
+  return res.data as unknown as SystemAccountOut[]
+}
+
+export async function createSystemAccount(slug: string, body: SystemAccountCreateIn): Promise<SystemAccountOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/system-accounts/', {
+    params: { path: { slug } },
+    body,
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to create system account'))
+  }
+  return res.data as unknown as SystemAccountOut
+}
+
+export async function updateSystemAccount(
+  slug: string,
+  accountId: number,
+  body: SystemAccountUpdateIn,
+): Promise<SystemAccountOut> {
+  const res = await apiV2.PATCH('/api/workspaces/{slug}/system-accounts/{account_id}/', {
+    params: { path: { slug, account_id: accountId } },
+    body,
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to update system account'))
+  }
+  return res.data as unknown as SystemAccountOut
+}
+
+export async function deleteSystemAccount(slug: string, accountId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/workspaces/{slug}/system-accounts/{account_id}/', {
+    params: { path: { slug, account_id: accountId } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to delete system account'))
+  }
+}
+
+export async function addSystemSender(
+  slug: string,
+  accountId: number,
+  address: string,
+  subjectPattern: string,
+): Promise<SystemSenderOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/system-accounts/{account_id}/senders/', {
+    params: { path: { slug, account_id: accountId } },
+    body: { address, subject_pattern: subjectPattern },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to add sender'))
+  }
+  return res.data as unknown as SystemSenderOut
+}
+
+export async function removeSystemSender(slug: string, accountId: number, senderId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/workspaces/{slug}/system-accounts/{account_id}/senders/{sender_id}/', {
+    params: { path: { slug, account_id: accountId, sender_id: senderId } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to remove sender'))
+  }
+}

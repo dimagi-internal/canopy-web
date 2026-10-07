@@ -8,6 +8,7 @@ import {
   createInvite,
   listInvites,
   listMembers,
+  listSystemAccounts,
   reissueInvite,
   removeMember,
   revokeInvite,
@@ -17,7 +18,9 @@ import {
   type InviteRole,
   type MemberOut,
   type MemberRole,
+  type SystemAccountOut,
 } from '@/api/workspaces'
+import { SystemAccountsSection } from '@/components/people/SystemAccountsSection'
 import { AddPersonForm, PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
 import { roleOptions } from '@/components/people/roles'
 import { grantableRoles, mayManageMember, roleAllows } from '@/lib/workspaceRoles'
@@ -65,6 +68,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
 
   const [members, setMembers] = useState<MemberOut[] | null>(null)
   const [invites, setInvites] = useState<InviteOut[] | null>(null)
+  const [systemAccounts, setSystemAccounts] = useState<SystemAccountOut[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [rowError, setRowError] = useState<string | null>(null)
 
@@ -82,6 +86,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
     let cancelled = false
     setMembers(null)
     setInvites(null)
+    setSystemAccounts(null)
     setLoadError(null)
     Promise.all([listMembers(slug), listInvites(slug)])
       .then(([m, i]) => {
@@ -99,10 +104,23 @@ export function WorkspaceMembersPage(): JSX.Element | null {
         }
         setLoadError(e instanceof Error ? e.message : 'Failed to load members')
       })
+    // Separately, so an older backend without the route still shows members.
+    listSystemAccounts(slug)
+      .then((a) => {
+        if (!cancelled) setSystemAccounts(a)
+      })
+      .catch(() => {
+        if (!cancelled) setSystemAccounts([])
+      })
     return () => {
       cancelled = true
     }
   }, [slug, navigate])
+
+  const systemByUser = useMemo(
+    () => new Map((systemAccounts ?? []).map((a) => [a.user_id, a])),
+    [systemAccounts],
+  )
 
   const outstandingInvites = useMemo(() => (invites ?? []).filter(isInviteOutstanding), [invites])
   // Owners of a parent workspace own this one too (`inherited`). They count
@@ -215,11 +233,17 @@ export function WorkspaceMembersPage(): JSX.Element | null {
                 m.role === 'owner' && !m.inherited && directOwnerCount === 1 && !hasInheritedOwner
               // A row I may act on: below me (an owner may act on anyone).
               const manageable = !m.inherited && mayManageMember(myRole, m.role)
+              // A system account (an automated sender) is named, not addressed —
+              // its email is a synthetic one nobody can use — and never above editor.
+              const system = m.system ? systemByUser.get(m.user_id) : undefined
               return {
                 key: m.user_id,
-                name: m.email,
+                name: m.system ? (system?.name ?? 'System account') : m.email,
+                detail: m.system ? 'System account — cannot sign in' : undefined,
                 role: m.role,
-                options: roleOptions(grantable),
+                options: m.system
+                  ? roleOptions(grantable.filter((r) => r === 'editor' || r === 'viewer'))
+                  : roleOptions(grantable),
                 editable: manageable,
                 roleDisabled: isSoleOwner,
                 why: m.inherited
@@ -234,6 +258,17 @@ export function WorkspaceMembersPage(): JSX.Element | null {
           />
         )}
       </div>
+
+      <SystemAccountsSection
+        slug={slug}
+        accounts={systemAccounts}
+        canManage={canManage}
+        onChange={(next) => {
+          setSystemAccounts(next)
+          // Membership follows the account (created, deleted, re-roled).
+          void listMembers(slug).then(setMembers).catch(() => {})
+        }}
+      />
 
       <div className="mb-8">
         <WorkbenchSubHeader title="Pending invites" count={outstandingInvites.length} />

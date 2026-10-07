@@ -137,6 +137,12 @@ A request cannot be used to probe tenants: a workspace whose domains do not matc
 a workspace that does not exist return the **same 404**. Approval is upgrade-only, like an
 invite, so it never demotes an existing member.
 
+**A member who is not a person: system accounts.** An admin can also create a *system
+account*, an automated sender such as CloudWatch alarm mail. It joins as an editor (or
+viewer, never above) and **can never sign in**. Inbound mail becomes it only through a
+sender binding in that workspace. Membership is created through the same `_grant` door as
+an invite. See `docs/architecture/access.md` § "System accounts".
+
 ## What enforces the membership tiers
 
 Every surface is gated now, through the table above; this section is about the shapes that

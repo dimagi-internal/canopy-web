@@ -3339,6 +3339,91 @@ export interface paths {
         readonly patch: operations["set_member_role"];
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/system-accounts/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List system accounts (member-only)
+         * @description Automated senders (e.g. CloudWatch alarm mail) that hold a member's
+         *     standing here and can never sign in, with the addresses bound to each.
+         */
+        readonly get: operations["list_system_accounts"];
+        readonly put?: never;
+        /**
+         * Create a system account (admin or owner)
+         * @description Creates a member that cannot sign in (editor by default, never above),
+         *     and binds any `senders` given: aligned mail from a bound address, in THIS
+         *     workspace, whose subject matches the pattern, then makes agent turns as
+         *     this account instead of as an outside contact.
+         */
+        readonly post: operations["create_system_account"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/system-accounts/{account_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get a system account (member-only) */
+        readonly get: operations["get_system_account"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete a system account (admin or owner)
+         * @description Deletes it, its membership and its bindings. Its past turns lose their
+         *     initiator; to keep the name on them, disable it instead.
+         */
+        readonly delete: operations["delete_system_account"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Rename, re-role, disable or re-enable a system account (admin or owner) */
+        readonly patch: operations["update_system_account"];
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/system-accounts/{account_id}/senders/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Bind an inbound address to a system account (admin or owner) */
+        readonly post: operations["add_system_sender"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/system-accounts/{account_id}/senders/{sender_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Unbind an inbound address from a system account (admin or owner) */
+        readonly delete: operations["remove_system_sender"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/invites/": {
         readonly parameters: {
             readonly query?: never;
@@ -12089,6 +12174,11 @@ export interface components {
              * @default false
              */
             readonly inherited: boolean;
+            /**
+             * System
+             * @default false
+             */
+            readonly system: boolean;
         };
         /** MemberRoleUpdateIn */
         readonly MemberRoleUpdateIn: {
@@ -12097,6 +12187,91 @@ export interface components {
              * @enum {string}
              */
             readonly role: "owner" | "admin" | "editor" | "viewer";
+        };
+        /** SystemAccountOut */
+        readonly SystemAccountOut: {
+            /** Id */
+            readonly id: number;
+            /** User Id */
+            readonly user_id: number;
+            /** Name */
+            readonly name: string;
+            /** Description */
+            readonly description: string;
+            /** Role */
+            readonly role: string | null;
+            /** Disabled */
+            readonly disabled: boolean;
+            /** Disabled At */
+            readonly disabled_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Created By Email */
+            readonly created_by_email: string | null;
+            /** Senders */
+            readonly senders: readonly components["schemas"]["SystemSenderOut"][];
+        };
+        /** SystemSenderOut */
+        readonly SystemSenderOut: {
+            /** Id */
+            readonly id: number;
+            /** Address */
+            readonly address: string;
+            /** Subject Pattern */
+            readonly subject_pattern: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** SystemAccountCreateIn */
+        readonly SystemAccountCreateIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /**
+             * Role
+             * @default editor
+             * @enum {string}
+             */
+            readonly role: "editor" | "viewer";
+            /** Senders */
+            readonly senders?: readonly components["schemas"]["SystemSenderIn"][];
+        };
+        /**
+         * SystemSenderIn
+         * @description Bind an inbound address to the account, in this workspace only.
+         */
+        readonly SystemSenderIn: {
+            /**
+             * Address
+             * Format: email
+             */
+            readonly address: string;
+            /**
+             * Subject Pattern
+             * @default
+             */
+            readonly subject_pattern: string;
+        };
+        /** SystemAccountUpdateIn */
+        readonly SystemAccountUpdateIn: {
+            /** Name */
+            readonly name?: string | null;
+            /** Description */
+            readonly description?: string | null;
+            /** Role */
+            readonly role?: ("editor" | "viewer") | null;
+            /** Disabled */
+            readonly disabled?: boolean | null;
         };
         /** InviteOut */
         readonly InviteOut: {
@@ -20171,6 +20346,174 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["MemberOut"];
                 };
+            };
+        };
+    };
+    readonly list_system_accounts: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SystemAccountOut"][];
+                };
+            };
+        };
+    };
+    readonly create_system_account: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SystemAccountCreateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SystemAccountOut"];
+                };
+            };
+        };
+    };
+    readonly get_system_account: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly account_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SystemAccountOut"];
+                };
+            };
+        };
+    };
+    readonly delete_system_account: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly account_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_system_account: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly account_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SystemAccountUpdateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SystemAccountOut"];
+                };
+            };
+        };
+    };
+    readonly add_system_sender: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly account_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SystemSenderIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SystemSenderOut"];
+                };
+            };
+        };
+    };
+    readonly remove_system_sender: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly account_id: number;
+                readonly sender_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
