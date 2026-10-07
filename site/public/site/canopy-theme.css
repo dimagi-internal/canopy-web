@@ -5,15 +5,35 @@
    own inline <style>, and change colour, never type or spacing,
    so canopy keeps the scale and rhythm every Dimagi site shares.
 
-   Palette (from assets/brand, the mark's greens):
-   - Canopy green  #1F6B4A  nav, footer, accents, <em> on light
-   - Leaf          #3FA374  the mark; hover and highlight
-   - Pale leaf     #E6F3EC  hero and tinted surfaces
-   - Ink           #180F60  inherited from styles.css: the Dimagi
-                            navy every product site keeps
+   Palette "Forest" (from assets/brand, the mark's greens):
+   - Forest        #123526  nav bar
+   - Forest deep   #0E241A  dark sections and footer
+   - Canopy green  #1F6B4A  primary buttons, accents, <em> on light
+   - Leaf          #3FA374  the mark; the nav's Request access
+   - Pale leaf     #E8F2EC  hero and tinted surfaces
+   - Ink           #132A20  green-black text and headings
+   - Paper         #F7FAF8  page ground, with green-grey lines
+
+   The site does NOT keep styles.css's Dimagi navy ink (#180F60) or
+   its cool lavender paper: navy and lavender next to the green were
+   what made the page read wrong (owner, 2026-10-07). Every navy and
+   teal value styles.css reaches on canopy's pages is overridden here.
+   The app (frontend/) is deliberately unchanged — it keeps its own
+   black / white / orange.
    ============================================================ */
 
 :root {
+  --ink: #132A20;
+  --ink-2: #132A20;
+  --deep-purple: #0E241A;
+  --paper: #F7FAF8;
+  --paper-2: #FFFFFF;
+  --paper-warm: #F0F5F2;
+  --line: #DFE8E2;
+  --rule: #B9CCC0;
+  --muted: #56675E;
+  --muted-soft: #8A9A91;
+
   --indigo: #1F6B4A;
   --indigo-deep: #154A33;
   --indigo-soft: #E6F3EC;
@@ -25,24 +45,26 @@
   --sky-tint: #EEF7F2;
   --paper-cool: #EEF7F2;
 
+  --canopy-forest: #123526;
+  --canopy-forest-deep: #0E241A;
   --canopy-green: #1F6B4A;
   --canopy-leaf: #3FA374;
-  --canopy-pale: #E6F3EC;
+  --canopy-pale: #E8F2EC;
 
   /* Solid emphasis, not a gradient (the Dimagi brand guide's 2026 rule). */
   --grad-text: linear-gradient(90deg, #1F6B4A 0%, #1F6B4A 100%);
   --grad-text-on-dark: linear-gradient(90deg, #8FDDB2 0%, #8FDDB2 100%);
   --grad: linear-gradient(135deg, #154A33 0%, #1F6B4A 55%, #3FA374 100%);
-  --grad-deep: linear-gradient(135deg, #07231A 0%, #0E3526 55%, #180F60 100%);
+  --grad-deep: linear-gradient(135deg, #0E241A 0%, #0E241A 100%);
 }
 
 /* ── Chrome: nav bar and footer in the product colour ───────── */
-.nav-wrap { background: var(--canopy-green); }
-footer { background: var(--canopy-green); }
-.nav-wrap .btn-primary { background: #fff; color: var(--canopy-green); }
-.nav-wrap .btn-primary:hover { background: var(--canopy-pale); color: var(--indigo-deep); }
+.nav-wrap { background: var(--canopy-forest); }
+footer { background: var(--canopy-forest-deep); }
+.nav-wrap .btn-primary { background: var(--canopy-leaf); color: #0B1F16; }
+.nav-wrap .btn-primary:hover { background: var(--sky); color: #0B1F16; }
 @media (max-width: 980px) {
-  .nav-links { background: var(--canopy-green) !important; }
+  .nav-links { background: var(--canopy-forest) !important; }
   /* Ported from SureAdhere's newer copy of the shared sheet (sureadhere.dimagi.com
      assets/styles.css): keep the logo full-size and move the CTAs out of the cramped
      bar into the open menu. The OCS copy vendored here predates this fix. */
@@ -67,23 +89,23 @@ footer { background: var(--canopy-green); }
 .logo .logo-by { font-size: 10px; font-weight: 500; letter-spacing: 0.04em; color: rgba(255,255,255,0.72); margin-top: 3px; }
 .footer-brand .logo .logo-mark-svg { width: 44px; }
 
-/* ── Buttons: the teal hovers in styles.css become canopy green ─ */
-.btn-primary:hover, .btn-on-dark:hover { background: var(--canopy-green); color: #fff; }
+/* ── Buttons: the primary is canopy green, not the ink colour ── */
+.btn-primary { background: var(--canopy-green); color: #fff; }
+.btn-primary:hover { background: var(--indigo-deep); color: #fff; }
+.btn-on-dark:hover { background: var(--canopy-green); color: #fff; }
 
-/* ── Hero: pale leaf with soft glows, like the sibling heroes ── */
+/* ── Hero: pale leaf with one soft glow ─────────────────────── */
 .hero {
   background:
-    radial-gradient(800px 380px at 100% 0%, rgba(63,163,116,0.22), transparent 65%),
-    radial-gradient(700px 320px at 0% 100%, rgba(31,107,74,0.10), transparent 65%),
+    radial-gradient(800px 380px at 100% 0%, rgba(63,163,116,0.16), transparent 65%),
     var(--canopy-pale);
 }
 .hero::before, .hero::after { display: none; }
 
-/* ── Dark sections: green glows instead of teal ─────────────── */
+/* ── Dark sections: deep forest with one leaf glow ─────────── */
+.section.dark { background: var(--canopy-forest-deep); }
 .section.dark::before {
-  background:
-    radial-gradient(50% 80% at 100% 50%, rgba(63,163,116,0.32), transparent 65%),
-    radial-gradient(40% 70% at 0% 50%, rgba(143,221,178,0.12), transparent 70%);
+  background: radial-gradient(50% 80% at 100% 50%, rgba(63,163,116,0.24), transparent 65%);
 }
 .eyebrow.on-dark { color: rgba(143,221,178,0.9); }
 .eyebrow.on-dark::before { background: rgba(143,221,178,0.75); }
@@ -92,9 +114,9 @@ footer { background: var(--canopy-green); }
 dialog.beta {
   width: min(520px, calc(100vw - 32px)); padding: 0; border: none;
   border-radius: var(--radius-lg); background: var(--paper-2); color: var(--ink);
-  box-shadow: 0 30px 80px -20px rgba(10, 6, 32, 0.45);
+  box-shadow: 0 30px 80px -20px rgba(8, 26, 18, 0.45);
 }
-dialog.beta::backdrop { background: rgba(10, 6, 32, 0.55); }
+dialog.beta::backdrop { background: rgba(8, 26, 18, 0.55); }
 .beta-body { padding: 36px; }
 .beta-body h2 { font-size: 28px; font-weight: 300; line-height: 1.15; padding-right: 32px; }
 .beta-body > p { margin: 10px 0 0; color: var(--muted); }
