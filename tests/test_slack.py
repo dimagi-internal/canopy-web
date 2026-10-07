@@ -2098,6 +2098,35 @@ def test_a_slack_stop_press_cancels_the_turn(slack, linked, hal, alice,
     assert resp.status_code == 200
     turn.refresh_from_db()
     assert turn.events.filter(kind="cancel_requested").exists() or turn.status == Turn.CANCELLED
+    # The stop records WHO pressed it, so the line can say so.
+    from apps.harness.services import stopped_by
+    assert stopped_by(turn) == (alice.get_full_name() or alice.email)
+
+
+def test_a_stopped_turn_reads_stopped_by_the_person(slack, linked, hal, alice):
+    from apps.harness.services import cancel_turn
+    from apps.slack import status
+
+    _runner("jj-mbp", runner_owner=alice, agent=hal)
+    mention("hal summarise")
+    turn = Turn.objects.get()
+    cancel_turn(turn, by="Jonathan Jackson")
+    turn.refresh_from_db()
+    assert turn.status == Turn.CANCELLED
+    text, _ = status.render(turn)
+    assert ":octagonal_sign: Stopped by Jonathan Jackson." in text and "Cancelled" not in text
+
+
+def test_a_stop_without_a_name_still_reads_stopped(slack, linked, hal, alice):
+    from apps.harness.services import cancel_turn
+    from apps.slack import status
+
+    _runner("jj-mbp", runner_owner=alice, agent=hal)
+    mention("hal summarise")
+    turn = Turn.objects.get()
+    cancel_turn(turn)
+    turn.refresh_from_db()
+    assert status.render(turn)[0].startswith(":octagonal_sign: Stopped.")
 
 
 def test_a_stop_for_a_thread_we_do_not_know_is_harmless(slack, linked, hal, alice):

@@ -222,7 +222,7 @@ def test_rest_and_websocket_stop_are_the_same_stop(seeded, monkeypatch):
 
     _owner, _ws, _agent, session, _runner = seeded
     calls = []
-    monkeypatch.setattr(chat, "stop_session", lambda s: calls.append(s.pk) or "session")
+    monkeypatch.setattr(chat, "stop_session", lambda s, **kw: calls.append(s.pk) or "session")
     consumer = SessionConsumer()
     consumer.session = session
     assert consumer._stop_session() == "session"

@@ -873,7 +873,7 @@ def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
     # found nothing to cancel and the agent worked on. services.stop_session is the
     # one stop the websocket uses too: turns first, then the session interrupt.
     session = _session_or_404(request, session_id, write=True)
-    route = services.stop_session(session)
+    route = services.stop_session(session, by=services.person_name(request.user))
     return {"cancelled": route == "turns", "interrupted": route == "session", "route": route}
 
 

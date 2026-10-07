@@ -426,7 +426,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         `POST /canopy-sessions/{id}/stop` so the two can never disagree again
         (canopy-web#1226: REST stopped at the turns and did nothing to an agent).
         """
-        return chat_services.stop_session(self.session)
+        return chat_services.stop_session(
+            self.session, by=chat_services.person_name((getattr(self, "scope", None) or {}).get("user")))
 
     def _resolve_message_id_sync(self, turn_id, seq):
         if turn_id:
