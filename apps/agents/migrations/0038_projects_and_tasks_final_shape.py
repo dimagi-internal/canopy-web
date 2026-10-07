@@ -37,11 +37,17 @@ def forward_actions(apps, schema_editor):
     Action = apps.get_model("agents", "AgentTaskAction")  # noqa: N806
     Action.objects.filter(task__isnull=True).delete()
     Action.objects.exclude(action__in=list(ACTION_FOR_KIND)).delete()
-    Action.objects.filter(status="dismissed").update(status="applied")
+    # One write per row. A second UPDATE of the same row in this transaction makes
+    # Postgres queue deferred FK checks, and the ALTERs that follow would then
+    # fail with "pending trigger events".
     for row in Action.objects.all().iterator():
         row.action = ACTION_FOR_KIND[row.action]
         row.comment = comment_from_payload(row.payload)
-        row.save(update_fields=["action", "comment"])
+        if row.status == "dismissed":
+            row.status = "applied"
+        row.save(update_fields=["action", "comment", "status"])
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 class Migration(migrations.Migration):
