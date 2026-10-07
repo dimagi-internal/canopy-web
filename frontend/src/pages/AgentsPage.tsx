@@ -56,7 +56,6 @@ function AgentCard({ agent }: { agent: AgentCardData }) {
 
       <div className="flex items-end gap-5 mt-4 pt-4 border-t border-border">
         <CountStat value={agent.sync_count} label="Syncs" />
-        <CountStat value={agent.work_product_count} label="Work" />
         <CountStat value={agent.skill_count} label="Skills" />
       </div>
 
@@ -75,7 +74,6 @@ function AgentCard({ agent }: { agent: AgentCardData }) {
 // renders for both shapes.
 type AgentCardData = AgentOut & {
   sync_count: number
-  work_product_count: number
   skill_count: number
   latest_sync_at: string | null
 }
@@ -85,7 +83,6 @@ function toCardData(a: AgentOut): AgentCardData {
   return {
     ...a,
     sync_count: anyA.sync_count ?? 0,
-    work_product_count: anyA.work_product_count ?? 0,
     skill_count: anyA.skill_count ?? 0,
     latest_sync_at: anyA.latest_sync_at ?? null,
   }
