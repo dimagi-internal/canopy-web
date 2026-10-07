@@ -1449,15 +1449,17 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Submit a SUGGESTION as an external (share-token) reviewer
-         * @description An external (non-dimagi) reviewer with the review's share token submits
-         *     suggested edits. Unlike /submit/, this NEVER resolves the gate — it appends to
-         *     the review's suggestions for the internal owner to review and accept.
+         * Submit a SUGGESTION (share-token reviewer, or a member saving edits)
+         * @description Suggested edits that NEVER resolve the gate — appended to the review's
+         *     suggestions for its owner to review and accept, and the owner is told.
          *
-         *     Auth is the share token (``?t=<token>``), not a dimagi login. The token is
-         *     unguessable and never ambient (not a cookie), so no CSRF check is needed — an
-         *     attacker cannot forge a cross-site POST without knowing the token. A dimagi
-         *     member should resolve the gate via /submit/ instead.
+         *     Two callers:
+         *     - an external reviewer holding the share token (``?t=<token>``). The token is
+         *       unguessable and never ambient (not a cookie), so no CSRF check is needed;
+         *     - a member of the review's workspace saving wording edits WITHOUT deciding.
+         *       Before this, a member's only way to keep an edit was "Submit — approve &
+         *       build", which locks the narrative as the build plan (canopy-web#1266). A
+         *       session is ambient, so this path is CSRF-checked like /submit/.
          */
         readonly post: operations["suggest_review"];
         readonly delete?: never;
@@ -8237,6 +8239,13 @@ export interface components {
             /** Is Owner */
             readonly is_owner: boolean;
             /**
+             * Can Decide
+             * @default false
+             */
+            readonly can_decide: boolean;
+            /** Title */
+            readonly title?: string | null;
+            /**
              * Created At
              * Format: date-time
              */
@@ -8267,9 +8276,10 @@ export interface components {
         };
         /**
          * ReviewSuggestIn
-         * @description Body of POST /api/reviews/<id>/suggest/: an external (share-token) reviewer's
-         *     suggested edits. Same response_json shape as a submit, but it is stored as a
-         *     SUGGESTION — it never resolves the gate. The internal owner reviews + accepts.
+         * @description Body of POST /api/reviews/<id>/suggest/: suggested edits from an external
+         *     (share-token) reviewer, or from a workspace member saving edits without
+         *     deciding. Same response_json shape as a submit, but it is stored as a
+         *     SUGGESTION — it never resolves the gate. The review's owner is notified.
          */
         readonly ReviewSuggestIn: {
             /** Response Json */

@@ -31,6 +31,14 @@ class ReviewRequestOut(StrictModel):
     # empty for anonymous link readers so one external reviewer can't see another's.
     suggestions: list[dict[str, Any]] = []
     is_owner: bool
+    # Whether THIS caller may resolve the gate (an editor of the review's workspace).
+    # The page decides between the decide-and-submit editor and the suggest-only
+    # editor on this — not on "is anyone signed in", which handed a signed-in
+    # non-editor an approve button the server then refused (canopy-web#1268).
+    can_decide: bool = False
+    # The narrative's human name (apps.reviews.titles) — the review page's subtitle
+    # was a run id like "chlorine-dispenser-walkthroughs-2026-10-07-002" (#1271).
+    title: str | None = None
     created_at: dt.datetime
     resolved_at: dt.datetime | None = None
 
@@ -71,9 +79,10 @@ class ReviewSubmitIn(StrictModel):
 
 
 class ReviewSuggestIn(StrictModel):
-    """Body of POST /api/reviews/<id>/suggest/: an external (share-token) reviewer's
-    suggested edits. Same response_json shape as a submit, but it is stored as a
-    SUGGESTION — it never resolves the gate. The internal owner reviews + accepts."""
+    """Body of POST /api/reviews/<id>/suggest/: suggested edits from an external
+    (share-token) reviewer, or from a workspace member saving edits without
+    deciding. Same response_json shape as a submit, but it is stored as a
+    SUGGESTION — it never resolves the gate. The review's owner is notified."""
 
     response_json: dict[str, Any]
     name: str | None = None

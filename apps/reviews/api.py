@@ -29,6 +29,8 @@ from ninja import Router, Status
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.common.csrf import csrf_rejected
+from apps.reviews.notify import notify_suggestion
+from apps.reviews.titles import narrative_title
 from apps.runs.ddd import (
     RUN_CHILD_GATES,
     is_run_child_gate,
@@ -135,7 +137,9 @@ def _token_ok(request: HttpRequest, review: ReviewRequest) -> bool:
     return hmac.compare_digest(provided, stored)
 
 
-def _detail_payload(review: ReviewRequest, *, is_owner: bool, can_write: bool = False) -> dict:
+def _detail_payload(
+    review: ReviewRequest, *, is_owner: bool, can_write: bool = False, can_decide: bool = False
+) -> dict:
     return {
         "id": review.id,
         "run_id": review.run_id,
@@ -150,13 +154,15 @@ def _detail_payload(review: ReviewRequest, *, is_owner: bool, can_write: bool = 
         # another's suggested wording.
         "suggestions": (review.suggestions_json or []) if can_write else [],
         "is_owner": is_owner,
+        "can_decide": can_decide,
+        "title": _list_title(review.request_json or {}, _narrative_slug_of(review)),
         "created_at": review.created_at,
         "resolved_at": review.resolved_at,
     }
 
 
-def _list_title(request_json: dict) -> str | None:
-    """A short human label: the narrative's first line, else the first scene title."""
+def _list_title(request_json: dict, narrative_slug: str | None = None) -> str | None:
+    """A short human label — the narrative's name (see apps.reviews.titles)."""
     # Run-child product-findings reviews have no narrative — label by cluster count.
     if request_json.get("gate") == "product_findings":
         clusters = request_json.get("clusters") or []
@@ -164,15 +170,7 @@ def _list_title(request_json: dict) -> str | None:
         n = len(clusters) if isinstance(clusters, list) else 0
         label = f"Findings review — {n} finding{'s' if n != 1 else ''}"
         return f"{label} (iter {iteration})" if iteration is not None else label
-    narrative = (request_json.get("narrative") or "").strip()
-    if narrative:
-        first = narrative.splitlines()[0].strip()
-        return first[:140] if first else None
-    narration = request_json.get("narration") or []
-    if narration and isinstance(narration[0], dict):
-        t = (narration[0].get("title") or "").strip()
-        return t or None
-    return None
+    return narrative_title(request_json, narrative_slug)
 
 
 def _list_item_payload(request: HttpRequest, review: ReviewRequest) -> dict:
@@ -191,7 +189,7 @@ def _list_item_payload(request: HttpRequest, review: ReviewRequest) -> dict:
         "status": review.status,
         "visibility": review.visibility,
         "narrative_slug": _narrative_slug_of(review),
-        "title": _list_title(rj),
+        "title": _list_title(rj, review.narrative_slug),
         "scene_count": item_count,
         "created_at": review.created_at,
         "resolved_at": review.resolved_at,
@@ -397,6 +395,7 @@ def get_review(request: HttpRequest, rid: UUID) -> ReviewRequestOut:
         _detail_payload(
             review, is_owner=is_own,
             can_write=request.user.is_authenticated and _in_caller_workspaces(request, review),
+            can_decide=_can_write(request, review),
         )
     )
 
@@ -453,7 +452,7 @@ def submit_review(request: HttpRequest, rid: UUID, payload: ReviewSubmitIn) -> R
 
     is_own = _is_owner(request, review)
     return ReviewRequestOut.model_validate(
-        _detail_payload(review, is_owner=is_own, can_write=True)
+        _detail_payload(review, is_owner=is_own, can_write=True, can_decide=True)
     )
 
 
@@ -465,27 +464,33 @@ def submit_review(request: HttpRequest, rid: UUID, payload: ReviewSubmitIn) -> R
 @router.post(
     "/{rid}/suggest/",
     response=ReviewSuggestOut,
-    auth=None,  # token-authed: an external reviewer with the share token, no session.
-    summary="Submit a SUGGESTION as an external (share-token) reviewer",
+    auth=None,  # share token OR a workspace member's session — checked below.
+    summary="Submit a SUGGESTION (share-token reviewer, or a member saving edits)",
 )
 def suggest_review(request: HttpRequest, rid: UUID, payload: ReviewSuggestIn) -> ReviewSuggestOut:
-    """An external (non-dimagi) reviewer with the review's share token submits
-    suggested edits. Unlike /submit/, this NEVER resolves the gate — it appends to
-    the review's suggestions for the internal owner to review and accept.
+    """Suggested edits that NEVER resolve the gate — appended to the review's
+    suggestions for its owner to review and accept, and the owner is told.
 
-    Auth is the share token (``?t=<token>``), not a dimagi login. The token is
-    unguessable and never ambient (not a cookie), so no CSRF check is needed — an
-    attacker cannot forge a cross-site POST without knowing the token. A dimagi
-    member should resolve the gate via /submit/ instead."""
+    Two callers:
+    - an external reviewer holding the share token (``?t=<token>``). The token is
+      unguessable and never ambient (not a cookie), so no CSRF check is needed;
+    - a member of the review's workspace saving wording edits WITHOUT deciding.
+      Before this, a member's only way to keep an edit was "Submit — approve &
+      build", which locks the narrative as the build plan (canopy-web#1266). A
+      session is ambient, so this path is CSRF-checked like /submit/."""
     review = _get_or_404(rid)
 
     # 404 (not 403) when unreadable, so we don't leak existence.
     if not _can_read(request, review):
         raise ProblemError(404, "Review request not found", type_=TYPE_NOT_FOUND)
-    if not _token_ok(request, review):
+    via_token = _token_ok(request, review)
+    as_member = request.user.is_authenticated and _in_caller_workspaces(request, review)
+    if not via_token and not as_member:
         raise ProblemError(
             403, "A valid share token is required to suggest", type_=TYPE_FORBIDDEN
         )
+    if not via_token and csrf_rejected(request):
+        raise ProblemError(403, "CSRF verification failed", type_=TYPE_FORBIDDEN)
 
     if review.status == ReviewRequest.STATUS_RESOLVED:
         raise ProblemError(
@@ -495,7 +500,11 @@ def suggest_review(request: HttpRequest, rid: UUID, payload: ReviewSuggestIn) ->
             detail="This review has been resolved; suggestions are closed.",
         )
 
-    count = review.add_suggestion(payload.response_json, payload.name)
+    name = payload.name
+    if not (name or "").strip() and request.user.is_authenticated:
+        name = request.user.email or None
+    count = review.add_suggestion(payload.response_json, name)
+    notify_suggestion(review, name, count)
     return ReviewSuggestOut(ok=True, suggestion_count=count)
 
 

@@ -260,6 +260,11 @@ export interface ReviewDetail {
   suggestions: ReviewSuggestion[]
   share_token: string | null
   is_owner: boolean
+  /** Whether THIS caller may resolve the gate (an editor of the review's workspace).
+   *  Everyone else gets the suggest-only editor. */
+  can_decide?: boolean
+  /** The narrative's human name — never the run id or a clipped first sentence. */
+  title?: string | null
   created_at: string
   resolved_at: string | null
 }
@@ -282,8 +287,9 @@ function submitUrl(id: string, token?: string | null): string {
   return `${API_BASE}/api/reviews/${id}/submit/${t}`
 }
 
-function suggestUrl(id: string, token: string): string {
-  return `${API_BASE}/api/reviews/${id}/suggest/?t=${encodeURIComponent(token)}`
+function suggestUrl(id: string, token?: string | null): string {
+  const t = token ? `?t=${encodeURIComponent(token)}` : ''
+  return `${API_BASE}/api/reviews/${id}/suggest/${t}`
 }
 
 async function parseResponse<T>(resp: Response): Promise<T> {
@@ -333,20 +339,22 @@ export async function submitReview(
 }
 
 /**
- * Submit a SUGGESTION as an external (share-token) reviewer. Requires the review's
- * share token — it never resolves the gate; the edits land as a suggestion for the
- * internal owner to accept. Returns the new suggestion count.
+ * Submit a SUGGESTION — it never resolves the gate; the edits land as a suggestion
+ * for the review's owner, who is notified. Either an external reviewer with the
+ * share token, or a workspace member saving edits without deciding (session +
+ * CSRF, no token). Returns the new suggestion count.
  */
 export async function suggestReview(
   id: string,
   payload: ReviewSubmitPayload,
-  token: string,
+  token?: string | null,
   name?: string | null,
 ): Promise<{ ok: boolean; suggestion_count: number }> {
+  const csrf = getCsrfToken()
   const resp = await fetch(suggestUrl(id, token), {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRFToken': csrf } : {}) },
     body: JSON.stringify({ response_json: payload, name: name ?? null }),
   })
   return parseResponse<{ ok: boolean; suggestion_count: number }>(resp)

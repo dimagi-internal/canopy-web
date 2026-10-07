@@ -240,7 +240,7 @@ function VersionBlock({
               href={withBase(`/review/${version.review_id}`)}
               className="mb-3 inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary transition-colors hover:bg-primary/20"
             >
-              Edit narrative <span aria-hidden>→</span>
+              Review &amp; edit this version <span aria-hidden>→</span>
             </a>
           )}
           {version.runs.length > 0 ? (
@@ -339,6 +339,16 @@ export function NarrativeLanding({ slug }: { slug: string }) {
             )}
             {detail.project_slug && <span>· {detail.project_slug}</span>}
           </div>
+          {/* The way in to the review was a sidebar "v2 CURRENT" link or a per-version
+              "Edit narrative" — neither said a story was waiting (canopy-web#1271). */}
+          {detail.current_version?.review_id && (
+            <a
+              href={withBase(`/review/${detail.current_version.review_id}`)}
+              className="mt-2 inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+            >
+              Open the current story review <span aria-hidden>→</span>
+            </a>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
