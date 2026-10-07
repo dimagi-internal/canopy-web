@@ -3,14 +3,13 @@
 An `Agent` is a first-class entity (e.g. "Echo," a marketing agent) — distinct
 from a code Project. Where a Project's work shows up as static markdown
 shareouts, an Agent's periodic sync is a **Google Doc** (`AgentSync.doc_url`),
-because an agent's sync spans both code/skill improvement AND work products and
-is richer than a feed card. canopy-web stores the metadata, summary, and
+because an agent's sync spans both code/skill improvement AND the work it
+delivered, and is richer than a feed card. canopy-web stores the metadata, summary, and
 self-grades for the feed; the body lives in the doc.
 """
-import uuid
-
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Lower
 
 
 class Agent(models.Model):
@@ -473,8 +472,8 @@ class RepoIdentity(models.Model):
 
 
 class AgentSync(models.Model):
-    """A periodic manager sync — a Google Doc covering code/skill improvement AND
-    work products. Body lives in `doc_url`; canopy-web keeps the summary +
+    """A periodic manager sync (a status report) — a Google Doc covering code/skill
+    improvement AND the work delivered. Body lives in `doc_url`; canopy-web keeps the summary +
     self-grades for the feed. Idempotent per (agent, period_start, period_end,
     source): re-posting the same window from the same source replaces it."""
 
@@ -495,33 +494,6 @@ class AgentSync(models.Model):
 
     def __str__(self):
         return f"sync:{self.agent.slug}:{self.period_start}..{self.period_end}"
-
-    @property
-    def agent_slug(self) -> str:
-        return self.agent.slug
-
-
-class AgentWorkProduct(models.Model):
-    """A deliverable the agent produced — a gdoc, form, story, etc. Idempotent
-    per (agent, url, source)."""
-
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="work_products")
-    title = models.CharField(max_length=200)
-    kind = models.CharField(max_length=40, blank=True, default="", help_text="doc / form / story / …")
-    url = models.URLField(max_length=500)
-    description = models.TextField(blank=True, default="")
-    tags = models.JSONField(default=list, blank=True)
-    source = models.CharField(max_length=100, blank=True, default="")
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-        constraints = [
-            models.UniqueConstraint(fields=["agent", "url"], name="uniq_agent_workproduct_url"),
-        ]
-
-    def __str__(self):
-        return f"work:{self.agent.slug}:{self.title}"
 
     @property
     def agent_slug(self) -> str:
@@ -661,6 +633,18 @@ class AgentProject(models.Model):
             return cached
         return self.tasks.filter(status__in=[AgentTask.SUGGESTED, AgentTask.IN_PROGRESS]).count()
 
+    @property
+    def waiting_task_count(self) -> int:
+        """Live tasks somebody has to act on (`services.waiting_q`) — an open
+        ask or a task parked on a person. Not per viewer: the Projects page
+        asks "how much of this is stuck on people", not "on me"."""
+        cached = getattr(self, "_waiting_task_count", None)
+        if cached is not None:
+            return cached
+        from apps.agents.services import waiting_q
+
+        return self.tasks.filter(waiting_q()).count()
+
 
 class AgentTask(models.Model):
     """A task in the agent's tracker. Source of truth is a Google Sheet the
@@ -723,59 +707,27 @@ class AgentTask(models.Model):
     due = models.DateField(null=True, blank=True)
     links = models.JSONField(default=list, blank=True)
     notes = models.TextField(blank=True, default="")
-    # ---- the ask: what this task needs from a HUMAN -------------------------
-    #
-    # An `Item` used to be its own model — "work YOU do", the dual of a Turn.
-    # In practice the two stopped being different things: across the fleet, 118
-    # tasks carried the work while a single agent had ever raised an item, and
-    # the ~24 tasks genuinely waiting on somebody reached no inbox at all,
-    # because the inbox read items only. So the ask moves onto the task.
-    #
-    # Field names are Item's, deliberately: `dispatch()` reads `.dispatch`,
-    # `.comment`, `.decided_by`, `.title` and `.agent` off whatever it is given,
-    # so one implementation serves both while items are migrated away.
-
-    #: Addressable like an item was. Migrated items keep THEIR uuid, so every
-    #: link, Ada-stored id and `/api/items/{id}/` path still resolves.
-    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
-
     #: Who the next step waits on, as a real person canopy can notify. The free
-    #: text `assigned` stays beside it — half the fleet's boards say things like
-    #: "Beth + Neal" or "operator (restart, then the build runs)", which no FK
-    #: can hold and which is still the truest description of the wait.
+    #: text `assigned` stays beside it for counterparts canopy has never seen.
     waiting_on_user = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="tasks_waiting_on",
     )
 
-    #: `review` (approve/skip/defer) or `question` (answer in words); blank means
-    #: the task asks nothing and is simply work in flight.
+    # ---- the ask: what this task needs from a person ----------------------
+    #: `review` ("should I do this?") or `question` ("I need an answer"); blank
+    #: means the task asks nothing and is simply work in flight.
     ASK_NONE, ASK_REVIEW, ASK_QUESTION = "", "review", "question"
     ASK_CHOICES = [(ASK_NONE, "None"), (ASK_REVIEW, "Review"), (ASK_QUESTION, "Question")]
     ask_kind = models.CharField(max_length=10, choices=ASK_CHOICES, blank=True, default=ASK_NONE)
-    #: The ask's own words, frozen when it was raised — an utterance, like an
-    #: email, not a view of something that may since have changed.
+    #: The ask's own words, frozen when it was raised.
     ask_body = models.TextField(blank=True, default="")
+    #: Set by the action that closed the ask; null while it is open. Who closed it
+    #: and why is that action's row.
+    ask_closed_at = models.DateTimeField(null=True, blank=True)
 
-    IMPLEMENT, SKIP, DEFER = "implement", "skip", "defer"
-    DECISION_CHOICES = [(IMPLEMENT, "Implement"), (SKIP, "Skip"), (DEFER, "Defer")]
-    decision = models.CharField(max_length=10, choices=DECISION_CHOICES, blank=True, default="")
-    comment = models.TextField(blank=True, default="")
-    decided_by = models.CharField(max_length=200, blank=True, default="")
-    decided_by_user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
-        related_name="tasks_decided",
-    )
-    #: Retired without acting, as opposed to answered. Both close the ask and
-    #: both can leave the task declined, so the verb alone cannot tell them
-    #: apart — and "dismissed" vs "decided" is exactly what a queue shows.
-    ask_dismissed = models.BooleanField(default=False)
-    #: The presence of this — not any status — is what closes an ask. A
-    #: question's answer sets it while `decision` stays blank, because a
-    #: question has no verb to click.
-    decided_at = models.DateTimeField(null=True, blank=True)
-
-    dispatch = models.JSONField(default=list, blank=True)
+    #: Turn specs that run when the task is approved (or its question answered).
+    on_approve = models.JSONField(default=list, blank=True)
     dispatched_at = models.DateTimeField(null=True, blank=True)
     #: One sitting (a fleet audit), so a batch can be rendered together.
     batch_key = models.CharField(max_length=64, blank=True, default="")
@@ -787,6 +739,14 @@ class AgentTask(models.Model):
     #: Where the ask came from, when it was raised by machinery rather than
     #: typed by a person.
     origin = models.CharField(max_length=32, blank=True, default="")
+    #: What a caller may post as `origin` (AgentTaskIn refuses anything else):
+    #: blank, the postable Turn sources an ask was raised from (legacy spellings
+    #: are normalized onto these — harness.schemas.normalize_origin), and the
+    #: labels canopy's own CLI stamps on the tasks it files (`canopy agent task
+    #: add` → task-tracker, `canopy agent dispatch` → dispatch, a huddle's
+    #: outcomes → huddle). `canopy_scheduler` is server-set, never posted.
+    POSTABLE_ORIGINS = ("", "api", "ace_web", "email", "slack",
+                        "task-tracker", "dispatch", "huddle")
     origin_ref = models.JSONField(default=dict, blank=True)
     raised_by = models.ForeignKey(
         "harness.Turn", null=True, blank=True, on_delete=models.SET_NULL,
@@ -801,7 +761,9 @@ class AgentTask(models.Model):
     class Meta:
         ordering = ["status", "position", "id"]
         constraints = [
-            models.UniqueConstraint(fields=["agent", "ext_id"], name="uniq_agent_task_extid"),
+            # Ignoring case: a task is looked up `ext_id__iexact`, so "t1" beside
+            # "T1" would leave one of them unreachable.
+            models.UniqueConstraint(Lower("ext_id"), "agent", name="uniq_agent_task_extid_ci"),
         ]
         indexes = [models.Index(fields=["agent", "status"])]
 
@@ -813,18 +775,8 @@ class AgentTask(models.Model):
         return self.waiting_on_user.email if self.waiting_on_user_id else None
 
     @property
-    def ask_state(self) -> str:
-        """`open` · `decided` · `dismissed` — the three words the queue speaks."""
-        if self.ask_is_open:
-            return "open"
-        return "dismissed" if self.ask_dismissed else "decided"
-
-    @property
     def ask_is_open(self) -> bool:
-        """Does this task still need a human? Keyed on `decided_at`, not on
-        `decision`: a question is closed by its ANSWER and never carries a verb,
-        so reading `decision` would leave every answered question open forever."""
-        return bool(self.ask_kind) and self.decided_at is None
+        return bool(self.ask_kind) and self.ask_closed_at is None
 
     @property
     def project_ext_id(self) -> str | None:
@@ -839,35 +791,34 @@ class AgentTask(models.Model):
         return self.agent.slug
 
 
-class AgentTaskCommand(models.Model):
-    """A human action from the board that the agent drains on its next turn.
+class AgentTaskAction(models.Model):
+    """Something a person did to a task. One row is both the task's history and,
+    while `pending`, the agent's to-do: it drains pending rows on its next turn
+    and marks each applied."""
 
-    Some kinds apply immediately server-side (decline/reassign/edit/done) AND/OR
-    queue agent work (accept/dispatch). The agent reads `status=pending`, does the
-    work under its normal guardrails, then marks the command applied."""
+    APPROVE, DECLINE, REPLY, DISPATCH, DONE = "approve", "decline", "reply", "dispatch", "done"
+    ACTION_CHOICES = [(a, a) for a in (APPROVE, DECLINE, REPLY, DISPATCH, DONE)]
+    PENDING, APPLIED = "pending", "applied"
+    STATUS_CHOICES = [(PENDING, "Pending"), (APPLIED, "Applied")]
 
-    ACCEPT, DECLINE, DISPATCH, REASSIGN, EDIT, COMMENT, DONE = (
-        "accept", "decline", "dispatch", "reassign", "edit", "comment", "done")
-    KIND_CHOICES = [(k, k) for k in (ACCEPT, DECLINE, DISPATCH, REASSIGN, EDIT, COMMENT, DONE)]
-    PENDING, APPLIED, DISMISSED = "pending", "applied", "dismissed"
-    STATUS_CHOICES = [(PENDING, "Pending"), (APPLIED, "Applied"), (DISMISSED, "Dismissed")]
-
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="commands")
-    task = models.ForeignKey(AgentTask, on_delete=models.SET_NULL, null=True, blank=True, related_name="commands")
-    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
-    payload = models.JSONField(default=dict, blank=True, help_text="reason / assignee / next_action / note …")
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
-    created_by = models.CharField(max_length=200, blank=True, default="", help_text="Who clicked it (email).")
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="task_actions")
+    task = models.ForeignKey(AgentTask, on_delete=models.CASCADE, related_name="actions")
+    action = models.CharField(max_length=10, choices=ACTION_CHOICES)
+    comment = models.TextField(blank=True, default="")
+    by = models.CharField(max_length=200, blank=True, default="")
+    by_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                on_delete=models.SET_NULL, related_name="task_actions")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=APPLIED)
+    applied_at = models.DateTimeField(null=True, blank=True)
     result_note = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
-    applied_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        ordering = ["-created_at"]
+        ordering = ["-created_at", "-id"]
         indexes = [models.Index(fields=["agent", "status"])]
 
-    def __str__(self):
-        return f"cmd:{self.agent.slug}:{self.kind}:{self.status}"
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.agent_id}:{self.task_id}:{self.action}"
 
     @property
     def agent_slug(self) -> str:
@@ -875,11 +826,7 @@ class AgentTaskCommand(models.Model):
 
     @property
     def task_ext_id(self) -> str:
-        return self.task.ext_id if self.task_id else ""
-
-    @property
-    def task_title(self) -> str:
-        return self.task.title if self.task_id else ""
+        return self.task.ext_id
 
 
 class SkillHistorySync(models.Model):

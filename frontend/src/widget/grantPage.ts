@@ -14,7 +14,7 @@
  * `backingTool` among its scope's tools.
  */
 const RULES: Array<[RegExp, string]> = [
-  [/^\/w\/[^/]+\/agents\/[^/]+\/inbox\/?$/, 'agent.inbox'],
+  [/^\/w\/[^/]+\/agents\/[^/]+\/tasks\/?$/, 'agent.tasks'],
   [/^\/w\/[^/]+\/agents\/[^/]+\/skills\/history\/?$/, 'agent.skill_history'],
 ]
 

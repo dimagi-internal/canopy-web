@@ -95,7 +95,7 @@
         "parent_message_id": "m1",
         "turn_index": 5,
         "block": {
-          "name": "list_items",
+          "name": "list_tasks",
           "input": {
             "limit": 5
           }
@@ -109,7 +109,7 @@
           "canopy": {
             "turn_index": 5,
             "block": {
-              "name": "list_items",
+              "name": "list_tasks",
               "input": {
                 "limit": 5
               }
@@ -117,7 +117,7 @@
           }
         },
         "toolCallId": "t9",
-        "toolCallName": "list_items",
+        "toolCallName": "list_tasks",
         "parentMessageId": "m1"
       },
       {
@@ -694,7 +694,7 @@
     "canopy": {
       "event": "page.invalidate",
       "data": {
-        "uri": "item://"
+        "uri": "task://"
       }
     },
     "agui": [
@@ -702,7 +702,7 @@
         "type": "CUSTOM",
         "name": "canopy.page.invalidate",
         "value": {
-          "uri": "item://"
+          "uri": "task://"
         }
       }
     ]

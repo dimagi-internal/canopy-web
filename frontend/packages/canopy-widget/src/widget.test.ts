@@ -236,11 +236,11 @@ describe('the credential path', () => {
     let page = 'projects'
     const { fromFrame } = widgetHarness({ tokenUrl: () => `${TOKEN_URL}?page=${page}` })
     await fromFrame({ source: SOURCE, type: 'ready' })
-    page = 'agent.inbox'
+    page = 'agent.tasks'
     await fromFrame({ source: SOURCE, type: 'token-request', id: 'r2' })
 
     const urls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])
-    expect(urls).toEqual([`${TOKEN_URL}?page=projects`, `${TOKEN_URL}?page=agent.inbox`])
+    expect(urls).toEqual([`${TOKEN_URL}?page=projects`, `${TOKEN_URL}?page=agent.tasks`])
   })
 
   it('sends the CSRF header when the host uses a csrftoken cookie', async () => {

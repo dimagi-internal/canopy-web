@@ -44,7 +44,7 @@ class TurnSpec:
         )
 
 
-def _with_reply(prompt: str, item) -> str:
+def _with_reply(prompt: str, reply: str, answered_by: str = "") -> str:
     """Carry the human's own words to the agent that will act on them.
 
     A card's `prompt` is written BEFORE the human replies, so on its own it is the
@@ -52,7 +52,7 @@ def _with_reply(prompt: str, item) -> str:
     it to hal instead", "only the retry, skip the backoff" — and an agent that never
     sees it executes a brief the human already amended.
     """
-    reply = (item.comment or "").strip()
+    reply = (reply or "").strip()
     if not reply:
         return prompt
     # The reply is DELIMITED, not just concatenated. `agent_review` drops a user turn carrying
@@ -64,74 +64,63 @@ def _with_reply(prompt: str, item) -> str:
     # "instead of", and scores as a forceful correction entirely on its own).
     return (
         f"{prompt}\n\n---\n"
-        f"ANSWERED BY {item.decided_by or 'a human'}: {wrap_human_reply(reply)}\n\n"
+        f"ANSWERED BY {answered_by or 'a human'}: {wrap_human_reply(reply)}\n\n"
         f"That reply is the authority on this card and OVERRIDES the brief above wherever "
         f"the two disagree. If it redirects the work, narrows it, declines it, or asks a "
-        f"question back, do THAT — and report on the item instead of executing the "
+        f"question back, do THAT — and report on the task instead of executing the "
         f"original proposal."
     )
 
 
-def _dispatch_initiator(item):
-    """Who this dispatched work is for. The person who APPROVED the item, when a
+def _dispatch_initiator(task, action):
+    """Who this dispatched work is for. The person who APPROVED the task, when a
     person did — they are the one who authorised it, whatever agent drafted the
-    card. With no human decision behind it, it is the agent that raised it."""
+    card. With no human behind the action, it is the agent that raised it."""
     from . import initiator as who
-    via = f"task:{item.uuid}" if _is_task(item) else f"item:{item.id}"
-    if getattr(item, "decided_by_user", None) is not None:
-        return who.for_user(item.decided_by_user, via=via, assurance=who.APPROVAL)
-    return who.for_agent(item.agent.slug, via=via)
+    via = f"task:{task.agent.slug}/{task.ext_id}"
+    if action.by_user_id or getattr(action, "by_user", None) is not None:
+        return who.for_user(action.by_user, via=via, assurance=who.APPROVAL)
+    return who.for_agent(task.agent.slug, via=via)
 
 
-def _is_task(obj) -> bool:
-    """A task carries an ask. Duck-typed on the one field
-    only a task has, so this module does not have to import the agents app to
-    ask a question about the object it was handed."""
-    return hasattr(obj, "ask_kind")
+def dispatch(task, *, action, actor_workspace_ids: set[str]) -> list[Turn]:
+    """Enqueue an approved task's work: one Turn per `task.on_approve` entry.
+    Idempotent per (task, index). `action` is the AgentTaskAction that approved
+    it (or dispatched it); it need not be saved.
 
-
-def dispatch(item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
-    """Enqueue an approved ask's work — a task carrying an ask.
-    Idempotent per (ask, index).
-
-    One implementation for both because the fields it reads are named the same
-    on each (`dispatch`, `title`, `comment`, `decided_by`, `agent`), which is
-    why the task's columns took Item's names.
-
-    `actor_workspace_slugs` is the deciding human's workspace memberships. A
-    cross-agent dispatch (`target_agent` set) is authorized ONLY if the target's
-    workspace is one of them — the hard tenant boundary. This preserves the fleet
-    manager (Ada dispatching hal→eva across workspaces works when the human driving
-    it is a member of both), while blocking a single-workspace user from landing a
-    prompt on another tenant's agent.
+    `actor_workspace_ids` is the acting human's workspace memberships (Workspace
+    pks, which are slugs). A cross-agent dispatch (`target_agent` set) is
+    authorized ONLY if the target's workspace is one of them — the hard tenant
+    boundary. This preserves the fleet manager (Ada dispatching hal->eva across
+    workspaces works when the human driving it is a member of both), while
+    blocking a single-workspace user from landing a prompt on another tenant's
+    agent.
 
     Raises ValueError for an unknown OR cross-tenant target_agent rather than
-    skipping it: an approved item whose work silently never happens is the worst
-    outcome here. The caller (agents.services.decide_ask) runs this inside the same
-    transaction as the decision, so a raise rolls the decision back and leaves the
-    item OPEN and retryable — rather than stranding it decided-but-undispatched,
-    which deciding once (409) would make permanent.
+    skipping it: an approved task whose work silently never happens is the worst
+    outcome here. The caller runs this inside the same transaction as the action,
+    so a raise rolls the action back and leaves the ask open and retryable.
     """
     turns: list[Turn] = []
-    for i, raw in enumerate(item.dispatch or []):
+    for i, raw in enumerate(task.on_approve or []):
         spec = TurnSpec.from_dict(raw)
         if spec.target_agent:
             target = Agent.objects.filter(slug=spec.target_agent).first()
             if target is None:
                 raise ValueError(
-                    f"item {item.id} dispatch[{i}]: unknown target_agent {spec.target_agent!r}"
+                    f"task {task.ext_id} on_approve[{i}]: unknown target_agent {spec.target_agent!r}"
                 )
             # Cross-agent dispatch is a cross-tenant action unless the actor is a
             # member of the target's workspace. Self-dispatch (below) is already
-            # authorized — the actor could decide the item, which required its
+            # authorized — the actor could act on the task, which required its
             # agent's workspace. Legacy null-workspace targets fall through.
-            if target.workspace_id is not None and target.workspace_id not in actor_workspace_slugs:
+            if target.workspace_id is not None and target.workspace_id not in actor_workspace_ids:
                 raise ValueError(
-                    f"item {item.id} dispatch[{i}]: not a member of target_agent "
+                    f"task {task.ext_id} on_approve[{i}]: not a member of target_agent "
                     f"{spec.target_agent!r}'s workspace"
                 )
         else:
-            target = item.agent
+            target = task.agent
         # STAMP HERE, and only here. This is the one enqueue path where the server KNOWS the
         # prompt was written by an agent — it came off the agent's own card. `enqueue_turn`
         # itself must NOT stamp: its other callers include `canopy_sessions`, where the prompt
@@ -142,7 +131,7 @@ def dispatch(item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
         #
         # Idempotent, so an agent that already stamped client-side (Ada does, ada#55) passes
         # through untouched and is not double-marked.
-        brief = stamp_dispatched(spec.prompt or f"/{target.slug}:turn", sender=item.agent.slug)
+        brief = stamp_dispatched(spec.prompt or f"/{target.slug}:turn", sender=task.agent.slug)
         # Carry the card's title so the runner can NAME the emdash session after the
         # work rather than after its slash command — `c-retry-the-backoff-on-429`
         # instead of `c-turn`, which is what every board dispatch would otherwise
@@ -150,37 +139,29 @@ def dispatch(item, *, actor_workspace_slugs: set[str]) -> list[Turn]:
         # the spec's own provenance keys are untouched (copied, not mutated — the
         # spec is frozen and shared with the task's stored JSON).
         origin_ref = dict(spec.origin_ref)
-        origin_ref.setdefault("item_title", item.title)
+        origin_ref.setdefault("task_title", task.title)
         turn, _created = services.enqueue_turn(
             agent=target,
             origin=spec.origin,
-            # `task-` vs `item-`: a task's integer pk and its uuid could
-            # never collide, but a migrated item becomes a task and both keys
-            # must stay addressable. The uuid is the one id that survives that.
-            idempotency_key=(f"task-{item.uuid}-{i}" if _is_task(item)
-                             else f"item-{item.id}-{i}"),
-            prompt=_with_reply(brief, item),
+            idempotency_key=f"task-{task.pk}-{i}",
+            prompt=_with_reply(brief, action.comment, action.by),
             origin_ref=origin_ref,
             routing=spec.routing,
-            initiator=_dispatch_initiator(item),
+            initiator=_dispatch_initiator(task, action),
             # The turn that raised the task (and its conversation) is what this
             # work came FROM — the chain a reader follows back from the new turn.
-            parent=_dispatch_parent(item),
+            parent=_dispatch_parent(task),
         )
-        if _is_task(item):
-            if turn.raised_from_task_id is None:
-                turn.raised_from_task = item
-                turn.save(update_fields=["raised_from_task"])
-        elif turn.raised_from_id is None:
-            turn.raised_from = item
-            turn.save(update_fields=["raised_from"])
+        if turn.raised_from_task_id is None:
+            turn.raised_from_task = task
+            turn.save(update_fields=["raised_from_task"])
         turns.append(turn)
     return turns
 
 
-def _dispatch_parent(item) -> dict | None:
-    """The turn that raised `item` (an AgentTask), when one did."""
-    raised_by = getattr(item, "raised_by", None) if getattr(item, "raised_by_id", None) else None
+def _dispatch_parent(task) -> dict | None:
+    """The turn that raised `task`, when one did."""
+    raised_by = getattr(task, "raised_by", None) if getattr(task, "raised_by_id", None) else None
     if raised_by is None:
         return None
     parent = {"turn": raised_by}

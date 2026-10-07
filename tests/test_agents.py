@@ -8,7 +8,7 @@ import pytest
 
 from apps.agent_runs.models import AgentRun
 from apps.agents import services
-from apps.agents.models import Agent, AgentSkill, AgentSync, AgentTask, AgentWorkProduct
+from apps.agents.models import Agent, AgentSkill, AgentSync, AgentTask
 from apps.harness.models import Turn
 from apps.workspaces.testing import a_workspace
 
@@ -192,15 +192,6 @@ def test_close_out_does_not_reclaim_an_already_reported_turn():
     assert Turn.objects.filter(agent=agent).count() == 2
 
 
-def test_work_products_upsert_by_url():
-    agent = _agent()
-    items = [SimpleNamespace(title="Story", kind="doc", url="https://d/1", description="", tags=["x"], source="echo")]
-    assert services.upsert_work_products(agent, items) == {"created": 1, "replaced": 0}
-    items[0].title = "Story v2"
-    assert services.upsert_work_products(agent, items) == {"created": 0, "replaced": 1}
-    assert AgentWorkProduct.objects.get(agent=agent).title == "Story v2"
-
-
 def _skill_in(**kw):
     """Stand-in for AgentSkillIn. Mirrors its fields (and its defaults) — the
     service is deliberately strict rather than getattr-defensive, because its one
@@ -227,31 +218,22 @@ def test_replace_skills_mirrors_catalog():
     assert AgentSkill.objects.get(agent=agent).description == "email v2"
 
 
-def _task(**kw):
-    base = dict(ext_id="t", title="T", next_action="", status="suggested", owner="",
-                assigned="", confidence="", score="", review="", rationale="", source_url="",
-                plan="", due=None, links=[], notes="", position=0, source="sheet")
-    base.update(kw)
-    return SimpleNamespace(**base)
+def _create(agent, **kw):
+    return services.create_tasks(agent, [{"title": "T", **kw}])[0]
 
 
-def test_sync_tasks_upserts_and_normalizes_status():
+def test_create_tasks_normalizes_status_and_keeps_links():
     agent = _agent()
-    link = SimpleNamespace(model_dump=lambda: {"label": "doc", "url": "https://d/1"})
-    tasks = [
-        _task(ext_id="t1", title="PRIDE story", next_action="Run the interview", status="in_progress",
-              owner="Sarvesh", assigned="Sarvesh", due=dt.date(2026, 6, 20), links=[link], position=0),
-        _task(ext_id="t2", title="Weird status", status="banana", position=1),  # invalid -> suggested
-    ]
-    res = services.sync_tasks(agent, tasks)
-    assert res["count"] == 2 and res["created"] == 2
-    assert AgentTask.objects.get(agent=agent, ext_id="t2").status == "suggested"
-    assert AgentTask.objects.get(agent=agent, ext_id="t1").assigned == "Sarvesh"
-    # re-sync is NON-destructive (DB is the source of truth): updates, never deletes
-    tasks[0].title = "PRIDE story v2"
-    res2 = services.sync_tasks(agent, tasks[:1])
-    assert res2["created"] == 0 and AgentTask.objects.filter(agent=agent).count() == 2
-    assert AgentTask.objects.get(agent=agent, ext_id="t1").title == "PRIDE story v2"
+    created = services.create_tasks(agent, [
+        {"title": "PRIDE story", "next_action": "Run the interview", "status": "in_progress",
+         "owner": "Sarvesh", "assigned": "Sarvesh", "due": dt.date(2026, 6, 20),
+         "links": [{"label": "doc", "url": "https://d/1"}]},
+        {"title": "Weird status", "status": "banana"},  # invalid -> suggested
+    ])
+    assert [t.ext_id for t in created] == ["T1", "T2"]
+    assert AgentTask.objects.get(agent=agent, ext_id="T2").status == "suggested"
+    t1 = AgentTask.objects.get(agent=agent, ext_id="T1")
+    assert t1.assigned == "Sarvesh" and t1.links == [{"label": "doc", "url": "https://d/1"}]
 
 
 def test_agenttask_run_link_round_trips():
@@ -259,7 +241,7 @@ def test_agenttask_run_link_round_trips():
     SET_NULL leaves the task when its run is deleted."""
     agent = _agent()
     run = AgentRun.objects.create(agent=agent, label="Linked run")
-    task = services.create_task(agent, _task(ext_id="t1", title="Execute the run"))
+    task = _create(agent, title="Execute the run")
     assert task.run_id is None                                   # nullable by default
     task.run = run
     task.save(update_fields=["run"])
@@ -278,7 +260,7 @@ def test_agenttask_score_review_captured_at_completion():
     from apps.agents.schemas import AgentTaskOut
 
     agent = _agent()
-    t = services.create_task(agent, _task(ext_id="t1", title="Solina guide", status="in_progress"))
+    t = _create(agent, title="Solina guide", status="in_progress")
     assert t.score == "" and t.review == ""                       # unscored while in flight
     # completion: patch status=done with the grade captured at that moment
     services.patch_task(t, {"status": "done", "score": "A-",
@@ -290,26 +272,6 @@ def test_agenttask_score_review_captured_at_completion():
     out = AgentTaskOut.model_validate(t, from_attributes=True)
     assert out.score == "A-" and out.review.startswith("provenance-checked")
     # create-time scoring works too (e.g. importing already-done history)
-    t2 = services.create_task(agent, _task(ext_id="t2", title="MLC submission",
-                                           status="done", score="B", review="you rewrote it to ship"))
+    t2 = _create(agent, title="MLC submission", status="done", score="B",
+                 review="you rewrote it to ship")
     assert t2.score == "B" and t2.review == "you rewrote it to ship"
-
-
-def test_command_flow_accept_then_apply_and_decline():
-    agent = _agent()
-    t = services.create_task(agent, _task(ext_id="t1", title="ZEGCAWIS story", next_action="Get consent",
-                                          status="suggested", owner="Matt", confidence="high",
-                                          rationale="strong near-miss", plan="email the FLW"))
-    # accept: applies to the task AND leaves a pending command for the agent
-    cmd = services.create_command(agent, t, "accept", {}, "jonathan@dimagi.com")
-    t.refresh_from_db()
-    assert t.status == "in_progress" and t.assigned == "Echo"
-    assert cmd.status == "pending"
-    assert [c.id for c in services.list_commands(agent, "pending")] == [cmd.id]
-    services.apply_command(cmd, "drafted")
-    cmd.refresh_from_db()
-    assert cmd.status == "applied" and cmd.result_note == "drafted"
-    # decline applies immediately (terminal) and records the reason
-    cmd2 = services.create_command(agent, t, "decline", {"reason": "not now"}, "x")
-    t.refresh_from_db()
-    assert t.status == "declined" and "not now" in t.notes and cmd2.status == "applied"

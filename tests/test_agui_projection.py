@@ -79,7 +79,7 @@ def test_every_projected_event_survives_a_round_trip_through_the_sdk():
         {"event": "chat.tool_use",
          "data": {"tool_message_id": "t9", "parent_message_id": "m1",
                   "block": {"type": "tool_use", "id": "toolu_01ABC",
-                        "name": "list_items", "input": {"limit": 5}}}},
+                        "name": "list_tasks", "input": {"limit": 5}}}},
         {"event": "chat.tool_result",
          "data": {"tool_message_id": "t9", "block": {"content": "[]"}}},
         {"event": "session.activity", "data": {"state": "working"}},
@@ -451,7 +451,7 @@ ROUND_TRIP_FRAMES = [
               "author": {"name": "Jon", "user_id": 7}}},
     {"event": "chat.tool_use",
      "data": {"tool_message_id": "t9", "parent_message_id": "m1", "turn_index": 5,
-              "block": {"name": "list_items", "input": {"limit": 5}}}},
+              "block": {"name": "list_tasks", "input": {"limit": 5}}}},
     {"event": "chat.tool_result",
      "data": {"tool_message_id": "t9", "parent_message_id": "m1", "turn_index": 6,
               "block": {"type": "tool_result", "tool_use_id": "toolu_01ABC",
@@ -513,7 +513,7 @@ ROUND_TRIP_FRAMES = [
     {"event": "chat.stream_error", "data": {"message_id": "m1", "detail": "runner went away"}},
     {"event": "draft.committed", "data": {"draft_id": "d1", "user_message_id": "u2"}},
     {"event": "draft.discarded", "data": {"draft_id": "d1"}},
-    {"event": "page.invalidate", "data": {"uri": "item://"}},
+    {"event": "page.invalidate", "data": {"uri": "task://"}},
 ]
 
 

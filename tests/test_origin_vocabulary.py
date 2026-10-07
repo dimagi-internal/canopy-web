@@ -11,7 +11,7 @@ from apps.agents.models import Agent
 from apps.harness import services
 from apps.agents.models import AgentTask
 from apps.harness.models import Turn
-from apps.harness.schemas import ItemIn, TurnIn
+from apps.harness.schemas import TurnIn, TurnSpecIn
 from apps.workspaces.testing import a_workspace
 
 
@@ -52,7 +52,8 @@ def test_legacy_origins_normalize_rather_than_422(legacy, expected):
     """The live fleet posts these today. Rejecting them would 422 Echo/Ada mid-flight,
     so they normalize to their migration target for one release."""
     assert TurnIn(agent_slug="echo", origin=legacy, idempotency_key="k").origin == expected
-    assert ItemIn(title="t", origin=legacy, idempotency_key="k").origin == expected
+    # A task's `on_approve` turn specs normalize the same way.
+    assert TurnSpecIn(origin=legacy).origin == expected
 
 
 def test_an_unknown_origin_is_still_rejected():
@@ -80,7 +81,7 @@ def test_both_origin_columns_hold_the_longest_value():
 
 
 def test_a_stored_dispatch_spec_with_a_retired_origin_still_enqueues_a_valid_one():
-    """Items raised before this deploy carry origin="manual" in their dispatch JSON,
+    """Tasks raised before this deploy carry origin="manual" in their on_approve JSON,
     and TurnSpec.from_dict hands it straight to enqueue_turn without a schema in the
     path. A turn born with a retired origin matches no rule and no log filter."""
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())

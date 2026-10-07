@@ -26,7 +26,7 @@ vi.mock('react-router-dom', async (orig) => ({
   useOutletContext: () => ({
     agent: {
       slug: 'hal', name: 'Hal', persona: 'The fleet engineer.', description: '', workspace: 'connect',
-      task_count: 1, sync_count: 2, work_product_count: 3, skill_count: 4,
+      task_count: 1, sync_count: 2, skill_count: 4,
       turn_mode: 'manual', slack_enabled: false, owner: null, can_transfer_owner: false,
     },
   }),

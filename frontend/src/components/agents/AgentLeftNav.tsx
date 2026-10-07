@@ -1,25 +1,12 @@
-import { useEffect, useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { WorkbenchRail, WorkbenchNavItem } from 'canopy-ui'
 import type { AgentDetailOut } from '@/api/agents'
-import { listItems } from '@/api/items'
 
 type NavItem = { to: string; label: string; count?: number }
 
-export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
-  // The "N waiting on you" count for the inbox badge — the agent's open items.
-  const [waiting, setWaiting] = useState<number | undefined>(undefined)
-  useEffect(() => {
-    let cancelled = false
-    setWaiting(undefined)
-    listItems(agent.slug, { state: 'open' })
-      .then((rows) => !cancelled && setWaiting(rows.length))
-      .catch(() => !cancelled && setWaiting(undefined))
-    return () => {
-      cancelled = true
-    }
-  }, [agent.slug])
-
+/** `waiting` is the count of tasks waiting on the viewer — owned by
+ *  AgentWorkspacePage, so this badge and the Tasks page's chip are one number. */
+export function AgentLeftNav({ agent, waiting }: { agent: AgentDetailOut; waiting?: number }) {
   // ONE badge, and it means "waiting on you".
   //
   // Six of these carried a size (Tasks 9, Turns 115, Skills 129) and four did
@@ -35,25 +22,19 @@ export function AgentLeftNav({ agent }: { agent: AgentDetailOut }) {
   // does change a decision keeps its badge. It also shortens every pill, which
   // is real estate the phone strip needs.
   const items: NavItem[] = [
-    // Inbox = OPEN items, decidable in place. Items = the full ledger incl.
-    // decided/dismissed + batch sittings (?batch=) — browse/history, no badge.
-    // Work FIRST, and the landing page: what the agent is doing.
-    //
-    // It replaced Overview, Projects, Tasks and Items. The last three were three
-    // renderings of one table (an item has been a property of a task since
-    // #873) and Overview was a dashboard over the same rows with the settings
-    // buried in it — so the rail offered four doors onto the same work and none
-    // of them was obviously the way in. Grouping and settled-visibility are
-    // query params on Work now, not destinations.
-    { to: 'work', label: 'Work' },
-    { to: 'inbox', label: 'Inbox', count: waiting },
+    // Two nouns. Projects FIRST, and the landing page: the outcomes the agent
+    // is working toward. Tasks is every task, with "waiting on you" a filter
+    // on it (the badge) — it replaced Work and Inbox, which were the same rows
+    // rendered with two different cards.
+    { to: 'projects', label: 'Projects' },
+    { to: 'tasks', label: 'Tasks', count: waiting },
+    // Turns also carries Status reports (what a "sync" actually is: a
+    // periodic self-review of the work).
     { to: 'turns', label: 'Turns' },
     { to: 'schedules', label: 'Schedules' },
-    // The huddles it led or joined — the tasks they produced are on Work.
+    // The huddles it led or joined — the tasks they produced are on Tasks.
     { to: 'huddles', label: 'Huddles' },
-    // Work products carries Status reports (what a "sync" actually is: a
-    // periodic self-review of this work), and Skills carries its own history.
-    { to: 'work-products', label: 'Work products' },
+    // Skills carries its own history.
     { to: 'skills', label: 'Skills' },
     // Last, and its own entry: every control that CONFIGURES the agent — owner,
     // admins, callers, turn mode, Slack, runners, credentials. They were

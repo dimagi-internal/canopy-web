@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { listAgents, type AgentOut } from '@/api/agents'
-import { listOpenItems, type ItemOut } from '@/api/items'
+import { listAgents, type AgentOut, type TaskOut } from '@/api/agents'
 import { listRunners, listUnclaimableTurns, retireRunner, type RunnerOut, type UnclaimableTurn } from '@/api/harness'
 import { Menu } from 'lucide-react'
 import {
@@ -19,7 +18,7 @@ import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
 import { AgentKpiCard } from '@/components/supervisor/AgentKpiCard'
-import { ItemInbox } from '@/components/supervisor/ItemInbox'
+import { WaitingOnYou, loadWaitingOnYou } from '@/components/supervisor/WaitingOnYou'
 import { ChatSessionsPanel } from '@/components/chat/ChatSessionsPanel'
 import { InstallPrompt } from '@/pwa/InstallPrompt'
 import { PushToggle } from '@/pwa/PushToggle'
@@ -39,7 +38,7 @@ function BandError({ message }: { message: string }): JSX.Element {
 // The supervisor's screens. The feed is home; the rest live behind the menu.
 const SCREENS = [
   { id: 'feed', label: 'Feed' },
-  { id: 'inbox', label: 'Inbox' },
+  { id: 'waiting', label: 'Waiting on you' },
   { id: 'sessions', label: 'Sessions' },
   { id: 'agents', label: 'Agents' },
   { id: 'runners', label: 'Runners' },
@@ -51,27 +50,27 @@ type Screen = (typeof SCREENS)[number]['id']
 // and a desktop browser. Phone-first layout — a single column that widens.
 //
 // Home is a FEED of sessions that finished a turn and need your next prompt,
-// readable and answerable in place (Jonathan, 2026-10-03). Inbox, Sessions,
+// readable and answerable in place (Jonathan, 2026-10-03). Waiting on you, Sessions,
 // Agents and Runners are separate screens reached from the header menu.
 export default function SupervisorPage(): JSX.Element {
   const [agents, setAgents] = useState<AgentOut[] | null>(null)
   const [runners, setRunners] = useState<RunnerOut[] | null>(null)
-  const [items, setItems] = useState<ItemOut[] | null>(null)
+  const [waiting, setWaiting] = useState<TaskOut[] | null>(null)
   const [selectedRunner, setSelectedRunner] = useState<RunnerOut | null>(null)
   // Per-band errors, not one page-level error: on cellular a single flaky call
   // is the common case, and Promise.all would blank all three bands for it.
-  const [errs, setErrs] = useState<{ agents?: string; runners?: string; items?: string }>({})
+  const [errs, setErrs] = useState<{ agents?: string; runners?: string; waiting?: string }>({})
 
-  // Reloadable on its own so acting on an item (decide/dismiss) refreshes the
-  // inbox without refetching agents + runners.
-  const reloadItems = useCallback(() => {
-    listOpenItems()
+  // Reloadable on its own so acting on a task (approve/decline/reply) refreshes
+  // Waiting on you without refetching agents + runners.
+  const reloadWaiting = useCallback(() => {
+    loadWaitingOnYou()
       .then((rows) => {
-        setItems(rows)
-        setErrs((e) => ({ ...e, items: undefined }))
+        setWaiting(rows)
+        setErrs((e) => ({ ...e, waiting: undefined }))
       })
       .catch((err: unknown) =>
-        setErrs((e) => ({ ...e, items: err instanceof Error ? err.message : 'Failed to load' })),
+        setErrs((e) => ({ ...e, waiting: err instanceof Error ? err.message : 'Failed to load' })),
       )
   }, [])
 
@@ -80,15 +79,15 @@ export default function SupervisorPage(): JSX.Element {
     const msg = (r: PromiseRejectedResult) =>
       r.reason instanceof Error ? r.reason.message : 'Failed to load'
 
-    Promise.allSettled([listAgents({ limit: 100 }), listRunners(), listOpenItems()]).then(
+    Promise.allSettled([listAgents({ limit: 100 }), listRunners(), loadWaitingOnYou()]).then(
       ([a, r, f]) => {
         if (cancelled) return
         if (a.status === 'fulfilled') setAgents(a.value.items)
         else setErrs((e) => ({ ...e, agents: msg(a) }))
         if (r.status === 'fulfilled') setRunners(r.value)
         else setErrs((e) => ({ ...e, runners: msg(r) }))
-        if (f.status === 'fulfilled') setItems(f.value)
-        else setErrs((e) => ({ ...e, items: msg(f) }))
+        if (f.status === 'fulfilled') setWaiting(f.value)
+        else setErrs((e) => ({ ...e, waiting: msg(f) }))
       },
     )
     return () => {
@@ -162,26 +161,29 @@ export default function SupervisorPage(): JSX.Element {
       return lr ? { ...r, status: lr.status, last_heartbeat_at: lr.last_heartbeat_at } : r
     }) ?? null
   // Waiting count per agent + total: prefer the live value once a snapshot lands,
-  // else derive from the fetched open items.
-  const itemCountFor = (slug: string): number =>
-    (items ?? []).filter((i) => i.agent_slug === slug).length
+  // else derive from the fetched waiting tasks.
+  const waitingCountFor = (slug: string): number =>
+    (waiting ?? []).filter((t) => t.agent_slug === slug).length
   const waitingFor = (slug: string): number =>
-    live.hasSnapshot && slug in live.waiting ? live.waiting[slug] : itemCountFor(slug)
+    live.hasSnapshot && slug in live.waiting ? live.waiting[slug] : waitingCountFor(slug)
   const liveTotalWaiting = Object.values(live.waiting).reduce((a, b) => a + b, 0)
-  const totalWaiting = live.hasSnapshot ? liveTotalWaiting : (items?.length ?? 0)
+  const totalWaiting = live.hasSnapshot ? liveTotalWaiting : (waiting?.length ?? 0)
 
   // The app-icon count. Android honours this; elsewhere it no-ops.
   useEffect(() => {
-    if (live.hasSnapshot || items) setBadge(totalWaiting)
-  }, [live.hasSnapshot, items, totalWaiting])
+    if (live.hasSnapshot || waiting) setBadge(totalWaiting)
+  }, [live.hasSnapshot, waiting, totalWaiting])
 
   const [searchParams, setSearchParams] = useSearchParams()
   const raw = searchParams.get('tab')
   // The bare URL is the FEED — sessions waiting for your next prompt. Every
   // other view is its own screen behind the menu, addressed by ?tab= (kept as
   // the param name so existing deep links — Settings → Runners, the topology
-  // map, item pushes — still land). Unknown values fall back to the feed.
-  const tab: Screen = SCREENS.some((s) => s.id === raw) ? (raw as Screen) : 'feed'
+  // map — still land). The retired `?tab=inbox` lands on Waiting on you, its
+  // successor, so old bookmarks still open the queue. Unknown values fall back
+  // to the feed.
+  const wanted = raw === 'inbox' ? 'waiting' : raw
+  const tab: Screen = SCREENS.some((s) => s.id === wanted) ? (wanted as Screen) : 'feed'
   const go = (value: Screen) =>
     // Push history (not replace) so the phone back button steps back to the feed.
     setSearchParams(value === 'feed' ? {} : { tab: value })
@@ -207,22 +209,30 @@ export default function SupervisorPage(): JSX.Element {
       ? `/w/${r.workspace}/settings/topology?runner=${r.id}`
       : undefined
   }
+  // Dispatch / done need the agent's editor role (`agent.work` in its workspace);
+  // approve, decline and reply are open to every viewer.
+  const workspaceOf = useMemo(
+    () => Object.fromEntries((agents ?? []).map((a) => [a.slug, a.workspace] as const)),
+    [agents],
+  )
+  const canEditTask = (t: TaskOut): boolean =>
+    roleAllows(workspaces.find((w) => w.slug === workspaceOf[t.agent_slug])?.role, 'agent.work')
   const selectRunner = (r: RunnerOut | null) => {
     setSelectedRunner(r)
     setSearchParams(r ? { tab: 'runners', runner: r.id } : { tab: 'runners' })
   }
 
   const screen = SCREENS.find((s) => s.id === tab)
-  const badgeFor = (id: Screen): number => (id === 'inbox' ? totalWaiting : id === 'runners' ? alertCount : 0)
+  const badgeFor = (id: Screen): number => (id === 'waiting' ? totalWaiting : id === 'runners' ? alertCount : 0)
   const menuBadge = totalWaiting + alertCount
 
   return (
-    // `max-w-2xl` (672px) is the right measure for the feed and the Inbox, whose
+    // `max-w-2xl` (672px) is the right measure for the feed and Waiting on you, whose
     // cards are prose you read. The runner and session tables get the room from
     // `lg` up — on a 1440 laptop (one of this surface's three consumers, beside
     // the phone PWA and the menubar) a 672px table leaves half the window empty.
     <div
-      className={`mx-auto flex w-full flex-col gap-4 p-4 ${tab === 'feed' || tab === 'inbox' ? 'max-w-2xl' : 'max-w-2xl lg:max-w-5xl'}`}
+      className={`mx-auto flex w-full flex-col gap-4 p-4 ${tab === 'feed' || tab === 'waiting' ? 'max-w-2xl' : 'max-w-2xl lg:max-w-5xl'}`}
       data-testid="supervisor-page"
     >
       <header className="flex items-center justify-between gap-3">
@@ -293,25 +303,26 @@ export default function SupervisorPage(): JSX.Element {
           {totalWaiting > 0 && (
             <button
               type="button"
-              onClick={() => go('inbox')}
-              data-testid="feed-inbox-link"
+              onClick={() => go('waiting')}
+              data-testid="feed-waiting-link"
               className="rounded-lg border border-border bg-card px-3 py-2 text-left text-[12px] text-foreground-secondary hover:bg-muted"
             >
-              {totalWaiting} item{totalWaiting === 1 ? '' : 's'} in your inbox — reviews and questions →
+              {totalWaiting} task{totalWaiting === 1 ? '' : 's'} waiting on you — reviews and questions →
             </button>
           )}
           <SessionFeed agents={agents} />
         </>
       )}
 
-      {/* Inbox — the fleet's open items, actionable in place. */}
-      {tab === 'inbox' &&
-        (errs.items ? (
-          <BandError message={errs.items} />
-        ) : items === null ? (
+      {/* Waiting on you — the fleet's tasks with an open ask or parked on you,
+          actionable in place. */}
+      {tab === 'waiting' &&
+        (errs.waiting ? (
+          <BandError message={errs.waiting} />
+        ) : waiting === null ? (
           <Skeleton className="h-24 w-full" />
         ) : (
-          <ItemInbox items={items} onActed={reloadItems} />
+          <WaitingOnYou tasks={waiting} canEdit={canEditTask} onChanged={reloadWaiting} />
         ))}
 
       {/* Sessions — ONE unified list (web-started + runner-discovered). Every row

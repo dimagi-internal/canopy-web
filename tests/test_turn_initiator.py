@@ -233,18 +233,20 @@ def test_a_schedule_is_system_with_its_creator_accountable(ctx):
 
 def test_dispatched_work_is_the_person_who_approved_it(ctx):
     owner, _ws, agent = ctx
-    item = AgentTask(agent=agent, ext_id="T1", title="t", ask_kind=AgentTask.ASK_REVIEW, origin="api",
-                idempotency_key="i1", decided_by_user=owner)
-    item.save()
+    item = AgentTask.objects.create(agent=agent, ext_id="T1", title="t",
+                                    ask_kind=AgentTask.ASK_REVIEW, origin="api",
+                                    idempotency_key="i1")
     assert who.for_user(owner, via="x", assurance=who.APPROVAL).kind == who.USER
 
+    from apps.agents.models import AgentTaskAction
     from apps.harness.dispatch import _dispatch_initiator
 
-    approved = _dispatch_initiator(item)
+    action = AgentTaskAction(agent=agent, task=item, action=AgentTaskAction.APPROVE, by_user=owner)
+    approved = _dispatch_initiator(item, action)
     assert (approved.kind, approved.user, approved.assurance) == (who.USER, owner, who.APPROVAL)
 
-    item.decided_by_user = None
-    raised = _dispatch_initiator(item)
+    action.by_user = None
+    raised = _dispatch_initiator(item, action)
     assert (raised.kind, raised.agent_slug) == (who.AGENT, agent.slug)
 
 

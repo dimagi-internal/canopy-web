@@ -16,9 +16,9 @@ import { buildPageContext, describePage } from './pageContext'
 
 describe('the route layer', () => {
   it('names an agent rail section specifically, since that is where staleness is noticed', () => {
-    expect(describePage('/w/connect/agents/echo/items')).toEqual({
-      surface: 'the items view of agent echo',
-      params: { workspace: 'connect', agent: 'echo', section: 'items' },
+    expect(describePage('/w/connect/agents/echo/tasks')).toEqual({
+      surface: 'the tasks view of agent echo',
+      params: { workspace: 'connect', agent: 'echo', section: 'tasks' },
     })
   })
 
@@ -49,7 +49,7 @@ describe('the route layer', () => {
   })
 
   it('covers the personal surfaces', () => {
-    expect(describePage('/supervisor').surface).toBe('the supervisor inbox')
+    expect(describePage('/supervisor').surface).toBe('the supervisor')
     expect(describePage('/activity').surface).toBe('the fleet activity log')
   })
 

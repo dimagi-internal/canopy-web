@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 // Reach a screen. The feed is home; every other screen is behind the header menu.
 async function openTab(
   page: import('@playwright/test').Page,
-  tab: 'feed' | 'inbox' | 'sessions' | 'agents' | 'runners',
+  tab: 'feed' | 'waiting' | 'sessions' | 'agents' | 'runners',
 ) {
   await page.getByTestId('supervisor-menu').click()
   await page.getByTestId(`menu-${tab}`).click()
@@ -13,7 +13,7 @@ test.describe('/supervisor', () => {
   test('renders without horizontal scroll on every screen', async ({ page }) => {
     await page.goto('/supervisor')
     await expect(page.getByTestId('supervisor-page')).toBeVisible()
-    for (const tab of ['feed', 'inbox', 'sessions', 'agents', 'runners'] as const) {
+    for (const tab of ['feed', 'waiting', 'sessions', 'agents', 'runners'] as const) {
       await openTab(page, tab)
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -28,11 +28,15 @@ test.describe('/supervisor', () => {
     await page.goto('/supervisor')
     await expect(page.getByTestId('session-feed').or(page.getByTestId('feed-empty'))).toBeVisible()
     await expect(page.getByTestId('sessions-panel')).toBeHidden()
-    await expect(page.getByTestId('item-inbox').or(page.getByTestId('inbox-empty'))).toBeHidden()
+    await expect(page.getByTestId('waiting-on-you').or(page.getByTestId('waiting-empty'))).toBeHidden()
 
-    // Item pushes deep-link to the Inbox screen.
+    // Waiting on you is its own screen, addressed by ?tab=waiting.
+    await page.goto('/supervisor?tab=waiting')
+    await expect(page.getByTestId('waiting-on-you').or(page.getByTestId('waiting-empty'))).toBeVisible()
+
+    // The retired ?tab=inbox still opens it, so old bookmarks land.
     await page.goto('/supervisor?tab=inbox')
-    await expect(page.getByTestId('item-inbox').or(page.getByTestId('inbox-empty'))).toBeVisible()
+    await expect(page.getByTestId('waiting-on-you').or(page.getByTestId('waiting-empty'))).toBeVisible()
 
     await page.goto('/supervisor?tab=agents')
     await expect(page.locator('[data-testid^="agent-card-"]').first()).toBeVisible()
@@ -48,13 +52,13 @@ test.describe('/supervisor', () => {
   })
 
   test('one failed call does not blank the page', async ({ page }) => {
-    // Abort the call the Inbox ACTUALLY makes. This used to abort
-    // `/api/agents/needs-you`, deleted with the aggregation — so the route never
+    // Abort the call Waiting on you ACTUALLY makes (`GET /api/tasks/?waiting=me`).
+    // An earlier version aborted a route that had been deleted — so it never
     // matched, nothing failed, and the test proved nothing while passing for it.
-    await page.route('**/api/items/**', (r) => r.abort())
+    await page.route((url) => url.pathname === '/api/tasks/', (r) => r.abort())
     await page.goto('/supervisor')
     await expect(page.getByTestId('supervisor-page')).toBeVisible()
-    // Runners still render despite the Inbox fetch failing.
+    // Runners still render despite the Waiting on you fetch failing.
     await openTab(page, 'runners')
     await expect(page.getByTestId('runner-status').or(page.getByText('No runner paired'))).toBeVisible()
   })

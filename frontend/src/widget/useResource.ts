@@ -6,7 +6,7 @@ import { onResourceChanged } from './pageInvalidation'
  * Re-read `resource` whenever canopy says it changed.
  *
  * ```tsx
- * useResource('item://', reload)   // InboxSection
+ * useResource('task://', reload)   // AgentTasksSection
  * ```
  *
  * Pairs with `usePageState`: that one declares WHAT is on screen (including the
@@ -18,6 +18,11 @@ import { onResourceChanged } from './pageInvalidation'
  * a caller does not have to memoise `refetch` and cannot accidentally
  * re-subscribe on every render.
  */
+/** The resource canopy marks dirty whenever any task row moves
+ *  (`apps/harness/signals.py::TASK_RESOURCE`) — every surface showing tasks
+ *  (an agent's Tasks page, a project page, the fleet's Waiting on you) listens. */
+export const TASK_RESOURCE = 'task://'
+
 export function useResource(resource: string, refetch: () => void | Promise<void>): void {
   const latest = useRef(refetch)
   latest.current = refetch

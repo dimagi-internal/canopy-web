@@ -1,5 +1,5 @@
 """Django Ninja router for the /api/agents surface — a first-class AI-agent
-workspace (agents, their Google-Doc syncs, work products, and skill catalog)."""
+workspace (agents, their Google-Doc syncs, projects, tasks, and skill catalog)."""
 from __future__ import annotations
 
 import datetime as dt
@@ -7,7 +7,7 @@ import logging
 from typing import Any
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, When
 from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -19,13 +19,11 @@ from apps.workspaces import services as wsvc
 
 from . import delegations, services
 from . import skill_history as history
-from .models import AgentTaskCommand
 from .schemas import (
     AgentInterfaceIn,
     AgentInterfaceOut,
     AgentAccessOut,
     AgentAdminOut,
-    AgentCommandApplyIn,
     AgentCredentialsIn,
     AgentGitHubIn,
     AgentCanopyUserIn,
@@ -51,29 +49,30 @@ from .schemas import (
     AgentSkillOut,
     AgentSyncIn,
     AgentSyncOut,
-    AgentTaskCommandIn,
-    AgentTaskCommandOut,
+    AgentTaskActionIn,
+    AgentTaskActionOut,
+    AgentTaskDetailOut,
     AgentTaskIn,
+    AgentProjectDetailOut,
     AgentProjectIn,
     AgentProjectOut,
     AgentProjectPatch,
     AgentTaskOut,
     AgentTaskPatch,
-    AgentTaskSyncIn,
     AgentTurnIn,
     AgentTurnOut,
     AgentVaultIn,
     AgentVaultOut,
-    AgentWorkProductBatchIn,
-    AgentWorkProductOut,
     BootstrapReportIn,
     BootstrapReportOut,
-    CommandResultOut,
+    ActOut,
+    ActionAppliedIn,
     CountOut,
     RunnerPreferenceIn,
     SkillHistoryOut,
     SlackEnabledIn,
     SlackEnabledOut,
+    TurnBriefOut,
     TurnModeIn,
 )
 
@@ -101,7 +100,7 @@ def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
     Fails CLOSED on an unhomed agent (security review 2026-07-26, hole A):
     this used to return the caller's workspace ids **plus {None}**, so an
     agent with no workspace was visible to ANY authenticated user across the
-    whole agents surface — reads (tasks, work products, skills, turns,
+    whole agents surface — reads (tasks, projects, skills, turns,
     including AgentTurnOut.share_token, a public transcript link) AND writes
     (board commands, PUT /runners). Strictly broader than the read-only hole
     `_agent_or_404` (apps/harness/api.py, F1) closed for the same
@@ -625,7 +624,7 @@ def delete_agent(request: HttpRequest, slug: str):
     existence leak) rather than 403.
 
     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
-    syncs, work products, schedules, items, runner assignments/drills), so
+    syncs, projects, schedules, task actions, runner assignments/drills), so
     this is a real delete rather than a soft flag — nothing is left dangling
     and nothing blocks it.
     """
@@ -1232,24 +1231,6 @@ def create_turn(request: HttpRequest, slug: str, payload: AgentTurnIn) -> Status
     return Status(201, AgentTurnOut.model_validate(turn))
 
 
-# ---- work products ----
-@router.get("/{slug}/work-products/", response=Page[AgentWorkProductOut],
-            summary="List the agent's work products",)
-def list_work_products(request: HttpRequest, slug: str, limit: int = 200) -> Page[AgentWorkProductOut]:
-    limit = clamp_limit(limit)
-    agent = _get_agent_or_404(request, slug)
-    items = [AgentWorkProductOut.model_validate(w) for w in services.list_work_products(agent, limit=limit)]
-    return paginate(items, offset=0, limit=limit)
-
-
-@router.post("/{slug}/work-products/", response=CountOut,
-             summary="Add/update work products (upsert by url)",)
-def add_work_products(request: HttpRequest, slug: str, payload: AgentWorkProductBatchIn) -> CountOut:
-    agent = _agent_for_write(request, slug)
-    result = services.upsert_work_products(agent, payload.work_products)
-    return CountOut(**result)
-
-
 # ---- skill catalog ----
 @router.get("/{slug}/skills/", response=list[AgentSkillOut], summary="List the agent's skill catalog",)
 def list_skills(request: HttpRequest, slug: str) -> list[AgentSkillOut]:
@@ -1356,7 +1337,6 @@ def skill_revision_diff(request: HttpRequest, slug: str, sha: str, skill: str) -
         raise HttpError(502, f"GitHub: {e}") from e
 
 
-# ---- tasks (board) ----
 # ---- projects (the work a `Projects/<name>` Drive folder holds) ----
 
 
@@ -1374,7 +1354,8 @@ def list_projects(request: HttpRequest, slug: str, status: str = "") -> list[Age
     projects = services.list_projects(agent, status=status)
     counts = services.project_task_counts(agent)
     for project in projects:
-        project._task_count, project._open_task_count = counts.get(project.pk, (0, 0))
+        (project._task_count, project._open_task_count,
+         project._waiting_task_count) = counts.get(project.pk, (0, 0, 0))
     return [AgentProjectOut.model_validate(p) for p in projects]
 
 
@@ -1384,10 +1365,65 @@ def create_project(request: HttpRequest, slug: str, payload: AgentProjectIn) -> 
     return Status(201, AgentProjectOut.model_validate(services.create_project(agent, payload)))
 
 
-@router.get("/{slug}/projects/{ref}/", response=AgentProjectOut, summary="Get one project",)
-def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectOut:
+#: How many of the agent's turns a project page shows.
+_PROJECT_RECENT_TURNS = 10
+
+
+def _turns_touching(agent, ext_ids: list[str]) -> list:
+    """The agent's latest turns whose `task_ext_ids` name any of `ext_ids`.
+
+    `task_ext_ids` is a JSON list. Postgres answers "contains this element"
+    natively; SQLite (the test database) has no such lookup, so there the
+    element is matched as its quoted JSON text — exact, since `"T1"` cannot
+    match inside `"T12"`.
+    """
+    from django.db import connection
+
+    from apps.harness.models import Turn
+
+    if not ext_ids:
+        return []
+    q = Q()
+    for eid in ext_ids:
+        if connection.features.supports_json_field_contains:
+            q |= Q(task_ext_ids__contains=[eid])
+        else:
+            q |= Q(task_ext_ids__icontains=f'"{eid}"')
+    # `redact` reads each turn's agent and claiming box; join them up front.
+    return list(Turn.objects.filter(agent=agent).filter(q)
+                .select_related("agent", "claimed_by")
+                .order_by("-created_at")[:_PROJECT_RECENT_TURNS])
+
+
+def _turn_brief(turn) -> TurnBriefOut:
+    preview = (turn.report_title or turn.prompt or "").strip()
+    return TurnBriefOut(id=turn.id, status=turn.status, prompt_preview=preview[:200],
+                        created_at=turn.created_at, task_ext_ids=list(turn.task_ext_ids or []))
+
+
+@router.get("/{slug}/projects/{ref}/", response=AgentProjectDetailOut,
+            summary="Get one project: its fields and links, its tasks, its recent turns",)
+def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetailOut:
+    from apps.harness import turn_access
+
     agent = _get_agent_or_404(request, slug)
-    return AgentProjectOut.model_validate(_get_project_or_404(agent, ref))
+    project = _get_project_or_404(agent, ref)
+    live_first = Case(When(status__in=services.LIVE_STATUSES, then=0), default=1,
+                      output_field=IntegerField())
+    tasks = list(project.tasks.select_related("agent", "project", "waiting_on_user")
+                 .order_by(live_first, "position", "id"))
+    project._task_count = len(tasks)
+    project._open_task_count = sum(t.status in services.LIVE_STATUSES for t in tasks)
+    # `waiting_task_count` is left to the model property: one COUNT through
+    # `services.waiting_q`, rather than a second Python copy of that predicate.
+    # Everyone sees what the agent did; a turn's prompt is a log (turn_access).
+    turns = turn_access.redact(_turns_touching(agent, [t.ext_id for t in tasks]), request.user)
+    # Built from the plain project shape: `project.tasks` is a manager, not a list.
+    return AgentProjectDetailOut(
+        **AgentProjectOut.model_validate(project).model_dump(),
+        tasks=[AgentTaskOut.model_validate(t) for t in tasks],
+        recent_turns=[_turn_brief(t) for t in turns],
+    )
 
 
 @router.patch("/{slug}/projects/{ref}/", response=AgentProjectOut, summary="Update a project",)
@@ -1402,50 +1438,72 @@ def patch_project(request: HttpRequest, slug: str, ref: str,
     return AgentProjectOut.model_validate(services.patch_project(project, data))
 
 
-@router.get("/{slug}/tasks/", response=list[AgentTaskOut], summary="List the agent's tasks (board)",)
-def list_tasks(request: HttpRequest, slug: str) -> list[AgentTaskOut]:
-    agent = _get_agent_or_404(request, slug)
-    return [AgentTaskOut.model_validate(t) for t in services.list_tasks(agent)]
+# ---- tasks, addressed by `ext_id` ----
 
 
-@router.get("/{slug}/tasks/waiting/", response=list[AgentTaskOut],
-            summary="This agent's tasks waiting on you",)
-def list_waiting_tasks(request: HttpRequest, slug: str) -> list[AgentTaskOut]:
-    """The inbox, per agent: tasks parked on the CALLER.
-
-    Routed on `waiting_on_user`, never on the free-text `assigned`: canopy
-    cannot notify a string, and the fleet's boards spell one person three ways
-    ("Jonathan", "Jonathan Jackson", "jjackson@dimagi.com").
-    """
-    agent = _get_agent_or_404(request, slug)
-    return [AgentTaskOut.model_validate(t)
-            for t in services.tasks_waiting_on(request.user, agent=agent)]
-
-
-@router.post("/{slug}/tasks/sync", response=CountOut,
-             summary="Upsert the agent's tasks from the (legacy) source sheet",)
-def sync_tasks(request: HttpRequest, slug: str, payload: AgentTaskSyncIn) -> CountOut:
-    agent = _agent_for_write(request, slug)
-    return CountOut(**services.sync_tasks(agent, payload.tasks))
-
-
-def _get_task_or_404(agent, task_id: int):
-    task = services.get_task(agent, task_id)
+def _get_task_or_404(agent, ref: str):
+    task = services.get_task(agent, ref)
     if task is None:
-        raise HttpError(404, f"task {task_id} not found")
+        raise HttpError(404, f"task {ref} not found")
     return task
 
 
-@router.post("/{slug}/tasks/", response={201: AgentTaskOut}, summary="Create a task",)
-def create_task(request: HttpRequest, slug: str, payload: AgentTaskIn) -> Status:
-    agent = _agent_for_write(request, slug)
-    return Status(201, AgentTaskOut.model_validate(services.create_task(agent, payload)))
+def _is_agent_itself(request: HttpRequest, agent) -> bool:
+    return agent.user_id is not None and agent.user_id == request.user.pk
 
 
-@router.patch("/{slug}/tasks/{task_id}/", response=AgentTaskOut, summary="Update a task",)
-def patch_task(request: HttpRequest, slug: str, task_id: int, payload: AgentTaskPatch) -> AgentTaskOut:
+@router.get("/{slug}/tasks/", response=list[AgentTaskOut], summary="List the agent's tasks",)
+def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str = "",
+               waiting: str = "", ask: str = "", batch: str = "") -> list[AgentTaskOut]:
+    """Filters: `project` (an ext_id, or `none` for one-offs), `status`
+    (comma-separated), `waiting=me` (open asks nobody owns plus tasks parked on
+    you), `ask=open|closed`, `batch` (a batch_key)."""
+    agent = _get_agent_or_404(request, slug)
+    qs = services.filter_tasks(
+        agent.tasks.select_related("agent", "project", "waiting_on_user"),
+        user=request.user, project=project, status=status, waiting=waiting, ask=ask, batch=batch)
+    return [AgentTaskOut.model_validate(t) for t in qs]
+
+
+@router.post("/{slug}/tasks/", response={201: list[AgentTaskOut]},
+             summary="Create tasks (a list; an idempotency_key replays instead of duplicating)",)
+def create_tasks(request: HttpRequest, slug: str, payload: list[AgentTaskIn]) -> Status:
+    agent = _get_agent_or_404(request, slug)
+    # A task can carry `on_approve` — work that runs the moment a viewer approves
+    # it — so WRITING one is the reshaping tier: an editor, or the agent itself
+    # under its own login.
+    if not _is_agent_itself(request, agent):
+        agent = _agent_for_write(request, slug)
+    try:
+        tasks = services.create_tasks(agent, [p.model_dump(exclude_unset=True) for p in payload])
+    except services.UnknownPersonError as exc:
+        raise HttpError(422, str(exc)) from exc
+    except services.DuplicateTaskError as exc:
+        # An explicit `ext_id` the agent already uses, with no idempotency key
+        # to say "this is the same task".
+        raise HttpError(409, f"{exc} — omit ext_id, or send an idempotency_key to replay") from exc
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201, [AgentTaskOut.model_validate(t) for t in tasks])
+
+
+@router.get("/{slug}/tasks/{ref}/", response=AgentTaskDetailOut,
+            summary="Get one task with everything done to it",)
+def get_task(request: HttpRequest, slug: str, ref: str) -> AgentTaskDetailOut:
+    agent = _get_agent_or_404(request, slug)
+    task = _get_task_or_404(agent, ref)
+    # Built from the plain task shape: `task.actions` is a manager, not a list.
+    return AgentTaskDetailOut(
+        **AgentTaskOut.model_validate(task).model_dump(),
+        actions=[AgentTaskActionOut.model_validate(a)
+                 for a in task.actions.select_related("agent", "task")],
+    )
+
+
+@router.patch("/{slug}/tasks/{ref}/", response=AgentTaskOut, summary="Update a task's fields",)
+def patch_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskPatch) -> AgentTaskOut:
     agent = _agent_for_write(request, slug)
-    task = _get_task_or_404(agent, task_id)
+    task = _get_task_or_404(agent, ref)
     data = payload.model_dump(exclude_unset=True)
     try:
         return AgentTaskOut.model_validate(services.patch_task(task, data))
@@ -1453,62 +1511,78 @@ def patch_task(request: HttpRequest, slug: str, task_id: int, payload: AgentTask
         raise HttpError(422, str(exc)) from exc
 
 
-# ---- task commands (the board's action queue) ----
-#
-# Which command kinds are a RESHAPE rather than an interaction. `PATCH
-# /tasks/{id}/` is gated at `_agent_for_write`, and `kind: "edit"` performs the
-# identical mutation through `services.create_command` — so gating one and not
-# the other left the gate with a door beside it. A viewer refused on the PATCH
-# could rewrite title/next_action/plan/owner/assigned via the command queue.
-#
-# The line is the role ladder's own: `accept` / `decline` / `comment` are
-# DECIDING an item that is already on the board, which is what the User tier
-# exists for ("decide an item, read the board"). `edit` rewrites the task's
-# text, `reassign` moves who holds it, `done` declares the work finished, and
-# `dispatch` queues fresh agent work — all reshapes, all editor.
-_RESHAPING_COMMAND_KINDS = frozenset({
-    AgentTaskCommand.EDIT,
-    AgentTaskCommand.REASSIGN,
-    AgentTaskCommand.DONE,
-    AgentTaskCommand.DISPATCH,
-})
+#: Actions that RESHAPE work rather than answer it: `dispatch` queues fresh
+#: agent work and `done` declares it finished. approve / decline / reply answer
+#: what is already on the board — the viewer tier ("decide, read the board").
+_EDITOR_ACTIONS = frozenset({"dispatch", "done"})
 
 
-@router.post("/{slug}/tasks/{task_id}/commands", response={201: CommandResultOut},
-             summary="Post a board action (accept/decline/dispatch/…) on a task",)
-def post_command(request: HttpRequest, slug: str, task_id: int, payload: AgentTaskCommandIn) -> Status:
-    if payload.kind in _RESHAPING_COMMAND_KINDS:
+@router.post("/{slug}/tasks/{ref}/actions", response=ActOut,
+             summary="Act on a task: approve, decline, reply, dispatch or done",)
+def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskActionIn) -> ActOut:
+    """approve → in progress, runs `on_approve`. decline → declined (comment is
+    the reason). reply → a comment; on a question it is the answer. dispatch →
+    queue the agent on it now (editor). done → done (editor). 409 when
+    approving or declining an ask that is already closed."""
+    if payload.action in _EDITOR_ACTIONS:
         agent = _agent_for_write(request, slug)
     else:
         agent = _get_agent_or_404(request, slug)
-    task = _get_task_or_404(agent, task_id)
-    created_by = payload.created_by or getattr(request.user, "email", "")
-    cmd = services.create_command(agent, task, payload.kind, payload.payload, created_by)
-    return Status(201, CommandResultOut(
-        command=AgentTaskCommandOut.model_validate(cmd),
-        task=AgentTaskOut.model_validate(cmd.task) if cmd.task_id else None,
-    ))
+    task = _get_task_or_404(agent, ref)
+    try:
+        task, row, turns = services.act(
+            task, action=payload.action, comment=payload.comment,
+            by=request.user.email or request.user.get_username(), by_user=request.user,
+            actor_workspace_ids=_visible_agent_workspace_ids(request))
+    except services.ClosedAskError as exc:
+        raise HttpError(409, str(exc)) from exc
+    except ValueError as exc:
+        # An empty reply, or an `on_approve` spec that cannot run. `act` is
+        # atomic: the ask is still open and the action can be retried.
+        raise HttpError(422, str(exc)) from exc
+    return ActOut(task=AgentTaskOut.model_validate(task),
+                  action=AgentTaskActionOut.model_validate(row),
+                  turn_ids=[t.id for t in turns])
 
 
-@router.get("/{slug}/commands", response=list[AgentTaskCommandOut],
-            summary="List commands (the agent reads ?status=pending)",)
-def list_commands(request: HttpRequest, slug: str, status: str | None = None) -> list[AgentTaskCommandOut]:
+# ---- the agent's queue: actions it still has to carry out ----
+
+
+@router.get("/{slug}/actions/", response=list[AgentTaskActionOut],
+            summary="List actions on the agent's tasks (the agent drains ?status=pending)",)
+def list_task_actions(request: HttpRequest, slug: str, status: str = "",
+                      limit: int = 200) -> list[AgentTaskActionOut]:
+    """At most `limit` rows (default 200, cap 500). Unfiltered, PENDING rows come
+    first (newest first), then the rest newest first — so a short page still
+    carries the agent's whole queue before any history."""
     agent = _get_agent_or_404(request, slug)
-    return [AgentTaskCommandOut.model_validate(c) for c in services.list_commands(agent, status)]
+    limit = clamp_limit(limit)
+    if status == "pending":
+        rows = services.pending_actions(agent)  # oldest first: the order to carry them out
+    else:
+        rows = agent.task_actions.select_related("agent", "task")
+        if status:
+            rows = rows.filter(status=status).order_by("-created_at", "-id")
+        else:
+            pending_first = Case(When(status="pending", then=0), default=1,
+                                 output_field=IntegerField())
+            rows = rows.order_by(pending_first, "-created_at", "-id")
+    return [AgentTaskActionOut.model_validate(a) for a in rows[:limit]]
 
 
-@router.post("/{slug}/commands/{cmd_id}/apply", response=AgentTaskCommandOut,
-             summary="Mark a command applied (the agent calls this after acting)",)
-def apply_command(request: HttpRequest, slug: str, cmd_id: int, payload: AgentCommandApplyIn) -> AgentTaskCommandOut:
-    # Marking a command applied tells the agent it is done, so the agent never
-    # acts on it — the agent's own login or the reshaping tier, not any viewer.
+@router.post("/{slug}/actions/{action_id}/applied", response=AgentTaskActionOut,
+             summary="Mark an action applied (the agent calls this after carrying it out)",)
+def mark_task_action_applied(request: HttpRequest, slug: str, action_id: int,
+                             payload: ActionAppliedIn) -> AgentTaskActionOut:
+    # Marking an action applied tells the agent it is done, so the agent never
+    # carries it out — the agent's own login or the reshaping tier, not any viewer.
     agent = _get_agent_or_404(request, slug)
-    if not (agent.user_id is not None and agent.user_id == request.user.pk):
+    if not _is_agent_itself(request, agent):
         agent = _agent_for_write(request, slug)
-    cmd = agent.commands.filter(id=cmd_id).select_related("task", "agent").first()
-    if cmd is None:
-        raise HttpError(404, f"command {cmd_id} not found")
-    return AgentTaskCommandOut.model_validate(services.apply_command(cmd, payload.result_note))
+    row = agent.task_actions.filter(id=action_id).select_related("agent", "task").first()
+    if row is None:
+        raise HttpError(404, f"action {action_id} not found")
+    return AgentTaskActionOut.model_validate(services.mark_applied(row, payload.result_note))
 
 
 # ---- Agent credentials (spec 2026-09-05-agent-credentials-design) -----------

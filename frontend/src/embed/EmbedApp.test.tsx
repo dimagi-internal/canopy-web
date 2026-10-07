@@ -326,7 +326,7 @@ describe('the page is declared BEFORE the turn is queued', () => {
     fakeLink({
       waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
       actions: () => [{ name: 'dismissItems' }] as never,
-      pageState: () => ({ visible_ids: [1, 2, 3], backing_tool: 'list_items' }),
+      pageState: () => ({ visible_ids: [1, 2, 3], backing_tool: 'list_fleet_tasks' }),
     })
 
   const order = () =>
@@ -368,13 +368,13 @@ describe('the page is declared BEFORE the turn is queued', () => {
   it('declares the state as it is at send time, not at mount', async () => {
     // `setPageState` pushes on every change, so a filter applied after the panel
     // opened must be what the agent can read.
-    let state: Record<string, unknown> = { visible_ids: [1], backing_tool: 'list_items' }
+    let state: Record<string, unknown> = { visible_ids: [1], backing_tool: 'list_fleet_tasks' }
     const link = fakeLink({
       waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
       pageState: () => state,
     })
     render(<EmbedApp link={link} app="canopy-web" />)
-    state = { visible_ids: [7, 8, 9], backing_tool: 'list_items' }
+    state = { visible_ids: [7, 8, 9], backing_tool: 'list_fleet_tasks' }
 
     await say('and now?')
 

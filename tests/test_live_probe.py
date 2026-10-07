@@ -141,10 +141,10 @@ def test_canopy_web_probes_itself_through_the_real_redemption_and_gateway(self_s
     from canopy_sdk.django.models import DelegatedToken as IssuedByHost
 
     issued = IssuedByHost.objects.get()
-    assert issued.subject == str(probe.pk) and issued.scope == "items:read"
+    assert issued.subject == str(probe.pk) and issued.scope == "tasks:read"
     assert issued.cnf_jkt == client_identity.dpop_jkt()
     # ...the tool ran AS the probe user, and the out-of-scope one never ran...
-    assert MCPAuditLog.objects.filter(tool="list_items", user=probe, ok=True).exists()
+    assert MCPAuditLog.objects.filter(tool="list_fleet_tasks", user=probe, ok=True).exists()
     assert not MCPAuditLog.objects.filter(tool="skill_history").exists()
     # ...and the probe's grant did not outlive the probe.
     assert not HostGrant.objects.exists()

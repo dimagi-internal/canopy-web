@@ -1770,7 +1770,7 @@ export interface paths {
          *     existence leak) rather than 403.
          *
          *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
-         *     syncs, work products, schedules, items, runner assignments/drills), so
+         *     syncs, projects, schedules, task actions, runner assignments/drills), so
          *     this is a real delete rather than a soft flag — nothing is left dangling
          *     and nothing blocks it.
          */
@@ -2214,24 +2214,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/work-products/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** List the agent's work products */
-        readonly get: operations["list_work_products"];
-        readonly put?: never;
-        /** Add/update work products (upsert by url) */
-        readonly post: operations["add_work_products"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/agents/{slug}/skills/": {
         readonly parameters: {
             readonly query?: never;
@@ -2372,7 +2354,7 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Get one project */
+        /** Get one project: its fields and links, its tasks, its recent turns */
         readonly get: operations["get_project"];
         readonly put?: never;
         readonly post?: never;
@@ -2390,18 +2372,64 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List the agent's tasks (board) */
+        /**
+         * List the agent's tasks
+         * @description Filters: `project` (an ext_id, or `none` for one-offs), `status`
+         *     (comma-separated), `waiting=me` (open asks nobody owns plus tasks parked on
+         *     you), `ask=open|closed`, `batch` (a batch_key).
+         */
         readonly get: operations["list_tasks"];
         readonly put?: never;
-        /** Create a task */
-        readonly post: operations["create_task"];
+        /** Create tasks (a list; an idempotency_key replays instead of duplicating) */
+        readonly post: operations["create_tasks"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/tasks/waiting/": {
+    readonly "/api/agents/{slug}/tasks/{ref}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get one task with everything done to it */
+        readonly get: operations["get_task"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /** Update a task's fields */
+        readonly patch: operations["patch_task"];
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/tasks/{ref}/actions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Act on a task: approve, decline, reply, dispatch or done
+         * @description approve → in progress, runs `on_approve`. decline → declined (comment is
+         *     the reason). reply → a comment; on a question it is the answer. dispatch →
+         *     queue the agent on it now (editor). done → done (editor). 409 when
+         *     approving or declining an ask that is already closed.
+         */
+        readonly post: operations["act_on_task"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/actions/": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -2409,14 +2437,12 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * This agent's tasks waiting on you
-         * @description The inbox, per agent: tasks parked on the CALLER.
-         *
-         *     Routed on `waiting_on_user`, never on the free-text `assigned`: canopy
-         *     cannot notify a string, and the fleet's boards spell one person three ways
-         *     ("Jonathan", "Jonathan Jackson", "jjackson@dimagi.com").
+         * List actions on the agent's tasks (the agent drains ?status=pending)
+         * @description At most `limit` rows (default 200, cap 500). Unfiltered, PENDING rows come
+         *     first (newest first), then the rest newest first — so a short page still
+         *     carries the agent's whole queue before any history.
          */
-        readonly get: operations["list_waiting_tasks"];
+        readonly get: operations["list_task_actions"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -2425,7 +2451,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/tasks/sync": {
+    readonly "/api/agents/{slug}/actions/{action_id}/applied": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -2434,76 +2460,8 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Upsert the agent's tasks from the (legacy) source sheet */
-        readonly post: operations["sync_tasks"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/tasks/{task_id}/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        /** Update a task */
-        readonly patch: operations["patch_task"];
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/tasks/{task_id}/commands": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /** Post a board action (accept/decline/dispatch/…) on a task */
-        readonly post: operations["post_command"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/commands": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** List commands (the agent reads ?status=pending) */
-        readonly get: operations["list_commands"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/commands/{cmd_id}/apply": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /** Mark a command applied (the agent calls this after acting) */
-        readonly post: operations["apply_command"];
+        /** Mark an action applied (the agent calls this after carrying it out) */
+        readonly post: operations["mark_task_action_applied"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2909,27 +2867,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agent-runs/projects/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Agent projects across agents
-         * @description Every visible agent's projects (optionally touching ``repo_slug``) — the
-         *     choices a runner offers when a narrative is not yet bound to a project.
-         */
-        readonly get: operations["list_agent_projects"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/agent-runs/{ext_id}/": {
         readonly parameters: {
             readonly query?: never;
@@ -3105,25 +3042,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/items/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** List an agent's items */
-        readonly get: operations["list_agent_items"];
-        readonly put?: never;
-        /** Raise items for an agent (batch, idempotent) */
-        readonly post: operations["create_items"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/items/": {
+    readonly "/api/tasks/": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -3131,20 +3050,12 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * Fleet inbox — items across every agent you can see
-         * @description The "waiting on you" queue: asks across every agent you can see, ranked
-         *     review -> question, then oldest first.
-         *
-         *     An item is a task's ASK — something a human must answer, as opposed to a
-         *     turn, which is work an agent does. Defaults to `state=open` (the inbox);
-         *     pass another state to widen. Optional filters: `agent` slug, `kind`
-         *     (review, question). `limit` caps the rows (0 = all).
-         *
-         *     When a request is about "these", "the ones on screen" or "my inbox", read
-         *     `current_page` first: the page gives the ids it is showing, and this
-         *     resolves them with your own permissions applied.
+         * Tasks across every agent you can see (the per-agent filters, plus agent)
+         * @description Reviews first, then questions, then the rest; oldest first within each.
+         *     `waiting=me` is the caller's inbox: open asks nobody owns plus tasks parked
+         *     on the caller. `limit` caps the rows (at most 500).
          */
-        readonly get: operations["list_items"];
+        readonly get: operations["list_fleet_tasks"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -3153,51 +3064,20 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/items/{item_id}/": {
+    readonly "/api/projects/": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Get an item */
-        readonly get: operations["get_item"];
+        /**
+         * Projects across every agent you can see
+         * @description Active by default; `status=` (empty for all) and `repo_slug=` narrow it.
+         */
+        readonly get: operations["list_fleet_projects"];
         readonly put?: never;
         readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/items/{item_id}/decide": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /** Decide an item (implement dispatches its work) */
-        readonly post: operations["decide_item"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/items/{item_id}/dismiss": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /** Dismiss an item */
-        readonly post: operations["dismiss_item"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -7238,14 +7118,10 @@ export interface components {
         };
         /** ActOut */
         readonly ActOut: {
-            /** Anchor Id */
-            readonly anchor_id: string;
-            /** Title */
-            readonly title: string;
-            /** Prose */
-            readonly prose: string;
-            /** Entries */
-            readonly entries: readonly components["schemas"]["EntryOut"][];
+            readonly task: components["schemas"]["AgentTaskOut"];
+            readonly action: components["schemas"]["AgentTaskActionOut"];
+            /** Turn Ids */
+            readonly turn_ids?: readonly string[];
         };
         /** EntryOut */
         readonly EntryOut: {
@@ -7734,7 +7610,7 @@ export interface components {
          *
          *     `parameters` is JSON-Schema, written by the HOST and passed through
          *     uninterpreted — canopy is not the party that knows what a host's action
-         *     means. It is what lets an agent call `dismissItems` knowing it takes
+         *     means. It is what lets an agent call `declineTasks` knowing it takes
          *     `{ids: string[]}`, rather than being told in prose.
          *
          *     May also be sent as `inputSchema`, which is MCP's name for the same field;
@@ -7918,8 +7794,8 @@ export interface components {
              * @default
              */
             readonly parent_claude_session: string;
-            /** Raised From Task Id */
-            readonly raised_from_task_id?: number | null;
+            /** Raised From Task Ext Id */
+            readonly raised_from_task_ext_id?: string | null;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
@@ -9313,11 +9189,6 @@ export interface components {
              */
             readonly sync_count: number;
             /**
-             * Work Product Count
-             * @default 0
-             */
-            readonly work_product_count: number;
-            /**
              * Skill Count
              * @default 0
              */
@@ -10056,88 +9927,6 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
-        /** AgentWorkProductOut */
-        readonly AgentWorkProductOut: {
-            /** Id */
-            readonly id: number;
-            /** Agent Slug */
-            readonly agent_slug: string;
-            /** Title */
-            readonly title: string;
-            /** Kind */
-            readonly kind: string;
-            /** Url */
-            readonly url: string;
-            /** Description */
-            readonly description: string;
-            /** Tags */
-            readonly tags?: readonly string[];
-            /** Source */
-            readonly source: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-        };
-        /** Page[AgentWorkProductOut] */
-        readonly Page_AgentWorkProductOut_: {
-            /** Items */
-            readonly items: readonly components["schemas"]["AgentWorkProductOut"][];
-            /** Total */
-            readonly total: number;
-            /** Offset */
-            readonly offset: number;
-            /** Limit */
-            readonly limit: number;
-        };
-        /** CountOut */
-        readonly CountOut: {
-            /**
-             * Created
-             * @default 0
-             */
-            readonly created: number;
-            /**
-             * Replaced
-             * @default 0
-             */
-            readonly replaced: number;
-            /**
-             * Count
-             * @default 0
-             */
-            readonly count: number;
-        };
-        /** AgentWorkProductBatchIn */
-        readonly AgentWorkProductBatchIn: {
-            /** Work Products */
-            readonly work_products: readonly components["schemas"]["AgentWorkProductIn"][];
-        };
-        /** AgentWorkProductIn */
-        readonly AgentWorkProductIn: {
-            /** Title */
-            readonly title: string;
-            /**
-             * Kind
-             * @default
-             */
-            readonly kind: string;
-            /** Url */
-            readonly url: string;
-            /**
-             * Description
-             * @default
-             */
-            readonly description: string;
-            /** Tags */
-            readonly tags?: readonly string[];
-            /**
-             * Source
-             * @default
-             */
-            readonly source: string;
-        };
         /** AgentSkillOut */
         readonly AgentSkillOut: {
             /** Id */
@@ -10161,6 +9950,24 @@ export interface components {
              * Format: date-time
              */
             readonly updated_at: string;
+        };
+        /** CountOut */
+        readonly CountOut: {
+            /**
+             * Created
+             * @default 0
+             */
+            readonly created: number;
+            /**
+             * Replaced
+             * @default 0
+             */
+            readonly replaced: number;
+            /**
+             * Count
+             * @default 0
+             */
+            readonly count: number;
         };
         /**
          * AgentSkillCatalogIn
@@ -10312,6 +10119,11 @@ export interface components {
              */
             readonly open_task_count: number;
             /**
+             * Waiting Task Count
+             * @default 0
+             */
+            readonly waiting_task_count: number;
+            /**
              * Created At
              * Format: date-time
              */
@@ -10376,31 +10188,72 @@ export interface components {
             /** Links */
             readonly links?: readonly components["schemas"]["AgentTaskLink"][];
         };
-        /** AgentProjectPatch */
-        readonly AgentProjectPatch: {
-            /** Name */
-            readonly name?: string | null;
-            /** Outcome */
-            readonly outcome?: string | null;
-            /** Status */
-            readonly status?: string | null;
-            /** Owner Note */
-            readonly owner_note?: string | null;
-            /** Drive Folder Id */
-            readonly drive_folder_id?: string | null;
-            /** Drive Folder Url */
-            readonly drive_folder_url?: string | null;
-            /** Repo Slug */
-            readonly repo_slug?: string | null;
-            /** Notes */
-            readonly notes?: string | null;
-            /** Links */
-            readonly links?: readonly components["schemas"]["AgentTaskLink"][] | null;
-        };
-        /** AgentTaskOut */
-        readonly AgentTaskOut: {
+        /** AgentProjectDetailOut */
+        readonly AgentProjectDetailOut: {
             /** Id */
             readonly id: number;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Name */
+            readonly name: string;
+            /** Outcome */
+            readonly outcome: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "active" | "done" | "archived";
+            /** Owner Note */
+            readonly owner_note: string;
+            /** Owner Email */
+            readonly owner_email?: string | null;
+            /** Drive Folder Id */
+            readonly drive_folder_id: string;
+            /** Drive Folder Url */
+            readonly drive_folder_url: string;
+            /** Repo Slug */
+            readonly repo_slug: string;
+            /** Notes */
+            readonly notes: string;
+            /** Links */
+            readonly links?: readonly components["schemas"]["AgentTaskLink"][];
+            /**
+             * Task Count
+             * @default 0
+             */
+            readonly task_count: number;
+            /**
+             * Open Task Count
+             * @default 0
+             */
+            readonly open_task_count: number;
+            /**
+             * Waiting Task Count
+             * @default 0
+             */
+            readonly waiting_task_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /** Tasks */
+            readonly tasks?: readonly components["schemas"]["AgentTaskOut"][];
+            /** Recent Turns */
+            readonly recent_turns?: readonly components["schemas"]["TurnBriefOut"][];
+        };
+        /**
+         * AgentTaskOut
+         * @description A task, addressed by `(agent_slug, ext_id)` — there is no other id.
+         */
+        readonly AgentTaskOut: {
             /** Agent Slug */
             readonly agent_slug: string;
             /** Ext Id */
@@ -10409,23 +10262,6 @@ export interface components {
             readonly project_ext_id?: string | null;
             /** Project Name */
             readonly project_name?: string | null;
-            /**
-             * Uuid
-             * Format: uuid
-             */
-            readonly uuid: string;
-            /**
-             * Ask Kind
-             * @default
-             */
-            readonly ask_kind: string;
-            /**
-             * Ask State
-             * @default
-             */
-            readonly ask_state: string;
-            /** Waiting On Email */
-            readonly waiting_on_email?: string | null;
             /** Title */
             readonly title: string;
             /** Next Action */
@@ -10439,6 +10275,46 @@ export interface components {
             readonly owner: string;
             /** Assigned */
             readonly assigned: string;
+            /** Waiting On Email */
+            readonly waiting_on_email?: string | null;
+            /**
+             * Ask Kind
+             * @default
+             */
+            readonly ask_kind: string;
+            /**
+             * Ask Body
+             * @default
+             */
+            readonly ask_body: string;
+            /**
+             * Ask Open
+             * @default false
+             */
+            readonly ask_open: boolean;
+            /** Ask Closed At */
+            readonly ask_closed_at?: string | null;
+            /** On Approve */
+            readonly on_approve?: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Dispatched At */
+            readonly dispatched_at?: string | null;
+            /**
+             * Batch Key
+             * @default
+             */
+            readonly batch_key: string;
+            /**
+             * Idempotency Key
+             * @default
+             */
+            readonly idempotency_key: string;
+            /**
+             * Origin
+             * @default
+             */
+            readonly origin: string;
             /** Confidence */
             readonly confidence: string;
             /** Score */
@@ -10460,14 +10336,72 @@ export interface components {
             /** Position */
             readonly position: number;
             /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
              * Updated At
              * Format: date-time
              */
             readonly updated_at: string;
         };
-        /** AgentTaskIn */
+        /** TurnBriefOut */
+        readonly TurnBriefOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Prompt Preview
+             * @default
+             */
+            readonly prompt_preview: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Task Ext Ids */
+            readonly task_ext_ids?: readonly string[];
+        };
+        /** AgentProjectPatch */
+        readonly AgentProjectPatch: {
+            /** Name */
+            readonly name?: string | null;
+            /** Outcome */
+            readonly outcome?: string | null;
+            /** Status */
+            readonly status?: string | null;
+            /** Owner Note */
+            readonly owner_note?: string | null;
+            /** Drive Folder Id */
+            readonly drive_folder_id?: string | null;
+            /** Drive Folder Url */
+            readonly drive_folder_url?: string | null;
+            /** Repo Slug */
+            readonly repo_slug?: string | null;
+            /** Notes */
+            readonly notes?: string | null;
+            /** Links */
+            readonly links?: readonly components["schemas"]["AgentTaskLink"][] | null;
+        };
+        /**
+         * AgentTaskIn
+         * @description One task to create. `POST /tasks/` takes a LIST of these.
+         *
+         *     `idempotency_key` makes a create safe to retry: a key already seen returns
+         *     the task it made instead of making another. `ext_id` is assigned (T1, T2 …)
+         *     when omitted — pass it only to mirror an id the agent already uses.
+         */
         readonly AgentTaskIn: {
-            /** Ext Id */
+            /**
+             * Ext Id
+             * @default
+             */
             readonly ext_id: string;
             /**
              * Project
@@ -10496,6 +10430,11 @@ export interface components {
              * @default
              */
             readonly assigned: string;
+            /**
+             * Waiting On Email
+             * @default
+             */
+            readonly waiting_on_email: string;
             /**
              * Confidence
              * @default
@@ -10541,18 +10480,199 @@ export interface components {
              */
             readonly position: number;
             /**
+             * Ask Kind
+             * @default
+             * @enum {string}
+             */
+            readonly ask_kind: "" | "review" | "question";
+            /**
+             * Ask Body
+             * @default
+             */
+            readonly ask_body: string;
+            /** On Approve */
+            readonly on_approve?: readonly components["schemas"]["TurnSpecIn"][];
+            /**
+             * Batch Key
+             * @default
+             */
+            readonly batch_key: string;
+            /**
+             * Idempotency Key
+             * @default
+             */
+            readonly idempotency_key: string;
+            /**
+             * Origin
+             * @default
+             */
+            readonly origin: string;
+            /** Origin Ref */
+            readonly origin_ref?: {
+                readonly [key: string]: unknown;
+            };
+            /** Raised By */
+            readonly raised_by?: string | null;
+            /**
              * Source
              * @default
              */
             readonly source: string;
         };
         /**
-         * AgentTaskSyncIn
-         * @description Full replacement of the agent's task board from the source sheet.
+         * TurnSpecIn
+         * @description One deferred Turn enqueue. `target_agent=""` means the task's own agent —
+         *     self-dispatch is the default; Ada's fan-out is this field set.
          */
-        readonly AgentTaskSyncIn: {
-            /** Tasks */
-            readonly tasks?: readonly components["schemas"]["AgentTaskIn"][];
+        readonly TurnSpecIn: {
+            /**
+             * Prompt
+             * @default
+             */
+            readonly prompt: string;
+            /**
+             * Target Agent
+             * @default
+             */
+            readonly target_agent: string;
+            /**
+             * Origin
+             * @default api
+             * @enum {string}
+             */
+            readonly origin: "api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill";
+            /** Origin Ref */
+            readonly origin_ref?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Routing
+             * @default prefer_local
+             * @enum {string}
+             */
+            readonly routing: "prefer_local" | "local_only" | "any";
+        };
+        /** AgentTaskActionOut */
+        readonly AgentTaskActionOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Task Ext Id */
+            readonly task_ext_id: string;
+            /** Action */
+            readonly action: string;
+            /** Comment */
+            readonly comment: string;
+            /** By */
+            readonly by: string;
+            /** Status */
+            readonly status: string;
+            /** Applied At */
+            readonly applied_at?: string | null;
+            /** Result Note */
+            readonly result_note: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** AgentTaskDetailOut */
+        readonly AgentTaskDetailOut: {
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Project Ext Id */
+            readonly project_ext_id?: string | null;
+            /** Project Name */
+            readonly project_name?: string | null;
+            /** Title */
+            readonly title: string;
+            /** Next Action */
+            readonly next_action: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "suggested" | "in_progress" | "done" | "declined";
+            /** Owner */
+            readonly owner: string;
+            /** Assigned */
+            readonly assigned: string;
+            /** Waiting On Email */
+            readonly waiting_on_email?: string | null;
+            /**
+             * Ask Kind
+             * @default
+             */
+            readonly ask_kind: string;
+            /**
+             * Ask Body
+             * @default
+             */
+            readonly ask_body: string;
+            /**
+             * Ask Open
+             * @default false
+             */
+            readonly ask_open: boolean;
+            /** Ask Closed At */
+            readonly ask_closed_at?: string | null;
+            /** On Approve */
+            readonly on_approve?: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Dispatched At */
+            readonly dispatched_at?: string | null;
+            /**
+             * Batch Key
+             * @default
+             */
+            readonly batch_key: string;
+            /**
+             * Idempotency Key
+             * @default
+             */
+            readonly idempotency_key: string;
+            /**
+             * Origin
+             * @default
+             */
+            readonly origin: string;
+            /** Confidence */
+            readonly confidence: string;
+            /** Score */
+            readonly score: string;
+            /** Review */
+            readonly review: string;
+            /** Rationale */
+            readonly rationale: string;
+            /** Source Url */
+            readonly source_url: string;
+            /** Plan */
+            readonly plan: string;
+            /** Due */
+            readonly due?: string | null;
+            /** Links */
+            readonly links?: readonly components["schemas"]["AgentTaskLink"][];
+            /** Notes */
+            readonly notes: string;
+            /** Position */
+            readonly position: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /** Actions */
+            readonly actions?: readonly components["schemas"]["AgentTaskActionOut"][];
         };
         /**
          * AgentTaskPatch
@@ -10594,66 +10714,21 @@ export interface components {
             /** Links */
             readonly links?: readonly components["schemas"]["AgentTaskLink"][] | null;
         };
-        /** AgentTaskCommandOut */
-        readonly AgentTaskCommandOut: {
-            /** Id */
-            readonly id: number;
-            /** Agent Slug */
-            readonly agent_slug: string;
-            /** Task Id */
-            readonly task_id?: number | null;
-            /** Task Ext Id */
-            readonly task_ext_id: string;
-            /** Task Title */
-            readonly task_title: string;
-            /** Kind */
-            readonly kind: string;
-            /** Payload */
-            readonly payload?: {
-                readonly [key: string]: unknown;
-            };
-            /** Status */
-            readonly status: string;
-            /** Created By */
-            readonly created_by: string;
-            /** Result Note */
-            readonly result_note: string;
+        /** AgentTaskActionIn */
+        readonly AgentTaskActionIn: {
             /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /** Applied At */
-            readonly applied_at?: string | null;
-        };
-        /**
-         * CommandResultOut
-         * @description Returned when the UI posts a command: the queued command + the (maybe
-         *     immediately-updated) task.
-         */
-        readonly CommandResultOut: {
-            readonly command: components["schemas"]["AgentTaskCommandOut"];
-            readonly task?: components["schemas"]["AgentTaskOut"] | null;
-        };
-        /** AgentTaskCommandIn */
-        readonly AgentTaskCommandIn: {
-            /**
-             * Kind
+             * Action
              * @enum {string}
              */
-            readonly kind: "accept" | "decline" | "dispatch" | "reassign" | "edit" | "comment" | "done";
-            /** Payload */
-            readonly payload?: {
-                readonly [key: string]: unknown;
-            };
+            readonly action: "approve" | "decline" | "reply" | "dispatch" | "done";
             /**
-             * Created By
+             * Comment
              * @default
              */
-            readonly created_by: string;
+            readonly comment: string;
         };
-        /** AgentCommandApplyIn */
-        readonly AgentCommandApplyIn: {
+        /** ActionAppliedIn */
+        readonly ActionAppliedIn: {
             /**
              * Result Note
              * @default
@@ -11630,21 +11705,6 @@ export interface components {
              */
             readonly session_link: string;
         };
-        /** AgentProjectRefOut */
-        readonly AgentProjectRefOut: {
-            /** Agent Slug */
-            readonly agent_slug: string;
-            /** Ext Id */
-            readonly ext_id: string;
-            /** Name */
-            readonly name: string;
-            /** Outcome */
-            readonly outcome: string;
-            /** Repo Slug */
-            readonly repo_slug: string;
-            /** Status */
-            readonly status: string;
-        };
         /** RunDocStateIn */
         readonly RunDocStateIn: {
             /** State */
@@ -11866,147 +11926,6 @@ export interface components {
             readonly always_run?: boolean | null;
             /** Notify */
             readonly notify?: readonly string[] | null;
-        };
-        /** ItemOut */
-        readonly ItemOut: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            readonly id: string;
-            /** Agent Slug */
-            readonly agent_slug: string;
-            /** Idempotency Key */
-            readonly idempotency_key: string;
-            /** Kind */
-            readonly kind: string;
-            /** Title */
-            readonly title: string;
-            /** Body */
-            readonly body: string;
-            /** Origin */
-            readonly origin: string;
-            /** Origin Ref */
-            readonly origin_ref: {
-                readonly [key: string]: unknown;
-            };
-            /** State */
-            readonly state: string;
-            /** Decision */
-            readonly decision: string;
-            /** Comment */
-            readonly comment: string;
-            /** Decided By */
-            readonly decided_by: string;
-            /** Decided By Email */
-            readonly decided_by_email?: string | null;
-            /** Decided At */
-            readonly decided_at?: string | null;
-            /** Dispatch */
-            readonly dispatch: readonly {
-                readonly [key: string]: unknown;
-            }[];
-            /** Dispatched At */
-            readonly dispatched_at?: string | null;
-            /** Batch Key */
-            readonly batch_key: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-        };
-        /** ItemIn */
-        readonly ItemIn: {
-            /**
-             * Kind
-             * @default review
-             * @enum {string}
-             */
-            readonly kind: "review" | "question";
-            /** Title */
-            readonly title: string;
-            /**
-             * Body
-             * @default
-             */
-            readonly body: string;
-            /**
-             * Origin
-             * @default api
-             * @enum {string}
-             */
-            readonly origin: "api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill";
-            /** Origin Ref */
-            readonly origin_ref?: {
-                readonly [key: string]: unknown;
-            };
-            /** Dispatch */
-            readonly dispatch?: readonly components["schemas"]["TurnSpecIn"][];
-            /**
-             * Batch Key
-             * @default
-             */
-            readonly batch_key: string;
-            /** Idempotency Key */
-            readonly idempotency_key: string;
-            /** Raised By */
-            readonly raised_by?: string | null;
-        };
-        /**
-         * TurnSpecIn
-         * @description One deferred Turn enqueue. `target_agent=""` means the item's own agent —
-         *     self-dispatch is the default; Ada's fan-out is this field set.
-         */
-        readonly TurnSpecIn: {
-            /**
-             * Prompt
-             * @default
-             */
-            readonly prompt: string;
-            /**
-             * Target Agent
-             * @default
-             */
-            readonly target_agent: string;
-            /**
-             * Origin
-             * @default api
-             * @enum {string}
-             */
-            readonly origin: "api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill";
-            /** Origin Ref */
-            readonly origin_ref?: {
-                readonly [key: string]: unknown;
-            };
-            /**
-             * Routing
-             * @default prefer_local
-             * @enum {string}
-             */
-            readonly routing: "prefer_local" | "local_only" | "any";
-        };
-        /** ItemDecideIn */
-        readonly ItemDecideIn: {
-            /**
-             * Decision
-             * @default
-             * @enum {string}
-             */
-            readonly decision: "implement" | "skip" | "defer" | "";
-            /**
-             * Comment
-             * @default
-             */
-            readonly comment: string;
-        };
-        /** ItemDismissIn */
-        readonly ItemDismissIn: {
-            /**
-             * Comment
-             * @default
-             */
-            readonly comment: string;
         };
         /** WorkspaceOut */
         readonly WorkspaceOut: {
@@ -13660,8 +13579,8 @@ export interface components {
              * @default
              */
             readonly parent_claude_session: string;
-            /** Raised From Task Id */
-            readonly raised_from_task_id?: number | null;
+            /** Raised From Task Ext Id */
+            readonly raised_from_task_ext_id?: string | null;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
@@ -18574,56 +18493,6 @@ export interface operations {
             };
         };
     };
-    readonly list_work_products: {
-        readonly parameters: {
-            readonly query?: {
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["Page_AgentWorkProductOut_"];
-                };
-            };
-        };
-    };
-    readonly add_work_products: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["AgentWorkProductBatchIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["CountOut"];
-                };
-            };
-        };
-    };
     readonly list_skills: {
         readonly parameters: {
             readonly query?: never;
@@ -18842,7 +18711,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["AgentProjectOut"];
+                    readonly "application/json": components["schemas"]["AgentProjectDetailOut"];
                 };
             };
         };
@@ -18876,7 +18745,13 @@ export interface operations {
     };
     readonly list_tasks: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly project?: string;
+                readonly status?: string;
+                readonly waiting?: string;
+                readonly ask?: string;
+                readonly batch?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
@@ -18896,7 +18771,7 @@ export interface operations {
             };
         };
     };
-    readonly create_task: {
+    readonly create_tasks: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -18907,7 +18782,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["AgentTaskIn"];
+                readonly "application/json": readonly components["schemas"]["AgentTaskIn"][];
             };
         };
         readonly responses: {
@@ -18917,17 +18792,18 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["AgentTaskOut"];
+                    readonly "application/json": readonly components["schemas"]["AgentTaskOut"][];
                 };
             };
         };
     };
-    readonly list_waiting_tasks: {
+    readonly get_task: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
+                readonly ref: string;
             };
             readonly cookie?: never;
         };
@@ -18939,33 +18815,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["AgentTaskOut"][];
-                };
-            };
-        };
-    };
-    readonly sync_tasks: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["AgentTaskSyncIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["CountOut"];
+                    readonly "application/json": components["schemas"]["AgentTaskDetailOut"];
                 };
             };
         };
@@ -18976,7 +18826,7 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
-                readonly task_id: number;
+                readonly ref: string;
             };
             readonly cookie?: never;
         };
@@ -18997,37 +18847,38 @@ export interface operations {
             };
         };
     };
-    readonly post_command: {
+    readonly act_on_task: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
-                readonly task_id: number;
+                readonly ref: string;
             };
             readonly cookie?: never;
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["AgentTaskCommandIn"];
+                readonly "application/json": components["schemas"]["AgentTaskActionIn"];
             };
         };
         readonly responses: {
-            /** @description Created */
-            readonly 201: {
+            /** @description OK */
+            readonly 200: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["CommandResultOut"];
+                    readonly "application/json": components["schemas"]["ActOut"];
                 };
             };
         };
     };
-    readonly list_commands: {
+    readonly list_task_actions: {
         readonly parameters: {
             readonly query?: {
-                readonly status?: string | null;
+                readonly status?: string;
+                readonly limit?: number;
             };
             readonly header?: never;
             readonly path: {
@@ -19043,24 +18894,24 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["AgentTaskCommandOut"][];
+                    readonly "application/json": readonly components["schemas"]["AgentTaskActionOut"][];
                 };
             };
         };
     };
-    readonly apply_command: {
+    readonly mark_task_action_applied: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
-                readonly cmd_id: number;
+                readonly action_id: number;
             };
             readonly cookie?: never;
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["AgentCommandApplyIn"];
+                readonly "application/json": components["schemas"]["ActionAppliedIn"];
             };
         };
         readonly responses: {
@@ -19070,7 +18921,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["AgentTaskCommandOut"];
+                    readonly "application/json": components["schemas"]["AgentTaskActionOut"];
                 };
             };
         };
@@ -19644,29 +19495,6 @@ export interface operations {
             };
         };
     };
-    readonly list_agent_projects: {
-        readonly parameters: {
-            readonly query?: {
-                readonly repo_slug?: string | null;
-                readonly status?: string;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["AgentProjectRefOut"][];
-                };
-            };
-        };
-    };
     readonly get_run_doc: {
         readonly parameters: {
             readonly query?: never;
@@ -19931,64 +19759,15 @@ export interface operations {
             };
         };
     };
-    readonly list_agent_items: {
+    readonly list_fleet_tasks: {
         readonly parameters: {
             readonly query?: {
-                readonly state?: string;
-                readonly kind?: string;
-                readonly batch?: string;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["ItemOut"][];
-                };
-            };
-        };
-    };
-    readonly create_items: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": readonly components["schemas"]["ItemIn"][];
-            };
-        };
-        readonly responses: {
-            /** @description Created */
-            readonly 201: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["ItemOut"][];
-                };
-            };
-        };
-    };
-    readonly list_items: {
-        readonly parameters: {
-            readonly query?: {
-                readonly state?: string;
-                readonly kind?: string;
                 readonly agent?: string;
+                readonly project?: string;
+                readonly status?: string;
+                readonly waiting?: string;
+                readonly ask?: string;
+                readonly batch?: string;
                 readonly limit?: number;
             };
             readonly header?: never;
@@ -20003,18 +19782,19 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": readonly components["schemas"]["ItemOut"][];
+                    readonly "application/json": readonly components["schemas"]["AgentTaskOut"][];
                 };
             };
         };
     };
-    readonly get_item: {
+    readonly list_fleet_projects: {
         readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly item_id: string;
+            readonly query?: {
+                readonly status?: string;
+                readonly repo_slug?: string;
             };
+            readonly header?: never;
+            readonly path?: never;
             readonly cookie?: never;
         };
         readonly requestBody?: never;
@@ -20025,59 +19805,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["ItemOut"];
-                };
-            };
-        };
-    };
-    readonly decide_item: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly item_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["ItemDecideIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ItemOut"];
-                };
-            };
-        };
-    };
-    readonly dismiss_item: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly item_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["ItemDismissIn"] | null;
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ItemOut"];
+                    readonly "application/json": readonly components["schemas"]["AgentProjectOut"][];
                 };
             };
         };

@@ -121,11 +121,12 @@ const WS_SCOPED_API_PREFIXES = [
   "/api/ddd",
   "/api/timeline",
   "/api/agents",
-  // Items are agent-scoped, so /api/agents already covers the collection; the
-  // resource routes (/api/items/{id}/decide) are a separate top-level prefix and
-  // must be pinned too, or one of the two calls would be tenant-scoped and the
-  // other not.
-  "/api/items",
+  // Tasks and projects are agent-scoped, so /api/agents already covers them; the
+  // fleet-wide lists (/api/tasks/, /api/projects/) are separate top-level
+  // prefixes and must be pinned too, or a tenant page reading the fleet list
+  // would see every workspace while its per-agent calls saw one.
+  "/api/tasks",
+  "/api/projects",
   // Huddles are derived from one tenant's turns; /w/:ws/huddles reads that tenant.
   "/api/huddles",
 ];

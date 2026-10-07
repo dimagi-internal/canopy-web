@@ -635,8 +635,9 @@ class TurnOut(Schema):
     parent_session_id: uuid.UUID | None = None
     parent_task: str = ""
     parent_claude_session: str = ""
-    # The board task whose approved dispatch created this turn, if any.
-    raised_from_task_id: int | None = None
+    # The board task whose approved dispatch created this turn, if any — by its
+    # ext_id, the way every route names a task (it is the agent's own task).
+    raised_from_task_ext_id: str | None = None
     session_id: str
     result_note: str
     # True when `prompt`, `origin_ref` and `result_note` were blanked because
@@ -658,6 +659,12 @@ class TurnOut(Schema):
         # agent, so surface the session's agent as the emdash target the runner drives.
         cs = getattr(obj, "chat_session", None)
         return cs.agent.slug if cs and cs.agent_id else None
+
+    @staticmethod
+    def resolve_raised_from_task_ext_id(obj) -> str | None:
+        if not getattr(obj, "raised_from_task_id", None):
+            return None
+        return obj.raised_from_task.ext_id
 
     @staticmethod
     def resolve_project(obj) -> str:
@@ -1085,12 +1092,12 @@ class BackfillWriteOut(Schema):
 
 
 # ---------------------------------------------------------------------------
-# Items — the supervisor's queue (the dual of Turn)
+# Deferred turns — what a task runs when it is approved
 # ---------------------------------------------------------------------------
 
 
 class TurnSpecIn(Schema):
-    """One deferred Turn enqueue. `target_agent=""` means the item's own agent —
+    """One deferred Turn enqueue. `target_agent=""` means the task's own agent —
     self-dispatch is the default; Ada's fan-out is this field set."""
 
     prompt: str = ""
@@ -1100,59 +1107,6 @@ class TurnSpecIn(Schema):
     routing: Routing = "prefer_local"
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
-
-
-class ItemIn(Schema):
-    # No `notify` kind: an FYI asks nothing of you, and that is the timeline.
-    kind: Literal["review", "question"] = "review"
-    title: str = Field(min_length=1, max_length=300)
-    body: str = ""
-    origin: Origin = "api"
-    origin_ref: dict[str, Any] = Field(default_factory=dict)
-    dispatch: list[TurnSpecIn] = Field(default_factory=list)
-    batch_key: str = ""
-    idempotency_key: str = Field(min_length=1, max_length=128)
-    raised_by: uuid.UUID | None = None
-
-    _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
-
-
-class ItemOut(Schema):
-    id: uuid.UUID
-    agent_slug: str
-    # Echoed back so a producer can reconcile its batch against what landed, and so
-    # the UI has a stable, human-readable key for test ids.
-    idempotency_key: str
-    kind: str
-    title: str
-    body: str
-    origin: str
-    origin_ref: dict[str, Any]
-    state: str
-    decision: str
-    comment: str
-    decided_by: str
-    decided_by_email: str | None = None  # resolved from the User FK, string fallback
-    decided_at: dt.datetime | None = None
-    dispatch: list[dict[str, Any]]
-    dispatched_at: dt.datetime | None = None
-    batch_key: str
-    created_at: dt.datetime
-
-
-class ItemDecideIn(Schema):
-    # CLOSED set — a generic inbox must render buttons for an item it has never
-    # seen. "" is valid for a question, whose answer is the comment.
-    decision: Literal["implement", "skip", "defer", ""] = ""
-    comment: str = ""
-
-
-class ItemDismissIn(Schema):
-    # Dismiss carries an optional reason: a PRODUCER retracting its own item raised
-    # in error (e.g. an agent that verified the friction was already fixed) records
-    # WHY, so the board shows "retracted: already shipped" instead of a bare
-    # dismissed row. Optional — an empty-body dismiss stays valid.
-    comment: str = ""
 
 
 # ---- Runner credentials (per-runner, cloud-only; laptop uses emdash) ----

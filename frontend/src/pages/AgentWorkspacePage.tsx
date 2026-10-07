@@ -1,12 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, Outlet, useParams } from 'react-router-dom'
-import { getAgent, type AgentDetailOut } from '@/api/agents'
+import { getAgent, listTasks, type AgentDetailOut } from '@/api/agents'
 import { AgentLeftNav } from '@/components/agents/AgentLeftNav'
+import { roleAllows } from '@/lib/workspaceRoles'
+import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { WorkbenchShell, WorkbenchMain } from 'canopy-ui'
 
 /** Context the section sub-routes read via useOutletContext. */
 export interface AgentOutletContext {
   agent: AgentDetailOut
+  /** May the viewer dispatch / mark done — the server's `_agent_for_write`
+   *  tier (`agent.work`, editor and above). The server decides; this only
+   *  avoids offering a button that 403s. */
+  canEdit: boolean
+  /** Tasks waiting on the viewer (`?waiting=me`); `undefined` until known. The
+   *  rail badge and the Tasks page's chip read this ONE number. */
+  waiting: number | undefined
+  /** Re-read `waiting` — call after anything that may move a task. */
+  refreshWaiting: () => void
 }
 
 /**
@@ -20,6 +31,19 @@ export function AgentWorkspacePage() {
   const [agent, setAgent] = useState<AgentDetailOut | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const { workspaces } = useWorkspace()
+
+  // ONE source for "waiting on you", stamped with the slug it counts so a
+  // switch of agent never shows the previous agent's number.
+  const [waitingFor, setWaitingFor] = useState<{ slug: string; n: number } | null>(null)
+  const refreshWaiting = useCallback(() => {
+    if (!slug) return
+    listTasks(slug, { waiting: 'me' })
+      .then((rows) => setWaitingFor({ slug, n: rows.length }))
+      .catch(() => setWaitingFor(null))
+  }, [slug])
+  useEffect(() => refreshWaiting(), [refreshWaiting])
+  const waiting = waitingFor && waitingFor.slug === slug ? waitingFor.n : undefined
 
   useEffect(() => {
     if (!slug) return
@@ -78,11 +102,13 @@ export function AgentWorkspacePage() {
     )
   }
 
+  const canEdit = roleAllows(workspaces.find((w) => w.slug === agent.workspace)?.role, 'agent.work')
+
   return (
     <WorkbenchShell>
-      <AgentLeftNav agent={agent} />
+      <AgentLeftNav agent={agent} waiting={waiting} />
       <WorkbenchMain>
-        <Outlet context={{ agent } satisfies AgentOutletContext} />
+        <Outlet context={{ agent, canEdit, waiting, refreshWaiting } satisfies AgentOutletContext} />
       </WorkbenchMain>
     </WorkbenchShell>
   )

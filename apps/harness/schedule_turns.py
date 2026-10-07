@@ -284,38 +284,38 @@ def release_stale_occurrence_turns_all(*, now: dt.datetime | None = None) -> int
 
 
 # ---------------------------------------------------------------------------
-# Schedule nags — an unattended occurrence becomes a real Item (not a projection)
+# Schedule nags — an unattended occurrence becomes a real task ask (not a projection)
 # ---------------------------------------------------------------------------
 
 
 def _raise_schedule_nag(schedule, turn: Turn) -> None:
-    """A grace-released (unattended) scheduled occurrence becomes a review Item.
+    """A grace-released (unattended) scheduled occurrence becomes a review task.
 
-    Its `implement` re-runs the schedule's prompt as a fresh turn — the generic
-    Item action replaces the old bespoke "Run now" nag button. `skip`/`defer`
-    (or `dismiss`) retire it. Idempotent per released turn: a re-raise of the same
+    Approving it re-runs the schedule's prompt as a fresh turn (its `on_approve`)
+    — the generic task action replaces the old bespoke "Run now" nag button;
+    declining retires it. Idempotent per released turn: a re-raise of the same
     occurrence collapses on the idempotency key, and a later abandonment gets its
-    own row (keyed by the new turn), so a dismissed nag can legitimately return.
+    own row (keyed by the new turn), so a declined nag can legitimately return.
 
     Honours the schedule's `notify` channel list — the "inbox" channel is what
-    materializes this Item; a schedule that opts out raises nothing.
+    materializes this task; a schedule that opts out raises nothing.
     """
     if "inbox" not in (schedule.notify or []):
         return
     from apps.agents import services as agent_services
 
-    agent_services.raise_asks(agent=schedule.agent, payloads=[{
+    agent_services.create_tasks(schedule.agent, [{
         "ask_kind": "review",
         "title": f"Scheduled turn unattended: {schedule.name}",
         "ask_body": (
             f"“{schedule.name}” fired but was left unattended past "
-            f"{schedule.grace_minutes}m. Implement to run it now, or skip."
+            f"{schedule.grace_minutes}m. Approve to run it now, or decline."
         ),
         "origin": Turn.ORIGIN_CANOPY_SCHEDULER,
         "origin_ref": {
             "schedule_id": schedule.id, "turn_id": str(turn.id), "kind": "schedule_nag",
         },
-        "dispatch": [{
+        "on_approve": [{
             "prompt": schedule.prompt,
             "origin": Turn.ORIGIN_CANOPY_SCHEDULER,
             "origin_ref": {"schedule_id": schedule.id, "manual": True,
@@ -327,17 +327,24 @@ def _raise_schedule_nag(schedule, turn: Turn) -> None:
 
 
 def resolve_schedule_nags(schedule_id: int) -> int:
-    """Dismiss every open nag for a schedule — a later occurrence finished, so the
+    """Decline every open nag for a schedule — a later occurrence finished, so the
     owed attention is discharged. Called from finish_turn on a DONE occurrence."""
     from apps.agents import services as agent_services
     from apps.agents.models import AgentTask
 
     count = 0
     open_nags = (
-        AgentTask.objects.filter(decided_at__isnull=True, origin_ref__schedule_id=schedule_id)
+        AgentTask.objects.filter(ask_closed_at__isnull=True, origin_ref__schedule_id=schedule_id)
         .exclude(ask_kind="")
     )
     for task in open_nags:
-        agent_services.dismiss_ask(task, by="system:schedule")
+        # The read above is unlocked: a person may approve/decline the nag before
+        # act() takes its lock. That is a closed nag, not an error — and this runs
+        # inside finish_turn for an unrelated turn, which must not fail over it.
+        try:
+            agent_services.act(task, action="decline", by="system:schedule",
+                               actor_workspace_ids=set())
+        except agent_services.ClosedAskError:
+            continue
         count += 1
     return count

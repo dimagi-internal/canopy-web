@@ -62,11 +62,11 @@ def test_a_declared_action_becomes_an_mcp_tool_with_its_schema():
 
 
 def test_tools_are_namespaced_so_a_page_cannot_shadow_a_canopy_tool():
-    """A page declaring `dismiss_item` must not intercept calls meant for
+    """A page declaring `act_on_task` must not intercept calls meant for
     canopy's real one."""
     user, ws = _user()
-    _session(user, ws, [{"name": "dismiss_item"}])
-    assert [n for n, _s, _sp in page_tools.page_tool_specs(user)] == ["page_dismiss_item"]
+    _session(user, ws, [{"name": "act_on_task"}])
+    assert [n for n, _s, _sp in page_tools.page_tool_specs(user)] == ["page_act_on_task"]
 
 
 def test_a_session_with_no_declaration_contributes_nothing():

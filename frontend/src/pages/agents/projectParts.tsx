@@ -1,19 +1,14 @@
 import { useState, type JSX } from 'react'
 
-import {
-  createAgentProject,
-  patchAgentProject,
-  type AgentProjectOut,
-  type AgentTaskOut,
-} from '@/api/agents'
+import { createProject, patchProject, type ProjectOut, type TaskOut } from '@/api/agents'
 
 // What a PROJECT knows that a task cannot: how much is open, what is waiting on
 // a person, and where the Drive folder is. canopy keeps the state; Drive keeps
 // the files, per `agent-core/deliverables.md`.
 //
-// These were the Projects page. That page listed the same tasks the board
-// listed, so it is a GROUPING of Work now rather than a destination — and this
-// is the part of it worth keeping: the header of each group.
+// Shared by the Projects page (`AgentProjectsSection`), the project page
+// (`AgentProjectPage`) and the Tasks page's group-by-project view, which uses
+// `ProjectGroupHeader` as the header of each group.
 
 const STATUS_LABEL: Record<string, string> = {
   active: 'Active',
@@ -21,7 +16,20 @@ const STATUS_LABEL: Record<string, string> = {
   archived: 'Archived',
 }
 
-function StatusChip({ status }: { status: string }): JSX.Element {
+/** The `<option>`s for a project-status `<select>`, labelled like the chip. */
+export function ProjectStatusOptions(): JSX.Element {
+  return (
+    <>
+      {Object.entries(STATUS_LABEL).map(([value, label]) => (
+        <option key={value} value={value}>
+          {label}
+        </option>
+      ))}
+    </>
+  )
+}
+
+export function StatusChip({ status }: { status: string }): JSX.Element {
   const tone =
     status === 'done'
       ? 'bg-success/10 text-success border-success/30'
@@ -41,15 +49,14 @@ export function ProjectGroupHeader({
   slug,
   onChanged,
 }: {
-  project: AgentProjectOut
-  tasks: AgentTaskOut[]
+  project: ProjectOut
+  tasks: TaskOut[]
   slug: string
   onChanged: () => void
 }): JSX.Element {
-  // Kept from the Projects page, and it is no longer the only place you can see
-  // it: the cards below now carry their own ask, so this is a count rather than
-  // the sole signal.
-  const waiting = tasks.filter((t) => t.status === 'suggested' || t.ask_state === 'open').length
+  // The cards below carry their own ask, so this is a count rather than the
+  // sole signal.
+  const waiting = tasks.filter((t) => t.status === 'suggested' || t.ask_open).length
 
   return (
     <div className="border-b border-border pb-2">
@@ -69,7 +76,7 @@ export function ProjectGroupHeader({
             type="button"
             className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
             onClick={() => {
-              void patchAgentProject(slug, project.ext_id, { status: 'done' }).then(onChanged)
+              void patchProject(slug, project.ext_id, { status: 'done' }).then(onChanged)
             }}
           >
             Mark done
@@ -99,23 +106,41 @@ export function ProjectGroupHeader({
   )
 }
 
-export function NewProject({ slug, onCreated }: { slug: string; onCreated: () => void }): JSX.Element {
+/** "Add project" takes a name AND an outcome, both required: a project without
+ *  "what done looks like" is a task, and the outcome is the line every row on
+ *  the Projects page leads with. The server accepts an empty outcome (the CLI
+ *  and agents create projects too); the requirement is the UI's. */
+export function NewProject({
+  slug,
+  onCreated,
+  canEdit,
+}: {
+  slug: string
+  onCreated: () => void
+  /** Creating a project is an editor action (`_agent_for_write`). */
+  canEdit: boolean
+}): JSX.Element {
   const [name, setName] = useState('')
+  const [outcome, setOutcome] = useState('')
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const ready = name.trim() !== '' && outcome.trim() !== ''
 
   return (
     <form
-      className="flex items-center gap-2"
+      className="flex flex-wrap items-center gap-2"
       onSubmit={(e) => {
         e.preventDefault()
-        const trimmed = name.trim()
-        if (!trimmed || busy) return
+        if (!ready || busy || !canEdit) return
         setBusy(true)
-        void createAgentProject(slug, { name: trimmed })
+        setError(null)
+        void createProject(slug, { name: name.trim(), outcome: outcome.trim() })
           .then(() => {
             setName('')
+            setOutcome('')
             onCreated()
           })
+          .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Could not add the project'))
           .finally(() => setBusy(false))
       }}
     >
@@ -123,16 +148,25 @@ export function NewProject({ slug, onCreated }: { slug: string; onCreated: () =>
         aria-label="New project name"
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="e.g. UNGA 2026 conference planning"
-        className="w-72 rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground"
+        placeholder="Name, e.g. UNGA 2026 conference planning"
+        className="min-h-11 w-full rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground sm:min-h-0 sm:w-64"
+      />
+      <input
+        aria-label="New project outcome"
+        value={outcome}
+        onChange={(e) => setOutcome(e.target.value)}
+        placeholder="What done looks like"
+        className="min-h-11 w-full flex-1 rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground sm:min-h-0 sm:min-w-64"
       />
       <button
         type="submit"
-        disabled={busy || !name.trim()}
-        className="rounded bg-primary px-2 py-1 text-[12px] text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        disabled={busy || !ready || !canEdit}
+        title={canEdit ? undefined : 'Adding a project needs the editor role'}
+        className="min-h-11 rounded bg-primary px-2 py-1 text-[12px] text-primary-foreground hover:bg-primary/90 disabled:opacity-50 sm:min-h-0"
       >
         Add project
       </button>
+      {error && <p className="basis-full text-[12px] text-destructive">{error}</p>}
     </form>
   )
 }

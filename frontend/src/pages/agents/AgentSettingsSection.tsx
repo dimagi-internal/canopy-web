@@ -62,7 +62,6 @@ export function AgentSettingsSection() {
         <div className="mt-4 flex flex-wrap gap-6">
           <CountStat value={agent.task_count} label="Tasks" />
           <CountStat value={agent.sync_count} label="Syncs" />
-          <CountStat value={agent.work_product_count} label="Work" />
           <CountStat value={agent.skill_count} label="Skills" />
         </div>
       </Section>
