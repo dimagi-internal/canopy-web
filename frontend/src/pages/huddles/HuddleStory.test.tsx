@@ -30,7 +30,7 @@ describe('the Story (default view)', () => {
     const steps = [...container.querySelectorAll('[data-story] > [data-step]')].map((s) => s.getAttribute('data-step'))
     expect(steps).toEqual(['1', '2', '3', 'result'])
     const titles = [...container.querySelectorAll('[data-story] > [data-step] > div > h2')].map((h) => h.textContent)
-    expect(titles).toEqual(["Step 1: What everyone's working on", 'Step 2: Ideas', "Step 3: Who's in", 'The result'])
+    expect(titles).toEqual(["Step 1: What everyone's working on", 'Step 2: Ideas', "Step 3: Agreement", 'The result'])
   })
 
   it("step 1: one line per agent — what it did and what it thinks the top priority is", async () => {

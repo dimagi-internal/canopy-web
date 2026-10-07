@@ -3,7 +3,7 @@ import type { Huddle } from '@/api/huddles'
 import { AnswerPill, BlockView } from './BlockView'
 import { MemberAvatar } from './MemberAvatar'
 import { arcsFor, columns, memberHue, type Block } from './huddleModel'
-import { who } from './plainWords'
+import { possessive, who } from './plainWords'
 import { lanesOf, sequenceOf, YOU, type Message } from './sequenceModel'
 
 /**
@@ -73,7 +73,7 @@ function Lifelines({ count }: { count: number }) {
   )
 }
 
-function Said({ m, leader }: { m: Message; leader: string }) {
+function Said({ m, leader, lanes }: { m: Message; leader: string; lanes: string[] }) {
   const to = m.kind === 'result' ? 'you' : m.kind === 'reply' ? who(leader) : null
   return (
     <span className="min-w-0 text-[13px] leading-snug">
@@ -85,7 +85,10 @@ function Said({ m, leader }: { m: Message; leader: string }) {
           {m.chips.map((c) => (
             <span key={c.title} className="inline-flex min-w-0 items-center gap-1.5">
               <AnswerPill answer={c.answer} />
-              <span className="text-foreground-secondary">“{c.title}”</span>
+              <span className="text-foreground-secondary">
+                {lanes.includes(c.lead) && c.lead !== m.from && <span className="text-muted-foreground">on {possessive(c.lead)} idea </span>}
+                “{c.title}”
+              </span>
             </span>
           ))}
         </span>
@@ -191,7 +194,7 @@ export function HuddleSequence({ huddle }: { huddle: Huddle }) {
                       <Arrow m={m} lanes={lanes} />
                     </span>
                     <span className="col-start-2 flex min-w-0 items-start gap-2 pl-0 md:col-start-auto md:pl-4">
-                      <Said m={m} leader={huddle.leader} />
+                      <Said m={m} leader={huddle.leader} lanes={lanes} />
                       <span aria-hidden className={'ml-auto shrink-0 pt-0.5 text-[10px] text-muted-foreground transition-transform ' + (isOpen ? 'rotate-90' : '')}>▸</span>
                     </span>
                   </button>

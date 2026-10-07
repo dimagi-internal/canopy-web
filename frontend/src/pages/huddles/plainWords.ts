@@ -32,7 +32,7 @@ export function huddleExplainer(leader: string): string {
 // ── steps (the engine's rounds) ──────────────────────────────────────────────
 
 const STEP_NAMES: Record<string, Record<number, string>> = {
-  work: { 1: "What everyone's working on", 2: 'Ideas', 3: "Who's in", 4: 'Settling changes' },
+  work: { 1: "What everyone's working on", 2: 'Ideas', 3: "Agreement", 4: 'Settling changes' },
 }
 
 export function stepName(type: string, round: number): string {
