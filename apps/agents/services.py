@@ -15,6 +15,7 @@ from .models import (
     AgentSkill,
     AgentSync,
     AgentTask,
+    AgentTaskAction,
 )
 
 _VALID_TASK_STATUS = {AgentTask.SUGGESTED, AgentTask.IN_PROGRESS, AgentTask.DONE, AgentTask.DECLINED}
@@ -177,7 +178,6 @@ def agent_detail(agent: Agent) -> dict:
         "created_at": agent.created_at,
         "updated_at": agent.updated_at,
         "sync_count": agent.syncs.count(),
-        "work_product_count": agent.work_products.count(),
         "skill_count": agent.skills.count(),
         "task_count": agent.tasks.count(),
         "turn_count": agent.turns.count(),
@@ -403,33 +403,6 @@ def _link_turn_sessions(agent: Agent, turns: list[Turn]) -> None:
             t.linked_session_id = max(fits, key=lambda c: c[0])[1]
 
 
-# ---- work products ----
-def upsert_work_products(agent: Agent, items: list) -> dict:
-    """Create work products; re-posting the same url for the agent updates it."""
-    created = replaced = 0
-    for item in items:
-        _, was_created = AgentWorkProduct.objects.update_or_create(
-            agent=agent,
-            url=item.url,
-            defaults={
-                "title": item.title,
-                "kind": item.kind,
-                "description": item.description,
-                "tags": item.tags,
-                "source": item.source,
-            },
-        )
-        if was_created:
-            created += 1
-        else:
-            replaced += 1
-    return {"created": created, "replaced": replaced}
-
-
-def list_work_products(agent: Agent, limit: int = 200) -> list[AgentWorkProduct]:
-    return list(agent.work_products.select_related("agent")[:limit])
-
-
 # ---- skills ----
 @transaction.atomic
 def replace_skills(agent: Agent, items: list) -> int:
@@ -556,58 +529,71 @@ def _norm_status(s: str) -> str:
     return s if s in _VALID_TASK_STATUS else AgentTask.SUGGESTED
 
 
-@transaction.atomic
-def sync_tasks(agent: Agent, items: list) -> dict:
-    """Upsert tasks from the (legacy) source sheet by ext_id. NON-destructive:
-    the DB is now the source of truth, so DB-only fields (rationale/plan/…) and
-    DB-only tasks are preserved; the sheet just sets the columns it carries."""
-    created = updated = 0
-    for t in items:
-        # A project is set only when the payload NAMES one. A wholesale sync
-        # that defaulted it to "" would unfile every task it touches, and the
-        # CLI's `agent add` goes through this path — so filing a task once and
-        # editing its title later would quietly take it out of its project.
-        ref = (getattr(t, "project", "") or "").strip()
-        filing = {"project": get_project(agent, ref)} if ref else {}
-        _, was_created = AgentTask.objects.update_or_create(
-            agent=agent,
-            ext_id=t.ext_id,
-            defaults=dict(
-                **filing,
-                title=t.title,
-                next_action=t.next_action,
-                status=_norm_status(t.status),
-                owner=t.owner,
-                assigned=t.assigned,
-                confidence=t.confidence,
-                due=t.due,
-                links=[l.model_dump() for l in t.links],
-                notes=t.notes,
-                position=t.position,
-                source=t.source,
-            ),
-        )
-        created += int(was_created)
-        updated += int(not was_created)
-    return {"created": created, "count": agent.tasks.count()}
-
-
 _TASK_FIELDS = ("title", "next_action", "status", "owner", "assigned", "confidence",
                 "score", "review", "rationale", "source_url", "plan", "due", "notes", "position")
 
+#: What a create may carry beyond `_TASK_FIELDS`, copied straight onto the row.
+_TASK_CREATE_EXTRAS = ("ask_body", "on_approve", "batch_key", "origin", "origin_ref")
 
-def create_task(agent: Agent, data) -> AgentTask:
-    payload = {f: getattr(data, f) for f in _TASK_FIELDS if getattr(data, f, None) is not None}
-    payload["status"] = _norm_status(payload.get("status", AgentTask.SUGGESTED))
-    if getattr(data, "links", None):
-        payload["links"] = [l.model_dump() for l in data.links]
-    # An unknown project reference files the task nowhere rather than 404ing the
-    # create: the task is the thing worth keeping, and a typo in "P7" must not
-    # cost the agent the work it just recorded. The response carries
-    # `project_ext_id: null`, so the miss is visible.
-    ref = (getattr(data, "project", "") or "").strip()
-    project = get_project(agent, ref) if ref else None
-    return AgentTask.objects.create(agent=agent, ext_id=data.ext_id, project=project, **payload)
+_ASK_KINDS = {AgentTask.ASK_NONE, AgentTask.ASK_REVIEW, AgentTask.ASK_QUESTION}
+
+
+def _plain_links(links) -> list:
+    return [link.model_dump() if hasattr(link, "model_dump") else dict(link) for link in links or []]
+
+
+@transaction.atomic
+def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
+    """Create a batch of tasks, idempotent per `idempotency_key`.
+
+    ONE outer transaction, so a batch that cannot route somebody's wait
+    (`UnknownPersonError`) leaves nothing behind; each row keeps its own
+    SAVEPOINT so a key two producers raced on replays instead of rolling the
+    batch back. A key already used by ANOTHER agent is refused rather than
+    replayed — handing back somebody else's task would cross a tenant line.
+    """
+    out = []
+    for p in payloads:
+        key = (p.get("idempotency_key") or "").strip()
+        existing = AgentTask.objects.filter(idempotency_key=key).first() if key else None
+        if existing is not None:
+            if existing.agent_id != agent.pk:
+                raise ValueError(f"idempotency_key {key!r} is already used by another agent")
+            out.append(existing)
+            continue
+
+        fields = {f: p[f] for f in _TASK_FIELDS if p.get(f) is not None}
+        fields.update({f: p[f] for f in _TASK_CREATE_EXTRAS if p.get(f) is not None})
+        fields["status"] = _norm_status(fields.get("status", AgentTask.SUGGESTED))
+        ask_kind = p.get("ask_kind") or AgentTask.ASK_NONE
+        if ask_kind not in _ASK_KINDS:
+            raise ValueError(f"ask_kind must be review|question, got {ask_kind!r}")
+        if p.get("links"):
+            fields["links"] = _plain_links(p["links"])
+        # An unknown project reference files the task nowhere rather than failing
+        # the create: the task is the thing worth keeping, and a typo in "P7" must
+        # not cost the agent the work it just recorded. The response carries
+        # `project_ext_id: null`, so the miss is visible.
+        ref = str(p.get("project") or "").strip()
+        waiting_on = resolve_waiting_on(agent, p["waiting_on_email"]) if p.get("waiting_on_email") else None
+        try:
+            with transaction.atomic():  # savepoint
+                out.append(AgentTask.objects.create(
+                    agent=agent,
+                    ext_id=(p.get("ext_id") or "").strip() or next_task_ext_id(agent),
+                    project=get_project(agent, ref) if ref else None,
+                    ask_kind=ask_kind,
+                    idempotency_key=key or None,
+                    raised_by_id=p.get("raised_by") or None,
+                    waiting_on_user=waiting_on,
+                    **fields,
+                ))
+        except IntegrityError:
+            replay = AgentTask.objects.filter(agent=agent, idempotency_key=key).first() if key else None
+            if replay is None:
+                raise
+            out.append(replay)
+    return out
 
 
 class UnknownPersonError(Exception):
@@ -655,152 +641,111 @@ def patch_task(task: AgentTask, data) -> AgentTask:
     return task
 
 
-def get_task(agent: Agent, task_id: int) -> AgentTask | None:
-    return agent.tasks.filter(id=task_id).select_related("agent").first()
+def get_task(agent: Agent, ref: str) -> AgentTask | None:
+    """By `ext_id` ("T3"), the way every route and link names a task."""
+    return agent.tasks.filter(ext_id__iexact=str(ref)).select_related("agent", "project").first()
 
 
 def list_tasks(agent: Agent) -> list[AgentTask]:
     return list(agent.tasks.select_related("agent"))
 
 
-# ---- asks: what a task needs from a human -------------------------------
+# ---- actions: everything a person does TO a task ------------------------
 #
-# An `Item` was its own model — "work YOU do", the dual of a Turn. The two
-# stopped being different things in practice: the fleet's work lives in tasks,
-# one agent had ever raised an item, and the tasks actually waiting on somebody
-# reached no inbox at all. So an ask is a property of a task, and these are
-# Item's three verbs with the same guarantees.
+# Five of them — approve, decline, reply, dispatch, done — through one function.
+# Each is recorded as an `AgentTaskAction` row, which is both the task's history
+# ("who approved this and why" is the closing row) and, while `pending`, the
+# agent's to-do: it drains pending rows on its next turn and marks each applied.
 
 
-class AlreadyDecidedError(Exception):
-    """The ask is closed. Deciding twice would dispatch its work twice."""
+class ClosedAskError(Exception):
+    """The ask is already closed — acting on it again would dispatch twice."""
+
+
+#: action -> (closes the ask?, new status or None, needs agent follow-up?)
+_EFFECT = {
+    AgentTaskAction.APPROVE: (True, AgentTask.IN_PROGRESS, True),
+    AgentTaskAction.DECLINE: (True, AgentTask.DECLINED, False),
+    AgentTaskAction.REPLY: (None, None, True),  # closes only a question
+    AgentTaskAction.DISPATCH: (False, None, True),
+    AgentTaskAction.DONE: (True, AgentTask.DONE, False),
+}
 
 
 @transaction.atomic
-def raise_asks(*, agent: Agent, payloads: list[dict]) -> list:
-    """Raise asks on an agent, idempotent per `idempotency_key`.
+def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=None,
+        actor_workspace_ids: set) -> tuple[AgentTask, AgentTaskAction, list[Turn]]:
+    """Do one of the five actions to `task`; returns (task, action row, turns).
 
-    The whole batch commits in ONE outer transaction so a fleet audit raising N
-    of them notifies once rather than N times; each row keeps its own SAVEPOINT
-    so a single duplicate key replays without rolling the batch back.
+    Atomic, and that is the whole ballgame: `dispatch()` raises on a bad
+    `on_approve` spec, and committing the action first would leave the ask
+    closed and its work never run — permanently, since approving a closed ask is
+    refused. Rolling back leaves it open and retryable, with no action row.
+
+    The task row is re-read under a lock before the ask is checked. Two tabs
+    holding the same open card would otherwise both pass the check on their own
+    stale copies and dispatch the work twice; locked, the second one waits,
+    then sees the ask closed and gets `ClosedAskError`.
     """
-    out = []
-    for p in payloads:
-        key = p.get("idempotency_key") or ""
-        existing = AgentTask.objects.filter(idempotency_key=key).first() if key else None
-        if existing is not None:
-            out.append(existing)
-            continue
-        project = get_project(agent, str(p.get("project") or "")) if p.get("project") else None
-        try:
-            with transaction.atomic():  # savepoint
-                out.append(AgentTask.objects.create(
-                    agent=agent,
-                    project=project,
-                    ext_id=p.get("ext_id") or next_task_ext_id(agent),
-                    title=p["title"],
-                    # Suggested is the board's word for "the agent proposed it,
-                    # a human validates" — which is what an ask is.
-                    status=AgentTask.SUGGESTED,
-                    ask_kind=p.get("ask_kind") or AgentTask.ASK_REVIEW,
-                    ask_body=p.get("ask_body") or "",
-                    origin=p.get("origin") or "",
-                    origin_ref=p.get("origin_ref") or {},
-                    dispatch=p.get("dispatch") or [],
-                    batch_key=p.get("batch_key") or "",
-                    idempotency_key=key or None,
-                    raised_by_id=p.get("raised_by") or None,
-                    waiting_on_user=p.get("waiting_on_user"),
-                    assigned=p.get("assigned") or "",
-                ))
-        except IntegrityError:
-            replay = AgentTask.objects.filter(idempotency_key=key).first() if key else None
-            if replay is None:
-                raise
-            out.append(replay)
-    return out
+    from apps.harness.dispatch import dispatch
 
+    if action not in _EFFECT:
+        raise ValueError(f"action must be one of {'|'.join(_EFFECT)}, got {action!r}")
+    comment = (comment or "").strip()
+    if action == AgentTaskAction.REPLY and not comment:
+        raise ValueError("a reply needs words — comment must not be empty")
 
-def decide_ask(task: AgentTask, *, decision: str, comment: str, by: str,
-               actor_workspace_slugs: set[str], decided_by_user=None):
-    """Answer a task's ask, dispatching its work the moment the human commits.
+    task = (AgentTask.objects.select_for_update(of=("self",))
+            .select_related("agent", "project").get(pk=task.pk))
+    if action in (AgentTaskAction.APPROVE, AgentTaskAction.DECLINE) and task.ask_kind \
+            and not task.ask_is_open:
+        raise ClosedAskError(f"{task.agent.slug}/{task.ext_id} has no open ask")
 
-    A **review** takes a verb from the closed set and dispatches on `implement`.
-    A **question** is resolved by its ANSWER — `decision` stays blank, and any
-    answer dispatches, because there is no verb to click. Answering used to be
-    inert, and three answered cards produced zero turns (2026-07-30).
+    closes, status, follow_up = _EFFECT[action]
+    if action == AgentTaskAction.REPLY:
+        # A reply on a question IS the answer; on anything else it is a comment.
+        closes = task.ask_kind == AgentTask.ASK_QUESTION and task.ask_is_open
 
-    Atomic, and that is the whole ballgame: `dispatch()` raises on a bad spec,
-    and committing the decision first would leave the ask closed and
-    undispatched — permanently, since deciding twice is refused. Rolling back
-    instead leaves it open and retryable.
-    """
-    from apps.harness.dispatch import dispatch as dispatch_ask
-
-    if not task.ask_is_open:
-        raise AlreadyDecidedError(f"task {task.uuid} has no open ask")
-
-    if task.ask_kind == AgentTask.ASK_QUESTION:
-        if not (comment or "").strip():
-            raise ValueError("a question is resolved by its answer — comment must not be empty")
-        decision = ""
-    elif decision not in (AgentTask.IMPLEMENT, AgentTask.SKIP, AgentTask.DEFER):
-        raise ValueError(f"decision must be one of implement|skip|defer, got {decision!r}")
-
-    with transaction.atomic():
-        task.decision = decision
-        task.comment = comment or ""
-        task.decided_by = by
-        task.decided_by_user = (
-            decided_by_user if getattr(decided_by_user, "is_authenticated", False) else None
-        )
-        task.decided_at = timezone.now()
+    row = AgentTaskAction(
+        agent=task.agent, task=task, action=action, comment=comment, by=by,
+        by_user=by_user if getattr(by_user, "is_authenticated", False) else None,
+    )
+    turns: list[Turn] = []
+    runs = action == AgentTaskAction.APPROVE or (action == AgentTaskAction.REPLY and closes)
+    if runs and task.on_approve:
+        turns = dispatch(task, action=row, actor_workspace_ids=actor_workspace_ids)
+        task.dispatched_at = timezone.now()
+        follow_up = False  # the dispatched turn IS the follow-up
+    if closes and task.ask_is_open:
+        task.ask_closed_at = timezone.now()
         # Answered: nobody is waiting on a person any more.
         task.waiting_on_user = None
+    if status:
+        task.status = status
+    elif runs and turns:
+        task.status = AgentTask.IN_PROGRESS  # the agent has the ball now
+    task.save()
 
-        turns = []
-        answered = task.ask_kind == AgentTask.ASK_QUESTION and bool(task.dispatch)
-        if decision == AgentTask.IMPLEMENT or answered:
-            turns = dispatch_ask(task, actor_workspace_slugs=actor_workspace_slugs)
-            task.dispatched_at = timezone.now()
-            # The agent has the ball now.
-            task.status = AgentTask.IN_PROGRESS
-        elif decision == AgentTask.SKIP:
-            task.status = AgentTask.DECLINED
-        # `defer` leaves the task suggested: not now is not never, and the card
-        # stays on the board while the ask stops asking.
-
-        task.save(update_fields=[
-            "decision", "comment", "decided_by", "decided_by_user", "decided_at",
-            "dispatched_at", "status", "waiting_on_user", "updated_at",
-        ])
-    return task, turns
+    row.status = AgentTaskAction.PENDING if follow_up else AgentTaskAction.APPLIED
+    row.applied_at = None if follow_up else timezone.now()
+    row.save()
+    return task, row, turns
 
 
-def dismiss_ask(task: AgentTask, *, by: str, decided_by_user=None, comment: str = "") -> AgentTask:
-    """Retire an open ask without acting — raised in error, or overtaken.
+def pending_actions(agent: Agent):
+    """The agent's queue: actions it still has to carry out, oldest first."""
+    return (agent.task_actions.filter(status=AgentTaskAction.PENDING)
+            .select_related("agent", "task", "by_user")
+            .order_by("created_at", "id"))
 
-    Guards on the same state decide does: dismissing a decided ask would
-    overwrite who approved it while the turns that decision dispatched keep
-    running.
-    """
-    if not task.ask_is_open:
-        raise AlreadyDecidedError(f"task {task.uuid} has no open ask")
-    task.decided_by = by
-    task.decided_by_user = (
-        decided_by_user if getattr(decided_by_user, "is_authenticated", False) else None
-    )
-    task.decided_at = timezone.now()
-    task.waiting_on_user = None
-    task.status = AgentTask.DECLINED
-    task.ask_dismissed = True
-    fields = ["decided_by", "decided_by_user", "decided_at", "status",
-              "ask_dismissed", "waiting_on_user", "updated_at"]
-    if comment:
-        task.comment = comment
-        fields.append("comment")
-    task.save(update_fields=fields)
-    return task
+
+def mark_applied(action_row: AgentTaskAction, result_note: str = "") -> AgentTaskAction:
+    action_row.status = AgentTaskAction.APPLIED
+    action_row.applied_at = timezone.now()
+    if result_note:
+        action_row.result_note = result_note
+    action_row.save(update_fields=["status", "applied_at", "result_note"])
+    return action_row
 
 
 def next_task_ext_id(agent: Agent) -> str:
@@ -833,8 +778,37 @@ def waiting_q():
     from django.db.models import Q
 
     return Q(status__in=LIVE_STATUSES) & (
-        (~Q(ask_kind="") & Q(decided_at__isnull=True)) | Q(waiting_on_user__isnull=False)
+        (~Q(ask_kind="") & Q(ask_closed_at__isnull=True)) | Q(waiting_on_user__isnull=False)
     )
+
+
+def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting: str = "",
+                 ask: str = "", batch: str = ""):
+    """The task list's filters, shared by the per-agent and fleet routes.
+
+    `waiting=me` is what lands in a person's inbox: tasks parked on them, plus
+    open asks routed to nobody — an unrouted ask waits on whoever looks at it.
+    """
+    from django.db.models import Q
+
+    if project == "none":
+        qs = qs.filter(project__isnull=True)
+    elif project:
+        qs = qs.filter(project__ext_id__iexact=project)
+    if status:
+        qs = qs.filter(status__in=[s.strip() for s in status.split(",") if s.strip()])
+    if waiting == "me":
+        unrouted_ask = (~Q(ask_kind="") & Q(ask_closed_at__isnull=True)
+                        & Q(waiting_on_user__isnull=True))
+        mine = Q(waiting_on_user=user) if getattr(user, "is_authenticated", False) else Q(pk__in=[])
+        qs = qs.filter(waiting_q()).filter(mine | unrouted_ask)
+    if ask == "open":
+        qs = qs.exclude(ask_kind="").filter(ask_closed_at__isnull=True)
+    elif ask == "closed":
+        qs = qs.exclude(ask_kind="").filter(ask_closed_at__isnull=False)
+    if batch:
+        qs = qs.filter(batch_key=batch)
+    return qs
 
 
 def tasks_waiting_on(user, *, agent: Agent | None = None):
@@ -850,72 +824,12 @@ def tasks_waiting_on(user, *, agent: Agent | None = None):
         AgentTask.objects.filter(
             Q(waiting_on_user=user),
             Q(status__in=LIVE_STATUSES),
-            Q(decided_at__isnull=True),
+            Q(ask_closed_at__isnull=True),
         )
         .select_related("agent", "project")
         .order_by("-updated_at")
     )
     return qs.filter(agent=agent) if agent is not None else qs
-
-
-# ---- task commands (the board's action queue) ----
-@transaction.atomic
-def create_command(agent: Agent, task, kind: str, payload: dict, created_by: str) -> AgentTaskCommand:
-    """Record a board action. Some kinds apply immediately to the task; accept
-    and dispatch also leave a PENDING command for the agent to drain."""
-    C = AgentTaskCommand
-    payload = payload or {}
-    cmd = C(agent=agent, task=task, kind=kind, payload=payload, created_by=created_by)
-    applied_now = True  # most kinds need no agent follow-up
-    if task is not None:
-        if kind == C.ACCEPT:
-            task.status, task.assigned = AgentTask.IN_PROGRESS, "Echo"
-            task.save(update_fields=["status", "assigned", "updated_at"])
-            applied_now = False  # the agent still has to do the work
-        elif kind == C.DECLINE:
-            task.status = AgentTask.DECLINED
-            reason = payload.get("reason", "").strip()
-            if reason:
-                task.notes = f"{task.notes}\nDeclined: {reason}".strip()
-            task.save(update_fields=["status", "notes", "updated_at"])
-        elif kind == C.REASSIGN:
-            task.assigned = payload.get("assignee", task.assigned)
-            task.save(update_fields=["assigned", "updated_at"])
-        elif kind == C.EDIT:
-            for f in ("title", "next_action", "plan", "owner", "assigned"):
-                if f in payload:
-                    setattr(task, f, payload[f])
-            task.save()
-        elif kind == C.DONE:
-            task.status = AgentTask.DONE
-            task.save(update_fields=["status", "updated_at"])
-        elif kind == C.COMMENT:
-            note = payload.get("note", "").strip()
-            if note:
-                task.notes = f"{task.notes}\n{note}".strip()
-                task.save(update_fields=["notes", "updated_at"])
-        elif kind == C.DISPATCH:
-            applied_now = False  # pure agent work
-    if applied_now:
-        cmd.status, cmd.applied_at = C.APPLIED, timezone.now()
-    cmd.save()
-    return cmd
-
-
-def list_commands(agent: Agent, status: str | None = None) -> list[AgentTaskCommand]:
-    qs = agent.commands.select_related("task", "agent")
-    if status:
-        qs = qs.filter(status=status)
-    return list(qs)
-
-
-def apply_command(cmd: AgentTaskCommand, result_note: str = "") -> AgentTaskCommand:
-    cmd.status = AgentTaskCommand.APPLIED
-    cmd.applied_at = timezone.now()
-    if result_note:
-        cmd.result_note = result_note
-    cmd.save(update_fields=["status", "applied_at", "result_note"])
-    return cmd
 
 
 # ---- Agent credentials (per-agent secret store, encrypted at rest) ----------

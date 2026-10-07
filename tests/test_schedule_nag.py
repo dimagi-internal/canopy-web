@@ -1,7 +1,7 @@
 """The nag: a grace-released (unattended) scheduled occurrence raises a real ask.
 
 This is not a projection — release_stale_occurrence_turns raises a review ask whose
-`implement` re-runs the schedule; a later finished occurrence dismisses it via
+`approve` re-runs the schedule; a later finished occurrence declines it via
 finish_turn. Firing alone does NOT nag: only holding the agent past grace does.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import pytest
 from apps.agents.models import Agent
 from apps.agents import services as agent_services
 from apps.harness import services as hsvc
-from apps.agents.models import AgentTask
+from apps.agents.models import AgentTask, AgentTaskAction
 from apps.harness.models import AgentSchedule, Turn
 
 pytestmark = pytest.mark.django_db
@@ -32,9 +32,9 @@ def _claimed_long_ago(turn: Turn, *, minutes: int) -> Turn:
 
 
 def _open_nags(agent) -> list:
-    """Open nags — tasks whose ask is still unanswered (`decided_at` is null)."""
+    """Open nags — tasks whose ask is still unanswered (`ask_closed_at` is null)."""
     return list(
-        agent.tasks.filter(decided_at__isnull=True, origin_ref__kind="schedule_nag")
+        agent.tasks.filter(ask_closed_at__isnull=True, origin_ref__kind="schedule_nag")
         .exclude(ask_kind="")
         .order_by("created_at")
     )
@@ -75,16 +75,16 @@ def test_grace_released_occurrence_raises_a_review_nag(agent, schedule):
     assert len(nags) == 1
     assert nags[0].ask_kind == AgentTask.ASK_REVIEW
     assert nags[0].title == "Scheduled turn unattended: Goal review"
-    # implement re-runs the schedule's prompt (self-dispatch) — the generic
+    # approve re-runs the schedule's prompt (self-dispatch) — the generic
     # replacement for the old "Run now" button.
-    assert nags[0].dispatch[0]["prompt"] == "/eva:goal-review"
+    assert nags[0].on_approve[0]["prompt"] == "/eva:goal-review"
 
 
 def test_a_finished_later_occurrence_clears_the_nag(agent, schedule):
     turn, _ = hsvc.fire_schedule(schedule, SLOT)
     _claimed_long_ago(turn, minutes=200)
     hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
-    assert len(_open_nags(agent)) == 1
+    nag = _open_nags(agent)[0]
 
     # A later occurrence completes -> the owed attention is discharged.
     later, _ = hsvc.fire_schedule(schedule, SLOT + dt.timedelta(days=31))
@@ -93,23 +93,29 @@ def test_a_finished_later_occurrence_clears_the_nag(agent, schedule):
     hsvc.finish_turn(later, status=Turn.DONE)
 
     assert _open_nags(agent) == []
+    nag.refresh_from_db()
+    assert nag.status == AgentTask.DECLINED and nag.ask_closed_at is not None
+    closing = nag.actions.get()
+    assert (closing.action, closing.by, closing.status) == (
+        AgentTaskAction.DECLINE, "system:schedule", AgentTaskAction.APPLIED,
+    )
 
 
-def test_implementing_the_nag_re_runs_the_schedule(agent, schedule):
+def test_approving_the_nag_re_runs_the_schedule(agent, schedule):
     turn, _ = hsvc.fire_schedule(schedule, SLOT)
     _claimed_long_ago(turn, minutes=200)
     hsvc.release_stale_occurrence_turns(schedule, now=SLOT)
     nag = _open_nags(agent)[0]
 
-    item, turns = agent_services.decide_ask(
-        nag, decision=AgentTask.IMPLEMENT, comment="", by="jj@dimagi.com", actor_workspace_slugs=set(),
+    task, row, turns = agent_services.act(
+        nag, action="approve", by="jj@dimagi.com", actor_workspace_ids=set(),
     )
 
-    assert item.ask_state == "decided"
+    assert not task.ask_is_open and row.action == AgentTaskAction.APPROVE
     assert len(turns) == 1
-    # Stamped: a nag item's brief is machine-authored like any other card prompt.
+    # Stamped: a nag's brief is machine-authored like any other card prompt.
     assert turns[0].prompt.startswith("/eva:goal-review")
-    assert _open_nags(agent) == []  # decided -> out of the inbox
+    assert _open_nags(agent) == []  # approved -> out of the inbox
 
 
 def test_a_schedule_that_opts_out_of_the_inbox_channel_does_not_nag(agent, schedule):

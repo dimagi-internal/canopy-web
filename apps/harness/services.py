@@ -1864,23 +1864,3 @@ def list_visible_sessions(user) -> list[SessionView]:
             )
         )
     return out
-
-
-# ---------------------------------------------------------------------------
-# Items — the supervisor's queue (the dual of Turn)
-# ---------------------------------------------------------------------------
-
-
-# ONE class, not two: a caller catching `harness.services.AlreadyDecidedError`
-# must catch what the task verbs actually raise, or a double-decide would sail
-# past its guard as an unhandled 500 instead of the 409 it is. Imported lazily
-# inside a function-level alias would be worse — the name has to exist at import
-# time for `except services.AlreadyDecidedError` to resolve.
-from apps.agents.services import AlreadyDecidedError  # noqa: E402,F401  (re-export; see above)
-
-
-# The three Item verbs live on tasks (`apps.agents.services.raise_asks` /
-# `decide_ask` / `dismiss_ask`), because an ask IS a task's property. The thin
-# forwarders that carried the fleet across the #873 rename are gone; nothing in
-# this repo called them, and the routes the fleet actually calls (`/api/items/`)
-# never went through them.
