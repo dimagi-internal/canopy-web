@@ -5,8 +5,7 @@ from .models import (
     AgentSkill,
     AgentSync,
     AgentTask,
-    AgentTaskCommand,
-    AgentWorkProduct,
+    AgentTaskAction,
     RepoIdentity,
 )
 
@@ -39,12 +38,6 @@ class AgentSyncAdmin(admin.ModelAdmin):
     list_filter = ("agent", "source")
 
 
-@admin.register(AgentWorkProduct)
-class AgentWorkProductAdmin(admin.ModelAdmin):
-    list_display = ("agent", "title", "kind", "created_at")
-    list_filter = ("agent", "kind")
-
-
 @admin.register(AgentSkill)
 class AgentSkillAdmin(admin.ModelAdmin):
     list_display = ("agent", "name", "updated_at")
@@ -57,7 +50,7 @@ class AgentTaskAdmin(admin.ModelAdmin):
     list_filter = ("agent", "status")
 
 
-@admin.register(AgentTaskCommand)
-class AgentTaskCommandAdmin(admin.ModelAdmin):
-    list_display = ("agent", "kind", "task", "status", "created_by", "created_at")
-    list_filter = ("agent", "kind", "status")
+@admin.register(AgentTaskAction)
+class AgentTaskActionAdmin(admin.ModelAdmin):
+    list_display = ("agent", "task", "action", "status", "created_at")
+    list_filter = ("agent", "action", "status")

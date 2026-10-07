@@ -15,8 +15,6 @@ from .models import (
     AgentSkill,
     AgentSync,
     AgentTask,
-    AgentTaskCommand,
-    AgentWorkProduct,
 )
 
 _VALID_TASK_STATUS = {AgentTask.SUGGESTED, AgentTask.IN_PROGRESS, AgentTask.DONE, AgentTask.DECLINED}
