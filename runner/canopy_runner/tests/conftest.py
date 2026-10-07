@@ -75,3 +75,15 @@ def _isolate_user_settings(monkeypatch, tmp_path):
     a dead listener until the daemon's next tick noticed (canopy-web#1188)."""
     from canopy_runner import hooks
     monkeypatch.setattr(hooks, "user_settings_path", lambda: tmp_path / "claude-settings.json")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_composer_reads(monkeypatch):
+    """An unconfirmed send now LOOKS at the session before giving up
+    (execute._recover_delivery), which shells out to the CDP sidecar. Default that
+    look to "unreadable" — recovery then leaves the session alone and the turn fails
+    exactly as it did before recovery existed — so no test drives a real emdash;
+    tests of the recovery ladder fake the read."""
+    def unreadable(*a, **k):
+        raise cdp_control.CDPError("composer read not faked in this test")
+    monkeypatch.setattr(cdp_control, "read_composer", unreadable)
