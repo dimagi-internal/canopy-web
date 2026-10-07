@@ -46,3 +46,36 @@ def test_open_ask_is_keyed_on_closed_at():
     t.ask_closed_at = timezone.now()
     assert not t.ask_is_open
     assert AgentTaskAction.APPROVE == "approve"
+
+
+# --- ext_ids made safe before the case-insensitive unique constraint ----------
+
+
+def test_safe_ext_ids_leaves_clean_ids_alone():
+    assert mig.safe_ext_ids([(1, 7, "T1"), (2, 7, "T2"), (3, 8, "T1")]) == {}
+
+
+def test_safe_ext_ids_renames_later_case_collisions():
+    # Oldest keeps it; later ones get -2, -3 … unique ignoring case.
+    rows = [(1, 7, "T1"), (2, 7, "t1"), (3, 7, "T1")]
+    assert mig.safe_ext_ids(rows) == {2: "t1-2", 3: "T1-3"}
+
+
+def test_safe_ext_ids_never_takes_an_id_a_later_row_already_has():
+    rows = [(1, 7, "T2"), (2, 7, "t2"), (3, 7, "T2-2")]
+    assert mig.safe_ext_ids(rows) == {2: "t2-3"}
+
+
+def test_safe_ext_ids_replaces_slashes_and_resolves_what_that_collides_with():
+    rows = [(1, 7, "a/b"), (2, 7, "A-B"), (3, 7, "x/y/z")]
+    assert mig.safe_ext_ids(rows) == {1: "a-b", 2: "A-B-2", 3: "x-y-z"}
+
+
+def test_safe_ext_ids_is_per_agent():
+    assert mig.safe_ext_ids([(1, 7, "T1"), (2, 8, "t1")]) == {}
+
+
+def test_safe_ext_ids_keeps_within_the_column_length():
+    long = "x" * 64
+    out = mig.safe_ext_ids([(1, 7, long), (2, 7, long.upper())])
+    assert out == {2: "X" * 62 + "-2"} and len(out[2]) == 64

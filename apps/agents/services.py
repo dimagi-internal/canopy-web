@@ -534,7 +534,7 @@ _TASK_FIELDS = ("title", "next_action", "status", "owner", "assigned", "confiden
                 "score", "review", "rationale", "source_url", "plan", "due", "notes", "position")
 
 #: What a create may carry beyond `_TASK_FIELDS`, copied straight onto the row.
-_TASK_CREATE_EXTRAS = ("ask_body", "on_approve", "batch_key", "origin", "origin_ref")
+_TASK_CREATE_EXTRAS = ("ask_body", "on_approve", "batch_key", "origin", "origin_ref", "source")
 
 _ASK_KINDS = {AgentTask.ASK_NONE, AgentTask.ASK_REVIEW, AgentTask.ASK_QUESTION}
 
@@ -624,6 +624,9 @@ def _claim_ext_id(agent: Agent, explicit: str) -> str:
     from then on (the counter bump rolls back with the failed batch).
     """
     if explicit:
+        if "/" in explicit:
+            # A task is addressed as `/tasks/{ext_id}/` — a slash cannot be routed.
+            raise ValueError(f"ext_id {explicit!r} may not contain '/'")
         if _ext_id_taken(agent, explicit):
             raise DuplicateTaskError(f"{agent.slug} already has a task {explicit}")
         m = re.fullmatch(r"[Tt](\d+)", explicit)

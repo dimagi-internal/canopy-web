@@ -9,6 +9,7 @@ self-grades for the feed; the body lives in the doc.
 """
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Lower
 
 
 class Agent(models.Model):
@@ -738,6 +739,14 @@ class AgentTask(models.Model):
     #: Where the ask came from, when it was raised by machinery rather than
     #: typed by a person.
     origin = models.CharField(max_length=32, blank=True, default="")
+    #: What a caller may post as `origin` (AgentTaskIn refuses anything else):
+    #: blank, the postable Turn sources an ask was raised from (legacy spellings
+    #: are normalized onto these — harness.schemas.normalize_origin), and the
+    #: labels canopy's own CLI stamps on the tasks it files (`canopy agent task
+    #: add` → task-tracker, `canopy agent dispatch` → dispatch, a huddle's
+    #: outcomes → huddle). `canopy_scheduler` is server-set, never posted.
+    POSTABLE_ORIGINS = ("", "api", "ace_web", "email", "slack",
+                        "task-tracker", "dispatch", "huddle")
     origin_ref = models.JSONField(default=dict, blank=True)
     raised_by = models.ForeignKey(
         "harness.Turn", null=True, blank=True, on_delete=models.SET_NULL,
@@ -752,7 +761,9 @@ class AgentTask(models.Model):
     class Meta:
         ordering = ["status", "position", "id"]
         constraints = [
-            models.UniqueConstraint(fields=["agent", "ext_id"], name="uniq_agent_task_extid"),
+            # Ignoring case: a task is looked up `ext_id__iexact`, so "t1" beside
+            # "T1" would leave one of them unreachable.
+            models.UniqueConstraint(Lower("ext_id"), "agent", name="uniq_agent_task_extid_ci"),
         ]
         indexes = [models.Index(fields=["agent", "status"])]
 

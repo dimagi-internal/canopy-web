@@ -338,3 +338,81 @@ def test_fleet_tasks_limit_caps_rows(c):
     assert len(client.get("/api/tasks/?limit=2").json()) == 2
     assert len(client.get("/api/tasks/?limit=0").json()) == 1  # clamped, not a 500
     assert len(client.get("/api/tasks/").json()) == 3
+
+
+# --- ext_id safety, origin, source -------------------------------------------------
+
+
+def test_case_variant_ext_id_is_refused_by_the_database_too():
+    # The service checks first (iexact); this is the race that slips past it — two
+    # creates both seeing the id free. The Lower(ext_id) constraint stops it.
+    from django.db import IntegrityError, transaction
+
+    u = User.objects.create_user("db", "db@dimagi.com", "pw")
+    ws = Workspace.objects.create(slug="w2", display_name="W2", created_by=u)
+    agent = Agent.objects.create(slug="eve", name="Eve", workspace=ws, owner=u)
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="a")
+    with pytest.raises(IntegrityError), transaction.atomic():
+        AgentTask.objects.create(agent=agent, ext_id="t1", title="b")
+
+
+def test_a_raced_case_variant_maps_to_409(c, monkeypatch):
+    from apps.agents import services
+
+    client, agent, _u = c
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="a")
+    # Simulate the race: the pre-check sees "t1" as free, the insert collides.
+    monkeypatch.setattr(services, "_claim_ext_id", lambda _agent, explicit: explicit)
+    r = client.post("/api/agents/eva/tasks/", [{"ext_id": "t1", "title": "b"}],
+                    content_type="application/json")
+    assert r.status_code == 409, r.content
+    assert agent.tasks.count() == 1
+
+
+def test_an_ext_id_with_a_slash_is_422(c):
+    client, agent, _u = c
+    r = client.post("/api/agents/eva/tasks/", [{"ext_id": "a/b", "title": "x"}],
+                    content_type="application/json")
+    assert r.status_code == 422, r.content
+    assert "/" in r.json()["detail"]
+    assert agent.tasks.count() == 0
+
+
+def test_patch_cannot_set_an_ext_id(c):
+    # ext_id is the address; a PATCH has no such field (unknown fields are 422).
+    client, agent, _u = c
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="a")
+    r = client.patch("/api/agents/eva/tasks/T1/", {"ext_id": "a/b"},
+                     content_type="application/json")
+    assert r.status_code == 422
+    assert agent.tasks.get().ext_id == "T1"
+
+
+@pytest.mark.parametrize("origin,stored", [
+    ("", ""), ("api", "api"), ("email", "email"), ("huddle", "huddle"),
+    ("task-tracker", "task-tracker"), ("dispatch", "dispatch"),
+    ("manual", "api"), ("cron", "canopy_scheduler"),  # retired spellings normalize
+])
+def test_known_origins_are_accepted(c, origin, stored):
+    client, agent, _u = c
+    r = client.post("/api/agents/eva/tasks/", [{"title": "x", "origin": origin}],
+                    content_type="application/json")
+    assert r.status_code == 201, r.content
+    assert agent.tasks.get().origin == stored
+
+
+@pytest.mark.parametrize("origin", ["nonsense", "canopy_scheduler", "canopy_web_chat"])
+def test_an_unknown_or_server_only_origin_is_422(c, origin):
+    client, agent, _u = c
+    r = client.post("/api/agents/eva/tasks/", [{"title": "x", "origin": origin}],
+                    content_type="application/json")
+    assert r.status_code == 422
+    assert agent.tasks.count() == 0
+
+
+def test_create_keeps_source(c):
+    client, agent, _u = c
+    r = client.post("/api/agents/eva/tasks/", [{"title": "x", "source": "sheet:board"}],
+                    content_type="application/json")
+    assert r.status_code == 201, r.content
+    assert agent.tasks.get().source == "sheet:board"

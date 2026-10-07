@@ -12,6 +12,10 @@ with no task are deleted so `task` can be required. `dismissed` rows become
 
 `AgentWorkProduct` is dropped with its rows.
 
+`ext_id` becomes unique per agent ignoring case, and loses '/': a later row
+that collides with an older one (in any case) is renamed `<id>-2`, `-3` …
+(`safe_ext_ids`).
+
 Not reversible in practice: the data steps reverse as no-ops, and re-adding the
 unique `uuid` column to a table with more than one row would fail exactly as
 0027 once did. Restore from backup rather than migrating back past this.
@@ -19,6 +23,7 @@ unique `uuid` column to a table with more than one row would fail exactly as
 import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
+from django.db.models.functions import Lower
 
 ACTION_FOR_KIND = {"accept": "approve", "decline": "decline", "comment": "reply",
                    "dispatch": "dispatch", "done": "done"}
@@ -28,9 +33,68 @@ def comment_from_payload(payload: dict) -> str:
     return str((payload or {}).get("note") or (payload or {}).get("reason") or "")
 
 
+EXT_ID_MAX = 64
+
+
+def _suffixed(base: str, n: int) -> str:
+    suffix = f"-{n}"
+    return base[: EXT_ID_MAX - len(suffix)] + suffix
+
+
+def safe_ext_ids(rows) -> dict:
+    """The ext_ids that must change so one agent's ids are unique ignoring case
+    and carry no '/' (a task is addressed as `/tasks/{ext_id}/`).
+
+    `rows` is `(pk, agent_id, ext_id)` OLDEST FIRST. Returns `{pk: new_ext_id}`
+    for the rows that change. '/' becomes '-'. Within an agent the oldest row
+    holding an id (case-insensitively) keeps it; each later one becomes
+    `<id>-2`, `<id>-3` … — the first suffix no row keeps or was already given.
+    Ids that need no rename are reserved FIRST, so a rename never takes the id a
+    later, untouched row already has.
+    """
+    by_agent: dict = {}
+    for pk, agent_id, ext_id in rows:
+        by_agent.setdefault(agent_id, []).append((pk, ext_id))
+    renames = {}
+    for agent_rows in by_agent.values():
+        taken: set = set()
+        keep = set()
+        for pk, ext_id in agent_rows:
+            wanted = ext_id.replace("/", "-")
+            if wanted.lower() not in taken:
+                taken.add(wanted.lower())
+                keep.add(pk)
+        for pk, ext_id in agent_rows:
+            wanted = ext_id.replace("/", "-")
+            if pk not in keep:
+                n = 2
+                while _suffixed(wanted, n).lower() in taken:
+                    n += 1
+                wanted = _suffixed(wanted, n)
+                taken.add(wanted.lower())
+            if wanted != ext_id:
+                renames[pk] = wanted
+    return renames
+
+
 def forward_tasks(apps, schema_editor):
     Task = apps.get_model("agents", "AgentTask")  # noqa: N806
-    Task.objects.filter(decided_at__isnull=False).update(ask_closed_at=models.F("decided_at"))
+    rows = Task.objects.order_by("created_at", "id").values_list("pk", "agent_id", "ext_id")
+    renames = safe_ext_ids(list(rows))
+    # One write per row, both changes at once — see forward_actions on why a
+    # second UPDATE of a row in this transaction breaks the ALTERs that follow.
+    todo = Task.objects.filter(models.Q(decided_at__isnull=False) | models.Q(pk__in=list(renames)))
+    for row in todo.iterator():
+        fields = []
+        if row.decided_at is not None:
+            row.ask_closed_at = row.decided_at
+            fields.append("ask_closed_at")
+        if row.pk in renames:
+            row.ext_id = renames[row.pk]
+            fields.append("ext_id")
+        row.save(update_fields=fields)
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 def forward_actions(apps, schema_editor):
@@ -142,4 +206,13 @@ class Migration(migrations.Migration):
         ),
         # (6) Work products are gone.
         migrations.DeleteModel(name="AgentWorkProduct"),
+        # (7) ext_id unique per agent IGNORING CASE — lookups are iexact, so "t1"
+        # beside "T1" would leave one unreachable. forward_tasks made the data fit.
+        migrations.RemoveConstraint(model_name="agenttask", name="uniq_agent_task_extid"),
+        migrations.AddConstraint(
+            model_name="agenttask",
+            constraint=models.UniqueConstraint(
+                Lower("ext_id"), "agent", name="uniq_agent_task_extid_ci",
+            ),
+        ),
     ]

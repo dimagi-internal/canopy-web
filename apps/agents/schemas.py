@@ -6,9 +6,10 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import AliasChoices, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
+from apps.agents.models import AgentTask
 from apps.common.schemas import StrictModel
 
 # framework→framework: agents and harness are both framework tier, and the
@@ -18,6 +19,7 @@ from apps.harness.schemas import (
     RoutableSource,
     TurnSpecIn,
     adopt_legacy_session_key,
+    normalize_origin,
 )
 
 
@@ -663,10 +665,23 @@ class AgentTaskIn(StrictModel):
     on_approve: list[TurnSpecIn] = Field(default_factory=list)
     batch_key: str = Field(default="", max_length=64)
     idempotency_key: str = Field(default="", max_length=128)
+    #: One of `AgentTask.POSTABLE_ORIGINS`; a retired spelling is normalized.
     origin: str = Field(default="", max_length=32)
     origin_ref: dict = Field(default_factory=dict)
     #: The turn that raised this task, if any.
     raised_by: uuid.UUID | None = None
+    #: Free-text producer tag (the sheet / tool the task was mirrored from).
+    source: str = Field(default="", max_length=100)
+
+    @field_validator("origin")
+    @classmethod
+    def _known_origin(cls, v: str) -> str:
+        # A retired spelling (cron, manual …) is accepted and normalized, as on
+        # every other input carrying an origin.
+        if v not in AgentTask.POSTABLE_ORIGINS and normalize_origin(v) == v:
+            raise ValueError(f"origin must be one of {', '.join(o for o in AgentTask.POSTABLE_ORIGINS if o)}"
+                             f" (or blank), got {v!r}")
+        return normalize_origin(v)
 
 
 class AgentTaskOut(StrictModel):
