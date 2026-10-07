@@ -122,3 +122,34 @@ def test_not_waiting_is_on_nobodys_feed(fleet):
     session = _blocked_session(fleet, on="jj")
     RunnerBinding.objects.filter(session=session).update(pending_question=None)
     assert _feed_status(fleet["jj"], session) == ""
+
+
+def test_an_agents_cloud_session_is_on_its_owners_feed(fleet, monkeypatch):
+    """Nobody sits at a cloud box, so a manual session an agent opened there — a
+    dispatch waiting for approval — is the agent owner's (Jonathan, 2026-10-07).
+    Before, it was NOT_YOURS for everyone and reached no one's feed."""
+    agent = fleet["agent"]
+    agent.owner = fleet["jj"]
+    agent.save(update_fields=["owner"])
+    fleet["runners"]["cloud"] = Runner.objects.create(
+        name="cloud-ec2-2", kind=Runner.CLOUD, host="ec2", owner=fleet["sarvesh"],
+        workspace=fleet["ws"], status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
+    )
+    session = _blocked_session(fleet, on="cloud", key="dispatch")
+    monkeypatch.setattr(feed, "driving_turn", lambda s: ("manual", "api"))
+    assert _feed_status(fleet["jj"], session) == feed.WAITING
+    assert _pushed_to(monkeypatch, session) == ["jj"]
+
+
+def test_every_session_row_carries_its_turn_mode(fleet):
+    """The sessions list labels each card with its mode, not only the feed."""
+    from apps.harness.models import Turn
+
+    session = _blocked_session(fleet, on="jj")
+    Turn.objects.create(agent=fleet["agent"], origin="canopy_scheduler", idempotency_key="t1",
+                        status=Turn.DONE, session_key="spark", turn_mode="auto",
+                        claimed_by=fleet["runners"]["jj"])
+    c = Client()
+    c.force_login(fleet["jj"])
+    row = next(r for r in c.get("/api/canopy-sessions/").json() if r["id"] == str(session.id))
+    assert row["turn_mode"] == "auto"

@@ -1,5 +1,6 @@
 """A turn that ran on the cloud runner, or reached an agent by email, can be found —
-and a cloud session is open exactly while a turn on it is in flight (#1140).
+and a cloud session stays open after its turn finishes, until it is closed or its
+runner is retired.
 
 canopy-web#1087 (2026-10-03): an ACE email turn ran on cloud-ec2-1 and finished with
 a reply drafted for approval. Two things hid it:
@@ -92,50 +93,36 @@ def test_a_cloud_session_is_listed_while_its_turn_runs():
     assert "turn c1" in _active(user)
 
 
-def test_a_cloud_session_closes_the_moment_its_last_turn_finishes():
-    """#1140: once the runner is done with it, it is not an 'active' session to pick
-    back up later — not for 3 days, not at all. That held even for a manual turn
-    whose last word was a draft awaiting approval (#1087)."""
+def test_a_cloud_session_waiting_for_approval_stays_listed_after_its_turn():
     user, ws, agent = _ctx()
     cloud = _runner(ws, user, "cloud-ec2-1", reports=False, kind=Runner.CLOUD)
-    _recorded(agent, cloud, "c1", started_ago=dt.timedelta(minutes=10),
+    _recorded(agent, cloud, "c1", started_ago=dt.timedelta(days=2),
               said="Draft reply to Ali — waiting for your approval.",
-              said_ago=dt.timedelta(seconds=30))
+              said_ago=dt.timedelta(days=2))
     _turn(cloud, "c1", Turn.DONE, agent=agent)
-    assert "turn c1" not in _active(user)
-    closed = _active(user, state="archived", reply="true")
-    assert closed["turn c1"]["last_reply"].startswith("Draft reply to Ali")
+    rows = _active(user, reply="true")
+    assert rows["turn c1"]["last_reply"].startswith("Draft reply to Ali")
 
 
-def test_a_session_with_no_turn_left_is_closed_even_if_it_never_spoke():
-    """The empty shell a turn that died at birth leaves behind."""
+def test_closing_a_cloud_session_takes_it_off_the_list():
+    from apps.canopy_sessions.models import Session
+
     user, ws, agent = _ctx()
     cloud = _runner(ws, user, "cloud-ec2-1", reports=False, kind=Runner.CLOUD)
-    _recorded(agent, cloud, "c1", started_ago=dt.timedelta(seconds=5))
-    _turn(cloud, "c1", Turn.FAILED, agent=agent)
-    assert "turn c1" not in _active(user)
-
-
-def test_replying_to_a_closed_cloud_session_opens_it_for_that_turn():
-    user, ws, agent = _ctx()
-    cloud = _runner(ws, user, "cloud-ec2-1", reports=False, kind=Runner.CLOUD)
-    session = _recorded(agent, cloud, "c1", started_ago=dt.timedelta(days=2))
+    session = _recorded(agent, cloud, "c1", started_ago=dt.timedelta(minutes=10))
     _turn(cloud, "c1", Turn.DONE, agent=agent)
-    assert "turn c1" not in _active(user)
-    reply = _turn(cloud, "", Turn.QUEUED, session=session)
-    assert "turn c1" in _active(user)
-    Turn.objects.filter(pk=reply.pk).update(status=Turn.DONE)
+    Session.objects.filter(pk=session.pk).update(status=Session.ARCHIVED)
     assert "turn c1" not in _active(user)
 
 
-def test_another_sessions_turn_does_not_keep_this_one_open():
+def test_a_retired_cloud_runners_sessions_are_closed():
+    """Nothing can continue a session on a box that is gone."""
     user, ws, agent = _ctx()
     cloud = _runner(ws, user, "cloud-ec2-1", reports=False, kind=Runner.CLOUD)
-    _recorded(agent, cloud, "c1", started_ago=dt.timedelta(minutes=10))
-    _recorded(agent, cloud, "c2", started_ago=dt.timedelta(minutes=1))
-    _turn(cloud, "c2", Turn.RUNNING, agent=agent)
-    rows = _active(user)
-    assert "turn c2" in rows and "turn c1" not in rows
+    _recorded(agent, cloud, "c1", started_ago=dt.timedelta(days=60))
+    Runner.objects.filter(pk=cloud.pk).update(status=Runner.RETIRED)
+    assert "turn c1" not in _active(user)
+    assert "turn c1" in _active(user, state="archived")
 
 
 def test_a_laptop_session_still_retires_on_the_short_window():
@@ -235,16 +222,16 @@ def _web_chat_on(runner, user, agent, title, *, seen_ago, said_ago=None):
     return session
 
 
-def test_a_web_chat_the_cloud_ran_is_open_only_while_a_turn_runs():
-    """Labs, 2026-10-05: a hal web chat, quiet for 67 days on a since-retired cloud
-    runner, was still listed as active. Now: open while a turn on it is in flight."""
+def test_a_web_chat_the_cloud_ran_stays_open_until_its_runner_is_retired():
+    """Labs, 2026-10-05: a hal web chat was listed 67 days after its last word, on a
+    cloud runner long since gone. Idle is not gone; a retired runner is."""
     user, ws, agent = _ctx()
     cloud = _runner(ws, user, "cloud-ec2-1", reports=False, kind=Runner.CLOUD)
-    idle = _web_chat_on(cloud, user, agent, "idle web chat", seen_ago=dt.timedelta(minutes=5),
-                        said_ago=dt.timedelta(minutes=5))
-    busy = _web_chat_on(cloud, user, agent, "busy web chat", seen_ago=dt.timedelta(days=30))
-    _turn(cloud, "", Turn.RUNNING, session=busy)
-    rows = _active(user)
-    assert "busy web chat" in rows and "idle web chat" not in rows
+    idle = _web_chat_on(cloud, user, agent, "idle web chat", seen_ago=dt.timedelta(days=5),
+                        said_ago=dt.timedelta(days=5))
+    assert "idle web chat" in _active(user)
+    Runner.objects.filter(pk=cloud.pk).update(status=Runner.RETIRED)
+    assert "idle web chat" not in _active(user)
     assert "idle web chat" in _active(user, state="archived")
-    assert idle.status == "active"  # derived, never written: a reply reopens it
+    idle.refresh_from_db()
+    assert idle.status == "active"  # derived, never written

@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 
 from django.apps import apps
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Q
 from django.utils import timezone
 
 # How long a runner-discovered session survives with no runner sighting before it
@@ -40,12 +40,14 @@ SESSION_LIVE_WINDOW = dt.timedelta(minutes=3)
 
 # A box that posts NO wholesale reports (the cloud runner) has no open-task set to
 # observe: it runs each turn as one Claude process that EXITS when the turn ends. So
-# there, "open on the runner" means exactly "a turn on this session is queued or
-# running" — and when the last one finishes the session is closed, the cloud
-# equivalent of a laptop task being closed. It used to stay listed for 3 days after
-# it last spoke (CLOUD_SESSION_LIVE_WINDOW, #1087/#1155) so a drafted reply could be
-# picked back up later; there is no such thing (Jonathan, 2026-10-05, #1140). A
-# reply to a closed session still works — it queues a turn, which opens it again.
+# there, a finished turn says nothing about whether the SESSION is done — a manual
+# turn ends by asking for approval, and its session is exactly the one you need to
+# find. #1140 closed a cloud session the moment its last turn ended; that hid every
+# session waiting on a person (Jonathan, 2026-10-07: "the sessions weren't done").
+# So a cloud-held session stays open until someone closes or archives it, or its
+# runner is retired (the box is gone; nothing can continue it there). The list shows
+# each session's turn mode, which is how an auto session that just ran and a manual
+# one waiting on you are told apart.
 
 
 def stale_cutoff(now=None):
@@ -88,8 +90,8 @@ def unseen_q() -> Q:
     # qualification. Narrowing this leg would resurrect the 47 zombies of 2026-07-25.
     #
     # Except on the cloud runner, which records a session per turn and never reports
-    # it again: there, the session is open exactly while a turn on it is in flight
-    # (see the module note above `stale_cutoff`). Gated on the runner's KIND, not on
+    # it again: there, the session is open until it is closed or its runner is
+    # retired (see the module note above `stale_cutoff`). Gated on the runner's KIND, not on
     # its never having reported: a laptop that went quiet before
     # `sessions_reported_at` existed has no stamp either, and its sessions are
     # exactly the zombies this leg retires. A session with no binding, or whose
@@ -97,20 +99,10 @@ def unseen_q() -> Q:
     unobserved = Q(runner_binding__runner__kind="cloud") & Q(
         runner_binding__runner__sessions_reported_at__isnull=True
     )
-    Turn = apps.get_model("harness", "Turn")
-    in_flight = Exists(
-        Turn.objects.filter(status__in=Turn.NON_TERMINAL).filter(
-            # A chat reply names its session; a dispatched turn's session was
-            # recorded under the Claude session id the turn carries.
-            Q(chat_session=OuterRef("pk"))
-            | (Q(session_key=OuterRef("runner_binding__session_key"))
-               & Q(claimed_by=OuterRef("runner_binding__runner"))
-               & ~Q(session_key=""))
-        )
-    )
-    cloud_quiet = ~Q(in_flight)
+    Runner = apps.get_model("harness", "Runner")
+    cloud_gone = Q(runner_binding__runner__status=Runner.RETIRED)
     runner_unseen = Q(origin="runner") & (
-        (~unobserved & quiet) | (unobserved & cloud_quiet)
+        (~unobserved & quiet) | (unobserved & cloud_gone)
     )
 
     # NEW, and gated on an OBSERVER existing. A sent web chat is held and reported
@@ -121,15 +113,15 @@ def unseen_q() -> Q:
     # 3 minutes after its turn STARTED, mid-run. `sessions_reported_at` is that gate; see Runner for why it is `isnull`
     # rather than a freshness window.
     #
-    # And held by the cloud runner, the same rule the runner leg uses: open while a
-    # turn on it is in flight, closed when the last one ends. (Before #1155 it had no
-    # end at all — labs listed a hal chat 67 days after its last word.)
+    # And held by the cloud runner, the same rule the runner leg uses: open until it
+    # is closed, or its runner is retired. (Labs once listed a hal chat 67 days after
+    # its last word, on a cloud runner long since gone — the retired gate ends that.)
     web_unseen = (
         ~Q(origin="runner")
         & Q(runner_binding__isnull=False)
         & (
             (Q(runner_binding__runner__sessions_reported_at__isnull=False) & quiet)
-            | (unobserved & cloud_quiet)
+            | (unobserved & cloud_gone)
         )
     )
 

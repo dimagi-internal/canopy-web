@@ -205,8 +205,8 @@ class SessionOut(Schema):
     last_reply: str = ""
     agent_spoke_last: bool = False
     # The mode (`manual` / `auto`) and origin of the newest claimed turn that drove
-    # this session — also feed-only (`?reply=true`), "" otherwise or when no turn
-    # has been claimed. Lets the feed hold back work an agent did on its own.
+    # this session, on every row; "" when no turn has been claimed. Lets the feed
+    # hold back work an agent did on its own, and the list label each card.
     turn_mode: str = ""
     turn_origin: str = ""
     # Is this session on the CALLER's supervisor feed — feed-only (`?reply=true`).

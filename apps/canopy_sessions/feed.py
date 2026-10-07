@@ -16,7 +16,9 @@ fired it (a dialog appeared; a turn finished) while the list has to read it:
     dialog, or the agent had the last word and has stopped.
   - `held` — why a waiting session is still not on this person's feed:
       NOT_YOURS  it runs on somebody else's runner and they did not start it —
-                 the box's owner drives it and sees it on their own feed;
+                 the box's owner drives it and sees it on their own feed. A
+                 cloud box has nobody at it, so a session an agent opened there
+                 belongs to the agent's owner;
       PARKED     its runner is paused or offline, so a reply would only queue;
       AUTO       an agent drove it on its own (auto mode, not a chat), so it
                  did not stop to wait for anybody. The feed can show these on
@@ -94,7 +96,21 @@ def _is_yours(viewer, session, runner) -> bool:
     # runner admin may fix a colleague's box, but the conversations on it are
     # still the colleague's. A runner with no owner belongs to nobody's feed
     # (a NULL never means allow — see can_administer_runner).
+    #
+    # Except on a cloud runner: nobody sits at that box, so a session an agent
+    # opened there (a dispatch, a scheduled turn — no creator) is its owner's to
+    # drive. Without this a manual cloud session waiting for approval reached no
+    # one's feed (Jonathan, 2026-10-07).
+    from apps.harness.models import Runner
+
     viewer_id = getattr(viewer, "pk", None)
     if viewer_id is None:
         return False
-    return session.created_by_id == viewer_id or runner.owner_id == viewer_id
+    if session.created_by_id == viewer_id or runner.owner_id == viewer_id:
+        return True
+    return (
+        runner.kind == Runner.CLOUD
+        and session.created_by_id is None
+        and session.agent_id is not None
+        and session.agent.owner_id == viewer_id
+    )

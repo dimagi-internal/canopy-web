@@ -1874,7 +1874,8 @@ def list_visible_sessions(user) -> list[SessionView]:
 
     Three conditions, all polled or explicit — none of them "the FK went null":
       * the session is not explicitly ARCHIVED (a decision, effective immediately),
-      * its binding was in a report within SESSION_LIVE_WINDOW (the polled clock),
+      * its binding was in a report within SESSION_LIVE_WINDOW (the polled clock) —
+        or it is held by a cloud runner, which never re-reports a session,
       * and its runner is still heartbeating (Runner.live_status).
     The last two overlap by design: a runner that stops heartbeating also stops
     reporting, so the strictest of the two wins and a dead box's rows go quiet fast.
@@ -1896,7 +1897,13 @@ def list_visible_sessions(user) -> list[SessionView]:
             # recent messages.
             session__in=Session.objects.filter(session_access.visible_session_q(user)).values("pk"),
             session__status=Session.ACTIVE,
-            live_seen_at__gte=stale_cutoff(),
+        )
+        # The polled clock only means something on a box that reports. A cloud
+        # runner records a session once per turn and never again, so there the
+        # session stays open until it is closed (staleness.py's module note).
+        .filter(
+            Q(live_seen_at__gte=stale_cutoff())
+            | Q(runner__kind=Runner.CLOUD, runner__sessions_reported_at__isnull=True)
         )
         .select_related("runner", "session", "session__agent")
         .order_by("-last_interacted_at")
