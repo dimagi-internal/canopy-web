@@ -533,18 +533,3 @@ export function ideaHue(index: number): string {
 export function ideaLetter(index: number): string {
   return String.fromCharCode(65 + (index % 26))
 }
-
-/** "Oct 6, 16:34 – 16:42": when a step went out and when its last answer came
- * back (the end is dropped while any answer is still out). */
-export function stepWindow(cells: HuddleCell[]): string {
-  const starts = cells.map((c) => c.created_at).filter(Boolean).map((t) => new Date(t as string))
-  if (!starts.length) return ''
-  const start = new Date(Math.min(...starts.map((d) => d.getTime())))
-  const day = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-  const hm = (d: Date) => d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-  const done = cells.every((c) => c.finished_at)
-  if (!done) return `${day}, ${hm(start)} – still answering`
-  const end = new Date(Math.max(...cells.map((c) => new Date(c.finished_at as string).getTime())))
-  const endDay = end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-  return `${day}, ${hm(start)} – ${endDay === day ? '' : endDay + ', '}${hm(end)}`
-}

@@ -2,7 +2,8 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import type { Huddle, HuddleCell } from '@/api/huddles'
 import { AnswerPill } from './BlockView'
-import { FlowLegend, HuddleGrid, MemberAvatar } from './HuddleGrid'
+import { HuddleSequence } from './HuddleSequence'
+import { MemberAvatar } from './MemberAvatar'
 import { Linkified } from './HuddleOutcome'
 import { HuddleStory } from './HuddleStory'
 import {
@@ -662,15 +663,7 @@ export function HuddleConversation({ huddle }: { huddle: Huddle }) {
           </div>
         </details>
       )}
-      {view === 'map' && (
-        // The map breaks out of the page column: it is as wide as the team.
-        <div className="relative left-1/2 w-[min(calc(100vw-3rem),1800px)] -translate-x-1/2">
-          <div className="mb-3 hidden flex-wrap items-center justify-end gap-x-4 gap-y-2 md:flex">
-            <FlowLegend leader={huddle.leader} />
-          </div>
-          <HuddleGrid huddle={huddle} />
-        </div>
-      )}
+      {view === 'map' && <HuddleSequence huddle={huddle} />}
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { Huddle } from '@/api/huddles'
 import { AnswerPill } from './BlockView'
-import { MemberAvatar } from './HuddleGrid'
+import { MemberAvatar } from './MemberAvatar'
 import { TaskLine } from './HuddleOutcome'
 import type { Output } from './outcomeSummary'
 import { pairQA, pitchesOf, proposalThreads, type ProposalThread } from './conversationModel'

@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import type { HuddleSummary } from '@/api/huddles'
 import { relativeTime } from '@/components/activity/turnLog'
-import { MemberAvatar } from './HuddleGrid'
+import { MemberAvatar } from './MemberAvatar'
 import { memberHue, roundName, roundsToShow } from './huddleModel'
 
 /** The huddles index, one card per huddle — shared by /w/:ws/huddles and an

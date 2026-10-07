@@ -179,7 +179,7 @@ describe('By idea and the switcher', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Diagram' }))
     expect(screen.getByTestId('where').textContent).toContain('view=map')
     expect(screen.getByRole('button', { name: 'Diagram' }).getAttribute('aria-pressed')).toBe('true')
-    expect(container.querySelector('[data-card="eva-1"]')).toBeTruthy()
+    expect(container.querySelector('[data-message="reply-eva-1"]')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Full conversation' }))
     expect(screen.getByTestId('where').textContent).toContain('view=agent')
     fireEvent.click(screen.getByRole('button', { name: 'By idea' }))
@@ -198,18 +198,24 @@ describe('By idea and the switcher', () => {
     expect(screen.getByRole('button', { name: 'Diagram' }).getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('the diagram shows the order of the flow, with nothing colour-coded to remember', () => {
+  it('the diagram is a sequence: who said what to whom, in the order it happened', () => {
     const { container } = renderAt('?view=map')
-    // The key is time, a question and an answer — no colour per kind of answer, no toggle.
-    const legend = container.querySelector('[data-legend]') as HTMLElement
-    expect(legend.textContent).toMatch(/Time runs top to bottom/)
-    expect(legend.textContent).not.toMatch(/I'm in|with changes|Not in|agreed/)
-    expect(screen.queryByRole('checkbox')).toBeNull()
-    // Every step's row says when it happened.
-    for (const r of [1, 2, 3]) {
-      expect(container.querySelector(`[data-card="leader-${r}"] [data-step-time]`)?.textContent).toMatch(/\d/)
-    }
-    // At rest, no idea-to-answer links are drawn at all.
-    expect(container.querySelector('[data-arc-layer="trace"]')).toBeNull()
+    const seq = container.querySelector('[data-sequence]') as HTMLElement
+    // One lane per participant: you, the leader, then each agent.
+    expect([...seq.querySelectorAll('[data-lane]')].map((n) => n.getAttribute('data-lane'))).toEqual(['you', 'ada', 'ace', 'echo', 'eva', 'hal'])
+    // Steps in order, the result last.
+    expect([...seq.querySelectorAll('[data-step]')].map((n) => n.getAttribute('aria-label'))).toEqual([
+      "What everyone's working on", 'Ideas', "Who's in", 'The result',
+    ])
+    // Each step opens with the leader asking, then the answers.
+    const step2 = [...seq.querySelectorAll('[data-step="2"] [data-message]')]
+    expect(step2[0].getAttribute('data-kind')).toBe('ask')
+    expect(step2.slice(1).every((n) => n.getAttribute('data-kind') === 'reply')).toBe(true)
+    expect(seq.querySelector('[data-message="result"]')?.textContent).toMatch(/Ada → you · 3 ideas sent to you to decide · 2 parked/i)
+    // No engine words, and a click opens the full text.
+    expect(seq.textContent).not.toMatch(/co-?sign|\bamend|roundtable/i)
+    const evaIdeas = seq.querySelector('[data-message="reply-eva-2"] button') as HTMLElement
+    fireEvent.click(evaIdeas)
+    expect(seq.querySelector('[data-message="reply-eva-2"] [data-detail]')?.textContent).toContain('Diagnose chrome-sales MCP connect failures')
   })
 })
