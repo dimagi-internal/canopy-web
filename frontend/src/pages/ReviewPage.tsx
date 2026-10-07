@@ -1058,7 +1058,11 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
   const [choices, setChoices] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {}
     for (const dec of review.request_json.decisions ?? []) {
-      initial[dec.id] = dec.recommended ?? dec.options[0] ?? ''
+      // The narrative verdict is never pre-chosen: with "approve" pre-selected, a
+      // member who only meant to fix a word met one enabled button — "Submit —
+      // approve & build" — and one click locked the build plan (canopy-web#1266).
+      initial[dec.id] =
+        dec.id === 'narrative-verdict' ? '' : (dec.recommended ?? dec.options[0] ?? '')
     }
     return initial
   })
@@ -1244,7 +1248,9 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
         <div className="flex items-start gap-3 flex-wrap">
           <div>
             <h1 className="text-xl font-semibold text-foreground">
-              {req.gate === 'concept_change'
+              {canSuggest
+                ? 'Suggest edits to this demo story'
+                : req.gate === 'concept_change'
                 ? 'Approve the story before we build it'
                 : req.gate === 'external_release'
                   ? 'Approve for release'
@@ -1331,8 +1337,9 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
         <>
       {!readOnly && (
         <p className="text-xs text-foreground-secondary rounded border border-input bg-card/60 px-3 py-2">
-          Every field on this page is editable — click any text to change it, drag the build
-          sequence to reorder, then approve or send back at the bottom.
+          {canSuggest
+            ? 'Click any narration to change its wording, then Send suggestions at the bottom.'
+            : 'Every field on this page is editable — click any text to change it, drag the build sequence to reorder, then approve or send back at the bottom.'}
         </p>
       )}
       {/* The demo — the cohesive story + the one problem it all serves */}
@@ -1649,7 +1656,11 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
               dispatch({ type: 'APPEND_OP', op: { op: 'set-overall-feedback', text: e.target.value } })
             }
             rows={2}
-            placeholder="Any overall feedback for the re-draft (optional)"
+            placeholder={
+              canSuggest
+                ? 'Anything else the team should know (optional)'
+                : 'Any overall feedback for the re-draft (optional)'
+            }
           />
         </section>
       )}
@@ -1705,8 +1716,10 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
         </p>
       )}
 
-      {/* Your decision — single decision zone, immediately above Submit */}
-      {narrativeVerdictDecision && (
+      {/* Your decision — single decision zone, immediately above Submit. A guest
+          only suggests, so they get no decision: showing them "Approve & continue"
+          under a banner saying they approve nothing is the contradiction #1267 is. */}
+      {narrativeVerdictDecision && !canSuggest && (
         <section>
           <h2 className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider mb-3">
             {readOnly ? 'Decision (submitted)' : 'Your decision'}
@@ -1766,9 +1779,11 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
                 : 'Submitting…'
               : canSuggest
                 ? 'Send suggestions'
-                : resolvedChoice('narrative-verdict') === 'redraft'
-                  ? 'Submit — send back to re-draft'
-                  : 'Submit — approve & build'}
+                : narrativeVerdictDecision && !resolvedChoice('narrative-verdict')
+                  ? 'Choose approve or re-draft above'
+                  : resolvedChoice('narrative-verdict') === 'redraft'
+                    ? 'Submit — send back to re-draft'
+                    : 'Submit — approve & build'}
           </button>
           <span className="text-[11px] text-muted-foreground">
             {canSuggest
