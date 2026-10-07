@@ -79,3 +79,18 @@ def test_safe_ext_ids_keeps_within_the_column_length():
     long = "x" * 64
     out = mig.safe_ext_ids([(1, 7, long), (2, 7, long.upper())])
     assert out == {2: "X" * 62 + "-2"} and len(out[2]) == 64
+
+
+def test_safe_ext_ids_an_older_slash_id_takes_the_dashed_id_from_a_newer_row():
+    # The shape that needs the case-sensitive unique dropped BEFORE the data step:
+    # 'a/b' is saved as 'a-b' while the newer 'a-b' still holds it.
+    assert mig.safe_ext_ids([(1, 7, "a/b"), (2, 7, "a-b")]) == {1: "a-b", 2: "a-b-2"}
+
+
+def test_the_case_sensitive_unique_is_dropped_before_the_data_step():
+    ops = mig.Migration.operations
+    names = [type(o).__name__ for o in ops]
+    remove = next(i for i, o in enumerate(ops) if type(o).__name__ == "RemoveConstraint")
+    data = next(i for i, o in enumerate(ops)
+                if type(o).__name__ == "RunPython" and o.code is mig.forward_tasks)
+    assert remove < data and names[-1] == "AddConstraint"

@@ -128,6 +128,11 @@ class Migration(migrations.Migration):
             name="ask_closed_at",
             field=models.DateTimeField(blank=True, null=True),
         ),
+        # The case-sensitive unique goes BEFORE the renames: forward_tasks saves
+        # row by row, so an older 'a/b' becomes 'a-b' while a newer 'a-b' still
+        # holds that id (it is renamed 'a-b-2' a save later). The case-insensitive
+        # constraint that replaces it is added at the end (7), once the data fits.
+        migrations.RemoveConstraint(model_name="agenttask", name="uniq_agent_task_extid"),
         migrations.RunPython(forward_tasks, migrations.RunPython.noop),
         migrations.RenameField(model_name="agenttask", old_name="dispatch", new_name="on_approve"),
         migrations.RemoveField(model_name="agenttask", name="uuid"),
@@ -208,7 +213,6 @@ class Migration(migrations.Migration):
         migrations.DeleteModel(name="AgentWorkProduct"),
         # (7) ext_id unique per agent IGNORING CASE — lookups are iexact, so "t1"
         # beside "T1" would leave one unreachable. forward_tasks made the data fit.
-        migrations.RemoveConstraint(model_name="agenttask", name="uniq_agent_task_extid"),
         migrations.AddConstraint(
             model_name="agenttask",
             constraint=models.UniqueConstraint(
