@@ -197,6 +197,25 @@ def _record_email_contact(agent, origin_ref):
     )
 
 
+def address_holder(email: str, workspace_id: str):
+    """`(user, role)` for the canopy user who provably holds `email`, and their
+    role in `workspace_id` — `(None, None)` when no single user holds it, and
+    `(user, None)` when one does but is not a member.
+
+    The lookup `_member_behind_email` links a sender with, shared with the caller
+    envelope's `unproven_member` note so the two cannot drift. It says WHO an
+    address belongs to and nothing about whether a given message proves it:
+    answering that (this message's alignment) is each caller's own gate, and
+    finding a user here grants nothing.
+    """
+    from apps.contacts import services as contacts
+
+    user = contacts.user_for_verified_email(email)
+    if user is None:
+        return None, None
+    return user, wsvc.member_role(user, workspace_id)
+
+
 def _member_behind_email(agent, contact, subject: str = ""):
     """The canopy user who sent this email, when that can be PROVEN — else None.
 
@@ -231,7 +250,7 @@ def _member_behind_email(agent, contact, subject: str = ""):
 
     if contact is None or contact.last_auth_result not in Contact.EMAIL_ALIGNED or not contact.email:
         return None
-    user = contacts.user_for_verified_email(contact.email)
+    user, role = address_holder(contact.email, agent.workspace_id)
     if user is None:
         from apps.workspaces.system_accounts import account_for_inbound
 
@@ -243,8 +262,9 @@ def _member_behind_email(agent, contact, subject: str = ""):
         return account.user
     if contact.user_id is not None and contact.user_id != user.pk:
         return None
-    # A question about the SENDER's membership, asked through the one authorizer.
-    if user is None or not wsvc.is_member(user, agent.workspace_id):
+    # A question about the SENDER's membership, asked through the one authorizer
+    # (`address_holder` reads the role with `wsvc.member_role`).
+    if role is None:
         return None
     if contact.user_id is None:
         contacts.promote_to_user(contact, user)

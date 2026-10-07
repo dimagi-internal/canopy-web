@@ -194,6 +194,48 @@ def _contact(contact) -> dict | None:
     }
 
 
+#: The message grades that would have tied the sender to their account.
+_ALIGNED_NEEDS = (Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED)
+
+
+def _unproven_member(turn, agent) -> dict | None:
+    """The member an unaligned email's address belongs to, or None.
+
+    Only for an email turn whose initiator stayed a CONTACT (not blocked) because
+    this message's grade is not in `Contact.EMAIL_ALIGNED`, where the address is
+    held by exactly one canopy user who is a member of the agent's workspace —
+    the same lookup `_member_behind_email` links with (`address_holder`). Reads
+    the turn's own grade, never the contact's best: the question is about THIS
+    message. Informs, does not enforce.
+    """
+    if agent is None or turn.origin != "email" or turn.initiator_kind != who.CONTACT:
+        return None
+    contact = turn.initiator_contact if turn.initiator_contact_id else None
+    if contact is None or contact.is_blocked or not contact.email:
+        return None
+    grade = turn.initiator_assurance or Contact.AUTH_NONE
+    if grade in Contact.EMAIL_ALIGNED:
+        return None
+    from .services import address_holder
+
+    user, role = address_holder(contact.email, agent.workspace_id)
+    if user is None or role is None:
+        return None
+    # Linked to a different account already: that is not this member's address.
+    if contact.user_id is not None and contact.user_id != user.pk:
+        return None
+    return {
+        "email": contact.email,
+        "role": role,
+        "this_message_grade": grade,
+        "needs": list(_ALIGNED_NEEDS),
+        "note": ("This address belongs to a member of the agent's workspace, but this "
+                 "message could not be tied to their account, so they were treated as a "
+                 "contact; the fix is their domain's mail authentication (aligned DKIM or "
+                 "DMARC), not their access."),
+    }
+
+
 def build(turn) -> dict:
     """The envelope for one turn. Pure read; safe to call on every claim."""
     agent = _agent_of(turn)
@@ -215,6 +257,14 @@ def build(turn) -> dict:
         "verified": _verified(turn),
         "relationship": rel,
         "contact": _contact(turn.initiator_contact) if turn.initiator_contact_id else None,
+        # Non-null when this email came from an address that belongs to a MEMBER of
+        # the agent's workspace, but THIS message could not be tied to them (it is
+        # not DMARC- or DKIM-aligned), so they were treated as a contact. Without it
+        # a confined session cannot tell its own editor from a stranger
+        # (canopy-web#1265). Information only: it grants nothing, changes no
+        # `relationship`/`profile`/`granted_by`, and must not be read as proof of
+        # who sent the message — the whole point is that it is NOT proven.
+        "unproven_member": _unproven_member(turn, agent),
         "conversation": {
             "session_id": str(cs.pk) if cs is not None else None,
             "thread_id": str(ref.get("thread_id") or "") or None,
