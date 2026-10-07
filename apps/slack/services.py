@@ -504,7 +504,7 @@ def handle_message(inbound: Inbound) -> Outcome:
     if not prompt and not inbound.files and not joining:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
     title = prompt or "Slack thread"
-    minutes, ask = None, prompt
+    win, ask = None, prompt
     if window.has_flag(prompt):
         # The agent's tenant decides, not the Slack's: a Slack can serve several.
         link = SlackWorkspaceLink.objects.filter(installation=installation,
@@ -514,17 +514,19 @@ def handle_message(inbound: Inbound) -> Outcome:
                            "A workspace owner can turn it on in canopy's Slack settings.",
                            agent=agent, workspace_id=agent.workspace_id)
         try:
-            minutes, ask = window.parse(prompt, max_minutes=link.history_max_minutes)
+            win, ask = window.parse(prompt, max_minutes=link.history_max_minutes,
+                                    tz=lambda: str(slack_profile(installation, inbound.slack_user_id).get("tz") or ""))
         except window.HistoryFlagError as e:
             return Outcome(WINDOW_REFUSED, str(e), agent=agent, workspace_id=agent.workspace_id)
-    if minutes is not None:
-        prompt, refusal = _with_window(installation, principal, agent, inbound, minutes, ask)
+    if win is not None:
+        prompt, refusal = _with_window(installation, principal, agent, inbound, win, ask)
         if refusal is not None:
             return refusal
-        title = f"Slack: last {minutes} min" + (f" — {ask}" if ask else "")
+        title = (f"Slack: since {win.since}" if win.since else f"Slack: last {win.minutes} min") \
+            + (f" — {ask}" if ask else "")
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
                                       title=title)
-    if created and minutes is None and inbound.thread_ts and not inbound.is_dm:
+    if created and win is None and inbound.thread_ts and not inbound.is_dm:
         # Mentioned partway into a thread: the agent starts with the thread so
         # far, not just the line that named it. Only on creation — from here on
         # every message in the thread reaches the session as it is posted.
@@ -556,8 +558,8 @@ def _first_closed_notice(session: Session, slack_user_id: str) -> bool:
 
 
 def _with_window(installation: SlackInstallation, principal: Principal, agent: Agent,
-                 inbound: Inbound, minutes: int, ask: str) -> tuple[str, Outcome | None]:
-    """The ask, with the channel's last `minutes` in front of it (see `window`).
+                 inbound: Inbound, win: window.Window, ask: str) -> tuple[str, Outcome | None]:
+    """The ask, with the channel's last `win.minutes` in front of it (see `window`).
 
     Members only: the window can hold a private channel's messages, and a
     contact's session is one no member can open — nobody could check what it
@@ -571,15 +573,15 @@ def _with_window(installation: SlackInstallation, principal: Principal, agent: A
                            f"`{agent.slug}` in the channel the conversation is in.", agent=agent,
                            workspace_id=agent.workspace_id)
     try:
-        lines = window.fetch(installation.bot_token, channel_id=inbound.channel_id, minutes=minutes,
+        lines = window.fetch(installation.bot_token, channel_id=inbound.channel_id, minutes=win.minutes,
                              thread_ts=inbound.thread_ts, skip_ts=inbound.ts)
     except client.SlackApiError as e:
-        _record_window(agent, principal, inbound, minutes, 0, error=e.error)
+        _record_window(agent, principal, inbound, win, 0, error=e.error)
         return "", Outcome(WINDOW_REFUSED, f"canopy couldn't read this channel ({e.error}). "
                            "If it's private, invite the canopy app to it first.", agent=agent,
                            workspace_id=agent.workspace_id)
-    _record_window(agent, principal, inbound, minutes, window.count(lines))
-    material = window.render(installation.bot_token, lines, channel_id=inbound.channel_id, minutes=minutes)
+    _record_window(agent, principal, inbound, win, window.count(lines))
+    material = window.render(installation.bot_token, lines, channel_id=inbound.channel_id, win=win)
     return f"{material}\n\n{ask or window.DEFAULT_ASK}", None
 
 
@@ -633,7 +635,7 @@ def _record_thread_read(agent: Agent, principal: Principal, inbound: Inbound, n:
         logger.exception("could not record a Slack thread read")
 
 
-def _record_window(agent: Agent, principal: Principal, inbound: Inbound, minutes: int, n: int,
+def _record_window(agent: Agent, principal: Principal, inbound: Inbound, win: window.Window, n: int,
                    *, error: str = "") -> None:
     """Every read leaves a row: who asked, which channel, how far back, how much."""
     from apps.events import services as events_services
@@ -645,11 +647,11 @@ def _record_window(agent: Agent, principal: Principal, inbound: Inbound, minutes
             "kind": "slack.window_read" if not error else "slack.window_failed",
             "level": Event.INFO if not error else Event.WARN,
             "key": f"window:{inbound.channel_id}:{inbound.ts}",
-            "summary": (f"{principal.user.email} read {minutes} min of <#{inbound.channel_id}> "
+            "summary": (f"{principal.user.email} read {window.describe(win)} of <#{inbound.channel_id}> "
                         f"for {agent.slug}: " + (f"failed ({error})" if error else f"{n} message(s)"))[:500],
             "payload": {"team": inbound.team_id, "channel": inbound.channel_id, "ts": inbound.ts,
-                        "user": principal.user.pk, "agent": agent.slug, "minutes": minutes,
-                        "messages": n, "error": error},
+                        "user": principal.user.pk, "agent": agent.slug, "minutes": win.minutes,
+                        "since": win.since, "messages": n, "error": error},
         }], workspace=agent.workspace)
     except Exception:  # noqa: BLE001 — bookkeeping must not fail the ask
         logger.exception("could not record a Slack window read")

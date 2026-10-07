@@ -140,6 +140,17 @@ deferred (below).
    turn's prompt fenced as quoted Slack content, so the agent reads it as
    material, not instructions.
 
+*Amended 2026-10-07 (canopy-web#1255):* the window can also be given as a clock
+time on the asker's own clock — `--history 9am`, `--history 9:30pm`,
+`--history 14:30` (24-hour needs the colon; a bare number is still minutes). The
+time is read in the asker's Slack profile timezone (`users.info` `tz`) as its most
+recent past occurrence, so `--history 5pm` at 8am means yesterday 5pm. It is
+converted to minutes and checked against the same workspace limit — refused, not
+clamped. No timezone on the profile, an unknown zone, `9 am` split in two, or an
+impossible time (`13pm`) is refused; canopy never falls back to UTC. The header
+handed to the agent names the window as the asker said it ("since 9:00 AM EDT
+(52 min)"); the message lines themselves stay in UTC.
+
 **Known gap, accepted for v1:** a reply posted in the window to a thread whose
 *parent* is older than the window is missed (Slack's history call returns
 parents only, by parent time). Closing it means scanning parents further back

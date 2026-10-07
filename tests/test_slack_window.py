@@ -104,7 +104,7 @@ def _turn() -> Turn:
     ("--history 120", 120, ""),                       # two hours: the default cap
 ])
 def test_the_flag_is_recognised(text, minutes, ask):
-    assert window.parse(text, max_minutes=120) == (minutes, ask)
+    assert window.parse(text, max_minutes=120) == (window.Window(minutes), ask)
 
 
 @pytest.mark.parametrize("text", [
@@ -132,9 +132,113 @@ def test_anything_else_is_an_ordinary_ask(text):
 
 
 def test_the_cap_is_the_callers_policy():
-    assert window.parse("--history 180 catch me up", max_minutes=240) == (180, "catch me up")
+    assert window.parse("--history 180 catch me up", max_minutes=240) == (window.Window(180), "catch me up")
     with pytest.raises(window.HistoryFlagError, match="1–30"):
         window.parse("--history 45", max_minutes=30)
+
+
+# ---- a clock time, on the asker's clock ------------------------------------------
+
+def _at(iso: str) -> float:
+    """An instant, written as the asker's wall clock with its offset."""
+    from datetime import datetime
+    return datetime.fromisoformat(iso).timestamp()
+
+
+NY = lambda: "America/New_York"  # noqa: E731
+MORNING = _at("2026-10-07T09:52:00-04:00")   # 9:52 AM EDT
+
+
+@pytest.mark.parametrize("text, minutes, since", [
+    ("--history 9am catch me up", 52, "9:00 AM EDT"),
+    ("--history 9:30am", 22, "9:30 AM EDT"),
+    ("--history 9:30AM", 22, "9:30 AM EDT"),
+    ("--history 09:00", 52, "9:00 AM EDT"),          # 24-hour, colon required
+    ("--history 8:15", 97, "8:15 AM EDT"),
+    ("—history 9am", 52, "9:00 AM EDT"),            # the em dash Slack substitutes
+    ("--history=9am", 52, "9:00 AM EDT"),
+])
+def test_a_clock_time_is_read_on_the_askers_clock(text, minutes, since):
+    win, ask = window.parse(text, max_minutes=120, tz=NY, now=MORNING)
+    assert (win.minutes, win.since) == (minutes, since)
+    assert ask == ("catch me up" if "catch" in text else "")
+
+
+def test_a_time_later_than_now_means_yesterday():
+    win, _ = window.parse("--history 2:30pm", max_minutes=1440, tz=NY, now=MORNING)
+    assert (win.minutes, win.since) == (19 * 60 + 22, "2:30 PM EDT yesterday")
+    win, _ = window.parse("--history 12pm", max_minutes=1440, tz=NY, now=MORNING)
+    assert win.since == "12:00 PM EDT yesterday"
+    win, _ = window.parse("--history 12am", max_minutes=1440, tz=NY, now=MORNING)
+    assert (win.minutes, win.since) == (9 * 60 + 52, "12:00 AM EDT")
+
+
+def test_the_minute_it_started_is_inside_the_window():
+    """Rounded up: at 9:52:30, `9am` must still include what was said at 9:00."""
+    win, _ = window.parse("--history 9am", max_minutes=120, tz=NY, now=MORNING + 30)
+    assert win.minutes == 53
+    win, _ = window.parse("--history 9:52am", max_minutes=120, tz=NY, now=MORNING)
+    assert win.minutes == 1                                         # never a zero window
+
+
+def test_the_askers_zone_decides_not_the_servers():
+    # The same instant is 7:22 PM in Kolkata.
+    win, _ = window.parse("--history 7pm", max_minutes=120, tz=lambda: "Asia/Kolkata", now=MORNING)
+    assert (win.minutes, win.since) == (22, "7:00 PM IST")
+
+
+def test_a_clock_change_is_counted_in_real_minutes():
+    """Clocks went back at 2am on 2026-11-01: midnight to 9am was ten hours, not nine."""
+    win, _ = window.parse("--history 12am", max_minutes=1440, tz=NY, now=_at("2026-11-01T09:00:00-05:00"))
+    assert (win.minutes, win.since) == (600, "12:00 AM EDT")
+
+
+def test_a_time_further_back_than_the_cap_is_refused_not_clamped():
+    with pytest.raises(window.HistoryFlagError, match=r"8:15 AM EDT, 97 minutes ago.*\(60 minutes\)"):
+        window.parse("--history 8:15", max_minutes=60, tz=NY, now=MORNING)
+    with pytest.raises(window.HistoryFlagError, match="yesterday"):
+        window.parse("--history 2:30pm", max_minutes=120, tz=NY, now=MORNING)
+
+
+@pytest.mark.parametrize("tz", [lambda: "", lambda: "Not/AZone", None])
+def test_no_timezone_means_no_guess(tz):
+    with pytest.raises(window.HistoryFlagError, match="timezone"):
+        window.parse("--history 9am", max_minutes=120, tz=tz, now=MORNING)
+
+
+def test_minutes_never_look_up_a_timezone():
+    def boom():
+        raise AssertionError("minutes need no timezone")
+    assert window.parse("--history 10", max_minutes=120, tz=boom) == (window.Window(10), "")
+
+
+@pytest.mark.parametrize("text", [
+    "--history 13pm",
+    "--history 0am",
+    "--history 9:75",
+    "--history 24:00",
+    "--history 9:5am",
+    "--history 9.30am",
+    "--history 9am-ish",
+    "--history noon",
+])
+def test_a_malformed_time_is_refused(text):
+    with pytest.raises(window.HistoryFlagError):
+        window.parse(text, max_minutes=1440, tz=NY, now=MORNING)
+
+
+@pytest.mark.parametrize("text", ["--history 9 am catch me up", "--history 9:30 PM"])
+def test_a_split_meridiem_is_refused_not_read_as_minutes(text):
+    """`9 am` read as 9 minutes followed by the word "am" would be a silent misparse."""
+    with pytest.raises(window.HistoryFlagError, match="one word"):
+        window.parse(text, max_minutes=1440, tz=NY, now=MORNING)
+
+
+def test_the_header_names_the_window_in_the_askers_terms():
+    win = window.Window(52, "9:00 AM EDT")
+    text = window.render("xoxb", [], channel_id="C1", win=win)
+    assert "since 9:00 AM EDT (52 min)" in text and 'since="9:00 AM EDT"' in text
+    assert "over the last 10 minute(s)" in window.render("xoxb", [], channel_id="C1", win=window.Window(10))
 
 
 def test_the_message_ceiling_is_server_policy(channel, settings):
@@ -157,6 +261,32 @@ def test_read_back_puts_the_channel_in_front_of_the_ask(channel, linked, hal):
     assert prompt.rstrip().endswith("pick this up")
     assert "not instructions" in prompt
     assert turn.chat_session.title.startswith("Slack: last 10 min")
+
+
+def test_a_clock_time_reads_back_to_then_on_the_askers_clock(channel, linked, hal, alice):
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    channel.users[ALICE]["tz"] = "America/New_York"
+    then = datetime.fromtimestamp(NOW, ZoneInfo("America/New_York")) - timedelta(minutes=7)
+    mention(f"<@UBOT> hal --history {then:%H:%M} pick this up", ts=_ts(0))
+    turn = _turn()
+    assert "agreed, let's ask hal" in turn.prompt and "probably the new index" in turn.prompt
+    assert "OLD" not in turn.prompt
+    label = then.strftime("%I:%M %p").lstrip("0") + " " + then.strftime("%Z")
+    assert f"since {label}" in turn.prompt
+    assert turn.chat_session.title.startswith(f"Slack: since {label}")
+    ev = Event.objects.get(kind="slack.window_read")
+    # 7 minutes before NOW, truncated to the minute, read some seconds after NOW.
+    assert ev.payload["since"] == label and 7 <= ev.payload["minutes"] <= 10
+
+
+def test_a_clock_time_with_no_slack_timezone_is_refused(channel, linked, hal):
+    mention("<@UBOT> hal --history 9am", ts=_ts(0))          # ALICE's profile has no tz
+    assert not channel.said("conversations.history")
+    assert not Turn.objects.exists()
+    told = channel.said("chat.postEphemeral") + channel.said("chat.postMessage")
+    assert any("timezone" in (p.get("text") or "") for p in told)
 
 
 def test_only_the_channel_the_request_came_from_is_read(channel, linked, hal):
