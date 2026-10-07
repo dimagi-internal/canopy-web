@@ -200,7 +200,10 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         # started — not someone pressing stop. The sender gets the why privately.
         line = f":no_entry_sign: Not run — {agent} doesn't take requests from this person here."
     elif st.state == ts.CANCELLED:
-        line = ":heavy_minus_sign: Cancelled."
+        from apps.harness.services import stopped_by
+
+        by = stopped_by(turn)
+        line = f":octagonal_sign: Stopped by {by}." if by else ":octagonal_sign: Stopped."
     elif st.state == ts.MISSED:
         line = ":heavy_minus_sign: Missed — nothing picked it up in time."
     elif st.state == ts.LOST and st.claimed_by:

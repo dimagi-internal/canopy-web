@@ -938,13 +938,18 @@ def cancel_queued_turn(turn: Turn) -> Turn | None:
     return finish_turn(turn, status=Turn.CANCELLED, result_note="cancelled", allow_queued=True)
 
 
-def cancel_turn(turn: Turn) -> Turn | None:
+def cancel_turn(turn: Turn, *, by: str = "") -> Turn | None:
     """Full cancel semantics for chat.stop / the REST stop route. A QUEUED turn
     is finished CANCELLED immediately. An executing turn is NOT force-finished —
     the runner owns its lease — instead we record cancel_requested in the ledger
     and signal the claiming runner over its control channel; the runner interrupts
     the emdash session and finishes the turn as cancelled (or, if the runner is
-    gone, the lease sweep sees cancel_requested and closes it CANCELLED)."""
+    gone, the lease sweep sees cancel_requested and closes it CANCELLED).
+
+    `by` names the person who pressed stop; it rides the ledger (the status event
+    for a queued turn, `cancel_requested` for an executing one) so a channel can
+    say "Stopped by <name>" — see `stopped_by`."""
+    who = {"by": by} if by else {}
     if turn.status == Turn.QUEUED:
         # Race guard (finding M1): this is a read-then-act on `turn.status`, and
         # a runner's claim can land between the read and the write, moving the
@@ -962,7 +967,7 @@ def cancel_turn(turn: Turn) -> Turn | None:
         if updated:
             append_events(turn, [{
                 "kind": "status",
-                "payload": {"status": Turn.CANCELLED, "result_note": "cancelled"},
+                "payload": {"status": Turn.CANCELLED, "result_note": "cancelled", **who},
             }])
             # Mirror finish_turn's drill hook (bypassed above) so a queued
             # drill cancelled this way doesn't strand OUTCOME_PENDING. Keyed on
@@ -980,10 +985,10 @@ def cancel_turn(turn: Turn) -> Turn | None:
         # rider ends with it (`_finish_riders`).
         holder = turn.rides_turn
         if holder is not None and holder.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN):
-            cancel_turn(holder)
+            cancel_turn(holder, by=by)
             return turn
     if turn.status in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN):
-        append_events(turn, [{"kind": "cancel_requested", "payload": {}}])
+        append_events(turn, [{"kind": "cancel_requested", "payload": who}])
         if turn.claimed_by_id:
             from apps.realtime import groups
 
@@ -991,6 +996,15 @@ def cancel_turn(turn: Turn) -> Turn | None:
                            {"type": "runner.cancel", "turn_id": str(turn.id)})
         return turn
     return None
+
+
+def stopped_by(turn: Turn) -> str:
+    """Who pressed stop on this turn, or "" (nobody recorded, or not a person's stop)."""
+    for ev in turn.events.filter(kind__in=["cancel_requested", "status"]).order_by("-seq"):
+        by = (ev.payload or {}).get("by")
+        if by:
+            return str(by)
+    return ""
 
 
 # --------------------------------------------------------------------------------------

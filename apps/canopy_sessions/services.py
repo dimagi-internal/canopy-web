@@ -2149,7 +2149,14 @@ def interrupt_session(session: Session) -> str:
     return "sent"
 
 
-def cancel_session_turns(session: Session) -> bool:
+def person_name(user) -> str:
+    """A user's name for "Stopped by <name>", or "" for no one / an anonymous caller."""
+    if user is None or not getattr(user, "is_authenticated", False):
+        return ""
+    return (user.get_full_name() or user.email or "").strip()
+
+
+def cancel_session_turns(session: Session, *, by: str = "") -> bool:
     """Cancel every non-terminal turn on a session. Returns whether anything moved.
 
     ALL non-terminal turns, not just the newest: a mid-reply send queues a second
@@ -2164,12 +2171,12 @@ def cancel_session_turns(session: Session) -> bool:
 
     cancelled = False
     for turn in Turn.objects.filter(chat_session=session, status__in=list(Turn.NON_TERMINAL)):
-        if harness_services.cancel_turn(turn) is not None:
+        if harness_services.cancel_turn(turn, by=by) is not None:
             cancelled = True
     return cancelled
 
 
-def stop_session(session: Session) -> str:
+def stop_session(session: Session, *, by: str = "") -> str:
     """Stop this session, by whichever route actually owns the running work.
     Returns WHICH route fired: "turns" | "session" | "".
 
@@ -2189,7 +2196,7 @@ def stop_session(session: Session) -> str:
     turns, so a stop from MCP or a script did nothing to a working agent
     (canopy-web#1226).
     """
-    if cancel_session_turns(session):
+    if cancel_session_turns(session, by=by):
         return "turns"
     return "session" if interrupt_session(session) == "sent" else ""
 

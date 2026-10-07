@@ -319,6 +319,22 @@ def interactions(request: HttpRequest) -> HttpResponse:
     return HttpResponse(status=200)
 
 
+def _stopper_name(installation, slack_user_id: str) -> str:
+    """Who pressed Stop: their canopy name if linked, else their Slack name, else ""."""
+    if not slack_user_id:
+        return ""
+    try:
+        user, _, info = services.slack_user(installation, slack_user_id)
+        if user is not None:
+            from apps.canopy_sessions.services import person_name
+            return person_name(user)
+        info = info or services.slack_profile(installation, slack_user_id)
+        return str((info.get("profile") or {}).get("real_name") or info.get("real_name") or "").strip()
+    except Exception:  # noqa: BLE001 — a name is a nicety; the stop must not depend on it
+        logger.exception("could not name who stopped")
+        return ""
+
+
 def _stop_from_slack(body: dict) -> HttpResponse:
     """Slack's own Stop button, beside the "Working…" indicator it draws.
 
@@ -345,12 +361,23 @@ def _stop_from_slack(body: dict) -> HttpResponse:
                .order_by("-created_at").first())
     if session is None:
         return JsonResponse({"ok": True})
+    by = _stopper_name(installation, str(event.get("user") or event.get("user_id") or ""))
+    interrupted = ""
     try:
-        session_services.cancel_session_turns(session)
-        session_services.interrupt_session(session)
+        cancelled = session_services.cancel_session_turns(session, by=by)
+        interrupted = session_services.interrupt_session(session)
     except Exception:  # noqa: BLE001 — a stop that half-lands must still settle the indicator
         logger.exception("slack stop failed")
+        cancelled = False
     dest = relay.session_destination(session)
+    if dest is not None and not cancelled and interrupted == "sent":
+        # An agent turn is already DONE once its prompt is delivered, so there is
+        # no turn for the status line to turn into "Stopped" — say it in the thread.
+        try:
+            client.post_message(dest[0].bot_token, channel=dest[1], thread_ts=dest[2],
+                                text=f":octagonal_sign: Stopped by {by}." if by else ":octagonal_sign: Stopped.")
+        except Exception:  # noqa: BLE001 — the stop landed; the confirmation is best-effort
+            logger.exception("could not confirm the Slack stop")
     if dest is not None:
         status.sync_session(session, dest)
     return JsonResponse({"ok": True})
