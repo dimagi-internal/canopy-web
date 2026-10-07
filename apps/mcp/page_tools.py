@@ -144,7 +144,7 @@ def to_mcp_tool(name: str, session, spec: dict) -> PageActionTool:
 
     The schema is the host's own JSON-Schema, passed through. That is the whole
     reason a declaration carries one rather than just a name: an agent cannot
-    call `dismissItems` without being told it takes `{ids: string[]}`.
+    call `declineTasks` without being told it takes `{ids: string[]}`.
 
     Both spellings are accepted — `inputSchema` is MCP's and `parameters` is
     OpenAI function-calling's — because a host author will reasonably write

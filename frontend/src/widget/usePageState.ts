@@ -8,12 +8,12 @@ import { notifyPageStateChanged, setPageStateContributor, type PageState } from 
  * ```tsx
  * usePageState(
  *   () => describeSelection({
- *     backingTool: 'list_items',
- *     resource: 'item://',
- *     ids: items.map((i) => i.id),
- *     filters: { agent: agent.slug, state: 'open' },
+ *     backingTool: 'list_tasks',
+ *     resource: 'task://',
+ *     ids: tasks.map((t) => t.ext_id),
+ *     filters: { agent: agent.slug, waiting: 'me' },
  *   }),
- *   [items, agent.slug],
+ *   [tasks, agent.slug],
  * )
  * ```
  *

@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 @receiver([post_save, post_delete], sender=AgentTask)
-def _item_changed(sender, instance: AgentTask, **kwargs) -> None:
+def _task_changed(sender, instance: AgentTask, **kwargs) -> None:
     mark_dirty(instance.agent_id)  # the FK shadow attribute — no query
 
 

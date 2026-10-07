@@ -3,8 +3,8 @@
 An `Agent` is a first-class entity (e.g. "Echo," a marketing agent) — distinct
 from a code Project. Where a Project's work shows up as static markdown
 shareouts, an Agent's periodic sync is a **Google Doc** (`AgentSync.doc_url`),
-because an agent's sync spans both code/skill improvement AND work products and
-is richer than a feed card. canopy-web stores the metadata, summary, and
+because an agent's sync spans both code/skill improvement AND the work it
+delivered, and is richer than a feed card. canopy-web stores the metadata, summary, and
 self-grades for the feed; the body lives in the doc.
 """
 from django.conf import settings
@@ -471,8 +471,8 @@ class RepoIdentity(models.Model):
 
 
 class AgentSync(models.Model):
-    """A periodic manager sync — a Google Doc covering code/skill improvement AND
-    work products. Body lives in `doc_url`; canopy-web keeps the summary +
+    """A periodic manager sync (a status report) — a Google Doc covering code/skill
+    improvement AND the work delivered. Body lives in `doc_url`; canopy-web keeps the summary +
     self-grades for the feed. Idempotent per (agent, period_start, period_end,
     source): re-posting the same window from the same source replaces it."""
 

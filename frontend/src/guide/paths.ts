@@ -67,7 +67,7 @@ export const USER_ROLES: UserRole[] = [
       '/system',
     ],
     note:
-      'Chat, answer a question an agent is blocked on, decide an item, read the board. ' +
+      'Chat, answer a question an agent is blocked on, approve or decline a task, read the board. ' +
       'Then choose where it runs: a cloud runner needs nothing from you, or pair your own ' +
       'laptop so you can jump into the terminal mid-turn. Or skip agents entirely — mint a ' +
       'token in Settings and install the canopy plugin to use the capability library in ' +
@@ -83,7 +83,7 @@ export const USER_ROLES: UserRole[] = [
     startHere: 'Run /canopy:create-agent, then register the agent in your workspace.',
     surfaces: ['/w/:workspace/agents', '/w/:workspace/schedules', '/system'],
     note:
-      'Create and edit agents, run turns, publish work products, edit schedules, assign ' +
+      'Create and edit agents, run turns, record project links, edit schedules, assign ' +
       'runners. The scaffold is a skeleton — persona and domain skills are yours to write. ' +
       'You read the turns you started; the full turn log is an administrator\'s.',
   },

@@ -166,6 +166,19 @@ def test_fleet_routes(c):
     assert client.get("/api/projects/").status_code == 200
 
 
+def test_fleet_routes_answer_under_a_tenant_prefix(c):
+    """A tenant page's client rewrites /api/tasks/ and /api/projects/ to
+    /api/w/<ws>/… (WS_SCOPED_API_PREFIXES); the pinned path must serve that
+    workspace, and a workspace the caller is not in must 404."""
+    client, agent, _u = c
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="q", ask_kind="question")
+    got = client.get("/api/w/connect/tasks/?waiting=me")
+    assert got.status_code == 200, got.content
+    assert [t["agent_slug"] for t in got.json()] == ["eva"]
+    assert client.get("/api/w/connect/projects/").status_code == 200
+    assert client.get("/api/w/elsewhere/tasks/").status_code == 404
+
+
 def test_fleet_waiting_me_includes_parked_task_with_no_ask(c):
     client, agent, u = c
     AgentTask.objects.create(agent=agent, ext_id="T1", title="numbers", waiting_on_user=u)

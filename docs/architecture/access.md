@@ -79,7 +79,7 @@ What a person IS to one agent (`Decision.role`, the envelope's `relationship`):
 | **admin** | A workspace **owner**, or an explicit `AgentAdmin` grant (still a member). `Agent.is_admin` answers owner-or-admin. |
 | **member** | Any other member of the agent's workspace (viewer, editor or workspace admin). |
 | **contact** | Anyone who is not a member: an emailer, a widget visitor, a canopy user from another tenant, someone unidentified. (Envelope VERSION 1 said `caller`.) |
-| **system** | Not a person: canopy itself (a schedule, a drill), the agent's OWN canopy login (`Agent.user`), an approved board item's dispatch. Another agent's login is not `system` — it is graded like anyone. |
+| **system** | Not a person: canopy itself (a schedule, a drill), the agent's OWN canopy login (`Agent.user`), an approved task's `on_approve` dispatch. Another agent's login is not `system` — it is graded like anyone. |
 
 An agent's **admins** (owner + admin) hold its keys: credentials, the vault
 pointer, GitHub delegation, the interface, its admin list, and routing in `auto`.

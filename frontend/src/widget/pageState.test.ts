@@ -85,13 +85,13 @@ describe('the state channel pushes, where context was pulled', () => {
 describe('describeSelection is the shape that works', () => {
   it('carries which rows and which tool resolves them', () => {
     const state = describeSelection({
-      backingTool: 'list_items',
+      backingTool: 'list_tasks',
       ids: [4471, 4472],
       filters: { state: 'open' },
     })
 
     expect(state).toEqual({
-      backing_tool: 'list_items',
+      backing_tool: 'list_tasks',
       visible_ids: [4471, 4472],
       visible_count: 2,
       filters: { state: 'open' },
@@ -102,7 +102,7 @@ describe('describeSelection is the shape that works', () => {
     // The agent re-reads the rows through `backing_tool`, live, with the user's
     // own permissions. A copy serialised here could go stale between render and
     // send and would be a second place an ACL could be got wrong.
-    const state = describeSelection({ backingTool: 'list_items', ids: [1, 2, 3] })
+    const state = describeSelection({ backingTool: 'list_tasks', ids: [1, 2, 3] })
 
     expect(Object.keys(state).sort()).toEqual(['backing_tool', 'visible_count', 'visible_ids'])
   })
@@ -114,7 +114,7 @@ describe('describeSelection is the shape that works', () => {
   })
 
   it('counts what is visible, so the agent can tell a page from a whole list', () => {
-    const state = describeSelection({ backingTool: 'list_items', ids: [1, 2, 3, 4, 5] })
+    const state = describeSelection({ backingTool: 'list_tasks', ids: [1, 2, 3, 4, 5] })
 
     expect(state.visible_count).toBe(5)
   })
@@ -134,8 +134,8 @@ describe('the first message must not depend on MCP being up', () => {
   it('merges the selection into what rides the first message', () => {
     dispose = setPageStateContributor(() =>
       describeSelection({
-        backingTool: 'list_items',
-        resource: 'item://',
+        backingTool: 'list_tasks',
+        resource: 'task://',
         ids: [61, 60, 59],
       }),
     )
@@ -145,7 +145,7 @@ describe('the first message must not depend on MCP being up', () => {
     // The route layer AND the selection, in one object.
     expect(forTheBlock.path).toBe('/w/connect/agents/echo/inbox')
     expect(forTheBlock.visible_ids).toEqual([61, 60, 59])
-    expect(forTheBlock.backing_tool).toBe('list_items')
+    expect(forTheBlock.backing_tool).toBe('list_tasks')
   })
 
   it('still produces the route alone when no page declared a selection', () => {

@@ -694,7 +694,7 @@
     "canopy": {
       "event": "page.invalidate",
       "data": {
-        "uri": "item://"
+        "uri": "task://"
       }
     },
     "agui": [
@@ -702,7 +702,7 @@
         "type": "CUSTOM",
         "name": "canopy.page.invalidate",
         "value": {
-          "uri": "item://"
+          "uri": "task://"
         }
       }
     ]

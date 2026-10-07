@@ -513,7 +513,7 @@ ROUND_TRIP_FRAMES = [
     {"event": "chat.stream_error", "data": {"message_id": "m1", "detail": "runner went away"}},
     {"event": "draft.committed", "data": {"draft_id": "d1", "user_message_id": "u2"}},
     {"event": "draft.discarded", "data": {"draft_id": "d1"}},
-    {"event": "page.invalidate", "data": {"uri": "item://"}},
+    {"event": "page.invalidate", "data": {"uri": "task://"}},
 ]
 
 

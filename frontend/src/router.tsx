@@ -10,6 +10,7 @@ import { GuidePage } from './pages/GuidePage'
 import { ShareRouteErrorBoundary } from './components/ShareRouteErrorBoundary'
 import { lazyRoute } from './pwa/staleChunk'
 import { CredentialsRedirect } from './pages/agents/CredentialsRedirect'
+import { KeepQueryRedirect } from './pages/agents/KeepQueryRedirect'
 import { AgentSkillsPage } from './pages/agents/AgentSkillsPage'
 import { ShareoutsPage } from './pages/ShareoutsPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -307,10 +308,11 @@ export const routeTable: RouteObject[] = [
           { path: 'projects/:ref', element: <LazySection><AgentProjectPage /></LazySection> },
           { path: 'tasks', element: <LazySection><AgentTasksSection /></LazySection> },
           // Old addresses for the same things — bookmarks and links in old emails.
-          { path: 'work', element: <Navigate to="../tasks" replace /> },
-          { path: 'inbox', element: <Navigate to="../tasks?waiting=me" replace /> },
-          { path: 'needs-you', element: <Navigate to="../tasks?waiting=me" replace /> },
-          { path: 'items', element: <Navigate to="../tasks" replace /> },
+          // Those that took a query keep it (an old `/items?batch=` link).
+          { path: 'work', element: <KeepQueryRedirect to="../tasks" /> },
+          { path: 'inbox', element: <KeepQueryRedirect to="../tasks" add={{ waiting: 'me' }} /> },
+          { path: 'needs-you', element: <KeepQueryRedirect to="../tasks" add={{ waiting: 'me' }} /> },
+          { path: 'items', element: <KeepQueryRedirect to="../tasks" /> },
           { path: 'overview', element: <Navigate to="../projects" replace /> },
           { path: 'work-products', element: <Navigate to="../projects" replace /> },
           { path: 'syncs', element: <Navigate to="../turns#status-reports" replace /> },

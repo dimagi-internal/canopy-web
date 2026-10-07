@@ -50,7 +50,7 @@ def test_agent_detail_serializes_workspace_slug(client, workspace):
 
 def test_another_tenants_agent_is_invisible(client):
     """`_visible_agent_workspace_ids` gates the WHOLE agents surface: tasks,
-    board commands (a write), work products, skills, PUT /runners (a write),
+    task actions (a write), projects, skills, PUT /runners (a write),
     and GET /{slug}/turns/ (which serializes AgentTurnOut.share_token — a
     public transcript link). Non-membership must be indistinguishable from
     non-existence on every one of them.

@@ -278,7 +278,7 @@ class PageAction(models.Model):
     session = models.ForeignKey(
         Session, on_delete=models.CASCADE, related_name="page_actions"
     )
-    #: The host-declared action name, e.g. "dismissItems".
+    #: The host-declared action name, e.g. "declineTasks".
     name = models.CharField(max_length=120)
     #: Arguments as the agent supplied them. Validated against the host's
     #: declared JSON-Schema before the row is written, so a stored row is one

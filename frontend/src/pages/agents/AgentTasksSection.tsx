@@ -20,21 +20,26 @@ import { useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton, WorkbenchSubHeader } from 'canopy-ui'
 
 // The resource canopy marks dirty whenever any task row moves
-// (`apps/harness/signals.py::ITEM_RESOURCE`). The string is the server's, so it
+// (`apps/harness/signals.py::TASK_RESOURCE`). The string is the server's, so it
 // is the one this page listens on.
-const TASK_RESOURCE = 'item://'
+const TASK_RESOURCE = 'task://'
 
 type View = 'waiting' | 'open' | 'done'
 
 // What the page is showing IS the URL: `?waiting=me`, `?view=done`,
-// `?project=P2|none`, `?by=project`. A link to "what is waiting on me" is a link
-// to this page, which is why the old Inbox address redirects here.
-function filtersFor(view: View, project: string): TaskFilters {
+// `?project=P2|none`, `?by=project`, `?batch=<key>`. A link to "what is waiting
+// on me" is a link to this page, which is why the old Inbox address redirects
+// here. `?batch=` names one sitting (e.g. a fleet audit) and is usually opened
+// to read back what was decided, so it is not narrowed to open tasks.
+function filtersFor(view: View, project: string, batch: string): TaskFilters {
   const f: TaskFilters =
     view === 'waiting'
       ? { waiting: 'me' }
-      : { status: view === 'done' ? 'done,declined' : 'suggested,in_progress' }
+      : batch
+        ? {}
+        : { status: view === 'done' ? 'done,declined' : 'suggested,in_progress' }
   if (project) f.project = project
+  if (batch) f.batch = batch
   return f
 }
 
@@ -53,8 +58,9 @@ export function AgentTasksSection(): JSX.Element {
     params.get('waiting') === 'me' ? 'waiting' : params.get('view') === 'done' ? 'done' : 'open'
   const project = params.get('project') ?? ''
   const byProject = params.get('by') === 'project'
+  const batch = params.get('batch') ?? ''
 
-  const filters = useMemo(() => filtersFor(view, project), [view, project])
+  const filters = useMemo(() => filtersFor(view, project, batch), [view, project, batch])
   // Stamp what we hold with what it answers, so a filter change shows the
   // skeleton rather than the previous filter's rows under the new chip.
   const key = `${agent.slug}|${JSON.stringify(filters)}`

@@ -39,7 +39,7 @@ class PushSubscription(models.Model):
 class AgentWaitingSnapshot(models.Model):
     """The last waiting_count we pushed about, per agent.
 
-    The waiting set is a count (open items per agent) — there is no single event
+    The waiting set is a count (tasks waiting on a person, per agent) — there is no single event
     meaning "the fleet now needs you" — so we diff against this and push only on
     an INCREASE.
     Pushing on every recompute would buzz you when you CLEAR something, which is

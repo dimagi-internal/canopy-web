@@ -727,9 +727,9 @@ wearing a page action's clothes* — unaudited, dead the moment the tab closed,
 capped by a 20-second wait, and a second implementation of a delete the REST API
 already had. It existed only because nothing could tell the page its data had
 changed. Once pages could be told their data changed (§5a), the reason was gone;
-it became a server tool and the page action was deleted. The inbox shows the
-right shape today: declining is the server tool `act_on_task`, and the page
-hears about it through `item://` (§5a).
+it became a server tool and the page action was deleted. The Tasks page shows
+the right shape today: declining is the server tool `act_on_task`, and the page
+hears about it through `task://` (§5a).
 
 **If your action's last line is an HTTP call to your own backend, it is not a
 page action.** Put it in your MCP server and let §5a refresh the page.

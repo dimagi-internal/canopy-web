@@ -54,14 +54,14 @@ const NOT_DOCUMENTABLE = new Set([
   '/w/:workspace/slack',
   '/w/:workspace/agents/:slug/needs-you',
   '/w/:workspace/agents/:slug/credentials',
-  // Overview, Projects, Tasks and Items became Work: the last three were three
-  // renderings of one table, and Overview was a dashboard over the same rows.
-  // Grouping and settled-visibility are query params on Work now.
-  '/w/:workspace/agents/:slug/overview',
-  '/w/:workspace/agents/:slug/projects',
-  '/w/:workspace/agents/:slug/tasks',
+  // Two nouns, Projects and Tasks: Work is Tasks, Inbox and Items are Tasks
+  // filtered to Waiting on you, and Overview and Work products are Projects.
+  '/w/:workspace/agents/:slug/work',
+  '/w/:workspace/agents/:slug/inbox',
   '/w/:workspace/agents/:slug/items',
-  // Syncs are Status reports (a section of Work products); History is a view of
+  '/w/:workspace/agents/:slug/overview',
+  '/w/:workspace/agents/:slug/work-products',
+  // Syncs are Status reports (a section of Turns); History is a view of
   // Skills. Neither was a name that said what it held.
   '/w/:workspace/agents/:slug/syncs',
   '/w/:workspace/agents/:slug/history',

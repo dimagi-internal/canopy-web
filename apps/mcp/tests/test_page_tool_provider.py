@@ -30,8 +30,8 @@ User = get_user_model()
 pytestmark = pytest.mark.django_db
 
 DISMISS = {
-    "name": "dismissItems",
-    "description": "Dismiss inbox items from the list the user is viewing",
+    "name": "declineTasks",
+    "description": "Decline tasks from the list the user is viewing",
     "inputSchema": {
         "type": "object",
         "properties": {"ids": {"type": "array", "items": {"type": "string"}}},
@@ -76,7 +76,7 @@ def test_an_open_page_puts_its_action_in_the_agents_tool_list():
     with as_user(user):
         tools = async_to_sync(mcp.list_tools)()
 
-    tool = next((t for t in tools if t.name == "page_dismissItems"), None)
+    tool = next((t for t in tools if t.name == "page_declineTasks"), None)
     assert tool is not None, f"page tools never reached the server: {sorted(t.name for t in tools)}"
     # And with the host's schema, which is the only way the agent knows the
     # call takes `ids`.
@@ -101,12 +101,12 @@ def test_another_users_page_is_not_in_my_tool_list():
 
     # Both users declared the same action, so a leak would be invisible by name
     # alone — assert on the SESSION named in the description instead.
-    tool = next(t for t in mine_names if t == "page_dismissItems")
+    tool = next(t for t in mine_names if t == "page_declineTasks")
     assert tool  # present for me
     theirs_sessions = Session.objects.exclude(created_by=mine)
     with as_user(mine):
         described = next(
-            t.description for t in async_to_sync(mcp.list_tools)() if t.name == "page_dismissItems"
+            t.description for t in async_to_sync(mcp.list_tools)() if t.name == "page_declineTasks"
         )
     for session in theirs_sessions:
         assert str(session.id) not in described
@@ -128,13 +128,13 @@ def test_calling_it_queues_a_real_page_action():
             # No page is listening in a test, so it times out — which is the
             # point: it got far enough to WAIT, and then refused out loud.
             async_to_sync(mcp.call_tool)(
-                "page_dismissItems", {"ids": ["i1", "i2"]}
+                "page_declineTasks", {"ids": ["i1", "i2"]}
             )
 
     assert "timeout" in str(exc.value)
     action = PageAction.objects.get()
     assert action.session_id == session.id
-    assert action.name == "dismissItems"
+    assert action.name == "declineTasks"
     assert action.args == {"ids": ["i1", "i2"]}
     # And it is recorded as unanswered rather than left pending forever.
     assert action.status == PageAction.EXPIRED
@@ -147,7 +147,7 @@ def test_a_refusal_reaches_the_model_as_words_not_an_opaque_error():
 
     with as_user(user):
         with pytest.raises(ToolError) as exc:
-            async_to_sync(mcp.call_tool)("page_dismissItems", {})
+            async_to_sync(mcp.call_tool)("page_declineTasks", {})
 
     assert "bad_arguments" in str(exc.value)
     assert "ids" in str(exc.value)

@@ -12,9 +12,9 @@ beforeEach(() => resetResourceHandlers())
 describe('a page is told to re-read what it is showing', () => {
   it('calls the handler registered for that resource', () => {
     const refetch = vi.fn()
-    onResourceChanged('item://', refetch)
+    onResourceChanged('task://', refetch)
 
-    expect(resourceChanged('item://')).toBe(1)
+    expect(resourceChanged('task://')).toBe(1)
     expect(refetch).toHaveBeenCalledOnce()
   })
 
@@ -22,7 +22,7 @@ describe('a page is told to re-read what it is showing', () => {
     const refetch = vi.fn()
     onResourceChanged('walkthrough://', refetch)
 
-    resourceChanged('item://')
+    resourceChanged('task://')
 
     expect(refetch).not.toHaveBeenCalled()
   })
@@ -30,20 +30,20 @@ describe('a page is told to re-read what it is showing', () => {
   it('tells every page showing it — two tabs are two handlers', () => {
     const a = vi.fn()
     const b = vi.fn()
-    onResourceChanged('item://', a)
-    onResourceChanged('item://', b)
+    onResourceChanged('task://', a)
+    onResourceChanged('task://', b)
 
-    expect(resourceChanged('item://')).toBe(2)
+    expect(resourceChanged('task://')).toBe(2)
     expect(a).toHaveBeenCalledOnce()
     expect(b).toHaveBeenCalledOnce()
   })
 
   it('stops after the page unmounts', () => {
     const refetch = vi.fn()
-    const stop = onResourceChanged('item://', refetch)
+    const stop = onResourceChanged('task://', refetch)
 
     stop()
-    resourceChanged('item://')
+    resourceChanged('task://')
 
     expect(refetch).not.toHaveBeenCalled()
   })
@@ -55,34 +55,34 @@ describe('a page is told to re-read what it is showing', () => {
 
 describe('a failing refetch cannot break the conversation', () => {
   it('survives a handler that throws', () => {
-    onResourceChanged('item://', () => {
+    onResourceChanged('task://', () => {
       throw new Error('the list endpoint is down')
     })
 
     // An exception escaping here would propagate into the socket handler and
     // could take down the connection carrying the chat — a strictly worse
     // outcome than a page showing slightly old rows.
-    expect(() => resourceChanged('item://')).not.toThrow()
+    expect(() => resourceChanged('task://')).not.toThrow()
   })
 
   it('survives a handler whose promise rejects', async () => {
-    onResourceChanged('item://', async () => {
+    onResourceChanged('task://', async () => {
       throw new Error('network')
     })
 
-    expect(() => resourceChanged('item://')).not.toThrow()
+    expect(() => resourceChanged('task://')).not.toThrow()
     // And leaves no unhandled rejection behind.
     await new Promise((r) => setTimeout(r, 0))
   })
 
   it('still calls the other handlers when one throws', () => {
     const ok = vi.fn()
-    onResourceChanged('item://', () => {
+    onResourceChanged('task://', () => {
       throw new Error('boom')
     })
-    onResourceChanged('item://', ok)
+    onResourceChanged('task://', ok)
 
-    resourceChanged('item://')
+    resourceChanged('task://')
 
     expect(ok).toHaveBeenCalledOnce()
   })
@@ -92,11 +92,11 @@ describe('declaring the resource is what makes any of it fire', () => {
   it('carries the resource into the page state', () => {
     const state = describeSelection({
       backingTool: 'list_items',
-      resource: 'item://',
+      resource: 'task://',
       ids: [1, 2],
     })
 
-    expect(state.resource).toBe('item://')
+    expect(state.resource).toBe('task://')
   })
 
   it('omits it when a page does not declare one', () => {

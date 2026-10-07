@@ -16,7 +16,7 @@
  * layer underneath, the page's own declaration on top.
  *
  * Ordered rules, first match wins, mirroring `src/presence/routes.ts` — so a
- * specific pattern (an agent's Items tab) must precede the general one (the
+ * specific pattern (an agent's Tasks tab) must precede the general one (the
  * agent workspace).
  *
  * Unlike presence, a page with no rule is NOT excluded: it still gets its path
@@ -42,10 +42,10 @@ export interface PageContextRule {
 
 export const pageContextRules: PageContextRule[] = [
   // --- an agent's workspace: the rail section is the interesting part ------
-  // Inbox and Items are where "this is stale" gets said, so they are named
+  // Tasks and Projects are where "this is stale" gets said, so they are named
   // specifically rather than collapsed into "the agent workspace".
   {
-    pattern: /^\/w\/([^/]+)\/agents\/([^/]+)\/(items|inbox|turns|tasks|schedules|syncs|skills|history|runners|overview)/,
+    pattern: /^\/w\/([^/]+)\/agents\/([^/]+)\/(projects|tasks|turns|schedules|huddles|syncs|skills|settings|history|runners|overview)/,
     build: (m) => ({
       surface: `the ${m[3]} view of agent ${m[2]}`,
       params: { workspace: m[1], agent: m[2], section: m[3] },
@@ -86,7 +86,7 @@ export const pageContextRules: PageContextRule[] = [
   },
 
   // --- personal / global --------------------------------------------------
-  { pattern: /^\/supervisor/, build: () => ({ surface: 'the supervisor inbox' }) },
+  { pattern: /^\/supervisor/, build: () => ({ surface: 'the supervisor' }) },
   { pattern: /^\/activity/, build: () => ({ surface: 'the fleet activity log' }) },
   { pattern: /^\/schedules/, build: () => ({ surface: 'the personal schedule calendar' }) },
   { pattern: /^\/sessions/, build: () => ({ surface: 'my shared sessions' }) },

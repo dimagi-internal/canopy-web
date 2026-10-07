@@ -45,6 +45,7 @@ vi.mock('react-router-dom', async (orig) => ({
 }))
 
 const { AgentTasksSection } = await import('./AgentTasksSection')
+const { KeepQueryRedirect } = await import('./KeepQueryRedirect')
 
 function task(over: Record<string, unknown> = {}) {
   return {
@@ -126,6 +127,14 @@ describe('AgentTasksSection', () => {
       'eva', { status: 'suggested,in_progress', project: 'none' }))
   })
 
+  it('opens one sitting on ?batch=, settled tasks included', async () => {
+    // An old `/items?batch=` link lands here; a batch is usually opened to read
+    // back what was decided, so it is not narrowed to open tasks.
+    show('/w/connect/agents/eva/tasks?batch=fleet-audit-2026-07-14')
+    await waitFor(() =>
+      expect(listTasks).toHaveBeenCalledWith('eva', { batch: 'fleet-audit-2026-07-14' }))
+  })
+
   it('groups by project on ?by=project', async () => {
     listProjects.mockResolvedValue([project()])
     listTasks.mockResolvedValue([
@@ -170,7 +179,7 @@ describe('old agent addresses', () => {
     if (!agentRoute?.children) throw new Error('agent route not found')
     const children = agentRoute.children.map((c): RouteObject => {
       const el = c.element as { type?: unknown } | undefined
-      if (el?.type === Navigate) return c
+      if (el?.type === Navigate || el?.type === KeepQueryRedirect) return c
       return c.index ? { index: true, element: <Where /> } : { path: c.path, element: <Where /> }
     })
     const router = createMemoryRouter(
@@ -198,6 +207,10 @@ describe('old agent addresses', () => {
     ['/w/connect/agents/eva/items', '/w/connect/agents/eva/tasks'],
     ['/w/connect/agents/eva/syncs', '/w/connect/agents/eva/turns#status-reports'],
     ['/w/connect/agents/eva/tasks', '/w/connect/agents/eva/tasks'],
+    // Old links keep their query: a batch permalink still opens its sitting.
+    ['/w/connect/agents/eva/items?batch=fa-1', '/w/connect/agents/eva/tasks?batch=fa-1'],
+    ['/w/connect/agents/eva/work?batch=fa-1', '/w/connect/agents/eva/tasks?batch=fa-1'],
+    ['/w/connect/agents/eva/inbox?batch=fa-1', '/w/connect/agents/eva/tasks?batch=fa-1&waiting=me'],
   ])('%s lands on %s', async (from, to) => {
     expect(await land(from)).toBe(to)
   })
