@@ -185,6 +185,24 @@ def _remember(cfg, sid: str, wt: Path, project: str) -> None:
         tmp.replace(path)
 
 
+def forget(cfg, sid: str) -> bool:
+    """Drop `sid` from the index, so the session report stops naming it — closing a
+    desktop session. There is no emdash task to delete, and `open_sessions` reports
+    every indexed session whose worktree exists, so without this a close from the
+    web was retried every poll tick forever (5,103 times on one session, 2026-10-07)
+    while the session stayed on the feed. The worktree is left on disk: it may hold
+    uncommitted work, and nothing reads it once the session is unindexed."""
+    with _lock:
+        data = _index(cfg)
+        if data.pop(sid or "", None) is None:
+            return False
+        path = _index_path(cfg)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        tmp.replace(path)
+        return True
+
+
 def worktree_for(cfg, sid: str) -> Path | None:
     entry = _index(cfg).get(sid or "")
     if not entry:
