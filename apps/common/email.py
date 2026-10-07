@@ -1,10 +1,11 @@
 """Outbound email: Django email backends for Amazon SES, and for "not configured".
 
-canopy sends through the labs account's SES identity (`labs.connect.dimagi.com`),
-which connect-labs stood up (identity + DKIM, production access, the
-`labs-jj-email` configuration set, and `ses:SendEmail` on the shared ECS task
-role — connect-labs `infra/labs-email.yml`). Nothing here holds a key: boto3
-takes credentials from the task role.
+canopy sends as its own SES identity, `canopy.dimagi.com` (identity + DKIM and
+`ses:SendEmail` on the shared ECS task role — deploy/aws/canopy-email.cfn.yaml),
+through what connect-labs stood up for the whole labs account (production
+access and the `labs-jj-email` configuration set — connect-labs
+`infra/labs-email.yml`). Nothing here holds a key: boto3 takes credentials from
+the task role.
 
 Talks to SESv2 directly rather than through django-anymail: boto3 is already a
 dependency and a raw send is one call, so a second package buys nothing.
