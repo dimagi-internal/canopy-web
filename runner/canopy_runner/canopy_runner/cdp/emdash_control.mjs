@@ -18,6 +18,9 @@
 //   interrupt {task}                  -> {ok, task} opens the task (same lookup as open-send)
 //                                           and presses Escape — Claude Code's TUI treats
 //                                           this as "stop the running turn" (see runner.cancel).
+//   composer {task, project}          -> {ok, found, text, typed, screen, running} READ-ONLY look at
+//                                        the task's composer and rendered frame, for the runner's
+//                                        delivery recovery (execute._recover_delivery) — never types.
 //   close-task {task, project}        -> {ok, action:"deleted"|"absent"} DELETES the task
 //                                        from emdash (delete is the designed close behaviour).
 //                                        Verifies it is gone before reporting success; "absent"
@@ -270,16 +273,93 @@ const openTask = async (task, project) => {
   // `.xterm-helper-textarea`, so a Playwright .click() fails its viewport check — we
   // focus it via JS (viewport-agnostic) instead, picking the visible xterm (the active
   // task's pane) when several are mounted.
-  const focused = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
-    const term = activeTerm();
-    const ta = (term && term.querySelector('.xterm-helper-textarea'))
-      || document.querySelector('textarea[aria-label="Terminal input"]');
-    if (!ta) return false;
-    ta.focus();
-    return true;
-  })(); })()`);
-  if (!focused) fail(`could not focus the terminal input for task "${task}"`);
+  if (!await focusTerminal()) fail(`could not focus the terminal input for task "${task}"`);
 };
+
+// Focus the active terminal's input and CONFIRM focus is there. Returns false when
+// it cannot be put there.
+//
+// The confirmation is the point. `keyboard.insertText` and `keyboard.press` go to
+// whatever element holds focus at the instant they arrive, not to the terminal we
+// meant. On 2026-10-07 a Slack message to ACE was typed into an existing session
+// while Jonathan was using emdash; nothing reached that session's transcript, and
+// the likeliest cause is a click of his landing between our focus and our insert,
+// so the text went wherever he had clicked. The New Task path already checks focus
+// moved before it inserts (see `create`); this is the same check for the terminal,
+// and every keystroke-sending site calls it immediately before it types.
+const focusTerminal = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
+  const term = activeTerm();
+  const ta = (term && term.querySelector('.xterm-helper-textarea'))
+    || document.querySelector('textarea[aria-label="Terminal input"]');
+  if (!ta) return false;
+  if (document.activeElement !== ta) ta.focus();
+  return document.activeElement === ta;
+})(); })()`);
+
+// Re-assert focus right before a keystroke, once more after a short pause (a click
+// in flight can steal it back), and refuse rather than type somewhere unknown.
+// FOCUS_LOST is raised BEFORE anything is typed, so the runner may treat it as a
+// send that never happened.
+const ensureFocus = async (task) => {
+  if (await focusTerminal()) return;
+  await page.waitForTimeout(150);
+  if (await focusTerminal()) return;
+  fail(`FOCUS_LOST: the terminal input for task "${task}" would not keep focus ` +
+       `(a human is probably using emdash) — refusing to type`);
+};
+
+// Read whatever is in the ACTIVE terminal's composer.
+//
+// Detection is structural (COMPOSER_FN: the ❯ row directly under a box rule,
+// whole viewport, status-bar bounded) — NOT a "last N rows" scan. The previous
+// window read a FRESH session as empty every time, because a fresh session
+// draws its composer near the TOP of the pane (measured: row 13 of 38, the
+// whole scanned window blank) — which is exactly the state every new chat
+// session is in (#521).
+// Returns {found, text, typed}: `text` is everything rendered in the composer,
+// `typed` only the part the HUMAN put there (see BRIGHT_FN — dim cells are the
+// suggestion claude is offering, not keystrokes). `found` comes from the full
+// frame, since the box rules and ❯ that make a composer findable are never dim.
+const readComposer = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; ${COMPOSER_FN}; ${BRIGHT_FN}; return (() => {
+  const term = activeTerm();
+  if (!term) return { found: false, text: '', typed: '' };
+  const descriptors = [...term.querySelectorAll('.xterm-rows > div')].map(r => ({
+    text: r.textContent || '',
+    spans: [...r.children].map(s => ({
+      text: s.textContent || '',
+      dim: (s.className || '').includes('xterm-dim'),
+    })),
+  }));
+  const full = composerText(descriptors.map(d => d.text));
+  const typed = composerText(brightRows(descriptors));
+  // If the blanked frame LOSES the composer the structure itself was dim, which
+  // this rule does not model — so fall back to the full text (a collision, the
+  // human is asked) rather than to '' (send, and clobber whatever is there).
+  // Every send site in this file fails closed; this one does too.
+  return { found: full.found, text: full.text,
+           typed: typed.found ? typed.text : full.text };
+})(); })()`);
+
+// A frame with no composer is UNREADABLE, not empty: mid-redraw right after the
+// task click, a menu/dialog covering the input, or a clipped stale frame (all
+// observed live). Re-read a few times for the transient cases; the caller decides
+// what an unreadable frame means (open-send fails closed).
+const readComposerSettled = async () => {
+  let composer = { found: false, text: '', typed: '' };
+  for (let attempt = 0; attempt < 4; attempt++) {
+    composer = await readComposer();
+    if (composer.found) break;
+    await page.waitForTimeout(400);
+  }
+  return composer;
+};
+
+// Ghost/placeholder hints claude shows in an EMPTY input — treat as empty so the
+// fast path still fires instead of popping a spurious collision dialog. `typed`
+// (above) already blanks every dim cell, which is the general form of this rule;
+// the prefix list stays as a second net for any hint claude renders undimmed.
+const PLACEHOLDER = /^(Try |Ask |\/ for |\? for )/i;
+const isEmpty = (s) => !s || PLACEHOLDER.test(s);
 
 try {
   if (command === 'list') {
@@ -387,59 +467,15 @@ try {
     // was typing when emdash switched to this task and their keystrokes leaked in —
     // a COLLISION we must NOT clobber blindly (insertText APPENDS and Enter submits
     // the concatenation; verified live 2026-07-28, a half-typed thought and a chat
-    // message reached the agent as ONE line).
+    // message reached the agent as ONE line). See readComposer for how.
     //
-    // Detection is structural (COMPOSER_FN: the ❯ row directly under a box rule,
-    // whole viewport, status-bar bounded) — NOT a "last N rows" scan. The previous
-    // window read a FRESH session as empty every time, because a fresh session
-    // draws its composer near the TOP of the pane (measured: row 13 of 38, the
-    // whole scanned window blank) — which is exactly the state every new chat
-    // session is in (#521).
-    // Returns {found, text, typed}: `text` is everything rendered in the composer,
-    // `typed` only the part the HUMAN put there (see BRIGHT_FN — dim cells are the
-    // suggestion claude is offering, not keystrokes). `found` comes from the full
-    // frame, since the box rules and ❯ that make a composer findable are never dim.
-    const readComposer = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; ${COMPOSER_FN}; ${BRIGHT_FN}; return (() => {
-      const term = activeTerm();
-      if (!term) return { found: false, text: '', typed: '' };
-      const descriptors = [...term.querySelectorAll('.xterm-rows > div')].map(r => ({
-        text: r.textContent || '',
-        spans: [...r.children].map(s => ({
-          text: s.textContent || '',
-          dim: (s.className || '').includes('xterm-dim'),
-        })),
-      }));
-      const full = composerText(descriptors.map(d => d.text));
-      const typed = composerText(brightRows(descriptors));
-      // If the blanked frame LOSES the composer the structure itself was dim, which
-      // this rule does not model — so fall back to the full text (a collision, the
-      // human is asked) rather than to '' (send, and clobber whatever is there).
-      // Every send site in this file fails closed; this one does too.
-      return { found: full.found, text: full.text,
-               typed: typed.found ? typed.text : full.text };
-    })(); })()`);
-    // A frame with no composer is UNREADABLE, not empty: mid-redraw right after the
-    // task click, a menu/dialog covering the input, or a clipped stale frame (all
-    // observed live). Re-read a few times for the transient cases, then fail closed —
-    // a blind send would append into a composer we cannot see. The runner treats a
-    // CDPError as "task exists but undrivable" and retries the turn; it never
-    // duplicates the session.
-    let composer = { found: false, text: '', typed: '' };
-    for (let attempt = 0; attempt < 4; attempt++) {
-      composer = await readComposer();
-      if (composer.found) break;
-      await page.waitForTimeout(400);
-    }
+    // The runner treats a CDPError as "task exists but undrivable" and retries the
+    // turn; it never duplicates the session.
+    const composer = await readComposerSettled();
     if (!composer.found) {
       fail(`COMPOSER_NOT_VISIBLE: no input line in the rendered frame for task "${task}" ` +
            `(mid-redraw, a menu is up, or a stale frame) — refusing a blind send`);
     }
-    // Ghost/placeholder hints claude shows in an EMPTY input — treat as empty so the
-    // fast path still fires instead of popping a spurious collision dialog. `typed`
-    // (above) already blanks every dim cell, which is the general form of this rule;
-    // the prefix list stays as a second net for any hint claude renders undimmed.
-    const PLACEHOLDER = /^(Try |Ask |\/ for |\? for )/i;
-    const isEmpty = (s) => !s || PLACEHOLDER.test(s);
 
     // Type `body` and submit it. Claude Code reads a burst of input that contains
     // a newline as a PASTE, and an Enter arriving inside that same burst becomes
@@ -451,19 +487,36 @@ try {
     // then Enter in one write never submits; any gap of 50ms or more always does.
     // So: pause before Enter, then LOOK — if the composer still holds the message,
     // the Enter was swallowed and pressing it again cannot send it twice.
+    //
+    // A SINGLE-line message gets the same look, after the same pause. It used to be
+    // Enter-and-return, so a swallowed Enter (a keystroke lost to a human's click,
+    // or a TUI mid-redraw) left the message sitting in the composer with nobody the
+    // wiser until the transcript check gave up (2026-10-07, ACE). There the match is
+    // by TEXT rather than emptiness: a one-liner is never collapsed, and a slash
+    // command's first Enter can legitimately REPLACE the text with an autocomplete
+    // pick — pressing again then would send something we never typed.
     const PASTE_SETTLE_MS = 500;
+    const squash = (s) => (s || '').replace(/[\s│|]+/g, '');
+    const PASTED = /^\[Pasted text #\d+[^\]]*\]$/;
+    const stillOurs = (body, typed) => {
+      if (isEmpty(typed)) return false;
+      if (/\n/.test(body)) return true;           // only ever our paste (see below)
+      return squash(typed) === squash(body) || PASTED.test(typed.trim());
+    };
     const submit = async (body) => {
+      await ensureFocus(task);
       await page.keyboard.insertText(body);   // atomic commit, not char-by-char
       if (/\n/.test(body)) await page.waitForTimeout(PASTE_SETTLE_MS);
       await page.keyboard.press('Enter');
-      if (!/\n/.test(body)) return;
       // Only ever called on a composer that was empty (or just cleared), so
-      // anything typed in it now is this message — matched by emptiness, not by
-      // text, because claude collapses a long paste to "[Pasted text #1 +N lines]".
+      // anything typed in it now is this message — for a multi-line body matched by
+      // emptiness, not by text, because claude collapses a long paste to
+      // "[Pasted text #1 +N lines]".
       for (let attempt = 0; attempt < 2; attempt++) {
         await page.waitForTimeout(PASTE_SETTLE_MS);
         const after = await readComposer();
-        if (!after.found || isEmpty(after.typed)) return;
+        if (!after.found || !stillOurs(body, after.typed)) return;
+        await ensureFocus(task);
         await page.keyboard.press('Enter');
       }
     };
@@ -473,6 +526,7 @@ try {
       // Ctrl+U (kill-to-start) as a fast path, then backspace the MEASURED content and
       // re-read until empty (self-correcting; robust to whatever line editing claude's
       // TUI actually honors). Leaked text is "the last few words", so this is short.
+      await ensureFocus(task);
       await page.keyboard.press('Control+U');
       for (let i = 0; i < 6; i++) {
         const cur = await readComposer();
@@ -619,6 +673,29 @@ try {
       if (!gone) fail(`task "${task}" is still in the sidebar after the delete`);
       out({ ok: true, action: 'deleted' });
     }
+
+  } else if (command === 'composer') {
+    // READ-ONLY: what is in this task's composer, and what is on its screen. The
+    // runner asks after a send it could not confirm in the transcript, to decide
+    // between pressing Enter on our own unsent message, believing a submit the
+    // transcript has not shown yet, retyping into an empty composer, or leaving a
+    // human's text alone (execute._recover_delivery). Types nothing; opening the
+    // task is no new hazard — open-send opened this same task seconds earlier.
+    //   found    composer visible (false = unreadable frame; the runner fails closed)
+    //   typed    the non-dim composer text (what a human — or we — put there)
+    //   screen   the whole rendered frame, for "is our message already up there?"
+    //   running  claude's own "esc to interrupt" marker is showing
+    const { task, project } = args;
+    await openTask(task, project);
+    const composer = await readComposerSettled();
+    const screen = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
+      const term = activeTerm();
+      const rows = term && term.querySelector('.xterm-rows');
+      if (!rows) return '';
+      return [...rows.children].map(r => r.textContent).join('\n');
+    })(); })()`);
+    out({ ok: true, task, found: composer.found, text: composer.text, typed: composer.typed,
+          screen: screen || '', running: /esc to interrupt/i.test(screen || '') });
 
   } else if (command === 'read-term') {
     // The rendered terminal, as TEXT. This is how canopy sees a dialog that only

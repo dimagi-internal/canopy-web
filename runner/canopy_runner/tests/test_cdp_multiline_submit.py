@@ -40,4 +40,52 @@ def test_submit_waits_and_rechecks_a_multiline_message():
     branch = _open_send_branch()
     body = branch[branch.index("const submit = async"):]
     assert "waitForTimeout(PASTE_SETTLE_MS)" in body.split("press('Enter')")[0]
-    assert "readComposer()" in body and "isEmpty(after.typed)" in body
+    assert "readComposer()" in body and "stillOurs(body, after.typed)" in body
+
+
+def _still_ours_src() -> str:
+    branch = _open_send_branch()
+    return branch[branch.index("const stillOurs"):branch.index("const submit = async")]
+
+
+def test_a_multiline_body_is_rechecked_by_emptiness_not_text():
+    # claude collapses a long paste to "[Pasted text #1 +N lines]", so the
+    # multi-line recheck must not compare text.
+    src = _still_ours_src()
+    assert "if (isEmpty(typed)) return false;" in src
+    assert "if (/\\n/.test(body)) return true;" in src
+
+
+# ── 2026-10-07 (ACE): a single-line Enter swallowed, focus stolen mid-send ──────
+
+def test_a_single_line_body_is_rechecked_too():
+    """It used to press Enter once and return, so a swallowed Enter left a one-line
+    message sitting in the composer. The recheck loop now runs for every body."""
+    branch = _open_send_branch()
+    body = branch[branch.index("const submit = async"):branch.index("if (clearFirst)")]
+    assert "if (!/\\n/.test(body)) return;" not in body
+    loop = body[body.index("press('Enter')"):]
+    assert "readComposer()" in loop and "press('Enter')" in loop.split("readComposer()")[1]
+
+
+def test_a_single_line_recheck_matches_by_text():
+    """A slash command's first Enter can replace the text with an autocomplete pick;
+    pressing again on THAT would send something never typed. So a one-liner is
+    only re-submitted while the composer still holds exactly it."""
+    src = _still_ours_src()
+    assert "squash(typed) === squash(body)" in src
+
+
+def test_focus_is_confirmed_immediately_before_every_keystroke_burst():
+    """insertText and press go to whatever holds focus when they arrive; a human's
+    click between focus and insert diverts the message. Every typing site
+    re-asserts (and verifies) focus first."""
+    branch = _open_send_branch()
+    body = branch[branch.index("const submit = async"):]
+    assert body.index("await ensureFocus(task);") < body.index("insertText(")
+    assert "await ensureFocus(task);\n      await page.keyboard.press('Control+U');" in branch
+    src = SIDECAR.read_text()
+    focus = src[src.index("const focusTerminal"):src.index("const ensureFocus")]
+    assert "document.activeElement === ta" in focus
+    ensure = src[src.index("const ensureFocus"):src.index("const readComposer")]
+    assert "FOCUS_LOST" in ensure

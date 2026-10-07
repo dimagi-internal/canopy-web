@@ -255,6 +255,24 @@ def read_terminal(task: str, *, port: int = 9222, project: str = "") -> str:
     return _run("read-term", args).get("text") or ""
 
 
+def read_composer(task: str, *, port: int = 9222, project: str = "") -> dict:
+    """READ-ONLY: the task's composer and rendered frame, for delivery recovery.
+
+    Returns ``{"found", "text", "typed", "screen", "running"}`` (see the sidecar's
+    ``composer`` command). ``found: False`` means the frame could not be read — a menu
+    is up, mid-redraw — and callers must treat it as "cannot see", never as "empty".
+    Types nothing. Raises CDPError like every other command (an older sidecar that
+    lacks the command fails as "unknown command", which callers treat as unreadable).
+    """
+    args = {"task": task, "port": port}
+    if project:
+        args["project"] = project   # task names are unique per project only
+    data = _run("composer", args)
+    return {"found": bool(data.get("found")), "text": data.get("text") or "",
+            "typed": data.get("typed") or "", "screen": data.get("screen") or "",
+            "running": bool(data.get("running"))}
+
+
 def send_keys(task: str, keys: list[str], *, port: int = 9222, project: str = "") -> dict:
     """Press `keys` in the task's terminal, one at a time.
 
