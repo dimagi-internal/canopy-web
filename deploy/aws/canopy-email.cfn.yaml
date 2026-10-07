@@ -20,9 +20,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 #
 # DNS is the step this stack cannot do: dimagi.com is a Cloudflare zone, in no
 # AWS account. The identity stays unverified, and SES refuses every send from
-# it, until the three DKIM CNAMEs in the Outputs are published there. Switch
-# DEFAULT_FROM_EMAIL (canopy-web.cfn.yaml) only after `aws sesv2
-# get-email-identity --email-identity canopy.dimagi.com` says SUCCESS.
+# it, until the three DKIM CNAMEs in the Outputs are published there. They were
+# published and verified on 2026-10-07, and DEFAULT_FROM_EMAIL
+# (config/settings/connectlabs.py) moved to noreply@canopy.dimagi.com then.
 #
 # dimagi.com publishes DMARC p=quarantine, and a subdomain inherits it. DKIM
 # alignment is what passes it: the default MAIL FROM is amazonses.com, which

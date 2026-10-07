@@ -56,9 +56,10 @@ CANOPY_FORMER_BASE_URLS = ["https://labs.connect.dimagi.com/canopy"]
 # ON here so the probe runs once deployed (apps/tokens/live_probe.py).
 CANOPY_HOST_PROBE_USERNAME = env("CANOPY_HOST_PROBE_USERNAME", default="canopy-probe")
 
-# The labs account's verified SES domain (see apps/common/email.py). Never a
-# domain prod Connect sends from: labs' reputation must not touch anyone else's.
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Canopy <noreply@labs.connect.dimagi.com>")
+# canopy's own verified SES domain (deploy/aws/canopy-email.cfn.yaml; see
+# apps/common/email.py). Never a domain prod Connect sends from: labs' reputation
+# must not touch anyone else's.
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Canopy <noreply@canopy.dimagi.com>")
 
 LOGIN_URL = "/accounts/google/login/"
 
