@@ -7,9 +7,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
-const { listProjects, createProject } = vi.hoisted(() => ({
+const { listProjects, createProject, ctx } = vi.hoisted(() => ({
   listProjects: vi.fn<(slug: string, status?: string) => Promise<unknown[]>>(async () => []),
   createProject: vi.fn(async () => ({})),
+  ctx: { canEdit: true, waiting: 0, refreshWaiting: () => {} },
 }))
 
 vi.mock('@/api/agents', async (orig) => ({
@@ -19,7 +20,7 @@ vi.mock('@/api/agents', async (orig) => ({
 }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
-  useOutletContext: () => ({ agent: { slug: 'eva', name: 'Eva' }, canEdit: true }),
+  useOutletContext: () => ({ agent: { slug: 'eva', name: 'Eva' }, ...ctx }),
 }))
 
 const { AgentProjectsSection } = await import('./AgentProjectsSection')
@@ -30,7 +31,7 @@ function project(over: Record<string, unknown> = {}) {
     outcome: 'A clear "what" explanation of Connect Enterprise',
     status: 'active', owner_note: '', owner_email: 'jonathan@dimagi.com',
     drive_folder_id: '', drive_folder_url: '', repo_slug: '', notes: '', links: [],
-    task_count: 4, open_task_count: 3,
+    task_count: 4, open_task_count: 3, waiting_task_count: 1,
     created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-05T00:00:00Z', ...over,
   }
 }
@@ -49,6 +50,7 @@ afterEach(() => {
   cleanup()
   vi.clearAllMocks()
   listProjects.mockResolvedValue([])
+  ctx.canEdit = true
 })
 
 describe('AgentProjectsSection', () => {
@@ -63,7 +65,7 @@ describe('AgentProjectsSection', () => {
     expect(row.getAttribute('href')).toBe('/w/connect/agents/eva/projects/P1')
     expect(row.textContent).toContain('Connect Enterprise')
     expect(row.textContent).toContain('jonathan@dimagi.com')
-    expect(row.textContent).toContain('3 open')
+    expect(row.textContent).toContain('3 open · 1 waiting')
     expect(row.textContent).toContain('A clear "what" explanation')
 
     const group = screen.getByTestId('projects-finished') as HTMLDetailsElement
@@ -97,5 +99,15 @@ describe('AgentProjectsSection', () => {
       name: 'UNGA 2026', outcome: 'Every meeting booked and briefed',
     }))
     await waitFor(() => expect(listProjects).toHaveBeenCalledTimes(2))
+  })
+
+  it('a viewer cannot add a project', async () => {
+    ctx.canEdit = false
+    show()
+    await waitFor(() => expect(listProjects).toHaveBeenCalledTimes(1))
+    fireEvent.change(screen.getByLabelText('New project name'), { target: { value: 'X' } })
+    fireEvent.change(screen.getByLabelText('New project outcome'), { target: { value: 'Y' } })
+    const add = screen.getByRole('button', { name: 'Add project' }) as HTMLButtonElement
+    expect(add.disabled).toBe(true)
   })
 })

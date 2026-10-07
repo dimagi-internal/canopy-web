@@ -12,7 +12,7 @@ import { WorkbenchSkeleton, WorkbenchSubHeader } from 'canopy-ui'
 // One row per project, live ones first; finished ones fold into a group below
 // because they are history you ask for, not what this page opens on.
 export function AgentProjectsSection(): JSX.Element {
-  const { agent } = useOutletContext<AgentOutletContext>()
+  const { agent, canEdit } = useOutletContext<AgentOutletContext>()
 
   // Stamped with the slug it belongs to, so switching agents never shows the
   // previous agent's rows while the next list loads.
@@ -47,7 +47,7 @@ export function AgentProjectsSection(): JSX.Element {
       <WorkbenchSubHeader title="Projects" count={fresh ? active.length : undefined} />
 
       <div className="mb-6">
-        <NewProject slug={agent.slug} onCreated={() => void reload()} />
+        <NewProject slug={agent.slug} canEdit={canEdit} onCreated={() => void reload()} />
       </div>
 
       {!fresh ? (
@@ -84,11 +84,11 @@ export function AgentProjectsSection(): JSX.Element {
 }
 
 function ProjectRow({ project: p }: { project: ProjectOut }): JSX.Element {
-  // The API counts open tasks per project but not waiting ones, so the row
-  // shows "N open" only; the project page carries the full picture.
+  // "N open · M waiting", as in the spec's example row. Waiting is shown even at
+  // zero so rows line up and "0 waiting" reads as the good news it is.
   const meta = [
     p.owner_email || p.owner_note,
-    `${p.open_task_count} open`,
+    `${p.open_task_count} open · ${p.waiting_task_count} waiting`,
     relativeTime(p.updated_at, new Date()),
   ].filter(Boolean)
 

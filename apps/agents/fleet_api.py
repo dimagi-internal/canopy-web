@@ -61,8 +61,9 @@ def list_fleet_projects(request: HttpRequest, status: str = "active",
     qs = qs.annotate(
         n_tasks=Count("tasks", distinct=True),
         n_open=Count("tasks", filter=Q(tasks__status__in=services.LIVE_STATUSES), distinct=True),
+        n_waiting=Count("tasks", filter=services.waiting_q("tasks__"), distinct=True),
     )
     projects = list(qs.select_related("agent", "owner_user").order_by("agent__slug", "-updated_at"))
     for p in projects:
-        p._task_count, p._open_task_count = p.n_tasks, p.n_open
+        p._task_count, p._open_task_count, p._waiting_task_count = p.n_tasks, p.n_open, p.n_waiting
     return [AgentProjectOut.model_validate(p) for p in projects]

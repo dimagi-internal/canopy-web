@@ -110,7 +110,16 @@ export function ProjectGroupHeader({
  *  "what done looks like" is a task, and the outcome is the line every row on
  *  the Projects page leads with. The server accepts an empty outcome (the CLI
  *  and agents create projects too); the requirement is the UI's. */
-export function NewProject({ slug, onCreated }: { slug: string; onCreated: () => void }): JSX.Element {
+export function NewProject({
+  slug,
+  onCreated,
+  canEdit,
+}: {
+  slug: string
+  onCreated: () => void
+  /** Creating a project is an editor action (`_agent_for_write`). */
+  canEdit: boolean
+}): JSX.Element {
   const [name, setName] = useState('')
   const [outcome, setOutcome] = useState('')
   const [busy, setBusy] = useState(false)
@@ -122,7 +131,7 @@ export function NewProject({ slug, onCreated }: { slug: string; onCreated: () =>
       className="flex flex-wrap items-center gap-2"
       onSubmit={(e) => {
         e.preventDefault()
-        if (!ready || busy) return
+        if (!ready || busy || !canEdit) return
         setBusy(true)
         setError(null)
         void createProject(slug, { name: name.trim(), outcome: outcome.trim() })
@@ -151,7 +160,8 @@ export function NewProject({ slug, onCreated }: { slug: string; onCreated: () =>
       />
       <button
         type="submit"
-        disabled={busy || !ready}
+        disabled={busy || !ready || !canEdit}
+        title={canEdit ? undefined : 'Adding a project needs the editor role'}
         className="min-h-11 rounded bg-primary px-2 py-1 text-[12px] text-primary-foreground hover:bg-primary/90 disabled:opacity-50 sm:min-h-0"
       >
         Add project

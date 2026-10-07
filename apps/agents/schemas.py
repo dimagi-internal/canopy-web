@@ -620,6 +620,8 @@ class AgentProjectOut(StrictModel):
     links: list[AgentTaskLink] = Field(default_factory=list)
     task_count: int = 0
     open_task_count: int = 0
+    #: Live tasks with an open ask or parked on a person (`services.waiting_q`).
+    waiting_task_count: int = 0
     created_at: dt.datetime
     updated_at: dt.datetime
 

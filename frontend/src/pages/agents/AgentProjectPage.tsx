@@ -22,10 +22,8 @@ export function AgentProjectPage(): JSX.Element {
   // `canEdit` is the workspace shell's one answer to "may this person dispatch
   // or close a task" — the same value the Tasks board hands its cards — and
   // `refreshWaiting` keeps the rail's "waiting on you" badge honest after a card
-  // acts. Both are optional here only until the shell's context declares them.
-  const { agent, canEdit = false, refreshWaiting } = useOutletContext<
-    AgentOutletContext & { canEdit?: boolean; refreshWaiting?: () => void }
-  >()
+  // acts.
+  const { agent, canEdit, refreshWaiting } = useOutletContext<AgentOutletContext>()
   const { ref = '' } = useParams<{ ref: string }>()
 
   const [data, setData] = useState<{
@@ -108,6 +106,7 @@ export function AgentProjectPage(): JSX.Element {
             Status
             <select
               aria-label="Project status"
+              disabled={!canEdit}
               value={detail.status}
               onChange={(e) => {
                 const status = e.target.value
@@ -156,7 +155,7 @@ export function AgentProjectPage(): JSX.Element {
                 task={t}
                 onChanged={() => {
                   reload()
-                  refreshWaiting?.()
+                  refreshWaiting()
                 }}
                 canEdit={canEdit}
               />

@@ -210,3 +210,30 @@ def test_reading_needs_membership_and_writing_needs_more(agent):
     assert vc.get("/api/agents/eva/projects/").status_code == 200
     assert vc.post("/api/agents/eva/projects/", {"name": "nope"},
                    content_type="application/json").status_code == 403
+
+
+def test_projects_count_tasks_waiting_on_a_person(client, agent, owner):
+    """`waiting_task_count` is `services.waiting_q` per project — an open ask or
+    a live task parked on someone — the same on the agent list, the fleet list
+    and the detail page. Not per viewer."""
+    _create(client)
+    rows = [
+        {"ext_id": "T1", "title": "q", "project": "P1", "status": "in_progress",
+         "ask_kind": "question", "ask_body": "Which date?"},           # open ask
+        {"ext_id": "T2", "title": "p", "project": "P1", "status": "in_progress",
+         "waiting_on_email": owner.email},                              # parked
+        {"ext_id": "T3", "title": "x", "project": "P1", "status": "in_progress"},
+        {"ext_id": "T4", "title": "d", "project": "P1", "status": "done",
+         "ask_kind": "review", "ask_body": "ok?"},                     # not live
+    ]
+    assert client.post("/api/agents/eva/tasks/", rows,
+                       content_type="application/json").status_code in (200, 201)
+
+    listed = client.get("/api/agents/eva/projects/").json()[0]
+    fleet = client.get("/api/projects/").json()[0]
+    detail = client.get("/api/agents/eva/projects/P1/").json()
+
+    assert listed["waiting_task_count"] == 2
+    assert fleet["waiting_task_count"] == 2
+    assert detail["waiting_task_count"] == 2
+    assert listed["open_task_count"] == 3

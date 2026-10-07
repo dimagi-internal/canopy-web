@@ -1354,7 +1354,8 @@ def list_projects(request: HttpRequest, slug: str, status: str = "") -> list[Age
     projects = services.list_projects(agent, status=status)
     counts = services.project_task_counts(agent)
     for project in projects:
-        project._task_count, project._open_task_count = counts.get(project.pk, (0, 0))
+        (project._task_count, project._open_task_count,
+         project._waiting_task_count) = counts.get(project.pk, (0, 0, 0))
     return [AgentProjectOut.model_validate(p) for p in projects]
 
 
@@ -1413,6 +1414,8 @@ def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetail
                  .order_by(live_first, "position", "id"))
     project._task_count = len(tasks)
     project._open_task_count = sum(t.status in services.LIVE_STATUSES for t in tasks)
+    # `waiting_task_count` is left to the model property: one COUNT through
+    # `services.waiting_q`, rather than a second Python copy of that predicate.
     # Everyone sees what the agent did; a turn's prompt is a log (turn_access).
     turns = turn_access.redact(_turns_touching(agent, [t.ext_id for t in tasks]), request.user)
     # Built from the plain project shape: `project.tasks` is a manager, not a list.

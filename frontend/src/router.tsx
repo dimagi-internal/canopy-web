@@ -59,6 +59,12 @@ const lazySection: typeof lazy = (load) => lazy(lazyRoute(load))
 
 // Agent Workspace sections are lazy-loaded — each owns its data fetch and only
 // the active section's bundle is pulled in.
+const AgentProjectsSection = lazySection(() =>
+  import('./pages/agents/AgentProjectsSection').then((m) => ({ default: m.AgentProjectsSection })),
+)
+const AgentProjectPage = lazySection(() =>
+  import('./pages/agents/AgentProjectPage').then((m) => ({ default: m.AgentProjectPage })),
+)
 const AgentTasksSection = lazySection(() =>
   import('./pages/agents/AgentTasksSection').then((m) => ({ default: m.AgentTasksSection })),
 )
@@ -297,9 +303,8 @@ export const routeTable: RouteObject[] = [
         children: [
           // Projects is where an agent opens: the outcomes it is working toward.
           { index: true, element: <Navigate to="projects" replace /> },
-          // Until the Projects page lands this is still the grouped view of
-          // Tasks, so the landing page shows the work rather than nothing.
-          { path: 'projects', element: <Navigate to="../tasks?by=project" replace /> },
+          { path: 'projects', element: <LazySection><AgentProjectsSection /></LazySection> },
+          { path: 'projects/:ref', element: <LazySection><AgentProjectPage /></LazySection> },
           { path: 'tasks', element: <LazySection><AgentTasksSection /></LazySection> },
           // Old addresses for the same things — bookmarks and links in old emails.
           { path: 'work', element: <Navigate to="../tasks" replace /> },

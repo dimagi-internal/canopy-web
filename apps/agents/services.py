@@ -500,23 +500,23 @@ def patch_project(project: AgentProject, data: dict) -> AgentProject:
 
 
 def project_task_counts(agent: Agent) -> dict:
-    """`{project_id: (tasks, still open)}` in ONE query.
+    """`{project_id: (tasks, still open, waiting on a person)}` in ONE query.
 
     The board shows a count per project, and resolving it per row would be a
     query per project on a page that lists them all.
     """
-    from django.db.models import Case, Count, IntegerField, When
+    from django.db.models import Count, Q
 
     rows = (
         AgentTask.objects.filter(agent=agent, project__isnull=False)
         .values("project_id")
         .annotate(
             total=Count("id"),
-            open=Count(Case(When(status__in=[AgentTask.SUGGESTED, AgentTask.IN_PROGRESS], then=1),
-                            output_field=IntegerField())),
+            open=Count("id", filter=Q(status__in=LIVE_STATUSES)),
+            waiting=Count("id", filter=waiting_q()),
         )
     )
-    return {r["project_id"]: (r["total"], r["open"]) for r in rows}
+    return {r["project_id"]: (r["total"], r["open"], r["waiting"]) for r in rows}
 
 
 def set_task_project(task, project) -> None:
@@ -807,7 +807,7 @@ def next_task_ext_id(agent: Agent) -> str:
 LIVE_STATUSES = [AgentTask.SUGGESTED, AgentTask.IN_PROGRESS]
 
 
-def waiting_q():
+def waiting_q(prefix: str = ""):
     """"Somebody has to do something" — as ONE predicate.
 
     Two shapes count, and both are real:
@@ -816,14 +816,17 @@ def waiting_q():
         boards actually hold — "waiting on Andrea for the numbers" is a wait
         even though nothing is being asked.
 
-    One definition because three consumers read it (the inbox, the waiting
-    badge, push), and this codebase has already paid for the same predicate
-    written three times.
+    One definition because several consumers read it (the inbox, the waiting
+    badge, push, the per-project waiting count), and this codebase has already
+    paid for the same predicate written three times. `prefix` (e.g. "tasks__")
+    lets a query on a related model — a project annotating its tasks — reuse it.
     """
     from django.db.models import Q
 
-    return Q(status__in=LIVE_STATUSES) & (
-        (~Q(ask_kind="") & Q(ask_closed_at__isnull=True)) | Q(waiting_on_user__isnull=False)
+    p = prefix
+    return Q(**{f"{p}status__in": LIVE_STATUSES}) & (
+        (~Q(**{f"{p}ask_kind": ""}) & Q(**{f"{p}ask_closed_at__isnull": True}))
+        | Q(**{f"{p}waiting_on_user__isnull": False})
     )
 
 

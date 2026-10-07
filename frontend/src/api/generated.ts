@@ -3048,7 +3048,7 @@ export interface paths {
          * Tasks across every agent you can see (the per-agent filters, plus agent)
          * @description Reviews first, then questions, then the rest; oldest first within each.
          *     `waiting=me` is the caller's inbox: open asks nobody owns plus tasks parked
-         *     on the caller.
+         *     on the caller. `limit` caps the rows (at most 500).
          */
         readonly get: operations["list_fleet_tasks"];
         readonly put?: never;
@@ -10114,6 +10114,11 @@ export interface components {
              */
             readonly open_task_count: number;
             /**
+             * Waiting Task Count
+             * @default 0
+             */
+            readonly waiting_task_count: number;
+            /**
              * Created At
              * Format: date-time
              */
@@ -10219,6 +10224,11 @@ export interface components {
              * @default 0
              */
             readonly open_task_count: number;
+            /**
+             * Waiting Task Count
+             * @default 0
+             */
+            readonly waiting_task_count: number;
             /**
              * Created At
              * Format: date-time
@@ -19737,6 +19747,7 @@ export interface operations {
                 readonly waiting?: string;
                 readonly ask?: string;
                 readonly batch?: string;
+                readonly limit?: number;
             };
             readonly header?: never;
             readonly path?: never;

@@ -632,6 +632,18 @@ class AgentProject(models.Model):
             return cached
         return self.tasks.filter(status__in=[AgentTask.SUGGESTED, AgentTask.IN_PROGRESS]).count()
 
+    @property
+    def waiting_task_count(self) -> int:
+        """Live tasks somebody has to act on (`services.waiting_q`) — an open
+        ask or a task parked on a person. Not per viewer: the Projects page
+        asks "how much of this is stuck on people", not "on me"."""
+        cached = getattr(self, "_waiting_task_count", None)
+        if cached is not None:
+            return cached
+        from apps.agents.services import waiting_q
+
+        return self.tasks.filter(waiting_q()).count()
+
 
 class AgentTask(models.Model):
     """A task in the agent's tracker. Source of truth is a Google Sheet the
