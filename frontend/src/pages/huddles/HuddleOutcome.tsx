@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import type { Huddle } from '@/api/huddles'
-import { MemberAvatar } from './HuddleGrid'
+import { MemberAvatar } from './MemberAvatar'
 import {
   columns, holdWords, ideaHue, ideaLetter, memberHue, outcomeOf, sizeWords,
   type ProposalOutcome,

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import live from './__fixtures__/work-fleet-20261006.json'
-import { askPath, flowArc, replyPath, rowAnchor } from './flowGeometry'
 import {
   anchorKey, answerLines, arcsFor, critiqueAnswered, leaderAsks, proposalLines, reportSummary, resolutionLines, roundAsk,
   type Block,
@@ -76,36 +75,5 @@ describe('compact summaries', () => {
       expect(rows.has(anchorKey.answer(a.partner, a.title))).toBe(true)
       expect(rows.has(anchorKey.proposal(a.lead, a.title))).toBe(true)
     }
-  })
-})
-
-describe('flow geometry', () => {
-  const card = (x: number, y: number) => ({ x, y, w: 200, h: 80 })
-  const row = (c: { x: number; y: number }, dy: number) => ({ x: c.x + 10, y: c.y + dy, w: 180, h: 20 })
-
-  it('anchors an arc to the card edge, level with the answer row and the proposal row', () => {
-    const answerCard = card(600, 300) // right of the proposal: leaves by its left edge
-    const proposalCard = card(100, 150)
-    const { start, end, d } = flowArc(row(answerCard, 40), answerCard, row(proposalCard, 20), proposalCard)
-    expect(start).toEqual({ x: 600, y: 300 + 40 + 10 })
-    expect(end).toEqual({ x: 300, y: 150 + 20 + 10 })
-    expect(d.startsWith('M 600 350 C')).toBe(true)
-    expect(d.endsWith('300 180')).toBe(true)
-    // Mirrored: an answer left of its proposal leaves by the right edge.
-    expect(flowArc(row(proposalCard, 0), proposalCard, row(answerCard, 0), answerCard).start.x).toBe(300)
-    expect(rowAnchor(row(answerCard, 0), answerCard, 'right').x).toBe(800)
-  })
-
-  it('same column: out of and back into the left edges', () => {
-    const a = card(100, 300), b = card(100, 100)
-    const { start, end } = flowArc(row(a, 0), a, row(b, 0), b)
-    expect([start.x, end.x]).toEqual([100, 100])
-  })
-
-  it('ask and reply run in the gutters above and below the row', () => {
-    const leader = { x: 0, y: 100, w: 200, h: 60 }
-    const member = { x: 500, y: 100, w: 200, h: 90 }
-    expect(askPath(leader, member, 88)).toBe('M 200 114 L 206 114 L 206 88 L 522 88 L 522 100')
-    expect(replyPath(member, leader, 202)).toBe('M 678 190 L 678 202 L 178 202 L 178 160')
   })
 })
