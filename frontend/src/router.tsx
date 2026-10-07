@@ -11,7 +11,6 @@ import { ShareRouteErrorBoundary } from './components/ShareRouteErrorBoundary'
 import { lazyRoute } from './pwa/staleChunk'
 import { CredentialsRedirect } from './pages/agents/CredentialsRedirect'
 import { AgentSkillsPage } from './pages/agents/AgentSkillsPage'
-import { WorkRedirect } from './pages/agents/WorkRedirect'
 import { ShareoutsPage } from './pages/ShareoutsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { WalkthroughsPage } from './pages/WalkthroughsPage'
@@ -60,11 +59,8 @@ const lazySection: typeof lazy = (load) => lazy(lazyRoute(load))
 
 // Agent Workspace sections are lazy-loaded — each owns its data fetch and only
 // the active section's bundle is pulled in.
-const InboxSection = lazySection(() =>
-  import('./pages/agents/InboxSection').then((m) => ({ default: m.InboxSection })),
-)
-const AgentWorkSection = lazySection(() =>
-  import('./pages/agents/AgentWorkSection').then((m) => ({ default: m.AgentWorkSection })),
+const AgentTasksSection = lazySection(() =>
+  import('./pages/agents/AgentTasksSection').then((m) => ({ default: m.AgentTasksSection })),
 )
 const AgentTurnsSection = lazySection(() =>
   import('./pages/agents/AgentTurnsSection').then((m) => ({ default: m.AgentTurnsSection })),
@@ -74,9 +70,6 @@ const SchedulesSection = lazySection(() =>
 )
 const AgentSettingsSection = lazySection(() =>
   import('./pages/agents/AgentSettingsSection').then((m) => ({ default: m.AgentSettingsSection })),
-)
-const AgentWorkProductsSection = lazySection(() =>
-  import('./pages/agents/AgentWorkProductsSection').then((m) => ({ default: m.AgentWorkProductsSection })),
 )
 const AgentSkillsSection = lazySection(() =>
   import('./pages/agents/AgentSkillsSection').then((m) => ({ default: m.AgentSkillsSection })),
@@ -302,32 +295,27 @@ export const routeTable: RouteObject[] = [
         path: '/w/:workspace/agents/:slug',
         element: <AgentWorkspacePage />,
         children: [
-          // Work is where an agent opens: what it is doing, not what it is.
-          { index: true, element: <Navigate to="work" replace /> },
-          { path: 'work', element: <LazySection><AgentWorkSection /></LazySection> },
-          { path: 'inbox', element: <LazySection><InboxSection /></LazySection> },
-          // Legacy path from before the rename; keep the old link working.
-          { path: 'needs-you', element: <Navigate to="../inbox" replace /> },
-          // Tasks, Items and Projects were three renderings of ONE table (an
-          // item has been a property of a task since #873) and Overview was a
-          // dashboard over the same rows. They are Work now — grouping and
-          // settled-visibility are query params on it, so an old link lands on
-          // the same view rather than a page that no longer exists.
-          { path: 'overview', element: <Navigate to="../work" replace /> },
-          { path: 'projects', element: <Navigate to="../work?by=project" replace /> },
-          { path: 'tasks', element: <Navigate to="../work" replace /> },
-          { path: 'items', element: <WorkRedirect /> },
+          // Projects is where an agent opens: the outcomes it is working toward.
+          { index: true, element: <Navigate to="projects" replace /> },
+          // Until the Projects page lands this is still the grouped view of
+          // Tasks, so the landing page shows the work rather than nothing.
+          { path: 'projects', element: <Navigate to="../tasks?by=project" replace /> },
+          { path: 'tasks', element: <LazySection><AgentTasksSection /></LazySection> },
+          // Old addresses for the same things — bookmarks and links in old emails.
+          { path: 'work', element: <Navigate to="../tasks" replace /> },
+          { path: 'inbox', element: <Navigate to="../tasks?waiting=me" replace /> },
+          { path: 'needs-you', element: <Navigate to="../tasks?waiting=me" replace /> },
+          { path: 'items', element: <Navigate to="../tasks" replace /> },
+          { path: 'overview', element: <Navigate to="../projects" replace /> },
+          { path: 'work-products', element: <Navigate to="../projects" replace /> },
+          { path: 'syncs', element: <Navigate to="../turns#status-reports" replace /> },
           { path: 'turns', element: <LazySection><AgentTurnsSection /></LazySection> },
           { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
           { path: 'huddles', element: <LazySection><AgentHuddlesSection /></LazySection> },
-          // Syncs are Status reports, a section of Work products now — a "sync"
-          // could be anything; this is a periodic self-review of the work.
-          { path: 'syncs', element: <Navigate to="../work-products#status-reports" replace /> },
           { path: 'settings', element: <LazySection><AgentSettingsSection /></LazySection> },
           // Credentials is a section of Settings now. Old links (and bookmarks)
           // keep working and keep their query, e.g. `?google=ok`.
           { path: 'credentials', element: <CredentialsRedirect /> },
-          { path: 'work-products', element: <LazySection><AgentWorkProductsSection /></LazySection> },
           {
             // Skills and their history are one subject, two views.
             path: 'skills',

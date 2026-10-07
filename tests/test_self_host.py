@@ -353,8 +353,6 @@ def test_the_discovery_documents_and_token_endpoint_are_public(world):
     assert r.status_code == 401 and r.json()["error"] == "invalid_client"
 
 
-@pytest.mark.xfail(strict=True, reason="frontend/src/widget/grantPage.ts still names agent.inbox; "
-                   "the frontend moves to agent.tasks in its own task (plan Task 7)")
 def test_the_widget_names_exactly_the_pages_the_server_registers():
     """A key the server does not know is silently no grant, so the two lists
     must not drift: `frontend/src/widget/grantPage.ts` names every page here."""
