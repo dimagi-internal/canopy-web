@@ -202,7 +202,7 @@ def mark_dirty(agent_id: int) -> None:
 
 # --- A blocked agent asking a question ---------------------------------------
 #
-# Deliberately not routed through the item snapshot above. An agent going from
+# Deliberately not routed through the waiting-task snapshot above. An agent going from
 # "working" to "waiting on a human" is a discrete edge, observed once, and the notification can carry the
 # actual question rather than a tally. It is also not a task ask and must not
 # become one — a task's `approve` can dispatch a Turn, whereas answering a

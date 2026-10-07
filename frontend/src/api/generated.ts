@@ -1770,7 +1770,7 @@ export interface paths {
          *     existence leak) rather than 403.
          *
          *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
-         *     syncs, work products, schedules, items, runner assignments/drills), so
+         *     syncs, projects, schedules, task actions, runner assignments/drills), so
          *     this is a real delete rather than a soft flag — nothing is left dangling
          *     and nothing blocks it.
          */
@@ -2436,7 +2436,12 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List actions on the agent's tasks (the agent drains ?status=pending) */
+        /**
+         * List actions on the agent's tasks (the agent drains ?status=pending)
+         * @description At most `limit` rows (default 200, cap 500). Unfiltered, PENDING rows come
+         *     first (newest first), then the rest newest first — so a short page still
+         *     carries the agent's whole queue before any history.
+         */
         readonly get: operations["list_task_actions"];
         readonly put?: never;
         readonly post?: never;
@@ -7605,7 +7610,7 @@ export interface components {
          *
          *     `parameters` is JSON-Schema, written by the HOST and passed through
          *     uninterpreted — canopy is not the party that knows what a host's action
-         *     means. It is what lets an agent call `dismissItems` knowing it takes
+         *     means. It is what lets an agent call `declineTasks` knowing it takes
          *     `{ids: string[]}`, rather than being told in prose.
          *
          *     May also be sent as `inputSchema`, which is MCP's name for the same field;
@@ -7789,8 +7794,8 @@ export interface components {
              * @default
              */
             readonly parent_claude_session: string;
-            /** Raised From Task Id */
-            readonly raised_from_task_id?: number | null;
+            /** Raised From Task Ext Id */
+            readonly raised_from_task_ext_id?: string | null;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
@@ -10301,6 +10306,11 @@ export interface components {
              */
             readonly batch_key: string;
             /**
+             * Idempotency Key
+             * @default
+             */
+            readonly idempotency_key: string;
+            /**
              * Origin
              * @default
              */
@@ -10503,6 +10513,11 @@ export interface components {
             };
             /** Raised By */
             readonly raised_by?: string | null;
+            /**
+             * Source
+             * @default
+             */
+            readonly source: string;
         };
         /**
          * TurnSpecIn
@@ -10616,6 +10631,11 @@ export interface components {
              * @default
              */
             readonly batch_key: string;
+            /**
+             * Idempotency Key
+             * @default
+             */
+            readonly idempotency_key: string;
             /**
              * Origin
              * @default
@@ -13559,8 +13579,8 @@ export interface components {
              * @default
              */
             readonly parent_claude_session: string;
-            /** Raised From Task Id */
-            readonly raised_from_task_id?: number | null;
+            /** Raised From Task Ext Id */
+            readonly raised_from_task_ext_id?: string | null;
             /** Session Id */
             readonly session_id: string;
             /** Result Note */
@@ -18858,6 +18878,7 @@ export interface operations {
         readonly parameters: {
             readonly query?: {
                 readonly status?: string;
+                readonly limit?: number;
             };
             readonly header?: never;
             readonly path: {

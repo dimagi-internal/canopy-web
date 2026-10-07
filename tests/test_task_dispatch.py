@@ -46,3 +46,17 @@ def test_cross_tenant_target_raises(world):
     task.on_approve = [{"prompt": "x", "target_agent": "hal"}]
     with pytest.raises(ValueError, match="not a member"):
         dispatch(task, action=action, actor_workspace_ids={ws.pk})
+
+
+def test_the_turn_names_its_task_by_ext_id(world):
+    from django.test import Client
+
+    u, ws, _agent, task, action = world
+    turn = dispatch(task, action=action, actor_workspace_ids={ws.pk})[0]
+    client = Client()
+    client.force_login(u)
+    body = client.get(f"/api/harness/turns/{turn.pk}").json()
+    assert body["raised_from_task_ext_id"] == "T1"
+    assert "raised_from_task_id" not in body
+    rows = client.get("/api/harness/turns/?agent=eva").json()
+    assert [r["raised_from_task_ext_id"] for r in rows] == ["T1"]

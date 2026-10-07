@@ -619,7 +619,9 @@ class Turn(models.Model):
     report_summary = models.TextField(blank=True, default="")
     # The request(s) this turn advanced — AgentTask.ext_id values (loose refs, not FKs).
     task_ext_ids = models.JSONField(default=list, blank=True)
-    # Deliverables produced this turn — AgentWorkProduct urls (loose refs).
+    # Deliverables produced this turn, by url — the turn's own provenance (the
+    # work-product table this once pointed at is gone; a project's deliverables
+    # now live in its `links`).
     work_product_urls = models.JSONField(default=list, blank=True)
     # Optional transcript link (empty when the turn was packaged without upload).
     # The uploaded Session is owned by the human whose PAT uploaded it; only its

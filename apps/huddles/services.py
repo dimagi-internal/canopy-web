@@ -244,7 +244,7 @@ def detail(anchor, *, user, visible_qs, workspaces) -> dict:
         {"agent": a.agent.slug, "task_id": a.id, "ext_id": a.ext_id, "title": a.title,
          "status": a.status, "assigned": a.assigned,
          "project": a.project.ext_id if a.project_id else "",
-         "url": f"/w/{a.agent.workspace_id}/agents/{a.agent.slug}/work",
+         "url": f"/w/{a.agent.workspace_id}/agents/{a.agent.slug}/tasks",
          "next_action": a.next_action, "updated_at": a.updated_at}
         for a in _outputs_qs(workspaces).filter(
             Q(source_url__endswith=f"/huddles/{hid}") | Q(source_url__endswith=f"/huddles/{hid}/"))

@@ -707,6 +707,9 @@ class AgentTaskOut(StrictModel):
     on_approve: list[dict] = Field(default_factory=list)
     dispatched_at: dt.datetime | None = None
     batch_key: str = ""
+    #: The producer's key, echoed so an agent can match the tasks it published.
+    #: "" when none was sent (the column is NULL then).
+    idempotency_key: str = ""
     origin: str = ""
     confidence: str
     score: str
@@ -720,6 +723,11 @@ class AgentTaskOut(StrictModel):
     position: int
     created_at: dt.datetime
     updated_at: dt.datetime
+
+    @field_validator("idempotency_key", mode="before")
+    @classmethod
+    def _null_key_is_blank(cls, v):
+        return v or ""
 
 
 class AgentTaskPatch(StrictModel):

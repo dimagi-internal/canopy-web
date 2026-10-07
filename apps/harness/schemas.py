@@ -635,8 +635,9 @@ class TurnOut(Schema):
     parent_session_id: uuid.UUID | None = None
     parent_task: str = ""
     parent_claude_session: str = ""
-    # The board task whose approved dispatch created this turn, if any.
-    raised_from_task_id: int | None = None
+    # The board task whose approved dispatch created this turn, if any — by its
+    # ext_id, the way every route names a task (it is the agent's own task).
+    raised_from_task_ext_id: str | None = None
     session_id: str
     result_note: str
     # True when `prompt`, `origin_ref` and `result_note` were blanked because
@@ -658,6 +659,12 @@ class TurnOut(Schema):
         # agent, so surface the session's agent as the emdash target the runner drives.
         cs = getattr(obj, "chat_session", None)
         return cs.agent.slug if cs and cs.agent_id else None
+
+    @staticmethod
+    def resolve_raised_from_task_ext_id(obj) -> str | None:
+        if not getattr(obj, "raised_from_task_id", None):
+            return None
+        return obj.raised_from_task.ext_id
 
     @staticmethod
     def resolve_project(obj) -> str:

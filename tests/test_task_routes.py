@@ -39,6 +39,8 @@ def test_create_list_filter_act(c):
     ], content_type="application/json")
     assert r.status_code == 201, r.content
     assert [t["ext_id"] for t in r.json()] == ["T1", "T2"]
+    # An agent matches its own published tasks on the key it sent.
+    assert [t["idempotency_key"] for t in r.json()] == ["", "k"]
     assert len(client.get("/api/agents/eva/tasks/?project=P1").json()) == 1
     assert len(client.get("/api/agents/eva/tasks/?project=none").json()) == 1
     assert [t["ext_id"] for t in client.get("/api/agents/eva/tasks/?ask=open").json()] == ["T2"]
@@ -416,3 +418,20 @@ def test_create_keeps_source(c):
                     content_type="application/json")
     assert r.status_code == 201, r.content
     assert agent.tasks.get().source == "sheet:board"
+
+
+def test_actions_list_is_capped_and_puts_pending_first(c):
+    from apps.agents.models import AgentTaskAction
+
+    client, agent, _u = c
+    task = AgentTask.objects.create(agent=agent, ext_id="T1", title="t")
+    old_pending = AgentTaskAction.objects.create(agent=agent, task=task, action="reply",
+                                                 status=AgentTaskAction.PENDING)
+    applied = [AgentTaskAction.objects.create(agent=agent, task=task, action="reply")
+               for _ in range(3)]
+    ids = lambda q: [a["id"] for a in client.get(f"/api/agents/eva/actions/{q}").json()]  # noqa: E731
+    # The pending row is the OLDEST, yet a short page still carries it.
+    assert ids("?limit=2") == [old_pending.id, applied[-1].id]
+    assert ids("") == [old_pending.id] + [a.id for a in reversed(applied)]
+    assert ids("?status=applied&limit=1") == [applied[-1].id]
+    assert len(ids("?limit=0")) == 1  # clamped, not a 500

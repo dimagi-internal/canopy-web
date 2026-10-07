@@ -100,7 +100,7 @@ def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
     Fails CLOSED on an unhomed agent (security review 2026-07-26, hole A):
     this used to return the caller's workspace ids **plus {None}**, so an
     agent with no workspace was visible to ANY authenticated user across the
-    whole agents surface — reads (tasks, work products, skills, turns,
+    whole agents surface — reads (tasks, projects, skills, turns,
     including AgentTurnOut.share_token, a public transcript link) AND writes
     (board commands, PUT /runners). Strictly broader than the read-only hole
     `_agent_or_404` (apps/harness/api.py, F1) closed for the same
@@ -624,7 +624,7 @@ def delete_agent(request: HttpRequest, slug: str):
     existence leak) rather than 403.
 
     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
-    syncs, work products, schedules, items, runner assignments/drills), so
+    syncs, projects, schedules, task actions, runner assignments/drills), so
     this is a real delete rather than a soft flag — nothing is left dangling
     and nothing blocks it.
     """
@@ -1550,15 +1550,24 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
 
 @router.get("/{slug}/actions/", response=list[AgentTaskActionOut],
             summary="List actions on the agent's tasks (the agent drains ?status=pending)",)
-def list_task_actions(request: HttpRequest, slug: str, status: str = "") -> list[AgentTaskActionOut]:
+def list_task_actions(request: HttpRequest, slug: str, status: str = "",
+                      limit: int = 200) -> list[AgentTaskActionOut]:
+    """At most `limit` rows (default 200, cap 500). Unfiltered, PENDING rows come
+    first (newest first), then the rest newest first — so a short page still
+    carries the agent's whole queue before any history."""
     agent = _get_agent_or_404(request, slug)
+    limit = clamp_limit(limit)
     if status == "pending":
         rows = services.pending_actions(agent)  # oldest first: the order to carry them out
     else:
-        rows = agent.task_actions.select_related("agent", "task").order_by("-created_at", "-id")
+        rows = agent.task_actions.select_related("agent", "task")
         if status:
-            rows = rows.filter(status=status)
-    return [AgentTaskActionOut.model_validate(a) for a in rows]
+            rows = rows.filter(status=status).order_by("-created_at", "-id")
+        else:
+            pending_first = Case(When(status="pending", then=0), default=1,
+                                 output_field=IntegerField())
+            rows = rows.order_by(pending_first, "-created_at", "-id")
+    return [AgentTaskActionOut.model_validate(a) for a in rows[:limit]]
 
 
 @router.post("/{slug}/actions/{action_id}/applied", response=AgentTaskActionOut,
