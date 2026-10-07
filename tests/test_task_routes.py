@@ -228,3 +228,100 @@ def test_operation_ids_are_the_mcp_tool_names():
             "list_task_actions", "mark_task_action_applied", "list_projects",
             "create_project", "get_project", "patch_project", "list_fleet_tasks",
             "list_fleet_projects"} <= ops
+
+
+# --- ext_id allocation ----------------------------------------------------------
+
+
+def test_an_explicit_ext_id_does_not_break_auto_numbering(c):
+    client, agent, _u = c
+    post = lambda body: client.post("/api/agents/eva/tasks/", body,  # noqa: E731
+                                    content_type="application/json")
+    assert post([{"ext_id": "T1", "title": "a"}]).status_code == 201
+    r = post([{"title": "b"}])
+    assert r.status_code == 201, r.content
+    assert r.json()[0]["ext_id"] == "T2"
+    # An explicit id ahead of the counter moves it, so the next auto id is fresh.
+    assert post([{"ext_id": "T7", "title": "c"}]).status_code == 201
+    assert post([{"title": "d"}]).json()[0]["ext_id"] == "T8"
+
+
+def test_a_case_variant_ext_id_is_a_duplicate(c):
+    client, agent, _u = c
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="a")
+    r = client.post("/api/agents/eva/tasks/", [{"ext_id": "t1", "title": "b"}],
+                    content_type="application/json")
+    assert r.status_code == 409
+    assert agent.tasks.count() == 1
+
+
+def test_raised_by_must_be_a_turn_of_this_agent(c):
+    client, agent, u = c
+    other = Agent.objects.create(slug="ace", name="Ace", workspace=agent.workspace, owner=u)
+    foreign = Turn.objects.create(agent=other, origin=Turn.ORIGIN_API, idempotency_key="f")
+    mine = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_API, idempotency_key="m")
+    post = lambda raised_by: client.post(  # noqa: E731
+        "/api/agents/eva/tasks/", [{"title": "x", "raised_by": str(raised_by)}],
+        content_type="application/json")
+    assert post(foreign.id).status_code == 422
+    assert post(mine.id).status_code == 201
+
+
+# --- approve runs on_approve -----------------------------------------------------
+
+
+def test_approve_dispatches_on_approve(c):
+    client, agent, _u = c
+    client.post("/api/agents/eva/tasks/", [{
+        "title": "Send it?", "ask_kind": "review", "idempotency_key": "d1",
+        "on_approve": [{"prompt": "/eva:turn send it"}]}], content_type="application/json")
+    r = client.post("/api/agents/eva/tasks/T1/actions", {"action": "approve"},
+                    content_type="application/json")
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert len(body["turn_ids"]) == 1
+    assert body["action"]["status"] == "applied", "the dispatched turn IS the follow-up"
+    assert body["task"]["status"] == "in_progress" and body["task"]["dispatched_at"]
+    turn = Turn.objects.get(pk=body["turn_ids"][0])
+    assert turn.agent_id == agent.pk and "send it" in turn.prompt
+
+
+def test_cross_workspace_target_is_422_and_the_ask_stays_open(c):
+    client, _agent, _u = c
+    owner = User.objects.create_user("x", "x@dimagi.com", "pw")
+    ws2 = Workspace.objects.create(slug="other", display_name="Other", created_by=owner)
+    Agent.objects.create(slug="zed", name="Zed", workspace=ws2, owner=owner)
+    client.post("/api/agents/eva/tasks/", [{
+        "title": "Fan out?", "ask_kind": "review", "idempotency_key": "d2",
+        "on_approve": [{"prompt": "go", "target_agent": "zed"}]}], content_type="application/json")
+    r = client.post("/api/agents/eva/tasks/T1/actions", {"action": "approve"},
+                    content_type="application/json")
+    assert r.status_code == 422
+    task = AgentTask.objects.get(ext_id="T1")
+    assert task.ask_is_open and task.status == "suggested" and not task.actions.exists()
+    assert not Turn.objects.filter(agent__slug="zed").exists()
+
+
+def test_a_malformed_on_approve_is_422(c):
+    client, agent, _u = c
+    # Refused at the door...
+    r = client.post("/api/agents/eva/tasks/", [{
+        "title": "x", "on_approve": [{"prompt": "go", "routing": "anywhere"}]}],
+        content_type="application/json")
+    assert r.status_code == 422
+    # ...and a stored spec that cannot run rolls the approve back.
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="q", ask_kind="review",
+                             on_approve=[{"prompt": "go", "target_agent": "nobody"}])
+    r = client.post("/api/agents/eva/tasks/T1/actions", {"action": "approve"},
+                    content_type="application/json")
+    assert r.status_code == 422
+    assert AgentTask.objects.get(ext_id="T1").ask_is_open
+
+
+def test_fleet_tasks_limit_caps_rows(c):
+    client, agent, _u = c
+    for i in range(3):
+        AgentTask.objects.create(agent=agent, ext_id=f"T{i + 1}", title="t")
+    assert len(client.get("/api/tasks/?limit=2").json()) == 2
+    assert len(client.get("/api/tasks/?limit=0").json()) == 1  # clamped, not a 500
+    assert len(client.get("/api/tasks/").json()) == 3

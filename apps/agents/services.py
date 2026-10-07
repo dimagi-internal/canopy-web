@@ -3,6 +3,7 @@ unit-testable without HTTP."""
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -576,24 +577,64 @@ def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
         # `project_ext_id: null`, so the miss is visible.
         ref = str(p.get("project") or "").strip()
         waiting_on = resolve_waiting_on(agent, p["waiting_on_email"]) if p.get("waiting_on_email") else None
+        raised_by = p.get("raised_by") or None
+        if raised_by and not Turn.objects.filter(pk=raised_by, agent=agent).exists():
+            raise ValueError(f"raised_by {raised_by} is not a turn of {agent.slug}")
+        ext_id = _claim_ext_id(agent, (p.get("ext_id") or "").strip())
         try:
             with transaction.atomic():  # savepoint
                 out.append(AgentTask.objects.create(
                     agent=agent,
-                    ext_id=(p.get("ext_id") or "").strip() or next_task_ext_id(agent),
+                    ext_id=ext_id,
                     project=get_project(agent, ref) if ref else None,
                     ask_kind=ask_kind,
                     idempotency_key=key or None,
-                    raised_by_id=p.get("raised_by") or None,
+                    raised_by_id=raised_by,
                     waiting_on_user=waiting_on,
                     **fields,
                 ))
         except IntegrityError:
             replay = AgentTask.objects.filter(agent=agent, idempotency_key=key).first() if key else None
-            if replay is None:
-                raise
-            out.append(replay)
+            if replay is not None:
+                out.append(replay)
+                continue
+            if _ext_id_taken(agent, ext_id):  # a concurrent create took it first
+                raise DuplicateTaskError(f"{agent.slug} already has a task {ext_id}") from None
+            raise
     return out
+
+
+class DuplicateTaskError(Exception):
+    """An explicit `ext_id` the agent already uses (in any letter case)."""
+
+
+def _ext_id_taken(agent: Agent, ext_id: str) -> bool:
+    return agent.tasks.filter(ext_id__iexact=ext_id).exists()
+
+
+def _claim_ext_id(agent: Agent, explicit: str) -> str:
+    """The ext_id a new task gets.
+
+    Explicit: refused if the agent already has it in ANY case — lookups are
+    case-insensitive (`get_task`), so "t1" beside "T1" would make one of them
+    unreachable. An explicit `T<n>` also moves the counter past n.
+
+    Auto: the next counter value that is free. An explicit id may already sit
+    ahead of the counter, and handing it out again would 409 every auto create
+    from then on (the counter bump rolls back with the failed batch).
+    """
+    if explicit:
+        if _ext_id_taken(agent, explicit):
+            raise DuplicateTaskError(f"{agent.slug} already has a task {explicit}")
+        m = re.fullmatch(r"[Tt](\d+)", explicit)
+        if m:
+            Agent.objects.filter(pk=agent.pk, task_seq__lt=int(m.group(1))).update(
+                task_seq=int(m.group(1)))
+        return explicit
+    while True:
+        ext_id = next_task_ext_id(agent)
+        if not _ext_id_taken(agent, ext_id):
+            return ext_id
 
 
 class UnknownPersonError(Exception):
@@ -813,27 +854,6 @@ def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting:
     if batch:
         qs = qs.filter(batch_key=batch)
     return qs
-
-
-def tasks_waiting_on(user, *, agent: Agent | None = None):
-    """The inbox: live tasks parked on THIS person.
-
-    `waiting_on_user`, not the free-text `assigned`: canopy cannot notify a
-    string, and the fleet's boards spell one human three ways
-    ("Jonathan", "Jonathan Jackson", "jjackson@dimagi.com").
-    """
-    from django.db.models import Q
-
-    qs = (
-        AgentTask.objects.filter(
-            Q(waiting_on_user=user),
-            Q(status__in=LIVE_STATUSES),
-            Q(ask_closed_at__isnull=True),
-        )
-        .select_related("agent", "project")
-        .order_by("-updated_at")
-    )
-    return qs.filter(agent=agent) if agent is not None else qs
 
 
 # ---- Agent credentials (per-agent secret store, encrypted at rest) ----------

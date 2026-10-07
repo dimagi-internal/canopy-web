@@ -10,6 +10,7 @@ from django.http import HttpRequest
 from ninja import Router
 
 from apps.api.auth import session_auth
+from apps.api.pagination import DEFAULT_LIMIT_CAP, clamp_limit
 
 from . import services
 from .api import _visible_agent_workspace_ids
@@ -28,10 +29,11 @@ _ASK_RANK = Case(When(ask_kind=AgentTask.ASK_REVIEW, then=0),
 @router.get("/tasks/", response=list[AgentTaskOut],
             summary="Tasks across every agent you can see (the per-agent filters, plus agent)")
 def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", status: str = "",
-                     waiting: str = "", ask: str = "", batch: str = "") -> list[AgentTaskOut]:
+                     waiting: str = "", ask: str = "", batch: str = "",
+                     limit: int = DEFAULT_LIMIT_CAP) -> list[AgentTaskOut]:
     """Reviews first, then questions, then the rest; oldest first within each.
     `waiting=me` is the caller's inbox: open asks nobody owns plus tasks parked
-    on the caller."""
+    on the caller. `limit` caps the rows (at most 500)."""
     # Scope FIRST: `filter_tasks(waiting="me")` adds unrouted open asks from
     # whatever queryset it is handed, so an unscoped one would leak other
     # tenants' asks into the inbox.
@@ -41,7 +43,8 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
     qs = services.filter_tasks(qs.select_related("agent", "project", "waiting_on_user"),
                                user=request.user, project=project, status=status,
                                waiting=waiting, ask=ask, batch=batch)
-    return [AgentTaskOut.model_validate(t) for t in qs.order_by(_ASK_RANK, "created_at", "id")]
+    qs = qs.order_by(_ASK_RANK, "created_at", "id")[:clamp_limit(limit)]
+    return [AgentTaskOut.model_validate(t) for t in qs]
 
 
 @router.get("/projects/", response=list[AgentProjectOut],

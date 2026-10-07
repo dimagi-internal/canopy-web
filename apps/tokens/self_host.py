@@ -132,7 +132,7 @@ def probe_endpoint() -> str:
 #: dedicated probe user, and a tool outside that scope the MCP must refuse.
 #:
 #: `list_fleet_tasks` (tasks across the fleet, `tasks:read`, page `agent.tasks`):
-#: cheap, every argument is an optional filter so it needs none, and it is
+#: cheap, every argument is optional (it passes `limit: 1`), and it is
 #: scoped by the caller's workspace memberships (`_visible_agent_workspace_ids`),
 #: so for the membershipless probe user it is a real query that returns
 #: nothing. It was `list_items` until items became tasks (2026-10), and
@@ -165,7 +165,7 @@ def probe_identity() -> ProbeIdentity | None:
     if user is None:
         return None
     return ProbeIdentity(endpoint=probe_endpoint(), subject=str(user.pk), scope=PROBE_SCOPE,
-                         tool=PROBE_TOOL, arguments={}, denied_tool=PROBE_DENIED_TOOL,
+                         tool=PROBE_TOOL, arguments={"limit": 1}, denied_tool=PROBE_DENIED_TOOL,
                          page=PROBE_PAGE)
 
 

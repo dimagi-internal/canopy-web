@@ -6,7 +6,7 @@ import datetime as dt
 import logging
 from typing import Any
 
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django.db.models import Case, IntegerField, Q, When
 from django.http import HttpRequest
 from ninja import Router, Status
@@ -1388,7 +1388,9 @@ def _turns_touching(agent, ext_ids: list[str]) -> list:
             q |= Q(task_ext_ids__contains=[eid])
         else:
             q |= Q(task_ext_ids__icontains=f'"{eid}"')
+    # `redact` reads each turn's agent and claiming box; join them up front.
     return list(Turn.objects.filter(agent=agent).filter(q)
+                .select_related("agent", "claimed_by")
                 .order_by("-created_at")[:_PROJECT_RECENT_TURNS])
 
 
@@ -1473,11 +1475,10 @@ def create_tasks(request: HttpRequest, slug: str, payload: list[AgentTaskIn]) ->
         tasks = services.create_tasks(agent, [p.model_dump(exclude_unset=True) for p in payload])
     except services.UnknownPersonError as exc:
         raise HttpError(422, str(exc)) from exc
-    except IntegrityError as exc:
+    except services.DuplicateTaskError as exc:
         # An explicit `ext_id` the agent already uses, with no idempotency key
         # to say "this is the same task".
-        raise HttpError(409, "a task with that ext_id already exists — omit ext_id, "
-                             "or send an idempotency_key to replay") from exc
+        raise HttpError(409, f"{exc} — omit ext_id, or send an idempotency_key to replay") from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
     return Status(201, [AgentTaskOut.model_validate(t) for t in tasks])
@@ -1549,9 +1550,9 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
 def list_task_actions(request: HttpRequest, slug: str, status: str = "") -> list[AgentTaskActionOut]:
     agent = _get_agent_or_404(request, slug)
     if status == "pending":
-        rows = services.pending_actions(agent)
+        rows = services.pending_actions(agent)  # oldest first: the order to carry them out
     else:
-        rows = agent.task_actions.select_related("agent", "task")
+        rows = agent.task_actions.select_related("agent", "task").order_by("-created_at", "-id")
         if status:
             rows = rows.filter(status=status)
     return [AgentTaskActionOut.model_validate(a) for a in rows]

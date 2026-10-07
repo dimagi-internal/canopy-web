@@ -775,8 +775,9 @@ class ActionAppliedIn(StrictModel):
 class TurnBriefOut(StrictModel):
     id: uuid.UUID
     status: str
-    #: The turn's title if it reported one, else the start of its prompt. Blank
-    #: when the caller may not read the turn's content (a turn's content is a log).
+    #: The turn's reported title if it has one, else the first 200 characters of
+    #: its prompt. When the caller may not read the turn's content
+    #: (`turn_access`), the prompt is blanked, so this is the title or empty.
     prompt_preview: str = ""
     created_at: dt.datetime
     task_ext_ids: list[str] = Field(default_factory=list)
