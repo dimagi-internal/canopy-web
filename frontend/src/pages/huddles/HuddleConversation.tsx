@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import type { Huddle, HuddleCell } from '@/api/huddles'
 import { AnswerPill } from './BlockView'
-import { ArcLegend, HuddleGrid, MemberAvatar } from './HuddleGrid'
+import { FlowLegend, HuddleGrid, MemberAvatar } from './HuddleGrid'
 import { Linkified } from './HuddleOutcome'
 import { HuddleStory } from './HuddleStory'
 import {
@@ -596,7 +596,6 @@ function Segmented<T extends string>({ label, options, value, onPick, small = fa
 
 export function HuddleConversation({ huddle }: { huddle: Huddle }) {
   const [params, setParams] = useSearchParams()
-  const [showArcs, setShowArcs] = useState(true)
   const members = columns(huddle)
   const hueOf = (m: string) => (m === huddle.leader ? LEADER_HUE : memberHue(Math.max(0, members.indexOf(m))))
   const view = readView(params.get('view'))
@@ -667,14 +666,9 @@ export function HuddleConversation({ huddle }: { huddle: Huddle }) {
         // The map breaks out of the page column: it is as wide as the team.
         <div className="relative left-1/2 w-[min(calc(100vw-3rem),1800px)] -translate-x-1/2">
           <div className="mb-3 hidden flex-wrap items-center justify-end gap-x-4 gap-y-2 md:flex">
-            {showArcs && <ArcLegend leader={huddle.leader} />}
-            {showArcs && <span className="hidden text-[11px] text-foreground-subtle lg:inline">hover an idea or an answer to trace it</span>}
-            <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12px] text-muted-foreground">
-              <input type="checkbox" checked={showArcs} onChange={(e) => setShowArcs(e.target.checked)} className="accent-[var(--primary)]" />
-              show who&apos;s in
-            </label>
+            <FlowLegend leader={huddle.leader} />
           </div>
-          <HuddleGrid huddle={huddle} showArcs={showArcs} />
+          <HuddleGrid huddle={huddle} />
         </div>
       )}
     </div>

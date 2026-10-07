@@ -197,4 +197,19 @@ describe('By idea and the switcher', () => {
     renderAt('?view=map')
     expect(screen.getByRole('button', { name: 'Diagram' }).getAttribute('aria-pressed')).toBe('true')
   })
+
+  it('the diagram shows the order of the flow, with nothing colour-coded to remember', () => {
+    const { container } = renderAt('?view=map')
+    // The key is time, a question and an answer — no colour per kind of answer, no toggle.
+    const legend = container.querySelector('[data-legend]') as HTMLElement
+    expect(legend.textContent).toMatch(/Time runs top to bottom/)
+    expect(legend.textContent).not.toMatch(/I'm in|with changes|Not in|agreed/)
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    // Every step's row says when it happened.
+    for (const r of [1, 2, 3]) {
+      expect(container.querySelector(`[data-card="leader-${r}"] [data-step-time]`)?.textContent).toMatch(/\d/)
+    }
+    // At rest, no idea-to-answer links are drawn at all.
+    expect(container.querySelector('[data-arc-layer="trace"]')).toBeNull()
+  })
 })
