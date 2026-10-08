@@ -97,6 +97,10 @@ def _digest_turns():
 
 
 def _fact(person, ws, kind="role", statement="Program lead for KC.", **kw):
+    if kw.get("by_agent") is not None and "source_turn" not in kw:
+        # An agent's write names the turn it comes from (hcp.refuse_if_zdr).
+        kw["source_turn"] = _human_turn(kw["by_agent"], person.user,
+                                        f"src-{PersonFact.objects.count()}-{statement[:20]}")
     return people.record_fact(person=person, workspace=ws, kind=kind, statement=statement, **kw)
 
 
@@ -313,23 +317,25 @@ def test_an_agent_login_writes_facts_as_the_agent_and_unknown_kinds_are_400(worl
     assert r.json()["project"] == {"id": project.pk, "title": "Kangaroo Care", "ext_id": "P7"}
 
     bad = c.post(f"/api/people/{person.pk}/facts/", content_type="application/json",
-                 data={"workspace": "connect", "kind": "health", "statement": "Has a cold."})
+                 data={"workspace": "connect", "kind": "health", "statement": "Has a cold.",
+                       "source_turn_id": str(turn.pk)})
     assert bad.status_code == 400
     # A project from another workspace is refused.
     eva_p = AgentProject.objects.create(agent=world["eva"], ext_id="P1", name="Other")
     bad = c.post(f"/api/people/{person.pk}/facts/", content_type="application/json",
                  data={"workspace": "connect", "kind": "project", "statement": "x",
-                       "project_id": eva_p.pk})
+                       "project_id": eva_p.pk, "source_turn_id": str(turn.pk)})
     assert bad.status_code == 400
 
 
 def test_supersede_over_the_api(world):
     person = contacts.person_for(user=world["lili"])
     old = _fact(person, world["ws"], "terminology", "Says KMC.")
+    turn = _human_turn(world["ace"], world["lili"], "sup")
     r = _client(world["ace"].user).post(
         f"/api/people/{person.pk}/facts/", content_type="application/json",
         data={"workspace": "connect", "kind": "correction", "statement": "Say KC, not KMC.",
-              "supersedes_id": old.pk})
+              "supersedes_id": old.pk, "source_turn_id": str(turn.pk)})
     assert r.status_code == 201 and r.json()["supersedes_id"] == old.pk
     old.refresh_from_db()
     assert old.superseded_at is not None

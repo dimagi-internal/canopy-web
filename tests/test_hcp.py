@@ -398,3 +398,106 @@ def test_the_four_operations_are_mcp_tools_with_the_spec_names(db):
     # Appendix B: grants, audit and export are not MCP tools.
     for name in ("hcp_listAudit", "hcp_listGrants", "hcp_revokeGrant", "hcp_export"):
         assert name not in tools
+
+
+# --- zero data retention: nothing from a ZDR session is ever written ---------------
+#
+# Owner rule (2026-10-08). A turn is ZDR when its conversation requires it, when a
+# runner flagged `zdr` claimed it, or when it descends from such a turn.
+
+
+def _zdr_runner():
+    from apps.harness.models import Runner, RunnerFlag
+
+    r = Runner.objects.create(name="zdr-box", kind=Runner.CLOUD, capabilities={})
+    RunnerFlag.objects.create(runner=r, flag="zdr")
+    return r
+
+
+def _claimed_by(turn, runner):
+    Turn.objects.filter(pk=turn.pk).update(claimed_by=runner, status=Turn.RUNNING)
+    turn.refresh_from_db()
+    return turn
+
+
+def _add_body(turn):
+    return {"category": "work_context", "preference": "Works on KC.",
+            "declarationType": "user-declared", "sourceContext": f"turn:{turn.pk}"}
+
+
+def test_an_hcp_write_from_a_zdr_runners_session_is_refused_and_leaves_nothing(w):
+    turn = _claimed_by(_turn(w["ace"], w["lili"], "z"), _zdr_runner())
+    r = _post(_as(w["ace"].user), f"/v1/preferences/add?turn={turn.pk}", _add_body(turn))
+    assert r.status_code == 403 and "zero data retention" in r.json()["detail"]
+    assert not PersonFact.objects.exists()
+    assert not _events(w["person"], "preference.created")
+    # reads are not writes: the same session may still recall
+    assert _search(_as(w["ace"].user), turn).status_code == 200
+
+
+def test_an_update_from_a_zdr_session_is_refused_but_the_entry_stays(w):
+    f = _add(w["person"], w["ws"], "KC metrics lead.")
+    turn = _claimed_by(_turn(w["ace"], w["lili"], "z"), _zdr_runner())
+    r = _as(w["ace"].user).put(f"{BASE}/v1/preferences/urn:uuid:{f.entry_id}?turn={turn.pk}",
+                               data=json.dumps({"updatedPreference": "Changed.", "reason": "r"}),
+                               content_type="application/json")
+    assert r.status_code == 403
+    f.refresh_from_db()
+    assert f.is_live and f.statement == "KC metrics lead."
+
+
+def test_a_conversation_that_requires_zdr_is_zdr_whatever_runner_it_is_on(w):
+    from apps.canopy_sessions.models import Session
+
+    chat = Session.objects.create(agent=w["ace"], workspace=w["ws"], title="c",
+                                  metadata={"runner_requirements": ["zdr"]})
+    turn = _turn(w["ace"], w["lili"], "zc")
+    Turn.objects.filter(pk=turn.pk).update(chat_session=chat, agent=None)
+    turn.refresh_from_db()
+    assert hcp.is_zdr_turn(turn)
+    with pytest.raises(hcp.ZdrRefused):
+        people.record_fact(person=w["person"], workspace=w["ws"], kind="role", statement="x",
+                           by_agent=w["ace"], source_turn=turn)
+    assert not PersonFact.objects.exists()
+
+
+def test_a_turn_descended_from_a_zdr_session_is_zdr_too(w):
+    parent = _claimed_by(_turn(w["ace"], w["lili"], "p"), _zdr_runner())
+    child = _turn(w["hal"], w["lili"], "c")
+    Turn.objects.filter(pk=child.pk).update(parent_turn=parent)
+    child.refresh_from_db()
+    assert hcp.is_zdr_turn(child)
+    assert not hcp.is_zdr_turn(_turn(w["hal"], w["lili"], "plain"))
+
+
+def test_the_cli_path_is_caught_by_the_parent_turn_header_and_an_unnamed_agent_write_is_refused(w):
+    turn = _claimed_by(_turn(w["ace"], w["lili"], "z"), _zdr_runner())
+    c = _as(w["ace"].user)
+    url = f"/api/people/{w['person'].pk}/facts/"
+    body = {"workspace": "connect", "kind": "role", "statement": "KC lead.", "basis": "declared"}
+    # `canopy people remember` on a ZDR box: the CLI sends X-Canopy-Parent-Turn
+    r = c.post(url, data=json.dumps(body), content_type="application/json",
+               HTTP_X_CANOPY_PARENT_TURN=str(turn.pk))
+    assert r.status_code == 403
+    # no turn named at all: an agent's write cannot prove it is not from a ZDR session
+    r = c.post(url, data=json.dumps(body), content_type="application/json")
+    assert r.status_code == 403 and "must name the turn" in r.json()["detail"]
+    assert not PersonFact.objects.exists()
+    # a person writing about themself from the web app is not a session: allowed
+    plain = _turn(w["ace"], w["lili"], "ok")
+    r = c.post(url, data=json.dumps(body), content_type="application/json",
+               HTTP_X_CANOPY_PARENT_TURN=str(plain.pk))
+    assert r.status_code == 201
+
+
+def test_zdr_conversations_are_never_handed_to_the_digest(w, settings):
+    from apps.harness import people_digest
+
+    settings.PEOPLE_DIGEST_ENABLED = True
+    zdr = _claimed_by(_turn(w["ace"], w["lili"], "z", prompt="secret"), _zdr_runner())
+    plain = _turn(w["ace"], w["lili"], "p", prompt="hello")
+    got = {t.pk for t in people.conversations(w["person"], w["ace"])}
+    assert plain.pk in got and zdr.pk not in got
+    Turn.objects.filter(pk=zdr.pk).update(status=Turn.DONE)
+    zdr.refresh_from_db()
+    assert people_digest.on_turn_finished(zdr) is None

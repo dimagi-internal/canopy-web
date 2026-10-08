@@ -233,7 +233,8 @@ def test_coverage_counts_human_turns_context_digests_and_facts(world):
     caller_context.build(t1)
     _finish(t1)  # → one digest turn (queued)
     # Now the brain knows something: the next envelope has context.
-    people.record_fact(person=person, workspace=ws, kind="role", statement="Lead.", by_agent=ace)
+    people.record_fact(person=person, workspace=ws, kind="role", statement="Lead.", by_agent=ace,
+                       source_turn=t1)
     people.put_digest(person=person, workspace=ws, text="Lili leads KC.", by_agent=ace)
     t2 = _human_turn(ace, lili, "t2")
     caller_context.build(t2)
