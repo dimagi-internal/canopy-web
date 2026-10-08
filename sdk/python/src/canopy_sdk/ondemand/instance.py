@@ -11,9 +11,9 @@ import time
 from dataclasses import dataclass, field
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, WaiterError
 
-from .errors import InstanceGone, OnDemandError
+from .errors import InstanceGone, OnDemandError, SSMFailure, SSMTimeout
 from .ssm import CommandResult, run_command
 
 
@@ -44,6 +44,9 @@ class OnDemandInstance:
         try:
             r = self.ec2.describe_instances(InstanceIds=[self.instance_id])
         except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("InvalidInstanceID.NotFound", "InvalidInstanceID.Malformed"):
+                raise InstanceGone(self._gone_msg("missing")) from e
             raise OnDemandError(f"describe_instances failed for {self.instance_id}: {e}") from e
         insts = [i for res in r.get("Reservations", []) for i in res.get("Instances", [])]
         if not insts:
@@ -62,11 +65,17 @@ class OnDemandInstance:
         t = time.monotonic()
         if state in ("terminated", "shutting-down"):
             raise InstanceGone(self._gone_msg(state))
+        if state not in ("running", "stopped", "pending", "stopping"):
+            raise OnDemandError(f"{self.instance_id} in unexpected state {state!r}")
+        if state == "stopping":
+            self._wait_stopped(boot_timeout_s)
+            state = "stopped"
         if state == "stopped":
-            self.ec2.start_instances(InstanceIds=[self.instance_id])
+            try:
+                self.ec2.start_instances(InstanceIds=[self.instance_id])
+            except ClientError as e:
+                raise OnDemandError(f"start_instances failed for {self.instance_id}: {e}") from e
         if cold:
-            if state not in ("stopped", "pending", "stopping"):
-                raise OnDemandError(f"{self.instance_id} in unexpected state {state!r}")
             self._wait_ec2_ok(boot_timeout_s)
             timings["ec2_start_s"] = round(time.monotonic() - t, 1)
         t = time.monotonic()
@@ -76,20 +85,36 @@ class OnDemandInstance:
         return Running(self.instance_id, cold, timings)
 
     def _wait_ec2_ok(self, timeout_s: int) -> None:
-        self.ec2.get_waiter("instance_status_ok").wait(
-            InstanceIds=[self.instance_id],
-            WaiterConfig={"Delay": 5, "MaxAttempts": max(1, timeout_s // 5)},
-        )
+        self._wait("instance_status_ok", timeout_s)
+
+    def _wait_stopped(self, timeout_s: int) -> None:
+        self._wait("instance_stopped", timeout_s)
+
+    def _wait(self, waiter: str, timeout_s: int) -> None:
+        try:
+            self.ec2.get_waiter(waiter).wait(
+                InstanceIds=[self.instance_id],
+                WaiterConfig={"Delay": 5, "MaxAttempts": max(1, timeout_s // 5)},
+            )
+        except WaiterError as e:
+            raise OnDemandError(f"{waiter} wait failed for {self.instance_id}: {e}") from e
 
     def _wait_ready(self, timeout_s: int) -> None:
         deadline = time.monotonic() + timeout_s
         probe = f"test -f {shlex.quote(self.ready_file)} && echo READY || echo WAIT"
+        last_err = None
         while time.monotonic() < deadline:
-            res = self.run([probe], timeout_s=30)
-            if "READY" in (res.stdout or ""):
-                return
+            try:
+                res = self.run([probe], timeout_s=30)
+                if "READY" in (res.stdout or ""):
+                    return
+            except (SSMFailure, SSMTimeout) as e:
+                last_err = e  # SSM agent may not be registered yet right after boot
             time.sleep(5)
-        raise OnDemandError(f"{self.capability} not ready after {timeout_s}s ({self.ready_file} absent)")
+        detail = f"; last error: {last_err}" if last_err else ""
+        raise OnDemandError(
+            f"{self.capability} not ready after {timeout_s}s ({self.ready_file} absent){detail}"
+        )
 
     def touch(self) -> None:
         q = shlex.quote(self.activity_file)
@@ -102,13 +127,19 @@ class OnDemandInstance:
         try:
             self.ec2.stop_instances(InstanceIds=[self.instance_id])
         except ClientError as e:
-            raise OnDemandError(f"stop_instances failed: {e}") from e
+            raise OnDemandError(f"stop_instances failed for {self.instance_id}: {e}") from e
 
     def status(self) -> Status:
         state = self._state()
         idle = None
         if state == "running":
             q = shlex.quote(self.activity_file)
-            res = self.run([f"echo $(( $(date +%s) - $(stat -c %Y {q} 2>/dev/null || date +%s) ))"], timeout_s=30)
-            idle = int((res.stdout or "0").strip() or 0)
+            res = self.run(
+                [f"test -f {q} && echo $(( $(date +%s) - $(stat -c %Y {q}) )) || echo NONE"],
+                timeout_s=30,
+            )
+            try:
+                idle = int((res.stdout or "").strip())
+            except ValueError:
+                idle = None
         return Status(self.instance_id, state, idle)
