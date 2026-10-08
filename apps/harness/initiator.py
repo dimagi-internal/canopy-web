@@ -156,6 +156,17 @@ def channel(request, default: str) -> str:
     return f"widget:{app.name}" if app is not None else default
 
 
+def _agent_login_of(user) -> str | None:
+    """The slug of the agent whose own login `user` is — `Agent.user`, or, for an
+    agent whose login predates that link, the user holding its mailbox address."""
+    from apps.agents.models import Agent
+
+    agent = Agent.objects.filter(user_id=user.pk).only("slug").first()
+    if agent is None and user.email:
+        agent = Agent.objects.filter(email__iexact=user.email).only("slug").first()
+    return agent.slug if agent is not None else None
+
+
 def describe(turn) -> dict:
     """The initiator as the API and the runner see it. Names, not ids alone:
     the agent is going to read this and address a person."""
@@ -180,6 +191,15 @@ def describe(turn) -> dict:
         system = describe_system(user)
         if system is not None:
             out["system_account"] = system
+        # AN AGENT'S OWN LOGIN is not a person either: a turn it started (an agent
+        # driving a widget to test itself, calling canopy as itself) must never be
+        # read as someone's request. 2026-10-08: ACE saw its own Labs-widget test
+        # runs as `ace@dimagi-ai.com`, decided the widget hides who asks, and
+        # attributed them to a person in a shared Slack thread. Say it outright.
+        login_of = _agent_login_of(user)
+        if login_of:
+            out["agent_login"] = login_of
+            out["self"] = bool(turn.agent_id) and login_of == getattr(turn.agent, "slug", None)
     if contact is not None:
         out["contact"] = {
             "id": contact.pk,

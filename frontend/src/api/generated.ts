@@ -8472,6 +8472,13 @@ export interface components {
             readonly contact?: components["schemas"]["InitiatorPersonOut"] | null;
             /** Agent */
             readonly agent?: string | null;
+            /** Agent Login */
+            readonly agent_login?: string | null;
+            /**
+             * Self
+             * @default false
+             */
+            readonly self: boolean;
             /** Credential */
             readonly credential?: {
                 readonly [key: string]: unknown;
