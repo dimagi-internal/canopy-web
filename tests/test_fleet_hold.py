@@ -89,6 +89,7 @@ def test_the_hold_reports_who_why_and_how_much_is_waiting():
     assert body["note"] == "tracing digests"
     assert body["held_by_email"] == user.email
     assert body["queued"] == 2
+    assert body["can_hold"] is True
     assert c.get("/api/harness/fleet-hold").json()["held"] is True
 
 
@@ -109,7 +110,8 @@ def test_only_a_superuser_may_hold_or_release():
     assert c.post("/api/harness/fleet-hold", data={},
                   content_type="application/json").status_code == 403
     assert c.post("/api/harness/fleet-hold/release").status_code == 403
-    assert c.get("/api/harness/fleet-hold").json()["held"] is False
+    body = c.get("/api/harness/fleet-hold").json()
+    assert body["held"] is False and body["can_hold"] is False
 
 
 def test_the_stuck_list_names_the_hold_as_the_reason(settings):
