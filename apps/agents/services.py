@@ -8,7 +8,7 @@ import re
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.harness.models import Turn
+from apps.harness.models import Turn, agent_turns_q
 
 from .models import (
     Agent,
@@ -182,7 +182,10 @@ def agent_detail(agent: Agent) -> dict:
         "sync_count": agent.syncs.count(),
         "skill_count": agent.skills.count(),
         "task_count": agent.tasks.count(),
-        "turn_count": agent.turns.count(),
+        # Same set as `GET /api/harness/turns/?agent=` (agent_turns_q): counting
+        # only `agent.turns` left out every email/Slack turn, which targets the
+        # agent's session, so the card and the turn list disagreed (#359).
+        "turn_count": Turn.objects.filter(agent_turns_q(agent)).count(),
         "latest_sync_at": latest.period_end if latest else None,
         # "When did this agent last RUN" — read off the dispatch queue, which has a
         # row for every turn the harness sent. It used to be read off the close-out
@@ -204,10 +207,11 @@ def _latest_turn_at(agent: Agent):
     NULLS FIRST, so a single queued turn (started_at IS NULL) would win and the
     fallback would become the answer for every agent with anything in the queue.
     """
-    started = agent.turns.filter(started_at__isnull=False).order_by("-started_at").first()
+    turns = Turn.objects.filter(agent_turns_q(agent))
+    started = turns.filter(started_at__isnull=False).order_by("-started_at").first()
     if started is not None:
         return started.started_at
-    newest = agent.turns.order_by("-created_at").first()
+    newest = turns.order_by("-created_at").first()
     return newest.created_at if newest else None
 
 

@@ -10007,12 +10007,16 @@ export interface components {
             readonly task_count: number;
             /**
              * Turn Count
+             * @description Every turn of this agent's work, in any status: the same set `GET /api/harness/turns/?agent=` lists (turns targeting the agent, and email/Slack turns targeting one of its sessions), counted without that endpoint's page limit.
              * @default 0
              */
             readonly turn_count: number;
             /** Latest Sync At */
             readonly latest_sync_at?: string | null;
-            /** Latest Turn At */
+            /**
+             * Latest Turn At
+             * @description When the agent last RAN, over the same set as `turn_count`: the newest `started_at`, or the newest `created_at` when none has started yet. A queued turn nobody claimed is not a run.
+             */
             readonly latest_turn_at?: string | null;
         };
         /** AgentOwnerOut */

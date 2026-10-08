@@ -24,7 +24,7 @@ from apps.workspaces.models import Workspace
 from . import initiator as who
 from . import services
 from . import turn_mode as turn_modes
-from .models import AgentSchedule, FleetHold, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder
+from .models import AgentSchedule, FleetHold, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder, agent_turns_q
 from .schedule_services import serialize_schedule
 from .schemas import (
     CallerContextOut,
@@ -1987,7 +1987,7 @@ def list_turns(
         # sits on `chat_session.agent`. Filtering on `agent` alone dropped every
         # one of them: `?agent=ace` listed no ACE email turn after 2026-09-10, for
         # every caller, and hal's routing audit read that as "0 turns" (#1087).
-        qs = qs.filter(Q(agent=target) | Q(agent__isnull=True, chat_session__agent=target))
+        qs = qs.filter(agent_turns_q(target))
     if status:
         qs = qs.filter(status__in=status.split(","))
     # A huddle's turns (canopy `huddle`): its anchor and every round carry
