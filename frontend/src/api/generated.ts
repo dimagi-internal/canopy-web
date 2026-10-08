@@ -5387,6 +5387,85 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/threads/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List agent threads
+         * @description Threads the caller can see, newest first (max 50), without their messages.
+         *     `parent_key` + `parent_value` keep threads hanging off one thing (e.g.
+         *     `parent_key=huddle&parent_value=<huddle id>`); `agent` keeps those it takes part
+         *     in; `status` one status.
+         */
+        readonly get: operations["list_threads"];
+        readonly put?: never;
+        /**
+         * Open an agent thread
+         * @description Open a bounded conversation between 2–6 named agents, moderated by one of the
+         *     caller's agents (its workspace becomes the thread's; opening needs the editor
+         *     role there). Each message is then a turn for the speaking agent tagged
+         *     `origin_ref = {"kind": "thread_message", "thread": <id>, "n": <n>, "speaker": <slug>}`,
+         *     refused at creation once the thread is closed, past `deadline_at` or out of
+         *     `max_messages`. Re-opening — an OPEN thread with the same `parent` and the same
+         *     set of agents — returns that thread with 200, so a moderator loop can resume.
+         *     422 when called from inside a thread message (threads do not nest).
+         */
+        readonly post: operations["open_thread"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/threads/{thread_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get one agent thread
+         * @description One thread with its messages, in order: each message's turn status and, when
+         *     you may read that turn's content, its prompt and the speaker's parsed reply
+         *     block (from its close-out, else its transcript).
+         */
+        readonly get: operations["get_thread"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/threads/{thread_id}/close": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Close an agent thread
+         * @description The moderator ends the thread: `settled` (with an `outcome`, e.g.
+         *     `{"result": "agreed", "proposal": {...}}`), `out_of_budget`, `timed_out` or
+         *     `cancelled`. Only an open thread closes (409 otherwise); needs the editor role
+         *     in the thread's workspace.
+         */
+        readonly post: operations["close_thread"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/push/vapid-public-key": {
         readonly parameters: {
             readonly query?: never;
@@ -15211,6 +15290,166 @@ export interface components {
             /** Updated At */
             readonly updated_at?: string | null;
         };
+        /** ThreadMessageOut */
+        readonly ThreadMessageOut: {
+            /** N */
+            readonly n: number;
+            /** Speaker */
+            readonly speaker: string;
+            /** Turn Id */
+            readonly turn_id: string;
+            /** Status */
+            readonly status: string;
+            /** Created At */
+            readonly created_at?: string | null;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /**
+             * Content Hidden
+             * @default false
+             */
+            readonly content_hidden: boolean;
+            /**
+             * Prompt
+             * @default
+             */
+            readonly prompt: string;
+            /** Block */
+            readonly block?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Reply Source
+             * @default none
+             */
+            readonly reply_source: string;
+            /**
+             * Reply Error
+             * @default
+             */
+            readonly reply_error: string;
+        };
+        /** ThreadOut */
+        readonly ThreadOut: {
+            /** Id */
+            readonly id: string;
+            /** Kind */
+            readonly kind: string;
+            /** Purpose */
+            readonly purpose: string;
+            /**
+             * Participants
+             * @default []
+             */
+            readonly participants: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Moderator */
+            readonly moderator: string;
+            /**
+             * Parent
+             * @default {}
+             */
+            readonly parent: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Context
+             * @default
+             */
+            readonly context: string;
+            /** Max Messages */
+            readonly max_messages: number;
+            /**
+             * Messages Used
+             * @default 0
+             */
+            readonly messages_used: number;
+            /**
+             * Deadline At
+             * Format: date-time
+             */
+            readonly deadline_at: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Outcome
+             * @default {}
+             */
+            readonly outcome: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Closed At */
+            readonly closed_at?: string | null;
+            /**
+             * Messages
+             * @default []
+             */
+            readonly messages: readonly components["schemas"]["ThreadMessageOut"][];
+        };
+        /** ParticipantIn */
+        readonly ParticipantIn: {
+            /** Agent */
+            readonly agent: string;
+            /**
+             * Role
+             * @default
+             */
+            readonly role: string;
+        };
+        /** ThreadIn */
+        readonly ThreadIn: {
+            /** Kind */
+            readonly kind: string;
+            /** Purpose */
+            readonly purpose: string;
+            /** Participants */
+            readonly participants: readonly components["schemas"]["ParticipantIn"][];
+            /** Moderator */
+            readonly moderator: string;
+            /**
+             * Parent
+             * @default {}
+             */
+            readonly parent: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Context
+             * @default
+             */
+            readonly context: string;
+            /**
+             * Max Messages
+             * @default 4
+             */
+            readonly max_messages: number;
+            /**
+             * Deadline Minutes
+             * @default 90
+             */
+            readonly deadline_minutes: number;
+        };
+        /** ThreadCloseIn */
+        readonly ThreadCloseIn: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "settled" | "out_of_budget" | "timed_out" | "cancelled";
+            /**
+             * Outcome
+             * @default {}
+             */
+            readonly outcome: {
+                readonly [key: string]: unknown;
+            };
+        };
         /** VapidKeyOut */
         readonly VapidKeyOut: {
             /** Public Key */
@@ -23676,6 +23915,113 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HuddleOut"];
+                };
+            };
+        };
+    };
+    readonly list_threads: {
+        readonly parameters: {
+            readonly query?: {
+                readonly parent_key?: string | null;
+                readonly parent_value?: string | null;
+                readonly agent?: string | null;
+                readonly status?: string | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ThreadOut"][];
+                };
+            };
+        };
+    };
+    readonly open_thread: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ThreadIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ThreadOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ThreadOut"];
+                };
+            };
+        };
+    };
+    readonly get_thread: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly thread_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ThreadOut"];
+                };
+            };
+        };
+    };
+    readonly close_thread: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly thread_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ThreadCloseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ThreadOut"];
                 };
             };
         };

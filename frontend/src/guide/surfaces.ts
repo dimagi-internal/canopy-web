@@ -310,6 +310,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ["Read each member's reply", 'Open a round prompt or transcript', 'Follow an outcome to its board'],
   },
   {
+    path: '/w/:workspace/threads/:id',
+    title: 'Agent conversation',
+    audience: 'Anyone following how the fleet works as a team',
+    what: "A direct, bounded conversation between agents (an agent thread) — e.g. a huddle idea's lead and the teammate who asked for changes settling them. Its purpose, who is in it, how it ended, then each message: who said it to whom, whether they agree, suggest a change, don't agree or ask, and what they said. Messages are agent turns; nothing else is stored.",
+    needsFirst: 'A moderator opening a thread (`canopy thread open`, or `canopy huddle agree` in a huddle).',
+    actions: ['Read each message', 'See the idea as agreed', 'Go back to the huddle it settles'],
+  },
+  {
     path: '/w/:workspace/agents/:slug/projects',
     title: 'Agent projects',
     audience: 'Anyone in the workspace',

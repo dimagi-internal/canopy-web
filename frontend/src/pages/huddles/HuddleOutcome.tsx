@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
+import { threadHref } from '../threads/threadModel'
 import type { Huddle } from '@/api/huddles'
 import { MemberAvatar } from './MemberAvatar'
 import {
@@ -8,7 +9,7 @@ import {
 import { pitchesOf } from './conversationModel'
 import { boardTally, headline, ideaState, yourMove, type IdeaState, type Output } from './outcomeSummary'
 import {
-  boardLinkText, deJargon, nextStep, peopleWords, taskStatusPlain, trimPriority, VERDICT_WORDS, who,
+  boardLinkText, deJargon, nextStep, peopleWords, possessive, taskStatusPlain, trimPriority, VERDICT_WORDS, who,
 } from './plainWords'
 
 /**
@@ -110,6 +111,28 @@ function Serves({ p }: { p: ProposalOutcome }) {
   )
 }
 
+/** "Changes agreed with Echo in a direct conversation — the conversation". One
+ * line per agreement thread that settled (or is settling) a partner's changes. */
+function Conversations({ p }: { p: ProposalOutcome }) {
+  const { workspace = '' } = useParams()
+  const talks = p.arcs.filter((a) => a.thread)
+  if (!talks.length) return null
+  return (
+    <ul className="mt-2 space-y-1 text-[13px] leading-snug text-foreground-secondary">
+      {talks.map((a) => (
+        <li key={a.key} data-conversation={a.thread}>
+          {a.state === 'amend-accepted'
+            ? <>{who(p.lead)} and {who(a.partner)} agreed {possessive(a.partner)} changes directly — </>
+            : a.state === 'amend-rejected'
+              ? <>{who(p.lead)} and {who(a.partner)} talked {possessive(a.partner)} changes through directly but didn&apos;t agree — </>
+              : <>{who(p.lead)} and {who(a.partner)} are talking {possessive(a.partner)} changes through directly — </>}
+          <Link to={threadHref(workspace, a.thread!)} className="font-medium text-primary underline-offset-2 hover:underline">the conversation</Link>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function FiledCard({ p, agents, hueOf }: { p: ProposalOutcome; agents: string[]; hueOf: (m: string) => string }) {
   const size = sizeWords(p.effort, p.confidence)
   return (
@@ -119,6 +142,7 @@ function FiledCard({ p, agents, hueOf }: { p: ProposalOutcome; agents: string[];
         {size && <span className="shrink-0 text-[12px] text-muted-foreground">{size}</span>}
       </div>
       <div className="mt-2"><People p={p} hueOf={hueOf} /></div>
+      <Conversations p={p} />
       <Serves p={p} />
       <div className="mt-3 border-t border-border/70 pt-1">
         {p.tasks.length > 0 ? (
@@ -154,6 +178,7 @@ function HeldCard({ p, leader, hueOf }: { p: ProposalOutcome; leader: string; hu
           <dd className="inline text-foreground-secondary">{clear}</dd>
         </div>
       </dl>
+      <Conversations p={p} />
       {notes.length > 0 && (
         <details className="mt-2 text-[12px]">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground">

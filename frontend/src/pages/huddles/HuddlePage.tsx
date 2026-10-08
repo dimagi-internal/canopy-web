@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { getHuddle, type Huddle } from '@/api/huddles'
+import { getHuddleThreads } from '@/api/threads'
 import { relativeTime } from '@/components/activity/turnLog'
 import { HuddleConversation } from './HuddleConversation'
 import { readView } from './conversationModel'
 import { MemberAvatar } from './MemberAvatar'
 import { HuddleOutcome } from './HuddleOutcome'
-import { columns, countdown, roundName, roundsToShow } from './huddleModel'
+import { agreementThreads, columns, countdown, roundName, roundsToShow } from './huddleModel'
 import { andList, huddleExplainer, who } from './plainWords'
 
 /**
@@ -31,17 +32,23 @@ function Pill({ className, children }: { className: string; children: React.Reac
 }
 
 function Stepper({ huddle }: { huddle: Huddle }) {
+  // Settling changes in direct conversations is step 4 too (the Diagram's).
+  const threads = agreementThreads(huddle)
   const rounds = roundsToShow(huddle)
+  if (threads.length && !rounds.includes(4)) rounds.push(4)
+  const talking = threads.some((t) => t.status === 'open')
   return (
     <ol aria-label="Steps" className="flex flex-wrap items-center gap-2">
       {rounds.map((r, i) => {
         const cells = huddle.cells.filter((c) => c.round === r)
         const replied = cells.filter((c) => c.block).length
-        const done = huddle.finished || (cells.length > 0 && replied >= cells.length && r < huddle.rounds_dispatched)
-        const current = !huddle.finished && r === huddle.rounds_dispatched
+        const viaThreads = r === 4 && threads.length > 0
+        const done = viaThreads ? !talking
+          : huddle.finished || (cells.length > 0 && replied >= cells.length && r < huddle.rounds_dispatched)
+        const current = viaThreads ? talking : !huddle.finished && r === huddle.rounds_dispatched
         return (
           <li key={r} className="flex items-center gap-2">
-            {i > 0 && <span aria-hidden className={'h-px w-4 sm:w-6 ' + (r <= huddle.rounds_dispatched ? 'bg-primary/50' : 'bg-border')} />}
+            {i > 0 && <span aria-hidden className={'h-px w-4 sm:w-6 ' + (r <= huddle.rounds_dispatched || viaThreads ? 'bg-primary/50' : 'bg-border')} />}
             <span
               className={
                 'inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[12px] ' +
@@ -85,13 +92,16 @@ export function HuddlePage() {
     let alive = true
     let timer: ReturnType<typeof setTimeout> | undefined
     const load = () => {
-      getHuddle(id)
-        .then((h) => {
+      // The agreement threads hanging off the huddle ride along; a failure to load
+      // them leaves the huddle readable as relayed (no direct conversations).
+      Promise.all([getHuddle(id), getHuddleThreads(id).catch(() => undefined)])
+        .then(([h, threads]) => {
+          if (threads) h = { ...h, threads }
           if (!alive) return
           setHuddle(h)
           setError('')
           setNow(new Date())
-          if (!h.finished) timer = setTimeout(load, POLL_MS)
+          if (!h.finished || h.threads?.some((t) => t.status === 'open')) timer = setTimeout(load, POLL_MS)
         })
         .catch((e: unknown) => {
           if (!alive) return

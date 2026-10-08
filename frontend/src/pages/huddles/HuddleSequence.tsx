@@ -1,9 +1,11 @@
 import { useState, type CSSProperties } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import type { Huddle } from '@/api/huddles'
+import { POSITION_WORDS, said, threadHref } from '../threads/threadModel'
 import { AnswerPill, BlockView } from './BlockView'
 import { MemberAvatar } from './MemberAvatar'
 import { arcsFor, columns, memberHue, type Block } from './huddleModel'
-import { possessive, who } from './plainWords'
+import { andList, deJargon, possessive, who } from './plainWords'
 import { lanesOf, sequenceOf, YOU, type Message } from './sequenceModel'
 
 /**
@@ -17,6 +19,10 @@ import { lanesOf, sequenceOf, YOU, type Message } from './sequenceModel'
  * Jonathan, 2026-10-07: "we mostly want to show the time sequence of the
  * flow" — so the only thing position encodes is who and when, and the only
  * colour is each participant's own.
+ *
+ * Step 4 ("Settling changes") is different in kind: the idea's lead and the
+ * teammate who asked for changes talk DIRECTLY, so its arrows run agent to agent
+ * (a bold line in the info colour), not through the leader.
  */
 
 const LANE = '4.75rem'
@@ -26,6 +32,8 @@ const LINE = {
   ask: { color: 'var(--foreground-secondary)', dash: '', width: 1.5 },
   reply: { color: 'var(--muted-foreground)', dash: '4 3', width: 1.5 },
   result: { color: 'var(--primary)', dash: '', width: 2.5 },
+  direct: { color: 'var(--info)', dash: '', width: 2 },
+  settled: { color: 'var(--success)', dash: '', width: 2.5 },
 } as const
 
 function clock(iso: string | null): string {
@@ -74,7 +82,7 @@ function Lifelines({ count }: { count: number }) {
 }
 
 function Said({ m, leader, lanes }: { m: Message; leader: string; lanes: string[] }) {
-  const to = m.kind === 'result' ? 'you' : m.kind === 'reply' ? who(leader) : null
+  const to = m.kind === 'result' ? 'you' : m.kind === 'reply' ? who(leader) : m.kind === 'direct' ? andList(m.to) : null
   return (
     <span className="min-w-0 text-[13px] leading-snug">
       <span className="font-semibold text-foreground">{who(m.from)}</span>
@@ -93,7 +101,7 @@ function Said({ m, leader, lanes }: { m: Message; leader: string; lanes: string[
           ))}
         </span>
       ) : (
-        <span className={m.pending ? 'italic text-muted-foreground' : m.kind === 'result' ? 'font-medium text-foreground' : 'text-foreground-secondary'}>
+        <span className={m.pending ? 'italic text-muted-foreground' : m.kind === 'result' || m.kind === 'settled' ? 'font-medium text-foreground' : 'text-foreground-secondary'}>
           {m.label}
         </span>
       )}
@@ -101,7 +109,44 @@ function Said({ m, leader, lanes }: { m: Message; leader: string; lanes: string[
   )
 }
 
+function ThreadDetail({ m }: { m: Message }) {
+  const { workspace = '' } = useParams()
+  const t = m.thread!
+  const msg = t.message
+  const link = (
+    <Link className="text-primary underline-offset-2 hover:underline" to={threadHref(workspace, t.thread.id)}>
+      Open the whole conversation
+    </Link>
+  )
+  if (!msg || !msg.block) {
+    const why = String((t.thread.outcome as Record<string, unknown>)?.why ?? '')
+    return (
+      <div className="space-y-1.5 text-[12px] text-foreground-secondary">
+        {m.kind === 'settled'
+          ? <p>{m.label}.{why && <> {deJargon(why)}</>}</p>
+          : <p className="text-muted-foreground">{m.pending === 'hidden'
+            ? "You can see that it was sent, not what it said — a turn's content is for the people who run the agent."
+            : m.pending === 'waiting' ? `${who(m.from)} is still writing.` : 'No message came back that the page could read.'}</p>}
+        {msg?.reply_error && <p className="font-mono text-[11px] text-warning">{msg.reply_error}</p>}
+        <p>{link}</p>
+      </div>
+    )
+  }
+  const { position, says, proposal } = said(msg)
+  return (
+    <div className="space-y-2 text-[12px] leading-snug text-foreground-secondary">
+      <p className="text-muted-foreground">
+        {who(m.from)} to {andList(m.to)}, about “{t.title}”{position ? <> · <span className="font-medium text-foreground">{POSITION_WORDS[position]}</span></> : null}
+      </p>
+      {says && <p className="whitespace-pre-wrap text-foreground">{deJargon(says)}</p>}
+      {proposal && <p><span className="font-medium text-foreground">Offers a revised idea: </span>{String(proposal.title ?? '')}</p>}
+      <p>{link}</p>
+    </div>
+  )
+}
+
 function Detail({ m, huddle }: { m: Message; huddle: Huddle }) {
+  if (m.kind === 'direct' || m.kind === 'settled') return <ThreadDetail m={m} />
   if (m.kind === 'ask') {
     const any = m.asks?.some((a) => a.asks.length)
     return (
@@ -154,6 +199,12 @@ export function HuddleSequence({ huddle }: { huddle: Huddle }) {
           <svg width="26" height="8" aria-hidden><line x1="1" y1="4" x2="25" y2="4" stroke={LINE.reply.color} strokeWidth="1.5" strokeDasharray="4 3" /></svg>
           an answer comes back
         </span>
+        {steps.some((s) => s.messages.some((m) => m.kind === 'direct')) && (
+          <span className="inline-flex items-center gap-1.5">
+            <svg width="26" height="8" aria-hidden><line x1="1" y1="4" x2="25" y2="4" stroke={LINE.direct.color} strokeWidth="2" /></svg>
+            two agents talk directly
+          </span>
+        )}
         <span>Click a row to read it in full.</span>
       </div>
 

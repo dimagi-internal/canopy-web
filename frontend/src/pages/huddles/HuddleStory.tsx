@@ -1,12 +1,15 @@
 import type { ReactNode } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import type { Huddle } from '@/api/huddles'
+import type { AgentThread } from '@/api/threads'
+import { budgetWords, resultOf, statusWords, threadHref } from '../threads/threadModel'
 import { AnswerPill } from './BlockView'
 import { MemberAvatar } from './MemberAvatar'
 import { TaskLine } from './HuddleOutcome'
 import type { Output } from './outcomeSummary'
 import { pairQA, pitchesOf, proposalThreads, type ProposalThread } from './conversationModel'
 import {
-  arcsFor, cellAt, columns, holdWords, ideaHue, ideaLetter, leaderAsks, memberHue, sizeWords, type ArcState, type Block,
+  agreementParties, agreementThreads, arcsFor, cellAt, columns, holdWords, ideaHue, ideaLetter, leaderAsks, memberHue, sizeWords, type ArcState, type Block,
 } from './huddleModel'
 import {
   andList, deJargon, firstSentence, gistOf, possessive, resolutionWords, stepName, trimPriority, VERDICT_WORDS, who,
@@ -248,6 +251,36 @@ function StepIdeas({ huddle, ideas, index }: { huddle: Huddle; ideas: ProposalTh
 
 // ── step 3 ───────────────────────────────────────────────────────────────────
 
+/** The agreement threads about one idea: where its lead and a teammate who was in
+ * only with changes talked it through directly. */
+function threadsAbout(huddle: Huddle, lead: string, title: string): AgentThread[] {
+  const n = (s: string) => s.toLowerCase().replace(/\W+/g, ' ').trim()
+  return agreementThreads(huddle).filter((t) => {
+    const p = agreementParties(t)
+    return p.lead === lead && n(p.title) === n(title)
+  })
+}
+
+/** "Eva and Echo then talked it through directly: Agreed. Read the conversation →" */
+function TalkedThrough({ t }: { t: AgentThread }) {
+  const { workspace = '' } = useParams()
+  const { lead, asker } = agreementParties(t)
+  const result = resultOf(t)
+  // Only a settled thread's reason says something its status does not ("ran out
+  // of messages" just repeats it).
+  const why = t.status === 'settled' ? String((t.outcome as Record<string, unknown>)?.why ?? '') : ''
+  return (
+    <p data-thread={t.id} className="text-[13px] text-foreground-secondary">
+      {result === null
+        ? <>{who(lead)} and {who(asker)} are talking the changes through directly ({budgetWords(t)}). </>
+        : <>Then {who(lead)} and {who(asker)} talked the changes through directly: <span className={'font-medium ' + (result === 'agreed' ? 'text-success' : 'text-foreground')}>{statusWords(t)}</span>{why ? <> — {firstSentence(why)}</> : '.'} </>}
+      <Link to={threadHref(workspace, t.id)} className="whitespace-nowrap font-medium text-primary underline-offset-2 hover:underline">
+        {result === null ? 'Follow the conversation →' : 'Read the conversation →'}
+      </Link>
+    </p>
+  )
+}
+
 function StepWhosIn({ huddle, ideas, index, hueOf }: { huddle: Huddle; ideas: ProposalThread[]; index: (t: ProposalThread) => number; hueOf: (m: string) => string }) {
   const arcs = arcsFor(huddle)
   const sorted = [...ideas].sort((a, b) => index(a) - index(b))
@@ -295,6 +328,7 @@ function StepWhosIn({ huddle, ideas, index, hueOf }: { huddle: Huddle; ideas: Pr
                     )
                   })}
                 </ul>
+                {threadsAbout(huddle, o.lead, o.title).map((th) => <TalkedThrough key={th.id} t={th} />)}
                 {t.resolutions.map((r, k) => r.verdict && (
                   <p key={k} className="text-[13px] text-foreground-secondary">
                     Then {who(r.member)}: <span className="font-medium text-foreground">{resolutionWords(r.verdict)}</span>
@@ -311,6 +345,11 @@ function StepWhosIn({ huddle, ideas, index, hueOf }: { huddle: Huddle; ideas: Pr
 }
 
 // ── the result ───────────────────────────────────────────────────────────────
+
+function ConversationLink({ id, children }: { id: string; children: ReactNode }) {
+  const { workspace = '' } = useParams()
+  return <Link to={threadHref(workspace, id)} className="font-medium text-primary underline-offset-2 hover:underline">{children}</Link>
+}
 
 function Result({ huddle, ideas, index, hueOf }: { huddle: Huddle; ideas: ProposalThread[]; index: (t: ProposalThread) => number; hueOf: (m: string) => string }) {
   const agents = columns(huddle)
@@ -331,6 +370,12 @@ function Result({ huddle, ideas, index, hueOf }: { huddle: Huddle; ideas: Propos
                 <p className="mt-1.5 text-[13px] text-foreground-secondary">
                   {o.partners.length ? <>{who(o.lead)} leads it, together with {andList(o.partners)}.</> : <>{who(o.lead)} does it alone.</>}
                 </p>
+                {threadsAbout(huddle, o.lead, o.title).filter((th) => resultOf(th) === 'agreed').map((th) => (
+                  <p key={th.id} data-agreed-in={th.id} className="mt-1 text-[13px] text-foreground-secondary">
+                    The changes were agreed in a direct conversation between {andList([agreementParties(th).lead, agreementParties(th).asker])} —{' '}
+                    <ConversationLink id={th.id}>the conversation</ConversationLink>.
+                  </p>
+                ))}
                 {t.tasks.length > 0 ? (
                   <ul className="mt-2 divide-y divide-border/60 border-t border-border/60">
                     {t.tasks.map((task) => <TaskLine key={`${task.agent}-${task.task_id}`} o={task as Output} lead={o.lead} agents={agents} hueOf={hueOf} />)}
@@ -383,6 +428,7 @@ export function HuddleStory({ huddle }: { huddle: Huddle }) {
   const has = (r: number) => huddle.cells.some((c) => c.round === r)
   const type = huddle.type || 'work'
   const ran4 = has(4)
+  const talked = agreementThreads(huddle).length > 0
 
   return (
     <ol data-story className="mx-auto max-w-[760px]">
@@ -398,7 +444,9 @@ export function HuddleStory({ huddle }: { huddle: Huddle }) {
       <Step n={3} title={stepName(type, 3)}>
         <Lead>
           {L} sent each idea to the teammates it named, with her take on it, and asked each one: are you in?
-          {ran4 && <> Where someone was in only with changes, the idea&apos;s lead then said whether they agree.</>}
+          {talked
+            ? <> Where someone was in only with changes, the idea&apos;s lead and that teammate then talked it through directly.</>
+            : ran4 && <> Where someone was in only with changes, the idea&apos;s lead then said whether they agree.</>}
         </Lead>
         {has(3) || ideas.some((t) => t.outcome.partners.length === 0)
           ? <StepWhosIn huddle={huddle} ideas={ideas} index={index} hueOf={hueOf} />
