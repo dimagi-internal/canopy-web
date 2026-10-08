@@ -92,9 +92,9 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
         GitHub — acting as its owner
       </h3>
       <p className="mb-2 max-w-2xl text-[11px] text-muted-foreground">
-        This agent pushes branches and opens pull requests as its owner
-        {gh.owner_email ? <> ({gh.owner_email})</> : null}, on exactly the repositories the owner&rsquo;s
-        token allows. Each turn is handed the token for that turn only; no box holds it.
+        Pushes and opens pull requests as its owner
+        {gh.owner_email ? <> ({gh.owner_email})</> : null}, on the repositories the owner&rsquo;s token
+        allows. No runner keeps the token.
       </p>
       <div className="rounded-lg border border-border bg-card px-3 py-2 text-[12px]">
         <div className="flex flex-wrap items-center gap-2" data-testid="github-status">
