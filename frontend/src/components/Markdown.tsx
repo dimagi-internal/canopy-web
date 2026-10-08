@@ -1,4 +1,4 @@
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import type { JSX } from 'react'
@@ -37,7 +37,28 @@ const PROSE = `
   [&_table]:my-2 [&_table]:block [&_table]:overflow-x-auto [&_table]:text-[0.9em]
   [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_th]:font-semibold
   [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1
+  [&_img]:my-2 [&_img]:block [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-border
 `
+
+// An agent can show a picture with `![caption](https://…)` (e.g. a Labs coach
+// chart, a 1080px-wide PNG). Without the [&_img] rules above it overflows a
+// narrow surface like the Connect Labs embed panel. Each image links to the
+// full-size original in a new tab, since the inline copy is scaled down.
+// urlTransform is left at react-markdown's default, so a `data:` src is still
+// stripped to an empty string — no image src is rendered from it.
+const components: Components = {
+  img: ({ src, alt, title }) => {
+    const img = (
+      <img src={src} alt={alt ?? ''} title={title} loading="lazy" referrerPolicy="no-referrer" />
+    )
+    if (typeof src !== 'string' || !src) return img
+    return (
+      <a href={src} target="_blank" rel="noopener noreferrer">
+        {img}
+      </a>
+    )
+  },
+}
 
 export function Markdown({
   children,
@@ -48,7 +69,7 @@ export function Markdown({
 }): JSX.Element {
   return (
     <div className={`${PROSE} ${className}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{children}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>{children}</ReactMarkdown>
     </div>
   )
 }
