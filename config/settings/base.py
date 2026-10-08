@@ -463,7 +463,9 @@ RUNNER_CLOUD_CODE_COMMITTED_AT = env.int("RUNNER_CLOUD_CODE_COMMITTED_AT", defau
 
 # Key for at-rest field encryption (per-runner credentials — apps/common/encryption.py).
 # Empty → derived from SECRET_KEY (fine for dev). Set explicitly in production so the
-# encryption key can rotate independently of SECRET_KEY.
+# encryption key can rotate independently of SECRET_KEY. When set, new rows are written
+# under it and rows written under SECRET_KEY still decrypt (MultiFernet — see
+# apps/common/encryption.py), so setting it needs no re-encryption at deploy time.
 FIELD_ENCRYPTION_KEY = env("FIELD_ENCRYPTION_KEY", default="")
 
 # --- GitHub App (agent creation creates a real repo) -------------------------
