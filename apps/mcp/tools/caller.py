@@ -63,7 +63,7 @@ def _envelope_sync(user_id, turn_id: str) -> dict:
     slug = _tenant_of(turn) if turn is not None else None
     if turn is None or user is None or not slug or not wsvc.is_member(user, slug):
         raise TurnNotFound("turn not found")
-    return build(turn)
+    return build(turn, reader_user=user)
 
 
 @mcp.tool

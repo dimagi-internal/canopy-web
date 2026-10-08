@@ -408,7 +408,7 @@ def unblock(contact: Contact) -> Contact:
     return contact
 
 
-def person_for(*, app=None, external_id: str = "", email: str = ""):
+def person_for(*, app=None, external_id: str = "", email: str = "", user=None, contact=None):
     """The `Person` behind this contact, creating it if canopy has not met them
     before. `None` when there is nothing to key on.
 
@@ -416,9 +416,17 @@ def person_for(*, app=None, external_id: str = "", email: str = ""):
     cannot answer it differently. Keyed on what the world already uses to name
     them — a site's own id, or an address that IS the identity — never on an
     address a site merely asserted.
+
+    `user=` / `contact=` (fleet brain v1, canopy#804) answer it for a turn's
+    initiator, whichever kind it is, and are idempotent: the same account or
+    contact always comes back as the same person.
     """
     from .models import Person
 
+    if user is not None:
+        return _person_for_user(user)
+    if contact is not None:
+        return _person_for_contact(contact)
     external_id = (external_id or "").strip()[:200]
     if app is not None and external_id:
         # The signer, not the row: every tenant registers a system itself, so
@@ -435,3 +443,82 @@ def person_for(*, app=None, external_id: str = "", email: str = ""):
                                               email=address)
         return row
     return None
+
+
+def verified_address_of(user) -> str:
+    """The address `user`'s login PROVES, or "".
+
+    The reverse of `user_for_verified_email`, by the same rules: a VERIFIED
+    allauth `EmailAddress` (the primary one first), else — only for an agent's
+    own login, which never signs in through allauth — `User.email`. A bare
+    `User.email` proves nothing for a human, so it is never used for one.
+    """
+    if user is None or not getattr(user, "pk", None):
+        return ""
+    from allauth.account.models import EmailAddress
+
+    row = (EmailAddress.objects.filter(user=user, verified=True)
+           .order_by("-primary", "id").values_list("email", flat=True).first())
+    if row:
+        return _normalize(row)
+    if getattr(user, "agent_identity", None) is not None:
+        return _normalize(user.email)
+    return ""
+
+
+def _person_for_user(user):
+    """The person a canopy ACCOUNT is. Idempotent.
+
+    Joins the account to the correspondent row for its verified address, so the
+    member who emails an agent and the member who talks to it in Slack are one
+    person — but only an address the login proves, and only a row no OTHER
+    account has claimed. With nothing to join, the account is its own person.
+    """
+    from django.db import IntegrityError
+
+    from .models import Person
+
+    if user is None or not getattr(user, "pk", None):
+        return None
+    existing = Person.objects.filter(user=user).first()
+    if existing is not None:
+        return existing
+    address = verified_address_of(user)
+    try:
+        with transaction.atomic():
+            if address:
+                row, _ = Person.objects.get_or_create(issuer="", signer="", external_id="",
+                                                      email=address)
+                if row.user_id is None:
+                    Person.objects.filter(pk=row.pk, user__isnull=True).update(user=user)
+                    row.refresh_from_db()
+                if row.user_id == user.pk:
+                    return row
+            return Person.objects.create(user=user)
+    except IntegrityError:
+        # A concurrent call made it first; the unique `user` says which row.
+        return Person.objects.filter(user=user).first()
+
+
+def _person_for_contact(contact):
+    """The person a `Contact` is. Idempotent; records the answer on the contact.
+
+    A contact already carrying a person keeps it. One linked to an account is
+    that account's person. Otherwise — a Slack contact, deliberately created
+    without a person because its ids name a Slack account, not a human — it
+    gets a person of its OWN: keyless, so it can never be matched to anyone
+    else, which keeps "cannot tell" true while giving the facts somewhere to live.
+    """
+    from .models import Contact, Person
+
+    if contact is None:
+        return None
+    if contact.person_id:
+        return contact.person
+    if contact.user_id:
+        person = _person_for_user(contact.user)
+    else:
+        person = Person.objects.create()
+    Contact.objects.filter(pk=contact.pk, person__isnull=True).update(person=person)
+    contact.refresh_from_db(fields=["person"])
+    return contact.person

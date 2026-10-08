@@ -38,7 +38,12 @@ from . import initiator as who
 #: roster and the docs use. Readers accept both (`normalize_relationship`,
 #: `normalize_profile`), since an envelope written by an older canopy-web may
 #: still sit on a box.
-VERSION = 2
+#: 3 (2026-10-07, fleet brain v1, canopy#804): adds `person` — what canopy knows
+#: about the human asking (facts + digest, this agent's workspace only) — and
+#: `trigger.kind`. Purely additive: every v2 field keeps its meaning, so a v2
+#: reader (runner, canopy hook) ignores the new keys and works unchanged. The
+#: runner gate (`routing.ENVELOPE_VERSION`) stays 2 for that reason.
+VERSION = 3
 
 #: User assurances that establish the person, not just a claim about them.
 #: `dmarc` is a member resolved from a DMARC-aligned email (harness
@@ -247,8 +252,14 @@ def _unproven_member(turn, agent) -> dict | None:
     }
 
 
-def build(turn) -> dict:
-    """The envelope for one turn. Pure read; safe to call on every claim."""
+def build(turn, *, reader_user=None) -> dict:
+    """The envelope for one turn. Safe to call on every claim.
+
+    Not quite a pure read since v3: a turn asked by a human resolves (get-or-
+    create) their `Person`, and serving the `person` block writes one
+    `PersonAccess(via=envelope)` — reader the turn's agent, plus `reader_user`
+    when someone fetched the envelope themselves (REST / MCP) — so the person
+    can see every time an agent was handed what canopy knows about them."""
     agent = _agent_of(turn)
     ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
     cs = getattr(turn, "chat_session", None)
@@ -268,6 +279,12 @@ def build(turn) -> dict:
         "verified": _verified(turn),
         "relationship": rel,
         "contact": _contact(turn.initiator_contact) if turn.initiator_contact_id else None,
+        # WHAT CANOPY KNOWS ABOUT THE HUMAN ASKING (v3, fleet brain): live facts
+        # and the digest from the agent's workspace, corrections first. null only
+        # when the asker is not a human (canopy itself, another agent, unknown).
+        # The person can see all of it, and every read of it, at `see_all` — so
+        # it is safe to quote back to them. See apps/contacts/people.py.
+        "person": _person(turn, agent, reader_user),
         # Non-null when this email came from an address that belongs to a MEMBER of
         # the agent's workspace, but THIS message could not be tied to them (it is
         # not DMARC- or DKIM-aligned), so they were treated as a contact. Without it
@@ -328,6 +345,18 @@ def build(turn) -> dict:
     }
 
 
+def _person(turn, agent, reader_user) -> dict | None:
+    from apps.contacts import people
+
+    if agent is not None:
+        ws = agent.workspace_id
+    elif getattr(turn, "chat_session", None) is not None:
+        ws = turn.chat_session.workspace_id
+    else:
+        ws = turn.workspace_id
+    return people.envelope_block(turn, agent=agent, workspace_slug=ws, reader_user=reader_user)
+
+
 def _page(session) -> dict | None:
     state = (getattr(session, "page_state", None) or {}) if session is not None else {}
     if not isinstance(state, dict) or not state.get("resource"):
@@ -358,6 +387,9 @@ def _trigger(turn, ref: dict) -> dict:
     runner = turn.claimed_by if turn.claimed_by_id else None
     return {
         "origin": turn.origin,
+        # What canopy-initiated work this turn IS, when it is one (v3):
+        # "people_digest" for a digest turn (apps/harness/people_digest.py).
+        "kind": str(ref.get("trigger") or "") or None,
         "discovered_by": ref.get("discovered_by"),
         "from": ref.get("from"),
         "message_id": ref.get("message_id"),

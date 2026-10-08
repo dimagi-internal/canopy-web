@@ -948,6 +948,14 @@ def finish_turn(
         from . import auto_debug
 
         auto_debug.on_turn_failed(turn)
+    # A conversation a HUMAN had with an agent just finished: canopy makes that
+    # agent remember it (apps/harness/people_digest.py — debounced per agent and
+    # person, never for a digest turn or a turn canopy/another agent started).
+    # on_turn_finished never raises.
+    if status == Turn.DONE:
+        from . import people_digest
+
+        people_digest.on_turn_finished(turn)
     return turn
 
 

@@ -384,6 +384,16 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_contacts": ("member",),
     "get_contact": ("member",),
     "patch_contact": ("content.write",),
+    # --- apps/contacts/people_api.py  (fleet brain v1, canopy#804; apps/contacts/people.py)
+    # Every per-person route is ALSO gated on `people.known_in` — a person the
+    # workspace does not deal with is 404, so ids and addresses confirm nothing.
+    "people_me": ("self",),  # only ever the caller's own Person
+    "lookup_person": ("member",),  # 404 unless known in one of the caller's workspaces
+    "get_person": ("member",),  # read logged as PersonAccess(via=api)
+    "add_person_fact": ("member",),
+    "retract_person_fact": ("self", "members.manage"),  # the subject, the asserter, or a workspace admin
+    "put_person_digest": ("member",),
+    "list_person_conversations": ("agent-admin",),  # or the agent's OWN login; an admin gets only turns turn_access already shows them
     # --- apps/api/api.py
     "_auth_smoke": ("authenticated",),  # internal smoke route
     # --- apps/common/api.py
@@ -487,5 +497,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "record_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "preview_cron": "POST but read-only: computes next fire times, writes nothing",
     "create_session": "starting a chat with an agent is the interaction tier a viewer holds",
+    "add_person_fact": "an agent's login is a member, and that is who writes facts (contract canopy#804); a fact is append-only, attributed, visible to its subject and retractable by them",
+    "put_person_digest": "the digest is a regenerable cache written by the people_digest agent turn as the agent's login (a member); visible to its subject",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
 }

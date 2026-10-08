@@ -1,0 +1,348 @@
+"""The fleet brain (canopy#804): what agents know about a person, and who read it.
+
+Design: hal `docs/proposals/2026-10-07-caller-context-brain.md` §1–3, approved by
+Jonathan 2026-10-07 with these calls:
+
+* Q1 — a person's private conversation with an agent may feed FACTS other agents
+  read, work-context kinds only. Raw conversations stay exactly as private as
+  before; `conversations()` below is the one new read of turn content, and it is
+  limited to the turns ONE agent had with the person, for that agent alone.
+* Q2 — v1 serves facts only inside the workspace they were written in.
+* Q3 — extraction is an agent turn on the runner fleet (`harness.people_digest`);
+  canopy-web makes no model calls.
+* Q5 — members AND contacts, keyed on `Person` (`services.person_for`).
+
+Every rule a caller could get subtly wrong lives here as a function, so the
+REST routes, the envelope and the page all apply the same one.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import logging
+
+from django.db import transaction
+from django.db.models import Case, IntegerField, Q, Value, When
+from django.utils import timezone
+
+from .models import Contact, Person, PersonAccess, PersonDigest, PersonFact
+
+logger = logging.getLogger(__name__)
+
+#: Most live facts the envelope carries.
+ENVELOPE_FACTS = 25
+#: The page a person reads everything held about them on (a web path).
+SEE_ALL = "/people/me/"
+#: A conversation's prompt is cut here in `conversations()`.
+PROMPT_MAX = 4000
+
+
+class FactError(ValueError):
+    """A fact the rules do not allow. The message is safe to show the caller."""
+
+
+# --- who a person is ---------------------------------------------------------------
+
+
+def initiator_person(turn) -> Person | None:
+    """The human behind a turn, or None when the asker is not a human.
+
+    A canopy USER (including a member resolved from an aligned email, which
+    carries a contact too — the account wins, it is who the turn acts for), or a
+    CONTACT. canopy itself, another agent and an unidentified asker have none.
+    """
+    from apps.harness import initiator as who
+
+    from . import services
+
+    kind = turn.initiator_kind
+    if kind == who.USER and turn.initiator_user_id:
+        if not is_human_account(turn.initiator_user):
+            return None
+        return services.person_for(user=turn.initiator_user)
+    if kind == who.CONTACT and turn.initiator_contact_id:
+        return services.person_for(contact=turn.initiator_contact)
+    return None
+
+
+def is_human_account(user) -> bool:
+    """A canopy account a PERSON is behind — not an agent's own login (another
+    agent dispatching work arrives as one) and not a system account (CloudWatch
+    mail with a member's standing). Neither has anything to remember."""
+    from apps.workspaces.system_accounts import is_system_user
+
+    if user is None or agent_of_login(user) is not None:
+        return False
+    return not is_system_user(user)
+
+
+def display_name(person: Person) -> str:
+    user = person.user if person.user_id else None
+    if user is not None:
+        full = (user.get_full_name() or "").strip()
+        if full:
+            return full
+    name = (Contact.objects.filter(person=person).exclude(display_name="")
+            .order_by("-last_seen_at").values_list("display_name", flat=True).first())
+    if name:
+        return name
+    if user is not None and user.email:
+        return user.email
+    return person.email or f"person-{person.pk}"
+
+
+def email_of(person: Person) -> str:
+    if person.email:
+        return person.email
+    if person.user_id and person.user.email:
+        return person.user.email.lower()
+    return (Contact.objects.filter(person=person).exclude(email="")
+            .order_by("-last_seen_at").values_list("email", flat=True).first()) or ""
+
+
+def by_email(address: str) -> Person | None:
+    """The person an address names, without creating one."""
+    from . import services
+
+    address = services._normalize(address)
+    if not address:
+        return None
+    hit = Person.objects.filter(issuer="", signer="", email=address).first()
+    if hit is not None:
+        return hit
+    user = services.user_for_verified_email(address)
+    if user is not None:
+        return Person.objects.filter(user=user).first()
+    return None
+
+
+def known_in(person: Person, workspace_slug: str) -> bool:
+    """Is this person someone `workspace_slug` deals with?
+
+    The gate under every per-person read: a member of workspace A must not be
+    able to learn, by guessing ids or addresses, that canopy knows someone only
+    workspace B deals with. Known = a member there, a contact there, someone a
+    turn there was initiated by, or already the subject of a fact or digest there.
+    """
+    from apps.harness.models import Turn
+    from apps.workspaces import services as wsvc
+
+    if not workspace_slug:
+        return False
+    if person.user_id and wsvc.is_member(person.user, workspace_slug):
+        return True
+    if Contact.objects.filter(person=person, workspace_id=workspace_slug).exists():
+        return True
+    if (PersonFact.objects.filter(person=person, workspace_id=workspace_slug).exists()
+            or PersonDigest.objects.filter(person=person, workspace_id=workspace_slug).exists()):
+        return True
+    return Turn.objects.filter(_initiated_by(person)).filter(
+        Q(agent__workspace_id=workspace_slug) | Q(chat_session__workspace_id=workspace_slug)
+    ).exists()
+
+
+def _initiated_by(person: Person) -> Q:
+    q = Q(initiator_contact__person=person)
+    if person.user_id:
+        q |= Q(initiator_user_id=person.user_id, initiator_kind="user")
+    return q
+
+
+# --- facts -------------------------------------------------------------------------
+
+
+def live_facts(person: Person, workspace_slug: str | None = None):
+    """Live facts — neither superseded nor retracted — corrections FIRST (they
+    must always be honoured), then newest."""
+    qs = PersonFact.objects.filter(person=person, superseded_at__isnull=True,
+                                   retracted_at__isnull=True)
+    if workspace_slug is not None:
+        qs = qs.filter(workspace_id=workspace_slug)
+    return (qs.select_related("project", "workspace")
+            .annotate(_correction_first=Case(When(kind=PersonFact.CORRECTION, then=Value(0)),
+                                             default=Value(1), output_field=IntegerField()))
+            .order_by("_correction_first", "-created_at", "-pk"))
+
+
+def fact_dict(fact: PersonFact) -> dict:
+    project = None
+    if fact.project_id:
+        # `title` is the contract's word for the project's `name`.
+        project = {"id": fact.project_id, "title": fact.project.name,
+                   "ext_id": fact.project.ext_id}
+    return {
+        "id": fact.pk,
+        "kind": fact.kind,
+        "statement": fact.statement,
+        "basis": fact.basis,
+        "project": project,
+        "instance_ref": fact.instance_ref,
+        "created_at": fact.created_at.isoformat() if fact.created_at else None,
+    }
+
+
+@transaction.atomic
+def record_fact(*, person: Person, workspace, kind: str, statement: str,
+                basis: str = PersonFact.DECLARED, by_user=None, by_agent=None,
+                source_turn=None, project=None, instance_ref: str = "",
+                supersedes: PersonFact | None = None) -> PersonFact:
+    """Append a fact. If it `supersedes` another, that one stops being live now.
+
+    Raises FactError for an unknown kind or basis, an empty or over-long
+    statement, a project from another workspace, or a superseded fact that is
+    not this person's in this workspace.
+    """
+    kind = (kind or "").strip()
+    if kind not in PersonFact.KINDS:
+        raise FactError(f"unknown kind {kind!r}; one of {sorted(PersonFact.KINDS)}")
+    basis = (basis or PersonFact.DECLARED).strip()
+    if basis not in PersonFact.BASES:
+        raise FactError(f"unknown basis {basis!r}; one of {sorted(PersonFact.BASES)}")
+    statement = " ".join((statement or "").split())
+    if not statement:
+        raise FactError("a fact needs a statement")
+    if len(statement) > PersonFact.STATEMENT_MAX:
+        raise FactError(f"a statement is one sentence, at most {PersonFact.STATEMENT_MAX} characters")
+    if project is not None and project.agent.workspace_id != workspace.pk:
+        raise FactError("that project belongs to another workspace")
+    if supersedes is not None:
+        old = PersonFact.objects.select_for_update().filter(pk=supersedes.pk).first()
+        if old is None or old.person_id != person.pk or old.workspace_id != workspace.pk:
+            raise FactError("a fact can only supersede a fact about the same person in the same workspace")
+        if not old.is_live:
+            raise FactError("that fact is no longer live")
+    fact = PersonFact.objects.create(
+        person=person, workspace=workspace, kind=kind, statement=statement, basis=basis,
+        project=project, instance_ref=(instance_ref or "").strip()[:300],
+        source_turn=source_turn,
+        asserted_by_user=None if by_agent is not None else by_user,
+        asserted_by_agent=by_agent, supersedes=supersedes,
+    )
+    if supersedes is not None:
+        PersonFact.objects.filter(pk=supersedes.pk).update(superseded_at=timezone.now())
+    return fact
+
+
+def may_retract(user, fact: PersonFact) -> bool:
+    """The person themself, an admin of the fact's workspace, or whoever asserted
+    it (the user, or the asserting agent's own login)."""
+    from apps.workspaces import permissions as perms
+
+    if not getattr(user, "is_authenticated", False):
+        return False
+    person = fact.person
+    if person.user_id and person.user_id == user.pk:
+        return True
+    if fact.asserted_by_user_id and fact.asserted_by_user_id == user.pk:
+        return True
+    if fact.asserted_by_agent_id and fact.asserted_by_agent.user_id == user.pk:
+        return True
+    return perms.can(user, fact.workspace_id, perms.MEMBERS_MANAGE)
+
+
+def retract(fact: PersonFact, *, by) -> PersonFact:
+    if fact.retracted_at is None:
+        PersonFact.objects.filter(pk=fact.pk, retracted_at__isnull=True).update(
+            retracted_at=timezone.now(),
+            retracted_by=by if getattr(by, "is_authenticated", False) else None)
+        fact.refresh_from_db()
+    return fact
+
+
+# --- the digest -------------------------------------------------------------------
+
+
+def put_digest(*, person: Person, workspace, text: str, source_turn_ids=(),
+               by_user=None, by_agent=None) -> PersonDigest:
+    text = (text or "").strip()
+    if len(text) > PersonDigest.TEXT_MAX:
+        raise FactError(f"a digest is at most {PersonDigest.TEXT_MAX} characters")
+    ids = [str(i) for i in (source_turn_ids or [])][:200]
+    digest, _ = PersonDigest.objects.update_or_create(
+        person=person, workspace=workspace,
+        defaults={"text": text, "source_turn_ids": ids, "updated_by_agent": by_agent,
+                  "updated_by_user": None if by_agent is not None else by_user},
+    )
+    return digest
+
+
+def digest_for(person: Person, workspace_slug: str | None) -> PersonDigest | None:
+    if not workspace_slug:
+        return None
+    return PersonDigest.objects.filter(person=person, workspace_id=workspace_slug).first()
+
+
+# --- reads, logged -----------------------------------------------------------------
+
+
+def log_access(person: Person, *, via: str, workspace_slug: str | None = None,
+               reader_user=None, reader_agent=None, turn=None) -> None:
+    """Record a read. Never raises: a read is never worth a failed request."""
+    try:
+        PersonAccess.objects.create(
+            person=person, workspace_id=workspace_slug or None, via=via, turn=turn,
+            reader_user=reader_user if getattr(reader_user, "is_authenticated", False) else None,
+            reader_agent=reader_agent)
+    except Exception:  # noqa: BLE001
+        logger.exception("people: could not log a read of person %s", person.pk)
+
+
+def agent_of_login(user):
+    """The agent whose own canopy login `user` is (`Agent.user`), or None."""
+    return getattr(user, "agent_identity", None) if user is not None else None
+
+
+def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None) -> dict | None:
+    """The envelope v3 `person` block, and one `PersonAccess(via=envelope)`.
+
+    None when the asker is not a human. Facts and digest are those of the
+    turn's agent's workspace only (Q2).
+    """
+    person = initiator_person(turn)
+    if person is None:
+        return None
+    digest = digest_for(person, workspace_slug)
+    facts = list(live_facts(person, workspace_slug)[:ENVELOPE_FACTS]) if workspace_slug else []
+    log_access(person, via=PersonAccess.VIA_ENVELOPE, workspace_slug=workspace_slug,
+               reader_user=reader_user, reader_agent=agent, turn=turn)
+    return {
+        "id": person.pk,
+        "display_name": display_name(person),
+        "email": email_of(person),
+        # The workspace these facts are from, and where `canopy people remember
+        # --workspace <slug>` writes (contract addendum, canopy side).
+        "workspace": workspace_slug,
+        "digest": digest.text if digest is not None else "",
+        "digest_updated_at": digest.updated_at.isoformat() if digest is not None else None,
+        "facts": [fact_dict(f) for f in facts],
+        "see_all": SEE_ALL,
+    }
+
+
+def conversations(person: Person, agent, *, since: dt.datetime | None = None, limit: int = 200):
+    """The turns `person` started WITH `agent` — directly or in one of its chats.
+
+    The one new read of turn content the brain adds, and deliberately narrow:
+    only that agent's turns, only ones this person initiated. Gating who may
+    call it (the agent's own login, or its admins) is the route's job.
+    """
+    from apps.harness.models import Turn
+
+    qs = (Turn.objects.filter(Q(agent=agent) | Q(chat_session__agent=agent))
+          .filter(_initiated_by(person)))
+    if since is not None:
+        qs = qs.filter(created_at__gte=since)
+    return qs.order_by("-created_at")[:limit]
+
+
+def conversation_dict(turn) -> dict:
+    return {
+        "id": str(turn.pk),
+        "created_at": turn.created_at.isoformat() if turn.created_at else None,
+        "origin": turn.origin,
+        "via": turn.initiator_via,
+        "status": turn.status,
+        "prompt": (turn.prompt or "")[:PROMPT_MAX],
+        "result_note": turn.result_note or "",
+        "chat_session_id": str(turn.chat_session_id) if turn.chat_session_id else None,
+        "content_purged": turn.content_purged_at is not None,
+    }

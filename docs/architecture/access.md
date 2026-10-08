@@ -236,7 +236,7 @@ on any rung is for the agent's admins.
 ## The caller envelope
 
 What the runner hands the agent beside each turn (`apps/harness/caller_context.py`,
-VERSION 2): `who`, `verified` (THIS message), `relationship` (the agent role),
+VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffected): `who`, `verified` (THIS message), `relationship` (the agent role),
 `profile` (`full` | `confined`), `granted_by` (`owner` | `admin` | `system` |
 `editor` | `session:<role>` | `full:<rule>` | `capability:<name>` | `refused` |
 `no-interface` for a turn with no agent), `capability` (the confined profile),
@@ -261,9 +261,54 @@ VERSION 2): `who`, `verified` (THIS message), `relationship` (the agent role),
   whose payload is this same object, read by `read_turn_events` and shown (with
   the note) in the activity drill-down. canopy writes it; a runner cannot post
   that kind.
+* **`person`** (v3) — what canopy knows about the HUMAN asking:
+  `{id, display_name, email, workspace, digest, digest_updated_at, facts[], see_all}`.
+  null only when the asker is not a human (canopy, another agent's login, a
+  system account, unknown). See "What agents know about a person" below.
+* **`trigger.kind`** (v3) — `people_digest` on a digest turn canopy started; null
+  otherwise.
 
 Readers accept both spellings: `relationship: caller` means `contact`, `profile:
 restricted` means `confined` (`normalize_relationship`, `normalize_profile`; the
 runners and the canopy plugin's hooks do the same). A runner gets confined turns
 only if it reports `envelope >= 2` (its code reads `confined`) and `profiles >= 3`
 (its guard confines writes) on every heartbeat.
+
+## What agents know about a person (the fleet brain)
+
+`apps/contacts/people.py` + `people_api.py` (`/api/people/…`), canopy#804. One
+`Person` per human — a member (`Person.user`, joined to their correspondent row by
+a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…)`).
+
+* **What may be kept: work context only.** `PersonFact.kind` is closed —
+  `role | project | instance | preference | correction | terminology` — by a DB
+  CHECK constraint as well as the API (anything else is a 400). No health,
+  personal life, performance judgements or sentiment. Facts are append-only:
+  superseded (same person, same workspace) or retracted, never edited.
+* **Per workspace (v1).** A fact or digest is written in one workspace and served
+  only there — the envelope carries the facts of the turn's agent's workspace
+  and no other. Reading or writing needs membership of that workspace (an agent's
+  login is a member), AND the person must be someone that workspace deals with
+  (`people.known_in`: a member, a contact, an initiator of a turn there, or the
+  subject of a fact there) — otherwise 404, so an id or an address confirms
+  nothing across tenants.
+* **Raw conversations stay exactly as private as before.** The one new read of
+  turn content is `GET /api/people/{id}/conversations/?agent=<slug>`: the turns
+  that person started with THAT agent, for that agent's OWN login only. An admin
+  of the agent may call it but sees only turns the turn ACL already shows them.
+  No other agent, and no plain member, can read them. A fact's `source_turn` is
+  a link, readable only by whoever can already read the turn.
+* **The subject sees everything.** `GET /api/people/me/` (the page
+  `/people/me/`): every live fact in every workspace, every digest, and the last
+  50 reads. Every read — the envelope's and the API's — is a `PersonAccess` row.
+* **Who may retract**: the person, whoever asserted it (the user, or the asserting
+  agent's login), or a workspace admin (`members.manage`).
+* **The forced write.** When a turn a human started with an agent finishes DONE,
+  canopy enqueues a `/canopy:people-digest` turn for the same agent
+  (`apps/harness/people_digest.py`): initiator `system`, `origin_ref.trigger =
+  people_digest`, no outbound; debounced per (agent, person) by
+  `PEOPLE_DIGEST_DEBOUNCE_MINUTES`; never for a digest turn, a canopy- or
+  agent-started turn, or a turn with no agent; off with `PEOPLE_DIGEST_ENABLED`.
+  At claim a digest turn yields to every other queued turn.
+* **Retention** (`apps/retention`) scrubs turn content, not facts or digests; a
+  fact whose source turn was scrubbed keeps its statement.

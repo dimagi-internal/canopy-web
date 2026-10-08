@@ -643,7 +643,8 @@ def test_an_ordinary_email_turn_has_no_grant(ctx):
 def test_version_2_renames_and_readers_accept_both():
     # `caller` -> `contact`, `restricted` -> `confined`; an envelope from an older
     # canopy-web may still sit on a box, so the normalizers read either.
-    assert caller_context.VERSION == 2
+    # 3 (fleet brain) only ADDED `person` and `trigger.kind`; the v2 renames stand.
+    assert caller_context.VERSION == 3
     assert caller_context.normalize_relationship("caller") == "contact"
     assert caller_context.normalize_relationship("contact") == "contact"
     assert caller_context.normalize_relationship("owner") == "owner"

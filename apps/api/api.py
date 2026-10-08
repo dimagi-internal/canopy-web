@@ -207,6 +207,7 @@ from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
 from apps.canopy_sessions.secrets_api import router as session_secrets_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
+from apps.contacts.people_api import router as people_router  # noqa: E402
 from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
 from apps.tokens.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.tokens.embed_api import embed_router
@@ -266,3 +267,4 @@ api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)
 api.add_router("/session-secrets", session_secrets_router)
 api.add_router("/contacts", contacts_router)
+api.add_router("/people", people_router)  # fleet brain v1 (canopy#804)
