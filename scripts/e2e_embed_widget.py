@@ -48,7 +48,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_BASE = "https://labs.connect.dimagi.com/canopy"
+DEFAULT_BASE = "https://canopy.dimagi.com"
 
 OK, BAD = "  ok  ", " FAIL "
 failures: list[str] = []

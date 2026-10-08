@@ -20,7 +20,7 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("CANOPY_BASE", "https://labs.connect.dimagi.com/canopy")
+BASE = os.environ.get("CANOPY_BASE", "https://canopy.dimagi.com")
 WS_BASE = BASE.replace("https://", "wss://").replace("http://", "ws://")
 
 

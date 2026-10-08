@@ -93,7 +93,7 @@ class HostConfig:
     #: visitor assertion AND the ID-JAG — canopy verifies both with the same key.
     signing_key: object
     #: Where the visitor assertion is addressed: the canopy deployment's base URL
-    #: (e.g. ``https://labs.connect.dimagi.com/canopy``). Also where the host
+    #: (e.g. ``https://canopy.dimagi.com``). Also where the host
     #: POSTs the arrival.
     canopy_base_url: str = ""
     #: The host's name as registered in canopy (the Connected site): the ``iss``

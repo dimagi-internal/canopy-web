@@ -56,11 +56,11 @@ INSTALLED_APPS += ["canopy_sdk.django"]          # app label: canopy_host
 MIDDLEWARE += ["canopy_sdk.django.middleware.CanopyPageTokenMiddleware"]  # optional
 CANOPY_HOST = {
     "SIGNING_KEY": env("CANOPY_SIGNING_KEY"),     # Ed25519 or P-256 PEM — never RSA/HMAC
-    "CANOPY_BASE_URL": "https://labs.connect.dimagi.com/canopy",
+    "CANOPY_BASE_URL": "https://canopy.dimagi.com",
     "APP_NAME": "connect-labs",                   # your Connected-site name in canopy
     "AGENT_SLUG": "ace",
     # The grant: all four present turns it on.
-    "CLIENT_ID": "https://labs.connect.dimagi.com/canopy/oauth/client.json",
+    "CLIENT_ID": "https://canopy.dimagi.com/oauth/client.json",
     "ISSUER": "https://labs.connect.dimagi.com",
     "RESOURCE": "https://labs.connect.dimagi.com/mcp/",
     "TOKEN_ENDPOINT": "https://labs.connect.dimagi.com/o/token/",
@@ -309,7 +309,7 @@ constant in `canopy_sdk.contract`.
 
 ### Identifiers
 - Canopy client_id (a CIMD URL, MCP 2026-07-28 client registration):
-  `https://labs.connect.dimagi.com/canopy/oauth/client.json`
+  `https://canopy.dimagi.com/oauth/client.json`
   (generally `{CANOPY_PUBLIC_BASE}/oauth/client.json`). Served by canopy, public, JSON:
   `{"client_id": <that url>, "client_name": "canopy", "jwks_uri": "{base}/oauth/jwks.json",
     "token_endpoint_auth_method": "private_key_jwt",
