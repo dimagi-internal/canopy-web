@@ -1,0 +1,84 @@
+run_date: 2026-10-08
+repo: dimagi-internal/canopy-web
+scope_contract: triage-plus-quick-wins
+code_ref: b445da92
+open_total: 4
+triaged: 4
+carried_forward: 0
+truncated: false
+clusters: []
+tier_counts: { blocks-e2e: 0, harness: 3, polish: 1 }
+prs:
+  - number: 1315
+    disposition: merge
+    checks: { backend-tests: pending, frontend-build: pending, codeql: pass, secret-scan: pass }
+    blocker: null
+    mechanical: true
+    refs_issues: []
+    action: none (auto-merge already armed)
+    outcome: pending
+  - number: 1297
+    disposition: merge
+    checks: { backend-tests: pass, frontend-build: pass, codeql: pass, secret-scan: pass }
+    blocker: "auto-merge never armed"
+    mechanical: true
+    refs_issues: []
+    action: "gh pr merge --auto (queued)"
+    outcome: queued
+  - number: 1187
+    disposition: merge
+    checks: { backend-tests: pass, frontend-build: pass, secret-scan: pass }
+    blocker: "major action bumps; publish workflows (setup-node v7 drops dummy NODE_AUTH_TOKEN) untested until a release"
+    mechanical: false
+    refs_issues: []
+    action: "gh pr merge --auto (queued)"
+    outcome: null
+verdicts:
+  - number: 1188
+    disposition: blocked
+    blocking: harness
+    confidence: high
+    effort: n/a
+    cluster: null
+    evidence_paths: [runner/canopy_runner/canopy_runner/desktop.py, frontend/src/components/supervisor/RunnerEngine.tsx]
+    unblocked_by: "Jonathan picks A/B/C (runtime default) on the issue"
+    duplicate_of: null
+    source: fresh
+    action: none
+    outcome: null
+  - number: 1127
+    disposition: blocked
+    blocking: harness
+    confidence: high
+    effort: S
+    cluster: null
+    evidence_paths: [apps/canopy_sessions/access.py, tests/test_session_lookup_by_key.py]
+    unblocked_by: "Jonathan picks a/b/c for delegated read"
+    duplicate_of: null
+    source: fresh
+    action: none
+    outcome: null
+  - number: 1238
+    disposition: blocked
+    blocking: harness
+    confidence: high
+    effort: n/a
+    cluster: null
+    evidence_paths: [runner/canopy_runner/canopy_runner/desktop.py]
+    unblocked_by: "`canopy-runner runtime` prints `start_session ON` on a runner account"
+    duplicate_of: null
+    source: fresh
+    action: none
+    outcome: null
+  - number: 1314
+    disposition: implement
+    blocking: polish
+    confidence: high
+    effort: M
+    cluster: null
+    evidence_paths: [frontend/src/pages/agents/AgentSettingsSection.tsx, frontend/src/components/agents/AgentAccessRoster.tsx, frontend/src/pages/agents/AgentCredentialsPanel.tsx]
+    unblocked_by: null
+    duplicate_of: null
+    source: fresh
+    action: handed back (over quick-win cap)
+    outcome: null
