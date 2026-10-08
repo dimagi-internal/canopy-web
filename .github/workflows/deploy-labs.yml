@@ -101,7 +101,7 @@ jobs:
     timeout-minutes: 30
     needs: guard
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # `git log -1 -- <path>` needs real history: at the default depth of 1
           # it answers with HEAD or with nothing, so the runner-staleness alert
@@ -202,7 +202,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
