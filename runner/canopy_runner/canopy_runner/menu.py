@@ -39,6 +39,13 @@ _OPTION = re.compile(rf"^\s*(?:{CURSOR}\s*)?(\d+)\.\s+(\S.*)$")
 # keeps a numbered LIST an agent wrote from parsing as a menu.
 _QUESTION = re.compile(r"^\s*(.*\?)\s*$")
 
+# The bar Claude Code draws down the left of a long AskUserQuestion's prose:
+# "│ canopy's scheduler … a paused" / "│ runner fires nothing …". Chrome, not
+# words. Kept in, it reached the phone as "a paused │ runner fires", and — the
+# real harm — the question no longer matched the declared one, so a tapped
+# answer was refused as unmodelled and pressed nothing (2026-10-08).
+_GUTTER = re.compile(r"^\s*│\s?")
+
 # Footer hints, never options or subject.
 _FOOTER = re.compile(r"(Esc to cancel|Enter to confirm|Tab to amend|ctrl\+e to explain)")
 
@@ -218,7 +225,7 @@ def _unwrap_question(lines: list[str], question: str, question_line: int):
     """
     width = max((len(l) for l in lines), default=0)
     if width <= 0:
-        return question, question_line
+        return _GUTTER.sub("", question).strip(), question_line
     start = question_line
     while start > 0:
         above = lines[start - 1]
@@ -228,8 +235,8 @@ def _unwrap_question(lines: list[str], question: str, question_line: int):
             break
         start -= 1
     if start == question_line:
-        return question, question_line
-    return " ".join(l.strip() for l in lines[start:question_line + 1]), start
+        return _GUTTER.sub("", question).strip(), question_line
+    return " ".join(_GUTTER.sub("", l).strip() for l in lines[start:question_line + 1]), start
 
 
 def find_menu(text: str) -> Menu | None:
@@ -470,7 +477,9 @@ MAX_STEPS = 60
 
 
 def normalise(text: str) -> str:
-    return " ".join((text or "").split()).casefold()
+    # The gutter bar is dropped here too, not only in the parser: a menu cached
+    # by an older runner still carries it, and must match the declared question.
+    return " ".join((text or "").replace("│", " ").split()).casefold()
 
 
 def question_index(menu: "Menu", questions: list[dict]) -> int | None:
