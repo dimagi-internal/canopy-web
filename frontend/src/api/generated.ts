@@ -6249,6 +6249,162 @@ export interface paths {
         readonly patch: operations["patch_contact"];
         readonly trace?: never;
     };
+    readonly "/api/people/me/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What agents know about me
+         * @description Everything canopy holds about YOU: every live fact in every workspace
+         *     (corrections first), every digest, and the last 50 times an agent or a
+         *     person read it. Any signed-in user; only ever your own.
+         */
+        readonly get: operations["people_me"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/lookup/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Find a person by email
+         * @description The person an address names — only if a workspace you are a member of
+         *     deals with them (`?workspace=` narrows to one), else 404. Creates nothing.
+         */
+        readonly get: operations["lookup_person"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/{person_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A person, as one workspace knows them
+         * @description Live facts (corrections first) and the digest for `?workspace=`. Members
+         *     of that workspace only, and the read is logged where the person can see it.
+         */
+        readonly get: operations["get_person"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/{person_id}/facts/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Remember something about a person
+         * @description Append a work-context fact (`kind` is closed: anything outside role,
+         *     project, instance, preference, correction, terminology is a 400). With
+         *     `supersedes_id`, that fact (same person, same workspace) stops being live.
+         *     Asserted by the calling agent when you are an agent's login, else by you.
+         */
+        readonly post: operations["add_person_fact"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/{person_id}/facts/{fact_id}/retract/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Take back a fact
+         * @description The person themself, an admin of the fact's workspace, or whoever asserted
+         *     it (the user, or the asserting agent's login). Anyone else: 404.
+         */
+        readonly post: operations["retract_person_fact"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/{person_id}/digest/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Replace a person's digest
+         * @description The short brief agents read about this person in this workspace — a cache,
+         *     written by the `people_digest` turn. Members of the workspace (in practice an
+         *     agent's login).
+         */
+        readonly put: operations["put_person_digest"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/{person_id}/conversations/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The conversations a person had with one agent
+         * @description The turns this person started WITH `agent` (directly or in its chats),
+         *     newest first: their message (≤ 4000 chars) and the result note.
+         *
+         *     Only for that agent's OWN login, or an admin of that agent — "an agent may
+         *     recall conversations it was party to". It widens no other visibility: not
+         *     another agent, not a workspace member, and an admin who is not the agent's
+         *     login sees only the turns the turn ACL already lets them read.
+         */
+        readonly get: operations["list_person_conversations"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -15630,6 +15786,309 @@ export interface components {
             /** Blocked Reason */
             readonly blocked_reason?: string | null;
         };
+        /**
+         * PersonAccessOut
+         * @description One read of what canopy knows about you.
+         */
+        readonly PersonAccessOut: {
+            /** Created At */
+            readonly created_at: string;
+            /**
+             * Via
+             * @description envelope (handed to an agent with a turn) | api (looked up).
+             */
+            readonly via: string;
+            /** Workspace */
+            readonly workspace?: string | null;
+            /** Reader Agent */
+            readonly reader_agent?: string | null;
+            /** Reader User */
+            readonly reader_user?: string | null;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+        };
+        /** PersonDigestOut */
+        readonly PersonDigestOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Text */
+            readonly text: string;
+            /** Updated At */
+            readonly updated_at?: string | null;
+            /**
+             * Updated By
+             * @default
+             */
+            readonly updated_by: string;
+        };
+        /**
+         * PersonFactDetailOut
+         * @description A fact as its subject sees it on their own page: where and who.
+         */
+        readonly PersonFactDetailOut: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Kind
+             * @description role | project | instance | preference | correction | terminology.
+             */
+            readonly kind: string;
+            /** Statement */
+            readonly statement: string;
+            /**
+             * Basis
+             * @description declared (the person said it, or a human asserted it) | inferred (a model concluded it).
+             */
+            readonly basis: string;
+            readonly project?: components["schemas"]["PersonProjectRef"] | null;
+            /**
+             * Instance Ref
+             * @default
+             */
+            readonly instance_ref: string;
+            /** Created At */
+            readonly created_at?: string | null;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Asserted By
+             * @description The agent slug or the person's email that asserted it.
+             * @default
+             */
+            readonly asserted_by: string;
+            /** Source Turn Id */
+            readonly source_turn_id?: string | null;
+        };
+        /**
+         * PersonMeOut
+         * @description Everything canopy holds about the caller: live facts in every workspace,
+         *     every digest, and the last 50 reads.
+         */
+        readonly PersonMeOut: {
+            /** Id */
+            readonly id: number;
+            /** Display Name */
+            readonly display_name: string;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /** Facts */
+            readonly facts?: readonly components["schemas"]["PersonFactDetailOut"][];
+            /** Digests */
+            readonly digests?: readonly components["schemas"]["PersonDigestOut"][];
+            /** Accesses */
+            readonly accesses?: readonly components["schemas"]["PersonAccessOut"][];
+        };
+        /** PersonProjectRef */
+        readonly PersonProjectRef: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Title
+             * @description The agent project's name.
+             */
+            readonly title: string;
+            /**
+             * Ext Id
+             * @description Its per-agent id (P1, P2 …).
+             * @default
+             */
+            readonly ext_id: string;
+        };
+        /** PersonRefOut */
+        readonly PersonRefOut: {
+            /** Id */
+            readonly id: number;
+            /** Display Name */
+            readonly display_name: string;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+        };
+        /**
+         * PersonFactOut
+         * @description One live, work-context fact.
+         */
+        readonly PersonFactOut: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Kind
+             * @description role | project | instance | preference | correction | terminology.
+             */
+            readonly kind: string;
+            /** Statement */
+            readonly statement: string;
+            /**
+             * Basis
+             * @description declared (the person said it, or a human asserted it) | inferred (a model concluded it).
+             */
+            readonly basis: string;
+            readonly project?: components["schemas"]["PersonProjectRef"] | null;
+            /**
+             * Instance Ref
+             * @default
+             */
+            readonly instance_ref: string;
+            /** Created At */
+            readonly created_at?: string | null;
+        };
+        /**
+         * PersonOut
+         * @description A person, as one workspace knows them: live facts (corrections first) and the digest.
+         */
+        readonly PersonOut: {
+            /** Id */
+            readonly id: number;
+            /** Display Name */
+            readonly display_name: string;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Digest
+             * @default
+             */
+            readonly digest: string;
+            /** Digest Updated At */
+            readonly digest_updated_at?: string | null;
+            /** Facts */
+            readonly facts?: readonly components["schemas"]["PersonFactOut"][];
+            /**
+             * See All
+             * @default /people/me/
+             */
+            readonly see_all: string;
+        };
+        /** PersonFactCreatedOut */
+        readonly PersonFactCreatedOut: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Kind
+             * @description role | project | instance | preference | correction | terminology.
+             */
+            readonly kind: string;
+            /** Statement */
+            readonly statement: string;
+            /**
+             * Basis
+             * @description declared (the person said it, or a human asserted it) | inferred (a model concluded it).
+             */
+            readonly basis: string;
+            readonly project?: components["schemas"]["PersonProjectRef"] | null;
+            /**
+             * Instance Ref
+             * @default
+             */
+            readonly instance_ref: string;
+            /** Created At */
+            readonly created_at?: string | null;
+            /** Supersedes Id */
+            readonly supersedes_id?: number | null;
+        };
+        /** PersonFactIn */
+        readonly PersonFactIn: {
+            /**
+             * Workspace
+             * @description The workspace slug the fact is written in (default: the /api/w/{ws}/ one).
+             */
+            readonly workspace?: string | null;
+            /**
+             * Kind
+             * @description role | project | instance | preference | correction | terminology — anything else is a 400.
+             */
+            readonly kind: string;
+            /**
+             * Statement
+             * @description One sentence, 1–500 characters.
+             */
+            readonly statement: string;
+            /**
+             * Basis
+             * @description declared | inferred.
+             * @default declared
+             */
+            readonly basis: string;
+            /** Source Turn Id */
+            readonly source_turn_id?: string | null;
+            /** Project Id */
+            readonly project_id?: number | null;
+            /**
+             * Instance Ref
+             * @default
+             */
+            readonly instance_ref: string;
+            /**
+             * Supersedes Id
+             * @description A live fact about the same person in the same workspace that this one replaces.
+             */
+            readonly supersedes_id?: number | null;
+        };
+        /** PersonDigestIn */
+        readonly PersonDigestIn: {
+            /** Workspace */
+            readonly workspace?: string | null;
+            /** Text */
+            readonly text: string;
+            /** Source Turn Ids */
+            readonly source_turn_ids?: readonly string[];
+        };
+        /**
+         * PersonConversationOut
+         * @description A turn this person started with the agent.
+         */
+        readonly PersonConversationOut: {
+            /** Id */
+            readonly id: string;
+            /** Created At */
+            readonly created_at?: string | null;
+            /** Origin */
+            readonly origin: string;
+            /**
+             * Via
+             * @default
+             */
+            readonly via: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Prompt
+             * @description Their message, cut at 4000 characters.
+             * @default
+             */
+            readonly prompt: string;
+            /**
+             * Result Note
+             * @default
+             */
+            readonly result_note: string;
+            /** Chat Session Id */
+            readonly chat_session_id?: string | null;
+            /**
+             * Content Purged
+             * @description Retention scrubbed this turn's content.
+             * @default false
+             */
+            readonly content_purged: boolean;
+        };
+        /** PersonConversationsOut */
+        readonly PersonConversationsOut: {
+            /** Person */
+            readonly person: number;
+            /** Agent */
+            readonly agent: string;
+            /** Conversations */
+            readonly conversations: readonly components["schemas"]["PersonConversationOut"][];
+        };
     };
     responses: never;
     parameters: never;
@@ -24089,6 +24548,173 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ContactOut"];
+                };
+            };
+        };
+    };
+    readonly people_me: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PersonMeOut"];
+                };
+            };
+        };
+    };
+    readonly lookup_person: {
+        readonly parameters: {
+            readonly query: {
+                readonly email: string;
+                readonly workspace?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PersonRefOut"];
+                };
+            };
+        };
+    };
+    readonly get_person: {
+        readonly parameters: {
+            readonly query?: {
+                readonly workspace?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PersonOut"];
+                };
+            };
+        };
+    };
+    readonly add_person_fact: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PersonFactIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PersonFactCreatedOut"];
+                };
+            };
+        };
+    };
+    readonly retract_person_fact: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+                readonly fact_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PersonFactCreatedOut"];
+                };
+            };
+        };
+    };
+    readonly put_person_digest: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PersonDigestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PersonDigestOut"];
+                };
+            };
+        };
+    };
+    readonly list_person_conversations: {
+        readonly parameters: {
+            readonly query: {
+                readonly agent: string;
+                readonly since?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PersonConversationsOut"];
                 };
             };
         };

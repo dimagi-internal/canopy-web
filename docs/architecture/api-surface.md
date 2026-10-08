@@ -256,6 +256,18 @@ Firing is automatic: on each poll tick the runner syncs its schedules, evaluates
 
 > **Operational note — deleting a user bricks their runners' schedules.** `Runner.owner` is `on_delete=SET_NULL`, and `_runner_schedule_qs` derives the schedule tenant from it, failing closed when it is NULL: deleting a pairing user's Django `User` orphans their runners, and every schedule route then returns nothing for that runner, forever. The runner must be re-paired (a new row); the orphan can only be retired. This is correct — a runner with no owner has no tenant to derive, and inferring one would be privilege escalation — so prefer deactivating a departing user (`is_active=False`) over deleting them if their runners should keep running.
 
+### People (`apps/contacts/people_api.py`, mounted at `/api/people`) — the fleet brain (canopy#804)
+
+What agents know about a person, per workspace. Rules in `docs/architecture/access.md` → "What agents know about a person".
+
+- `GET /api/people/me/` — everything held about the caller: live facts in every workspace, digests, last 50 reads (`PersonAccess`). Any signed-in user, only their own
+- `GET /api/people/lookup/?email=…[&workspace=…]` — `{id, display_name, email}`, 404 unless a workspace the caller is in deals with that person. Creates nothing
+- `GET /api/people/{id}/?workspace=<slug>` — the person, that workspace's live facts (corrections first) and digest. Members; logged
+- `POST /api/people/{id}/facts/` — `{workspace, kind, statement, basis, source_turn_id?, project_id?, instance_ref?, supersedes_id?}` → 201. Unknown kind → 400. Asserted by the agent when the caller is an agent's login
+- `POST /api/people/{id}/facts/{fid}/retract/` — the person, the asserter, or a workspace admin; else 404
+- `PUT /api/people/{id}/digest/` — `{workspace, text ≤ 2000, source_turn_ids}`. Members (in practice the digest turn, as the agent's login)
+- `GET /api/people/{id}/conversations/?agent=<slug>&since=<iso>` — the turns that person started with that agent; the agent's own login (all of them) or its admins (only turns they can already read). 403 for another agent
+
 ### Asks — a task that asks a person something
 A task may **ask** — a property of the task, not a third noun: `ask_kind` is `review` ("should I do this?") or `question` ("I need an answer"), with `ask_body` carrying its own text (message semantics, like an email; `origin_ref` is provenance, not identity). The ask is **open** until an action closes it: `approve` or `decline` on a review, `reply` (the answer) or `decline` on a question. There are no separate routes — an ask is raised by `POST /api/agents/{slug}/tasks/` and answered by `POST …/tasks/{ref}/actions`. The `Item` model, `/api/agents/{slug}/items/`, `/api/items/…` and `apps/harness/items_api.py` were deleted outright (2026-10, no aliases).
 

@@ -140,7 +140,8 @@ def test_a_chat_message_from_canopy_is_the_signed_in_user(ctx):
                     content_type="application/json")
     assert r.status_code == 200, r.content
 
-    turn = Turn.objects.get()
+    # The chat turn — not the people-digest turn its finish enqueues.
+    turn = Turn.objects.get(chat_session__isnull=False)
     assert (turn.initiator_kind, turn.initiator_user, turn.initiator_via,
             turn.initiator_assurance) == (who.USER, owner, "chat", who.SESSION)
 
@@ -160,7 +161,8 @@ def test_a_chat_message_through_a_hosts_widget_names_the_host(ctx):
                     content_type="application/json")
     assert r.status_code == 200, r.content
 
-    turn = Turn.objects.get()
+    # The chat turn — not the people-digest turn its finish enqueues.
+    turn = Turn.objects.get(chat_session__isnull=False)
     assert (turn.initiator_user, turn.initiator_via, turn.initiator_assurance) == (
         owner, "widget:connect-labs", who.DELEGATED)
 

@@ -585,6 +585,15 @@ CANOPY_AUTO_DEBUG_MAX_PER_HOUR = env.int("CANOPY_AUTO_DEBUG_MAX_PER_HOUR", defau
 CANOPY_AUTO_DEBUG_MAX_PER_DAY = env.int("CANOPY_AUTO_DEBUG_MAX_PER_DAY", default=10)
 CANOPY_AUTO_DEBUG_LOST = env.bool("CANOPY_AUTO_DEBUG_LOST", default=False)
 
+# --- People digest: the fleet brain's forced write (apps/harness/people_digest.py) ---
+# ON by default (Jonathan approved fleet brain v1, canopy#804, 2026-10-07): when a
+# turn a HUMAN started with an agent finishes DONE, canopy enqueues a
+# `/canopy:people-digest` turn for the same agent, at most once per
+# (agent, person) per PEOPLE_DIGEST_DEBOUNCE_MINUTES. Set PEOPLE_DIGEST_ENABLED=false
+# to stop it outright; facts, digests and the envelope `person` block keep working.
+PEOPLE_DIGEST_ENABLED = env.bool("PEOPLE_DIGEST_ENABLED", default=True)
+PEOPLE_DIGEST_DEBOUNCE_MINUTES = env.int("PEOPLE_DIGEST_DEBOUNCE_MINUTES", default=60)
+
 # --- Outbound email (apps/common/email.py) ---
 # OFF unless CANOPY_EMAIL_ENABLED is set: sending needs a verified SES identity
 # and ses:SendEmail on the task role, which live in AWS, not here. Off means

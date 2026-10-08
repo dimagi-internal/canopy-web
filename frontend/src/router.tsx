@@ -35,6 +35,7 @@ import { DddPage } from './pages/DddPage'
 import { TimelinePage } from './pages/TimelinePage'
 import { SystemPage } from './pages/SystemPage'
 import { SessionsPage } from './pages/SessionsPage'
+import { PeopleMePage } from './pages/PeopleMePage'
 import { AgentsPage } from './pages/AgentsPage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import SessionSharePage from './pages/SessionSharePage'
@@ -221,6 +222,7 @@ export const routeTable: RouteObject[] = [
       { path: '/system', element: <SystemPage /> },
       { path: '/guide', element: <GuidePage /> },
       { path: '/sessions', element: <SessionsPage /> },
+      { path: '/people/me', element: <PeopleMePage /> },
       { path: '/supervisor', element: <SupervisorPage /> },
       { path: '/schedules', element: <SchedulesPage /> },
       { path: '/activity', element: <ActivityPage /> },

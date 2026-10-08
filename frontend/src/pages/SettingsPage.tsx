@@ -51,6 +51,11 @@ export function SettingsPage() {
         <p className="mt-0.5 text-xs text-muted-foreground">
           Your account: the runners you administer, presence, GitHub, connected apps and access tokens.
         </p>
+        <p className="mt-1 text-xs">
+          <Link to="/people/me/" className="text-primary underline-offset-2 hover:underline">
+            What agents know about me
+          </Link>
+        </p>
       </div>
 
       <RunnersPanel />

@@ -94,6 +94,17 @@ class Person(models.Model):
     #: Set when the address IS the identity (a correspondent), not when a site
     #: merely told us one.
     email = models.EmailField(blank=True, default="")
+    #: The canopy ACCOUNT this person is, when they have one (fleet brain v1,
+    #: canopy#804). A workspace member never has a `Contact` — so before this,
+    #: the people agents talk to most had no `Person` at all and nothing could
+    #: be remembered about them. Set by `services.person_for(user=…)`, which
+    #: also joins the account to the correspondent row for its VERIFIED address
+    #: (a login proves an address the way DMARC does), so someone who both
+    #: emails an agent and talks to it in Slack is one person.
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="person",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -418,3 +429,166 @@ class Contact(models.Model):
         whoever later finds it matching a widget visitor.
         """
         return self.AUTH_RANK.get(self.auth_result, 0) >= self.AUTH_RANK[grade]
+
+
+# --- the fleet brain (canopy#804): what agents know about a person --------------
+#
+# Design: hal `docs/proposals/2026-10-07-caller-context-brain.md` §3, approved by
+# Jonathan 2026-10-07. Three layers, only the first two authority:
+#
+#   1. history — turns and messages, which already exist, keyed by initiator;
+#   2. FACTS — `PersonFact`, append-only, small, one sentence each;
+#   3. a DIGEST — `PersonDigest`, a regenerable cache written by an agent turn.
+#
+# Every agent that serves a person reads (2) and (3) in its caller envelope
+# (`apps/harness/caller_context.py`, envelope v3 `person`), and every such read
+# is logged in `PersonAccess`, which the person can see. Raw conversations stay
+# exactly as private as before: only facts and the digest cross agents.
+#
+# v1 serves facts ONLY within the workspace they were written in. Crossing a
+# tenant is `Person`'s "deliberate act" and is not offered yet.
+
+
+class PersonFact(models.Model):
+    """One durable, work-context thing canopy knows about a person.
+
+    **Append-only.** A fact is never edited: it is SUPERSEDED by a newer fact
+    (`supersedes`), or RETRACTED (by the person, a workspace admin, or whoever
+    asserted it). So every correction carries its own history, and "live" is
+    simply "neither superseded nor retracted".
+
+    **The kind list IS the privacy rule.** Only work context — no health, no
+    personal life, no performance judgements or sentiment. A free-text
+    "anything" kind is exactly what lets that creep, so `kind` is closed and
+    enforced by a CHECK constraint, not only by the API.
+    """
+
+    ROLE, PROJECT, INSTANCE = "role", "project", "instance"
+    PREFERENCE, CORRECTION, TERMINOLOGY = "preference", "correction", "terminology"
+    KIND_CHOICES = [
+        (ROLE, "Role — who they are at work"),
+        (PROJECT, "Project — work they are part of"),
+        (INSTANCE, "Instance — a specific thing they work with (a bot, an app, a report)"),
+        (PREFERENCE, "Preference — how they like to work with agents"),
+        (CORRECTION, "Correction — something an agent got wrong, to honour"),
+        (TERMINOLOGY, "Terminology — the words they use for things"),
+    ]
+    KINDS = frozenset(k for k, _ in KIND_CHOICES)
+
+    DECLARED, INFERRED = "declared", "inferred"
+    BASIS_CHOICES = [
+        (DECLARED, "Declared — the person said it, or a human asserted it"),
+        (INFERRED, "Inferred — a model concluded it"),
+    ]
+    BASES = frozenset(b for b, _ in BASIS_CHOICES)
+
+    STATEMENT_MAX = 500
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="facts")
+    #: Where it was written. v1 serves a fact only inside this workspace.
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="person_facts")
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES)
+    statement = models.CharField(max_length=STATEMENT_MAX)
+    basis = models.CharField(max_length=10, choices=BASIS_CHOICES, default=DECLARED)
+    project = models.ForeignKey("agents.AgentProject", on_delete=models.SET_NULL,
+                                null=True, blank=True, related_name="person_facts")
+    #: A specific instance in words, e.g. "OCS bot 'KMC Audit' (team Vaccine_Coach)".
+    instance_ref = models.CharField(max_length=300, blank=True, default="")
+    #: The turn it came from. Only people who can already read that turn can
+    #: open it; the link itself widens nothing.
+    source_turn = models.ForeignKey("harness.Turn", on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="person_facts")
+    asserted_by_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                         null=True, blank=True, related_name="person_facts_asserted")
+    asserted_by_agent = models.ForeignKey("agents.Agent", on_delete=models.SET_NULL,
+                                          null=True, blank=True, related_name="person_facts_asserted")
+    supersedes = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="superseded_by")
+    superseded_at = models.DateTimeField(null=True, blank=True)
+    retracted_at = models.DateTimeField(null=True, blank=True)
+    retracted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name="person_facts_retracted")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_person_facts"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["person", "workspace", "created_at"])]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(kind__in=["role", "project", "instance", "preference",
+                                             "correction", "terminology"]),
+                name="person_fact_kind_is_work_context",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(basis__in=["declared", "inferred"]),
+                name="person_fact_basis_known",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.person_id}@{self.workspace_id} {self.kind}: {self.statement[:40]}"
+
+    @property
+    def is_live(self) -> bool:
+        return self.superseded_at is None and self.retracted_at is None
+
+
+class PersonDigest(models.Model):
+    """A short brief about one person in one workspace — a CACHE.
+
+    Regenerated by a `people_digest` agent turn from the person's facts and
+    recent conversations. Delete it and the next digest turn rebuilds it; it is
+    never the authority on anything.
+    """
+
+    TEXT_MAX = 2000
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="digests")
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="person_digests")
+    text = models.TextField(max_length=TEXT_MAX, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by_agent = models.ForeignKey("agents.Agent", on_delete=models.SET_NULL,
+                                         null=True, blank=True, related_name="person_digests")
+    updated_by_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                        null=True, blank=True, related_name="person_digests")
+    source_turn_ids = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        db_table = "contact_person_digests"
+        constraints = [
+            models.UniqueConstraint(fields=["person", "workspace"],
+                                    name="one_digest_per_person_workspace"),
+        ]
+
+
+class PersonAccess(models.Model):
+    """Append-only audit: who READ what canopy knows about a person, and how.
+
+    The person sees the last of these on "What agents know about me", which is
+    what makes it safe for an agent to quote the digest back: transparency
+    instead of secrecy.
+    """
+
+    VIA_ENVELOPE, VIA_API = "envelope", "api"
+    VIA_CHOICES = [(VIA_ENVELOPE, "In an agent turn's caller envelope"),
+                   (VIA_API, "Through the REST/MCP API")]
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="accesses")
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  null=True, blank=True, related_name="person_accesses")
+    reader_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="person_reads")
+    reader_agent = models.ForeignKey("agents.Agent", on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name="person_reads")
+    turn = models.ForeignKey("harness.Turn", on_delete=models.SET_NULL,
+                             null=True, blank=True, related_name="person_reads")
+    via = models.CharField(max_length=10, choices=VIA_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_person_accesses"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["person", "created_at"])]

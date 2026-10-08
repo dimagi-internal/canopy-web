@@ -1978,7 +1978,7 @@ def get_turn_caller_context(request: HttpRequest, turn_id: uuid.UUID):
     # /api/contacts/, which any member of the tenant can already read.
     from .caller_context import build
 
-    return {"envelope": build(_turn_content_or_404(request, turn_id))}
+    return {"envelope": build(_turn_content_or_404(request, turn_id), reader_user=request.user)}
 
 
 @router.post("/turns/{turn_id}/events", response=TurnEventCountOut)
