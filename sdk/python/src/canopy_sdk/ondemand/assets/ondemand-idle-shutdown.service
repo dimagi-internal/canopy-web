@@ -1,0 +1,10 @@
+[Unit]
+Description=On-demand capability idle-shutdown probe (oneshot, fired by ondemand-idle-shutdown.timer)
+Documentation=https://github.com/dimagi-internal/canopy-web/tree/main/sdk/python#on-demand-capabilities
+
+[Service]
+Type=oneshot
+# Runs as root: it calls `shutdown -h now`.
+# CAPABILITY=<name> (required), IDLE_SECONDS=<n> (optional), ACTIVITY_FILE=<path> (optional).
+EnvironmentFile=/etc/default/ondemand-idle-shutdown
+ExecStart=/usr/local/bin/ondemand-idle-shutdown
