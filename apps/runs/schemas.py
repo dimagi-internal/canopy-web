@@ -46,6 +46,7 @@ class NarrativeCutOut(StrictModel):
     walkthrough_id: uuid.UUID
     video_url: str
     video_viewer_url: str
+    duration_sec: int | None = None
 
 
 class NarrativeVersionOut(StrictModel):

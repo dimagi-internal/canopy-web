@@ -8442,6 +8442,10 @@ export interface components {
             readonly walkthrough_id: string;
             /** Video Url */
             readonly video_url?: string | null;
+            /** Video Viewer Url */
+            readonly video_viewer_url?: string | null;
+            /** Duration Sec */
+            readonly duration_sec?: number | null;
         };
         /**
          * ReviewRequestOut
@@ -8607,6 +8611,8 @@ export interface components {
             readonly video_url: string;
             /** Video Viewer Url */
             readonly video_viewer_url: string;
+            /** Duration Sec */
+            readonly duration_sec?: number | null;
         };
         /** NarrativeDetailOut */
         readonly NarrativeDetailOut: {

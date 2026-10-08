@@ -43,6 +43,17 @@ export interface DddNarrativeStory {
   video_viewer_url: string | null
 }
 
+/** One recorded-narrative cut and its pinned video (canopy-web#1288). */
+export interface DddNarrativeCut {
+  cut_id: string
+  title: string
+  scene_ids: string[]
+  walkthrough_id: string
+  video_url: string
+  video_viewer_url: string
+  duration_sec?: number | null
+}
+
 export interface DddNarrativeVersion {
   version: number | null
   review_id: string | null
@@ -56,6 +67,8 @@ export interface DddNarrativeVersion {
   status: string | null
   video_url: string | null
   video_viewer_url: string | null
+  /** A recorded narrative's cuts, in narration order; empty otherwise. */
+  cuts?: DddNarrativeCut[]
   runs: DddNarrativeRun[]
 }
 
