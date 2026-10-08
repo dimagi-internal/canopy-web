@@ -122,9 +122,8 @@ export function AgentVaultSection({ slug, workspace }: { slug: string; workspace
         </div>
 
         <p className="mt-2 text-[11px] text-muted-foreground">
-          A service account scoped to this one vault. <strong>The runner uses it</strong> — canopy-web
-          holds it and hands it to a runner this agent routes to, and never resolves secrets itself.
-          Encrypted at rest, never returned to a browser.
+          A service account for this one vault. Canopy-web hands it to the runner, which reads the
+          secrets; it is encrypted at rest and never shown again.
         </p>
 
         {declared > 0 && (

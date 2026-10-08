@@ -114,7 +114,7 @@ export function AgentInterfaceView({ agentSlug, canEdit = false }: { agentSlug: 
     <div className="flex flex-col gap-2">
       {!published && (
         <p data-testid="interface-none" className="m-0 text-[13px] text-foreground-secondary">
-          Not published. Everyone who can reach this agent gets all of it.
+          No outside callers. Only workspace members can use this agent.
         </p>
       )}
       {full.length > 0 && (

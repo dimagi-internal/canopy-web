@@ -60,7 +60,7 @@ describe('AgentCredentialsPanel', () => {
     // And it still says the declaration is separate, rather than implying the
     // vault is pointless.
     expect(screen.getByTestId('agent-credentials-undeclared').textContent)
-      .toContain('Setting the vault above is still worth doing')
+      .toContain('The vault above still matters')
   })
 
   it('still offers it for an agent that declares refs', async () => {

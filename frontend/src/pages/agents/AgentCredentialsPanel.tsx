@@ -184,19 +184,9 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
         </p>
       )}
 
-      {/* ALWAYS, and above the declaration-dependent half. Which vault this agent
-          reads and the service account that opens it are facts about the agent,
-          not about its runtime.yaml — and they were rendered inside the
-          "declares some secrets" branch, so the form was hidden on exactly the
-          agents nobody had registered yet (ada/echo/eva/hal, all declared: 0,
-          2026-09-23: "I don't even see where the 1pass service account goes").
-          ace showed it only because it declares 45 refs. */}
-      <AgentVaultSection slug={agent.slug} workspace={agent.workspace} />
-      <AgentGitHubSection slug={agent.slug} />
-      <AgentSalesforceSection slug={agent.slug} />
-
-      {/* Above the declaration-dependent half too, for the same reason as the
-          vault: an agent with a mailbox and no runtime.yaml (ada/echo/eva/hal)
+      {/* FIRST: it is the one row here that only a person can fix, and it used
+          to sit last, under the healthy ones. Above the declaration-dependent
+          half too, for the same reason as the vault: an agent with a mailbox and no runtime.yaml (ada/echo/eva/hal)
           needs this button exactly as much as ace does. A browser sign-in mints
           under the fleet's `canopy-web` client, which every agent's turns accept
           (canopy agent_email.FLEET_CLIENTS) — there is no "wrong client" here. */}
@@ -209,7 +199,7 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
             <div className="text-[13px] text-foreground">
               Google mailbox
               <span className="ml-2 text-[12px] text-muted-foreground">
-                a token can only be minted by signing in — nothing else here can do it for you
+                only a person can connect it, by signing in to Google
               </span>
             </div>
             <button
@@ -224,16 +214,24 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
         </section>
       )}
 
+      {/* ALWAYS, and above the declaration-dependent half. Which vault this agent
+          reads and the service account that opens it are facts about the agent,
+          not about its runtime.yaml — and they were rendered inside the
+          "declares some secrets" branch, so the form was hidden on exactly the
+          agents nobody had registered yet (ada/echo/eva/hal, all declared: 0,
+          2026-09-23: "I don't even see where the 1pass service account goes").
+          ace showed it only because it declares 45 refs. */}
+      <AgentVaultSection slug={agent.slug} workspace={agent.workspace} />
+      <AgentGitHubSection slug={agent.slug} />
+      <AgentSalesforceSection slug={agent.slug} />
+
       {rows.length === 0 ? (
         // Zero refs is UNDECLARED, not provisioned — the state every agent is in
         // before someone writes a runtime.yaml. Saying "ready" would assert that
         // a box can run it, which nobody has established.
         <p className="text-[13px] text-muted-foreground" data-testid="agent-credentials-undeclared">
-          This agent declares no secrets of its own yet. What it needs is listed in its repo’s{' '}
-          <code className="font-mono text-[12px]">runtime.yaml</code> and reaches canopy-web as the
-          registry’s secret refs. Setting the vault above is still worth doing: a runner reads this
-          agent’s <code className="font-mono text-[12px]">.env.tpl</code> from it when it provisions
-          the agent, whether or not anything is declared here.
+          No other secrets declared yet. The vault above still matters: runners read this agent’s{' '}
+          <code className="font-mono text-[12px]">.env.tpl</code> from it.
         </p>
       ) : (
         <>
@@ -298,8 +296,7 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
       )}
 
       <p className="mt-4 text-[11px] text-muted-foreground">
-        Values are write-only: encrypted at rest, and readable only by a runner this agent routes to.
-        This page can show whether a secret is set, never what is in it.
+        Values are write-only: this page shows whether a secret is set, never what it is.
       </p>
     </div>
   )

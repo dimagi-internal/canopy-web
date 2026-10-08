@@ -41,7 +41,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   canopy_scheduler: 'scheduler',
   canopy_web_chat: 'canopy chat',
   slack: 'slack',
-  api: 'api (unclassified)',
+  api: 'other api',
 }
 
 // Sources whose turns have no human sender: a schedule fires on a clock, so a

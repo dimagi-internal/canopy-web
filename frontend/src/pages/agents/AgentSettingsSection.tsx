@@ -70,13 +70,13 @@ export function AgentSettingsSection() {
       <Section
         id="operators"
         title="People and roles"
-        description={`Everyone in the workspace, their role on ${agent.name}, and what they can reach.`}
+        description={`Who runs ${agent.name}, and who can use it.`}
       >
         <div className="divide-y divide-border rounded-lg border border-border bg-card">
           <Setting
             title="Owner"
             who="Workspace owners and the current owner"
-            description={`The person who operates ${agent.name}. Its GitHub-backed features, including History, read the repository through this person's GitHub connection.`}
+            description={`Runs ${agent.name}. GitHub features, including History, use this person's GitHub connection.`}
           >
             <AgentOwnerControl
               agentSlug={agent.slug}
@@ -88,7 +88,7 @@ export function AgentSettingsSection() {
           <Setting
             title="Canopy user"
             who="The agent's owner and admins"
-            description={`The canopy user account ${agent.name} is — the one its own token signs in as. Canopy then treats that account as ${agent.name} itself — for example, acting as itself it is never confined as a caller. One user belongs to one agent instance.`}
+            description={`The canopy account ${agent.name} signs in as. Canopy treats it as ${agent.name} itself, never as an outside caller.`}
           >
             <AgentCanopyUserControl
               agentSlug={agent.slug}
@@ -100,9 +100,14 @@ export function AgentSettingsSection() {
           <Setting
             title="People"
             who="Admins are granted by the agent's owner and workspace owners"
-            description={`Admins are trusted with all of ${agent.name}: they can change it and set its credentials. Workspace owners are always admins. Everyone else can use it, as far as the caller rules below allow.`}
+            description={`Admins can change ${agent.name}, set its credentials and run it in auto. Everyone else's access comes from their workspace role.`}
           >
-            <AgentAccessRoster agentSlug={agent.slug} canManage={agent.can_manage_admins ?? false} />
+            <AgentAccessRoster
+              agentSlug={agent.slug}
+              agentName={agent.name}
+              workspace={agent.workspace ?? undefined}
+              canManage={agent.can_manage_admins ?? false}
+            />
           </Setting>
         </div>
       </Section>
@@ -110,20 +115,20 @@ export function AgentSettingsSection() {
       <Section
         id="reach"
         title="Who can reach it"
-        description={`Who may ask ${agent.name} for something, and through which door.`}
+        description={`Who outside the workspace may use ${agent.name}, and from where.`}
       >
         <div className="divide-y divide-border rounded-lg border border-border bg-card">
           <Setting
             title="Callers"
             who="The agent's owner and admins"
-            description={`Who else may use ${agent.name}, and for what: the whole agent for addresses you trust (e.g. everyone at your domain), a confined capability for everyone else. Each also appears as an MCP tool.`}
+            description={`Give the whole agent to addresses you trust (e.g. your domain), or one limited capability to everyone else. Each rule is also an MCP tool.`}
           >
             <AgentInterfaceView agentSlug={agent.slug} canEdit={agent.is_admin ?? false} />
           </Setting>
           <Setting
             title="Slack"
             who="Workspace owners"
-            description={`Whether people can talk to ${agent.name} from the connected Slack — by @mention, DM, or /canopy ${agent.slug}. Members act as themselves; anyone else is answered as a contact.`}
+            description={`Talk to ${agent.name} from Slack by @mention, DM or /canopy ${agent.slug}. Workspace members act as themselves; anyone else is answered as a contact.`}
           >
             <SlackAccessToggle agentSlug={agent.slug} initialEnabled={agent.slack_enabled} />
           </Setting>
@@ -163,7 +168,7 @@ export function AgentSettingsSection() {
       <Section
         id="credentials"
         title="Credentials"
-        description={`The secrets ${agent.name} needs to run, and whether each is set. Anyone here can see the status; only the agent's owner and admins can change a value.`}
+        description={`What ${agent.name} needs to run, and whether each is set. Only the owner and admins can change them.`}
       >
         <AgentCredentialsPanel agent={agent} />
       </Section>

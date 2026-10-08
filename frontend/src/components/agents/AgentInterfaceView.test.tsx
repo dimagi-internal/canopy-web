@@ -35,7 +35,7 @@ describe('AgentInterfaceView', () => {
   it('says plainly when nothing is published, and offers no edit to a non-admin', async () => {
     getAgentInterface.mockResolvedValue({ interface: {}, source: '', published_at: null, published_by_email: null })
     render(<AgentInterfaceView agentSlug="ace" />)
-    expect((await screen.findByTestId('interface-none')).textContent).toMatch(/gets all of it/)
+    expect((await screen.findByTestId('interface-none')).textContent).toMatch(/Only workspace members can use/)
     expect(screen.queryByRole('button', { name: /Set up|Edit/ })).toBeNull()
   })
 

@@ -84,7 +84,7 @@ export function AgentDefaultRunners({
             className="self-start text-[11px] text-primary hover:underline disabled:opacity-50"
             data-testid="default-runners-follow"
           >
-            Follow {state.workspace}&rsquo;s default instead
+            Use the {state.workspace} workspace&rsquo;s runners instead
           </button>
         )}
         {error && <span className="text-[11px] text-destructive">{error}</span>}

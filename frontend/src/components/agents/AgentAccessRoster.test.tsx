@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AgentAccessOut } from '@/api/agents'
@@ -100,9 +101,30 @@ describe('AgentAccessRoster', () => {
     expect(await within(rowFor('ed@dimagi.com')).findByText('not allowed')).toBeTruthy()
   })
 
-  it('says plainly when no caller rules are published', async () => {
+  it('leaves outsiders to the Callers section when no caller rules are published', async () => {
     getAgentAccess.mockResolvedValue({ ...ACCESS, interface_published: false, outsiders: [] })
     render(<AgentAccessRoster agentSlug="ace" canManage={false} />)
-    expect(await screen.findByText(/only this agent's admins and the workspace's editors can reach/)).toBeTruthy()
+    await screen.findAllByTestId('agent-access-row')
+    expect(screen.queryByText(/Outside the workspace/)).toBeNull()
+  })
+
+  it('separates what was set on the agent from what the workspace role gives', async () => {
+    getAgentAccess.mockResolvedValue(ACCESS)
+    render(
+      <MemoryRouter>
+        <AgentAccessRoster agentSlug="ace" agentName="Ace" workspace="connect" canManage={false} />
+      </MemoryRouter>,
+    )
+    await screen.findAllByTestId('agent-access-row')
+    expect(screen.getByText('Set on Ace')).toBeTruthy()
+    const inherited = screen.getByTestId('agent-access-inherited')
+    expect(within(inherited).getByText(/From the workspace · 4 people/)).toBeTruthy()
+    // grouped by what they reach, not one row each
+    const groups = within(screen.getByTestId('agent-access-groups'))
+    expect(groups.getAllByRole('listitem')).toHaveLength(4)
+    expect(groups.getByText('Whole agent, manual only')).toBeTruthy()
+    expect(groups.getByText('No access')).toBeTruthy()
+    expect(within(inherited).getByRole('link', { name: /Manage workspace members/ }).getAttribute('href'))
+      .toBe('/w/connect/settings/members')
   })
 })

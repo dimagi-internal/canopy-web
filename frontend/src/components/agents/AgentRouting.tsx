@@ -317,20 +317,18 @@ export function AgentRouting({
       </div>
 
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        Rows are checked top to bottom. The first that matches a turn picks its runners and its
-        mode. <span className="text-foreground-secondary">Fall back</span> passes the turn to the
-        rows below when none of the row&apos;s runners is available;{' '}
-        <span className="text-foreground-secondary">Wait</span> holds it until one is.{' '}
-        <span className="text-foreground-secondary">Manual</span>: outbound actions wait for
-        approval. <span className="text-foreground-secondary">Auto</span>: the agent reviews its
-        own work and sends it.
+        The first matching row wins. <span className="text-foreground-secondary">Fall back</span>{' '}
+        tries the next row if its runners are down; <span className="text-foreground-secondary">Wait</span>{' '}
+        holds the turn. <span className="text-foreground-secondary">Manual</span> waits for your approval
+        before sending; <span className="text-foreground-secondary">Auto</span> sends after the agent
+        reviews its own work.
       </p>
       {/* The two cases the table cannot show, and the one place `enabled` means
           two things: a runner switched off under Everything else still takes
           the work of any rule that names it, because the rule is its own row. */}
       <p className="text-[10px] text-foreground-subtle">
-        A turn pinned to a runner, or a chat already live on one, skips this table. A rule uses its
-        runners even when they are switched off under Everything else.
+        Pinned turns and live chats skip this table. A rule uses its runners even if they are off
+        under Everything else.
       </p>
     </div>
   )
@@ -492,8 +490,7 @@ function RuleRowView({
           discover it from a turn that ran manual. */}
       {g.actor && effective === 'auto' && (
         <p className="mt-1 text-[11px] text-muted-foreground" data-testid={`runner-rule-verified-${testId}`}>
-          Auto only when the message is verified as coming from {g.actor}. Anything that cannot
-          prove it runs Manual.
+          Auto only for messages verified as coming from {g.actor}; the rest run Manual.
         </p>
       )}
 
