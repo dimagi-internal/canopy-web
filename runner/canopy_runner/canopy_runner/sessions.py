@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import emdash, hooks, transcript
+from . import emdash, hooks, startup_watch, transcript
 from .client import Client
 from .config import Config
 from .tail import TailReader
@@ -231,6 +231,15 @@ def reported_projects(cfg: Config) -> list[str] | None:
         return None
 
 
+def _has_transcript(cfg: Config, project: str, task: str) -> bool:
+    """Whether Claude Code has started writing this session's transcript."""
+    home = Path.home()
+    return transcript.resolve_transcript(
+        project, task, home=home, claude_home=home / ".claude" / "projects",
+        emdash_db=cfg.emdash_db,
+    ) is not None
+
+
 def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) -> None:
     """Report the open emdash sessions the phone can continue. CHANGE-DRIVEN: reports
     the instant a shown session's transcript grows (so the phone reflects live emdash
@@ -315,6 +324,12 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         hooks.prune_menus(s.get("emdash_task") for s in sessions)
         transcript.attach_pending_questions(
             sessions, hook_menu_for=hooks.pending_hook_menu, emdash_db=cfg.emdash_db,
+        )
+        # Last, and only where nothing above found a question: a session canopy
+        # created that has not started is stuck at a startup dialog, which neither
+        # a hook nor a transcript can describe (#1190, see startup_watch).
+        startup_watch.attach_stall_markers(
+            sessions, has_transcript=lambda project, task: _has_transcript(cfg, project, task),
         )
         # Complete = not cut off by the limit. Only a complete report lets the
         # server read a task's absence as "closed" (emdash deletes closed tasks).

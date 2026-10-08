@@ -87,3 +87,15 @@ def _no_real_composer_reads(monkeypatch):
     def unreadable(*a, **k):
         raise cdp_control.CDPError("composer read not faked in this test")
     monkeypatch.setattr(cdp_control, "read_composer", unreadable)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_startup_watch():
+    """The startup-stall watch (#1190) keeps the sessions canopy created at module
+    level. Each test starts with an empty watch that is not saved to disk. Otherwise
+    a CREATE in one test could mark a session in another test as stuck, and a test
+    could write to the real ~/.canopy."""
+    from canopy_runner import startup_watch
+    startup_watch._reset_for_tests()
+    yield
+    startup_watch._reset_for_tests()
