@@ -91,8 +91,54 @@ func currentState() -> RunnerState {
     return .stale
 }
 
+// The runner CLI exactly as launchd runs it: ProgramArguments + EnvironmentVariables
+// from the plist it actually loaded (see plistPath), so the menu can never drift from
+// the daemon's interpreter, venv or config.
+struct RunnerCLI {
+    let argv: [String]
+    let env: [String: String]
+
+    static func load() -> RunnerCLI? {
+        guard let data = try? Data(contentsOf: plistPath),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
+                  as? [String: Any],
+              let argv = plist["ProgramArguments"] as? [String], !argv.isEmpty else {
+            return nil
+        }
+        var env = ProcessInfo.processInfo.environment
+        for (k, v) in plist["EnvironmentVariables"] as? [String: String] ?? [:] { env[k] = v }
+        return RunnerCLI(argv: argv, env: env)
+    }
+
+    // The --config the daemon runs with, or nil to take the CLI's default.
+    var config: String? {
+        guard let i = argv.firstIndex(of: "--config"), i + 1 < argv.count else { return nil }
+        return argv[i + 1]
+    }
+
+    func process(_ args: [String]) -> Process {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: argv[0])
+        proc.arguments = args
+        proc.environment = env
+        return proc
+    }
+
+    // A subcommand with the daemon's config, run to completion. Blocking.
+    func run(_ subcommand: String, _ args: [String]) -> (code: Int32, out: String) {
+        let proc = process([subcommand] + (config.map { ["--config", $0] } ?? []) + args)
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do { try proc.run() } catch { return (-1, "") }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        return (proc.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+    }
+}
+
 // ── the app ───────────────────────────────────────────────────────────────────────
-final class Controller: NSObject, NSApplicationDelegate {
+final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var baseTree: NSImage?
     var timer: Timer?
@@ -304,6 +350,12 @@ final class Controller: NSObject, NSApplicationDelegate {
         // Take exactly ONE queued turn without running the whole daemon — works even
         // while paused. Dispatch a turn (composer / a session Continue), then tap this.
         add(menu, "Take one turn", #selector(takeOneTurn))
+        let closeItem = NSMenuItem(title: "Close sessions", action: nil, keyEquivalent: "")
+        let sub = NSMenu(title: "Close sessions")
+        sub.delegate = self
+        closeMenu = sub
+        closeItem.submenu = sub
+        menu.addItem(closeItem)
         menu.addItem(.separator())
 
         add(menu, "Open Supervisor in browser…", #selector(openSupervisor))
@@ -347,23 +399,83 @@ final class Controller: NSObject, NSApplicationDelegate {
     // config) so this can't drift from how the daemon runs — just with --drain-one and no
     // KeepAlive loop. Fire-and-forget on a background queue so the menu stays responsive.
     @objc func takeOneTurn() {
-        guard let data = try? Data(contentsOf: plistPath),
-              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
-                  as? [String: Any],
-              let argv = plist["ProgramArguments"] as? [String], !argv.isEmpty else {
-            return
-        }
-        let extraEnv = plist["EnvironmentVariables"] as? [String: String] ?? [:]
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: argv[0])
-        proc.arguments = Array(argv.dropFirst()) + ["--drain-one"]
-        var env = ProcessInfo.processInfo.environment
-        for (k, v) in extraEnv { env[k] = v }
-        proc.environment = env
+        guard let cli = RunnerCLI.load() else { return }
+        let proc = cli.process(Array(cli.argv.dropFirst()) + ["--drain-one"])
         DispatchQueue.global(qos: .userInitiated).async {
             try? proc.run()
             proc.waitUntilExit()
             DispatchQueue.main.async { self.rebuild() }
+        }
+    }
+
+    // -- close sessions --
+    // The submenu lists this box's open sessions per project ("ace — 6"), read when it
+    // opens (menuNeedsUpdate) rather than on every right-click, since it shells out to
+    // the runner CLI. Closing deletes the emdash tasks exactly as a close from the phone
+    // does — transcripts and canopy's record of the conversation are kept.
+    var closeMenu: NSMenu?
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === closeMenu else { return }
+        menu.removeAllItems()
+        func note(_ title: String) {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+        guard let cli = RunnerCLI.load() else { note("Runner is not installed"); return }
+        let (code, out) = cli.run("close-sessions", ["--list", "--json"])
+        if code == 2 { note("Needs a newer runner — update it first"); return }
+        guard code == 0,
+              let obj = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any],
+              let projects = obj["projects"] as? [String: Int],
+              let total = obj["total"] as? Int else {
+            note("Could not read emdash's sessions"); return
+        }
+        if total == 0 { note("No open sessions"); return }
+        // The CLI sends them busiest-first; a JSON object does not keep that order.
+        for (project, n) in projects.sorted(by: { ($0.value, $1.key) > ($1.value, $0.key) })
+        where !project.isEmpty {
+            let item = NSMenuItem(title: "\(project) — \(n) session\(n == 1 ? "" : "s")…",
+                                  action: #selector(closeProjectSessions(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = ["project": project, "count": n]
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        let all = NSMenuItem(title: "All sessions — \(total)…",
+                             action: #selector(closeProjectSessions(_:)), keyEquivalent: "")
+        all.target = self
+        all.representedObject = ["count": total]
+        menu.addItem(all)
+    }
+
+    @objc func closeProjectSessions(_ sender: NSMenuItem) {
+        guard let info = sender.representedObject as? [String: Any],
+              let count = info["count"] as? Int, let cli = RunnerCLI.load() else { return }
+        let project = info["project"] as? String
+        let what = project.map { "\(count) of \($0)'s session\(count == 1 ? "" : "s")" }
+            ?? "all \(count) open session\(count == 1 ? "" : "s")"
+        let confirm = NSAlert()
+        confirm.messageText = "Close \(what)?"
+        confirm.informativeText = "Each session's emdash task is deleted, as a close from the "
+            + "phone does. Anything still running in them stops. Transcripts and canopy's "
+            + "record of each conversation are kept."
+        confirm.addButton(withTitle: "Close")
+        confirm.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        let scope = project.map { ["--project", $0] } ?? ["--all"]
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (code, out) = cli.run("close-sessions", scope)
+            DispatchQueue.main.async {
+                let done = NSAlert()
+                done.messageText = code == 0 ? "Sessions closed" : "Some sessions did not close"
+                done.informativeText = out.isEmpty ? "The runner reported nothing (exit \(code))."
+                    : out.trimmingCharacters(in: .whitespacesAndNewlines)
+                NSApp.activate(ignoringOtherApps: true)
+                done.runModal()
+            }
         }
     }
     @objc func openSupervisor() {
