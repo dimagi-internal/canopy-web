@@ -97,5 +97,9 @@ class JobStore:
         # poll still sees the outcome instead of a 404.
         return self.get(job_id) or Job(job_id, "unknown", status, _now())
 
+    def put(self, job: Job) -> None:
+        """Store a job record as given (refreshing its TTL), e.g. after editing fields."""
+        self._write(job)
+
     def _write(self, job: Job) -> None:
         self._r.set(self._prefix + job.job_id, json.dumps(job.to_dict()), ex=self._ttl_s)
