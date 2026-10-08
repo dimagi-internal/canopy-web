@@ -26,16 +26,26 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # ── Backend ────────────────────────────────────────────────────────────
+  #
+  # Three jobs, ONE required check. The Django suite (`Backend pytest`) and
+  # the standalone package suites (`Runner packages`) run in PARALLEL, and
+  # `Backend tests` — the name the `main protection` ruleset requires — is a
+  # gate that needs both. Until 2026-10 the package suites ran serially
+  # after pytest in a single job, adding ~75-90s to the critical path of
+  # every PR and every merge-queue entry.
+  #
+  # Why a gate instead of adding `Runner packages` to the ruleset: a newly
+  # required check is "expected" on every OPEN PR, and a PR whose branch
+  # predates this file never produces it, so each one would block until
+  # someone rebased it. Keeping the required name on a gate changes nothing
+  # for anyone, and any future backend job joins `needs:` below rather than
+  # the ruleset.
   test-backend:
-    name: Backend tests
+    name: Backend pytest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          # The dimagi-canopy version-bump guard below diffs a PR's merge
-          # commit against its first parent (the base it was merged onto),
-          # which needs exactly one commit of history.
-          fetch-depth: 2
 
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -86,8 +96,8 @@ jobs:
       #      the `on:` block at the top of this file.
       #   2. A `paths:` filter, so it does not run at all on PRs that miss the
       #      filter, and a required check that never reports blocks the PR.
-      # It lives HERE instead: this job is already required and already runs on
-      # `merge_group`, so there is no ruleset change to make and nothing new
+      # It lives HERE instead: this job already runs on `merge_group` and gates the
+      # required `Backend tests` check, so there is no ruleset change to make and nothing new
       # that can deadlock.
       #
       # Unconditional, not path-scoped, and that is an upgrade rather than a
@@ -136,6 +146,40 @@ jobs:
         # ~160s here, nearly all of it single-threaded.
         run: uv run pytest -n auto
 
+  # The standalone in-repo packages. None of them touches Django or a
+  # database: each runs from its own dir against its own declared deps.
+  #
+  # One job, not a matrix of eight: together these take ~75-90s, which
+  # already finishes well inside `Backend pytest` (~3-5 min), so splitting
+  # them further cannot shorten the run — it would only pay checkout + uv
+  # setup eight times over and hold eight runners per PR.
+  test-runner-packages:
+    name: Runner packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The dimagi-canopy version-bump guard below diffs a PR's merge
+          # commit against its first parent (the base it was merged onto),
+          # which needs exactly one commit of history.
+          fetch-depth: 2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # NOT for the packages, which each resolve their own env. runner/ec2 has
+      # no pyproject.toml, so `uv run` there walks UP and runs in the ROOT
+      # project's env — exactly as it did when these steps lived in the
+      # backend job after its `uv sync`. Synced here so the cloud_runner suite
+      # keeps seeing the same env it always has (see the note on that step).
+      - name: Sync root dependencies (cloud_runner suite runs in the root env)
+        run: uv sync --extra dev
+
       # The root suite sets --ignore=packages, so each standalone in-repo package
       # needs its own invocation from its own dir — otherwise its tests never run
       # on a PR. Running from the package dir (rather than --project ../..) also
@@ -163,6 +207,13 @@ jobs:
       # as a package), which is presumably why it was missed. It executes turns
       # for the whole cloud fleet and cannot be tested against live EC2, so this
       # suite is the only gate it has.
+      #
+      # NOTE: this does NOT run in a bare env, whatever the comment in the
+      # root pyproject.toml says. runner/ec2 has no pyproject.toml, so uv
+      # discovers the ROOT project and Django et al. are importable here.
+      # A truly bare run (`--no-project`) currently fails: the tests import
+      # canopy_transcript and yaml. Tracked separately; unchanged by the job
+      # split.
       - name: Run cloud_runner tests
         working-directory: runner/ec2
         run: uv run --with pytest --with pytest-timeout pytest -q
@@ -246,6 +297,30 @@ jobs:
             exit 1
           fi
           echo "dimagi-canopy: src changed and the version moved $before -> $after."
+  test-backend-gate:
+    name: Backend tests
+    needs: [test-backend, test-runner-packages]
+    # always(): without it a failed `needs` SKIPS this job, and a skipped
+    # required check counts as passing — the gate would wave failures through.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every backend job passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | python3 -c '
+          import json, sys
+          needs = json.load(sys.stdin)
+          bad = {job: n["result"] for job, n in needs.items() if n["result"] != "success"}
+          for job, n in needs.items():
+              print(f"{job}: {n["result"]}")
+          if bad:
+              print(f"::error::backend job(s) did not pass: {bad}")
+              sys.exit(1)
+          '
+
 
   # A secret committed in a PR is public to everyone who can read the repo the
   # moment it is pushed, and "rotate it" is the only real remedy — so the point
