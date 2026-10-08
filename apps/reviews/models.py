@@ -109,7 +109,9 @@ class ReviewRequest(models.Model):
         self.save(update_fields=["share_token"])
         return self.share_token
 
-    def add_suggestion(self, response_json: dict, name: str | None = None) -> int:
+    def add_suggestion(
+        self, response_json: dict, name: str | None = None, email: str | None = None
+    ) -> int:
         """Append an external reviewer's suggestion. Does NOT resolve the gate —
         the review stays pending for the owner to review + accept. Returns the new
         suggestion count."""
@@ -120,6 +122,7 @@ class ReviewRequest(models.Model):
             {
                 "response_json": response_json,
                 "name": (name or "").strip() or None,
+                "email": (email or "").strip() or None,
                 "created_at": timezone.now().isoformat(),
             }
         )

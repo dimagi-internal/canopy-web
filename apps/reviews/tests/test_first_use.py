@@ -156,22 +156,76 @@ def test_non_member_without_token_still_refused(review):
     assert resp.status_code == 403
 
 
-# --- #1269: a suggestion reaches the owner ----------------------------------------------
+# --- #1269: a suggestion is emailed to ACE, the submitter cc'd ---------------------------
+
+
+@pytest.fixture
+def jj_review(db):
+    """Posted by someone OTHER than ACE — the email still goes to ACE (the setting),
+    not to whoever owns the review."""
+    jj = _user("jj@dimagi.com", WorkspaceMembership.EDITOR)
+    r = ReviewRequest.objects.create(
+        owner=jj, run_id=REQ["run_id"], gate="concept_change", request_json=REQ,
+        visibility="link", workspace=a_workspace(), narrative_slug="chlorine-dispenser-walkthroughs",
+    )
+    r.ensure_share_token()
+    return r
 
 
 @pytest.mark.django_db
-def test_suggestion_emails_the_owner(review):
+def test_guest_suggestion_goes_to_ace_with_the_guest_ccd(jj_review):
     mail.outbox.clear()
     resp = Client().post(
-        f"{BASE}/{review.id}/suggest/?t={review.share_token}",
-        data={"response_json": EDIT, "name": "Sagar"}, content_type="application/json",
+        f"{BASE}/{jj_review.id}/suggest/?t={jj_review.share_token}",
+        data={"response_json": EDIT, "name": "Sagar", "email": "sagar@dimagi.com"},
+        content_type="application/json",
     )
     assert resp.status_code == 200, resp.content
     assert len(mail.outbox) == 1
     m = mail.outbox[0]
     assert m.to == ["ace@dimagi-ai.com"]
+    assert m.cc == ["sagar@dimagi.com"]
+    assert m.reply_to == ["sagar@dimagi.com"]
     assert "Sagar" in m.subject and "Chlorine Dispenser Walkthroughs" in m.subject
-    assert f"/review/{review.id}/" in m.body
+    assert f"/review/{jj_review.id}/" in m.body
+    jj_review.refresh_from_db()
+    assert jj_review.suggestions_json[0]["email"] == "sagar@dimagi.com"
+
+
+@pytest.mark.django_db
+def test_signed_in_submitter_is_ccd_from_their_account(jj_review):
+    mail.outbox.clear()
+    member = _user("sarvesh@dimagi.com", WorkspaceMembership.EDITOR)
+    resp = _client(member).post(
+        f"{BASE}/{jj_review.id}/suggest/", data={"response_json": EDIT, "email": "spoof@example.com"},
+        content_type="application/json",
+    )
+    assert resp.status_code == 200, resp.content
+    m = mail.outbox[0]
+    assert m.to == ["ace@dimagi-ai.com"] and m.cc == ["sarvesh@dimagi.com"]
+
+
+@pytest.mark.django_db
+def test_guest_without_email_still_notifies_ace(jj_review):
+    mail.outbox.clear()
+    Client().post(
+        f"{BASE}/{jj_review.id}/suggest/?t={jj_review.share_token}",
+        data={"response_json": EDIT, "email": "not-an-address"}, content_type="application/json",
+    )
+    m = mail.outbox[0]
+    assert m.to == ["ace@dimagi-ai.com"] and m.cc == []
+    assert "not copied" in m.body
+
+
+@pytest.mark.django_db
+def test_recipient_is_a_setting(jj_review, settings):
+    settings.REVIEW_SUGGESTION_NOTIFY_TO = ["someone@dimagi.com", "ace@dimagi-ai.com"]
+    mail.outbox.clear()
+    Client().post(
+        f"{BASE}/{jj_review.id}/suggest/?t={jj_review.share_token}",
+        data={"response_json": EDIT}, content_type="application/json",
+    )
+    assert mail.outbox[0].to == ["someone@dimagi.com", "ace@dimagi-ai.com"]
 
 
 @pytest.mark.django_db
@@ -179,7 +233,7 @@ def test_a_mail_failure_never_loses_the_suggestion(review, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("SES down")
 
-    monkeypatch.setattr("apps.workspaces.services._send", boom)
+    monkeypatch.setattr("django.core.mail.EmailMultiAlternatives.send", boom)
     resp = Client().post(
         f"{BASE}/{review.id}/suggest/?t={review.share_token}",
         data={"response_json": EDIT}, content_type="application/json",

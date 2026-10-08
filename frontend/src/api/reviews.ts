@@ -349,13 +349,15 @@ export async function suggestReview(
   payload: ReviewSubmitPayload,
   token?: string | null,
   name?: string | null,
+  /** A guest's address, so they're cc'd on the notification (ignored when signed in). */
+  email?: string | null,
 ): Promise<{ ok: boolean; suggestion_count: number }> {
   const csrf = getCsrfToken()
   const resp = await fetch(suggestUrl(id, token), {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRFToken': csrf } : {}) },
-    body: JSON.stringify({ response_json: payload, name: name ?? null }),
+    body: JSON.stringify({ response_json: payload, name: name ?? null, email: email ?? null }),
   })
   return parseResponse<{ ok: boolean; suggestion_count: number }>(resp)
 }

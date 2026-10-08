@@ -8288,6 +8288,8 @@ export interface components {
             };
             /** Name */
             readonly name?: string | null;
+            /** Email */
+            readonly email?: string | null;
         };
         /** NarrativeListItemOut */
         readonly NarrativeListItemOut: {

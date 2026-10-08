@@ -603,6 +603,10 @@ elif DEBUG:
 else:
     EMAIL_BACKEND = "apps.common.email.NotConfiguredEmailBackend"
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Canopy <noreply@localhost>")
+# Who is emailed when someone sends suggested edits on a review (apps/reviews/notify.py).
+# ACE runs the DDD loops that post these reviews, so it reads them for now; the person
+# who sent the suggestions is cc'd. Comma-separated to widen it without a deploy of code.
+REVIEW_SUGGESTION_NOTIFY_TO = env.list("REVIEW_SUGGESTION_NOTIFY_TO", default=["ace@dimagi-ai.com"])
 # Who reads access requests from the public site's request-access form
 # (apps/beta_requests). Empty = record them without mailing anyone.
 CANOPY_BETA_REQUESTS_TO = env("CANOPY_BETA_REQUESTS_TO", default="jjackson@dimagi.com")

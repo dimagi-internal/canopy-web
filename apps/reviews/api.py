@@ -503,9 +503,27 @@ def suggest_review(request: HttpRequest, rid: UUID, payload: ReviewSuggestIn) ->
     name = payload.name
     if not (name or "").strip() and request.user.is_authenticated:
         name = request.user.email or None
-    count = review.add_suggestion(payload.response_json, name)
-    notify_suggestion(review, name, count)
+    # The submitter is cc'd on the notification. A signed-in caller's address is
+    # known; a share-link guest may give one. A malformed address is dropped, not
+    # refused — it must never cost the reviewer their suggestion.
+    email = (request.user.email if request.user.is_authenticated else None) or _valid_email(payload.email)
+    count = review.add_suggestion(payload.response_json, name, email)
+    notify_suggestion(review, name, count, submitter_email=email)
     return ReviewSuggestOut(ok=True, suggestion_count=count)
+
+
+def _valid_email(value: str | None) -> str | None:
+    from django.core.exceptions import ValidationError
+    from django.core.validators import validate_email
+
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        validate_email(value)
+    except ValidationError:
+        return None
+    return value
 
 
 # ---------------------------------------------------------------------------
