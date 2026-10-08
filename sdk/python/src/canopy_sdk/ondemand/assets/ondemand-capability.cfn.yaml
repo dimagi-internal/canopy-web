@@ -76,6 +76,14 @@ Parameters:
     Description: Root volume size in GiB (encrypted gp3).
     MinValue: 8
     Default: 30
+  IdleStopMinutes:
+    Type: Number
+    Description: >-
+      Minutes of max CPU below 5% before the CloudWatch backstop stops the
+      instance. Matches the in-VM watchdog's 3600 s default, so a box stays warm
+      between interactive requests.
+    MinValue: 5
+    Default: 60
 
 Conditions:
   WantsNestedVirtualization: !Equals [!Ref NestedVirtualization, "true"]
@@ -145,6 +153,11 @@ Resources:
               - Sid: ArtifactsPutObject
                 Effect: Allow
                 Action: [s3:PutObject, s3:AbortMultipartUpload]
+                Resource: !Sub "${ArtifactsBucket.Arn}/*"
+              # The box reads what the consumer stages (requests, worker files).
+              - Sid: ArtifactsGetObject
+                Effect: Allow
+                Action: [s3:GetObject]
                 Resource: !Sub "${ArtifactsBucket.Arn}/*"
               - Sid: ArtifactsListBucket
                 Effect: Allow
@@ -227,10 +240,12 @@ Resources:
     Properties:
       LaunchTemplate:
         LaunchTemplateId: !Ref LaunchTemplate
-        # "$Latest", not LatestVersionNumber: a launch-template edit then does
-        # not change this resource's properties, so it never forces a
-        # replacement (which would hand the consumer a new instance id).
-        Version: "$Latest"
+        # CloudFormation rejects "$Latest"/"$Default" here ("does not support
+        # using $Latest or $Default for LaunchTemplate version"), so pin the
+        # number. Consequence: a launch-template edit REPLACES the instance (new
+        # id; the old one is retained), and the consumer's instance-id setting
+        # must be updated.
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
       SubnetId: !Ref SubnetId
       # `capability` is what ConsumerPolicy keys on: change it and the consumer
       # loses the right to start, stop or command this instance.
@@ -260,11 +275,20 @@ Resources:
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
+      # Only per-request traffic expires. Anything else (worker files, caches)
+      # is durable: expiring it would break a reinstall or a replaced instance.
       LifecycleConfiguration:
         Rules:
-          - Id: expire-after-7-days
+          - Id: expire-requests-after-7-days
             Status: Enabled
+            Prefix: requests/
             ExpirationInDays: 7
+          - Id: expire-results-after-7-days
+            Status: Enabled
+            Prefix: results/
+            ExpirationInDays: 7
+          - Id: abort-incomplete-multipart
+            Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 1
       Tags:
@@ -272,19 +296,19 @@ Resources:
         - { Key: capability, Value: !Ref Capability }
         - { Key: managed-by, Value: cloudformation }
 
-  # Layer 3: stop the instance after 5 consecutive 1-minute periods of max CPU
+  # Layer 3: stop the instance after IdleStopMinutes consecutive 1-minute periods of max CPU
   # below 5% (Maximum, so a single spike resets the window). The action is the
   # AWS-builtin EC2 stop action: no Lambda or SNS in the loop.
   IdleStopAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: !Sub "ondemand-${Capability}-idle-stop"
-      AlarmDescription: !Sub "Stop the ${Capability} on-demand runner after 5 min of <5% CPU."
+      AlarmDescription: !Sub "Stop the ${Capability} on-demand runner after ${IdleStopMinutes} min of <5% CPU."
       Namespace: AWS/EC2
       MetricName: CPUUtilization
       Statistic: Maximum
       Period: 60
-      EvaluationPeriods: 5
+      EvaluationPeriods: !Ref IdleStopMinutes
       Threshold: 5
       ComparisonOperator: LessThanThreshold
       TreatMissingData: notBreaching
@@ -345,6 +369,10 @@ Resources:
             Effect: Allow
             Action: [s3:GetObject]
             Resource: !Sub "${ArtifactsBucket.Arn}/*"
+          - Sid: S3PutRequests
+            Effect: Allow
+            Action: [s3:PutObject]
+            Resource: !Sub "${ArtifactsBucket.Arn}/requests/*"
 
 Outputs:
   InstanceId:

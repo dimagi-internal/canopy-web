@@ -101,7 +101,8 @@ def test_stack_delete_retains_what_the_retained_instance_depends_on(template):
 def test_idle_alarm_stops_the_instance(template):
     alarm = template["Resources"]["IdleStopAlarm"]["Properties"]
     assert alarm["MetricName"] == "CPUUtilization" and alarm["Statistic"] == "Maximum"
-    assert (alarm["Period"], alarm["EvaluationPeriods"], alarm["Threshold"]) == (60, 5, 5)
+    assert (alarm["Period"], alarm["EvaluationPeriods"], alarm["Threshold"]) == (60, {"Ref": "IdleStopMinutes"}, 5)
+    assert template["Parameters"]["IdleStopMinutes"]["Default"] == 60
     assert alarm["ComparisonOperator"] == "LessThanThreshold"
     assert alarm["AlarmActions"] == [{"Sub": "arn:aws:automate:${AWS::Region}:ec2:stop"}]
 
@@ -180,3 +181,18 @@ def test_idle_script_defaults_marker_to_the_capability(tmp_path):
     out = subprocess.run(["bash", str(asset_path(SCRIPT)), "--dry-run"],
                          env=env, capture_output=True, text=True, check=True).stdout
     assert "/var/run/emod/last-activity" in out
+
+
+def test_instance_pins_a_launch_template_version_number(template):
+    # CloudFormation rejects "$Latest"/"$Default" for an instance's launch template.
+    version = template["Resources"]["Instance"]["Properties"]["LaunchTemplate"]["Version"]
+    assert version not in ("$Latest", "$Default")
+    assert version == {"GetAtt": ["LaunchTemplate", "LatestVersionNumber"]} or version == {
+        "GetAtt": "LaunchTemplate.LatestVersionNumber"
+    }
+
+
+def test_only_per_request_prefixes_expire(template):
+    rules = template["Resources"]["ArtifactsBucket"]["Properties"]["LifecycleConfiguration"]["Rules"]
+    expiring = {r.get("Prefix") for r in rules if "ExpirationInDays" in r}
+    assert expiring == {"requests/", "results/"}

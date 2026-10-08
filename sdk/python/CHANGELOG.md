@@ -12,6 +12,16 @@ The import name is `canopy_sdk` and does not change with the distribution name.
 - The EC2 gate now waits for **system** status ok as well as instance status ok, which is
   the check ace-web's mobile runner always used. A `ClientError` during the wait is now
   raised as `OnDemandError` instead of escaping.
+- `ondemand-capability.cfn.yaml` (the first real stack exposed these):
+  - CloudFormation rejects `"$Latest"` as an instance's launch-template version, so no
+    stack could be created. The template now pins `LatestVersionNumber`, which means a
+    launch-template edit replaces the instance (new id).
+  - The bucket now expires only `requests/` and `results/`. Worker files and caches no
+    longer vanish after 7 days.
+  - The CloudWatch backstop window is a parameter, `IdleStopMinutes`, defaulting to 60
+    (it was a fixed 5 minutes). That matches the watchdog's 3600 s, so a box no longer
+    stops between interactive requests.
+  - The instance can read the bucket, and the consumer can put under `requests/`.
 
 ## 0.7.0 — 2026-10-08
 

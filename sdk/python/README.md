@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.7.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.7.1#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.7.0/dimagi_canopy-0.7.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.7.1/dimagi_canopy-0.7.1-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -222,7 +222,8 @@ by the stack, the AMI and the consumer. Given `<capability>`:
 Idle shutdown has three layers: the consumer's own `stop()`, the in-VM watchdog
 (a halt becomes a stop because the launch template sets
 `InstanceInitiatedShutdownBehavior: stop`), and a CloudWatch alarm that stops the
-instance after 5 minutes of max CPU below 5 %.
+instance after `IdleStopMinutes` (default 60) minutes of max CPU below 5 %,
+matching the watchdog's 3600 s default.
 
 The assets ship inside the wheel; get their paths with
 `canopy_sdk.ondemand.assets.asset_path(name)`, e.g. to copy them into a Packer
@@ -257,14 +258,15 @@ aws cloudformation deploy --stack-name ondemand-<capability> \
 | `RootVolumeGb` | `30` | encrypted gp3 root volume |
 
 Resources: an egress-only security group (443, DNS); an instance role with
-`AmazonSSMManagedInstanceCore` plus put on the artifacts bucket, and its
+`AmazonSSMManagedInstanceCore` plus get/put on the artifacts bucket, and its
 instance profile; a launch template (IMDSv2 only, encrypted gp3, detailed
-monitoring, stop on shutdown); the instance; an artifacts bucket (objects expire
-after 7 days); `IdleStopAlarm`; and `ConsumerPolicy`, which grants the consumer
+monitoring, stop on shutdown); the instance (pinned to the launch template's
+latest version number, so a launch-template edit replaces it with a new id); an
+artifacts bucket (only `requests/` and `results/` expire, after 7 days); `IdleStopAlarm`; and `ConsumerPolicy`, which grants the consumer
 `ec2:StartInstances` / `StopInstances` and `ssm:SendCommand` only on instances
 tagged `capability=<capability>` (plus the `AWS-RunShellScript` document, the
 read-only `ec2:DescribeInstances` / `ec2:DescribeInstanceStatus` and
-`ssm:GetCommandInvocation`, and read on the bucket).
+`ssm:GetCommandInvocation`, read on the bucket, and put under `requests/`).
 
 **Deleting the stack does not delete the runner.** The instance, the artifacts
 bucket, and what the instance depends on to keep working — its security group,
