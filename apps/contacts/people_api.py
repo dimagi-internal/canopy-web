@@ -30,7 +30,6 @@ from . import people
 from . import services as contact_services
 from .models import Person, PersonAccess, PersonDigest, PersonFact
 from .people_schemas import (
-    DigestCandidatesOut,
     PeopleCoverageOut,
     PersonConversationsOut,
     PersonDigestIn,
@@ -155,36 +154,6 @@ def people_coverage(request: HttpRequest, workspace: str | None = None, days: in
     if not (coverage.MIN_DAYS <= days <= coverage.MAX_DAYS):
         raise _bad(f"days is {coverage.MIN_DAYS}–{coverage.MAX_DAYS}")
     return coverage.workspace_coverage(ws.pk, days=days, agents=agents)
-
-
-#: Most candidates one call returns.
-MAX_CANDIDATES = 200
-
-
-@router.get("/digest-candidates/", response=DigestCandidatesOut,
-            summary="Who an agent has talked to since it last digested them")
-def list_digest_candidates(request: HttpRequest, agent: str, limit: int = 50) -> dict:
-    """The people digest's work list (canopy#820): every person with at least one
-    REAL conversation with `agent` (chat, email or Slack from a human — not a
-    dispatch, huddle, approval, schedule or digest) since that agent last
-    digested them, most recently active first, at most `limit` (1–200).
-
-    `since` is where to read their conversations from. Only for that agent's OWN
-    login, or an admin of that agent — the same gate as its conversations. One
-    query; starts nothing."""
-    from apps.agents.models import Agent
-
-    target = Agent.objects.filter(slug=agent).select_related("workspace").first()
-    if target is None or not target.workspace_id or not wsvc.is_member(request.user, target.workspace_id):
-        raise _not_found("Agent not found")
-    own_login = target.user_id is not None and target.user_id == request.user.pk
-    if not (own_login or target.is_admin(request.user)):
-        raise ProblemError(403, "Only this agent's own login, or its admins, may list "
-                                "its digest candidates", type_=TYPE_FORBIDDEN)
-    if not (1 <= limit <= MAX_CANDIDATES):
-        raise _bad(f"limit is 1–{MAX_CANDIDATES}")
-    return {"agent": target.slug, "workspace": target.workspace_id,
-            "candidates": people.digest_candidates(target, limit=limit)}
 
 
 @router.get("/lookup/", response=PersonRefOut, summary="Find a person by email")
