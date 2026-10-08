@@ -192,7 +192,7 @@ function VersionBlock({
       <div className="flex items-center gap-2 px-4 py-3">
         <button
           onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left"
         >
           <span aria-hidden className="text-muted-foreground">
             {open ? '▾' : '▸'}
