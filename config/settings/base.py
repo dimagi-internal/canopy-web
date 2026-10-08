@@ -586,12 +586,15 @@ CANOPY_AUTO_DEBUG_MAX_PER_DAY = env.int("CANOPY_AUTO_DEBUG_MAX_PER_DAY", default
 CANOPY_AUTO_DEBUG_LOST = env.bool("CANOPY_AUTO_DEBUG_LOST", default=False)
 
 # --- People digest: the fleet brain's forced write (apps/harness/people_digest.py) ---
-# ON by default (Jonathan approved fleet brain v1, canopy#804, 2026-10-07): when a
-# turn a HUMAN started with an agent finishes DONE, canopy enqueues a
-# `/canopy:people-digest` turn for the same agent, at most once per
-# (agent, person) per PEOPLE_DIGEST_DEBOUNCE_MINUTES. Set PEOPLE_DIGEST_ENABLED=false
-# to stop it outright; facts, digests and the envelope `person` block keep working.
-PEOPLE_DIGEST_ENABLED = env.bool("PEOPLE_DIGEST_ENABLED", default=True)
+# OFF by default since 2026-10-07. v1 (canopy#804, approved and switched on the same
+# day) started a full agent session per human turn (debounced per agent+person), and the
+# "human" turns included agent dispatches carrying the human as initiator — so every
+# piece of dispatched work spawned a digest session on the owner's laptop runner. Paused
+# while the design is reworked toward a batched sweep. When ON: a turn a HUMAN started
+# with an agent finishing DONE enqueues a `/canopy:people-digest` turn for that agent, at
+# most once per (agent, person) per PEOPLE_DIGEST_DEBOUNCE_MINUTES. Facts, digests and
+# the envelope `person` block work either way.
+PEOPLE_DIGEST_ENABLED = env.bool("PEOPLE_DIGEST_ENABLED", default=False)
 PEOPLE_DIGEST_DEBOUNCE_MINUTES = env.int("PEOPLE_DIGEST_DEBOUNCE_MINUTES", default=60)
 
 # --- Outbound email (apps/common/email.py) ---

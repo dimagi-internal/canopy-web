@@ -1323,3 +1323,44 @@ class FailureInvestigation(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"investigation:{self.pk}:{self.status}:{self.fingerprint[:8]}"
+
+
+class FleetHold(models.Model):
+    """The fleet-wide hold: while `held`, NO runner is handed a turn — anywhere.
+
+    The per-runner pause (`Runner.paused`) parks one box; this parks the whole fleet,
+    for the moment something is starting sessions nobody can account for (2026-10-07:
+    people-digest turns appearing on a laptop). Turns keep ENQUEUING while held — that
+    is the point: they pile up QUEUED, each carrying its origin, `origin_ref.trigger`
+    and initiator, so `/harness/turns?status=queued` is the list of everything that
+    tried to start, and `unclaimable_queued_turns` names the hold as the reason.
+
+    Enforced in ONE place, `claim.claim_next_turn` (both the HTTP and the WebSocket
+    claim run through it), so it binds every runner regardless of its binary. Like the
+    runner pause it stops STARTING work, never finishing it: an executing turn keeps
+    its lease, and no NEW claim, ride or pin is granted while held.
+
+    What it cannot reach, because none of it passes through a claim: a laptop emdash
+    session that keeps working after its turn was closed on delivery (stop that with
+    `interrupt_session`); a menu answer pressed into a live session; and `claude -p`
+    run directly by canopy CLI tools or a local launchd job.
+
+    A single row (pk=1). Set and released only by a superuser — it spans every tenant.
+    """
+
+    SINGLETON_PK = 1
+
+    held = models.BooleanField(default=False)
+    note = models.CharField(max_length=500, blank=True, default="")
+    held_at = models.DateTimeField(null=True, blank=True)
+    held_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                null=True, blank=True, related_name="+")
+
+    @classmethod
+    def current(cls) -> "FleetHold":
+        row, _ = cls.objects.get_or_create(pk=cls.SINGLETON_PK)
+        return row
+
+    @classmethod
+    def is_held(cls) -> bool:
+        return cls.objects.filter(pk=cls.SINGLETON_PK, held=True).exists()

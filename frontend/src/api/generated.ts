@@ -4595,6 +4595,56 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/fleet-hold": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Fleet Hold
+         * @description Is the whole fleet on hold? Readable by anyone signed in — a member whose turn
+         *     is sitting queued should be able to see why.
+         */
+        readonly get: operations["get_fleet_hold"];
+        readonly put?: never;
+        /**
+         * Hold Fleet
+         * @description Stop EVERY runner from starting anything — the fleet-wide sibling of
+         *     /runners/{id}/pause (see FleetHold). Turns keep enqueuing and wait QUEUED with
+         *     their trigger, so `list turns?status=queued` shows what tried to start while
+         *     held. Running turns finish normally. Superuser only: it spans every tenant.
+         *     Idempotent — holding again refreshes the note.
+         */
+        readonly post: operations["hold_fleet"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/fleet-hold/release": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Release Fleet Hold
+         * @description Release the fleet hold; queued turns become claimable again. Wakes every
+         *     tenant's runners so the backlog starts now rather than at each box's next poll.
+         */
+        readonly post: operations["release_fleet_hold"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/heartbeat": {
         readonly parameters: {
             readonly query?: never;
@@ -14134,6 +14184,33 @@ export interface components {
              */
             readonly note: string;
         };
+        /** FleetHoldOut */
+        readonly FleetHoldOut: {
+            /** Held */
+            readonly held: boolean;
+            /** Note */
+            readonly note: string;
+            /** Held At */
+            readonly held_at?: string | null;
+            /**
+             * Held By Email
+             * @default
+             */
+            readonly held_by_email: string;
+            /**
+             * Queued
+             * @default 0
+             */
+            readonly queued: number;
+        };
+        /** FleetHoldIn */
+        readonly FleetHoldIn: {
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
         /** HeartbeatIn */
         readonly HeartbeatIn: {
             /**
@@ -22820,6 +22897,70 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly get_fleet_hold: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FleetHoldOut"];
+                };
+            };
+        };
+    };
+    readonly hold_fleet: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["FleetHoldIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FleetHoldOut"];
+                };
+            };
+        };
+    };
+    readonly release_fleet_hold: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FleetHoldOut"];
                 };
             };
         };

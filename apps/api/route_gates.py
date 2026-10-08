@@ -59,6 +59,8 @@ Vocabulary (closed — add to it deliberately, never in passing):
   invite token, OAuth state).
 * ``beta-reviewer`` — ``apps/beta_requests/services.may_review``: a superuser or
   the ``CANOPY_BETA_REQUESTS_TO`` address (a beta request names no workspace).
+* ``superuser`` — ``User.is_superuser``: fleet-wide switches that span every tenant
+  (the fleet hold).
 * ``host`` — a connected-site / machine protocol endpoint (assertion,
   jwt-bearer, Pub/Sub push).
 """
@@ -70,7 +72,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "members.manage", "integrations", "runners.route", "retention.manage", "own",
     "agent-admin", "agent-owner", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
-    "contact", "signed-link", "host", "beta-reviewer",
+    "contact", "signed-link", "host", "beta-reviewer", "superuser",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -182,6 +184,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "unretire_runner": ("runner",),
     "pause_runner": ("runner",),
     "unpause_runner": ("runner",),
+    "get_fleet_hold": ("authenticated",),
+    "hold_fleet": ("superuser",),
+    "release_fleet_hold": ("superuser",),
     "runner_heartbeat": ("runner",),
     "refresh_runner": ("runner-admin",),
     "claim_turn": ("runner",),
