@@ -207,3 +207,51 @@ def test_status_stopped_has_no_idle():
     with st:
         s = _inst(ec2).status()
     assert s.state == "stopped" and s.idle_for_s is None
+
+
+def test_ec2_ok_waits_for_instance_then_system_status():
+    ec2, _ = _ec2()
+    inst = _inst(ec2)
+    seen = []
+
+    class W:
+        def __init__(self, name):
+            self.name = name
+
+        def wait(self, **kw):
+            seen.append(self.name)
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(ec2, "get_waiter", lambda name: W(name))
+    try:
+        inst._wait_ec2_ok(60)
+    finally:
+        monkey.undo()
+    assert seen == ["instance_status_ok", "system_status_ok"]
+
+
+def test_default_boot_budget_covers_a_measured_cold_start():
+    import inspect
+
+    # ~230 s start -> status ok measured on a real m8i.xlarge; 180 s failed live.
+    default = inspect.signature(OnDemandInstance.ensure_running).parameters["boot_timeout_s"].default
+    assert default >= 400
+
+
+def test_waiter_client_error_is_wrapped():
+    from botocore.exceptions import ClientError
+
+    ec2, _ = _ec2()
+    inst = _inst(ec2)
+
+    class W:
+        def wait(self, **kw):
+            raise ClientError({"Error": {"Code": "RequestLimitExceeded", "Message": "x"}}, "DescribeInstanceStatus")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(ec2, "get_waiter", lambda name: W())
+    try:
+        with pytest.raises(OnDemandError, match="i-1"):
+            inst._wait_ec2_ok(10)
+    finally:
+        monkey.undo()
