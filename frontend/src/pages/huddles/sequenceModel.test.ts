@@ -59,11 +59,13 @@ describe('step 4 — settling changes in direct conversations', () => {
   })
 
   it('ends each conversation with how it settled', () => {
-    const ends = four.messages.filter((m) => m.kind === 'settled').map((m) => m.label)
-    expect(ends).toEqual([
-      'Agreed on “IDM talk: live demo from Ace, story slide from Echo”',
-      'Ran out of messages without agreeing on “Take PRIDE cholera story to reviewed draft”',
+    const ends = four.messages.filter((m) => m.kind === 'settled')
+    expect(ends.map((m) => m.label)).toEqual([
+      'Closed it: Eva and Echo — agreed on “IDM talk: live demo from Ace, story slide from Echo”',
+      'Closed it: Echo and Ace — ran out of messages without agreeing on “Take PRIDE cholera story to reviewed draft”',
     ])
+    // The moderator closes a thread, to both sides — not one of the agents.
+    expect(ends.map((m) => [m.from, m.to])).toEqual([['ada', ['eva', 'echo']], ['ada', ['echo', 'ace']]])
   })
 
   it('still never goes back in time', () => {

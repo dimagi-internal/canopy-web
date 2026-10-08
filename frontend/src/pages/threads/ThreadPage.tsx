@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { getThread, type AgentThread, type ThreadMessage } from '@/api/threads'
 import { relativeTime } from '@/components/activity/turnLog'
+import { IdeaView } from '../huddles/BlockView'
 import { MemberAvatar } from '../huddles/MemberAvatar'
 import { memberHue } from '../huddles/huddleModel'
 import { andList, deJargon, possessive, who } from '../huddles/plainWords'
@@ -53,23 +54,9 @@ function StatusPill({ t }: { t: AgentThread }) {
   )
 }
 
-/** A revised idea, as an agent offered it: its title, why, and plan. */
+/** A revised idea, as an agent offered it — shown exactly as the huddle shows ideas. */
 function Proposal({ p }: { p: Record<string, unknown> }) {
-  const plan = Array.isArray(p.plan) ? p.plan : []
-  const rest = Object.entries(p).filter(([k]) => !['title', 'why', 'plan', 'lead', 'with'].includes(k))
-  return (
-    <div className="space-y-1.5 text-[13px] leading-relaxed text-foreground-secondary">
-      {p.title != null && <p className="font-semibold text-foreground">{String(p.title)}</p>}
-      {p.why != null && <p><span className="font-medium text-foreground">Why: </span>{deJargon(String(p.why))}</p>}
-      {plan.length > 0 && (
-        <ol className="list-decimal space-y-0.5 pl-5">{plan.map((s, i) => <li key={i}>{deJargon(String(s))}</li>)}</ol>
-      )}
-      {rest.map(([k, v]) => (
-        <p key={k}><span className="font-medium text-foreground">{k.replace(/_/g, ' ')}: </span>
-          {typeof v === 'object' ? JSON.stringify(v) : deJargon(String(v))}</p>
-      ))}
-    </div>
-  )
+  return <IdeaView idea={p} member={String(p.lead ?? '')} />
 }
 
 function More({ label, children }: { label: string; children: ReactNode }) {

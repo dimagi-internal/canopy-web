@@ -112,7 +112,7 @@ type ProposalRow = {
 
 /** `anchored` is false for a revised copy (a round-4 accept), so the arcs keep
  * ending on the round-2 card where the proposal was made. */
-function Proposal({ p, member, arcs, anchored = true }: { p: ProposalRow; member: string; arcs: Arc[]; anchored?: boolean }) {
+function Proposal({ p, member, arcs, anchored = true, answers = true }: { p: ProposalRow; member: string; arcs: Arc[]; anchored?: boolean; answers?: boolean }) {
   const lead = text(p.lead) || member
   const title = text(p.title)
   const partners = asList(p.with).map(text).filter((m) => m && m !== lead)
@@ -140,7 +140,7 @@ function Proposal({ p, member, arcs, anchored = true }: { p: ProposalRow; member
           return (
             <span key={m} data-partner-state={st} className="inline-flex items-center gap-1">
               <Chip>{partners.length ? 'together with' : 'with'} {who(m)}</Chip>
-              <AnswerPill answer={st} title={`${who(m)}: ${ANSWER_STYLE[st].label}`} />
+              {answers && <AnswerPill answer={st} title={`${who(m)}: ${ANSWER_STYLE[st].label}`} />}
             </span>
           )
         })}
@@ -303,4 +303,12 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
       ))}
     </div>
   )
+}
+
+/** One idea, rendered the way a huddle shows it — for pages outside a huddle
+ * (a thread's revised idea), so an idea reads the same everywhere. Without the
+ * huddle's answers, each teammate's answer pill would read "No answer yet",
+ * which is wrong there, so it is left off. */
+export function IdeaView({ idea, member }: { idea: Record<string, unknown>; member: string }) {
+  return <Proposal p={idea as ProposalRow} member={member} arcs={[]} anchored={false} answers={false} />
 }
