@@ -387,6 +387,61 @@ def full_rule(classes: set[str], iface: dict) -> str | None:
     return None
 
 
+#: Wall-clock budget for the DNS half of `domain_warnings`, across all domains.
+#: Past it, the remaining domains are simply not checked this time.
+_PROOF_BUDGET_SECONDS = 2.5
+
+
+def _rules_needing_proof(iface: dict) -> dict[str, list[str]]:
+    """{domain: [rules]} for every rule that only an aligned email can satisfy at
+    that domain: `member@d` (a member's mail is tied to their account only when
+    aligned, else they arrive as a contact) and anything `@d:verified`."""
+    rules = list(iface.get("full") or [])
+    for cap in (iface.get("capabilities") or {}).values():
+        rules += list(cap.get("callers") or [])
+    out: dict[str, list[str]] = {}
+    for rule in rules:
+        m = _CALLER.match(rule)
+        if not m or not m["domain"]:
+            continue
+        if m["base"] == "member" or m["verified"]:
+            bucket = out.setdefault(m["domain"], [])
+            if rule not in bucket:
+                bucket.append(rule)
+    return out
+
+
+def domain_warnings(iface: dict, workspace_id) -> list[str]:
+    """Warnings for rules naming a mail domain that cannot prove its senders
+    (canopy-web#1280). A warning, never a refusal, and never an exception: the
+    interface is saved whatever this says. A domain whose DNS could not be asked
+    is not warned about — see apps/contacts/domain_proof.py."""
+    import time
+
+    from apps.contacts.domain_proof import proof
+
+    warnings: list[str] = []
+    try:
+        needing = _rules_needing_proof(iface)
+        started = time.monotonic()
+        for domain in sorted(needing):
+            if time.monotonic() - started > _PROOF_BUDGET_SECONDS:
+                break
+            if proof(domain, workspace_id).can_prove is not False:
+                continue
+            rules = ", ".join(needing[domain])
+            warnings.append(
+                f"{rules}: mail from {domain} can never prove who sent it — {domain} publishes "
+                f"no DMARC record and no mail DKIM-signed by {domain} itself has been seen. "
+                f"Everyone writing in from it is treated as a contact, so this rule admits no "
+                f"one by email. Fix it at {domain}: sign its mail with DKIM using its own key, "
+                f"or publish a DMARC record at _dmarc.{domain}.")
+    except Exception:  # informational — a bug here must not fail a save or a read
+        import logging
+        logging.getLogger(__name__).exception("interface domain warnings failed")
+    return warnings
+
+
 def published(iface: dict) -> bool:
     """Whether the agent has declared anything. An interface with neither a
     `full:` rule nor a capability says nothing, and is treated as none."""

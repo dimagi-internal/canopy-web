@@ -482,10 +482,15 @@ def _admin_rows(agent) -> list[dict]:
 
 
 def _interface_out(agent) -> dict:
+    from .interface import domain_warnings
+
     by = agent.interface_published_by
-    return {"interface": agent.interface or {}, "source": agent.interface_source or "",
+    iface = agent.interface or {}
+    return {"interface": iface, "source": agent.interface_source or "",
             "published_at": agent.interface_published_at,
-            "published_by_email": by.email if by is not None else None}
+            "published_by_email": by.email if by is not None else None,
+            # Computed AFTER any save, cached and time-boxed: it never blocks one.
+            "warnings": domain_warnings(iface, agent.workspace_id) if iface else []}
 
 
 @router.get("/{slug}/interface", response=AgentInterfaceOut,

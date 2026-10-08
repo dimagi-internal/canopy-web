@@ -48,6 +48,20 @@ describe('AgentInterfaceView', () => {
     expect(row.textContent).toContain('canopy email read --repo . {thread_id}')
   })
 
+  it("shows the server's warnings about rules no mail can satisfy", async () => {
+    const warning = 'member@nodmarc.org: mail from nodmarc.org can never prove who sent it'
+    getAgentInterface.mockResolvedValue({ ...PUBLISHED, warnings: [warning] })
+    render(<AgentInterfaceView agentSlug="ace" />)
+    expect((await screen.findByTestId('interface-warning')).textContent).toBe(warning)
+  })
+
+  it('shows no warning when there is none', async () => {
+    getAgentInterface.mockResolvedValue(PUBLISHED)
+    render(<AgentInterfaceView agentSlug="ace" />)
+    await screen.findByTestId('interface-full')
+    expect(screen.queryByTestId('interface-warning')).toBeNull()
+  })
+
   it('an admin edits the YAML as saved — comments included — and sees it saved', async () => {
     getAgentInterface.mockResolvedValue(PUBLISHED)
     saveAgentInterface.mockResolvedValue({ ...PUBLISHED, source: 'full: [contact@dimagi-ai.com:verified]\n' })

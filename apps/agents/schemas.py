@@ -433,6 +433,10 @@ class AgentInterfaceOut(StrictModel):
     source: str = ""
     published_at: dt.datetime | None = None
     published_by_email: str | None = None
+    # Rules that cannot work as written, e.g. `member@<domain>` for a domain whose
+    # mail can never prove its sender (no DMARC, no aligned DKIM). Advisory: the
+    # interface is saved regardless.
+    warnings: list[str] = []
 
 
 class AgentCanopyUserIn(StrictModel):
