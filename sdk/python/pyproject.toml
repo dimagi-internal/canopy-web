@@ -28,11 +28,15 @@ dependencies = [
 [project.optional-dependencies]
 # The optional Django integration (`canopy_sdk.django`).
 django = ["django>=4.2"]
+# The optional on-demand runner (`canopy_sdk.ondemand`): EC2/SSM lifecycle + Redis lease/jobs.
+ondemand = ["boto3>=1.34", "redis>=5"]
 # The SDK's own test suite.
 test = [
     "pytest>=8",
     "pytest-django>=4.8",
     "django>=4.2",
+    "boto3>=1.34",
+    "fakeredis>=2.20",
 ]
 
 [project.urls]
