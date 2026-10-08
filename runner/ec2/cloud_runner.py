@@ -38,7 +38,8 @@ Config comes from the environment (see runner/ec2/README.md):
   WORK_DIR          scratch dir for project/session turns and clone-less agents
                      (default: /tmp/canopy-runner-work)
   AGENT_ROOT         where bootstrapped agent clones live (default: /opt/agents);
-                     an agent turn with a clone here runs IN it, not WORK_DIR
+                     an agent turn with a clone here runs in its OWN worktree of
+                     it, WORK_DIR/agents/<slug>/<turn> (#1141)
   RUNNER_SRC_DIR    the runner's OWN canopy-web clone (default:
                      /opt/canopy-runner/src) — the in-repo packages it imports and
                      the bootstrap_agents.sh it runs come from here, never from a
@@ -63,6 +64,7 @@ import contextlib
 import json
 import os
 import fcntl
+import glob
 import pathlib
 import pty
 import re
@@ -2079,10 +2081,12 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     """Where claude should run for this turn (runner/ec2 design spec §2:
     'agent turns execute in the agent's clone'). An AGENT turn whose slug has a
     bootstrapped clone under AGENT_ROOT (bootstrap_agents.sh, run once per
-    service start — see bootstrap_agent_fleet) runs IN that clone, freshly
-    `git pull`ed here at claim, so it sees the agent's real repo — config,
-    skills, state — not an empty scratch dir. Best-effort: a pull failure logs
-    and still uses the clone as-is (stale beats absent).
+    service start — see bootstrap_agent_fleet) runs in its OWN worktree of that
+    clone (WORK_DIR/agents/<slug>/<turn>, `_agent_turn_worktree`, #1141), so it
+    sees the agent's real repo — config, skills, state — and two concurrent
+    turns for one agent no longer share a working tree. The clone is `git
+    pull`ed here at claim; a pull failure logs and the worktree comes from the
+    clone as-is (stale beats absent).
 
     A SESSION turn gets a STABLE per-canopy-Session directory
     (WORK_DIR/sessions/<chat_session_id>), checked BEFORE the agent-clone branch
@@ -2117,7 +2121,8 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
         return path
     if slug:
         agent_dir = pathlib.Path(AGENT_ROOT) / slug
-        if (agent_dir / ".git").is_dir():
+        if (agent_dir / ".git").is_dir() and _safe_session_dirname(slug) == slug:
+            # The clone is still pulled: the agent's plugin is installed from it.
             try:
                 subprocess.run(
                     ["git", "-C", str(agent_dir), "pull", "--ff-only"],
@@ -2125,7 +2130,7 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
                 )
             except Exception as exc:
                 _log(f"warn: git pull in {agent_dir} failed (using clone as-is): {exc}")
-            return agent_dir
+            return _agent_turn_worktree(slug, agent_dir, turn_id, env=env)
     path = pathlib.Path(WORK_DIR) / turn_id[:8]
     if project:
         _project_worktree(project, path, env)
@@ -2139,6 +2144,219 @@ def _project_worktree(project: str, path: pathlib.Path, env: dict | None) -> Non
         _ensure_session_worktree(_repo_clone(project, env=env), path, env=env)
     except (ValueError, RuntimeError, OSError) as exc:
         _log(f"warn: no worktree of {project!r} at {path} ({exc}); using a plain directory")
+
+
+# ── per-turn worktrees of an AGENT's repo (#1141) ────────────────────────────
+# An agent turn used to run IN the agent's one clone, AGENT_ROOT/<slug>, so two
+# concurrent turns for the same agent shared a working tree — the same stranded
+# commits and moving branches #1131 fixed for other repos. Each agent turn now
+# gets its own worktree of that clone at WORK_DIR/agents/<slug>/<turn>.
+#
+# What does NOT move: the clone stays where bootstrap put it, pulled at claim,
+# because the agent's own plugin is installed FROM it (skills, hooks, MCP
+# servers). Its git-ignored state — .env, node_modules, local settings — is not
+# in a fresh checkout, so it is linked in (see `_link_clone_state`). Anything an
+# agent wants to keep across turns that is neither tracked nor ignored belongs in
+# ~/.<slug>/, not the clone.
+
+#: Most ignored entries linked into one worktree — a guard against a clone whose
+#: ignore rules match thousands of files, never reached in practice.
+_LINK_LIMIT = 200
+#: A turn worktree left behind (a crashed worker) is swept after this long. Far
+#: longer than any turn runs, so a sweep never pulls a tree from under one.
+AGENT_WORKTREE_MAX_AGE = 24 * 3600
+#: Session-id → cwd records kept; the oldest go first.
+_SESSION_CWDS_KEEP = 2000
+_SESSION_CWDS_LOCK = threading.Lock()
+
+
+def _agent_turns_root(slug: str) -> pathlib.Path:
+    return pathlib.Path(WORK_DIR) / "agents" / slug
+
+
+def _session_cwds_file() -> pathlib.Path:
+    return pathlib.Path(WORK_DIR) / "agents" / ".session-cwds.json"
+
+
+def _git_out(*args: str, timeout: float = 30) -> str | None:
+    try:
+        r = subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout)
+    except Exception:  # noqa: BLE001
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _link_clone_state(clone: pathlib.Path, worktree: pathlib.Path) -> None:
+    """Symlink the clone's git-IGNORED files into a fresh worktree of it: the
+    rendered .env, node_modules, local settings — what bootstrap and the agent's
+    installer put in the clone and a checkout does not carry. Shared, exactly as
+    they were when every turn ran in the clone; only the tracked tree and git
+    state are per turn.
+
+    Each link is also added to the clone's info/exclude (which every worktree
+    shares): git matches a `dir/` ignore rule against directories only, so a
+    symlinked node_modules would otherwise show as untracked — and be one
+    `git add -A` away from a commit."""
+    out = _git_out("-C", str(clone), "ls-files", "--others", "--ignored",
+                   "--exclude-standard", "--directory", "-z")
+    if not out:
+        return
+    linked: list[str] = []
+    for entry in out.split("\0"):
+        rel = entry.rstrip("/")
+        if not rel or rel.startswith("/") or ".." in rel.split("/") or rel.split("/")[0] == ".git":
+            continue
+        if len(linked) >= _LINK_LIMIT:
+            _log(f"warn: {clone.name}: more than {_LINK_LIMIT} ignored entries; linked the first")
+            break
+        dst = worktree / rel
+        if dst.exists() or dst.is_symlink() or not dst.parent.is_dir():
+            continue
+        try:
+            dst.symlink_to(clone / rel)
+        except OSError as exc:
+            _log(f"warn: could not link {rel} into {worktree}: {exc}")
+            continue
+        linked.append(rel)
+    common = _git_out("-C", str(worktree), "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not linked or not common:
+        return
+    exclude = pathlib.Path(common.strip()) / "info" / "exclude"
+    try:
+        have = set(exclude.read_text().splitlines()) if exclude.exists() else set()
+        add = [f"/{rel}" for rel in linked if f"/{rel}" not in have]
+        if add:
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            with exclude.open("a") as fh:
+                fh.write("\n# linked into turn worktrees by cloud_runner.py (#1141)\n")
+                fh.write("".join(f"{line}\n" for line in add))
+    except OSError as exc:
+        _log(f"warn: could not update {exclude}: {exc}")
+
+
+def _agent_turn_worktree(slug: str, clone: pathlib.Path, turn_id: str,
+                         env: dict | None = None) -> pathlib.Path:
+    """This agent turn's own worktree of `clone`, or the clone itself when one
+    cannot be made — a turn in the shared clone (what every turn got before)
+    beats a turn in an empty directory with none of the agent in it."""
+    _sweep_agent_worktrees(slug, clone)
+    path = _agent_turns_root(slug) / _safe_session_dirname(turn_id[:8])
+    _ensure_session_worktree(clone, path, env=env)
+    if not (path / ".git").exists():
+        with contextlib.suppress(OSError):
+            path.rmdir()  # the plain-dir fallback, still empty
+        _log(f"warn: no worktree of {slug} for turn {turn_id[:8]}; running in the shared clone")
+        return clone
+    _link_clone_state(clone, path)
+    return path
+
+
+def _is_agent_worktree(path: pathlib.Path) -> bool:
+    try:
+        rel = pathlib.Path(path).resolve().relative_to((pathlib.Path(WORK_DIR) / "agents").resolve())
+    except (OSError, ValueError, TypeError):
+        return False
+    return len(rel.parts) == 2
+
+
+def _release_agent_worktree(path: pathlib.Path) -> bool:
+    """Remove a finished agent turn's worktree if nothing in it could be lost:
+    no uncommitted change, and HEAD either detached or already on a remote
+    branch. Anything else is kept, and said. The turn's transcript is not in the
+    worktree (it lives under ~/.claude/projects), so a resume is unaffected.
+    True if removed."""
+    if not _is_agent_worktree(path) or not (path / ".git").exists():
+        return False
+    status = _git_out("-C", str(path), "status", "--porcelain")
+    if status is None:
+        return False
+    if status.strip():
+        _log(f"kept {path}: it has uncommitted changes")
+        return False
+    if _git_out("-C", str(path), "symbolic-ref", "-q", "HEAD") is not None:
+        if not (_git_out("-C", str(path), "branch", "-r", "--contains", "HEAD") or "").strip():
+            _log(f"kept {path}: its branch has commits on no remote")
+            return False
+    if _git_out("-C", str(path), "worktree", "remove", str(path)) is None:
+        _log(f"warn: could not remove the turn worktree {path}")
+        return False
+    return True
+
+
+def _sweep_agent_worktrees(slug: str, clone: pathlib.Path) -> None:
+    """Release the worktrees of this agent's turns that ended without doing it
+    themselves (a crash, a restart) — only ones old enough that no turn can
+    still be in them."""
+    root = _agent_turns_root(slug)
+    if not root.is_dir():
+        return
+    cutoff = time.time() - AGENT_WORKTREE_MAX_AGE
+    for child in root.iterdir():
+        try:
+            if child.is_dir() and child.stat().st_mtime < cutoff:
+                _release_agent_worktree(child)
+        except OSError:
+            continue
+    _git_quiet("-C", str(clone), "worktree", "prune")
+
+
+def _record_session_cwd(cli_session_id: str, cwd: pathlib.Path) -> None:
+    """Remember where an agent turn's CLI session ran, so a chat reply's resume
+    and the stream tail can find its transcript without re-deriving a path that
+    is now per turn. Only agent-turn worktrees are recorded: every other cwd is
+    still derivable from the session itself."""
+    if not cli_session_id or not _is_agent_worktree(cwd):
+        return
+    path = _session_cwds_file()
+    with _SESSION_CWDS_LOCK:
+        try:
+            data = json.loads(path.read_text()) if path.exists() else {}
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data.pop(cli_session_id, None)
+        data[cli_session_id] = str(cwd)
+        while len(data) > _SESSION_CWDS_KEEP:
+            data.pop(next(iter(data)))
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data))
+            os.replace(tmp, path)
+        except OSError as exc:
+            _log(f"warn: could not record session {cli_session_id[:8]}'s cwd: {exc}")
+
+
+def _agent_session_transcript(slug: str, cli_session_id: str) -> pathlib.Path | None:
+    """Where an agent turn's CLI session wrote its transcript, or None.
+
+    The recorded cwd first; then any of this agent's turn worktrees (a record
+    lost with WORK_DIR, e.g. on a reboot — the transcripts outlive it); then the
+    shared clone, where every agent turn ran before #1141."""
+    if not (slug and cli_session_id) or _safe_session_dirname(slug) != slug:
+        return None
+    name = f"{cli_session_id}.jsonl"
+    try:
+        recorded = json.loads(_session_cwds_file().read_text()).get(cli_session_id)
+    except (OSError, ValueError, AttributeError):
+        recorded = None
+    candidates = []
+    if recorded:
+        candidates.append(CLAUDE_PROJECTS_HOME / _encode_project_dir(pathlib.Path(recorded)) / name)
+    prefix = _encode_project_dir(_agent_turns_root(slug)) + "-"
+    try:
+        candidates += sorted(CLAUDE_PROJECTS_HOME.glob(f"{glob.escape(prefix)}*/{glob.escape(name)}"))
+    except OSError:
+        pass
+    candidates.append(CLAUDE_PROJECTS_HOME / _encode_project_dir(pathlib.Path(AGENT_ROOT) / slug) / name)
+    for c in candidates:
+        try:
+            if c.is_file():
+                return c
+        except OSError:
+            continue
+    return None
 
 
 def sync_runner_src() -> bool:
@@ -3561,8 +3779,8 @@ def _agent_thread_key(turn: dict) -> str:
     chat or project turn.
 
     Always one session PER TURN, even when origin_ref names a thread: a cloud
-    agent turn never resumes (it runs in the shared agent clone, not a stable
-    per-session cwd), so a second turn on a named thread would only re-point the
+    agent turn never resumes (it runs in its own per-turn worktree, not a
+    stable per-session cwd), so a second turn on a named thread would only re-point the
     first one's binding at a different transcript and interleave two
     conversations' ordinals in one Session."""
     if _chat_session_id(turn):
@@ -3597,35 +3815,35 @@ def _encode_project_dir(cwd: pathlib.Path) -> str:
 def _adopt_resume_transcript(cwd: pathlib.Path, session_id: str, agent_slug: str) -> bool:
     """Make a session started by an AGENT turn resumable from a CHAT turn.
 
-    An agent turn runs in the agent's clone (AGENT_ROOT/<agent>); a reply sent
-    into that turn's chat is a session turn, which runs in the chat's own
+    An agent turn runs in its own worktree of the agent's clone (before #1141,
+    in the clone itself); a reply sent into that turn's chat is a session turn, which runs in the chat's own
     WORK_DIR/sessions/<id>. Claude Code finds a `--resume` / `session/load`
     target by the cwd-derived project directory, so the session the agent turn
     wrote was invisible from there: `_resume_target_exists` said no, and the
     reply started fresh with none of the turn's context.
 
     Copies the transcript into this cwd's project directory when it is missing
-    here and present under the agent's clone. A copy, not a move: the agent
-    clone's copy is the record the original turn's stream was read from. After
+    here and present where the agent turn ran. A copy, not a move: that copy is
+    the record the original turn's stream was read from. After
     this, the resume, the stream tail (`_session_transcript_path` checks this
     cwd first) and every later reply all use this cwd's copy. True if copied."""
     if not session_id or _resume_target_exists(cwd, session_id):
         return False
     if not agent_slug or _safe_session_dirname(agent_slug) != agent_slug:
         return False
-    src = (CLAUDE_PROJECTS_HOME
-           / _encode_project_dir(pathlib.Path(AGENT_ROOT) / agent_slug)
-           / f"{session_id}.jsonl")
+    # Looked up, not derived: since #1141 each agent turn ran in its own
+    # worktree (`_agent_session_transcript`), and older ones in the clone.
+    src = _agent_session_transcript(agent_slug, session_id)
     dst = CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{session_id}.jsonl"
     try:
-        if not src.is_file():
+        if src is None:
             return False
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
     except OSError as exc:
         _log(f"warn: could not adopt session {session_id[:8]} into {cwd}: {exc}")
         return False
-    _log(f"adopted session {session_id[:8]} from the {agent_slug} clone into {cwd}")
+    _log(f"adopted session {session_id[:8]} from {agent_slug}'s turn into {cwd}")
     return True
 
 
@@ -3904,21 +4122,21 @@ def _session_transcript_path(session_id: str, session_key: str, project: str = "
     """The CLI transcript backing a canopy session, or None if not resolvable yet.
 
     Two places a session can have run: a CHAT session in its own stable
-    WORK_DIR/sessions/<id> (see _turn_cwd), an AGENT turn's session in the
-    agent's clone, AGENT_ROOT/<agent> — the descriptor's `project`, which is the
-    session's emdash_project (the agent's slug). `session_key` is the CLI session
+    WORK_DIR/sessions/<id> (see _turn_cwd), an AGENT turn's session in that
+    turn's worktree of the agent's clone (or, before #1141, the clone itself) —
+    found by `_agent_session_transcript` from the descriptor's `project`, which
+    is the session's emdash_project (the agent's slug). `session_key` is the CLI session
     uuid, so whichever directory holds that file is the one; there is nothing to
     guess between them."""
     ct = _transcript_core()
     if ct is None or not (session_id and session_key):
         return None
-    cwds = [pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)]
+    cwd = pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
+    path = ct.resolve_cli_transcript(cwd, session_key, claude_home=CLAUDE_PROJECTS_HOME)
+    if path is not None:
+        return path
     if project and _safe_session_dirname(project) == project:
-        cwds.append(pathlib.Path(AGENT_ROOT) / project)
-    for cwd in cwds:
-        path = ct.resolve_cli_transcript(cwd, session_key, claude_home=CLAUDE_PROJECTS_HOME)
-        if path is not None:
-            return path
+        return _agent_session_transcript(project, session_key)
     return None
 
 
@@ -4425,8 +4643,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # A confined turn is never recorded: see the confined branch above.
         recorded = {"sid": ""}
 
-        def _on_session(sid, _turn=turn):
+        def _on_session(sid, _turn=turn, _cwd=cwd):
             if sid != recorded["sid"]:
+                _record_session_cwd(sid, _cwd)
                 _record_session_resume(runner_id, _turn, sid)
                 recorded["sid"] = sid
 
@@ -4449,6 +4668,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.extra = {}
         _TURN_ENV.settings = None
         _TURN_ENV.confined = None
+        if cli_session_id and cwd is not None:
+            _record_session_cwd(cli_session_id, cwd)
         if cli_session_id:
             # Never let bookkeeping cost us the finish below — an exception here
             # used to strand the turn exactly like a dead socket did (#448).
@@ -4480,6 +4701,14 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             finish_body["session_key"] = cli_session_id
         _api("POST", f"/turns/{turn_id}/finish", finish_body)
         _log(f"finished turn {turn_id[:8]}: {finish}")
+        if cwd is not None:
+            # After the finish, never before it: the transcript rows above are
+            # read from ~/.claude/projects, not the worktree, but a release that
+            # raised must not cost the turn its finish.
+            try:
+                _release_agent_worktree(cwd)
+            except Exception as exc:  # noqa: BLE001
+                _log(f"warn: could not release {cwd}: {exc}")
     except Exception as exc:  # noqa: BLE001 — a worker must never take the loop down
         _log(f"turn {turn_id[:8]} worker crashed: {exc}")
     finally:
