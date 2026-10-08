@@ -130,6 +130,12 @@ def _assignment_rows_for_turns(turns) -> tuple[dict, dict]:
     return load_assignment_rows(agent_ids)
 
 
+def _cloud_only_allows(r: Runner, t: Turn) -> bool:
+    """A `cloud_only` turn is for a `Runner.CLOUD` box and no other — checked above
+    the pin, so neither a pin nor a session binding can put it on a laptop."""
+    return t.routing != Turn.CLOUD_ONLY or r.kind == Runner.CLOUD
+
+
 def _held_agent(t: Turn):
     """The agent a turn runs AS — its own, or its chat's — else None."""
     if t.agent_id:
@@ -168,6 +174,8 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     reqs = frozenset() if ignore_requirements else rr.requirements_of(t)
     if not rr.satisfies(r.flags, reqs):
         return False  # above the pin and the binding, as in claim_next_turn
+    if not _cloud_only_allows(r, t):
+        return False  # likewise
     if not ignore_hold and not _may_hold(r, t, holds):
         return False  # likewise above the pin and the binding
     # A pin trumps everything below it (claim_next_turn's `pinned_here`).
@@ -509,7 +517,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         return None
     routing_q = Q(routing__in=[Turn.PREFER_LOCAL, Turn.LOCAL_ONLY, Turn.ANY])
     if runner.kind == Runner.CLOUD:
-        routing_q = Q(routing=Turn.ANY) | Q(routing=Turn.PREFER_LOCAL)
+        routing_q = Q(routing=Turn.ANY) | Q(routing=Turn.PREFER_LOCAL) | Q(routing=Turn.CLOUD_ONLY)
         # prefer_local turns fall to cloud only via the Phase 2 router policy;
         # Phase 0 has no cloud runners, so keep the simple rule: cloud never
         # takes local_only.
@@ -617,6 +625,10 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # Above the pin on purpose, like profile_q: a pin is a placement, never a
         # way past what the conversation's host requires of the box.
         if not rr.satisfies(my_flags, rr.requirements_of(turn)):
+            continue
+        # `cloud_only` is canopy's own background work (the people digest): never
+        # a laptop, and — like the requirement above — not even through a pin.
+        if not _cloud_only_allows(runner, turn):
             continue
         # An agent turn runs AS the agent: its prompt, its caller's token, its
         # owner's GitHub identity. Only a box whose owner is one of the agent's

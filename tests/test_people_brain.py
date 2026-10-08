@@ -9,8 +9,7 @@ The privacy tests are the point of this file. The rules they pin:
 * the person can see — and retract — everything held about them;
 * conversations are readable by the agent they were with (its own login) and
   nobody new: another agent's login is refused;
-* the digest turn fires for a human's finished turn only, never for itself, for
-  canopy/agent-started work, or without an agent, and is debounced.
+* the digest turn (v2, canopy#820) is pinned in `tests/test_people_digest_v2.py`.
 """
 from __future__ import annotations
 
@@ -27,7 +26,7 @@ from apps.contacts import services as contacts
 from apps.contacts.models import Contact, PersonAccess, PersonFact
 from apps.harness import caller_context, people_digest, services
 from apps.harness import initiator as who
-from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -80,8 +79,10 @@ def _client(user) -> Client:
 
 
 def _human_turn(agent, user, key, **kw):
+    """A person typing to `agent` in canopy's chat — a REAL conversation."""
     turn, _ = services.enqueue_turn(
-        agent=agent, origin=Turn.ORIGIN_API, idempotency_key=key, prompt=kw.pop("prompt", "hi"),
+        agent=agent, origin=kw.pop("origin", Turn.ORIGIN_CANOPY_WEB_CHAT), idempotency_key=key,
+        prompt=kw.pop("prompt", "hi"),
         initiator=who.for_user(user, via="chat", assurance=who.SESSION), **kw)
     return turn
 
@@ -204,7 +205,7 @@ def test_a_contact_has_a_person_block_too(world):
 
 def test_the_digest_turn_says_so_in_its_envelope(world):
     turn = _finish(_human_turn(world["ace"], world["lili"], "t1"))
-    digest = _digest_turns().get()
+    digest, _ = people_digest.enqueue_batch(world["ace"])
     env = caller_context.build(digest)
     assert env["trigger"]["kind"] == "people_digest"
     assert env["person"] is None and env["relationship"] == "system"
@@ -413,99 +414,3 @@ def test_conversations_since_filters(world):
     r = _client(world["ace"].user).get(f"/api/people/{person.pk}/conversations/",
                                        {"agent": "ace", "since": since})
     assert r.status_code == 200 and len(r.json()["conversations"]) == 1
-
-
-# --- the digest turn -----------------------------------------------------------------
-
-
-def test_a_finished_human_turn_enqueues_a_digest_turn(world):
-    ace, lili = world["ace"], world["lili"]
-    person = contacts.person_for(user=lili)
-    turn = _finish(_human_turn(ace, lili, "t1"))
-    digest = _digest_turns().get()
-    assert digest.agent == ace
-    assert digest.prompt.splitlines()[0].startswith(
-        f"/canopy:people-digest --person {person.pk} --workspace connect --since ")
-    assert digest.origin_ref["trigger"] == "people_digest"
-    assert digest.origin_ref["no_outbound"] is True
-    assert digest.initiator_kind == who.SYSTEM
-    assert digest.parent_turn == turn
-
-
-def test_digest_turns_never_retrigger(world):
-    _finish(_human_turn(world["ace"], world["lili"], "t1"))
-    digest = _digest_turns().get()
-    with timezone.override("UTC"):
-        Turn.objects.filter(pk=digest.pk).update(
-            created_at=timezone.now() - dt.timedelta(hours=5))
-    _finish(digest)
-    assert _digest_turns().count() == 1
-
-
-def test_no_digest_for_system_or_agent_initiated_turns(world):
-    ace = world["ace"]
-    sched, _ = services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="s",
-                                     initiator=who.system(via="schedule", accountable=world["owner"]))
-    _finish(sched)
-    agent_turn, _ = services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="a",
-                                          initiator=who.for_agent("hal", via="dispatch"))
-    _finish(agent_turn)
-    _finish(_human_turn(ace, world["hal"].user, "hal-login"))  # another agent's LOGIN
-    assert not _digest_turns().exists()
-
-
-def test_no_digest_without_an_agent(world):
-    turn, _ = services.enqueue_turn(
-        project="canopy-web", workspace=world["ws"], origin=Turn.ORIGIN_API, idempotency_key="p",
-        initiator=who.for_user(world["lili"], via="chat", assurance=who.SESSION))
-    _finish(turn)
-    assert not _digest_turns().exists()
-
-
-def test_no_digest_for_a_failed_turn(world):
-    t = _human_turn(world["ace"], world["lili"], "f")
-    Turn.objects.filter(pk=t.pk).update(session_key="s1")
-    _finish(t, Turn.FAILED)
-    assert not _digest_turns().exists()
-
-
-def test_the_digest_turn_is_debounced_per_agent_and_person(world, settings):
-    ace, hal, lili = world["ace"], world["hal"], world["lili"]
-    _finish(_human_turn(ace, lili, "t1"))
-    _finish(_human_turn(ace, lili, "t2"))
-    assert _digest_turns().filter(agent=ace).count() == 1
-    # Another agent, or another person, is its own pair.
-    _finish(_human_turn(hal, lili, "t3"))
-    _finish(_human_turn(ace, world["owner"], "t4"))
-    assert _digest_turns().count() == 3
-    # Past the window, the next one fires and looks back to the last digest.
-    first = _digest_turns().filter(agent=ace, origin_ref__person_id=contacts.person_for(user=lili).pk).get()
-    past = timezone.now() - dt.timedelta(minutes=settings.PEOPLE_DIGEST_DEBOUNCE_MINUTES + 1)
-    Turn.objects.filter(pk=first.pk).update(created_at=past)
-    _finish(_human_turn(ace, lili, "t5"))
-    newest = _digest_turns().filter(agent=ace).order_by("-created_at").first()
-    assert newest.pk != first.pk
-    assert newest.origin_ref["since"] == past.isoformat()
-
-
-def test_the_kill_switch(world, settings):
-    settings.PEOPLE_DIGEST_ENABLED = False
-    _finish(_human_turn(world["ace"], world["lili"], "t1"))
-    assert not _digest_turns().exists()
-
-
-def test_a_digest_turn_yields_to_a_persons_next_message_at_claim(world):
-    from apps.agents.models import AgentAdmin
-
-    ace, owner = world["ace"], world["owner"]
-    runner = Runner.objects.create(name="box", kind=Runner.EMDASH, host="box", owner=owner,
-                                   workspace_id="connect", status=Runner.ONLINE,
-                                   last_heartbeat_at=timezone.now(),
-                                   capabilities={"sessions": True})
-    RunnerAssignment.objects.create(agent=ace, runner=runner, rank=0)
-    AgentAdmin.objects.get_or_create(agent=ace, user=owner)
-    _finish(_human_turn(ace, world["lili"], "t1"))
-    assert _digest_turns().count() == 1
-    follow_up = _human_turn(ace, world["lili"], "t2")
-    claimed = services.claim_next_turn(runner)
-    assert claimed.pk == follow_up.pk

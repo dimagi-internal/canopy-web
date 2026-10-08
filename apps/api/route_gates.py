@@ -411,6 +411,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "retract_person_fact": ("self", "members.manage"),  # the subject, the asserter, or a workspace admin
     "put_person_digest": ("member",),
     "list_person_conversations": ("agent-admin",),  # or the agent's OWN login; an admin gets only turns turn_access already shows them
+    "list_digest_candidates": ("agent-admin",),  # or the agent's OWN login (people digest v2, canopy#820); names + counts, no content
     # --- apps/api/api.py
     "_auth_smoke": ("authenticated",),  # internal smoke route
     # --- apps/common/api.py

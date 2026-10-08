@@ -261,6 +261,8 @@ def assignment_rows_for(
 def _kind_allows(runner: Runner, routing: str) -> bool:
     if routing == Turn.LOCAL_ONLY:
         return runner.kind in (Runner.EMDASH, Runner.REMOTE)
+    if routing == Turn.CLOUD_ONLY:
+        return runner.kind == Runner.CLOUD
     return True
 
 

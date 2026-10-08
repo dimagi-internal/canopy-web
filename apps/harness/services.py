@@ -705,6 +705,11 @@ def heartbeat(
     from apps.retention import services as retention_services
 
     retention_services.maybe_sweep(now)
+    # Same clock: the daily people digest (canopy#820). A no-op unless
+    # PEOPLE_DIGEST_ENABLED is on, once a day, and never raises.
+    from . import people_digest
+
+    people_digest.maybe_sweep(now)
     return runner
 
 
@@ -959,14 +964,9 @@ def finish_turn(
         from . import auto_debug
 
         auto_debug.on_turn_failed(turn)
-    # A conversation a HUMAN had with an agent just finished: canopy makes that
-    # agent remember it (apps/harness/people_digest.py — debounced per agent and
-    # person, never for a digest turn or a turn canopy/another agent started).
-    # on_turn_finished never raises.
-    if status == Turn.DONE:
-        from . import people_digest
-
-        people_digest.on_turn_finished(turn)
+    # No people-digest hook here any more: v1 started a digest turn per finished
+    # human turn and v2 (canopy#820) sweeps once a day from the heartbeat
+    # (people_digest.maybe_sweep). A post-finish hook is a feedback loop.
     return turn
 
 

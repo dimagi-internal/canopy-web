@@ -570,6 +570,30 @@ class PersonDigest(models.Model):
         ]
 
 
+class PersonDigestMark(models.Model):
+    """When ONE agent last digested ONE person — the people digest's watermark.
+
+    `PersonDigest` is per (person, workspace) and several agents of a workspace
+    write it, so its `updated_by_agent`/`updated_at` say only who wrote LAST: ace
+    refreshing it would make hal's conversations since hal's own digest look
+    already read. The batch sweep (canopy#820) asks, per agent, "who has talked
+    to me since I last digested them?", so the answer needs its own row per pair.
+    Moved by `people.put_digest` whenever an agent's login writes the digest.
+    """
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="digest_marks")
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE,
+                              related_name="person_digest_marks")
+    digested_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "contact_person_digest_marks"
+        constraints = [
+            models.UniqueConstraint(fields=["person", "agent"],
+                                    name="one_digest_mark_per_person_agent"),
+        ]
+
+
 class PersonAccess(models.Model):
     """Append-only audit: who READ what canopy knows about a person, and how.
 
