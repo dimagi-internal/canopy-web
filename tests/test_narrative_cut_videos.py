@@ -76,7 +76,7 @@ def test_each_cut_gets_its_own_slot_in_narration_order():
     u = make_user()
     v = _version(u)
     # Uploaded out of order: cut 3 first, then cut 1, then cut 2.
-    c3 = _cut(u, v, "deliver", ["c3-a"], at=_t(1))
+    c3 = _cut(u, v, "deliver", ["c3-a"], at=_t(1), duration_sec=31)
     c1 = _cut(u, v, "register", ["c1-a", "c1-b"], at=_t(2))
     c2 = _cut(u, v, "decide", ["c2-a"], at=_t(3))
 
@@ -89,6 +89,7 @@ def test_each_cut_gets_its_own_slot_in_narration_order():
     # No explainer video → the hero is the FIRST cut, not the latest upload.
     assert narrative["current_version"]["video_url"] == f"/walkthrough/{c1.id}/content"
     assert {c3.id, c2.id} == {c["walkthrough_id"] for c in cuts[1:]}
+    assert cuts[2]["duration_sec"] == 31
 
 
 def test_reuploading_a_cut_replaces_only_that_cut():
@@ -156,9 +157,11 @@ def test_guest_on_the_review_link_gets_public_cuts_with_their_token():
     assert [c["cut_id"] for c in cuts] == ["register", "decide"]
     assert cuts[0]["scene_ids"] == ["c1-a", "c1-b"]
     assert cuts[0]["video_url"] == f"/walkthrough/{pub.id}/content?t=tok-register"
+    assert cuts[0]["video_viewer_url"] == f"/walkthrough/{pub.id}?t=tok-register"
     # A private cut: the guest learns it exists, never gets a way to play it.
     assert cuts[1]["walkthrough_id"] == str(priv.id)
     assert cuts[1]["video_url"] is None
+    assert cuts[1]["video_viewer_url"] is None
     # The hero (the first cut) rides along for the page's fallback.
     assert body["version_video"]["walkthrough_id"] == str(pub.id)
 

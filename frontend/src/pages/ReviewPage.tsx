@@ -8,7 +8,6 @@ import {
   suggestReview,
   submitFindingsReview,
   type ReviewDetail,
-  type ReviewPinnedVideo,
   type ReviewSuggestion,
   type ReviewDecision,
   type ReviewSceneActionability,
@@ -28,6 +27,11 @@ import {
   useReviewEditor,
 } from '../components/reviews/ReviewEditorContext'
 import { ProductFindingsReview } from '../components/reviews/ProductFindingsReview'
+import { CutVideoList, groupScenesByCut } from '../components/ddd/CutVideoList'
+
+// The cut grouping moved beside the cuts view it now also serves; re-exported
+// for the callers and tests that import it from here.
+export { groupScenesByCut }
 
 // ---------------------------------------------------------------------------
 // AutoTextarea — a textarea that grows to fit its content (never internally
@@ -424,30 +428,6 @@ interface SceneCardProps {
    *  and nothing else: no scores, build chips, features, grounding or delete —
    *  that scaffolding is for whoever approves the build plan (canopy-web#1267). */
   suggestOnly?: boolean
-}
-
-/**
- * Group scenes into the demo's cuts for "The demo" summary. A DDD scene title
- * names its cut before an em dash — "Cut 3 · Deliver — the proposed spot,
- * before" — and consecutive scenes sharing that prefix are one cut. A narrative
- * whose titles carry no cut prefix stays one cohesive paragraph, as before.
- */
-export function groupScenesByCut<T extends { title: string }>(
-  scenes: T[],
-): Array<{ cut: string | null; scenes: T[] }> {
-  const cutOf = (t: string) => {
-    const i = (t ?? '').indexOf(' — ')
-    return i > 0 ? t.slice(0, i).trim() : null
-  }
-  if (!scenes.some((s) => cutOf(s.title))) return [{ cut: null, scenes }]
-  const groups: Array<{ cut: string | null; scenes: T[] }> = []
-  for (const s of scenes) {
-    const cut = cutOf(s.title)
-    const last = groups[groups.length - 1]
-    if (last && last.cut === cut) last.scenes.push(s)
-    else groups.push({ cut, scenes: [s] })
-  }
-  return groups
 }
 
 function StatusBadge({ status, frontier: frontierOverride }: { status?: string; frontier?: boolean }) {
@@ -1048,59 +1028,6 @@ function ReviewCut({ walkthroughId }: { walkthroughId: string }) {
   )
 }
 
-/** A recorded narrative's cuts, each video beside the words it speaks
- *  (canopy-web#1288). The words are the LIVE scenes, so an edit made on the
- *  Narrative tab shows here too. A cut the reader may not play (a private video,
- *  a guest) still appears — the reviewer should know it exists and why it will
- *  not play. */
-export function CutVideos({
-  cuts,
-  scenes,
-}: {
-  cuts: ReviewPinnedVideo[]
-  scenes: Array<{ id: string; title: string; narration: string; deleted: boolean }>
-}) {
-  const byId = new Map(scenes.filter((s) => !s.deleted).map((s) => [s.id, s]))
-  return (
-    <div className="space-y-8">
-      {cuts.map((cut, i) => {
-        const words = cut.scene_ids.map((id) => byId.get(id)).filter((s) => s !== undefined)
-        return (
-          <section key={cut.cut_id || cut.walkthrough_id} aria-label={cut.title}>
-            <h2 className="text-sm font-semibold text-foreground mb-2">
-              <span className="text-muted-foreground tabular-nums mr-2">{i + 1}.</span>
-              {cut.title}
-            </h2>
-            <div className="grid gap-4 md:grid-cols-[3fr_2fr]">
-              <div className="rounded-lg border border-input bg-black overflow-hidden">
-                {cut.video_url ? (
-                  <video
-                    src={withBase(cut.video_url)}
-                    controls
-                    preload="metadata"
-                    className="w-full max-h-[50vh] bg-black"
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-40 px-4 text-center text-muted-foreground text-sm bg-card">
-                    This cut is private: only members of its workspace can watch it.
-                  </div>
-                )}
-              </div>
-              <div className="space-y-2 text-sm text-foreground-secondary">
-                {words.length > 0 ? (
-                  words.map((s) => <p key={s.id}>{s.narration}</p>)
-                ) : (
-                  <p className="text-muted-foreground">No narration matches this cut's scenes.</p>
-                )}
-              </div>
-            </div>
-          </section>
-        )
-      })}
-    </div>
-  )
-}
-
 function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }: ReviewEditorInnerProps) {
   const {
     state,
@@ -1434,7 +1361,12 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
 
       {/* Cuts tab — the rendered demo cut; kept off the main view so it isn't distracting */}
       {tab === 'cuts' && cutVideos.length > 0 && (
-        <CutVideos cuts={cutVideos} scenes={effectiveScenes} />
+        <CutVideoList
+          cuts={cutVideos}
+          scenes={effectiveScenes
+            .filter((sc) => !sc.deleted)
+            .map((sc) => ({ id: sc.id, title: sc.title, text: sc.narration }))}
+        />
       )}
       {tab === 'cuts' && cutVideos.length === 0 && (
         <section>

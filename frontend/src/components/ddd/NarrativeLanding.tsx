@@ -11,6 +11,7 @@ import {
   type DddNarrativeVersion,
 } from '@/api/ddd'
 import { withBase } from '@/lib/basePath'
+import { CutVideoList } from './CutVideoList'
 import { NarrativeDiff } from './NarrativeDiff'
 import { pairNarrationScenes } from './narrativeScenePairing'
 
@@ -150,6 +151,10 @@ function VersionBlock({
   const [open, setOpen] = useState(isCurrent)
   const [busy, setBusy] = useState(false)
   const label = version.version != null ? `v${version.version}` : 'no narrative'
+  // A recorded narrative (canopy#796) is several short videos, one per cut: show
+  // each beside what it says, instead of the whole story as one paragraph.
+  const cuts = version.cuts ?? []
+  const recorded = cuts.length > 0
   // How many scenes this version changed vs the one before it — the thing that
   // actually distinguishes two versions whose story line (the title) is identical.
   const changedScenes =
@@ -214,7 +219,7 @@ function VersionBlock({
 
       {open && (
         <div className="border-t border-border px-4 py-3">
-          {version.story && (
+          {version.story && !recorded && (
             <p className="mb-3 whitespace-pre-line text-sm leading-relaxed text-foreground-secondary">
               {version.story}
             </p>
@@ -234,6 +239,21 @@ function VersionBlock({
               preload="metadata"
               className="mb-3 w-full max-w-2xl rounded-lg border border-border bg-black"
             />
+          )}
+          {recorded && (
+            <div className="mb-4">
+              <h3 className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Cuts
+              </h3>
+              <CutVideoList
+                cuts={cuts}
+                scenes={version.narration.map((n, i) => ({
+                  id: n.id ?? `scene-${i}`,
+                  title: n.title ?? '',
+                  text: n.text,
+                }))}
+              />
+            </div>
           )}
           {version.review_id && (
             <a
