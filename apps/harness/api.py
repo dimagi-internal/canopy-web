@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import uuid
 
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import models, transaction
 from django.db.models import Q
@@ -1139,9 +1140,25 @@ def unpause_runner(request: HttpRequest, runner_id: uuid.UUID):
     return runner
 
 
+def _may_release_fleet_hold(user) -> bool:
+    return bool(getattr(user, "is_superuser", False))
+
+
+def _may_hold_fleet(user) -> bool:
+    """A superuser, or a named holder (`CANOPY_FLEET_HOLDERS` — Ada). Holding is the
+    safe direction: it starts nothing and loses nothing, so the fleet's conductor may
+    pull it unattended. Releasing is not widened (see `_may_release_fleet_hold`)."""
+    if _may_release_fleet_hold(user):
+        return True
+    email = (getattr(user, "email", "") or "").strip().lower()
+    holders = {e.strip().lower() for e in getattr(settings, "CANOPY_FLEET_HOLDERS", []) if e.strip()}
+    return bool(email) and email in holders
+
+
 def _fleet_hold_out(hold: FleetHold, user) -> dict:
     return {
-        "can_hold": bool(getattr(user, "is_superuser", False)),
+        "can_hold": _may_hold_fleet(user),
+        "can_release": _may_release_fleet_hold(user),
         "held": hold.held, "note": hold.note, "held_at": hold.held_at,
         "held_by_email": (hold.held_by.email if hold.held_by_id else ""),
         "queued": Turn.objects.filter(status=Turn.QUEUED).count() if hold.held else 0,
@@ -1160,10 +1177,11 @@ def hold_fleet(request: HttpRequest, payload: FleetHoldIn):
     """Stop EVERY runner from starting anything — the fleet-wide sibling of
     /runners/{id}/pause (see FleetHold). Turns keep enqueuing and wait QUEUED with
     their trigger, so `list turns?status=queued` shows what tried to start while
-    held. Running turns finish normally. Superuser only: it spans every tenant.
+    held. Running turns finish normally. A superuser or a named holder
+    (`CANOPY_FLEET_HOLDERS`, i.e. Ada) — it spans every tenant, but only stops work.
     Idempotent — holding again refreshes the note."""
-    if not request.user.is_superuser:
-        raise HttpError(403, "holding the whole fleet requires a superuser")
+    if not _may_hold_fleet(request.user):
+        raise HttpError(403, "holding the whole fleet requires a superuser or a named fleet holder")
     hold = FleetHold.current()
     if not hold.held:
         hold.held_at = timezone.now()
@@ -1177,8 +1195,9 @@ def hold_fleet(request: HttpRequest, payload: FleetHoldIn):
 @router.post("/fleet-hold/release", response=FleetHoldOut)
 def release_fleet_hold(request: HttpRequest):
     """Release the fleet hold; queued turns become claimable again. Wakes every
-    tenant's runners so the backlog starts now rather than at each box's next poll."""
-    if not request.user.is_superuser:
+    tenant's runners so the backlog starts now rather than at each box's next poll.
+    Superuser only — a named holder may stop the fleet, never restart it."""
+    if not _may_release_fleet_hold(request.user):
         raise HttpError(403, "releasing the fleet hold requires a superuser")
     hold = FleetHold.current()
     if hold.held:

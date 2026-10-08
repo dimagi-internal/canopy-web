@@ -339,9 +339,11 @@ class FleetHoldOut(Schema):
     held_by_email: str = ""
     # Turns waiting on the hold right now — the "what is trying to start" count.
     queued: int = 0
-    # Whether the CALLER may hold or release (a superuser). The UI offers the
-    # control only on this, so nobody else is handed a button that 403s.
+    # Whether the CALLER may hold (a superuser, or a named holder such as Ada) and
+    # release (a superuser only). The UI offers each control only on its flag, so
+    # nobody is handed a button that 403s.
     can_hold: bool = False
+    can_release: bool = False
 
 
 class PauseIn(Schema):
@@ -615,6 +617,10 @@ class InitiatorOut(Schema):
     user: InitiatorPersonOut | None = None
     contact: InitiatorPersonOut | None = None
     agent: str | None = None
+    # The user is an AGENT'S OWN LOGIN (its slug), not a person; `self` when it is
+    # this turn's own agent — the agent started this turn itself (e.g. testing).
+    agent_login: str | None = None
+    self: bool = False
     # WHICH credential the request that created the turn used — {type, id, label}
     # (`pat`, `oauth`, `session`, `delegated`, `contact`, `caller_token`) — and
     # the program that sent it (X-Canopy-Client). Null when canopy started it.

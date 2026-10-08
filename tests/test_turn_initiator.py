@@ -269,6 +269,46 @@ def test_the_turn_api_carries_the_initiator_by_name(ctx):
     assert row["initiator"]["user"]["email"] == "jj@dimagi.com"
 
 
+def test_a_turn_the_agent_started_as_itself_says_so(ctx):
+    """2026-10-08: ACE read its own Labs-widget test runs (initiator ace@) as a
+    person's requests and attributed them to someone in Slack. The initiator now
+    says outright that it is the agent's own login."""
+    owner, _ws, agent = ctx
+    login = User.objects.create_user("echo-bot", "echo@dimagi-ai.com", "pw")
+    agent.user = login
+    agent.save(update_fields=["user"])
+    turn = Turn.objects.create(agent=agent, origin="api", idempotency_key="self1",
+                               initiator_kind=who.USER, initiator_user=login,
+                               initiator_via="widget:connect-labs",
+                               initiator_assurance=who.HOST_SIGNED)
+
+    described = who.describe(turn)
+    assert described["agent_login"] == "echo" and described["self"] is True
+
+
+def test_an_agents_mailbox_login_is_recognised_without_the_link(ctx):
+    owner, _ws, agent = ctx
+    agent.email = "echo@dimagi-ai.com"
+    agent.save(update_fields=["email"])
+    login = User.objects.create_user("echo-mail", "Echo@dimagi-ai.com", "pw")
+    turn = Turn.objects.create(agent=agent, origin="api", idempotency_key="self2",
+                               initiator_kind=who.USER, initiator_user=login,
+                               initiator_via="widget:connect-labs",
+                               initiator_assurance=who.HOST_SIGNED)
+
+    assert who.describe(turn)["self"] is True
+
+
+def test_a_person_is_never_marked_as_an_agent_login(ctx):
+    owner, _ws, agent = ctx
+    turn = Turn.objects.create(agent=agent, origin="api", idempotency_key="self3",
+                               initiator_kind=who.USER, initiator_user=owner,
+                               initiator_via="chat", initiator_assurance=who.SESSION)
+
+    described = who.describe(turn)
+    assert "agent_login" not in described and "self" not in described
+
+
 # --- nothing slips through -------------------------------------------------------
 
 ENTRY_POINTS = {"enqueue_turn", "send_message", "transfer_session"}

@@ -280,8 +280,8 @@ export async function setRunnerFlags(runnerId: string, flags: string[]): Promise
 }
 
 // The fleet hold (apps/harness/models.py::FleetHold): while held, NO runner claims
-// anything; turns wait queued. Readable by anyone; held/released by a superuser only
-// (`can_hold` says whether the caller is one).
+// anything; turns wait queued. Readable by anyone; held by a superuser or a named
+// holder (Ada — `can_hold`), released by a superuser only (`can_release`).
 export type FleetHoldOut = components['schemas']['FleetHoldOut']
 
 export async function getFleetHold(): Promise<FleetHoldOut> {
