@@ -5656,7 +5656,16 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Get a session + transcript tail */
+        /**
+         * Get a session + transcript tail
+         * @description A session and the tail of its transcript.
+         *
+         *     `session_id` is the session's id. When no session you can read has that id,
+         *     it is tried as the runner's `session_key` instead (a cloud session's key is
+         *     a UUID, and it is the name the Open Sessions card shows); the response's
+         *     `id` then differs from the one you asked for, and `session_key` is the one
+         *     that matched. A key naming several sessions is a 409 listing their ids.
+         */
         readonly get: operations["canopy_sessions_get_session"];
         readonly put?: never;
         readonly post?: never;
@@ -23988,6 +23997,7 @@ export interface operations {
                 readonly resource?: string;
                 readonly page_path?: string;
                 readonly reply?: boolean;
+                readonly session_key?: string;
             };
             readonly header?: never;
             readonly path?: never;

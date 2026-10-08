@@ -11,7 +11,7 @@ import uuid
 from django.db.models import Max
 
 from django.conf import settings
-from django.http import HttpRequest, HttpResponse
+from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404
 from ninja import File, Router
 from ninja.errors import HttpError
@@ -316,6 +316,7 @@ def list_sessions(
     source: str = "", opp_slug: str = "", opp_run_id: str = "",
     origin_key: str = "", embed_app: str = "",
     resource: str = "", page_path: str = "", reply: bool = False,
+    session_key: str = "",
 ):
     # The ONE unified list (Plan 4): every session the caller can see in their
     # workspaces — their own web sessions UNION any session that has a
@@ -390,6 +391,11 @@ def list_sessions(
         rows = rows.filter(page_state__resource=resource)
     if page_path:
         rows = rows.filter(page_state__path=page_path)
+    # The name an Open Sessions card shows for a runner session (an emdash task
+    # name, or a cloud session's Claude UUID) — so it can be looked up by what
+    # a person reads off the card, not only by the session id they never see.
+    if session_key:
+        rows = rows.filter(runner_binding__session_key=session_key)
     if opp_slug:
         rows = rows.filter(metadata__opp_slug=opp_slug)
     if opp_run_id:
@@ -567,12 +573,50 @@ def cancel_transfer_request(request: HttpRequest, request_id: uuid.UUID):
     return _transfer_request_out(req)
 
 
+def _session_by_key_or_404(request: HttpRequest, key: uuid.UUID) -> Session:
+    """The fallback for a UUID that is not a session id: the runner's
+    `session_key` (a cloud session's key is a Claude session UUID, and it is
+    what the Open Sessions card shows). Read through the SAME authority as the
+    id lookup, so it finds nothing the caller could not already open by id."""
+    matches = list(
+        _site_scoped(request, access.readable_sessions(request.user,
+                                                       workspace_slugs=_visible_slugs(request)))
+        .filter(runner_binding__session_key=str(key))
+        .values_list("pk", flat=True)[:5]
+    )
+    if not matches:
+        raise HttpError(
+            404,
+            "no session with this id or session_key is visible to you. A session is "
+            "visible to its creator, its participants, the agent's admins (for the "
+            "agent's own threads) and, for an emdash-discovered session, its workspace",
+        )
+    if len(matches) > 1:
+        raise HttpError(
+            409,
+            "this session_key names more than one session; open one by id: "
+            + ", ".join(str(m) for m in matches),
+        )
+    return _session_or_404(request, matches[0])
+
+
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")
 def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False):
+    """A session and the tail of its transcript.
+
+    `session_id` is the session's id. When no session you can read has that id,
+    it is tried as the runner's `session_key` instead (a cloud session's key is
+    a UUID, and it is the name the Open Sessions card shows); the response's
+    `id` then differs from the one you asked for, and `session_key` is the one
+    that matched. A key naming several sessions is a 409 listing their ids.
+    """
     # Tail-first: never ship the whole transcript by default. The client gets the
     # last SESSION_TAIL_DEFAULT messages + a backward cursor; ?full=true is the
     # explicit escape hatch. Scroll-back pages via GET /{id}/messages?before=.
-    session = _session_or_404(request, session_id)
+    try:
+        session = _session_or_404(request, session_id)
+    except Http404:
+        session = _session_by_key_or_404(request, session_id)
     data = _out(session)
     rows, has_more, oldest = services.visible_transcript(session, full=full)
     from apps.tokens import delegation
