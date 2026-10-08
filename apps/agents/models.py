@@ -958,3 +958,55 @@ class SkillRevision(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["skill"])]
+
+
+class SenderTrust(models.Model):
+    """A TEMPORARY exception: one address's mail ties to its member account
+    without DMARC or a DKIM signature by the From: domain.
+
+    The rule it bends is `harness.services._member_behind_email`: a member's
+    email is linked to their account only when THIS message is aligned, because
+    an unaligned From: is a header anyone can write. Some members' domains sign
+    with a provider's key and publish no DMARC record (dimagi-associate.com,
+    canopy-web#1265), so their own mail reaches the agent as a stranger's until
+    the domain's admin fixes it. This is the stopgap while they do: an agent
+    admin names the address, says why, and it EXPIRES — there is no permanent
+    form, since a permanent one would be "accept a forgeable header" by default.
+
+    Narrow on purpose:
+      * one agent, one exact address — never a domain;
+      * the message must still carry a passing DKIM signature (tier 2), so mail
+        with no authentication at all is never accepted under it;
+      * everything else `_member_behind_email` asks still holds: one canopy user
+        provably holds the address and is a member of the agent's workspace.
+    The turn keeps its real grade (`initiator_assurance`), so the caller
+    envelope still says `verified: false`; it records the rule it rode on
+    (`sender_trust`), and the turn's event ledger logs it.
+    """
+
+    #: Longest a rule may live. Long enough to get a domain's DKIM switched on.
+    MAX_DAYS = 90
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="sender_trusts")
+    email = models.EmailField(help_text="Exact From: address, lowercased.")
+    reason = models.TextField(help_text="Why, and what fixes it for good.")
+    expires_at = models.DateTimeField()
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["agent", "email"],
+                                               name="uniq_agent_sender_trust")]
+        ordering = ["email"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"sender-trust:{self.email}@{self.agent_id} until {self.expires_at:%Y-%m-%d}"
+
+    @classmethod
+    def active_for(cls, agent_id, email: str):
+        """The unexpired rule for this agent and address, or None."""
+        from django.utils import timezone
+
+        return (cls.objects.filter(agent_id=agent_id, email=(email or "").strip().lower(),
+                                   expires_at__gt=timezone.now()).first())

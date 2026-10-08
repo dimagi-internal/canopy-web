@@ -237,6 +237,11 @@ def _member_behind_email(agent, contact, subject: str = ""):
 
     On success the contact is linked (`promote_to_user`), which grants nothing.
 
+    The one exception to the alignment rule is a TEMPORARY `SenderTrust` an
+    agent admin set for this exact address (`trusted_unaligned_sender`): a
+    DKIM-signed but unaligned message from it passes the first check. Every other
+    check still applies, and the contact is not linked.
+
     Failing that, a SYSTEM ACCOUNT of the agent's workspace bound to this
     address and subject (`workspaces.system_accounts.account_for_inbound`) —
     the same alignment requirement, and the binding is per workspace, because
@@ -248,9 +253,17 @@ def _member_behind_email(agent, contact, subject: str = ""):
     from apps.contacts import services as contacts
     from apps.contacts.models import Contact
 
-    if contact is None or contact.last_auth_result not in Contact.EMAIL_ALIGNED or not contact.email:
+    if contact is None or not contact.email:
         return None
+    trust = None
+    if contact.last_auth_result not in Contact.EMAIL_ALIGNED:
+        trust = trusted_unaligned_sender(agent, contact)
+        if trust is None:
+            return None
     user, role = address_holder(contact.email, agent.workspace_id)
+    if user is None and trust is not None:
+        # A trust rule names a MEMBER's address; it never reaches system accounts.
+        return None
     if user is None:
         from apps.workspaces.system_accounts import account_for_inbound
 
@@ -266,13 +279,30 @@ def _member_behind_email(agent, contact, subject: str = ""):
     # (`address_holder` reads the role with `wsvc.member_role`).
     if role is None:
         return None
-    if contact.user_id is None:
+    # Linking is for proven mail only: a temporary exception must not leave a
+    # permanent link behind when it expires.
+    if contact.user_id is None and trust is None:
         contacts.promote_to_user(contact, user)
     return user
 
 
+def trusted_unaligned_sender(agent, contact):
+    """The `SenderTrust` that lets THIS unaligned message stand in for alignment,
+    or None. Needs an unexpired rule for this agent and exact address AND a
+    passing DKIM signature on the message (tier 2): the rule excuses whose key
+    signed, never the absence of a signature. See `agents.models.SenderTrust`."""
+    from apps.agents.models import SenderTrust
+    from apps.contacts.models import Contact
+
+    grade = contact.last_auth_result or Contact.AUTH_NONE
+    if Contact.AUTH_RANK.get(grade, 0) < Contact.AUTH_RANK[Contact.TIER_SIGNED]:
+        return None
+    return SenderTrust.active_for(agent.pk, contact.email)
+
+
 def _log_unproven_member(turn) -> None:
-    """Record the envelope's `unproven_member` on the turn's event ledger.
+    """Record the envelope's `unproven_member` (and `sender_trust`) on the turn's
+    event ledger.
 
     Where an owner already reads a turn's history (`read_turn_events`, the
     activity drill-down): "a member wrote in, but this message could not be tied
@@ -287,8 +317,11 @@ def _log_unproven_member(turn) -> None:
         note = caller_context.unproven_member(turn)
         if note is not None:
             append_events(turn, [{"kind": caller_context.UNPROVEN_MEMBER_EVENT, "payload": note}])
+        trust = caller_context.sender_trust(turn)
+        if trust is not None:
+            append_events(turn, [{"kind": caller_context.SENDER_TRUST_EVENT, "payload": trust}])
     except Exception:  # noqa: BLE001
-        logger.exception("could not log unproven_member for turn %s", turn.pk)
+        logger.exception("could not log the sender's standing for turn %s", turn.pk)
 
 
 def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,

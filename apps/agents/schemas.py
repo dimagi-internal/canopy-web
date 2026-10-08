@@ -872,6 +872,26 @@ class GoogleMintStartOut(StrictModel):
     url: str
 
 
+class SenderTrustIn(StrictModel):
+    """A TEMPORARY trust rule for one member's unaligned mail (`SenderTrust`).
+
+    `reason` is required: say why, and what fixes it for good (usually "their
+    domain's admin turns on DKIM signing"). `days` is how long it lasts, 1–90;
+    re-PUT to extend. There is no permanent form."""
+
+    reason: str = Field(min_length=3, max_length=2000)
+    days: int = Field(default=14, ge=1, le=90)
+
+
+class SenderTrustOut(StrictModel):
+    email: str
+    reason: str
+    expires_at: datetime
+    active: bool
+    created_by: str | None = None
+    created_at: datetime
+
+
 class AgentVaultIn(StrictModel):
     """Non-clobbering, like every other credential write here: a blank/omitted
     service_key leaves the stored one alone, so editing the vault name does not

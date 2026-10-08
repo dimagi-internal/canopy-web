@@ -35,6 +35,14 @@ export function EventLedger({ turnId }: { turnId: string }) {
               {String(e.payload?.email ?? "")}: {String(e.payload?.note ?? "")}
             </span>
           )}
+          {e.kind === "sender_trust" && (
+            // Logged by canopy: an unaligned member email let in by a temporary
+            // trust rule an agent admin set (agents.models.SenderTrust).
+            <span className="text-foreground-secondary">
+              {String(e.payload?.email ?? "")}: trusted until{" "}
+              {new Date(String(e.payload?.expires_at ?? "")).toLocaleDateString()} ({String(e.payload?.reason ?? "")})
+            </span>
+          )}
         </li>
       ))}
     </ol>

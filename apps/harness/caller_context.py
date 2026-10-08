@@ -252,6 +252,46 @@ def _unproven_member(turn, agent) -> dict | None:
     }
 
 
+#: The TurnEvent kind that logs `sender_trust` on the turn. Canopy-written only,
+#: like `UNPROVEN_MEMBER_EVENT`.
+SENDER_TRUST_EVENT = "sender_trust"
+
+
+def sender_trust(turn) -> dict | None:
+    """The temporary `SenderTrust` this email turn's member rode on, or None.
+
+    Non-null only for an email turn resolved to a member although THIS message
+    is not aligned — which `_member_behind_email` allows for nothing but a
+    trust rule. Reads the rule as it is now (it may have expired or been
+    removed since; `active` says which), so an owner can see the exception that
+    let the person in."""
+    if turn.origin != "email" or turn.initiator_kind != who.USER:
+        return None
+    if (turn.initiator_assurance or "") in Contact.EMAIL_ALIGNED:
+        return None
+    agent = _agent_of(turn)
+    contact = turn.initiator_contact if turn.initiator_contact_id else None
+    if agent is None or contact is None or not contact.email:
+        return None
+    from django.utils import timezone
+
+    from apps.agents.models import SenderTrust
+
+    rule = SenderTrust.objects.filter(agent=agent, email=contact.email.lower()).first()
+    if rule is None:
+        return None
+    return {
+        "email": rule.email,
+        "reason": rule.reason,
+        "expires_at": rule.expires_at.isoformat(),
+        "active": rule.expires_at > timezone.now(),
+        "this_message_grade": turn.initiator_assurance,
+        "note": ("Tied to this member by a TEMPORARY trust rule an agent admin set, "
+                 "not by the message's own authentication (it is not DMARC- or "
+                 "DKIM-aligned). Treat it as the member, and expect it to lapse."),
+    }
+
+
 def build(turn, *, reader_user=None) -> dict:
     """The envelope for one turn. Safe to call on every claim.
 
@@ -293,6 +333,11 @@ def build(turn, *, reader_user=None) -> dict:
         # `relationship`/`profile`/`granted_by`, and must not be read as proof of
         # who sent the message — the whole point is that it is NOT proven.
         "unproven_member": _unproven_member(turn, agent),
+        # Non-null when the reverse happened: the message is NOT aligned, but a
+        # temporary `SenderTrust` an agent admin set for this exact address tied
+        # it to the member anyway (relationship is then theirs; `verified` stays
+        # false, since the message itself proves no more than it did).
+        "sender_trust": sender_trust(turn),
         "conversation": {
             "session_id": str(cs.pk) if cs is not None else None,
             "thread_id": str(ref.get("thread_id") or "") or None,

@@ -767,3 +767,89 @@ def test_a_failed_log_line_never_fails_the_enqueue(ctx, editor, monkeypatch):
     monkeypatch.setattr(caller_context, "unproven_member", boom)
     turn = _email(agent, headers=DKIM_ONLY)
     assert turn.pk and _unproven_events(turn) == []
+
+
+# --- sender_trust: a temporary rule that lets a member's unaligned mail through -----
+
+def _trust(agent, email="fatima@llo-foo.org", days=14):
+    import datetime as dt
+
+    from django.utils import timezone
+
+    from apps.agents.models import SenderTrust
+
+    return SenderTrust.objects.create(agent=agent, email=email, reason="domain lacks DKIM",
+                                      expires_at=timezone.now() + dt.timedelta(days=days))
+
+
+def test_a_trusted_member_with_dkim_only_mail_resolves_as_the_member(ctx, editor):
+    _o, _ws, agent = ctx
+    _trust(agent)
+    turn = _email(agent, headers=DKIM_ONLY)
+    assert turn.initiator_user == editor
+    assert turn.initiator_assurance == Contact.AUTH_DKIM          # the real grade, kept
+    env = caller_context.build(turn)
+    assert env["relationship"] == caller_context.MEMBER
+    assert env["verified"] is False                                 # the message proves no more
+    assert env["unproven_member"] is None
+    st = env["sender_trust"]
+    assert st["email"] == "fatima@llo-foo.org" and st["active"] is True
+    assert st["this_message_grade"] == Contact.AUTH_DKIM
+    [event] = turn.events.filter(kind=caller_context.SENDER_TRUST_EVENT)
+    assert event.payload["reason"] == "domain lacks DKIM"
+    # Not linked: the exception must not leave a permanent link when it lapses.
+    assert turn.initiator_contact.user_id is None
+
+
+def test_a_trust_rule_never_excuses_mail_with_no_signature(ctx, editor):
+    _o, _ws, agent = ctx
+    _trust(agent)
+    spf_only = [{"name": "Authentication-Results",
+                 "value": "mx.google.com; spf=pass smtp.mailfrom=llo-foo.org"}]
+    env = caller_context.build(_email(agent, headers=spf_only))
+    assert env["relationship"] == caller_context.CONTACT
+    assert env["sender_trust"] is None
+
+
+def test_an_expired_trust_rule_does_nothing(ctx, editor):
+    _o, _ws, agent = ctx
+    _trust(agent, days=-1)
+    env = caller_context.build(_email(agent, headers=DKIM_ONLY))
+    assert env["relationship"] == caller_context.CONTACT
+    assert env["unproven_member"] is not None
+
+
+def test_a_trust_rule_is_per_agent(ctx, editor):
+    owner, ws, agent = ctx
+    other = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=owner)
+    admit_contacts(other)
+    _trust(other)
+    assert caller_context.build(_email(agent, headers=DKIM_ONLY))["relationship"] == caller_context.CONTACT
+
+
+def test_a_trust_rule_for_a_non_member_grants_nothing(ctx):
+    from allauth.account.models import EmailAddress
+
+    _o, _ws, agent = ctx
+    u = User.objects.create_user("fatima", "fatima@llo-foo.org", "pw")
+    EmailAddress.objects.create(user=u, email=u.email, verified=True, primary=True)
+    _trust(agent)
+    assert caller_context.build(_email(agent, headers=DKIM_ONLY))["relationship"] == caller_context.CONTACT
+
+
+def test_the_rest_routes_are_admin_gated_and_need_a_member_address(ctx, editor):
+    owner, _ws, agent = ctx
+    c = Client()
+    c.force_login(editor)                                          # an editor, not an admin
+    url = f"/api/agents/{agent.slug}/sender-trust/fatima@llo-foo.org"
+    body = {"reason": "dimagi-associate.com has no DKIM yet", "days": 30}
+    assert c.put(url, body, content_type="application/json").status_code == 403
+    c.force_login(owner)
+    stranger = f"/api/agents/{agent.slug}/sender-trust/nobody@else.example"
+    assert c.put(stranger, body, content_type="application/json").status_code == 422
+    r = c.put(url, body, content_type="application/json")
+    assert r.status_code == 200 and r.json()["active"] is True
+    [row] = c.get(f"/api/agents/{agent.slug}/sender-trust").json()
+    assert row["email"] == "fatima@llo-foo.org" and row["created_by"] == owner.email
+    assert c.delete(url).status_code == 204
+    assert c.get(f"/api/agents/{agent.slug}/sender-trust").json() == []
