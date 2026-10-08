@@ -2,6 +2,8 @@ import { Link, useParams } from 'react-router-dom'
 import { threadHref } from '../threads/threadModel'
 import type { Huddle } from '@/api/huddles'
 import { MemberAvatar } from './MemberAvatar'
+import { costWords, failsWords, servesWords } from './briefWords'
+import { useBrief } from './briefContext'
 import {
   columns, holdWords, ideaHue, ideaLetter, memberHue, outcomeOf, sizeWords,
   type ProposalOutcome,
@@ -9,7 +11,7 @@ import {
 import { pitchesOf } from './conversationModel'
 import { boardTally, headline, ideaState, yourMove, type IdeaState, type Output } from './outcomeSummary'
 import {
-  boardLinkText, deJargon, nextStep, peopleWords, possessive, taskStatusPlain, trimPriority, VERDICT_WORDS, who,
+  boardLinkText, deJargon, nextStep, peopleWords, possessive, taskStatusPlain, VERDICT_WORDS, who,
 } from './plainWords'
 
 /**
@@ -102,12 +104,21 @@ function People({ p, hueOf }: { p: ProposalOutcome; hueOf: (m: string) => string
 }
 
 function Serves({ p }: { p: ProposalOutcome }) {
-  if (!p.priority) return null
+  const serves = servesWords(p.priority, useBrief())
+  const cost = costWords(p.cost)
+  const fails = failsWords(p.failsIf)
+  if (!serves && !cost && !fails) return null
   return (
-    <p className="mt-3 text-[13px] leading-snug">
-      <span className="font-medium text-foreground-secondary">For the priority: </span>
-      <span className="text-foreground">{trimPriority(p.priority, 200)}</span>
-    </p>
+    <div className="mt-3 space-y-1 text-[13px] leading-snug">
+      {serves && (
+        <p>
+          <span className="font-medium text-foreground-secondary">{serves.label}{serves.text ? ': ' : ''}</span>
+          <span className="text-foreground">{serves.text}</span>
+        </p>
+      )}
+      {cost && <p data-needs-you><span className="font-medium text-foreground-secondary">Needs from you: </span><span className="text-foreground">{cost}</span></p>}
+      {fails && <p data-fails-if className="text-foreground-secondary">{fails}</p>}
+    </div>
   )
 }
 

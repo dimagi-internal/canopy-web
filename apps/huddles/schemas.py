@@ -55,6 +55,9 @@ class HuddleOutputOut(StrictModel):
 
 class HuddleOut(HuddleSummaryOut):
     summary: str = ""
+    # The numbered priorities the huddle worked toward ("" for a huddle planned
+    # without one); proposals name these by number.
+    priorities_brief: str = ""
     deadline_at: dt.datetime | None = None
     cells: list[HuddleCellOut] = []
     outputs: list[HuddleOutputOut] = []

@@ -238,6 +238,10 @@ export type ProposalInfo = {
   effort: string
   confidence: number | null
   why: string
+  /** What it needs from Jonathan (`cost_to_jonathan`, a brief-era idea), as given. */
+  cost: unknown
+  /** What would make it fail (`fails_if`) — replaces `confidence` in brief-era ideas. */
+  failsIf: string
 }
 
 /**
@@ -295,6 +299,7 @@ export function taskProposalKey(o: Pick<HuddleOutput, 'title' | 'agent'>, propos
 
 type ProposalRaw = Proposal & {
   priority?: unknown; project?: unknown; effort?: unknown; confidence?: unknown; why?: unknown
+  cost_to_jonathan?: unknown; fails_if?: unknown
 }
 
 /** Every round-2 proposal, once each (lead + title), in column then card order. */
@@ -320,6 +325,8 @@ export function proposalsOf(h: Pick<Huddle, 'cells' | 'members'>): ProposalInfo[
         effort: String(p.effort ?? ''),
         confidence: typeof p.confidence === 'number' ? p.confidence : null,
         why: String(p.why ?? ''),
+        cost: p.cost_to_jonathan ?? null,
+        failsIf: typeof p.fails_if === 'string' ? p.fails_if : '',
       })
     }
   }
@@ -515,6 +522,7 @@ export function reportSummary(b: Block): { stats: string; top: string } {
   const n = (k: string) => list<unknown>(b[k]).length
   const parts = [
     n('worked_on') ? `${n('worked_on')} worked on` : '',
+    n('levers') ? plural(n('levers'), 'lever') : '',
     n('priorities') ? plural(n('priorities'), 'priority', 'priorities') : '',
     n('needs') ? plural(n('needs'), 'need') : '',
   ].filter(Boolean)

@@ -8,6 +8,8 @@ import { HuddleConversation } from './HuddleConversation'
 import { readView } from './conversationModel'
 import { MemberAvatar } from './MemberAvatar'
 import { HuddleOutcome } from './HuddleOutcome'
+import { PrioritiesBrief } from './HuddleBrief'
+import { BriefContext } from './briefContext'
 import { agreementThreads, columns, countdown, roundName, roundsToShow } from './huddleModel'
 import { andList, huddleExplainer, who } from './plainWords'
 
@@ -132,53 +134,56 @@ export function HuddlePage() {
   return (
     // pb-28: room under the last cards for the site-wide floating "Canopy AI"
     // button, which otherwise covers the bottom-right member card.
-    <div className="pb-28">
-      <Link to={`/w/${workspace}/huddles`} className="text-[12px] text-muted-foreground hover:text-primary">← Huddles</Link>
+    <BriefContext.Provider value={huddle.priorities_brief ?? ''}>
+      <div className="pb-28">
+        <Link to={`/w/${workspace}/huddles`} className="text-[12px] text-muted-foreground hover:text-primary">← Huddles</Link>
 
-      <header className="mt-3 mb-6 rounded-2xl border border-border bg-card p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0 max-w-[640px]">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold text-foreground">
-                {who(huddle.leader)}&apos;s huddle{when ? <span className="font-normal text-muted-foreground"> · {when}</span> : null}
-              </h1>
-              {huddle.finished ? (
-                <Pill className="border-success/30 bg-success/10 text-success">finished</Pill>
-              ) : (
-                <Pill className="border-info/30 bg-info/10 text-info">
-                  <span className="size-1.5 animate-pulse rounded-full bg-info" /> still going
-                </Pill>
-              )}
+        <header className="mt-3 mb-6 rounded-2xl border border-border bg-card p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0 max-w-[640px]">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl font-semibold text-foreground">
+                  {who(huddle.leader)}&apos;s huddle{when ? <span className="font-normal text-muted-foreground"> · {when}</span> : null}
+                </h1>
+                {huddle.finished ? (
+                  <Pill className="border-success/30 bg-success/10 text-success">finished</Pill>
+                ) : (
+                  <Pill className="border-info/30 bg-info/10 text-info">
+                    <span className="size-1.5 animate-pulse rounded-full bg-info" /> still going
+                  </Pill>
+                )}
+              </div>
+              <p className="mt-1.5 text-[14px] leading-relaxed text-foreground-secondary">{huddleExplainer(huddle.leader)}</p>
+              <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-foreground-secondary">
+                <span className="inline-flex items-center gap-1.5">
+                  <MemberAvatar slug={huddle.leader} hue="var(--foreground-secondary)" size="sm" />
+                  led by <span className="font-medium text-foreground">{who(huddle.leader)}</span>
+                </span>
+                <span className="text-muted-foreground">·</span>
+                <span>with {andList(columns(huddle))}</span>
+                <span className="text-muted-foreground">·</span>
+                <span>started {relativeTime(huddle.created_at, now)}</span>
+                {!huddle.finished && huddle.deadline_at && (
+                  <>
+                    <span className="text-muted-foreground">·</span>
+                    <span className={due ? '' : 'text-warning'}>{due ? `answers due in ${due}` : 'answers are late'}</span>
+                  </>
+                )}
+              </p>
             </div>
-            <p className="mt-1.5 text-[14px] leading-relaxed text-foreground-secondary">{huddleExplainer(huddle.leader)}</p>
-            <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-foreground-secondary">
-              <span className="inline-flex items-center gap-1.5">
-                <MemberAvatar slug={huddle.leader} hue="var(--foreground-secondary)" size="sm" />
-                led by <span className="font-medium text-foreground">{who(huddle.leader)}</span>
-              </span>
-              <span className="text-muted-foreground">·</span>
-              <span>with {andList(columns(huddle))}</span>
-              <span className="text-muted-foreground">·</span>
-              <span>started {relativeTime(huddle.created_at, now)}</span>
-              {!huddle.finished && huddle.deadline_at && (
-                <>
-                  <span className="text-muted-foreground">·</span>
-                  <span className={due ? '' : 'text-warning'}>{due ? `answers due in ${due}` : 'answers are late'}</span>
-                </>
-              )}
-            </p>
+            <Stepper huddle={huddle} />
           </div>
-          <Stepper huddle={huddle} />
-        </div>
-      </header>
+          <PrioritiesBrief brief={huddle.priorities_brief ?? ''} />
+        </header>
 
-      <HuddleOutcome huddle={huddle} compact={story} />
+        <HuddleOutcome huddle={huddle} compact={story} />
 
-      <section aria-label="How it went" className="mt-10 border-t border-border pt-6">
-        <HuddleConversation huddle={huddle} />
-      </section>
-      {error && <p className="mt-4 text-[12px] text-warning">Live refresh paused: {error}</p>}
-    </div>
+        <section aria-label="How it went" className="mt-10 border-t border-border pt-6">
+          <HuddleConversation huddle={huddle} />
+        </section>
+        {error && <p className="mt-4 text-[12px] text-warning">Live refresh paused: {error}</p>}
+      </div>
+    </BriefContext.Provider>
   )
 }
 
