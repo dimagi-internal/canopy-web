@@ -1207,7 +1207,37 @@ def email_thread_session(agent, thread_id: str, subject: str = ""):
     )
 
 
-def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = "", workspace=None) -> dict:
+def _busy_reason(binding, turn_id) -> str:
+    """Why the session `binding` points at must not take a prompt right now, or "".
+
+    A prompt is only ever sent into an IDLE session (#309): typing into one that is
+    mid-turn lands in the live turn's conversation and corrupts it. Two observations
+    say busy, and neither is inferred from write recency (which would also fire for a
+    session whose last turn ended a minute ago, forking every quick follow-up):
+
+    - another EXECUTING turn holds it: a chat turn on the same Session, or an
+      agent/project turn whose recorded session is this one on this box. Agent turns
+      already serialize per agent (`one_executing_turn_per_agent`); project turns do
+      not, and a chat turn is serialized per SESSION, not per agent.
+    - the engine says it is working (`agent_status`, emdash's own flag, or the
+      runner's `agent_status_stale` dissent): a person typing in it, or work that
+      outlived its turn. A blank status (the runner could not answer) is not busy."""
+    from apps.canopy_sessions import services as session_services
+
+    others = Turn.objects.filter(status__in=EXECUTING).exclude(pk=turn_id)
+    holder_q = Q(chat_session_id=binding.session_id)
+    if binding.session_key and binding.runner_id:
+        holder_q |= Q(session_key=binding.session_key, claimed_by_id=binding.runner_id)
+    holder = others.filter(holder_q).values_list("pk", flat=True).first()
+    if holder is not None:
+        return f"turn {holder} is executing in it"
+    if binding.agent_status and session_services.is_session_running(binding):
+        return f"the engine reports it {binding.agent_status}"
+    return ""
+
+
+def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = "", workspace=None,
+                    turn_id=None) -> dict:
     """Given (target, thread_key) and the CURRENTLY-active runner, decide how to execute.
 
     `agent` may be None when `project` is given — the phone addresses repos too.
@@ -1223,13 +1253,29 @@ def resolve_session(agent, thread_key: str, runner: Runner, *, project: str = ""
         thread).
 
     Never assumes the live session is reachable: reuse is only proposed when the hint's
-    runner + macOS host match the caller (the two-account failover invariant)."""
+    runner + macOS host match the caller (the two-account failover invariant).
+
+    `turn_id` names the agent/project turn asking. With it, reuse is also refused
+    when the session is mid-turn (`_busy_reason`, #309) and `busy` says why; the
+    runner then creates a fresh session, as it does for one that is gone. A CHAT
+    turn is exempt: its session IS the conversation, which claim already
+    serializes and a rider (#1153) joins on purpose. Without `turn_id` (a runner
+    predating it) the answer is unchanged."""
     binding = _binding_for_thread(agent, project, workspace, thread_key)
     if binding is None:
         return {"reuse": False, "session_key": "", "emdash_task_id": "", "agent_task_ext_id": "",
-                "summary": "", "link_id": None, "new_thread": True}
+                "summary": "", "link_id": None, "new_thread": True, "busy": ""}
+    reuse = binding.reusable_by(runner)
+    busy = ""
+    if reuse and turn_id is not None:
+        # Only a chat turn THIS runner holds is exempt; any other id is guarded.
+        turn = Turn.objects.filter(pk=turn_id, claimed_by=runner).only("chat_session_id").first()
+        if turn is None or turn.chat_session_id is None:
+            busy = _busy_reason(binding, turn_id)
+            reuse = not busy
     return {
-        "reuse": binding.reusable_by(runner),
+        "reuse": reuse,
+        "busy": busy,
         "session_key": binding.session_key,
         "emdash_task_id": binding.session_key,
         "agent_task_ext_id": binding.agent_task_ext_id,

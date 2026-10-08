@@ -213,3 +213,95 @@ def test_record_binds_its_own_project_session_by_uuid():
     services.record_session(None, str(chat.id), runner=r, project="canopy-web", workspace=ws,
                             session_key="t-1")
     assert RunnerBinding.objects.get(session=chat).session_key == "t-1"
+
+
+# ---- #309: never reuse a session that is mid-turn ----------------------------
+def _live_runner(ws, name="laptop", host="jj@air"):
+    from django.utils import timezone
+
+    return Runner.objects.create(name=name, workspace=ws, host=host, location=Runner.LOCAL,
+                                 status=Runner.ONLINE, last_heartbeat_at=timezone.now())
+
+
+def _claimed(runner, **target):
+    import uuid
+
+    from apps.harness.models import Turn
+
+    return Turn.objects.create(status=Turn.CLAIMED, claimed_by=runner,
+                               idempotency_key=uuid.uuid4().hex, **target)
+
+
+def test_an_idle_session_is_still_reused_by_a_named_turn():
+    ws = _ws("w1")
+    a = _agent(ws)
+    r = _live_runner(ws)
+    services.record_session(a, "thr", runner=r, session_key="echo-1")
+    me = _claimed(r, agent=a)
+    plan = services.resolve_session(a, "thr", r, turn_id=me.pk)
+    assert plan["reuse"] is True and plan["busy"] == ""
+
+
+def test_a_session_another_turn_is_executing_in_is_not_reused():
+    """Project turns do not serialize per agent, so two can resolve onto one
+    session; the second must not type into the first's live turn."""
+    ws = _ws("w1")
+    r = _live_runner(ws)
+    services.record_session(None, "thr", runner=r, project="canopy-web", workspace=ws,
+                            session_key="cw-1")
+    _claimed(r, project="canopy-web", session_key="cw-1")  # already working in it
+    me = _claimed(r, project="canopy-web")
+    plan = services.resolve_session(None, "thr", r, project="canopy-web", workspace=ws,
+                                    turn_id=me.pk)
+    assert plan["reuse"] is False
+    assert "executing" in plan["busy"]
+    assert plan["session_key"] == "cw-1"  # still named, for the log
+
+
+def test_a_chat_turn_on_the_session_makes_it_busy_for_an_agent_turn():
+    ws = _ws("w1")
+    a = _agent(ws)
+    r = _live_runner(ws)
+    services.record_session(a, "thr", runner=r, session_key="echo-1")
+    session = RunnerBinding.objects.get(thread_key="thr").session
+    _claimed(r, chat_session=session)
+    me = _claimed(r, agent=a)
+    assert services.resolve_session(a, "thr", r, turn_id=me.pk)["reuse"] is False
+
+
+def test_the_engine_reporting_working_makes_it_busy():
+    ws = _ws("w1")
+    a = _agent(ws)
+    r = _live_runner(ws)
+    services.record_session(a, "thr", runner=r, session_key="echo-1")
+    RunnerBinding.objects.filter(thread_key="thr").update(agent_status="working")
+    me = _claimed(r, agent=a)
+    plan = services.resolve_session(a, "thr", r, turn_id=me.pk)
+    assert plan["reuse"] is False and "working" in plan["busy"]
+    # Finished (awaiting input) is idle again.
+    RunnerBinding.objects.filter(thread_key="thr").update(agent_status="awaiting-input")
+    assert services.resolve_session(a, "thr", r, turn_id=me.pk)["reuse"] is True
+
+
+def test_the_asking_turn_does_not_count_as_busy_itself():
+    """A re-claimed turn may already carry this session's key from its first try."""
+    ws = _ws("w1")
+    a = _agent(ws)
+    r = _live_runner(ws)
+    services.record_session(a, "thr", runner=r, session_key="echo-1")
+    me = _claimed(r, agent=a, session_key="echo-1")
+    assert services.resolve_session(a, "thr", r, turn_id=me.pk)["reuse"] is True
+
+
+def test_a_chat_turn_and_an_unnamed_caller_keep_the_old_answer():
+    """A chat turn's session IS the conversation (riders join it on purpose), and
+    a runner predating `turn_id` gets exactly the answer it always did."""
+    ws = _ws("w1")
+    a = _agent(ws)
+    r = _live_runner(ws)
+    services.record_session(a, "thr", runner=r, session_key="echo-1")
+    RunnerBinding.objects.filter(thread_key="thr").update(agent_status="working")
+    session = RunnerBinding.objects.get(thread_key="thr").session
+    chat = _claimed(r, chat_session=session)
+    assert services.resolve_session(a, "thr", r, turn_id=chat.pk)["reuse"] is True
+    assert services.resolve_session(a, "thr", r)["reuse"] is True

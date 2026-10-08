@@ -14523,6 +14523,11 @@ export interface components {
             readonly summary: string;
             /** Link Id */
             readonly link_id: string | null;
+            /**
+             * Busy
+             * @default
+             */
+            readonly busy: string;
         };
         /** ResolveSessionIn */
         readonly ResolveSessionIn: {
@@ -14543,6 +14548,8 @@ export interface components {
             readonly workspace: string;
             /** Thread Key */
             readonly thread_key: string;
+            /** Turn Id */
+            readonly turn_id?: string | null;
         };
         /** RecordSessionIn */
         readonly RecordSessionIn: {
