@@ -5,11 +5,11 @@
     CANOPY_HOST = {
         # The arrival (visitor assertion). Required for the panel.
         "SIGNING_KEY": env("CANOPY_SIGNING_KEY"),        # Ed25519 / P-256 PEM
-        "CANOPY_BASE_URL": "https://canopy.dimagi.com",
+        "CANOPY_BASE_URL": "https://labs.connect.dimagi.com/canopy",
         "APP_NAME": "connect-labs",                       # your Connected-site name
         "AGENT_SLUG": "ace",                              # which canopy tenant
         # The grant. All four present turns it on; any missing turns it off.
-        "CLIENT_ID": "https://canopy.dimagi.com/oauth/client.json",
+        "CLIENT_ID": "https://labs.connect.dimagi.com/canopy/oauth/client.json",
         "ISSUER": "https://labs.connect.dimagi.com",
         "RESOURCE": "https://labs.connect.dimagi.com/mcp/",
         "TOKEN_ENDPOINT": "https://labs.connect.dimagi.com/o/token/",
