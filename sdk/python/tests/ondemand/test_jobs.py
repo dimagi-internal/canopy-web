@@ -54,3 +54,13 @@ def test_complete_after_expiry_recreates_record():
     js.complete("gone", {"ok": 1})
     got = js.get("gone")
     assert got.status == "completed" and got.result == {"ok": 1}
+
+
+def test_owner_roundtrips_and_is_omitted_when_unset():
+    js = JobStore(_r(), "emod")
+    j = js.create("op", owner="task1:req1")
+    assert js.get(j.job_id).owner == "task1:req1"
+    assert js.get(j.job_id).to_dict()["owner"] == "task1:req1"
+    js.complete(j.job_id, 1)
+    assert js.get(j.job_id).owner == "task1:req1"
+    assert "owner" not in js.get(js.create("op").job_id).to_dict()

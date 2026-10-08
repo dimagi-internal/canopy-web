@@ -2,6 +2,7 @@ import threading
 
 import fakeredis
 import pytest
+import redis
 
 from canopy_sdk.ondemand import Lease
 
@@ -65,7 +66,7 @@ class _NoEval:
         self._r = r
 
     def eval(self, *a, **k):
-        raise RuntimeError("EVAL unsupported")
+        raise NotImplementedError("EVAL unsupported")
 
     def __getattr__(self, name):
         return getattr(self._r, name)
@@ -79,3 +80,16 @@ def test_watch_multi_fallbacks_when_eval_unsupported():
     r.expire("ondemand:emod:lock", 5)
     assert l.refresh("x") and r.ttl("ondemand:emod:lock") > 5
     assert l.release("x") and l.holder() == ""
+
+
+def test_connection_error_from_eval_propagates():
+    class Down(_NoEval):
+        def eval(self, *a, **k):
+            raise redis.exceptions.ConnectionError("down")
+
+    l = Lease(Down(_r()), "emod")
+    l.acquire("x")
+    with pytest.raises(redis.exceptions.ConnectionError):
+        l.release("x")
+    with pytest.raises(redis.exceptions.ConnectionError):
+        l.refresh("x")

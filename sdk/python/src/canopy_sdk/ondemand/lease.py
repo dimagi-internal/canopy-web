@@ -9,6 +9,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from redis.exceptions import ResponseError, WatchError
+
 _RELEASE_LUA = (
     "if redis.call('get',KEYS[1])==ARGV[1] then "
     "return redis.call('del',KEYS[1]) else return 0 end"
@@ -20,6 +22,8 @@ _REFRESH_LUA = (
 
 
 class Lease:
+    """Expects a Redis client created with ``decode_responses=True``."""
+
     def __init__(self, redis: Any, capability: str, ttl_s: int = 1800, *, key: str | None = None):
         self._r = redis
         self._ttl_s = ttl_s
@@ -51,11 +55,15 @@ class Lease:
     def _if_owner(self, owner: str, lua: str, args: tuple, act) -> bool:
         try:
             return bool(self._r.eval(lua, 1, self._key, owner, *args))
-        except Exception:
+        except (NotImplementedError, AttributeError):
             pass
-        # No EVAL: WATCH/MULTI aborts the EXEC if the key changed after we read it.
-        try:
-            with self._r.pipeline() as pipe:
+        except ResponseError as e:
+            if "unknown command" not in str(e).lower() and "eval" not in str(e).lower():
+                raise
+        # EVAL unsupported: WATCH/MULTI aborts the EXEC if the key changed after we read it.
+        # Connection errors and timeouts propagate rather than reading as "not the owner".
+        with self._r.pipeline() as pipe:
+            try:
                 pipe.watch(self._key)
                 if pipe.get(self._key) != owner:
                     pipe.unwatch()
@@ -63,6 +71,6 @@ class Lease:
                 pipe.multi()
                 act(pipe)
                 result = pipe.execute()
-                return bool(result and result[0])
-        except Exception:
-            return False
+            except WatchError:
+                return False
+            return bool(result and result[0])

@@ -23,6 +23,7 @@ class Job:
     result: Any = None
     error: str | None = None
     error_code: str | None = None
+    owner: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -31,6 +32,8 @@ class Job:
             "status": self.status,
             "started_at": self.started_at,
         }
+        if self.owner is not None:
+            d["owner"] = self.owner
         if self.completed_at is not None:
             d["completed_at"] = self.completed_at
         if self.result is not None:
@@ -52,6 +55,7 @@ class Job:
             result=d.get("result"),
             error=d.get("error"),
             error_code=d.get("error_code"),
+            owner=d.get("owner"),
         )
 
 
@@ -60,13 +64,15 @@ def _now() -> str:
 
 
 class JobStore:
+    """Expects a Redis client created with ``decode_responses=True``."""
+
     def __init__(self, redis: Any, capability: str, ttl_s: int = 3600, *, prefix: str | None = None):
         self._r = redis
         self._ttl_s = ttl_s
         self._prefix = prefix if prefix is not None else f"ondemand:{capability}:job:"
 
-    def create(self, operation: str) -> Job:
-        job = Job(secrets.token_hex(8), operation, "running", _now())
+    def create(self, operation: str, owner: str | None = None) -> Job:
+        job = Job(secrets.token_hex(8), operation, "running", _now(), owner=owner)
         self._write(job)
         return job
 
