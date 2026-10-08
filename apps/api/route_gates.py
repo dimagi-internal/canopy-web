@@ -93,6 +93,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_runner_preference": ("agent.work",),
     "set_turn_mode": ("agent.work",),
     "set_slack_enabled": ("agent-admin",),
+    "set_people_digest_enabled": ("agent-admin",),  # fleet brain v1.1 per-agent opt-out
     "get_agent_runtime": ("member",),
     "list_agent_runners": ("member",),
     "get_agent_default_order": ("member",),
@@ -399,6 +400,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "people_me": ("self",),  # only ever the caller's own Person
     "lookup_person": ("member",),  # 404 unless known in one of the caller's workspaces
     "get_person": ("member",),  # read logged as PersonAccess(via=api)
+    "list_person_projects": ("member",),  # same gate as get_person (known_in); read logged
+    "people_coverage": ("member", "agent-admin"),  # counts only; a non-member agent admin sees just their agents
     "add_person_fact": ("member",),
     "retract_person_fact": ("self", "members.manage"),  # the subject, the asserter, or a workspace admin
     "put_person_digest": ("member",),

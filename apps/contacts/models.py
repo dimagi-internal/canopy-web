@@ -509,6 +509,12 @@ class PersonFact(models.Model):
     retracted_at = models.DateTimeField(null=True, blank=True)
     retracted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
                                      null=True, blank=True, related_name="person_facts_retracted")
+    #: Set on the fact that MIRRORS a contact's free-text `notes` (v1.1): the
+    #: one live mirrored fact per contact is the one with this set, which is
+    #: what makes the backfill (contacts/0011) idempotent and lets an edit to the notes
+    #: supersede it (`people.mirror_contact_notes`).
+    source_contact = models.ForeignKey("contacts.Contact", on_delete=models.SET_NULL,
+                                       null=True, blank=True, related_name="mirrored_facts")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -586,6 +592,12 @@ class PersonAccess(models.Model):
     turn = models.ForeignKey("harness.Turn", on_delete=models.SET_NULL,
                              null=True, blank=True, related_name="person_reads")
     via = models.CharField(max_length=10, choices=VIA_CHOICES)
+    #: For an envelope read: did the `person` block carry anything — at least
+    #: one live fact or a non-empty digest — at the moment it was BUILT. The
+    #: coverage metric (`people_coverage`) counts human turns whose envelope
+    #: had context from this, rather than re-deriving it later from facts that
+    #: have since changed. False for API reads (not meaningful there).
+    had_context = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

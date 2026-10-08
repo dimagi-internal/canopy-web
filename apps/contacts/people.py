@@ -184,7 +184,8 @@ def fact_dict(fact: PersonFact) -> dict:
 def record_fact(*, person: Person, workspace, kind: str, statement: str,
                 basis: str = PersonFact.DECLARED, by_user=None, by_agent=None,
                 source_turn=None, project=None, instance_ref: str = "",
-                supersedes: PersonFact | None = None) -> PersonFact:
+                supersedes: PersonFact | None = None,
+                source_contact=None) -> PersonFact:
     """Append a fact. If it `supersedes` another, that one stops being live now.
 
     Raises FactError for an unknown kind or basis, an empty or over-long
@@ -215,10 +216,15 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
         project=project, instance_ref=(instance_ref or "").strip()[:300],
         source_turn=source_turn,
         asserted_by_user=None if by_agent is not None else by_user,
-        asserted_by_agent=by_agent, supersedes=supersedes,
+        asserted_by_agent=by_agent, supersedes=supersedes, source_contact=source_contact,
     )
     if supersedes is not None:
         PersonFact.objects.filter(pk=supersedes.pk).update(superseded_at=timezone.now())
+    if project is not None:
+        # Any fact filed against a project makes its subject a participant (v1.1).
+        from apps.agents import participants
+
+        participants.on_fact(fact)
     return fact
 
 
@@ -275,11 +281,12 @@ def digest_for(person: Person, workspace_slug: str | None) -> PersonDigest | Non
 
 
 def log_access(person: Person, *, via: str, workspace_slug: str | None = None,
-               reader_user=None, reader_agent=None, turn=None) -> None:
+               reader_user=None, reader_agent=None, turn=None, had_context: bool = False) -> None:
     """Record a read. Never raises: a read is never worth a failed request."""
     try:
         PersonAccess.objects.create(
             person=person, workspace_id=workspace_slug or None, via=via, turn=turn,
+            had_context=had_context,
             reader_user=reader_user if getattr(reader_user, "is_authenticated", False) else None,
             reader_agent=reader_agent)
     except Exception:  # noqa: BLE001
@@ -302,8 +309,11 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         return None
     digest = digest_for(person, workspace_slug)
     facts = list(live_facts(person, workspace_slug)[:ENVELOPE_FACTS]) if workspace_slug else []
+    # "Did the brain have anything to say", recorded NOW, for the coverage
+    # metric (`apps/contacts/coverage.py`): a fact or a non-empty digest.
+    had_context = bool(facts) or bool(digest is not None and digest.text.strip())
     log_access(person, via=PersonAccess.VIA_ENVELOPE, workspace_slug=workspace_slug,
-               reader_user=reader_user, reader_agent=agent, turn=turn)
+               reader_user=reader_user, reader_agent=agent, turn=turn, had_context=had_context)
     return {
         "id": person.pk,
         "display_name": display_name(person),
@@ -314,8 +324,81 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         "digest": digest.text if digest is not None else "",
         "digest_updated_at": digest.updated_at.isoformat() if digest is not None else None,
         "facts": [fact_dict(f) for f in facts],
+        # v1.1, additive: the projects (of this workspace's agents) they take
+        # part in, most recently active first, at most 5. Not archived ones.
+        "projects": envelope_projects(person, workspace_slug),
         "see_all": SEE_ALL,
     }
+
+
+def envelope_projects(person: Person, workspace_slug: str | None) -> list[dict]:
+    from apps.agents import participants
+
+    if not workspace_slug:
+        return []
+    rows = participants.projects_of(person, workspace_slug, limit=participants.ENVELOPE_PROJECTS,
+                                    include_archived=False)
+    return [{"id": r.project_id, "ext_id": r.project.ext_id, "name": r.project.name,
+             "agent": r.project.agent.slug} for r in rows]
+
+
+# --- Contact.notes, mirrored into a fact (v1.1) -----------------------------------
+#
+# `Contact.notes` is free text a human or agent wrote about a correspondent. The
+# brain is the one place agents read what canopy knows about a person, so the
+# notes are MIRRORED into a single `role` fact (declared, asserted by nobody),
+# tagged with `source_contact` — the marker that makes this idempotent. The
+# notes field stays; it is simply no longer a second place to look.
+
+#: The `kind` a mirrored note is filed as. Notes are overwhelmingly "who this
+#: person is"; classifying free text would be a model call canopy does not make.
+NOTES_KIND = PersonFact.ROLE
+
+
+def notes_statement(notes: str) -> str:
+    """The first 500 characters of the notes, flattened to one line."""
+    return " ".join((notes or "").split())[:PersonFact.STATEMENT_MAX]
+
+
+def mirror_contact_notes(contact: Contact, *, by=None) -> PersonFact | None:
+    """Make the contact's live mirrored fact say what its notes say.
+
+    * notes empty → the live mirror (if any) is retracted; returns None.
+    * same text as the live mirror → nothing changes; returns it.
+    * otherwise → a new fact, superseding the previous mirror.
+    """
+    from . import services
+
+    statement = notes_statement(contact.notes)
+    current = (PersonFact.objects.filter(source_contact=contact, superseded_at__isnull=True,
+                                         retracted_at__isnull=True)
+               .order_by("-created_at", "-pk").first())
+    if not statement:
+        if current is not None:
+            retract(current, by=by)
+        return None
+    if current is not None and current.statement == statement:
+        return current
+    person = services.person_for(contact=contact)
+    if person is None:
+        return None
+    if current is not None and (current.person_id != person.pk
+                                or current.workspace_id != contact.workspace_id):
+        retract(current, by=by)
+        current = None
+    return record_fact(person=person, workspace=contact.workspace, kind=NOTES_KIND,
+                       statement=statement, basis=PersonFact.DECLARED,
+                       supersedes=current, source_contact=contact)
+
+
+def mirror_all_contact_notes() -> dict:
+    """Mirror every contact's notes. Idempotent; returns counts."""
+    seen = mirrored = 0
+    for contact in Contact.objects.exclude(notes="").select_related("workspace").iterator():
+        seen += 1
+        if mirror_contact_notes(contact) is not None:
+            mirrored += 1
+    return {"contacts_with_notes": seen, "mirrored": mirrored}
 
 
 def conversations(person: Person, agent, *, since: dt.datetime | None = None, limit: int = 200):

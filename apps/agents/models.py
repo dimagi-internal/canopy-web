@@ -159,6 +159,13 @@ class Agent(models.Model):
     # Reachable from Slack (apps/slack). Off by default and owner-only to flip:
     # it opens the agent to a new channel of people, which is a deliberate act.
     slack_enabled = models.BooleanField(default=False)
+    #: Whether a human's finished turn with this agent starts a people-digest
+    #: turn (the fleet brain's forced write, `harness.people_digest`). On by
+    #: default; an agent admin turns it off (PATCH /people-digest) for an agent
+    #: whose conversations should not feed the brain. Honoured ALONGSIDE the
+    #: global `PEOPLE_DIGEST_ENABLED` kill switch — either off stops it. Facts
+    #: and the envelope `person` block keep working either way.
+    people_digest_enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -609,6 +616,15 @@ class AgentProject(models.Model):
 
     notes = models.TextField(blank=True, default="")
     links = models.JSONField(default=list, blank=True)
+    #: The PEOPLE this work involves (fleet brain v1.1, canopy#804) — not the
+    #: owner (one human who owns the outcome) but everyone canopy has seen take
+    #: part: the subject of a fact filed against the project, or the human whose
+    #: conversation raised one of its tasks. Filled automatically
+    #: (`apps/agents/participants.py`); see `ProjectParticipant`.
+    participants = models.ManyToManyField(
+        "contacts.Person", through="agents.ProjectParticipant", related_name="agent_projects",
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -658,6 +674,50 @@ class AgentProject(models.Model):
         from apps.agents.services import waiting_q
 
         return self.tasks.filter(waiting_q()).count()
+
+
+class ProjectParticipant(models.Model):
+    """A person taking part in an agent's project (fleet brain v1.1, canopy#804).
+
+    One row per (project, person). `source` says how canopy learned it, and the
+    FIRST answer is kept: a later fact or turn about someone already linked
+    changes nothing, so `source` reads "how did they first come in".
+
+    Same tenancy as everything else about a person: a project belongs to one
+    agent, which belongs to one workspace, so a participant row is only ever
+    served to members of that workspace (`people.known_in` gates the person
+    side of it).
+    """
+
+    FACT, TURN, MANUAL = "fact", "turn", "manual"
+    SOURCE_CHOICES = [
+        (FACT, "A fact about them was filed against the project"),
+        (TURN, "A conversation with them raised one of its tasks"),
+        (MANUAL, "Added by a person"),
+    ]
+    ROLE_MAX = 80
+
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE,
+                                related_name="participant_rows")
+    person = models.ForeignKey("contacts.Person", on_delete=models.CASCADE,
+                               related_name="project_participations")
+    #: Free text, e.g. "program lead", "LLO contact". Blank when canopy filled
+    #: the row itself and nobody has said what part they play.
+    role = models.CharField(max_length=ROLE_MAX, blank=True, default="")
+    source = models.CharField(max_length=8, choices=SOURCE_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "agents_project_participant"
+        ordering = ["-created_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["project", "person"], name="one_participant_row_per_person"),
+            models.CheckConstraint(condition=models.Q(source__in=["fact", "turn", "manual"]),
+                                   name="project_participant_source_known"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.project_id}<-{self.person_id} ({self.source})"
 
 
 class AgentTask(models.Model):

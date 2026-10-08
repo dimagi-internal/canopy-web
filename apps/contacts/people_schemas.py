@@ -117,3 +117,63 @@ class PersonConversationsOut(StrictModel):
     agent: str
     conversations: list[PersonConversationOut]
 
+
+
+class PersonProjectOut(StrictModel):
+    """A project (of one of the workspace's agents) the person takes part in."""
+
+    id: int
+    ext_id: str = Field(description="Its per-agent id (P1, P2 …).")
+    name: str
+    agent: str = Field(description="The slug of the agent whose project it is.")
+    status: str = Field(description="active | done | archived.")
+    role: str = Field(default="", description="The part they play, free text; blank when canopy linked them itself.")
+    source: str = Field(description="fact | turn | manual — how canopy first learned it.")
+    since: str | None = None
+
+
+class PersonProjectsOut(StrictModel):
+    person: int
+    workspace: str
+    projects: list[PersonProjectOut]
+
+
+class DigestTurnCountsOut(StrictModel):
+    queued: int = Field(description="Not finished yet (queued, claimed, running, needs human).")
+    done: int
+    failed: int = Field(description="Failed, lost or missed.")
+    cancelled: int
+
+
+class AgentCoverageOut(StrictModel):
+    """How well the people brain served one agent over the window."""
+
+    agent: str
+    digest_enabled: bool = Field(description="This agent's switch AND the fleet-wide one.")
+    human_turns: int = Field(description="Turns with the agent a human started (not canopy, not another agent).")
+    human_turns_with_context: int = Field(
+        description="Of those, how many were handed a person block with at least one fact or a digest, "
+                    "as recorded when the envelope was built.")
+    context_rate: float | None = None
+    digest_turns: DigestTurnCountsOut
+    digest_failure_rate: float | None = Field(default=None, description="failed / (done + failed); null with none finished.")
+    facts_written: int = Field(description="Facts the agent asserted in this workspace.")
+    people: int = Field(description="Distinct people who started a turn with the agent.")
+    people_with_digest: int
+    median_digest_age_hours: float | None = Field(
+        default=None, description="Median age of those people's digests now; null when none has one.")
+    healthy: bool
+    reasons: list[str] = Field(default_factory=list, description="Why it is unhealthy, then anything worth saying.")
+
+
+class PeopleCoverageOut(StrictModel):
+    """Is the fleet brain alive in this workspace? A dead brain must be loud."""
+
+    workspace: str
+    days: int
+    since: str
+    generated_at: str
+    digest_enabled_globally: bool
+    rule: str = Field(description="The rule `healthy` applies, in words.")
+    healthy: bool
+    agents: list[AgentCoverageOut]

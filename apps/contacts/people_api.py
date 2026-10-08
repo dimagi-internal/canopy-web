@@ -30,6 +30,7 @@ from . import people
 from . import services as contact_services
 from .models import Person, PersonAccess, PersonDigest, PersonFact
 from .people_schemas import (
+    PeopleCoverageOut,
     PersonConversationsOut,
     PersonDigestIn,
     PersonDigestOut,
@@ -37,6 +38,7 @@ from .people_schemas import (
     PersonFactIn,
     PersonMeOut,
     PersonOut,
+    PersonProjectsOut,
     PersonRefOut,
 )
 
@@ -119,6 +121,41 @@ def people_me(request: HttpRequest) -> dict:
     return {**_ref(person), "facts": facts, "digests": digests, "accesses": accesses}
 
 
+@router.get("/coverage/", response=PeopleCoverageOut,
+            summary="Is the people brain working? Per-agent coverage")
+def people_coverage(request: HttpRequest, workspace: str | None = None, days: int = 7) -> dict:
+    """Per agent of the workspace, over the last `days` (1–90, default 7): the
+    turns humans started with it, how many of those were handed what canopy
+    knows about the person, its people-digest turns by outcome, the facts it
+    wrote, and how stale the digests of the people it talked to are — with an
+    explicit `healthy` verdict and the rule behind it.
+
+    Counts only: no person is named. Members of the workspace see every agent;
+    an admin of one of its agents who is not a member sees only the agents they
+    administer."""
+    from apps.agents.models import Agent
+    from apps.workspaces.models import Workspace
+
+    from . import coverage
+
+    slug = (workspace or "").strip() or getattr(request, "workspace_slug", None) or ""
+    if not slug:
+        raise _bad("say which workspace: ?workspace=<slug>")
+    ws = Workspace.objects.filter(pk=slug).first()
+    if ws is None:
+        raise _not_found("Workspace not found")
+    agents = Agent.objects.filter(workspace=ws)
+    if not wsvc.is_member(request.user, slug):
+        # Not a member: only the agents they hold the keys to, if any.
+        mine = [a.pk for a in agents.select_related("workspace") if a.is_admin(request.user)]
+        if not mine:
+            raise _not_found("Workspace not found")
+        agents = agents.filter(pk__in=mine)
+    if not (coverage.MIN_DAYS <= days <= coverage.MAX_DAYS):
+        raise _bad(f"days is {coverage.MIN_DAYS}–{coverage.MAX_DAYS}")
+    return coverage.workspace_coverage(ws.pk, days=days, agents=agents)
+
+
 @router.get("/lookup/", response=PersonRefOut, summary="Find a person by email")
 def lookup_person(request: HttpRequest, email: str, workspace: str | None = None) -> dict:
     """The person an address names — only if a workspace you are a member of
@@ -151,6 +188,25 @@ def get_person(request: HttpRequest, person_id: int, workspace: str | None = Non
         "facts": [people.fact_dict(f) for f in people.live_facts(person, ws.pk)],
         "see_all": people.SEE_ALL,
     }
+
+
+@router.get("/{person_id}/projects/", response=PersonProjectsOut,
+            summary="The projects a person takes part in, in one workspace")
+def list_person_projects(request: HttpRequest, person_id: int, workspace: str | None = None) -> dict:
+    """The projects of `?workspace=`'s agents this person is a participant of —
+    most recently active first, archived included. Members of that workspace
+    only, and the read is logged where the person can see it."""
+    from apps.agents import participants
+
+    ws = _workspace(request, workspace)
+    person = _person_in(person_id, ws)
+    people.log_access(person, via=PersonAccess.VIA_API, workspace_slug=ws.pk,
+                      reader_user=request.user, reader_agent=people.agent_of_login(request.user))
+    rows = participants.projects_of(person, ws.pk)
+    return {"person": person.pk, "workspace": ws.pk, "projects": [
+        {"id": r.project_id, "ext_id": r.project.ext_id, "name": r.project.name,
+         "agent": r.project.agent.slug, "status": r.project.status, "role": r.role,
+         "source": r.source, "since": _iso(r.created_at)} for r in rows]}
 
 
 @router.post("/{person_id}/facts/", response={201: PersonFactCreatedOut},

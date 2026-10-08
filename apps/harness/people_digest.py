@@ -24,10 +24,10 @@ The brakes, since a hook that starts turns when turns finish is a feedback loop:
   created in the last `PEOPLE_DIGEST_DEBOUNCE_MINUTES` (default 60). Counted
   from the digest turns themselves (their idempotency-key prefix), like
   auto-debug's caps, so there is no second ledger to drift.
-* SWITCH: `PEOPLE_DIGEST_ENABLED` — OFF by default since 2026-10-07 (see
-  config/settings/base.py for why). There is no per-agent switch yet:
-  `Agent` has no settings document to hang one on, and adding a column for it
-  was not worth it before v1 proves itself.
+* SWITCHES: `PEOPLE_DIGEST_ENABLED` — fleet-wide, OFF by default since
+  2026-10-07 (see config/settings/base.py for why) — and an agent's own
+  `Agent.people_digest_enabled` (v1.1, default on; an agent admin flips it with
+  `PATCH /api/agents/{slug}/people-digest`). Both must be on: either off is off.
 
 `on_turn_finished` never raises and runs in a savepoint: a digest is never worth
 a failed finish.
@@ -109,6 +109,8 @@ def _on_turn_finished(turn: Turn) -> Turn | None:
         return None
     agent = _agent_of(turn)
     if agent is None or not agent.workspace_id:
+        return None
+    if not agent.people_digest_enabled:
         return None
     person = people.initiator_person(turn)
     if person is None:
