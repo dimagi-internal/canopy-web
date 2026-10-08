@@ -11,6 +11,7 @@ import {
   type DddNarrativeVersion,
 } from '@/api/ddd'
 import { withBase } from '@/lib/basePath'
+import { CutList, type CutScene } from './CutList'
 import { NarrativeDiff } from './NarrativeDiff'
 import { pairNarrationScenes } from './narrativeScenePairing'
 
@@ -134,6 +135,13 @@ function RunCard({
   )
 }
 
+/** A version's narration as the Cuts view reads it. */
+function cutScenes(version: DddNarrativeVersion): CutScene[] {
+  return version.narration
+    .filter((n) => typeof n.id === 'string' && n.id)
+    .map((n) => ({ id: n.id as string, title: n.title ?? '', narration: n.text ?? '' }))
+}
+
 function VersionBlock({
   slug,
   version,
@@ -150,6 +158,10 @@ function VersionBlock({
   const [open, setOpen] = useState(isCurrent)
   const [busy, setBusy] = useState(false)
   const label = version.version != null ? `v${version.version}` : 'no narrative'
+  // A recorded narrative (one video per cut) reads as its cuts, each beside the
+  // words it speaks; everything else keeps the one-story, one-video layout.
+  const cuts = version.cuts ?? []
+  const recorded = cuts.length > 0
   // How many scenes this version changed vs the one before it — the thing that
   // actually distinguishes two versions whose story line (the title) is identical.
   const changedScenes =
@@ -185,7 +197,7 @@ function VersionBlock({
       <div className="flex items-center gap-2 px-4 py-3">
         <button
           onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left"
         >
           <span aria-hidden className="text-muted-foreground">
             {open ? '▾' : '▸'}
@@ -214,10 +226,20 @@ function VersionBlock({
 
       {open && (
         <div className="border-t border-border px-4 py-3">
-          {version.story && (
-            <p className="mb-3 whitespace-pre-line text-sm leading-relaxed text-foreground-secondary">
-              {version.story}
-            </p>
+          {recorded ? (
+            <div className="mb-4">
+              <CutList
+                cuts={cuts.map((c) => ({ ...c, viewer_url: c.video_viewer_url }))}
+                scenes={cutScenes(version)}
+                hero={{ video_url: version.video_url, viewer_url: version.video_viewer_url }}
+              />
+            </div>
+          ) : (
+            version.story && (
+              <p className="mb-3 whitespace-pre-line text-sm leading-relaxed text-foreground-secondary">
+                {version.story}
+              </p>
+            )
           )}
           {previous && previous.narration.length > 0 && version.narration.length > 0 && (
             <NarrativeDiff
@@ -227,7 +249,7 @@ function VersionBlock({
               afterLabel={label}
             />
           )}
-          {version.video_url && (
+          {!recorded && version.video_url && (
             <video
               src={withBase(version.video_url)}
               controls

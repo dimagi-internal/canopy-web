@@ -257,6 +257,9 @@ export interface ReviewPinnedVideo {
   /** Playable for THIS reader; null when the video is private and the reader
    *  is not a member of its workspace. */
   video_url: string | null
+  /** The video's own viewer page, under the same rule as video_url. */
+  viewer_url?: string | null
+  duration_sec?: number | null
 }
 
 export interface ReviewDetail {

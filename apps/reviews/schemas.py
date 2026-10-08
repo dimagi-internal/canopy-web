@@ -24,6 +24,10 @@ class ReviewPinnedVideoOut(StrictModel):
     # workspace, its own share-token URL for a public video, None when the
     # video is private and the reader is not a member.
     video_url: str | None = None
+    # The video's own viewer page, under the same rule as ``video_url``.
+    viewer_url: str | None = None
+    # Seconds, as recorded at upload; None when the uploader did not send it.
+    duration_sec: int | None = None
 
 
 class ReviewRequestOut(StrictModel):

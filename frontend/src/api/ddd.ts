@@ -34,6 +34,18 @@ export interface DddNarrativeRun {
   has_deck: boolean
 }
 
+/** One cut of a recorded narrative and the video pinned to it (canopy-web#1288). */
+export interface DddNarrativeCut {
+  cut_id: string
+  title: string
+  /** Narration item ids this cut plays, in order. */
+  scene_ids: string[]
+  walkthrough_id: string
+  video_url: string
+  video_viewer_url: string
+  duration_sec?: number | null
+}
+
 export interface DddNarrativeStory {
   review_id: string | null
   version: number | null
@@ -41,6 +53,7 @@ export interface DddNarrativeStory {
   story: string | null
   video_url: string | null
   video_viewer_url: string | null
+  cuts?: DddNarrativeCut[]
 }
 
 export interface DddNarrativeVersion {
@@ -56,6 +69,8 @@ export interface DddNarrativeVersion {
   status: string | null
   video_url: string | null
   video_viewer_url: string | null
+  /** A recorded narrative's per-cut videos, in narration order; empty otherwise. */
+  cuts?: DddNarrativeCut[]
   runs: DddNarrativeRun[]
 }
 

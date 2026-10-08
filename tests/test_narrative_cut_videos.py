@@ -167,6 +167,30 @@ def test_guest_on_the_review_link_gets_public_cuts_with_their_token():
     assert stream.status_code != 404
 
 
+def test_cut_carries_its_duration_and_viewer_link_on_both_surfaces():
+    """The Cuts view shows each cut's length and links to its own page
+    (canopy-web#1293) — on the narrative page and on the review link alike."""
+    u = make_user()
+    v = _version(u)
+    pub = _cut(u, v, "register", ["c1-a"], at=_t(1), visibility="link",
+               share_token="tok-r", duration_sec=31)
+    priv = _cut(u, v, "decide", ["c2-a"], at=_t(2))
+
+    narrative = aggregate.build_narrative(SLUG)["current_version"]["cuts"]
+    assert [c["duration_sec"] for c in narrative] == [31, None]
+
+    guest = Client().get(f"/api/reviews/{v.id}/").json()["cut_videos"]
+    assert guest[0]["duration_sec"] == 31
+    assert guest[0]["viewer_url"] == f"/walkthrough/{pub.id}?t=tok-r"
+    # A private cut gives a guest no page to open, as it gives no video to play.
+    assert guest[1]["viewer_url"] is None
+
+    c = Client()
+    c.force_login(u)
+    member = c.get(f"/api/reviews/{v.id}/").json()["cut_videos"]
+    assert member[1]["viewer_url"] == f"/walkthrough/{priv.id}"
+
+
 def test_member_on_the_review_gets_every_cut_tokenless():
     u = make_user()
     v = _version(u)
