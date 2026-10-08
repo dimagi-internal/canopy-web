@@ -7,7 +7,7 @@ name = "dimagi-canopy"
 # `dimagi-canopy-v<version>` and attaches the built sdist + wheel to a GitHub
 # Release when a version change reaches main. CI refuses a change under src/
 # that does not move it. Keep `canopy_sdk.__version__` equal (a test asserts it).
-version = "0.6.1"
+version = "0.7.0"
 description = "The canopy SDK for Python: the host grant contract, the host half (sign visitor assertions and ID-JAGs, redeem the jwt-bearer grant, verify DPoP at your MCP), canopy's consumer half, Django wiring, and conformance checks."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,11 +28,16 @@ dependencies = [
 [project.optional-dependencies]
 # The optional Django integration (`canopy_sdk.django`).
 django = ["django>=4.2"]
+# The optional on-demand runner (`canopy_sdk.ondemand`): EC2/SSM lifecycle + Redis lease/jobs.
+ondemand = ["boto3>=1.34", "redis>=5"]
 # The SDK's own test suite.
 test = [
     "pytest>=8",
     "pytest-django>=4.8",
     "django>=4.2",
+    "boto3>=1.34",
+    "fakeredis>=2.20",
+    "pyyaml>=6",
 ]
 
 [project.urls]

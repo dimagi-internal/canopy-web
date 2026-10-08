@@ -1,0 +1,13 @@
+[Unit]
+Description=Run ondemand-idle-shutdown.service every 60s
+Documentation=https://github.com/dimagi-internal/canopy-web/tree/main/sdk/python#on-demand-capabilities
+
+[Timer]
+# First check 60s after boot, then every 60s.
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=ondemand-idle-shutdown.service
+
+[Install]
+WantedBy=timers.target
