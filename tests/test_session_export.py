@@ -27,14 +27,15 @@ def _ctx():
     s = Session.objects.create(workspace=ws, project="canopy-web", title="widget", created_by=user)
     RunnerBinding.objects.create(session=s, runner=runner, session_key="a-task",
                                  emdash_project="canopy-web", thread_key=str(s.id))
-    rows = [(0, Message.USER, "Let's fix the widget's empty state."),
-            (64, Message.TOOL_USE, "Read apps/widget.py"),
-            (65, Message.TOOL_RESULT, "…800 lines of source…"),
-            (128, Message.ASSISTANT, "Fixed — it now shows a prompt instead of a blank panel."),
-            (130, Message.SYSTEM, "[canopy] runner paused"),
-            (192, Message.USER, "Great, now the error state ✓")]
-    for i, role, text in rows:
-        Message.objects.create(session=s, turn_index=i, role=role, plaintext=text)
+    rows = [(0, Message.USER, "Let's fix the widget's empty state.", {}),
+            (64, Message.TOOL_USE, "", {"name": "Read", "input": {"file_path": "apps/widget.py"}}),
+            (65, Message.TOOL_RESULT, "x" * 5000, {"tool_use_id": "t1"}),
+            (128, Message.ASSISTANT, "Fixed — it now shows a prompt instead of a blank panel.", {}),
+            (130, Message.SYSTEM, "runner paused", {}),
+            (192, Message.USER, "Great, now the error state ✓", {})]
+    for i, role, text, content in rows:
+        Message.objects.create(session=s, turn_index=i, role=role, plaintext=text,
+                               content=content)
     c = Client()
     c.force_login(user)
     return user, ws, s, c
@@ -44,24 +45,25 @@ def _export(c, s):
     return c.get(f"/api/canopy-sessions/{s.id}/export")
 
 
-def test_the_starter_gets_the_conversation_they_saw():
+def test_the_starter_gets_the_session_as_the_web_view_shows_it():
     _u, _ws, s, c = _ctx()
     resp = _export(c, s)
     assert resp.status_code == 200
     out = resp.json()
     md = out["markdown"]
-    assert out["message_count"] == 3
-    # In order, as seen.
-    a = md.index("Let's fix the widget's empty state.")
-    b = md.index("Fixed — it now shows a prompt")
-    d = md.index("Great, now the error state ✓")
-    assert a < b < d
-    # Not the machinery: no tool calls, tool output or canopy's own notices.
-    for hidden in ("Read apps/widget.py", "800 lines of source", "runner paused"):
-        assert hidden not in md
-    # And it says up front what is missing, so the reader checks git rather than
-    # disbelieving work it cannot see the tool calls for.
-    assert "tool calls" in md.split("## ", 1)[0] and "check git" in md
+    assert out["message_count"] == 6
+    # Every row the web view shows, in its order — tool calls included, so the
+    # reader can see what was actually done.
+    order = [md.index("Let's fix the widget's empty state."),
+             md.index("→ `Read` {\"file_path\": \"apps/widget.py\"}"),
+             md.index("x" * 100),
+             md.index("Fixed — it now shows a prompt"),
+             md.index("_runner paused_"),
+             md.index("Great, now the error state ✓")]
+    assert order == sorted(order)
+    # Tool output is shortened, as the web view collapses it.
+    assert "x" * 1600 not in md and "…" in md
+    assert "check git" in md.split("## ", 1)[0]
 
 
 def test_an_editor_who_did_not_start_it_cannot_export():

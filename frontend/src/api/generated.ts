@@ -6391,9 +6391,9 @@ export interface paths {
         };
         /**
          * Export a session's conversation to pick it up in your own Claude
-         * @description This conversation as readable markdown — your messages and the agent's
-         *     replies, as you saw them, without its tool calls — for handing to your own
-         *     Claude so it can see where the work stands and carry on. For when the runner
+         * @description This session as readable markdown — the same rows the web view shows, tool
+         *     output shortened — for handing to your own Claude so it can see where the
+         *     work stands and carry on. For when the runner
          *     is out of tokens, or you want to take it from here yourself.
          *
          *     `canopy runner export <session>` saves it to a file and prints the prompt to
