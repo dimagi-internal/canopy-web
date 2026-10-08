@@ -54,6 +54,7 @@ import hashlib
 import logging
 import re
 
+from canopy_transcript.usage_limit import is_usage_limit
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -205,6 +206,15 @@ def _on_turn_failed(turn: Turn) -> None:
         return
     note = _note_for(turn)
     if _HUMAN_NOTES.search(note):
+        return
+    if is_usage_limit(note) and ("resets" in note.lower() or "credential" in note.lower()):
+        # Narrowed past the bare shape match: "hit the recursion limit" is a real
+        # bug. A Claude cap always names its reset, or carries the cloud runner's
+        # "every Claude credential on this box is exhausted" note.
+        # A capped Claude subscription is not a fault to investigate: the runner
+        # has parked itself until the reset (`Runner.paused_until`), and a
+        # debugger turn would only spend another box's tokens re-reading
+        # "You've hit your limit".
         return
     debugger = debugger_agent()
     if debugger is None:

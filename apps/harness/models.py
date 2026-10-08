@@ -104,6 +104,18 @@ class Runner(models.Model):
     )
     paused_note = models.CharField(max_length=200, blank=True, default="")
     paused_at = models.DateTimeField(null=True, blank=True)
+    # A scheduled UNPAUSE — a one-off job, not a kind of pause. The pause above is
+    # the one state; this only says when the server will lift it. A runner sets it
+    # on ITSELF when its Claude subscription hits a usage cap: the CLI names the
+    # reset ("resets 2:30am (America/Denver)"), so the box is parked until then and
+    # routing sends its work to a runner that can still spend tokens.
+    #
+    # Run by `services.wake_due_runners` on the server's own clock (every
+    # heartbeat, from ANY runner), never by a runner and never as an agent turn:
+    # a paused laptop fires no schedules, and for someone with one laptop the
+    # only box that could fire it is the parked one. Null = no unpause scheduled;
+    # /unpause and /pause-without-`until` both cancel it.
+    unpause_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
     # When this runner last posted a WHOLESALE open-session report. OBSERVED, never
     # typed — the same discipline `capabilities["projects"]` follows, and for the same

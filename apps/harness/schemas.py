@@ -132,6 +132,9 @@ class RunnerOut(Schema):
     paused: bool
     paused_note: str
     paused_at: dt.datetime | None
+    # The scheduled unpause, if one is set (a usage cap's reset); null = paused
+    # until a human unpauses.
+    unpause_at: dt.datetime | None = None
     last_heartbeat_at: dt.datetime | None
     capabilities: dict
     host: str
@@ -347,6 +350,11 @@ class PauseIn(Schema):
     # cost of THIS feature going wrong is a box that stays silent long after
     # the reason expired.
     note: str = ""
+    # Schedule the unpause for this time — what a runner sends when its Claude
+    # subscription is capped, with the reset the CLI named. Omitted = an operator
+    # pause that holds until /unpause. Never shortens a scheduled unpause or puts
+    # one on an operator's open-ended pause (see `pause_runner`).
+    until: dt.datetime | None = None
 
 
 class HeartbeatIn(Schema):

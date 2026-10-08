@@ -170,6 +170,21 @@ describe('RunnerDetail — pause', () => {
     await waitFor(() => expect(onChanged).toHaveBeenCalledWith(paused))
   })
 
+  it('says when a usage-cap pause lifts on its own', () => {
+    render(
+      <RunnerDetail
+        runner={runner({
+          paused: true, status: 'paused',
+          paused_note: 'Claude usage cap — resumes 2026-10-08T08:30Z',
+          unpause_at: '2026-10-08T08:30:00Z',
+        })}
+        agents={agents}
+        onBack={() => {}}
+      />,
+    )
+    expect(screen.getByTestId('runner-unpause-at').textContent).toContain('Resumes on its own')
+  })
+
   it('offers Resume and the recorded reason once paused', async () => {
     unpauseRunner.mockResolvedValue(runner())
 

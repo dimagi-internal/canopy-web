@@ -1090,13 +1090,34 @@ def pause_runner(request: HttpRequest, runner_id: uuid.UUID, payload: PauseIn):
 
     Idempotent — pausing an already-paused runner refreshes the note and returns
     200 rather than erroring, so a retry after a dropped response is safe.
+
+    `until` also schedules the unpause (`Runner.unpause_at`) — what a runner sends
+    when its Claude subscription hits a usage cap, with the reset the CLI named,
+    so the box is parked exactly as long as it cannot work and the server's sweep
+    (`services.wake_due_runners`) lifts it. A scheduled unpause never weakens a
+    stronger pause: it is not added to an operator's open-ended pause, and a
+    second cap only ever moves it later. A pause without `until` cancels any
+    scheduled unpause — the operator outranks the clock.
     """
     runner = _runner_or_404(request, runner_id)
+    now = timezone.now()
+    until = payload.until
+    if until is not None and until <= now:
+        return runner  # the reset has already passed — nothing to park
+    note = (payload.note or "")[:200]
     if not runner.paused:
-        runner.paused_at = timezone.now()
+        runner.paused_at = now
+        runner.unpause_at = until
+        runner.paused_note = note
+    elif runner.unpause_at is None:
+        if until is not None:
+            return runner  # an operator's open-ended pause; keep it and its note
+        runner.paused_note = note
+    else:
+        runner.unpause_at = None if until is None else max(until, runner.unpause_at)
+        runner.paused_note = note
     runner.paused = True
-    runner.paused_note = (payload.note or "")[:200]
-    runner.save(update_fields=["paused", "paused_note", "paused_at"])
+    runner.save(update_fields=["paused", "paused_note", "paused_at", "unpause_at"])
     return runner
 
 
@@ -1114,11 +1135,7 @@ def unpause_runner(request: HttpRequest, runner_id: uuid.UUID):
     is observed, never asserted. Idempotent on an already-running runner.
     """
     runner = _runner_or_404(request, runner_id)
-    if runner.paused:
-        runner.paused = False
-        runner.paused_note = ""
-        runner.paused_at = None
-        runner.save(update_fields=["paused", "paused_note", "paused_at"])
+    services.unpause(runner)
     return runner
 
 

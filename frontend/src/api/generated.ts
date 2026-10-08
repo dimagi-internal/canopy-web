@@ -4582,6 +4582,14 @@ export interface paths {
          *
          *     Idempotent — pausing an already-paused runner refreshes the note and returns
          *     200 rather than erroring, so a retry after a dropped response is safe.
+         *
+         *     `until` also schedules the unpause (`Runner.unpause_at`) — what a runner sends
+         *     when its Claude subscription hits a usage cap, with the reset the CLI named,
+         *     so the box is parked exactly as long as it cannot work and the server's sweep
+         *     (`services.wake_due_runners`) lifts it. A scheduled unpause never weakens a
+         *     stronger pause: it is not added to an operator's open-ended pause, and a
+         *     second cap only ever moves it later. A pause without `until` cancels any
+         *     scheduled unpause — the operator outranks the clock.
          */
         readonly post: operations["pause_runner"];
         readonly delete?: never;
@@ -14036,6 +14044,8 @@ export interface components {
             readonly paused_note: string;
             /** Paused At */
             readonly paused_at: string | null;
+            /** Unpause At */
+            readonly unpause_at?: string | null;
             /** Last Heartbeat At */
             readonly last_heartbeat_at: string | null;
             /** Capabilities */
@@ -14418,6 +14428,8 @@ export interface components {
              * @default
              */
             readonly note: string;
+            /** Until */
+            readonly until?: string | null;
         };
         /** FleetHoldOut */
         readonly FleetHoldOut: {

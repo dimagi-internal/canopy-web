@@ -236,3 +236,65 @@ def test_the_api_key_is_never_promoted(cr, monkeypatch):
         (False, CAP_TEXT, "") if cr._CLAUDE_CRED_I < 2 else (True, "ok", "s")))
     cr.execute_prompt("p", "turn-abcdef12", lambda e: None)
     assert not any("swap" in str(c) for c in calls)
+
+
+# --- parking the box until the cap resets -------------------------------------
+
+def _capture_pause(cr, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cr, "_RUNNER_ID", "rid-1")
+    monkeypatch.setattr(cr, "_reload_claude_credentials", lambda: False)
+    monkeypatch.setattr(cr, "_notify_api_key_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(cr, "_api", lambda m, p, b=None, **kw: (calls.append((m, p, b)) or (200, {})))
+    return calls
+
+
+def test_an_exhausted_cascade_pauses_the_runner_until_the_earliest_reset(cr, monkeypatch):
+    import time as _time
+    calls = _capture_pause(cr, monkeypatch)
+    now = _time.time()
+    resets = iter([now + 7200, now + 3600, now + 5400])   # sub-2 frees up first
+    monkeypatch.setattr(cr, "_cap_reset_epoch", lambda text: next(resets))
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (False, CAP_TEXT, ""))
+    cr._apply_claude_credential(0)
+
+    ok, text, _ = cr.execute_prompt("do it", "turn-abcdef12", lambda e: None)
+
+    assert ok is False
+    pauses = [c for c in calls if c[1] == "/runners/rid-1/pause"]
+    assert len(pauses) == 1
+    body = pauses[0][2]
+    assert body["until"] == _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(now + 3600))
+    assert body["note"].startswith("Claude usage cap — resumes")
+    assert "paused itself until" in text
+    # Back to the primary for when the pause lifts.
+    assert cr._claude_cred_label() == "subscription-1"
+
+
+def test_an_unreadable_reset_still_parks_for_the_fallback_window(cr, monkeypatch):
+    import time as _time
+    calls = _capture_pause(cr, monkeypatch)
+    monkeypatch.setattr(cr, "_cap_reset_epoch", lambda text: None)
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (False, "You've hit your limit", ""))
+    cr._apply_claude_credential(0)
+    before = _time.time()
+    cr.execute_prompt("do it", "turn-abcdef12", lambda e: None)
+    body = [c for c in calls if c[1] == "/runners/rid-1/pause"][0][2]
+    assert "unreadable" in body["note"]
+    parked = _time.mktime(_time.strptime(body["until"], "%Y-%m-%dT%H:%M:%SZ")) - _time.timezone
+    assert abs(parked - (before + cr.CAP_PAUSE_FALLBACK_SECONDS)) < 5
+
+
+def test_a_cap_the_next_credential_survives_does_not_pause(cr, monkeypatch):
+    calls = _capture_pause(cr, monkeypatch)
+    outcomes = iter([(False, CAP_TEXT, ""), (True, "done", "s")])
+    monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: next(outcomes))
+    monkeypatch.setattr(cr, "_promote_working_subscription", lambda *a, **k: None)
+    cr._apply_claude_credential(0)
+    ok, _, _ = cr.execute_prompt("do it", "turn-abcdef12", lambda e: None)
+    assert ok is True
+    assert not [c for c in calls if c[1].endswith("/pause")]
+
+
+def test_the_real_cap_text_parses_to_a_reset(cr):
+    assert cr._cap_reset_epoch("You've hit your session limit · resets 2:30am (America/Denver)")

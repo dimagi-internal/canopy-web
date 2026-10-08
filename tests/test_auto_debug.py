@@ -164,6 +164,23 @@ def test_a_humans_stop_or_collision_does_not_trigger(ada, ws, runner, note):
     assert not FailureInvestigation.objects.exists()
 
 
+@pytest.mark.parametrize("note", [
+    "You've hit your session limit · resets 2:30am (America/Denver)",
+    "You've hit your limit\n\n[runner] every Claude credential on this box is exhausted "
+    "(tried: subscription-1). This runner has paused itself until …",
+])
+def test_a_usage_cap_does_not_trigger(ada, ws, runner, note):
+    """The runner parked itself until the reset; a debugger turn would only spend
+    another box's tokens re-reading the cap."""
+    _fail(_agent(ws, "ace"), runner, note)
+    assert not FailureInvestigation.objects.exists()
+
+
+def test_a_limit_that_is_not_a_claude_cap_still_triggers(ada, ws, runner):
+    _fail(_agent(ws, "ace"), runner, "RecursionError: hit the recursion limit")
+    assert FailureInvestigation.objects.exists()
+
+
 def test_the_kill_switch(ada, ws, runner):
     with override_settings(CANOPY_AUTO_DEBUG=False):
         _fail(_agent(ws, "ace"), runner, "boom")

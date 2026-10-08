@@ -570,6 +570,41 @@ def enqueue_turn(
     return turn, True
 
 
+def unpause(runner: Runner) -> None:
+    """Lift a runner's pause and cancel any scheduled unpause. The one write both
+    /unpause and the scheduled wake make."""
+    if not runner.paused and runner.unpause_at is None:
+        return
+    runner.paused = False
+    runner.paused_note = ""
+    runner.paused_at = None
+    runner.unpause_at = None
+    runner.save(update_fields=["paused", "paused_note", "paused_at", "unpause_at"])
+
+
+def wake_due_runners(now: dt.datetime) -> set:
+    """Run every scheduled unpause (`Runner.unpause_at`) that has come due, and
+    return the ids woken.
+
+    A row-locked re-check per runner, so an operator who re-paused the box
+    open-ended (which cancels `unpause_at`) between the query and the write is
+    never overridden, and two concurrent beats wake it once.
+    """
+    woken = set()
+    due = Runner.objects.filter(paused=True, unpause_at__lte=now).values_list("pk", flat=True)
+    for pk in list(due):
+        with transaction.atomic():
+            runner = Runner.objects.select_for_update().filter(pk=pk).first()
+            if runner is None or not runner.paused or runner.unpause_at is None \
+                    or runner.unpause_at > now:
+                continue
+            logger.info("pause: scheduled unpause of runner %s (%s) — was: %s",
+                        runner.name, runner.pk, runner.paused_note)
+            unpause(runner)
+            woken.add(runner.pk)
+    return woken
+
+
 def heartbeat(
     runner: Runner, *, active_turn_ids: list[str], degraded: bool = False, note: str = "",
     ready: bool = True, ready_note: str = "", code_branch: str = "",
@@ -654,6 +689,15 @@ def heartbeat(
         if "capabilities" not in fields:
             fields.append("capabilities")
     runner.save(update_fields=fields)
+    # Same clock: run every scheduled unpause that has come due, fleet-wide — so a
+    # parked box is woken by ANY runner's beat, its own included. If this beat's
+    # runner was one of them, the response must say so: the laptop mirrors it
+    # down, deleting its `~/.canopy/PAUSED` sentinel.
+    try:
+        if runner.pk in wake_due_runners(now):
+            runner.refresh_from_db(fields=["paused", "paused_note", "paused_at", "unpause_at"])
+    except Exception:  # noqa: BLE001 — a wake must never cost a runner its heartbeat
+        logger.exception("pause: running scheduled unpauses failed")
     # The update nudge: this is the one moment both shas are in hand — the
     # deploy moved the expectation, the beat just reported what's installed.
     # Ring the box's control channel so its updater checks NOW instead of
