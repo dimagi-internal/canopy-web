@@ -84,6 +84,18 @@ class OnDemandInstance:
         self.touch()
         return Running(self.instance_id, cold, timings)
 
+    def state(self) -> str:
+        """The EC2 state name ("running", "stopped", ...): one describe call, no SSM.
+
+        Raises InstanceGone if the instance no longer exists. Use status() when you
+        also need the idle age (that costs an SSM round-trip on a running box).
+        """
+        return self._state()
+
+    def wait_ec2_ok(self, timeout_s: int) -> None:
+        """Block until instance AND system status checks pass, within timeout_s."""
+        self._wait_ec2_ok(timeout_s)
+
     def _wait_ec2_ok(self, timeout_s: int) -> None:
         # Both reachability checks, as ace-web's mobile runner always required: the
         # instance_status_ok waiter alone ignores system status. One shared budget.

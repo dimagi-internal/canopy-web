@@ -77,3 +77,13 @@ def test_jobs_imports_on_python_310():
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == "datetime":
             assert "UTC" not in {a.name for a in node.names}
+
+
+def test_put_stores_an_edited_job():
+    js = JobStore(_r(), "emod")
+    j = js.create("run_pmc")
+    j.status = "completed"
+    j.result = {"x": 1}
+    js.put(j)
+    got = js.get(j.job_id)
+    assert got.status == "completed" and got.result == {"x": 1}

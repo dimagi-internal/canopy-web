@@ -255,3 +255,18 @@ def test_waiter_client_error_is_wrapped():
             inst._wait_ec2_ok(10)
     finally:
         monkey.undo()
+
+
+def test_public_state_and_wait_ec2_ok_delegate():
+    ec2, _ = _ec2()
+    inst = _inst(ec2)
+    seen = []
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(inst, "_state", lambda: "stopped")
+    monkey.setattr(inst, "_wait_ec2_ok", lambda t: seen.append(t))
+    try:
+        assert inst.state() == "stopped"
+        inst.wait_ec2_ok(42)
+    finally:
+        monkey.undo()
+    assert seen == [42]

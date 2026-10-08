@@ -2,6 +2,14 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.7.2 — 2026-10-08
+
+`canopy_sdk.ondemand`: three public methods, so consumers stop reaching into private ones.
+
+- `OnDemandInstance.state()`: the EC2 state name from a single describe call, with no SSM. Use it for cheap warm/cold checks; `status()` still adds the idle age over SSM.
+- `OnDemandInstance.wait_ec2_ok(timeout_s)`: waits for the instance and system status checks.
+- `JobStore.put(job)`: stores an edited job record.
+
 ## 0.7.1 — 2026-10-08
 
 `canopy_sdk.ondemand` fixes from the first live run:
