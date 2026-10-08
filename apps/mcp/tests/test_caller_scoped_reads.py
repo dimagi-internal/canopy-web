@@ -29,7 +29,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
-SECRET = "Lilianna's private question about the Q3 figures"
+PRIVATE_QUESTION = "Lilianna's private question about the Q3 figures"
 
 
 @pytest.fixture()
@@ -59,7 +59,7 @@ def _private_chat_turn(w):
     session = Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=None,
                                      origin=Session.ORIGIN_RUNNER, title="widget chat")
     return Turn.objects.create(chat_session=session, agent=None, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
-                               prompt=SECRET, idempotency_key=uuid.uuid4().hex)
+                               prompt=PRIVATE_QUESTION, idempotency_key=uuid.uuid4().hex)
 
 
 @contextlib.contextmanager
@@ -122,13 +122,13 @@ def test_a_members_session_cannot_read_another_users_chat(w):
     # The runner's owner reads it — that is the leak this closes.
     op_raw, _ = PersonalToken.create_for_user(user=w["op"], label="runner")
     with as_token(op_raw):
-        assert _listing()[str(theirs.pk)]["prompt"] == SECRET
+        assert _listing()[str(theirs.pk)]["prompt"] == PRIVATE_QUESTION
 
     with as_token(raw) as access:
         assert access.claims["user_id"] == w["matt"].pk        # the asker, not the runner owner
         rows = _listing()
         assert str(theirs.pk) not in rows or rows[str(theirs.pk)]["prompt"] == ""
-        assert SECRET not in str(rows)
+        assert PRIVATE_QUESTION not in str(rows)
         with pytest.raises(ToolError, match="404|not found"):
             _call("read_turn_messages", {"turn_id": str(theirs.pk)})
         with pytest.raises(ToolError, match="404|not found"):
@@ -140,7 +140,7 @@ def test_a_members_session_cannot_read_a_chat_a_colleague_started(w):
     session = Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=w["lili"],
                                      title="lili's chat")
     theirs = Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
-                                 prompt=SECRET, idempotency_key=uuid.uuid4().hex)
+                                 prompt=PRIVATE_QUESTION, idempotency_key=uuid.uuid4().hex)
     raw = caller_tokens.mint(_asked_by(w["matt"], w["agent"], "m1"), scoped=True)
     with as_token(raw), pytest.raises(ToolError, match="404|not found"):
         _call("read_turn_messages", {"turn_id": str(theirs.pk)})
