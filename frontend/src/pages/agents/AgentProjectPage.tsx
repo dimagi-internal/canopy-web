@@ -163,6 +163,8 @@ export function AgentProjectPage(): JSX.Element {
                   refreshWaiting()
                 }}
                 canEdit={canEdit}
+                // Every card on this page is in this project.
+                showProject={false}
               />
             ))}
           </div>
