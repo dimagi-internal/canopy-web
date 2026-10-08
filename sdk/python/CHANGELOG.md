@@ -2,6 +2,17 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.7.1 — 2026-10-08
+
+`canopy_sdk.ondemand` fixes from the first live run:
+
+- `OnDemandInstance.ensure_running`: the default `boot_timeout_s` goes from 180 s to 420 s.
+  A real m8i.xlarge took about 230 s from start to passing its status checks, so 180 s
+  failed every cold start.
+- The EC2 gate now waits for **system** status ok as well as instance status ok, which is
+  the check ace-web's mobile runner always used. A `ClientError` during the wait is now
+  raised as `OnDemandError` instead of escaping.
+
 ## 0.7.0 — 2026-10-08
 
 `canopy_sdk.ondemand`: run a dedicated capability on a stopped-when-idle EC2

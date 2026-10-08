@@ -58,7 +58,7 @@ class OnDemandInstance:
                 f"it, so something external removed it: redeploy the {self.capability} CloudFormation "
                 f"stack and update the consumer's instance-id setting.")
 
-    def ensure_running(self, boot_timeout_s: int = 180, ready_timeout_s: int = 480) -> Running:
+    def ensure_running(self, boot_timeout_s: int = 420, ready_timeout_s: int = 480) -> Running:
         timings: dict[str, float] = {}
         state = self._state()
         cold = state != "running"
@@ -85,7 +85,13 @@ class OnDemandInstance:
         return Running(self.instance_id, cold, timings)
 
     def _wait_ec2_ok(self, timeout_s: int) -> None:
+        # Both reachability checks, as ace-web's mobile runner always required: the
+        # instance_status_ok waiter alone ignores system status. One shared budget.
+        # A real m8i.xlarge took ~230 s from start to "ok" (2026-10-08), so the
+        # default budget is 420 s, not 180.
+        deadline = time.monotonic() + timeout_s
         self._wait("instance_status_ok", timeout_s)
+        self._wait("system_status_ok", max(5, int(deadline - time.monotonic())))
 
     def _wait_stopped(self, timeout_s: int) -> None:
         self._wait("instance_stopped", timeout_s)
@@ -96,7 +102,7 @@ class OnDemandInstance:
                 InstanceIds=[self.instance_id],
                 WaiterConfig={"Delay": 5, "MaxAttempts": max(1, timeout_s // 5)},
             )
-        except WaiterError as e:
+        except (WaiterError, ClientError) as e:
             raise OnDemandError(f"{waiter} wait failed for {self.instance_id}: {e}") from e
 
     def _wait_ready(self, timeout_s: int) -> None:
