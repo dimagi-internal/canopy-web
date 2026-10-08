@@ -1858,6 +1858,43 @@ def _chat_key_env(turn: dict) -> dict:
     return {"CANOPY_CHAT_KEY": key, "CANOPY_CHAT_SESSION": chat_id}
 
 
+SCOPED_TOKEN_ROOT = pathlib.Path.home() / ".canopy" / "scoped"
+_SCOPED_KEEP_SECONDS = 7 * 24 * 3600
+
+
+def _scoped_token_env(turn: dict) -> dict:
+    """A full-profile turn asked by someone who is not the agent's owner, an admin
+    or canopy (a `full:` rule, an editor) reaches canopy's MCP as its ASKER, not as
+    this box's PAT (who-is-asking phase 5, canopy-web#1332).
+
+    canopy hands such a turn a caller token (`scoped`) with the claim. The MCP
+    headers helper cannot read it from the environment — Claude Code strips
+    secret-looking variables — so it is written to `~/.canopy/scoped/turn/<id>.token`
+    (0600) and the helper finds it through CANOPY_SCOPED_TURN, a turn id, which is
+    not a secret. Once that variable is set the helper NEVER falls back to a PAT:
+    a missing file makes it send an invalid header. A write that fails refuses the
+    turn (ConfineError) rather than run it on the box's credential."""
+    token = str(turn.get("mcp_token") or "")
+    turn_id = str(turn.get("id") or "")
+    if not token:
+        return {}
+    if not _CHAT_ID.match(turn_id):
+        raise ConfineError("this turn's id is not a plain id, so its canopy token cannot be left")
+    d = SCOPED_TOKEN_ROOT / "turn"
+    try:
+        _write_private_text(d / f"{turn_id}.token", token)
+        now = time.time()
+        for old in d.glob("*.token"):
+            try:
+                if now - old.stat().st_mtime > _SCOPED_KEEP_SECONDS:
+                    old.unlink()
+            except OSError:
+                continue
+    except OSError as exc:
+        raise ConfineError(f"could not leave the session's canopy token: {exc}") from exc
+    return {"CANOPY_SCOPED_TURN": turn_id}
+
+
 def _write_private_text(path: pathlib.Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
@@ -4697,8 +4734,16 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # What this turn alone carries: its GitHub identity (first — the cwd's
             # own git pull needs it), its caller envelope and, for a chat, that
             # chat's key.
+            try:
+                scoped_env = _scoped_token_env(turn)
+            except ConfineError as exc:
+                _api("POST", f"/turns/{turn_id}/finish",
+                     {"status": "failed", "result_note": f"turn not run: {exc}"})
+                _log(f"turn {turn_id[:8]} NOT run — {exc}")
+                return
             per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
-                        **_chat_key_env(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV}
+                        **_chat_key_env(turn), **_lineage_env(turn), **scoped_env,
+                        **ONE_SHOT_TURN_ENV}
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(_turn_agent_slug(turn)))
