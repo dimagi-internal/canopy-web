@@ -463,6 +463,61 @@ def test_a_refusal_leaves_a_row_in_the_event_log(slack, linked, ws):
     assert event.kind == "slack.no_agent" and event.payload["user"] == ALICE
 
 
+def edited(text: str, *, user=ALICE, ts="1700000000.000100", channel_type="channel"):
+    """Slack's `message_changed`: the message as it now reads, under `message`."""
+    return event({"type": "message", "subtype": "message_changed", "channel": "C1",
+                  "channel_type": channel_type,
+                  "message": {"type": "message", "user": user, "text": text, "ts": ts,
+                              "edited": {"user": user, "ts": "1700000100.000000"}}})
+
+
+@pytest.fixture
+def eva(ws):
+    return Agent.objects.create(slug="eva", name="Eva", workspace=ws, slack_enabled=True)
+
+
+def test_editing_the_agent_into_a_refused_mention_asks_it(slack, linked, hal, eva):
+    mention(f"<@{BOT}> what's your email?")
+    assert not Turn.objects.exists()
+    edited(f"<@{BOT}> hal what's your email?")
+    turn = Turn.objects.get()
+    assert turn.chat_session.agent == hal and turn.prompt == "what's your email?"
+
+
+def test_a_refused_mention_is_retried_by_its_edit_only_once(slack, linked, hal, eva):
+    mention(f"<@{BOT}> what's your email?")
+    edited(f"<@{BOT}> hal what's your email?")
+    edited(f"<@{BOT}> hal what's your email address?")
+    assert Turn.objects.count() == 1
+
+
+def test_an_edit_that_still_names_no_agent_can_be_edited_again(slack, linked, hal, eva):
+    mention(f"<@{BOT}> what's your email?")
+    edited(f"<@{BOT}> what is your email?")
+    assert not Turn.objects.exists()
+    edited(f"<@{BOT}> hal what is your email?")
+    assert Turn.objects.count() == 1
+
+
+def test_an_edit_of_a_message_that_went_through_is_ignored(slack, linked, hal, eva):
+    mention(f"<@{BOT}> hal what's your email?")
+    edited(f"<@{BOT}> hal what's your email address?")
+    assert Turn.objects.count() == 1
+
+
+def test_an_edit_of_some_other_message_is_ignored(slack, linked, hal, eva):
+    mention(f"<@{BOT}> what's your email?")
+    edited(f"<@{BOT}> hal hi", ts="1700000999.000100")
+    edited(f"<@{BOT}> hal hi", user=BOB)
+    assert not Turn.objects.exists()
+
+
+def test_an_edit_that_drops_the_mention_is_ignored(slack, linked, hal, eva):
+    mention(f"<@{BOT}> what's your email?")
+    edited("hal what's your email?")
+    assert not Turn.objects.exists()
+
+
 def test_agent_not_turned_on_for_slack_is_unreachable(slack, linked, ws):
     Agent.objects.create(slug="hal", name="Hal", workspace=ws, slack_enabled=False)
     Agent.objects.create(slug="eva", name="Eva", workspace=ws, slack_enabled=True)

@@ -99,6 +99,50 @@ def _record(installation, inbound: services.Inbound, status: str, summary: str,
         logger.exception("could not record a Slack event")
 
 
+def _edit_from_event(body: dict) -> services.Inbound | None:
+    """An edited channel message, as the message it now is — or None.
+
+    Edits are otherwise ignored (see `_inbound_from_event`). This only reads
+    one; whether it is acted on is `_retry_refused_edit`'s call.
+    """
+    event = body.get("event") or {}
+    if event.get("type") != "message" or event.get("subtype") != "message_changed" \
+            or event.get("channel_type") not in ("channel", "group"):
+        return None
+    message = event.get("message") or {}
+    if message.get("bot_id"):
+        return None
+    return services.Inbound(
+        team_id=str(body.get("team_id") or event.get("team") or ""),
+        channel_id=str(event.get("channel") or ""),
+        slack_user_id=str(message.get("user") or ""),
+        text=str(message.get("text") or ""),
+        ts=str(message.get("ts") or ""),
+        thread_ts=str(message.get("thread_ts") or ""),
+    )
+
+
+def _retry_refused_edit(installation, edit: services.Inbound) -> bool:
+    """Should this edit be handled as a fresh mention? Once, and only to fix a no-agent refusal.
+
+    `@canopy what's my email?` with several agents on is refused for naming
+    none, and the obvious fix is to edit `hal` in. Slack sends that as
+    `message_changed`, which used to be dropped, so the corrected ask went
+    nowhere while looking sent (canopy-support, 2026-10-08). Only an edit of the
+    exact message canopy refused, still mentioning the bot, is retried — and the
+    refusal is consumed atomically, so a second edit of a message that did go
+    through can never ask the agent twice. A retry refused again re-records the
+    refusal, so the next edit gets its own try.
+    """
+    if not edit.ts or f"<@{installation.bot_user_id}>" not in edit.text:
+        return False
+    return bool(Event.objects.filter(
+        source="slack", kind=f"slack.{services.NO_AGENT}",
+        key=f"{services.NO_AGENT}:{edit.slack_user_id}:{edit.channel_id}",
+        payload__team=edit.team_id, payload__ts=edit.ts,
+    ).update(kind=f"slack.{services.NO_AGENT}.retried"))
+
+
 def _inbound_from_event(body: dict) -> services.Inbound | None:
     event = body.get("event") or {}
     kind = event.get("type")
@@ -151,13 +195,16 @@ def events(request: HttpRequest) -> HttpResponse:
         return JsonResponse({"ok": True})
     if str((body.get("event") or {}).get("type") or "") == "agent_session_stopped":
         return _stop_from_slack(body)
-    inbound = _inbound_from_event(body)
+    edit = _edit_from_event(body)
+    inbound = edit or _inbound_from_event(body)
     if inbound is None or not inbound.slack_user_id:
         return JsonResponse({"ok": True})
     installation = services.installation_for(inbound.team_id)
     if installation is None:
         # Nothing to reply with (no bot token) and no tenant to log against.
         logger.warning("slack event for a team with no installation: %s", inbound.team_id)
+        return JsonResponse({"ok": True})
+    if edit is not None and not _retry_refused_edit(installation, edit):
         return JsonResponse({"ok": True})
     if inbound.follow:
         # A reply that mentions the bot also arrives as `app_mention`, which
