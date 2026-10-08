@@ -421,7 +421,8 @@ def test_the_share_url_is_on_the_public_base_url(member, board, settings):
     prefix, minting a link that 404s; the base URL carries it."""
     settings.CANOPY_PUBLIC_BASE_URL = "https://labs.example.org/canopy"
     url = member.post(f"/api/storyboards/{board.slug}/share").json()["share_url"]
-    assert url.startswith("https://labs.example.org/canopy/storyboard/"), url
+    # Under the board's workspace like every artifact (canopy-web#1337).
+    assert url.startswith(f"https://labs.example.org/canopy/w/{board.workspace_id}/storyboard/"), url
     assert "?t=" in url
 
 
@@ -430,7 +431,7 @@ def test_the_share_url_has_no_prefix_when_served_at_root(member, board):
 
     set_script_prefix("/")
     url = member.post(f"/api/storyboards/{board.slug}/share").json()["share_url"]
-    assert "/storyboard/" in url and "/canopy/" not in url, url
+    assert f"/w/{board.workspace_id}/storyboard/" in url and "/canopy/" not in url, url
 
 
 def test_the_reviewer_surface_heading_is_not_a_copy_of_its_own_body(board, ws):
@@ -645,3 +646,13 @@ def test_notes_never_include_another_tenants_feedback_on_the_same_slug(member, b
                             workspace=board.workspace, body="Ours.")
     items = member.get(f"/api/storyboards/{board.slug}/notes").json()["items"]
     assert [i["body"] for i in items] == ["Ours."]
+
+
+def test_a_board_is_read_at_its_own_workspace_only(member, board, ws):
+    """The page is `/w/<ws>/storyboard/<slug>` (canopy-web#1337) and passes `ws`:
+    a board in another workspace is not at that address. Slugs are unique per
+    workspace, so `ws` also picks WHICH board a shared slug means."""
+    assert member.get(f"/api/storyboards/{board.slug}?ws={ws.slug}").status_code == 200
+    assert member.get(f"/api/storyboards/{board.slug}?ws=elsewhere").status_code == 404
+    narrative = f"/api/storyboards/{board.slug}/narratives/verified-monitoring"
+    assert member.get(f"{narrative}?ws=elsewhere").status_code == 404

@@ -68,8 +68,14 @@ export interface LeaveFeedbackIn {
   author_email?: string
 }
 
-function withToken(url: string, token?: string | null): string {
-  return token ? `${url}?t=${encodeURIComponent(token)}` : url
+/** `url` with the share token and the workspace the page's URL names. The API
+ * 404s a board that does not live in `ws` (canopy-web#1337). */
+function withToken(url: string, token?: string | null, ws?: string | null): string {
+  const q = new URLSearchParams()
+  if (token) q.set('t', token)
+  if (ws) q.set('ws', ws)
+  const qs = q.toString()
+  return qs ? `${url}?${qs}` : url
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -86,8 +92,12 @@ async function getJson<T>(url: string): Promise<T> {
   return resp.json() as Promise<T>
 }
 
-export function getStoryboard(slug: string, token?: string | null): Promise<Storyboard> {
-  return getJson(withToken(`/api/storyboards/${encodeURIComponent(slug)}`, token))
+export function getStoryboard(
+  slug: string,
+  token?: string | null,
+  ws?: string | null,
+): Promise<Storyboard> {
+  return getJson(withToken(`/api/storyboards/${encodeURIComponent(slug)}`, token, ws))
 }
 
 /** What came back. Members only — a 401/404 here just means "not yours". */
@@ -100,9 +110,10 @@ export async function leaveFeedback(
   slug: string,
   payload: LeaveFeedbackIn,
   token?: string | null,
+  ws?: string | null,
 ): Promise<{ created: number }> {
   const resp = await fetch(
-    apiUrl(withToken(`/api/storyboards/${encodeURIComponent(slug)}/feedback`, token)),
+    apiUrl(withToken(`/api/storyboards/${encodeURIComponent(slug)}/feedback`, token, ws)),
     {
       method: 'POST',
       credentials: 'same-origin',

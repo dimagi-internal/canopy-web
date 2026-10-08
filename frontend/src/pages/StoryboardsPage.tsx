@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useScopedPath } from '@/lib/scopedLinks'
 import { listStoryboards, type StoryboardListItem } from '@/api/storyboards'
 
 /**
@@ -9,7 +10,7 @@ import { listStoryboards, type StoryboardListItem } from '@/api/storyboards'
  * gated by its own token. Until this page existed the only way to find one
  * again was the API, so a board's share link lived wherever it was last
  * pasted. This is the member-side list; the board itself opens at
- * /storyboard/:slug, which a member reaches without the token.
+ * /w/:workspace/storyboard/:slug, which a member reaches without the token.
  */
 
 type LoadState =
@@ -77,6 +78,7 @@ export default function StoryboardsPage() {
 
 function StoryboardRow({ board }: { board: StoryboardListItem }) {
   const [copied, setCopied] = useState(false)
+  const scoped = useScopedPath()
 
   async function copyLink() {
     if (!board.share_url) return
@@ -94,7 +96,7 @@ function StoryboardRow({ board }: { board: StoryboardListItem }) {
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <Link
-            to={`/storyboard/${encodeURIComponent(board.slug)}`}
+            to={scoped(`/storyboard/${encodeURIComponent(board.slug)}`)}
             className="text-[15px] font-semibold text-foreground hover:underline"
           >
             {board.title}

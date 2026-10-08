@@ -8,6 +8,7 @@ import {
   type Storyboard,
 } from '@/api/storyboards'
 import { withBase } from '@/lib/basePath'
+import { useScopedPath } from '@/lib/scopedLinks'
 import { NoteComposer } from '@/components/storyboard/NoteComposer'
 import { NotesReturned, groupNotes } from '@/components/storyboard/NotesReturned'
 import { PublicHeader } from '@/components/PublicHeader'
@@ -34,7 +35,7 @@ type LoadState =
   | { kind: 'error'; message: string }
 
 export default function StoryboardPage() {
-  const { slug } = useParams()
+  const { slug, workspace } = useParams()
   const [params] = useSearchParams()
   const token = params.get('t')
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
@@ -46,7 +47,7 @@ export default function StoryboardPage() {
       return
     }
     setState({ kind: 'loading' })
-    getStoryboard(slug, token)
+    getStoryboard(slug, token, workspace)
       .then((data) => live && setState({ kind: 'ready', data }))
       .catch((e: Error) => {
         if (!live) return
@@ -304,6 +305,8 @@ function EntryCard({
   onExpand: () => void
   notes: Note[]
 }) {
+  const { workspace = '' } = useParams()
+  const scoped = useScopedPath()
   return (
     <article
       className={
@@ -386,7 +389,9 @@ function EntryCard({
           <div className="mt-0.5 flex flex-wrap items-center gap-3.5">
             {entry.published ? (
               <Link
-                to={`/narrative/${entry.narrative_slug}?b=${encodeURIComponent(board.slug)}${token ? `&t=${encodeURIComponent(token)}` : ''}`}
+                to={scoped(
+                  `/narrative/${entry.narrative_slug}?b=${encodeURIComponent(board.slug)}${token ? `&t=${encodeURIComponent(token)}` : ''}`,
+                )}
                 className="text-[12.5px] font-medium text-primary hover:underline"
               >
                 Read the scenes →
@@ -409,7 +414,7 @@ function EntryCard({
             seedText={entry.lede}
             defaults={{ narrative_slug: entry.narrative_slug, target_version: entry.version }}
             onSubmit={(payload) =>
-              leaveFeedback(board.slug, payload, token).then(() => undefined)
+              leaveFeedback(board.slug, payload, token, workspace).then(() => undefined)
             }
           />
         )}

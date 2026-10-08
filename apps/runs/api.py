@@ -107,11 +107,12 @@ def get_run(request: HttpRequest, run_id: str) -> RunPackageOut:
     auth=None,
     summary="Clean, shareable run release page (public via ?t=<share_token>)",
 )
-def get_run_release(request: HttpRequest, run_id: str) -> RunReleaseOut:
+def get_run_release(request: HttpRequest, run_id: str, ws: str = "") -> RunReleaseOut:
     """Anonymous-capable: the handler self-enforces access (workspace member OR a
     matching ``?t=`` share token) inside ``build_release`` — the middleware
-    allowlist only lets the request reach here."""
-    data = aggregate.build_release(run_id, request)
+    allowlist only lets the request reach here. ``ws`` is the workspace the
+    page's URL names (``/w/<ws>/ddd-release/…``); a run elsewhere 404s."""
+    data = aggregate.build_release(run_id, request, ws)
     if data is None:
         raise ProblemError(404, "Run not found", type_=TYPE_NOT_FOUND)
     return RunReleaseOut.model_validate(data)

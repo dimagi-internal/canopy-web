@@ -183,6 +183,9 @@ class RunReleaseOut(StrictModel):
     is_public: bool = False
     is_member: bool = False
     share_token: str | None = None
+    # Absolute, token-bearing `/w/<ws>/ddd-release/<narrative>/<run>?t=…` —
+    # only when the release is public.
+    share_url: str | None = None
     build_url: str | None = None
 
 

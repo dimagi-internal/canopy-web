@@ -27,8 +27,8 @@ import { currentSpecs, onPageActionsChanged, runPageAction } from './pageActions
  * creation and history, the context snapshot, and whether the panel is
  * actually pleasant to use.
  *
- * Mounted inside the authenticated shell only. Public surfaces (`/share/…`,
- * `/storyboard/…`, `/invite/…`) have no signed-in user to mint a token for,
+ * Mounted inside the authenticated shell only. Public surfaces
+ * (`/w/<ws>/share/…`, `/w/<ws>/storyboard/…`, `/invite/…`) have no signed-in user to mint a token for,
  * and a launcher on a chrome-less public viewer would be wrong anyway.
  */
 

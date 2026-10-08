@@ -60,9 +60,9 @@ def _allowlisted(path: str, method: str = "GET") -> bool:
 # Every surface mounted outside the app shell. A new one belongs here the day it
 # ships — being served while logged out is the entire point of a share link.
 PUBLIC_PATHS = [
-    "/storyboard/ecf-supply",
-    "/narrative/verified-monitoring",
-    "/ddd-release/verified-monitoring/verified-monitoring-2026-07-26-001",
+    "/w/connect/storyboard/ecf-supply",
+    "/w/connect/narrative/verified-monitoring",
+    "/w/connect/ddd-release/verified-monitoring/verified-monitoring-2026-07-26-001",
     "/w/connect/review/00000000-0000-0000-0000-000000000000/",
     "/w/connect/share/any-token",
     "/w/connect/walkthrough/00000000-0000-0000-0000-000000000000",
@@ -72,6 +72,9 @@ PUBLIC_PATHS = [
     "/review/00000000-0000-0000-0000-000000000000/",
     "/share/any-token",
     "/walkthrough/00000000-0000-0000-0000-000000000000",
+    "/storyboard/ecf-supply",
+    "/narrative/verified-monitoring",
+    "/ddd-release/verified-monitoring/verified-monitoring-2026-07-26-001",
     "/invite/any-token",
     "/api/storyboards/ecf-supply",
     "/api/storyboards/ecf-supply/narratives/verified-monitoring",
@@ -98,7 +101,9 @@ GATED_PATHS = [
     "/sessions",
     "/w/dimagi",
     "/w/dimagi/walkthroughs",
+    "/w/dimagi/storyboards",
     "/w/dimagi/agents",
+    "/w/dimagi/ddd/verified-monitoring",
     "/ddd/verified-monitoring",
     "/api/walkthroughs/",
     "/api/reviews/",
@@ -118,6 +123,7 @@ def test_an_authenticated_surface_is_not_allowlisted(path):
 
 def test_the_ddd_console_is_gated_even_though_ddd_release_is_public():
     """A prefix check that was too loose here would expose the operator console."""
-    assert _allowlisted("/ddd-release/x/y")
+    assert _allowlisted("/w/connect/ddd-release/x/y")
     assert not _allowlisted("/ddd/x")
+    assert not _allowlisted("/w/connect/ddd/x/y")
     assert not _allowlisted("/api/ddd/narratives/x/")

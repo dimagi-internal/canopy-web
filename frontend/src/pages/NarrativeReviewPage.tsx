@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams, Link } from 'react-router-dom'
 import { apiUrl } from '@/api/base'
+import { useScopedPath } from '@/lib/scopedLinks'
 import { leaveFeedback, type Capability } from '@/api/storyboards'
 import { NoteComposer } from '@/components/storyboard/NoteComposer'
 import { PublicHeader } from '@/components/PublicHeader'
@@ -45,7 +46,7 @@ type LoadState =
   | { kind: 'error'; message: string }
 
 export default function NarrativeReviewPage() {
-  const { slug } = useParams()
+  const { slug, workspace } = useParams()
   const [params] = useSearchParams()
   const token = params.get('t')
   const board = params.get('b')
@@ -58,7 +59,11 @@ export default function NarrativeReviewPage() {
       return
     }
     setState({ kind: 'loading' })
-    const q = token ? `?t=${encodeURIComponent(token)}` : ''
+    // `ws`: the workspace this page's URL names — a board elsewhere 404s.
+    const qp = new URLSearchParams()
+    if (token) qp.set('t', token)
+    if (workspace) qp.set('ws', workspace)
+    const q = qp.toString() ? `?${qp}` : ''
     fetch(
       apiUrl(
         `/api/storyboards/${encodeURIComponent(board)}/narratives/${encodeURIComponent(slug)}${q}`,
@@ -75,7 +80,7 @@ export default function NarrativeReviewPage() {
     return () => {
       live = false
     }
-  }, [slug, board, token])
+  }, [slug, board, token, workspace])
 
   if (state.kind === 'loading') return <Centered>Loading…</Centered>
   if (state.kind === 'not_found')
@@ -129,6 +134,8 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
   const cut = pairs.filter((p) => p.status === 'removed').length
   const moved = edited + added + cut
   const q = token ? `?t=${encodeURIComponent(token)}` : ''
+  const { workspace = '' } = useParams()
+  const scoped = useScopedPath()
 
   // A cut scene is history, not part of the story being read. Numbering it
   // alongside the others made scene 4 read as scene 5 and made the footer
@@ -150,7 +157,7 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
       <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
           <Link
-            to={`/storyboard/${data.storyboard_slug}${q}`}
+            to={scoped(`/storyboard/${data.storyboard_slug}${q}`)}
             className="text-[12.5px] font-medium text-primary hover:underline"
           >
             ← {data.storyboard_title}
@@ -293,7 +300,7 @@ function Review({ data, token }: { data: NarrativeRead; token: string | null }) 
                   anchor_id: pair.id ?? '',
                 }}
                 onSubmit={(payload) =>
-                  leaveFeedback(data.storyboard_slug, payload, token).then(() => undefined)
+                  leaveFeedback(data.storyboard_slug, payload, token, workspace).then(() => undefined)
                 }
               />
             </section>

@@ -161,6 +161,8 @@ export interface DddRunRelease {
   is_public: boolean
   is_member: boolean
   share_token: string | null
+  /** Absolute `/w/<ws>/ddd-release/<narrative>/<run>?t=…`; null unless public. */
+  share_url?: string | null
   build_url: string | null
 }
 
@@ -267,9 +269,17 @@ export function getRun(runId: string): Promise<DddRunPackage> {
  * admitted; members are recognised by their session cookie and `token` is
  * unnecessary.
  */
-export function getRelease(runId: string, token?: string | null): Promise<DddRunRelease> {
-  const q = token ? `?t=${encodeURIComponent(token)}` : ''
-  return getJson(`/api/ddd/release/${encodeURIComponent(runId)}/${q}`)
+export function getRelease(
+  runId: string,
+  token?: string | null,
+  ws?: string | null,
+): Promise<DddRunRelease> {
+  // `ws` is the workspace the page's URL names; the API 404s a run elsewhere.
+  const q = new URLSearchParams()
+  if (token) q.set('t', token)
+  if (ws) q.set('ws', ws)
+  const qs = q.toString()
+  return getJson(`/api/ddd/release/${encodeURIComponent(runId)}/${qs ? `?${qs}` : ''}`)
 }
 
 /** Delete a single run: its walkthroughs + reviews (best-effort Drive cleanup). */

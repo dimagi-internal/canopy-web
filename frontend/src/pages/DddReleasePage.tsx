@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { getRelease, type DddRunRelease, type DddLink } from '@/api/ddd'
 import { withBase } from '@/lib/basePath'
@@ -20,7 +20,7 @@ type LoadState =
   | { kind: 'error'; message: string }
 
 export default function DddReleasePage() {
-  const { runId } = useParams()
+  const { runId, workspace } = useParams()
   const [params] = useSearchParams()
   const token = params.get('t')
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
@@ -32,7 +32,7 @@ export default function DddReleasePage() {
       return
     }
     setState({ kind: 'loading' })
-    getRelease(runId, token)
+    getRelease(runId, token, workspace)
       .then((data) => live && setState({ kind: 'ready', data }))
       .catch((e: Error) => {
         if (!live) return
@@ -272,12 +272,9 @@ function CopyShare({ url }: { url: string }) {
   )
 }
 
-/** The absolute, tokened share URL for this release (only when public). */
+/** The absolute, tokened share URL for this release (only when public). The
+ * server builds it — `/w/<ws>/ddd-release/…`, under the run's workspace
+ * (canopy-web#1337) — so the page never assembles an address itself. */
 function useShareUrl(data: DddRunRelease): string | null {
-  return useMemo(() => {
-    if (!data.is_public || !data.share_token) return null
-    const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
-    const path = `/ddd-release/${data.narrative_slug}/${data.run_id}`
-    return `${window.location.origin}${base}${path}?t=${data.share_token}`
-  }, [data.is_public, data.share_token, data.narrative_slug, data.run_id])
+  return data.is_public ? (data.share_url ?? null) : null
 }

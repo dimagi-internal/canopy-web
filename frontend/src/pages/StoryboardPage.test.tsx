@@ -62,12 +62,12 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
   }
 }
 
-function renderAt(url = '/storyboard/ecf-supply?t=tok') {
+function renderAt(url = '/w/connect/storyboard/ecf-supply?t=tok') {
   return render(
     <MemoryRouter initialEntries={[url]}>
       <ThemeProvider>
       <Routes>
-        <Route path="/storyboard/:slug" element={<StoryboardPage />} />
+        <Route path="/w/:workspace/storyboard/:slug" element={<StoryboardPage />} />
       </Routes>
       </ThemeProvider>
     </MemoryRouter>,
@@ -93,10 +93,10 @@ describe('StoryboardPage', () => {
     expect(container.textContent).not.toMatch(/\bACT\b/i)
   })
 
-  it('passes the share token through to the API', async () => {
+  it('passes the share token and the workspace through to the API', async () => {
     getStoryboard.mockResolvedValue(board())
-    renderAt('/storyboard/ecf-supply?t=secret')
-    await waitFor(() => expect(getStoryboard).toHaveBeenCalledWith('ecf-supply', 'secret'))
+    renderAt('/w/connect/storyboard/ecf-supply?t=secret')
+    await waitFor(() => expect(getStoryboard).toHaveBeenCalledWith('ecf-supply', 'secret', 'connect'))
   })
 
   it('shows an unbuilt narrative as being built rather than hiding it', async () => {

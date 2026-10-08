@@ -162,6 +162,24 @@ def test_release_member_gets_internal_affordances(db, owner):
     body = resp.json()
     assert body["is_member"] is True
     assert body["is_public"] is False
-    assert body["build_url"] == f"/ddd/demo/{RUN_ID}"
+    assert body["build_url"] == f"/w/dimagi/ddd/demo/{RUN_ID}"
     # Private artifact → tokenless stream URL (session auth covers it).
     assert body["video"]["content_url"].endswith("/content")
+
+
+@override_settings(REQUIRE_AUTH=True, CANOPY_PUBLIC_BASE_URL="https://canopy.example.org")
+def test_release_page_lives_under_its_workspace(db, owner):
+    """The release page is `/w/<ws>/ddd-release/…` (canopy-web#1337): the API
+    hands out that address, and answers only the page that names the run's own
+    workspace — the flat `/ddd-release/…` is a 404."""
+    _hero(owner, visibility="private")
+    _rev(owner)
+    aggregate.set_narrative_visibility("demo", "link")
+    token = Walkthrough.objects.get(run_id=RUN_ID).share_token
+
+    body = Client().get(f"/api/ddd/release/{RUN_ID}/?t={token}&ws=dimagi").json()
+    assert body["share_url"] == f"https://canopy.example.org/w/dimagi/ddd-release/demo/{RUN_ID}?t={token}"
+    assert Client().get(f"/api/ddd/release/{RUN_ID}/?t={token}&ws=connect").status_code == 404
+
+    page = Client().get(f"/ddd-release/demo/{RUN_ID}?t={token}")
+    assert page.status_code == 404 and "Location" not in page

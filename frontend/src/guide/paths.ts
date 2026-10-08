@@ -48,7 +48,7 @@ export const USER_ROLES: UserRole[] = [
     enforcement: 'No account at all. The only genuinely read-only tier.',
     startHere: 'Open the link. That is the whole of it.',
     surfaces: [
-      '/storyboard/:slug', '/narrative/:slug', '/w/:workspace/walkthrough/:id', '/w/:workspace/share/:token',
+      '/w/:workspace/storyboard/:slug', '/w/:workspace/narrative/:slug', '/w/:workspace/walkthrough/:id', '/w/:workspace/share/:token',
     ],
     note:
       'Storyboards, narratives, demo walkthroughs and shared transcripts are all readable ' +

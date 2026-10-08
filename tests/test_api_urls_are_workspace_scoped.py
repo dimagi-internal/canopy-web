@@ -110,9 +110,16 @@ def seeded():
         agent=agent, origin=Turn.ORIGIN_API, idempotency_key="t1", status="done",
         session_slug=session.slug, share_token=share,
     )
+    # A storyboard (the shared arc) with its share link minted.
+    from apps.storyboards.models import Act, Entry, Storyboard
+
+    board = Storyboard.objects.create(slug="arc", title="Arc", workspace=ws)
+    act = Act.objects.create(storyboard=board, title="One", position=0)
+    Entry.objects.create(act=act, narrative_slug=SLUG, position=0)
+    board.ensure_share_token()
     # An owner reads every turn's content (apps/harness/turn_access.py).
     M.objects.filter(workspace=ws, user=owner).update(role=M.OWNER)
-    return {"owner": owner, "review": review, "share": share}
+    return {"owner": owner, "review": review, "share": share, "board": board}
 
 
 def _member(owner) -> Client:
@@ -136,6 +143,10 @@ def _reads(seeded):
         ("shared sessions", member, f"/api/w/{WS}/sessions/"),
         ("timeline", member, f"/api/w/{WS}/timeline/"),
         ("agent turns", member, "/api/agents/echo/turns/"),
+        ("storyboards", member, f"/api/w/{WS}/storyboards/"),
+        ("storyboard, guest", guest, f"/api/storyboards/arc?t={seeded['board'].share_token}&ws={WS}"),
+        ("release, member", member, f"/api/ddd/release/{RUN}/"),
+        ("release, guest", guest, f"/api/ddd/release/{RUN}/?t=tok-run&ws={WS}"),
     ]
 
 
@@ -149,7 +160,7 @@ def test_every_read_hands_out_only_scoped_links(seeded):
         assert _unscoped(body) == [], label
     # The walk found the links it exists to check — a schema rename that left
     # it looking at nothing would otherwise pass silently.
-    assert seen >= 15, seen
+    assert seen >= 20, seen
 
 
 def test_walkthrough_detail_hands_out_only_scoped_links(seeded):
@@ -217,3 +228,17 @@ def test_a_turns_transcript_link_is_under_the_workspace_it_was_shared_from(seede
     """The Turns card used to build `/share/<token>` itself."""
     item = _member(seeded["owner"]).get("/api/agents/echo/turns/").json()["items"][0]
     assert item["share_url"] == f"{PUBLIC}/w/{WS}/share/{seeded['share']}"
+
+
+def test_the_shared_arc_and_release_links_are_scoped(seeded):
+    """The storyboard's share link (list, mint, re-mint) and the release page's
+    own address are `/w/<ws>/…` — the flat /storyboard/ and /ddd-release/ are a
+    plain 404 (canopy-web#1337)."""
+    member = _member(seeded["owner"])
+    for resp in (member.post("/api/storyboards/arc/share"),
+                 member.post("/api/storyboards/arc/rotate-token")):
+        assert resp.status_code == 200, resp.content
+        url = resp.json()["share_url"]
+        assert url.startswith(f"{PUBLIC}/w/{WS}/storyboard/arc?t="), url
+    release = Client().get(f"/api/ddd/release/{RUN}/?t=tok-run&ws={WS}").json()
+    assert release["share_url"] == f"{PUBLIC}/w/{WS}/ddd-release/{SLUG}/{RUN}?t=tok-run"

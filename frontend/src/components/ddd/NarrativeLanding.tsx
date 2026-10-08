@@ -64,13 +64,14 @@ function RunCard({
   onDeleted: () => void
 }) {
   const navigate = useNavigate()
+  const scoped = useScopedPath()
   const [busy, setBusy] = useState(false)
   const href = `/ddd/${encodeURIComponent(slug)}/${encodeURIComponent(run.run_id)}`
   // The clean, shareable RELEASE (summary) page for this run. Offered only when
   // the run rendered something (video/deck) that the release page can show.
   const hasSummary = run.has_video || run.has_deck
   const summaryHref = withBase(
-    `/ddd-release/${encodeURIComponent(slug)}/${encodeURIComponent(run.run_id)}`,
+    scoped(`/ddd-release/${encodeURIComponent(slug)}/${encodeURIComponent(run.run_id)}`),
   )
 
   async function onDelete(e: React.MouseEvent) {
