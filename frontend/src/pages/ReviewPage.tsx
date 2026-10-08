@@ -8,6 +8,7 @@ import {
   suggestReview,
   submitFindingsReview,
   type ReviewDetail,
+  type ReviewPinnedVideo,
   type ReviewSuggestion,
   type ReviewDecision,
   type ReviewSceneActionability,
@@ -1047,6 +1048,59 @@ function ReviewCut({ walkthroughId }: { walkthroughId: string }) {
   )
 }
 
+/** A recorded narrative's cuts, each video beside the words it speaks
+ *  (canopy-web#1288). The words are the LIVE scenes, so an edit made on the
+ *  Narrative tab shows here too. A cut the reader may not play (a private video,
+ *  a guest) still appears — the reviewer should know it exists and why it will
+ *  not play. */
+export function CutVideos({
+  cuts,
+  scenes,
+}: {
+  cuts: ReviewPinnedVideo[]
+  scenes: Array<{ id: string; title: string; narration: string; deleted: boolean }>
+}) {
+  const byId = new Map(scenes.filter((s) => !s.deleted).map((s) => [s.id, s]))
+  return (
+    <div className="space-y-8">
+      {cuts.map((cut, i) => {
+        const words = cut.scene_ids.map((id) => byId.get(id)).filter((s) => s !== undefined)
+        return (
+          <section key={cut.cut_id || cut.walkthrough_id} aria-label={cut.title}>
+            <h2 className="text-sm font-semibold text-foreground mb-2">
+              <span className="text-muted-foreground tabular-nums mr-2">{i + 1}.</span>
+              {cut.title}
+            </h2>
+            <div className="grid gap-4 md:grid-cols-[3fr_2fr]">
+              <div className="rounded-lg border border-input bg-black overflow-hidden">
+                {cut.video_url ? (
+                  <video
+                    src={withBase(cut.video_url)}
+                    controls
+                    preload="metadata"
+                    className="w-full max-h-[50vh] bg-black"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-40 px-4 text-center text-muted-foreground text-sm bg-card">
+                    This cut is private: only members of its workspace can watch it.
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2 text-sm text-foreground-secondary">
+                {words.length > 0 ? (
+                  words.map((s) => <p key={s.id}>{s.narration}</p>)
+                ) : (
+                  <p className="text-muted-foreground">No narration matches this cut's scenes.</p>
+                )}
+              </div>
+            </div>
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
 function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }: ReviewEditorInnerProps) {
   const {
     state,
@@ -1270,6 +1324,8 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
   // are NOT gated on filling in the gate decisions.
   const canSubmit = !busy && (canSuggest || decisions.every((d) => !!choices[d.id]))
 
+  const cutVideos = review.cut_videos ?? []
+
   // Video embed
   let videoElement: React.ReactNode = null
   if (req.video?.walkthrough_id) {
@@ -1277,6 +1333,11 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
   } else if (req.video?.url) {
     videoElement = (
       <video src={withBase(req.video.url)} controls className="w-full max-h-[60vh] bg-black" />
+    )
+  } else if (review.version_video?.video_url) {
+    // The version's own video, uploaded after the review was posted.
+    videoElement = (
+      <video src={withBase(review.version_video.video_url)} controls className="w-full max-h-[60vh] bg-black" />
     )
   } else {
     videoElement = (
@@ -1372,7 +1433,10 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
       </div>
 
       {/* Cuts tab — the rendered demo cut; kept off the main view so it isn't distracting */}
-      {tab === 'cuts' && (
+      {tab === 'cuts' && cutVideos.length > 0 && (
+        <CutVideos cuts={cutVideos} scenes={effectiveScenes} />
+      )}
+      {tab === 'cuts' && cutVideos.length === 0 && (
         <section>
           <h2 className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider mb-2">
             Current cut

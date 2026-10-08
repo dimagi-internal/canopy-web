@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from uuid import UUID
 
 from django.conf import settings
@@ -54,6 +55,8 @@ FILENAME_BY_KIND: dict[str, str] = {"html": "slideshow.html", "video": "video.mp
 # artifacts (deck/clip) and non-DDD walkthrough-share uploads carry neither of
 # these roles and are unaffected.
 _NARRATIVE_REQUIRED_ROLES = {Walkthrough.ROLE_HERO_VIDEO, Walkthrough.ROLE_DOCS}
+# A recorded narrative's cut id — the recipe's kebab-case cuts[].id.
+_CUT_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,100}")
 
 
 def _require_enabled() -> None:
@@ -111,6 +114,7 @@ def _detail_payload(w: Walkthrough, *, is_owner: bool, request: HttpRequest) -> 
         "run_id": w.run_id,
         "narrative_slug": w.narrative_slug,
         "role": w.role,
+        "cut_id": w.cut_id,
         "created_at": w.created_at,
         "updated_at": w.updated_at,
         "share_url": _share_url(request, w) if is_owner else None,
@@ -131,6 +135,7 @@ def _list_item_payload(w: Walkthrough) -> dict:
         "run_id": w.run_id,
         "narrative_slug": w.narrative_slug,
         "role": w.role,
+        "cut_id": w.cut_id,
         "created_at": w.created_at,
         "updated_at": w.updated_at,
     }
@@ -199,6 +204,8 @@ def upload_walkthrough(
     narrative_slug: str = Form(""),
     role: str = Form(""),
     narrative_review_id: str = Form(""),
+    cut_id: str = Form(""),
+    cut_scene_ids: str = Form(""),
 ) -> Status:
     _require_enabled()
 
@@ -234,6 +241,29 @@ def upload_walkthrough(
             resolved_review_id = UUID(narrative_review_id.strip())
         except ValueError:
             resolved_review_id = None
+
+    # One cut of a recorded narrative (canopy-web#1288): the recipe's cuts[].id,
+    # plus the scene ids it plays (comma-separated). A cut only means something
+    # on a narrative version, so it needs the version stamp — without it the
+    # video could hang off nothing and would silently never show.
+    resolved_cut_id = cut_id.strip()
+    resolved_cut_scene_ids = [s.strip() for s in cut_scene_ids.split(",") if s.strip()]
+    if resolved_cut_id:
+        if not _CUT_ID_RE.fullmatch(resolved_cut_id):
+            raise ProblemError(
+                422, "Invalid cut id", type_=TYPE_VALIDATION,
+                detail="cut_id must be 1-100 letters, digits, '.', '_' or '-' (the recipe's cuts[].id)",
+            )
+        if kind != "video" or resolved_review_id is None:
+            raise ProblemError(
+                422, "Cut needs a narrative version", type_=TYPE_VALIDATION,
+                detail="a cut is a video pinned to a narrative version: send kind=video and narrative_review_id",
+            )
+    elif resolved_cut_scene_ids:
+        raise ProblemError(
+            422, "Scene ids without a cut", type_=TYPE_VALIDATION,
+            detail="cut_scene_ids names the scenes of a cut; send cut_id with it",
+        )
 
     # Backstop guard: refuse to publish a terminal DDD package artifact
     # (hero_video / docs) for a narrative that has no story-bearing version —
@@ -292,6 +322,8 @@ def upload_walkthrough(
         narrative_slug=resolved_narrative_slug,
         role=resolved_role,
         narrative_review_id=resolved_review_id,
+        cut_id=resolved_cut_id,
+        cut_scene_ids=resolved_cut_scene_ids,
         drive_file_id="",
         drive_folder_id="",
         content_type=content_type,

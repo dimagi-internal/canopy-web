@@ -78,7 +78,7 @@ uv run python manage.py create_token --email ace@dimagi-ai.com --label "canopy p
 
 ### Walkthroughs
 - `GET /api/walkthroughs/` — List. Filters: `?project=<slug>`, `?kind=html|video`, `?mine=true`
-- `POST /api/walkthroughs/` — Upload (multipart). Fields: `file`, `title`, `kind` (html|video), optional `description`, `project_slug`, `visibility` (`private` | `link`; `link` mints a share token)
+- `POST /api/walkthroughs/` — Upload (multipart). Fields: `file`, `title`, `kind` (html|video), optional `description`, `project_slug`, `visibility` (`private` | `link`; `link` mints a share token). A video pinned to a narrative version (`narrative_review_id`) may name the **cut** it is (`cut_id` = the recipe's `cuts[].id`, `cut_scene_ids` = the comma-separated narration ids it plays): a `style: recorded` narrative holds one video per cut, latest upload per cut wins, and a cut without a version stamp is a 422 (canopy-web#1288)
 - `GET /api/walkthroughs/<uuid>/` — Detail. `auth=None`: public (`visibility=link`) walkthroughs require `?t=<share_token>` for anonymous read — a missing/wrong token 404s, same as private (no existence leak). `is_owner` flag tells the UI which toolbar to render; owners additionally get `share_url` (the absolute `.../walkthrough/<uuid>?t=<token>` link)
 - `PATCH /api/walkthroughs/<uuid>/` — Owner-only update of title/description/project_slug/visibility. Flipping to `link` mints a token if none exists; flipping to `private` keeps the existing token (re-publishing later revives the same link)
 - `DELETE /api/walkthroughs/<uuid>/` — Owner-only. Deletes Drive file and the row
@@ -110,7 +110,7 @@ Reviews are tokenless. `visibility=link` reviews are readable by anyone with the
 
 ### DDD runs (`apps/runs`, mounted at `/api/ddd`)
 - `GET /api/ddd/narratives/` — List DDD narratives
-- `GET /api/ddd/narratives/{slug}/` — Get a narrative + its runs (grouped by version)
+- `GET /api/ddd/narratives/{slug}/` — Get a narrative + its runs (grouped by version). Each version carries `cuts` (one per recorded cut, in narration order) beside its hero `video_url`; the hero is the version's non-cut video, else a cut uploaded as `role=hero_video`, else the first cut (`apps/walkthroughs/pinned.py`). `GET /api/reviews/{id}/` carries the same as `version_video` + `cut_videos`, with each URL playable by THAT reader (a guest gets a public cut's own token URL and no URL for a private one)
 - `GET /api/ddd/runs/{run_id}/` — Get a run package (video + deck + narrative + links)
 - `GET /api/ddd/release/{run_id}/` — Public run-release read (`auth=None`; workspace member OR `?t=<share_token>`) — backs the chrome-less `/ddd-release` page
 - `PATCH /api/ddd/narratives/{slug}/visibility/` — Set Public/Private for an entire narrative; cascades visibility to every walkthrough + review under the slug (auth required). The narrative detail response carries a computed `visibility` (`public` / `private` / `mixed`)

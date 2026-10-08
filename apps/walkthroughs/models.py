@@ -49,7 +49,16 @@ class Walkthrough(models.Model):
     # plugin at upload; lets a run link to its exact story version instead of
     # being matched by run_id. Null for one-off / legacy uploads.
     narrative_review_id = models.UUIDField(blank=True, null=True, db_index=True)
-    owner = models.ForeignKey(
+    # One cut of a `style: recorded` narrative (canopy#796): the recipe's
+    # ``cuts[].id``. A recorded narrative renders one mp4 per cut, so a version
+    # holds one video PER CUT rather than one video — re-uploading a cut id
+    # replaces that cut's video (latest wins). Blank for every other upload.
+    # The cuts live only in canopy's recipe, never on canopy-web, so the upload
+    # also carries the cut's scene ids (the narration item ids it plays, in
+    # order): that is how the review page puts each video next to its words.
+    cut_id = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    cut_scene_ids = models.JSONField(default=list, blank=True)
+    owner =models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name="walkthroughs",

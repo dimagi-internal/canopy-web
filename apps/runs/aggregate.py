@@ -21,6 +21,7 @@ from apps.runs.ddd import (
 )
 from apps.reviews.models import ReviewRequest
 from apps.reviews.titles import narrative_title, phase_words
+from apps.walkthroughs import pinned
 from apps.walkthroughs.models import Walkthrough
 
 # ---------------------------------------------------------------------------
@@ -180,6 +181,18 @@ def _content_url(w: Walkthrough) -> str:
 
 def _viewer_url(w: Walkthrough) -> str:
     return _tok(f"/walkthrough/{w.id}", w)
+
+
+def _cut_payload(w: Walkthrough) -> dict:
+    """One recorded-narrative cut's video (canopy-web#1288)."""
+    return {
+        "cut_id": w.cut_id,
+        "title": pinned.cut_title(w),
+        "scene_ids": list(w.cut_scene_ids or []),
+        "walkthrough_id": w.id,
+        "video_url": _content_url(w),
+        "video_viewer_url": _viewer_url(w),
+    }
 
 
 def _artifact_payload(w: Walkthrough | None) -> dict | None:
@@ -789,17 +802,17 @@ def build_narrative(
     # version's review id (``narrative_review_id``) belongs to that exact story
     # version — so a later narration edit can't leave a stale video on a newer
     # version. Queried separately from ``wts`` above (which is run-scoped); a
-    # narrative-version video may carry no run_id. Ascending order → latest wins.
-    video_by_review: dict[str, Walkthrough] = {}
-    if versions:
-        for w in _scope(
-            Walkthrough.objects.filter(
-                kind=Walkthrough.KIND_VIDEO,
-                narrative_review_id__in=[r.id for r in versions],
-            ),
-            workspace_slugs,
-        ).order_by("created_at"):
-            video_by_review[str(w.narrative_review_id)] = w
+    # narrative-version video may carry no run_id. A recorded narrative pins one
+    # video PER CUT; ``pinned.resolve`` picks the hero and orders the cuts.
+    pinned_rows = pinned.pinned_video_rows(
+        [r.id for r in versions], _scope(Walkthrough.objects.all(), workspace_slugs)
+    )
+    pinned_by_review = {
+        str(r.id): pinned.resolve(
+            pinned_rows.get(str(r.id), []), (r.request_json or {}).get("narration")
+        )
+        for r in versions
+    }
 
     # Resolve which version each run rendered.
     def _version_review_for(run_id) -> ReviewRequest | None:
@@ -829,7 +842,8 @@ def build_narrative(
     versions_payload = []
     for r in reversed(versions):  # newest version first
         np = _narrative_payload(r)
-        vid = video_by_review.get(str(r.id))
+        pv = pinned_by_review[str(r.id)]
+        vid = pv.hero
         versions_payload.append(
             {
                 "version": r.version,
@@ -842,6 +856,7 @@ def build_narrative(
                 "status": r.status,
                 "video_url": _content_url(vid) if vid else None,
                 "video_viewer_url": _viewer_url(vid) if vid else None,
+                "cuts": [_cut_payload(w) for w in pv.cuts],
                 "runs": _sorted_runs(buckets.get(str(r.id), [])),
             }
         )
@@ -864,7 +879,8 @@ def build_narrative(
     current_payload = None
     if current is not None:
         cp = _narrative_payload(current)
-        cvid = video_by_review.get(cp["review_id"])
+        cpv = pinned_by_review[cp["review_id"]]
+        cvid = cpv.hero
         current_payload = {
             "review_id": cp["review_id"],
             "version": cp["version"],
@@ -872,6 +888,7 @@ def build_narrative(
             "story": cp["story"],
             "video_url": _content_url(cvid) if cvid else None,
             "video_viewer_url": _viewer_url(cvid) if cvid else None,
+            "cuts": [_cut_payload(w) for w in cpv.cuts],
         }
 
     return {

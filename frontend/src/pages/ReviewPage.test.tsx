@@ -233,3 +233,48 @@ describe('groupScenesByCut', () => {
     expect(g[0].cut).toBeNull()
   })
 })
+
+describe('ReviewPage — the Cuts tab of a recorded narrative (canopy-web#1288)', () => {
+  const cut = (over: Record<string, unknown>) => ({
+    cut_id: 'register',
+    title: 'Cut 1 · Register',
+    scene_ids: ['s1', 's2'],
+    walkthrough_id: 'w1',
+    video_url: '/walkthrough/w1/content?t=pub',
+    ...over,
+  })
+
+  it('shows a guest every cut, each video beside its own narration', async () => {
+    auth.status = 'anonymous'
+    review.current = detail({
+      cut_videos: [
+        cut({}),
+        cut({ cut_id: 'decide', title: 'Cut 2 · Decide', scene_ids: ['s3'], walkthrough_id: 'w2', video_url: null }),
+      ],
+    } as Partial<ReviewDetail>)
+    const { container } = renderAt('/review/r1/?t=tok&tab=cuts')
+    const register = await screen.findByRole('region', { name: 'Cut 1 · Register' })
+    expect(register.querySelector('video')?.getAttribute('src')).toContain('/walkthrough/w1/content?t=pub')
+    expect(register.textContent).toContain('Register waterpoints.')
+    expect(register.textContent).toContain('Correct the ward.')
+    expect(register.textContent).not.toContain('Decide where dispensers go.')
+
+    // A private cut is listed — with its words — but offers nothing to play.
+    const decide = screen.getByRole('region', { name: 'Cut 2 · Decide' })
+    expect(decide.querySelector('video')).toBeNull()
+    expect(decide.textContent).toContain('only members of its workspace')
+    expect(decide.textContent).toContain('Decide where dispensers go.')
+    expect(container.querySelectorAll('video')).toHaveLength(1)
+    expect(screen.queryByText('No cut available yet')).toBeNull()
+  })
+
+  it("falls back to the version's own video when there are no cuts", async () => {
+    auth.status = 'anonymous'
+    review.current = detail({
+      version_video: cut({ cut_id: '', title: 'Hero', video_url: '/walkthrough/w9/content?t=h' }),
+    } as Partial<ReviewDetail>)
+    const { container } = renderAt('/review/r1/?t=tok&tab=cuts')
+    await waitFor(() => expect(container.querySelector('video')).toBeTruthy())
+    expect(container.querySelector('video')?.getAttribute('src')).toContain('/walkthrough/w9/content?t=h')
+  })
+})
