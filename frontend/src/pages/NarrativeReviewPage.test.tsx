@@ -44,10 +44,10 @@ const payload = (over: Record<string, unknown> = {}) => ({
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={['/narrative/verified-monitoring?b=rf-surveys&t=tok']}>
+    <MemoryRouter initialEntries={['/w/connect/narrative/verified-monitoring?b=rf-surveys&t=tok']}>
       <ThemeProvider>
       <Routes>
-        <Route path="/narrative/:slug" element={<NarrativeReviewPage />} />
+        <Route path="/w/:workspace/narrative/:slug" element={<NarrativeReviewPage />} />
       </Routes>
       </ThemeProvider>
     </MemoryRouter>,

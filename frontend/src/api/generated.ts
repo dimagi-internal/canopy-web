@@ -689,6 +689,7 @@ export interface paths {
         /**
          * Read a storyboard (public via ?t=<share_token>)
          * @description Anonymous-capable; the handler self-enforces. See the module docstring.
+         *     `ws` is the workspace the page's URL names; a board elsewhere 404s.
          */
         readonly get: operations["get_storyboard"];
         readonly put?: never;
@@ -1539,7 +1540,8 @@ export interface paths {
          * Clean, shareable run release page (public via ?t=<share_token>)
          * @description Anonymous-capable: the handler self-enforces access (workspace member OR a
          *     matching ``?t=`` share token) inside ``build_release`` — the middleware
-         *     allowlist only lets the request reach here.
+         *     allowlist only lets the request reach here. ``ws`` is the workspace the
+         *     page's URL names (``/w/<ws>/ddd-release/…``); a run elsewhere 404s.
          */
         readonly get: operations["get_run_release"];
         readonly put?: never;
@@ -9221,6 +9223,8 @@ export interface components {
             readonly is_member: boolean;
             /** Share Token */
             readonly share_token?: string | null;
+            /** Share Url */
+            readonly share_url?: string | null;
             /** Build Url */
             readonly build_url?: string | null;
         };
@@ -18229,7 +18233,9 @@ export interface operations {
     };
     readonly get_storyboard: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly ws?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
@@ -18321,7 +18327,9 @@ export interface operations {
     };
     readonly leave_feedback: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly ws?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
@@ -18371,7 +18379,9 @@ export interface operations {
     };
     readonly get_board_narrative: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly ws?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
@@ -19248,7 +19258,9 @@ export interface operations {
     };
     readonly get_run_release: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly ws?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly run_id: string;

@@ -391,19 +391,25 @@ export const routeTable: RouteObject[] = [
   { path: '/w/:workspace/share/:token', element: <SessionSharePage />, errorElement: <ShareRouteErrorBoundary /> },
   // The clean, shareable DDD run RELEASE page — also mounted OUTSIDE AppLayout,
   // in a chrome-less PublicLayout, so a `?t=<share_token>` viewer with no Dimagi
-  // login is served (the release API self-enforces token-or-member access). New
-  // URL; the operator console at /w/:ws/ddd/:narrative/:runId is untouched.
+  // login is served (the release API self-enforces token-or-member access). The
+  // operator console at /w/:ws/ddd/:narrative/:runId is a different page.
+  //
+  // These three live under their workspace like every artifact, and there is
+  // no flat /ddd-release/, /storyboard/ or /narrative/ (owner decision,
+  // 2026-10-08; canopy-web#1337): the server answers a flat link with a plain
+  // 404 (config/views.py::flat_artifact_gone). Each page passes `ws` so the API
+  // 404s a row from another workspace.
   {
     element: <PublicLayout />,
     errorElement: <ShareRouteErrorBoundary />,
     children: [
-      { path: '/ddd-release/:narrative/:runId', element: <DddReleasePage /> },
+      { path: '/w/:workspace/ddd-release/:narrative/:runId', element: <DddReleasePage /> },
       // The shared ARC — several narratives as one link. Same public shape as
       // the release page above: the API self-enforces token-or-member access.
-      { path: '/storyboard/:slug', element: <StoryboardPage /> },
+      { path: '/w/:workspace/storyboard/:slug', element: <StoryboardPage /> },
       // One narrative, scene by scene, for an outsider. `?b=<board>` carries the
       // storyboard whose token gates it — the narrative itself has no token.
-      { path: '/narrative/:slug', element: <NarrativeReviewPage /> },
+      { path: '/w/:workspace/narrative/:slug', element: <NarrativeReviewPage /> },
       // The public explainer — anyone, no login. Mounted here (not AppLayout)
       // for the same reason as its siblings above.
       { path: '/about', element: <AboutPage /> },

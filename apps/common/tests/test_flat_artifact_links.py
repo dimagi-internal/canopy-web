@@ -17,6 +17,9 @@ FLAT = [
     "/share/sometoken",
     f"/w/{UUID}",
     f"/w/{UUID}/content",
+    "/storyboard/oes-supply",
+    "/narrative/chlorine",
+    "/ddd-release/chlorine/chlorine-2026-10-07-002",
 ]
 
 
@@ -36,7 +39,9 @@ def test_the_flat_matcher_names_each_retired_address(path):
 
 @pytest.mark.parametrize("path", [
     "/w/dimagi", "/w/dimagi/agents", "/w/dimagi/walkthroughs", "/walkthroughs",
-    "/reviews", "/sessions", "/shareouts",
+    "/reviews", "/sessions", "/shareouts", "/storyboards", "/ddd", "/ddd/chlorine",
+    "/w/dimagi/storyboards", "/w/dimagi/storyboard/oes-supply",
+    "/w/dimagi/ddd-release/chlorine/run-1",
 ])
 def test_the_flat_matcher_spares_live_routes(path):
     assert not _is_flat_artifact(path)

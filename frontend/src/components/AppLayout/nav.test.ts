@@ -137,9 +137,9 @@ describe('isNavGroupActive', () => {
   })
 
   it('does not light Demos up on the public storyboard page', () => {
-    // /storyboard/:slug is the chrome-less share page, not the index; the
-    // index is the tenant route /w/:ws/storyboards.
-    expect(groups.some((g) => isNavGroupActive(g, '/storyboard/oes-supply'))).toBe(false)
+    // /w/:ws/storyboard/:slug is the chrome-less share page, not the index;
+    // the index is the tenant route /w/:ws/storyboards.
+    expect(groups.some((g) => isNavGroupActive(g, '/w/connect/storyboard/oes-supply'))).toBe(false)
     expect(isNavGroupActive(group('Demos'), '/w/connect/storyboards')).toBe(true)
   })
 })

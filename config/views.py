@@ -18,11 +18,13 @@ def health_check(request):
 
 
 # The artifact addresses that no longer exist (canopy-web#1337): the flat
-# viewers and their byte stream, and the pre-tenancy `/w/<uuid>` walkthrough
-# links. Matched against Django's path (no leading slash). A workspace slug is
-# never a UUID, so `w/<uuid>` cannot shadow a real workspace.
+# viewers and their byte stream, the flat shared-arc pages (`/storyboard/<slug>`,
+# `/narrative/<slug>`, `/ddd-release/<narrative>/<run>`), and the pre-tenancy
+# `/w/<uuid>` walkthrough links. Matched against Django's path (no leading
+# slash). A workspace slug is never a UUID, so `w/<uuid>` cannot shadow a real
+# workspace; `storyboards` (the plural index redirect) is not matched.
 FLAT_ARTIFACT_PATH = (
-    r"^(?:(?:walkthrough|review|share)(?:/.*)?"
+    r"^(?:(?:walkthrough|review|share|storyboard|narrative|ddd-release)(?:/.*)?"
     r"|w/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:/.*)?)$"
 )
 

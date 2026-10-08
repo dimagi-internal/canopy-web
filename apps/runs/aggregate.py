@@ -494,13 +494,17 @@ def _lede_from_story(story: str | None, title: str | None) -> str | None:
     return first[:240]
 
 
-def build_release(run_id: str, request) -> dict | None:
+def build_release(run_id: str, request, ws: str = "") -> dict | None:
     """Curated, token-aware package for the clean release page.
 
     Returns ``None`` (→ 404) when the run doesn't exist OR the caller is neither
     a workspace member nor holding a valid share token — never leaking existence.
     NOT workspace-scoped at query time: the share token itself is the capability;
     the primary artifact's ``readable_by`` gate is the authority.
+
+    ``ws`` is the workspace the page's URL names
+    (``/w/<ws>/ddd-release/<narrative>/<run>``): a run whose primary artifact
+    lives elsewhere is not at that address (``None`` → 404).
     """
     wts = list(Walkthrough.objects.filter(run_id=run_id).select_related("owner"))
     revs = list(ReviewRequest.objects.filter(run_id=run_id))
@@ -517,6 +521,8 @@ def build_release(run_id: str, request) -> dict | None:
         lambda w: True,
     )
     if primary is None or not primary.readable_by(request):
+        return None
+    if ws and ws != primary.workspace_id:
         return None
 
     is_member = _is_member(primary, request)
@@ -593,9 +599,20 @@ def build_release(run_id: str, request) -> dict | None:
         "is_member": is_member,
         # The shareable handle: the primary artifact's token (only when public).
         "share_token": primary.share_token if is_public else None,
-        # Internal-only link to the full operator console (flat path redirects
-        # into the member's workspace). The clean page shows it only to members.
-        "build_url": f"/ddd/{narrative_slug}/{run_id}",
+        # The page's own address, absolute and token-bearing — what you send
+        # someone. Under the run's workspace like every artifact
+        # (canopy-web#1337); the flat /ddd-release/ is a 404.
+        "share_url": (
+            wsvc.scoped_url_or_none(
+                primary.workspace_id,
+                f"/ddd-release/{narrative_slug}/{run_id}?t={primary.share_token}",
+            )
+            if is_public
+            else None
+        ),
+        # Internal-only link to the full operator console, under the run's
+        # workspace. The clean page shows it only to members.
+        "build_url": wsvc.scoped_path_or_none(primary.workspace_id, f"/ddd/{narrative_slug}/{run_id}"),
     }
 
 

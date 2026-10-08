@@ -28,7 +28,10 @@ describe('navigate-fallback ownership', () => {
       '/w/connect/review/abc',
       '/w/connect/share/tok123',
       '/invite/tok123',
-      '/ddd-release/nutrition-demo/run-1',
+      '/w/connect/ddd-release/nutrition-demo/run-1',
+      '/w/connect/storyboard/oes-supply',
+      '/w/connect/narrative/chlorine',
+      '/ddd', // the legacy flat DDD redirect still renders
       '/w/connect',
       '/w/connect/ddd/nutrition-demo/nutrition-demo-2026-07-22-004',
       `/w/connect/walkthrough/${UUID}`, // viewer shell (no /content)
@@ -58,6 +61,9 @@ describe('navigate-fallback ownership', () => {
       '/review/abc',
       '/share/tok123',
       `/w/${UUID}/content`,
+      '/ddd-release/nutrition-demo/run-1',
+      '/storyboard/oes-supply',
+      '/narrative/chlorine',
     ]
     for (const p of serverPaths) {
       it(p, () => expect(shouldServeShell(p)).toBe(false))
@@ -125,6 +131,9 @@ describe('the matcher workbox inlines into the SW', () => {
     '/w/connect/share/tok123',
     '/invite/tok123',
     '/ddd-release/nutrition-demo/run-1',
+    '/w/connect/ddd-release/nutrition-demo/run-1',
+    '/storyboard/oes-supply',
+    '/w/connect/storyboard/oes-supply',
     '/w/connect',
     '/w/connect/ddd/nutrition-demo/nutrition-demo-2026-07-22-004',
     `/walkthrough/${UUID}`,

@@ -7,8 +7,9 @@ import { useParams } from 'react-router-dom'
  * address, and the page asks the API to confirm the row really lives there.
  *
  * There is ONE address per artifact and no flat form (canopy-web#1337): a flat
- * `/walkthrough/…`, `/review/…` or `/share/…` link is a server 404, so a
- * workspace is required here — nothing falls back to a flat path.
+ * `/walkthrough/…`, `/review/…`, `/share/…`, `/storyboard/…`, `/narrative/…`
+ * or `/ddd-release/…` link is a server 404, so a workspace is required here —
+ * nothing falls back to a flat path.
  */
 
 /** `path` under `workspace`: `/w/<ws><path>`. */
@@ -18,14 +19,16 @@ export function scopedPath(workspace: string, path: string): string {
 }
 
 /**
- * The scoped public viewers — `/w/<ws>/walkthrough/<id>`, `/w/<ws>/review/<id>`
- * and `/w/<ws>/share/<token>`. They self-gate on their token like the flat
- * routes did, so an anonymous visitor is not bounced to login there. The
- * trailing slash after the viewer's name is load-bearing: `/w/<ws>/walkthroughs`
- * (the list) stays behind the gate. Mirrors `_SCOPED_VIEWER` in
- * apps/common/middleware.py.
+ * The scoped public viewers — `/w/<ws>/walkthrough/<id>`, `/w/<ws>/review/<id>`,
+ * `/w/<ws>/share/<token>`, `/w/<ws>/storyboard/<slug>`,
+ * `/w/<ws>/narrative/<slug>` and `/w/<ws>/ddd-release/<narrative>/<run>`. They
+ * self-gate on their token like the flat routes did, so an anonymous visitor is
+ * not bounced to login there. The trailing slash after the viewer's name is
+ * load-bearing: `/w/<ws>/walkthroughs` and `/w/<ws>/storyboards` (the lists)
+ * stay behind the gate. Mirrors `_SCOPED_VIEWER` in apps/common/middleware.py.
  */
-export const SCOPED_VIEWER_RE = /^\/w\/[^/]+\/(walkthrough|review|share)\//
+export const SCOPED_VIEWER_RE =
+  /^\/w\/[^/]+\/(walkthrough|review|share|storyboard|narrative|ddd-release)\//
 
 export function isScopedViewerPath(path: string): boolean {
   return SCOPED_VIEWER_RE.test(path)

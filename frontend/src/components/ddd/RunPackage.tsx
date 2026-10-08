@@ -352,7 +352,7 @@ export function RunPackage({ runId }: { runId: string }) {
     run.video || run.slides || run.documentation || run.all_artifacts.length > 0,
   )
   const summaryHref = withBase(
-    `/ddd-release/${encodeURIComponent(run.narrative_slug)}/${encodeURIComponent(run.run_id)}`,
+    scoped(`/ddd-release/${encodeURIComponent(run.narrative_slug)}/${encodeURIComponent(run.run_id)}`),
   )
 
   return (

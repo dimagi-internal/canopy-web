@@ -59,13 +59,20 @@ def _is_member(request: HttpRequest, board: Storyboard) -> bool:
     )
 
 
-def _readable_or_404(request: HttpRequest, slug: str) -> Storyboard:
+def _readable_or_404(request: HttpRequest, slug: str, ws: str = "") -> Storyboard:
     """A board the caller may READ, or 404.
 
     404 rather than 403 on a bad token is the point: the response for "no such
     board" and "wrong token" must be indistinguishable.
+
+    `ws` is the workspace the page's URL names (`/w/<ws>/storyboard/<slug>`): a
+    board in another workspace is not at that address, so it 404s — and two
+    workspaces may each have a board with this slug, so `ws` also picks which.
     """
-    board = Storyboard.objects.filter(slug=slug).first()
+    boards = Storyboard.objects.filter(slug=slug)
+    if ws:
+        boards = boards.filter(workspace_id=ws)
+    board = boards.first()
     if board is None:
         raise HttpError(404, "storyboard not found")
 
@@ -104,10 +111,13 @@ def _share_url(request: HttpRequest, board: Storyboard) -> str | None:
     Built on CANOPY_PUBLIC_BASE_URL (which carries any deployment prefix), not
     `request.build_absolute_uri`: an MCP tool call reaches this route in-process
     with no real Host, and that minted `https://localhost/…` (canopy-web#1289).
+
+    The page lives under the board's workspace like every other artifact
+    (canopy-web#1337); the flat `/storyboard/<slug>` is a 404.
     """
     if not board.share_token:
         return None
-    return wsvc.public_url(f"/storyboard/{board.slug}?t={board.share_token}")
+    return wsvc.scoped_url(board.workspace_id, f"/storyboard/{board.slug}?t={board.share_token}")
 
 
 # ------------------------------------------------------------------- write ops
@@ -189,9 +199,10 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
     auth=None,
     summary="Read a storyboard (public via ?t=<share_token>)",
 )
-def get_storyboard(request: HttpRequest, slug: str) -> dict:
-    """Anonymous-capable; the handler self-enforces. See the module docstring."""
-    board = _readable_or_404(request, slug)
+def get_storyboard(request: HttpRequest, slug: str, ws: str = "") -> dict:
+    """Anonymous-capable; the handler self-enforces. See the module docstring.
+    `ws` is the workspace the page's URL names; a board elsewhere 404s."""
+    board = _readable_or_404(request, slug, ws)
     return services.resolve_board(board, is_member=_is_member(request, board))
 
 
@@ -242,7 +253,7 @@ def ensure_token(request: HttpRequest, slug: str) -> dict:
     auth=None,
     summary="Leave feedback on a storyboard (public via ?t=<share_token>)",
 )
-def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn) -> dict:
+def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws: str = "") -> dict:
     """The anonymous write L2 deferred, gated by the board's capability.
 
     A ``suggestion`` needs the ``suggest`` grant; a ``comment`` needs
@@ -250,7 +261,7 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn) -> 
     own channel or target kind — the server fills those in, so an outsider
     cannot file feedback against something this board does not contain.
     """
-    board = _readable_or_404(request, slug)
+    board = _readable_or_404(request, slug, ws)
     token = request.GET.get("t")
 
     needed = Storyboard.CAP_SUGGEST if payload.kind == "suggestion" else Storyboard.CAP_COMMENT
@@ -336,13 +347,13 @@ def list_notes(request: HttpRequest, slug: str) -> dict:
     auth=None,
     summary="Read one narrative on this storyboard (public via ?t=<share_token>)",
 )
-def get_board_narrative(request: HttpRequest, slug: str, narrative_slug: str) -> dict:
+def get_board_narrative(request: HttpRequest, slug: str, narrative_slug: str, ws: str = "") -> dict:
     """The reviewer surface's read. Gated by the SAME token as the board.
 
     404s when the narrative is not on this board — a link to one arc must not be
     a read handle for every narrative in the workspace.
     """
-    board = _readable_or_404(request, slug)
+    board = _readable_or_404(request, slug, ws)
     data = services.resolve_narrative(board, narrative_slug)
     if data is None:
         raise HttpError(404, "no such narrative on this storyboard")

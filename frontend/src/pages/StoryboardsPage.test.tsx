@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import StoryboardsPage from './StoryboardsPage'
 import * as api from '@/api/storyboards'
 
@@ -27,8 +27,10 @@ function item(over: Partial<api.StoryboardListItem> = {}): api.StoryboardListIte
 
 function mount() {
   return render(
-    <MemoryRouter>
-      <StoryboardsPage />
+    <MemoryRouter initialEntries={['/w/connect/storyboards']}>
+      <Routes>
+        <Route path="/w/:workspace/storyboards" element={<StoryboardsPage />} />
+      </Routes>
     </MemoryRouter>,
   )
 }
@@ -45,7 +47,7 @@ describe('StoryboardsPage', () => {
     })
     mount()
     const first = await screen.findByRole('link', { name: 'From the appropriation to the child' })
-    expect(first.getAttribute('href')).toBe('/storyboard/oes-supply')
+    expect(first.getAttribute('href')).toBe('/w/connect/storyboard/oes-supply')
     expect(screen.getByText('Review')).toBeTruthy()
     expect(screen.getByText('Reel')).toBeTruthy()
     expect(screen.getByText(/5 acts/)).toBeTruthy()

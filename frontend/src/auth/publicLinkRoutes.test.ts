@@ -34,14 +34,15 @@ describe('isPublicLinkRoute', () => {
 
   it('covers every chrome-less public surface', () => {
     const prefixes = publicPrefixes(clientSrc)
-    for (const route of [
-      '/ddd-release/', '/storyboard/', '/narrative/', '/invite/', '/about',
-    ]) {
+    for (const route of ['/invite/', '/about']) {
       expect(prefixes).toContain(route)
     }
-    // The artifact viewers are public only under their workspace
+    // The artifact viewers — the shared arc, its narratives and a run's release
+    // page included — are public only under their workspace
     // (isScopedViewerPath); the flat addresses are gone (canopy-web#1337).
-    for (const flat of ['/review/', '/share/', '/walkthrough/']) {
+    for (const flat of [
+      '/review/', '/share/', '/walkthrough/', '/storyboard/', '/narrative/', '/ddd-release/',
+    ]) {
       expect(prefixes).not.toContain(flat)
     }
     expect(clientSrc).toContain('isScopedViewerPath(p)')

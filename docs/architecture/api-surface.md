@@ -113,7 +113,7 @@ Reviews are tokenless. `visibility=link` reviews are readable by anyone with the
 - `GET /api/ddd/narratives/` — List DDD narratives
 - `GET /api/ddd/narratives/{slug}/` — Get a narrative + its runs (grouped by version). Each version carries `cuts` (one per recorded cut, in narration order) beside its hero `video_url`; the hero is the version's non-cut video, else a cut uploaded as `role=hero_video`, else the first cut (`apps/walkthroughs/pinned.py`). `GET /api/reviews/{id}/` carries the same as `version_video` + `cut_videos`, with each URL playable by THAT reader (a guest gets a public cut's own token URL and no URL for a private one)
 - `GET /api/ddd/runs/{run_id}/` — Get a run package (video + deck + narrative + links)
-- `GET /api/ddd/release/{run_id}/` — Public run-release read (`auth=None`; workspace member OR `?t=<share_token>`) — backs the chrome-less `/ddd-release` page
+- `GET /api/ddd/release/{run_id}/` — Public run-release read (`auth=None`; workspace member OR `?t=<share_token>`) — backs the chrome-less `/w/<ws>/ddd-release/…` page (`ws` = the workspace the page names; a run elsewhere 404s; `share_url` is the page's own scoped, token-bearing address)
 - `PATCH /api/ddd/narratives/{slug}/visibility/` — Set Public/Private for an entire narrative; cascades visibility to every walkthrough + review under the slug (auth required). The narrative detail response carries a computed `visibility` (`public` / `private` / `mixed`)
 - `DELETE /api/ddd/runs/{run_id}/` — Delete a run (cascades its walkthroughs + reviews)
 - `DELETE /api/ddd/narratives/{slug}/versions/{version}/` — Delete a narrative version (and its runs)
@@ -431,9 +431,9 @@ poll without losing its row.
 ### Storyboards (`apps/storyboards`) — the shareable arc
 **Product tier** (it curates DDD narratives). `Storyboard → Act → Entry`; an entry names a narrative by slug and resolves to its **current** release at read time. `Entry.pinned_run_id` exists but stays blank except to hold an entry on a known-good run while that narrative is mid-redraft. `slug` is unique **per workspace**, not globally.
 - `GET|POST /api/storyboards/` — List / create (member)
-- `GET /api/storyboards/{slug}` — Read. `auth=None`, self-enforcing (member OR matching `?t=`); a wrong token **404s, never 403s**, so "no such board" and "wrong token" are indistinguishable
+- `GET /api/storyboards/{slug}` — Read. `auth=None`, self-enforcing (member OR matching `?t=`); a wrong token **404s, never 403s**, so "no such board" and "wrong token" are indistinguishable. `ws` (the workspace the page `/w/<ws>/storyboard/<slug>` names) 404s a board elsewhere and picks which board a slug shared by two workspaces means; the narrative read and feedback routes take it too
 - `PATCH /api/storyboards/{slug}` — Retitle / reorder / set capability. Acts are replaced wholesale — reordering is a rewrite, not a diff
-- `POST /api/storyboards/{slug}/share` · `/rotate-token` — Mint / re-mint the link (rotate kills every link already sent)
+- `POST /api/storyboards/{slug}/share` · `/rotate-token` — Mint / re-mint the link (rotate kills every link already sent). The link is `/w/<ws>/storyboard/<slug>?t=…`; the flat `/storyboard/…` is a plain 404 (canopy-web#1337)
 - `GET /api/storyboards/{slug}/narratives/{narrative_slug}` — The reviewer surface's read: current + previous narration for the diff. Same token gate; 404s when the narrative is not on this board
 - `POST /api/storyboards/{slug}/feedback` — The **anonymous, capability-gated write**. One grant per board as a ladder (`read` < `comment` < `suggest`). Lives here and **not** in `apps/feedback` on purpose: `feedback` is framework and `storyboards` is product, so having the framework app resolve a storyboard token would invert the boundary — the storyboard owns the token, so it owns the route, and calls `feedback.services.ingest` (which is why that service layer is request-free). The caller cannot forge what it is not entitled to: `channel`/`target_kind` are server-set, and feedback against a narrative not on this board 404s
 

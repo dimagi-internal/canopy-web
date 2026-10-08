@@ -39,7 +39,7 @@ describe('guideGroups', () => {
   it('groups the shared-by-link surfaces together', () => {
     const shared = guideGroups().find((g) => g.label === 'Shared by link')
     expect(shared?.surfaces.map((s) => s.path)).toEqual(
-      expect.arrayContaining(['/w/:workspace/share/:token', '/storyboard/:slug', '/w/:workspace/walkthrough/:id']),
+      expect.arrayContaining(['/w/:workspace/share/:token', '/w/:workspace/storyboard/:slug', '/w/:workspace/walkthrough/:id']),
     )
   })
 

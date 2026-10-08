@@ -14,9 +14,9 @@
  *   - pre-tenant: you have no workspace yet (an invite, the first-run form);
  *   - redirect: only sends the browser to a scoped page — never an ARTIFACT
  *     link, which has one address and is not forwarded (canopy-web#1337);
- *   - FOLLOW-UP: tenant data still on a flat public URL. Each is a debt the
- *     owner decision covers but #1289 did not take on; shrink this, never grow
- *     it.
+ *   - FOLLOW-UP: tenant data still on a flat public URL. There are none left
+ *     (the last three moved in canopy-web#1337's follow-up); a new one fails
+ *     the test below.
  */
 import { describe, expect, it } from 'vitest'
 import { routeTable } from './router'
@@ -57,9 +57,8 @@ const FLAT_ALLOWED: Record<string, string> = {
   '/*': 'the not-found catch-all',
 
   // --- FOLLOW-UP: tenant data still on a flat public URL ---
-  '/ddd-release/:narrative/:runId': 'FOLLOW-UP: a DDD run release page; not yet moved under its workspace',
-  '/storyboard/:slug': 'FOLLOW-UP: a shared storyboard; not yet moved under its workspace',
-  '/narrative/:slug': 'FOLLOW-UP: the per-narrative reviewer surface; not yet moved under its workspace',
+  // None left: /storyboard, /narrative and /ddd-release moved under
+  // /w/:workspace (canopy-web#1337). Keep it that way.
 }
 
 const paths = flattenRoutePaths(routeTable)
@@ -70,6 +69,9 @@ describe('every route lives under /w/:workspace, or says why not', () => {
     expect(paths).toContain('/w/:workspace/walkthrough/:id')
     expect(paths).toContain('/w/:workspace/review/:id')
     expect(paths).toContain('/w/:workspace/share/:token')
+    expect(paths).toContain('/w/:workspace/storyboard/:slug')
+    expect(paths).toContain('/w/:workspace/narrative/:slug')
+    expect(paths).toContain('/w/:workspace/ddd-release/:narrative/:runId')
   })
 
   it('has no flat route without a reason', () => {
@@ -90,11 +92,17 @@ describe('every route lives under /w/:workspace, or says why not', () => {
 
   it('has no flat artifact viewer, and forwards none', () => {
     // One URL per artifact, under its workspace (owner decision, 2026-10-08;
-    // canopy-web#1337). A flat /walkthrough/, /review/ or /share/ link is a
-    // plain server 404 — not a page, and not a redirect to the scoped one.
-    const artifact = /^\/(walkthrough|review|share)(\/|$)/
+    // canopy-web#1337). A flat /walkthrough/, /review/, /share/, /storyboard/,
+    // /narrative/ or /ddd-release/ link is a plain server 404 — not a page, and
+    // not a redirect to the scoped one.
+    const artifact = /^\/(walkthrough|review|share|storyboard|narrative|ddd-release)(\/|$)/
     expect(paths.filter((p) => artifact.test(p))).toEqual([])
     expect(Object.keys(FLAT_ALLOWED).filter((p) => artifact.test(p))).toEqual([])
+  })
+
+  it('has no FOLLOW-UP left: no tenant data on a flat public URL', () => {
+    const debts = Object.entries(FLAT_ALLOWED).filter(([, why]) => why.startsWith('FOLLOW-UP'))
+    expect(debts).toEqual([])
   })
 
   it('gives every exception a reason', () => {

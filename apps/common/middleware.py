@@ -101,23 +101,27 @@ def _is_public(path: str) -> bool:
     return any(path == p or path.startswith(p) for p in PUBLIC_PATH_PREFIXES)
 
 
-# The three public viewers, under their workspace (/w/<ws>/walkthrough/<id>,
-# /w/<ws>/review/<id>, /w/<ws>/share/<token>) and the walkthrough's bytes
-# (/w/<ws>/walkthrough/<id>/content) — the ONLY address each has
-# (canopy-web#1337). The SPA shell and the stream self-gate on their token: the
-# page reads self-gating APIs passing `ws`, and the stream 404s a row from
-# another workspace. `/w/<ws>/walkthroughs` (the list, plural) and every other
-# tenant page stay behind the gate — the trailing slash after the viewer name
-# is load-bearing.
-_SCOPED_VIEWER = re.compile(r"^/w/[^/]+/(walkthrough|review|share)/")
+# The public viewers, under their workspace — /w/<ws>/walkthrough/<id>,
+# /w/<ws>/review/<id>, /w/<ws>/share/<token>, /w/<ws>/storyboard/<slug>,
+# /w/<ws>/narrative/<slug> and /w/<ws>/ddd-release/<narrative>/<run> — and the
+# walkthrough's bytes (/w/<ws>/walkthrough/<id>/content): the ONLY address each
+# has (canopy-web#1337). The SPA shell and the stream self-gate on their token:
+# the page reads self-gating APIs passing `ws`, and the stream 404s a row from
+# another workspace. `/w/<ws>/walkthroughs` and `/w/<ws>/storyboards` (the
+# lists, plural) and every other tenant page stay behind the gate — the
+# trailing slash after the viewer name is load-bearing.
+_SCOPED_VIEWER = re.compile(
+    r"^/w/[^/]+/(walkthrough|review|share|storyboard|narrative|ddd-release)/"
+)
 
 
 def _is_scoped_viewer(path: str) -> bool:
     return bool(_SCOPED_VIEWER.match(path))
 
 
-# The retired flat addresses (`/walkthrough/…`, `/review/…`, `/share/…`, the
-# pre-tenancy `/w/<uuid>/…`). They serve only a 404 that says links now carry
+# The retired flat addresses (`/walkthrough/…`, `/review/…`, `/share/…`,
+# `/storyboard/…`, `/narrative/…`, `/ddd-release/…`, the pre-tenancy
+# `/w/<uuid>/…`). They serve only a 404 that says links now carry
 # the workspace (config.views.flat_artifact_gone); admitting them means a
 # signed-out reader is told so, instead of being sent to sign in first.
 _FLAT_ARTIFACT = re.compile(r"^/" + FLAT_ARTIFACT_PATH.removeprefix("^"))
@@ -176,18 +180,13 @@ def _is_invite_link(request) -> bool:
 
 
 def _is_storyboard_link(request) -> bool:
-    # /storyboard/<slug> (SPA shell) and its read + feedback API self-enforce the
-    # ?t=<share_token> gate (or a workspace-member session) inside the handler,
-    # so admit anonymous callers and let the API decide. A wrong token 404s there
-    # rather than 403ing, so existence never leaks.
-    #
-    # /narrative/ was missed when the surface shipped: the FRONTEND allowlist
-    # knew about it but this one did not, so an anonymous reader got the arc
-    # fine and hit a Google login the moment they clicked "Read the scenes".
-    path = request.path
-    if path.startswith("/storyboard/") or path.startswith("/narrative/"):
-        return True
-    return path.startswith("/api/storyboards/")
+    # The storyboard read + feedback API self-enforces the ?t=<share_token> gate
+    # (or a workspace-member session) inside the handler, so admit anonymous
+    # callers and let the API decide. A wrong token 404s there rather than
+    # 403ing, so existence never leaks. The pages themselves
+    # (/w/<ws>/storyboard/<slug>, /w/<ws>/narrative/<slug>) are scoped viewers;
+    # the flat /storyboard/ and /narrative/ are a 404 (canopy-web#1337).
+    return request.path.startswith("/api/storyboards/")
 
 
 def _is_about(path: str) -> bool:
@@ -199,14 +198,13 @@ def _is_about(path: str) -> bool:
 
 
 def _is_ddd_release_link(request) -> bool:
-    # /ddd-release/<slug>/<run_id> (SPA shell) and the read API
-    # (/api/ddd/release/<run_id>/) self-enforce the ?t=<share_token> gate (or a
-    # workspace-member session) inside build_release, so admit anonymous callers
-    # through the middleware. The rest of /ddd/* and /api/ddd/* stay auth'd.
-    path = request.path
-    if path.startswith("/ddd-release/"):
-        return True
-    return request.method == "GET" and path.startswith("/api/ddd/release/")
+    # The release read API (/api/ddd/release/<run_id>/) self-enforces the
+    # ?t=<share_token> gate (or a workspace-member session) inside
+    # build_release, so admit anonymous callers through the middleware. The
+    # page is a scoped viewer (/w/<ws>/ddd-release/<narrative>/<run>); the flat
+    # /ddd-release/ is a 404 (canopy-web#1337). The rest of /api/ddd/* stays
+    # auth'd.
+    return request.method == "GET" and request.path.startswith("/api/ddd/release/")
 
 
 class LoginRequiredMiddleware:

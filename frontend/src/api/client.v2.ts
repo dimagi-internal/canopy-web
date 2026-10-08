@@ -91,9 +91,6 @@ function isPublicLinkRoute(): boolean {
   const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const p = window.location.pathname.slice(base.length);
   return (
-    p.startsWith("/ddd-release/") ||
-    p.startsWith("/storyboard/") ||
-    p.startsWith("/narrative/") ||
     p.startsWith("/invite/") ||
     p === "/about" ||
     isScopedViewerPath(p)

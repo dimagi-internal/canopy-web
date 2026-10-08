@@ -75,9 +75,9 @@ const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
     // login" was not.
     label: 'Shared by link',
     match: (p) =>
-      ['/w/:workspace/share/:token', '/storyboard/:slug', '/narrative/:slug',
+      ['/w/:workspace/share/:token', '/w/:workspace/storyboard/:slug', '/w/:workspace/narrative/:slug',
        '/w/:workspace/walkthrough/:id', '/w/:workspace/review/:id', '/invite/:token'].includes(p) ||
-      p.startsWith('/ddd-release/'),
+      p.startsWith('/w/:workspace/ddd-release/'),
   },
   {
     // Requests for access to Canopy itself, answered from the notification

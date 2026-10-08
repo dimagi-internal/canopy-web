@@ -60,15 +60,14 @@ export const NAVIGATE_FALLBACK_ALLOWLIST: RegExp[] = [
   /^\/(canopy\/)?shareouts/,
   /^\/(canopy\/)?walkthroughs/, // list page (plural); NOT the /walkthrough/ viewer
   /^\/(canopy\/)?agents/,
-  /^\/(canopy\/)?ddd-release\//, // public release page (chrome-less)
-  /^\/(canopy\/)?storyboard\//, // public shared arc (chrome-less)
-  /^\/(canopy\/)?narrative\//, // public per-narrative reviewer surface
   /^\/(canopy\/)?ddd-plans/,
-  /^\/(canopy\/)?ddd/, // NB: after ddd-release/ddd-plans so those match first
+  // `ddd` and `ddd/…` only — NOT `ddd-release/`, a retired flat address.
+  /^\/(canopy\/)?ddd(\/|$)/,
   /^\/(canopy\/)?reviews/, // legacy flat → redirect
-  // No flat /review/, /walkthrough/ or /share/: those artifact addresses are a
-  // server 404 now (canopy-web#1337), so they must reach the network. The
-  // viewers live under /w/<ws>/, which `^/w/` above already allows.
+  // No flat /review/, /walkthrough/, /share/, /storyboard/, /narrative/ or
+  // /ddd-release/: those artifact addresses are a server 404 now
+  // (canopy-web#1337), so they must reach the network. The viewers live under
+  // /w/<ws>/, which `^/w/` above already allows.
   /^\/(canopy\/)?invite\//, // /invite/:token accept page
   /^\/(canopy\/)?about/, // /about public explainer (chrome-less, anonymous)
   /^\/(canopy\/)?guide/, // /guide — self-documenting descriptor registry
