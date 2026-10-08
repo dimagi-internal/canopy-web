@@ -10,7 +10,7 @@ import datetime as dt
 
 from django.db.models import Prefetch
 
-from apps.workspaces.services import scoped_path
+from apps.workspaces.services import scoped_path_or_none
 
 from .models import Session, ShareToken
 
@@ -34,7 +34,7 @@ def recent_events(*, limit: int, before: dt.datetime | None, user) -> list:
     for s in cursor_page(qs, "created_at", before=before, limit=limit):
         href = "/sessions"
         if s.visibility == Session.VISIBILITY_LINK and s.active_tokens:
-            href = scoped_path(s.workspace_id, f"/share/{s.active_tokens[0].token}")
+            href = scoped_path_or_none(s.workspace_id, f"/share/{s.active_tokens[0].token}") or href
         out.append(
             ActivityEvent(
                 subsystem="sessions",

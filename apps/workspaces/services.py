@@ -1127,15 +1127,31 @@ def _base_url() -> str:
     return settings.CANOPY_PUBLIC_BASE_URL.rstrip("/")
 
 
+class Unhomed(ValueError):
+    """A row with no workspace has no address: there is no flat fallback."""
+
+
 def scoped_path(workspace, path: str) -> str:
     """`path` under its workspace: `/w/<ws><path>`, app-relative.
 
     Every page that shows tenant data lives under `/w/:workspace/` — the share
-    links too (owner decision, 2026-10-08). `workspace` is a `Workspace` or a
-    slug; a falsy one leaves the path flat, which is what an unhomed row can
-    honestly offer (the flat routes redirect when they can resolve one)."""
+    links too, and the bytes behind a walkthrough. There is ONE address per
+    artifact and no flat form to fall back to (owner decision, 2026-10-08;
+    canopy-web#1337): a flat link is a 404, so building one is a bug. A row with
+    no workspace raises `Unhomed`; a caller that may hold one asks
+    `scoped_path_or_none`."""
     slug = getattr(workspace, "slug", workspace)
-    return f"/w/{slug}{path}" if slug else path
+    if not slug:
+        raise Unhomed(f"no workspace to address {path!r} under")
+    return f"/w/{slug}{path}"
+
+
+def scoped_path_or_none(workspace, path: str) -> str | None:
+    """`scoped_path`, or None for a row with no workspace (it has no address)."""
+    try:
+        return scoped_path(workspace, path)
+    except Unhomed:
+        return None
 
 
 def scoped_url(workspace, path: str) -> str:
@@ -1145,6 +1161,17 @@ def scoped_url(workspace, path: str) -> str:
     in-process with no real Host, so that minted `https://localhost/…` links
     (canopy-web#1289). CANOPY_PUBLIC_BASE_URL is the address people visit."""
     return f"{_base_url()}{scoped_path(workspace, path)}"
+
+
+def scoped_url_or_none(workspace, path: str) -> str | None:
+    rel = scoped_path_or_none(workspace, path)
+    return f"{_base_url()}{rel}" if rel else None
+
+
+def public_url(path: str) -> str:
+    """Absolute URL of a page that is deliberately NOT under a workspace (an
+    invite, a storyboard) — named so a flat link is never built by accident."""
+    return f"{_base_url()}{path}"
 
 
 def access_request_path(req: WorkspaceAccessRequest) -> str:

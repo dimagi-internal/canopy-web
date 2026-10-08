@@ -102,7 +102,8 @@ def test_release_anonymous_with_valid_token(db, owner):
     assert body["is_member"] is False
     assert body["share_token"] == token
     # Stream URL carries the artifact's own token so anonymous playback works.
-    assert body["video"]["content_url"] == f"/walkthrough/{Walkthrough.objects.get(run_id=RUN_ID).id}/content?t={token}"
+    w = Walkthrough.objects.get(run_id=RUN_ID)
+    assert body["video"]["content_url"] == f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}"
     # Product URLs surfaced as named links; no operator jargon fields.
     assert body["product_links"] == [
         {"label": "Program Admin Report", "url": "https://labs/par", "kind": "reference"}

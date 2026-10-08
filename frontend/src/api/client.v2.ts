@@ -83,7 +83,7 @@ function redirectToLogin(): void {
   window.location.href = loginHref(currentNext());
 }
 
-// Per-token public-link routes (e.g. /review/<id>?t=…) self-gate on their share
+// Per-token public-link routes (e.g. /w/<ws>/review/<id>?t=…) self-gate on their share
 // token, so a 401 from an incidental authenticated call (e.g. /api/me) must NOT
 // bounce an anonymous visitor to login. Keep in sync with AuthProvider.
 function isPublicLinkRoute(): boolean {
@@ -91,9 +91,6 @@ function isPublicLinkRoute(): boolean {
   const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   const p = window.location.pathname.slice(base.length);
   return (
-    p.startsWith("/review/") ||
-    p.startsWith("/walkthrough/") ||
-    p.startsWith("/share/") ||
     p.startsWith("/ddd-release/") ||
     p.startsWith("/storyboard/") ||
     p.startsWith("/narrative/") ||

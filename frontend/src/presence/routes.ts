@@ -33,7 +33,7 @@ const GLOBAL_SENTINEL = '~global'
  *   - `/w/:ws/agents/:slug` — deciding an Item is a single atomic action and
  *     the ledger shows who decided it afterwards, so a collision is visible
  *     rather than silent
- *   - a shareouts period, `/walkthrough/:id` — published artifacts, read-only
+ *   - a shareouts period, `/w/:workspace/walkthrough/:id` — published artifacts, read-only
  *   - `/supervisor`, `/sessions`, `/activity`, `/schedules`,
  *     `/system`, `/settings` — personal or read-only dashboards
  *

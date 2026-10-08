@@ -19,10 +19,9 @@ import { UPLOADED_CONTENT_SANDBOX } from '../lib/uploadedContentSandbox'
 type LoadError = { status: number | null; message: string }
 
 export function WalkthroughViewerPage() {
-  // `workspace` is set on /w/:workspace/walkthrough/:id — the API confirms the
-  // walkthrough lives there. The flat route only renders here when its
-  // redirect could not resolve one (see FlatArtifactRedirect).
-  const { id, workspace } = useParams<{ id: string; workspace?: string }>()
+  // Mounted only at /w/:workspace/walkthrough/:id — the API confirms the
+  // walkthrough lives there. There is no flat route (canopy-web#1337).
+  const { id, workspace = '' } = useParams<{ id: string; workspace: string }>()
   const navigate = useNavigate()
   const auth = useAuth()
   const [w, setW] = useState<WalkthroughDetail | null>(null)
@@ -175,7 +174,7 @@ export function WalkthroughViewerPage() {
   // iframe so it opens on that scene; the deck's own JS reads its hash. Videos
   // ignore it. Non-scene hashes normalize to '' and pass through unchanged.
   const contentSrc = withSceneHash(
-    walkthroughContentUrl(w.id, shareToken),
+    walkthroughContentUrl(workspace, w.id, shareToken),
     window.location.hash,
   )
 

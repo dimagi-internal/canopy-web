@@ -84,10 +84,10 @@ def test_each_cut_gets_its_own_slot_in_narration_order():
     cuts = narrative["current_version"]["cuts"]
     assert [c["cut_id"] for c in cuts] == ["register", "decide", "deliver"]
     assert cuts[0]["scene_ids"] == ["c1-a", "c1-b"]
-    assert cuts[0]["video_url"] == f"/walkthrough/{c1.id}/content"
+    assert cuts[0]["video_url"] == f"/w/{c1.workspace_id}/walkthrough/{c1.id}/content"
     assert narrative["versions"][0]["cuts"] == cuts
     # No explainer video → the hero is the FIRST cut, not the latest upload.
-    assert narrative["current_version"]["video_url"] == f"/walkthrough/{c1.id}/content"
+    assert narrative["current_version"]["video_url"] == f"/w/{c1.workspace_id}/walkthrough/{c1.id}/content"
     assert {c3.id, c2.id} == {c["walkthrough_id"] for c in cuts[1:]}
     assert cuts[2]["duration_sec"] == 31
 
@@ -112,7 +112,7 @@ def test_a_cut_uploaded_as_hero_is_the_hero():
     chosen = _cut(u, v, "decide", ["c2-a"], at=_t(2), role="hero_video")
 
     cv = aggregate.build_narrative(SLUG)["current_version"]
-    assert cv["video_url"] == f"/walkthrough/{chosen.id}/content"
+    assert cv["video_url"] == f"/w/{chosen.workspace_id}/walkthrough/{chosen.id}/content"
 
 
 def test_an_explainer_video_stays_the_hero_and_is_not_a_cut():
@@ -125,7 +125,7 @@ def test_an_explainer_video_stays_the_hero_and_is_not_a_cut():
 
     cv = aggregate.build_narrative(SLUG)["current_version"]
     # A later cut upload must not displace the narrative's own video.
-    assert cv["video_url"] == f"/walkthrough/{hero.id}/content"
+    assert cv["video_url"] == f"/w/{hero.workspace_id}/walkthrough/{hero.id}/content"
     assert [c["cut_id"] for c in cv["cuts"]] == ["register"]
 
 
@@ -156,8 +156,8 @@ def test_guest_on_the_review_link_gets_public_cuts_with_their_token():
     cuts = body["cut_videos"]
     assert [c["cut_id"] for c in cuts] == ["register", "decide"]
     assert cuts[0]["scene_ids"] == ["c1-a", "c1-b"]
-    assert cuts[0]["video_url"] == f"/walkthrough/{pub.id}/content?t=tok-register"
-    assert cuts[0]["video_viewer_url"] == f"/walkthrough/{pub.id}?t=tok-register"
+    assert cuts[0]["video_url"] == f"/w/{pub.workspace_id}/walkthrough/{pub.id}/content?t=tok-register"
+    assert cuts[0]["video_viewer_url"] == f"/w/{pub.workspace_id}/walkthrough/{pub.id}?t=tok-register"
     # A private cut: the guest learns it exists, never gets a way to play it.
     assert cuts[1]["walkthrough_id"] == str(priv.id)
     assert cuts[1]["video_url"] is None
@@ -179,7 +179,7 @@ def test_member_on_the_review_gets_every_cut_tokenless():
     c = Client()
     c.force_login(u)
     cuts = c.get(f"/api/reviews/{v.id}/").json()["cut_videos"]
-    assert cuts[1]["video_url"] == f"/walkthrough/{priv.id}/content"
+    assert cuts[1]["video_url"] == f"/w/{priv.workspace_id}/walkthrough/{priv.id}/content"
     assert all(x["video_url"] for x in cuts)
 
 

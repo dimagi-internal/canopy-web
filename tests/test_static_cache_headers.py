@@ -75,14 +75,14 @@ class TestHashedAssetDetection:
 
 @pytest.mark.django_db
 def test_spa_view_marks_the_shell_no_cache(tmp_path, settings):
-    """A deep link (/supervisor, /share/<token>, …) is served by spa_view, not
+    """A deep link (/supervisor, /w/<ws>/share/<token>, …) is served by spa_view, not
     WhiteNoise. It shipped with no Cache-Control at all."""
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "index.html").write_text("<!doctype html><html></html>")
     settings.FRONTEND_DIST_DIR = dist
 
-    response = Client().get("/share/some-token")
+    response = Client().get("/w/dimagi/share/some-token")
 
     assert response.status_code == 200
     assert response["Cache-Control"] == REVALIDATE

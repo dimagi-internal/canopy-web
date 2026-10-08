@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import type { DddNarrativeDetail, DddNarrativeVersion } from '@/api/ddd'
 import { NarrativeLanding } from './NarrativeLanding'
 import { cutRows } from './CutVideoList'
@@ -65,8 +65,11 @@ function show(v: DddNarrativeVersion) {
     versions: [v],
   } satisfies DddNarrativeDetail
   return render(
-    <MemoryRouter>
-      <NarrativeLanding slug="chlorine" />
+    // Mounted where the app mounts it: under a workspace, whose links it draws.
+    <MemoryRouter initialEntries={['/w/connect/ddd/chlorine']}>
+      <Routes>
+        <Route path="/w/:workspace/ddd/:narrative" element={<NarrativeLanding slug="chlorine" />} />
+      </Routes>
     </MemoryRouter>,
   )
 }

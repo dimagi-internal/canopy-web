@@ -127,10 +127,9 @@ function formatDateTime(s: string): string {
 // ledger. Links (transcript, deliverables) sit outside it so they stay links.
 export function TurnCard({ turn }: { turn: AgentTurnOut }) {
   const [open, setOpen] = useState(false)
-  // The transcript is optional — only render the /share link when it was uploaded.
-  const shareHref = turn.share_token
-    ? `${import.meta.env.BASE_URL.replace(/\/$/, '')}/share/${turn.share_token}`
-    : ''
+  // The transcript is optional — only render its link when it was uploaded. The
+  // server builds it under the workspace it was shared from (canopy-web#1337).
+  const shareHref = turn.share_url ?? ''
   // Where the turn's actual work lives: the chat it ran in (a laptop runner's
   // emdash session, or a chat turn's own session) — or, for a cloud-runner turn
   // that has no chat, its retained transcript, shown inline when opened.

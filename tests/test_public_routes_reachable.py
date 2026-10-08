@@ -24,13 +24,13 @@ import pytest
 
 from apps.common.middleware import (
     _is_about,
+    _is_artifact_api,
     _is_ddd_release_link,
+    _is_flat_artifact,
     _is_invite_link,
     _is_public,
-    _is_review_link,
-    _is_share_link,
+    _is_scoped_viewer,
     _is_storyboard_link,
-    _is_walkthrough_link,
 )
 
 
@@ -48,9 +48,9 @@ def _allowlisted(path: str, method: str = "GET") -> bool:
     return (
         _is_public(path)
         or _is_about(path)
-        or _is_walkthrough_link(request)
-        or _is_review_link(path)
-        or _is_share_link(path)
+        or _is_artifact_api(request)
+        or _is_scoped_viewer(path)
+        or _is_flat_artifact(path)
         or _is_ddd_release_link(request)
         or _is_storyboard_link(request)
         or _is_invite_link(request)
@@ -63,8 +63,15 @@ PUBLIC_PATHS = [
     "/storyboard/ecf-supply",
     "/narrative/verified-monitoring",
     "/ddd-release/verified-monitoring/verified-monitoring-2026-07-26-001",
+    "/w/connect/review/00000000-0000-0000-0000-000000000000/",
+    "/w/connect/share/any-token",
+    "/w/connect/walkthrough/00000000-0000-0000-0000-000000000000",
+    "/w/connect/walkthrough/00000000-0000-0000-0000-000000000000/content",
+    # The retired flat addresses serve only "this link no longer works"; a
+    # signed-out reader must be told so, not sent to sign in first.
     "/review/00000000-0000-0000-0000-000000000000/",
     "/share/any-token",
+    "/walkthrough/00000000-0000-0000-0000-000000000000",
     "/invite/any-token",
     "/api/storyboards/ecf-supply",
     "/api/storyboards/ecf-supply/narratives/verified-monitoring",
@@ -90,7 +97,11 @@ GATED_PATHS = [
     "/settings",
     "/sessions",
     "/w/dimagi",
+    "/w/dimagi/walkthroughs",
+    "/w/dimagi/agents",
     "/ddd/verified-monitoring",
+    "/api/walkthroughs/",
+    "/api/reviews/",
     "/api/agents/",
     "/api/feedback/",
     # "/about" is an EXACT match, not a prefix — a future route that merely

@@ -17,6 +17,43 @@ def health_check(request):
     return JsonResponse({"status": "ok"})
 
 
+# The artifact addresses that no longer exist (canopy-web#1337): the flat
+# viewers and their byte stream, and the pre-tenancy `/w/<uuid>` walkthrough
+# links. Matched against Django's path (no leading slash). A workspace slug is
+# never a UUID, so `w/<uuid>` cannot shadow a real workspace.
+FLAT_ARTIFACT_PATH = (
+    r"^(?:(?:walkthrough|review|share)(?:/.*)?"
+    r"|w/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:/.*)?)$"
+)
+
+_FLAT_ARTIFACT_GONE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Link not found · Canopy</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 34rem; margin: 15vh auto;
+         padding: 0 16px; line-height: 1.5; color: #1c1917; background: #fafaf9; }
+  @media (prefers-color-scheme: dark) { body { color: #e7e5e4; background: #1c1917; } }
+  code { font-size: .95em; }
+</style></head>
+<body>
+<h1>This link no longer works</h1>
+<p>Canopy links now include the workspace, like
+<code>/w/&lt;workspace&gt;/review/&lt;id&gt;</code>. Links without one were
+retired and are not forwarded.</p>
+<p>Ask whoever sent you this link for the current one.</p>
+</body></html>
+"""
+
+
+def flat_artifact_gone(request, *args, **kwargs):
+    """A flat artifact link: a plain 404 that says why. Never a redirect — there
+    is one URL per artifact, under its workspace (owner decision, 2026-10-08)."""
+    resp = HttpResponse(_FLAT_ARTIFACT_GONE, status=404, content_type="text/html; charset=utf-8")
+    resp["Cache-Control"] = REVALIDATE
+    return resp
+
+
 @require_GET
 @ensure_csrf_cookie
 def csrf_view(request):

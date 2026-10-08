@@ -14,6 +14,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client, override_settings
 
 from apps.walkthroughs.models import Walkthrough
+from apps.workspaces.testing import a_workspace
 
 
 @pytest.fixture
@@ -30,6 +31,7 @@ def _make(owner, **kw):
         content_type="video/mp4", size_bytes=10,
     )
     defaults.update(kw)
+    defaults.setdefault("workspace", a_workspace())
     return Walkthrough.objects.create(**defaults)
 
 
@@ -39,7 +41,7 @@ def test_a_range_request_makes_exactly_one_drive_call(owner):
     token = w.ensure_share_token()
     with patch("apps.walkthroughs.streaming.storage.download",
                return_value=(b"2345", 2, 5, 10)) as dl:
-        resp = Client().get(f"/walkthrough/{w.id}/content?t={token}", HTTP_RANGE="bytes=2-5")
+        resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}", HTTP_RANGE="bytes=2-5")
     assert resp.status_code == 206
     assert dl.call_count == 1, "the size probe is back — every seek costs a second Drive round-trip"
     assert dl.call_args.kwargs["start"] == 2
@@ -52,7 +54,7 @@ def test_the_probe_still_happens_when_size_is_unknown(owner):
     token = w.ensure_share_token()
     with patch("apps.walkthroughs.streaming.storage.download",
                return_value=(b"2345", 2, 5, 10)) as dl:
-        resp = Client().get(f"/walkthrough/{w.id}/content?t={token}", HTTP_RANGE="bytes=2-5")
+        resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}", HTTP_RANGE="bytes=2-5")
     assert resp.status_code == 206
     assert dl.call_count == 2
 
@@ -64,7 +66,7 @@ def test_the_denominator_comes_from_the_fetch_not_the_row(owner):
     token = w.ensure_share_token()
     with patch("apps.walkthroughs.streaming.storage.download",
                return_value=(b"2345", 2, 5, 999)):
-        resp = Client().get(f"/walkthrough/{w.id}/content?t={token}", HTTP_RANGE="bytes=2-5")
+        resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}", HTTP_RANGE="bytes=2-5")
     assert resp["Content-Range"] == "bytes 2-5/999"
 
 
@@ -75,7 +77,7 @@ def test_the_browser_may_cache_the_bytes_but_no_shared_cache_may(owner, headers)
     token = w.ensure_share_token()
     with patch("apps.walkthroughs.streaming.storage.download",
                return_value=(b"2345", 2, 5, 10)):
-        resp = Client().get(f"/walkthrough/{w.id}/content?t={token}", **headers)
+        resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}", **headers)
     cc = resp["Cache-Control"]
     assert "private" in cc, "token-gated bytes must never enter a shared cache"
     assert "immutable" in cc and "max-age=" in cc
@@ -87,7 +89,7 @@ def test_an_unsatisfiable_range_still_416s_without_fetching_bytes(owner):
     w = _make(owner, size_bytes=10)
     token = w.ensure_share_token()
     with patch("apps.walkthroughs.streaming.storage.download") as dl:
-        resp = Client().get(f"/walkthrough/{w.id}/content?t={token}", HTTP_RANGE="bytes=99-")
+        resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}", HTTP_RANGE="bytes=99-")
     assert resp.status_code == 416
     assert resp["Content-Range"] == "bytes */10"
     assert dl.call_count == 0

@@ -346,6 +346,24 @@ def upsert_turn(agent: Agent, data, initiator=None) -> Turn:
     )
 
 
+def stamp_share_urls(turns) -> list:
+    """Stamp `share_url` on each turn: its transcript's page, under the
+    workspace the transcript was shared from. One query for the whole page.
+    Run AFTER redaction, so a hidden turn's blanked token yields no link."""
+    from apps.session_sharing.models import ShareToken
+    from apps.workspaces import services as wsvc
+
+    tokens = {t.share_token for t in turns if t.share_token}
+    homes = dict(
+        ShareToken.objects.filter(token__in=tokens, revoked_at__isnull=True)
+        .values_list("token", "session__workspace_id")
+    ) if tokens else {}
+    for t in turns:
+        ws = homes.get(t.share_token) if t.share_token else None
+        t.share_url = wsvc.scoped_url_or_none(ws, f"/share/{t.share_token}") if ws else None
+    return turns
+
+
 def list_turns(agent: Agent, limit: int = 100) -> list[Turn]:
     """Newest first. Turn.Meta orders ASC (the queue is drained oldest-first), which
     is the wrong end for a workspace timeline, so this reverses it explicitly.

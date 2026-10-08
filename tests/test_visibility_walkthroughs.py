@@ -63,7 +63,7 @@ def _stub_download():
 def test_public_content_404s_anonymous_without_token(owner):
     w = _make(owner, visibility="link")
     w.ensure_share_token()
-    resp = Client().get(f"/walkthrough/{w.id}/content")
+    resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content")
     assert resp.status_code == 404
 
 
@@ -72,7 +72,7 @@ def test_public_content_served_to_anonymous_with_token(owner):
     w = _make(owner, visibility="link")
     token = w.ensure_share_token()
     with _stub_download():
-        resp = Client().get(f"/walkthrough/{w.id}/content?t={token}")
+        resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}")
     assert resp.status_code == 200
 
 
@@ -80,7 +80,7 @@ def test_public_content_served_to_anonymous_with_token(owner):
 def test_public_content_404s_anonymous_with_wrong_token(owner):
     w = _make(owner, visibility="link")
     w.ensure_share_token()
-    resp = Client().get(f"/walkthrough/{w.id}/content?t=nope")
+    resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t=nope")
     assert resp.status_code == 404
 
 
@@ -88,14 +88,14 @@ def test_public_content_404s_anonymous_with_wrong_token(owner):
 def test_private_content_404s_anonymous_even_with_token(owner):
     w = _make(owner, visibility="private")
     token = w.ensure_share_token()
-    resp = Client().get(f"/walkthrough/{w.id}/content?t={token}")
+    resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}")
     assert resp.status_code == 404
 
 
 @override_settings(REQUIRE_AUTH=True)
 def test_private_content_404s_anonymous(owner):
     w = _make(owner, visibility="private")
-    resp = Client().get(f"/walkthrough/{w.id}/content")
+    resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content")
     assert resp.status_code == 404
 
 
@@ -107,7 +107,7 @@ def test_malformed_content_id_is_a_bare_404_not_the_spa(owner):
     # proves the id itself 404s — not the anonymous gate.
     client = Client()
     client.force_login(owner)
-    resp = client.get("/walkthrough/not-a-uuid/content")
+    resp = client.get(f"/w/{a_workspace().slug}/walkthrough/not-a-uuid/content")
     assert resp.status_code == 404
 
 
@@ -117,7 +117,7 @@ def test_owner_sees_private_content(owner):
     client = Client()
     client.force_login(owner)
     with _stub_download():
-        resp = client.get(f"/walkthrough/{w.id}/content")
+        resp = client.get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content")
     assert resp.status_code == 200
 
 
@@ -130,7 +130,7 @@ def test_authed_non_owner_sees_private_content(owner):
     client = Client()
     client.force_login(other)
     with _stub_download():
-        resp = client.get(f"/walkthrough/{w.id}/content")
+        resp = client.get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content")
     assert resp.status_code == 200
 
 
@@ -200,7 +200,7 @@ def test_detail_api_404s_private_even_with_token(owner):
 @override_settings(REQUIRE_AUTH=True)
 def test_walkthrough_shell_served_to_anonymous(owner):
     w = _make(owner, visibility="link")
-    resp = Client().get(f"/walkthrough/{w.id}")
+    resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}")
     # Middleware passes the request through (not a login redirect).
     # spa_view returns 200 when the frontend is built, 503 when it isn't
     # (test environment has no build output). Either way, auth did not block it.
@@ -216,14 +216,24 @@ def test_walkthrough_collection_still_gated(db):
 
 
 @override_settings(REQUIRE_AUTH=True)
-def test_legacy_w_content_path_redirects_to_walkthrough(owner):
-    # /w/<id>/content was the pre-reclaim stream URL; old artifacts have it
-    # baked in. Anonymous holders must get redirected to the new route, not
-    # bounced to login or handed the SPA shell.
+def test_content_is_served_only_under_its_own_workspace(owner):
+    # One address per walkthrough (canopy-web#1337): the bytes under another
+    # workspace 404 exactly like a missing id, and nothing redirects.
     w = _make(owner, visibility="link")
-    resp = Client().get(f"/w/{w.id}/content")
-    assert resp.status_code in (301, 302)
-    assert resp.headers["Location"] == f"/walkthrough/{w.id}/content"
+    token = w.ensure_share_token()
+    a_workspace("elsewhere")
+    with _stub_download():
+        assert Client().get(f"/w/elsewhere/walkthrough/{w.id}/content?t={token}").status_code == 404
+        assert Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}").status_code == 200
+
+
+@override_settings(REQUIRE_AUTH=True)
+def test_legacy_content_paths_are_gone_not_forwarded(owner):
+    w = _make(owner, visibility="link")
+    for path in (f"/w/{w.id}/content", f"/walkthrough/{w.id}/content"):
+        resp = Client().get(path)
+        assert resp.status_code == 404, path
+        assert "Location" not in resp
 
 
 @override_settings(REQUIRE_AUTH=True)
@@ -242,7 +252,7 @@ def test_patch_to_public_mints_token_and_returns_share_url(owner):
     w.refresh_from_db()
     assert w.share_token
     assert body["share_url"] is not None
-    assert f"/walkthrough/{w.id}?t={w.share_token}" in body["share_url"]
+    assert body["share_url"].endswith(f"/w/{w.workspace_id}/walkthrough/{w.id}?t={w.share_token}")
 
 
 @override_settings(REQUIRE_AUTH=True)
@@ -320,7 +330,7 @@ def test_rotate_invalidates_old_token_and_returns_new_share_url(owner):
     assert f"?t={w.share_token}" in resp.json()["share_url"]
     # Old token is dead on both surfaces.
     assert Client().get(f"/api/walkthroughs/{w.id}/?t={old}").status_code == 404
-    assert Client().get(f"/walkthrough/{w.id}/content?t={old}").status_code == 404
+    assert Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={old}").status_code == 404
     # New token works.
     assert Client().get(f"/api/walkthroughs/{w.id}/?t={w.share_token}").status_code == 200
 

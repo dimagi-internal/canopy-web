@@ -137,8 +137,9 @@ export function deleteSession(slug: string): Promise<void> {
   return request<void>(`/api/sessions/${slug}`, { method: "DELETE" });
 }
 
-/** The page to send — under the workspace it was shared from (flat when the
- * row has none; the flat route redirects when it can). */
-export function shareUrl(token: string, workspace?: string | null): string {
+/** The page to send — under the workspace it was shared from. A share with no
+ * workspace has no address (there is no flat one): null. */
+export function shareUrl(token: string, workspace?: string | null): string | null {
+  if (!workspace) return null;
   return `${window.location.origin}${withBase(scopedPath(workspace, `/share/${token}`))}`;
 }

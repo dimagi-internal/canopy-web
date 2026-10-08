@@ -4,7 +4,8 @@ import { isScopedViewerPath, scopedPath } from './scopedLinks'
 describe('scopedLinks', () => {
   it('scopes a path under its workspace, and leaves it flat without one', () => {
     expect(scopedPath('connect', '/review/abc')).toBe('/w/connect/review/abc')
-    expect(scopedPath(null, '/share/tok')).toBe('/share/tok')
+    // No flat fallback: an artifact has one address, under its workspace.
+    expect(() => scopedPath('', '/share/tok')).toThrow()
   })
 
   it('recognises exactly the three scoped viewers', () => {

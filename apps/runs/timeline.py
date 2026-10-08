@@ -63,7 +63,8 @@ def recent_events(
     # views use (aggregate._NON_NARRATIVE_GATES).
     title_by_narrative: dict[str, tuple[dt.datetime, str | None]] = {}
     for r in revs:
-        if not agg._is_narrative_version(r):
+        # A review with no workspace has no address to link to.
+        if not agg._is_narrative_version(r) or r.workspace_id is None:
             continue
         slug = agg.narrative_for_run_id(r.run_id, feature_map)
         prev = title_by_narrative.get(slug)
@@ -87,6 +88,13 @@ def recent_events(
         narrative = agg.narrative_of_walkthrough(run_wts[0])
         title = (title_by_narrative.get(narrative) or (None, None))[1] or narrative
         project_slug = next((w.project_slug for w in run_wts if w.project_slug), None)
+        # The run's page, under the workspace its artifacts live in.
+        href = next(
+            (h for w in run_wts if (h := wsvc.scoped_path_or_none(w.workspace_id, f"/ddd/{narrative}/{run_id}"))),
+            None,
+        )
+        if href is None:
+            continue
         events.append(
             ActivityEvent(
                 subsystem="ddd",
@@ -96,7 +104,7 @@ def recent_events(
                 summary=_run_stamp(run_id),
                 project_slug=project_slug,
                 actor=None,
-                href=f"/ddd/{narrative}/{run_id}",
+                href=href,
                 id=f"run:{run_id}",
                 icon="video" if any(agg._is_video(w) for w in run_wts) else "deck",
             )

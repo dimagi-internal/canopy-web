@@ -76,7 +76,7 @@ function renderAt(url: string) {
     <MemoryRouter initialEntries={[url]}>
       <ThemeProvider>
         <Routes>
-          <Route path="/review/:id/" element={<ReviewPage />} />
+          <Route path="/w/:workspace/review/:id/" element={<ReviewPage />} />
         </Routes>
       </ThemeProvider>
     </MemoryRouter>,
@@ -101,20 +101,20 @@ describe('ReviewPage — a member who can decide', () => {
   })
 
   it('does not pre-select approve, so nothing commits on the first click', async () => {
-    renderAt('/review/r1/')
+    renderAt('/w/connect/review/r1/')
     const submit = await screen.findByRole('button', { name: /choose approve or re-draft/i })
     expect(isDisabled(submit)).toBe(true)
     expect(screen.queryByRole('button', { name: /submit — approve & build/i })).toBeNull()
   })
 
   it('enables approve & build only once the member chooses it', async () => {
-    renderAt('/review/r1/')
+    renderAt('/w/connect/review/r1/')
     fireEvent.click(await screen.findByRole('button', { name: /approve & continue/i }))
     expect(isDisabled(screen.getByRole('button', { name: /submit — approve & build/i }))).toBe(false)
   })
 
   it('can save a wording edit without deciding (#1266)', async () => {
-    renderAt('/review/r1/')
+    renderAt('/w/connect/review/r1/')
     const save = await screen.findByRole('button', { name: /save edits without deciding/i })
     expect(isDisabled(save)).toBe(true) // nothing to save yet
     fireEvent.change(screen.getAllByPlaceholderText(/the beat the viewer watches/i)[0], {
@@ -128,7 +128,7 @@ describe('ReviewPage — a member who can decide', () => {
   })
 
   it('still sees the build plan it is approving', async () => {
-    renderAt('/review/r1/')
+    renderAt('/w/connect/review/r1/')
     expect(await screen.findAllByRole('button', { name: /delete scene/i })).toHaveLength(3)
   })
 })
@@ -139,7 +139,7 @@ describe('ReviewPage — a guest with the share link', () => {
   })
 
   it('asks for suggestions, not approval, and offers no approve control', async () => {
-    renderAt('/review/r1/?t=tok')
+    renderAt('/w/connect/review/r1/?t=tok')
     expect(await screen.findByRole('heading', { level: 1, name: /suggest edits/i })).toBeTruthy()
     expect(screen.queryByText(/approve the story before we build it/i)).toBeNull()
     expect(screen.queryByRole('button', { name: /approve & continue/i })).toBeNull()
@@ -148,7 +148,7 @@ describe('ReviewPage — a guest with the share link', () => {
   })
 
   it('shows none of the build scaffolding (#1267)', async () => {
-    renderAt('/review/r1/?t=tok')
+    renderAt('/w/connect/review/r1/?t=tok')
     await screen.findByRole('heading', { level: 1, name: /suggest edits/i })
     expect(screen.queryByRole('button', { name: /delete scene/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /add scene/i })).toBeNull()
@@ -159,14 +159,14 @@ describe('ReviewPage — a guest with the share link', () => {
   })
 
   it('sends suggestions with the share token', async () => {
-    renderAt('/review/r1/?t=tok')
+    renderAt('/w/connect/review/r1/?t=tok')
     fireEvent.click(await screen.findByRole('button', { name: /send suggestions/i }))
     await waitFor(() => expect(suggest).toHaveBeenCalledTimes(1))
     expect((suggest.mock.calls[0] as unknown as unknown[])[2]).toBe('tok')
   })
 
   it('lets a guest leave a name and email so they are copied on the notification', async () => {
-    renderAt('/review/r1/?t=tok')
+    renderAt('/w/connect/review/r1/?t=tok')
     fireEvent.change(await screen.findByLabelText(/your name/i), { target: { value: 'Sagar' } })
     fireEvent.change(screen.getByLabelText(/your email/i), { target: { value: 'sagar@dimagi.com' } })
     fireEvent.click(screen.getByRole('button', { name: /send suggestions/i }))
@@ -181,7 +181,7 @@ describe('ReviewPage — a signed-in suggester', () => {
   it('is not asked for an email (their account is cc’d)', async () => {
     auth.status = 'authenticated'
     review.current = detail({ can_decide: false })
-    renderAt('/review/r1/?t=tok')
+    renderAt('/w/connect/review/r1/?t=tok')
     await screen.findByRole('button', { name: /send suggestions/i })
     expect(screen.queryByLabelText(/your email/i)).toBeNull()
   })
@@ -191,7 +191,7 @@ describe('ReviewPage — signed in, but not allowed to decide (#1268)', () => {
   it('gets the suggest-only page on the guest link, not the approve UI', async () => {
     auth.status = 'authenticated'
     review.current = detail({ can_decide: false })
-    renderAt('/review/r1/?t=tok')
+    renderAt('/w/connect/review/r1/?t=tok')
     expect(await screen.findByRole('heading', { level: 1, name: /suggest edits/i })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /submit — approve & build/i })).toBeNull()
     expect(screen.getByRole('button', { name: /send suggestions/i })).toBeTruthy()
@@ -201,14 +201,14 @@ describe('ReviewPage — signed in, but not allowed to decide (#1268)', () => {
 describe('ReviewPage — the demo and its name (#1270, #1271)', () => {
   it('names the narrative, not the run id', async () => {
     auth.status = 'anonymous'
-    renderAt('/review/r1/?t=tok')
+    renderAt('/w/connect/review/r1/?t=tok')
     expect(await screen.findByText('Chlorine Dispenser Walkthroughs')).toBeTruthy()
     expect(screen.queryByText('chlorine-dispenser-walkthroughs-2026-10-07-002')).toBeNull()
   })
 
   it('renders one labelled paragraph per cut', async () => {
     auth.status = 'anonymous'
-    renderAt('/review/r1/?t=tok')
+    renderAt('/w/connect/review/r1/?t=tok')
     expect(await screen.findByText('Cut 1 · Register')).toBeTruthy()
     expect(screen.getByText('Cut 2 · Decide')).toBeTruthy()
   })
@@ -240,7 +240,7 @@ describe('ReviewPage — the Cuts tab of a recorded narrative (canopy-web#1288)'
     title: 'Cut 1 · Register',
     scene_ids: ['s1', 's2'],
     walkthrough_id: 'w1',
-    video_url: '/walkthrough/w1/content?t=pub',
+    video_url: '/w/connect/walkthrough/w1/content?t=pub',
     ...over,
   })
 
@@ -252,9 +252,9 @@ describe('ReviewPage — the Cuts tab of a recorded narrative (canopy-web#1288)'
         cut({ cut_id: 'decide', title: 'Cut 2 · Decide', scene_ids: ['s3'], walkthrough_id: 'w2', video_url: null }),
       ],
     } as Partial<ReviewDetail>)
-    const { container } = renderAt('/review/r1/?t=tok&tab=cuts')
+    const { container } = renderAt('/w/connect/review/r1/?t=tok&tab=cuts')
     const register = await screen.findByRole('region', { name: 'Cut 1 · Register' })
-    expect(register.querySelector('video')?.getAttribute('src')).toContain('/walkthrough/w1/content?t=pub')
+    expect(register.querySelector('video')?.getAttribute('src')).toContain('/w/connect/walkthrough/w1/content?t=pub')
     expect(register.textContent).toContain('Register waterpoints.')
     expect(register.textContent).toContain('Correct the ward.')
     expect(register.textContent).not.toContain('Decide where dispensers go.')
@@ -271,10 +271,10 @@ describe('ReviewPage — the Cuts tab of a recorded narrative (canopy-web#1288)'
   it("falls back to the version's own video when there are no cuts", async () => {
     auth.status = 'anonymous'
     review.current = detail({
-      version_video: cut({ cut_id: '', title: 'Hero', video_url: '/walkthrough/w9/content?t=h' }),
+      version_video: cut({ cut_id: '', title: 'Hero', video_url: '/w/connect/walkthrough/w9/content?t=h' }),
     } as Partial<ReviewDetail>)
-    const { container } = renderAt('/review/r1/?t=tok&tab=cuts')
+    const { container } = renderAt('/w/connect/review/r1/?t=tok&tab=cuts')
     await waitFor(() => expect(container.querySelector('video')).toBeTruthy())
-    expect(container.querySelector('video')?.getAttribute('src')).toContain('/walkthrough/w9/content?t=h')
+    expect(container.querySelector('video')?.getAttribute('src')).toContain('/w/connect/walkthrough/w9/content?t=h')
   })
 })

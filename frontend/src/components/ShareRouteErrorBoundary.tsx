@@ -1,9 +1,9 @@
 import { isRouteErrorResponse, useRouteError } from 'react-router-dom'
 
 /**
- * Error boundary for the public `/share/:token` viewer ONLY.
+ * Error boundary for the public `/w/:workspace/share/:token` viewer ONLY.
  *
- * `/share/:token` (`SessionSharePage`) is mounted OUTSIDE `AppLayout` and is
+ * `/w/:workspace/share/:token` (`SessionSharePage`) is mounted OUTSIDE `AppLayout` and is
  * deliberately light-themed + chrome-less — a Dimagi login is never required
  * to read it (see CLAUDE.md's design-tokens exception). The app's default
  * `RouteErrorBoundary` is wrong here on three counts: it styles off the dark

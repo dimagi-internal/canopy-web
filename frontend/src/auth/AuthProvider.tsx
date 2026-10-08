@@ -19,29 +19,24 @@ export const AuthContext = createContext<AuthState>({ status: 'loading', user: n
 // Routes reachable without a Dimagi session: public (visibility=link) walkthroughs
 // and reviews. These are tokenless — the UUID in the URL is the only secret, and
 // the API self-enforces (private resources 404 to anonymous callers).
-// Legacy /w/<uuid> walkthrough links pass too (the router redirects them to
-// /walkthrough/<uuid>), but /w/<workspace> tenant paths stay behind the gate —
-// except the three scoped viewers (/w/<ws>/walkthrough|review|share/…), where
-// every share link now points (lib/scopedLinks.ts).
+// The artifact viewers live ONLY under their workspace
+// (/w/<ws>/walkthrough|review|share/…, lib/scopedLinks.ts); every other
+// /w/<workspace> tenant path stays behind the gate. A flat /walkthrough/,
+// /review/ or /share/ link is a server 404 now (canopy-web#1337), so it is not
+// listed here.
 // /invite/<token> is the odd one out: the invitee has no Dimagi session (may
 // not even be a Dimagi address), so the accept page must render for an
 // anonymous visitor — it self-enforces via the token-gated preview/accept
 // endpoints, same shape as the others.
-const LEGACY_WALKTHROUGH_RE =
-  /^\/w\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\/|$)/i
 function isPublicLinkRoute(): boolean {
   const base = import.meta.env.BASE_URL.replace(/\/$/, '')
   const path = window.location.pathname.slice(base.length)
   return (
-    path.startsWith('/review/') ||
-    path.startsWith('/walkthrough/') ||
-    path.startsWith('/share/') ||
     path.startsWith('/ddd-release/') ||
     path.startsWith('/storyboard/') ||
     path.startsWith('/narrative/') ||
     path.startsWith('/invite/') ||
     path === '/about' ||
-    LEGACY_WALKTHROUGH_RE.test(path) ||
     isScopedViewerPath(path)
   )
 }

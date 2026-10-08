@@ -10732,6 +10732,8 @@ export interface components {
             readonly session_slug: string;
             /** Share Token */
             readonly share_token: string;
+            /** Share Url */
+            readonly share_url?: string | null;
             /** Started At */
             readonly started_at?: string | null;
             /** Ended At */

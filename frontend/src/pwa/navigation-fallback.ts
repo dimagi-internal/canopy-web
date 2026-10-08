@@ -25,9 +25,9 @@
  *
  * Workbox applies both lists: a navigation gets the shell iff it matches the
  * allowlist AND does not match the denylist (denylist wins). That precedence is
- * what lets a broad `walkthrough/` entry sit in the allowlist (so the viewer
- * shell `/walkthrough/<uuid>` stays offline-resilient) while the server stream
- * `/walkthrough/<uuid>/content` is carved back out on the denylist.
+ * what lets the broad `w/` entry sit in the allowlist (so the viewer shell
+ * `/w/<ws>/walkthrough/<uuid>` stays offline-resilient) while the server stream
+ * `/w/<ws>/walkthrough/<uuid>/content` is carved back out on the denylist.
  *
  * Every pattern tolerates the optional `(canopy/)?` segment so it matches both
  * the root deployment (`/…`) and the labs tenant mount (`/canopy/…`). Workbox
@@ -66,9 +66,9 @@ export const NAVIGATE_FALLBACK_ALLOWLIST: RegExp[] = [
   /^\/(canopy\/)?ddd-plans/,
   /^\/(canopy\/)?ddd/, // NB: after ddd-release/ddd-plans so those match first
   /^\/(canopy\/)?reviews/, // legacy flat → redirect
-  /^\/(canopy\/)?review\//, // /review/:id surface
-  /^\/(canopy\/)?walkthrough\//, // /walkthrough/:id VIEWER shell (…/content denied below)
-  /^\/(canopy\/)?share\//, // /share/:token public viewer
+  // No flat /review/, /walkthrough/ or /share/: those artifact addresses are a
+  // server 404 now (canopy-web#1337), so they must reach the network. The
+  // viewers live under /w/<ws>/, which `^/w/` above already allows.
   /^\/(canopy\/)?invite\//, // /invite/:token accept page
   /^\/(canopy\/)?about/, // /about public explainer (chrome-less, anonymous)
   /^\/(canopy\/)?guide/, // /guide — self-documenting descriptor registry
@@ -77,9 +77,10 @@ export const NAVIGATE_FALLBACK_ALLOWLIST: RegExp[] = [
 
 /**
  * Server-owned routes that must reach the network, never the shell. The first
- * six are Django's own prefixes; the last two are the content streams that
- * overlap an allowlisted SPA prefix and so must be carved back out here (the
- * denylist wins over the allowlist).
+ * six are Django's own prefixes; the last is the walkthrough content stream
+ * (/w/<ws>/walkthrough/<id>/content), which overlaps the allowlisted `/w/`
+ * prefix and so must be carved back out here (the denylist wins over the
+ * allowlist).
  */
 export const NAVIGATE_FALLBACK_DENYLIST: RegExp[] = [
   /^\/(canopy\/)?api\//,
@@ -88,8 +89,7 @@ export const NAVIGATE_FALLBACK_DENYLIST: RegExp[] = [
   /^\/(canopy\/)?static\//,
   /^\/(canopy\/)?auth\//,
   /^\/(canopy\/)?health\/?$/,
-  /^\/(canopy\/)?walkthrough\/.*\/content(?:\?.*)?$/, // streamed artifact bytes (Django)
-  /^\/(canopy\/)?w\/.*\/content(?:\?.*)?$/, // legacy /w/<uuid>/content redirect (Django)
+  /^\/(canopy\/)?w\/.*\/content(?:\?.*)?$/, // streamed artifact bytes (Django)
 ]
 
 /**

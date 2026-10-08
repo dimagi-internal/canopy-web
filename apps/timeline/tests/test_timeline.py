@@ -186,7 +186,7 @@ def test_ddd_run_and_narrative_review(client, owner):
     body = client.get(BASE, {"subsystem": "ddd"}).json()
     kinds = {e["kind"]: e for e in body["events"]}
     assert "run" in kinds and "narrative_review" in kinds
-    assert kinds["run"]["href"] == f"/ddd/reef/{rid}"
+    assert kinds["run"]["href"] == f"/w/test-ws/ddd/reef/{rid}"
     assert kinds["narrative_review"]["href"] == f"/w/{rev.workspace_id}/review/{rev.id}"
 
 

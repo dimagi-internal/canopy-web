@@ -12,7 +12,8 @@
  * The reasons sort into four kinds:
  *   - personal/global: about YOU, or the fleet across your workspaces;
  *   - pre-tenant: you have no workspace yet (an invite, the first-run form);
- *   - redirect: only sends the browser to a scoped page;
+ *   - redirect: only sends the browser to a scoped page — never an ARTIFACT
+ *     link, which has one address and is not forwarded (canopy-web#1337);
  *   - FOLLOW-UP: tenant data still on a flat public URL. Each is a debt the
  *     owner decision covers but #1289 did not take on; shrink this, never grow
  *     it.
@@ -53,9 +54,6 @@ const FLAT_ALLOWED: Record<string, string> = {
   '/reviews': 'redirect: retired, → /',
   '/insights': 'redirect: retired, → /',
   '/projects': 'redirect: retired, → /',
-  '/walkthrough/:id': "redirect: links sent before #1289 → /w/:workspace/walkthrough/:id (the row's workspace)",
-  '/review/:id': "redirect: links sent before #1289 → /w/:workspace/review/:id (the row's workspace)",
-  '/share/:token': "redirect: links sent before #1289 → /w/:workspace/share/:token (the row's workspace)",
   '/*': 'the not-found catch-all',
 
   // --- FOLLOW-UP: tenant data still on a flat public URL ---
@@ -88,6 +86,15 @@ describe('every route lives under /w/:workspace, or says why not', () => {
     // An allowlist entry outliving its route is how an allowlist stops being read.
     const stale = Object.keys(FLAT_ALLOWED).filter((p) => !paths.includes(p))
     expect(stale, `FLAT_ALLOWED names routes that are gone: ${stale.join(', ')}`).toEqual([])
+  })
+
+  it('has no flat artifact viewer, and forwards none', () => {
+    // One URL per artifact, under its workspace (owner decision, 2026-10-08;
+    // canopy-web#1337). A flat /walkthrough/, /review/ or /share/ link is a
+    // plain server 404 — not a page, and not a redirect to the scoped one.
+    const artifact = /^\/(walkthrough|review|share)(\/|$)/
+    expect(paths.filter((p) => artifact.test(p))).toEqual([])
+    expect(Object.keys(FLAT_ALLOWED).filter((p) => artifact.test(p))).toEqual([])
   })
 
   it('gives every exception a reason', () => {

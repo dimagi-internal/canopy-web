@@ -17,7 +17,6 @@ import { SettingsPage } from './pages/SettingsPage'
 import { WalkthroughsPage } from './pages/WalkthroughsPage'
 import { WalkthroughViewerPage } from './pages/WalkthroughViewerPage'
 import { ReviewPage } from './pages/ReviewPage'
-import { FlatArtifactRedirect } from './pages/FlatArtifactRedirect'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
@@ -138,8 +137,6 @@ function LazySection({ children }: { children: React.ReactNode }) {
   )
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
 // Legacy flat tenant surface (e.g. /agents, /ddd/foo) → the active workspace's
 // scoped path. Waits for the workspace list so `active` is known.
 export function TenantRedirect({ to }: { to: string }) {
@@ -170,17 +167,13 @@ export function SettingsRedirect({ to }: { to: string }) {
   return <Navigate to={`/w/${workspace}/settings/${to}${search}${hash}`} replace />
 }
 
-// /w/:workspace index. Disambiguates a legacy /w/<uuid> walkthrough link
-// (redirect to the new viewer) from a real workspace slug, which lands on the
-// workspace's agents: their projects and tasks are canopy's one project system
-// (the workbench Projects page that used to live here was retired 2026-10-06).
+// /w/:workspace index: lands on the workspace's agents — their projects and
+// tasks are canopy's one project system (the workbench Projects page that used
+// to live here was retired 2026-10-06). A pre-tenancy /w/<uuid> walkthrough
+// link never reaches here: the server answers it with a plain 404
+// (canopy-web#1337).
 function WorkspaceIndex() {
   const { workspace } = useParams()
-  const { search, hash } = useLocation()
-  if (workspace && UUID_RE.test(workspace)) {
-    // Preserve ?t=<share_token> and #t=<seconds> across the redirect.
-    return <Navigate to={`/walkthrough/${workspace}${search}${hash}`} replace />
-  }
   return <Navigate to={`/w/${workspace}/agents`} replace />
 }
 
@@ -237,18 +230,10 @@ export const routeTable: RouteObject[] = [
       // name no workspace, so they live outside /w/:workspace.
       { path: '/beta-requests', element: <BetaRequestsPage /> },
       { path: '/beta-requests/:requestId', element: <BetaRequestPage /> },
-      // --- Old flat viewer links → the same page under its workspace ---
-      // Every link sent before canopy-web#1289 points here, so these resolve the
-      // row's workspace and replace the URL; if they cannot, the page renders in
-      // place and says what it always said (not found, sign in).
-      {
-        path: '/walkthrough/:id',
-        element: <FlatArtifactRedirect kind="walkthrough"><WalkthroughViewerPage /></FlatArtifactRedirect>,
-      },
-      {
-        path: '/review/:id',
-        element: <FlatArtifactRedirect kind="review"><ReviewPage /></FlatArtifactRedirect>,
-      },
+      // There is no flat /walkthrough/:id, /review/:id or /share/:token: one
+      // URL per artifact, under its workspace, and nothing forwarded (owner
+      // decision, 2026-10-08; canopy-web#1337). The server answers a flat link
+      // with a plain 404 that says so (config/views.py::flat_artifact_gone).
       // /invite/:token — the accept page. Deliberately OUTSIDE /w/:workspace:
       // an invitee has no workspace membership yet, so there is no tenant to
       // scope it under. Self-enforces via the preview/accept endpoints
@@ -404,12 +389,6 @@ export const routeTable: RouteObject[] = [
   // Canopy"-linking app boundary off a page anonymous visitors can't log
   // into.
   { path: '/w/:workspace/share/:token', element: <SessionSharePage />, errorElement: <ShareRouteErrorBoundary /> },
-  // The old flat link: resolves the share's workspace and moves there.
-  {
-    path: '/share/:token',
-    element: <FlatArtifactRedirect kind="share"><SessionSharePage /></FlatArtifactRedirect>,
-    errorElement: <ShareRouteErrorBoundary />,
-  },
   // The clean, shareable DDD run RELEASE page — also mounted OUTSIDE AppLayout,
   // in a chrome-less PublicLayout, so a `?t=<share_token>` viewer with no Dimagi
   // login is served (the release API self-enforces token-or-member access). New
