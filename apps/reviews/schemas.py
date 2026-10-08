@@ -11,6 +11,21 @@ ReviewStatus = Literal["pending", "resolved"]
 ReviewVisibility = Literal["private", "link"]
 
 
+class ReviewPinnedVideoOut(StrictModel):
+    """A video pinned to the review's narrative version (canopy-web#1288)."""
+
+    # The recorded-narrative cut (the recipe's cuts[].id); "" for a plain video.
+    cut_id: str = ""
+    title: str
+    # Narration item ids this cut plays, in order — places it beside its words.
+    scene_ids: list[str] = []
+    walkthrough_id: uuid.UUID
+    # A playable path for THIS reader: tokenless for a member of the video's
+    # workspace, its own share-token URL for a public video, None when the
+    # video is private and the reader is not a member.
+    video_url: str | None = None
+
+
 class ReviewRequestOut(StrictModel):
     """Detail/list output for a review request."""
 
@@ -41,6 +56,12 @@ class ReviewRequestOut(StrictModel):
     title: str | None = None
     created_at: dt.datetime
     resolved_at: dt.datetime | None = None
+    # The narrative version's own video (an explainer render, or a recorded
+    # narrative's hero cut), and a recorded narrative's video per cut, in
+    # narration order. Both come from uploads pinned to this version — the
+    # review's request_json.video is whatever the orchestrator posted at creation.
+    version_video: ReviewPinnedVideoOut | None = None
+    cut_videos: list[ReviewPinnedVideoOut] = []
 
 
 class ReviewListItemOut(StrictModel):

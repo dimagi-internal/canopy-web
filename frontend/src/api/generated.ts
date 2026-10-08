@@ -6633,6 +6633,11 @@ export interface components {
             /** Role */
             readonly role?: string | null;
             /**
+             * Cut Id
+             * @default
+             */
+            readonly cut_id: string;
+            /**
              * Created At
              * Format: date-time
              */
@@ -6716,6 +6721,11 @@ export interface components {
             readonly narrative_slug?: string | null;
             /** Role */
             readonly role?: string | null;
+            /**
+             * Cut Id
+             * @default
+             */
+            readonly cut_id: string;
             /**
              * Created At
              * Format: date-time
@@ -8352,6 +8362,31 @@ export interface components {
             readonly visibility: "private" | "link";
         };
         /**
+         * ReviewPinnedVideoOut
+         * @description A video pinned to the review's narrative version (canopy-web#1288).
+         */
+        readonly ReviewPinnedVideoOut: {
+            /**
+             * Cut Id
+             * @default
+             */
+            readonly cut_id: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Scene Ids
+             * @default []
+             */
+            readonly scene_ids: readonly string[];
+            /**
+             * Walkthrough Id
+             * Format: uuid
+             */
+            readonly walkthrough_id: string;
+            /** Video Url */
+            readonly video_url?: string | null;
+        };
+        /**
          * ReviewRequestOut
          * @description Detail/list output for a review request.
          */
@@ -8408,6 +8443,12 @@ export interface components {
             readonly created_at: string;
             /** Resolved At */
             readonly resolved_at?: string | null;
+            readonly version_video?: components["schemas"]["ReviewPinnedVideoOut"] | null;
+            /**
+             * Cut Videos
+             * @default []
+             */
+            readonly cut_videos: readonly components["schemas"]["ReviewPinnedVideoOut"][];
         };
         /**
          * ReviewSubmitIn
@@ -8480,6 +8521,34 @@ export interface components {
              */
             readonly has_narrative: boolean;
         };
+        /**
+         * NarrativeCutOut
+         * @description One cut of a ``style: recorded`` narrative and the video pinned to it.
+         *
+         *     A recorded narrative renders one mp4 per cut (canopy#796); each is uploaded
+         *     with the recipe's ``cuts[].id`` and the scene ids it plays. Ordered by where
+         *     the cut's first scene falls in the narration.
+         */
+        readonly NarrativeCutOut: {
+            /** Cut Id */
+            readonly cut_id: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Scene Ids
+             * @default []
+             */
+            readonly scene_ids: readonly string[];
+            /**
+             * Walkthrough Id
+             * Format: uuid
+             */
+            readonly walkthrough_id: string;
+            /** Video Url */
+            readonly video_url: string;
+            /** Video Viewer Url */
+            readonly video_viewer_url: string;
+        };
         /** NarrativeDetailOut */
         readonly NarrativeDetailOut: {
             /** Slug */
@@ -8550,6 +8619,11 @@ export interface components {
             readonly video_url?: string | null;
             /** Video Viewer Url */
             readonly video_viewer_url?: string | null;
+            /**
+             * Cuts
+             * @default []
+             */
+            readonly cuts: readonly components["schemas"]["NarrativeCutOut"][];
         };
         /** NarrativeVersionOut */
         readonly NarrativeVersionOut: {
@@ -8578,6 +8652,11 @@ export interface components {
             readonly video_url?: string | null;
             /** Video Viewer Url */
             readonly video_viewer_url?: string | null;
+            /**
+             * Cuts
+             * @default []
+             */
+            readonly cuts: readonly components["schemas"]["NarrativeCutOut"][];
             /**
              * Runs
              * @default []
@@ -16398,6 +16477,16 @@ export interface operations {
                      * @default
                      */
                     readonly narrative_review_id?: string;
+                    /**
+                     * Cut Id
+                     * @default
+                     */
+                    readonly cut_id?: string;
+                    /**
+                     * Cut Scene Ids
+                     * @default
+                     */
+                    readonly cut_scene_ids?: string;
                 };
             };
         };

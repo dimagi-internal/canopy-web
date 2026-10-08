@@ -32,6 +32,22 @@ class NarrativeRunOut(StrictModel):
     has_deck: bool = False
 
 
+class NarrativeCutOut(StrictModel):
+    """One cut of a ``style: recorded`` narrative and the video pinned to it.
+
+    A recorded narrative renders one mp4 per cut (canopy#796); each is uploaded
+    with the recipe's ``cuts[].id`` and the scene ids it plays. Ordered by where
+    the cut's first scene falls in the narration."""
+
+    cut_id: str
+    title: str
+    # Narration item ids (scene ids) this cut plays, in order.
+    scene_ids: list[str] = []
+    walkthrough_id: uuid.UUID
+    video_url: str
+    video_viewer_url: str
+
+
 class NarrativeVersionOut(StrictModel):
     version: int | None = None
     review_id: str | None = None
@@ -46,8 +62,11 @@ class NarrativeVersionOut(StrictModel):
     status: str | None = None
     # A narrated video pinned to THIS version (a video walkthrough stamped with
     # this version's review id). None until one is uploaded for the version.
+    # For a recorded narrative it is the hero cut (see apps.walkthroughs.pinned).
     video_url: str | None = None
     video_viewer_url: str | None = None
+    # A recorded narrative's per-cut videos; empty for an explainer.
+    cuts: list[NarrativeCutOut] = []
     runs: list[NarrativeRunOut] = []
 
 
@@ -61,6 +80,7 @@ class NarrativeStoryOut(StrictModel):
     # The narrated video pinned to the current version, if one was uploaded.
     video_url: str | None = None
     video_viewer_url: str | None = None
+    cuts: list[NarrativeCutOut] = []
 
 
 class NarrativeDetailOut(StrictModel):

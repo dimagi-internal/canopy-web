@@ -245,6 +245,20 @@ export interface ReviewSuggestion {
   created_at: string
 }
 
+/** A video pinned to the review's narrative version (canopy-web#1288). For a
+ *  recorded narrative there is one per cut, named by the recipe's cut id. */
+export interface ReviewPinnedVideo {
+  /** The recipe's cuts[].id; "" for a plain (explainer) video. */
+  cut_id: string
+  title: string
+  /** Narration item ids this cut plays, in order. */
+  scene_ids: string[]
+  walkthrough_id: string
+  /** Playable for THIS reader; null when the video is private and the reader
+   *  is not a member of its workspace. */
+  video_url: string | null
+}
+
 export interface ReviewDetail {
   id: string
   run_id: string
@@ -267,6 +281,10 @@ export interface ReviewDetail {
   title?: string | null
   created_at: string
   resolved_at: string | null
+  /** The version's own video (explainer, or a recorded narrative's hero cut). */
+  version_video?: ReviewPinnedVideo | null
+  /** A recorded narrative's videos, one per cut, in narration order. */
+  cut_videos?: ReviewPinnedVideo[]
 }
 
 // ---------------------------------------------------------------------------

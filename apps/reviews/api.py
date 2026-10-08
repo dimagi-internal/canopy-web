@@ -36,6 +36,8 @@ from apps.runs.ddd import (
     is_run_child_gate,
     narrative_slug_from_run_id,
 )
+from apps.walkthroughs import pinned
+from apps.walkthroughs.models import Walkthrough
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -137,8 +139,52 @@ def _token_ok(request: HttpRequest, review: ReviewRequest) -> bool:
     return hmac.compare_digest(provided, stored)
 
 
+def _pinned_video(w: Walkthrough, member_slugs: set[str]) -> dict:
+    """A video pinned to this review's version, as the reader may play it.
+
+    A member of the video's workspace streams it on their session; anyone else —
+    the guest holding the review link — gets the video's own share-token URL when
+    it is public (visibility=link), and no URL when it is private. The review's
+    link never widens a private video: it only says the cut exists."""
+    url = None
+    if w.workspace_id is not None and w.workspace_id in member_slugs:
+        url = f"/walkthrough/{w.id}/content"
+    elif w.visibility == Walkthrough.VISIBILITY_LINK and w.share_token:
+        url = f"/walkthrough/{w.id}/content?t={w.share_token}"
+    return {
+        "cut_id": w.cut_id,
+        "title": pinned.cut_title(w) if w.cut_id else w.title,
+        "scene_ids": list(w.cut_scene_ids or []),
+        "walkthrough_id": w.id,
+        "video_url": url,
+    }
+
+
+def _pinned_videos(request: HttpRequest, review: ReviewRequest) -> dict:
+    """The hero + per-cut videos pinned to THIS version (canopy-web#1288).
+
+    Read from the same resolver as the narrative page, so the review link and
+    the narrative cannot disagree about which video is which cut. Only videos in
+    the review's own workspace count: the version stamp is not proof of
+    anything (an upload may name any review id), the tenant is."""
+    if review.workspace_id is None:
+        return {"version_video": None, "cut_videos": []}
+    rows = pinned.pinned_video_rows(
+        [review.id], Walkthrough.objects.filter(workspace_id=review.workspace_id)
+    ).get(str(review.id), [])
+    if not rows:
+        return {"version_video": None, "cut_videos": []}
+    pv = pinned.resolve(rows, (review.request_json or {}).get("narration"))
+    slugs = wsvc.request_workspace_slugs(request)
+    return {
+        "version_video": _pinned_video(pv.hero, slugs) if pv.hero else None,
+        "cut_videos": [_pinned_video(w, slugs) for w in pv.cuts],
+    }
+
+
 def _detail_payload(
-    review: ReviewRequest, *, is_owner: bool, can_write: bool = False, can_decide: bool = False
+    review: ReviewRequest, *, is_owner: bool, can_write: bool = False, can_decide: bool = False,
+    videos: dict | None = None,
 ) -> dict:
     return {
         "id": review.id,
@@ -158,6 +204,7 @@ def _detail_payload(
         "title": _list_title(review.request_json or {}, _narrative_slug_of(review)),
         "created_at": review.created_at,
         "resolved_at": review.resolved_at,
+        **(videos or {}),
     }
 
 
@@ -396,6 +443,7 @@ def get_review(request: HttpRequest, rid: UUID) -> ReviewRequestOut:
             review, is_owner=is_own,
             can_write=request.user.is_authenticated and _in_caller_workspaces(request, review),
             can_decide=_can_write(request, review),
+            videos=_pinned_videos(request, review),
         )
     )
 
@@ -452,7 +500,10 @@ def submit_review(request: HttpRequest, rid: UUID, payload: ReviewSubmitIn) -> R
 
     is_own = _is_owner(request, review)
     return ReviewRequestOut.model_validate(
-        _detail_payload(review, is_owner=is_own, can_write=True, can_decide=True)
+        _detail_payload(
+            review, is_owner=is_own, can_write=True, can_decide=True,
+            videos=_pinned_videos(request, review),
+        )
     )
 
 

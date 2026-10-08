@@ -47,6 +47,8 @@ class WalkthroughListItemOut(StrictModel):
     run_id: str | None = None
     narrative_slug: str | None = None
     role: str | None = None
+    # The recorded-narrative cut this video is (the recipe's cuts[].id); "" otherwise.
+    cut_id: str = ""
     created_at: dt.datetime
     updated_at: dt.datetime
 
@@ -79,6 +81,8 @@ class WalkthroughUploadIn(StrictModel):
     run_id: str = ""
     narrative_slug: str = ""
     role: str = ""
+    cut_id: str = ""
+    cut_scene_ids: str = ""
 
 
 class WalkthroughPatchIn(StrictModel):
