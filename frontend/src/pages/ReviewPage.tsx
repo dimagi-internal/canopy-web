@@ -1106,6 +1106,11 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
   const [suggested, setSuggested] = useState(false)
   // Set once a decider saves edits without deciding (mode 'save').
   const [saved, setSaved] = useState(false)
+  // A share-link guest is anonymous; these let them be named in, and cc'd on, the
+  // email the team gets. A signed-in caller's account supplies both server-side.
+  const [guestName, setGuestName] = useState('')
+  const [guestEmail, setGuestEmail] = useState('')
+  const auth = useAuth()
   const viaShareLink = !!shareToken && review.visibility === 'link'
   const [auditOpen, setAuditOpen] = useState(false)
 
@@ -1244,7 +1249,10 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
       if (canSuggest || mode === 'save') {
         // Land the edits as a SUGGESTION — never resolve the gate. A share-link
         // guest authenticates with the token; a signed-in member with a session.
-        await suggestReview(review.id, payload, viaShareLink ? shareToken : null)
+        await suggestReview(
+          review.id, payload, viaShareLink ? shareToken : null,
+          guestName.trim() || null, guestEmail.trim() || null,
+        )
         if (canSuggest) setSuggested(true)
         else setSaved(true)
       } else {
@@ -1256,7 +1264,7 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
     } finally {
       setBusy(false)
     }
-  }, [effectiveScenes, effectivePersonas, effectiveWhyBrief, overallFeedback, buildOrder, choices, review.id, review.request_json, shareToken, viaShareLink, canSuggest, onResolved])
+  }, [effectiveScenes, effectivePersonas, effectiveWhyBrief, overallFeedback, buildOrder, choices, review.id, review.request_json, shareToken, viaShareLink, canSuggest, onResolved, guestName, guestEmail])
 
   // An external suggester sends language edits without resolving the gate, so they
   // are NOT gated on filling in the gate decisions.
@@ -1832,6 +1840,26 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
         </div>
       ) : (
         <div className="flex flex-col items-end gap-1">
+          {canSuggest && auth.status !== 'authenticated' && (
+            <div className="flex flex-col sm:flex-row gap-2 mb-2 w-full sm:w-auto">
+              <input
+                type="text"
+                aria-label="Your name"
+                placeholder="Your name (optional)"
+                value={guestName}
+                onChange={(e) => setGuestName(e.target.value)}
+                className="rounded border border-input bg-card px-3 py-1.5 text-sm text-foreground-secondary focus:border-muted-foreground focus:outline-none"
+              />
+              <input
+                type="email"
+                aria-label="Your email"
+                placeholder="Your email — to get a copy (optional)"
+                value={guestEmail}
+                onChange={(e) => setGuestEmail(e.target.value)}
+                className="rounded border border-input bg-card px-3 py-1.5 text-sm text-foreground-secondary focus:border-muted-foreground focus:outline-none sm:w-72"
+              />
+            </div>
+          )}
           {!canSuggest && (frontierCount > 0 || belowBarCount > 0) && resolvedChoice('narrative-verdict') !== 'redraft' && (
             <p className="text-[11px] text-warning/90 max-w-md text-right mb-1">
               ⚠ {frontierCount > 0 && `${frontierCount} scene${frontierCount === 1 ? ' shows a new feature' : 's show new features'} (not built yet)`}

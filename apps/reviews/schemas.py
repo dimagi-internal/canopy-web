@@ -86,6 +86,9 @@ class ReviewSuggestIn(StrictModel):
 
     response_json: dict[str, Any]
     name: str | None = None
+    # A share-link guest's address, so they are cc'd on the notification. Ignored for
+    # a signed-in caller (their account address is used).
+    email: str | None = None
 
 
 class ReviewSuggestOut(StrictModel):

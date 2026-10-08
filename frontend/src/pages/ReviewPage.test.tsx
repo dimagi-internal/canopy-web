@@ -164,6 +164,27 @@ describe('ReviewPage — a guest with the share link', () => {
     await waitFor(() => expect(suggest).toHaveBeenCalledTimes(1))
     expect((suggest.mock.calls[0] as unknown as unknown[])[2]).toBe('tok')
   })
+
+  it('lets a guest leave a name and email so they are copied on the notification', async () => {
+    renderAt('/review/r1/?t=tok')
+    fireEvent.change(await screen.findByLabelText(/your name/i), { target: { value: 'Sagar' } })
+    fireEvent.change(screen.getByLabelText(/your email/i), { target: { value: 'sagar@dimagi.com' } })
+    fireEvent.click(screen.getByRole('button', { name: /send suggestions/i }))
+    await waitFor(() => expect(suggest).toHaveBeenCalledTimes(1))
+    const call = suggest.mock.calls[0] as unknown as unknown[]
+    expect(call[3]).toBe('Sagar')
+    expect(call[4]).toBe('sagar@dimagi.com')
+  })
+})
+
+describe('ReviewPage — a signed-in suggester', () => {
+  it('is not asked for an email (their account is cc’d)', async () => {
+    auth.status = 'authenticated'
+    review.current = detail({ can_decide: false })
+    renderAt('/review/r1/?t=tok')
+    await screen.findByRole('button', { name: /send suggestions/i })
+    expect(screen.queryByLabelText(/your email/i)).toBeNull()
+  })
 })
 
 describe('ReviewPage — signed in, but not allowed to decide (#1268)', () => {
