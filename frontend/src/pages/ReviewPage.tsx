@@ -1004,7 +1004,7 @@ interface ReviewEditorInnerProps {
  *  cut 404s there. Anything else (a deck) goes in the sandboxed frame, where its
  *  own script may drive its slides and nothing more. Until the kind is known we
  *  render nothing rather than guess; if it cannot be learned, the frame. */
-function ReviewCut({ walkthroughId }: { walkthroughId: string }) {
+function ReviewCut({ walkthroughId, workspace }: { walkthroughId: string; workspace: string }) {
   const [kind, setKind] = useState<string | null>(null)
   useEffect(() => {
     let live = true
@@ -1013,7 +1013,7 @@ function ReviewCut({ walkthroughId }: { walkthroughId: string }) {
       .catch(() => { if (live) setKind('unknown') })
     return () => { live = false }
   }, [walkthroughId])
-  const contentSrc = walkthroughContentUrl(walkthroughId)
+  const contentSrc = walkthroughContentUrl(workspace, walkthroughId)
   if (kind === null) return <div className="h-[60vh]" />
   if (kind === 'video') {
     return <video src={contentSrc} controls className="w-full max-h-[60vh] bg-black" />
@@ -1256,7 +1256,7 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
   // Video embed
   let videoElement: React.ReactNode = null
   if (req.video?.walkthrough_id) {
-    videoElement = <ReviewCut walkthroughId={req.video.walkthrough_id} />
+    videoElement = <ReviewCut walkthroughId={req.video.walkthrough_id} workspace={review.workspace ?? ''} />
   } else if (req.video?.url) {
     videoElement = (
       <video src={withBase(req.video.url)} controls className="w-full max-h-[60vh] bg-black" />
@@ -1927,8 +1927,8 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
 // ---------------------------------------------------------------------------
 
 export function ReviewPage() {
-  // `workspace` is set on /w/:workspace/review/:id — the API confirms the
-  // review lives there (see FlatArtifactRedirect for the flat route).
+  // Mounted only at /w/:workspace/review/:id — the API confirms the review
+  // lives there. There is no flat route (canopy-web#1337).
   const { id, workspace } = useParams<{ id: string; workspace?: string }>()
   const auth = useAuth()
 

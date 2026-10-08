@@ -47,7 +47,7 @@ def test_build_run_surfaces_video_slides_and_documentation_as_first_class():
     assert run["slides"]["id"] == slides.id
     assert run["documentation"]["id"] == docs.id
     assert run["narrative_slug"] == "microplans"
-    assert run["video"]["content_url"] == f"/walkthrough/{hero.id}/content"
+    assert run["video"]["content_url"] == f"/w/{hero.workspace_id}/walkthrough/{hero.id}/content"
 
 
 def test_build_run_tokenizes_link_visibility_console_embeds():
@@ -64,11 +64,11 @@ def test_build_run_tokenizes_link_visibility_console_embeds():
     priv = make_walkthrough(u, kind="video", run_id=rid, role="hero_video")
 
     run = aggregate.build_run(rid)
-    assert run["slides"]["content_url"] == f"/walkthrough/{pub.id}/content?t=sekret"
+    assert run["slides"]["content_url"] == f"/w/{pub.workspace_id}/walkthrough/{pub.id}/content?t=sekret"
     # The viewer page lives under its workspace; the content stream stays flat.
     assert run["slides"]["viewer_url"] == f"/w/{pub.workspace_id}/walkthrough/{pub.id}?t=sekret"
     # Private artifact: no token appended.
-    assert run["video"]["content_url"] == f"/walkthrough/{priv.id}/content"
+    assert run["video"]["content_url"] == f"/w/{priv.workspace_id}/walkthrough/{priv.id}/content"
 
 
 def test_build_run_unroled_html_falls_back_to_documentation():

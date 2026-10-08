@@ -25,13 +25,13 @@ describe('navigate-fallback ownership', () => {
       '/agents/echo',
       '/ddd-plans',
       '/reviews',
-      '/review/abc',
-      '/share/tok123',
+      '/w/connect/review/abc',
+      '/w/connect/share/tok123',
       '/invite/tok123',
       '/ddd-release/nutrition-demo/run-1',
       '/w/connect',
       '/w/connect/ddd/nutrition-demo/nutrition-demo-2026-07-22-004',
-      `/walkthrough/${UUID}`, // viewer shell (no /content)
+      `/w/connect/walkthrough/${UUID}`, // viewer shell (no /content)
       '/about', // public explainer
       '/guide', // self-documenting descriptor registry
       '/new-workspace', // FirstRunPage's alwaysOfferForm route
@@ -49,9 +49,15 @@ describe('navigate-fallback ownership', () => {
       '/static/app.js',
       '/auth/cli/authorize/',
       '/health/',
-      `/walkthrough/${UUID}/content`, // the reported bug: iframe stream
-      `/walkthrough/${UUID}/content?t=tok`, // …even with a share token
-      `/w/${UUID}/content`, // legacy redirect path
+      `/w/connect/walkthrough/${UUID}/content`, // the reported bug: iframe stream
+      `/w/connect/walkthrough/${UUID}/content?t=tok`, // …even with a share token
+      // The retired flat addresses: a server 404 that says links now carry the
+      // workspace (canopy-web#1337) — never the app shell.
+      `/walkthrough/${UUID}`,
+      `/walkthrough/${UUID}/content`,
+      '/review/abc',
+      '/share/tok123',
+      `/w/${UUID}/content`,
     ]
     for (const p of serverPaths) {
       it(p, () => expect(shouldServeShell(p)).toBe(false))
@@ -71,10 +77,10 @@ describe('navigate-fallback ownership', () => {
   describe('the /canopy labs mount behaves identically', () => {
     it('SPA route under /canopy → shell', () => {
       expect(shouldServeShell('/canopy/supervisor')).toBe(true)
-      expect(shouldServeShell(`/canopy/walkthrough/${UUID}`)).toBe(true)
+      expect(shouldServeShell(`/canopy/w/connect/walkthrough/${UUID}`)).toBe(true)
     })
     it('server stream under /canopy → network', () => {
-      expect(shouldServeShell(`/canopy/walkthrough/${UUID}/content`)).toBe(false)
+      expect(shouldServeShell(`/canopy/w/connect/walkthrough/${UUID}/content`)).toBe(false)
       expect(shouldServeShell('/canopy/api/me/')).toBe(false)
       expect(shouldServeShell('/canopy/accounts/google/login/')).toBe(false)
     })
@@ -115,11 +121,14 @@ describe('the matcher workbox inlines into the SW', () => {
     '/reviews',
     '/review/abc',
     '/share/tok123',
+    '/w/connect/review/abc',
+    '/w/connect/share/tok123',
     '/invite/tok123',
     '/ddd-release/nutrition-demo/run-1',
     '/w/connect',
     '/w/connect/ddd/nutrition-demo/nutrition-demo-2026-07-22-004',
     `/walkthrough/${UUID}`,
+    `/w/connect/walkthrough/${UUID}`,
     '/about',
     '/guide',
     '/new-workspace',
@@ -132,11 +141,12 @@ describe('the matcher workbox inlines into the SW', () => {
     `/walkthrough/${UUID}/content`,
     `/walkthrough/${UUID}/content?t=tok`,
     `/w/${UUID}/content`,
+    `/w/connect/walkthrough/${UUID}/content`,
     '/foo/bar',
     '/nope',
     '/canopy/supervisor',
-    `/canopy/walkthrough/${UUID}`,
-    `/canopy/walkthrough/${UUID}/content`,
+    `/canopy/w/connect/walkthrough/${UUID}`,
+    `/canopy/w/connect/walkthrough/${UUID}/content`,
     '/canopy/api/me/',
     '/canopy/accounts/google/login/',
     '/canopy/foo/bar',

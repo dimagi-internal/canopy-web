@@ -107,7 +107,7 @@ def _share_url(request: HttpRequest, board: Storyboard) -> str | None:
     """
     if not board.share_token:
         return None
-    return wsvc.scoped_url(None, f"/storyboard/{board.slug}?t={board.share_token}")
+    return wsvc.public_url(f"/storyboard/{board.slug}?t={board.share_token}")
 
 
 # ------------------------------------------------------------------- write ops

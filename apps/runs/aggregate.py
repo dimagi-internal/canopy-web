@@ -177,7 +177,7 @@ def _content_url(w: Walkthrough) -> str:
     with the URL — parity with the release page, and it keeps the DDD console's
     <iframe> embed readable even when the artifact's workspace differs from the
     viewer's active one."""
-    return _tok(f"/walkthrough/{w.id}/content", w)
+    return _tok(wsvc.scoped_path(w.workspace_id, f"/walkthrough/{w.id}/content"), w)
 
 
 def _viewer_url(w: Walkthrough) -> str:

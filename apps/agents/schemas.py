@@ -547,6 +547,10 @@ class AgentTurnOut(StrictModel):
     work_product_urls: list[str] = Field(default_factory=list)
     session_slug: str
     share_token: str
+    # The transcript's page, under the workspace it was shared from — the only
+    # address it has (canopy-web#1337). None when there is no transcript, its
+    # token is not a live share, or the content is hidden from this reader.
+    share_url: str | None = None
     started_at: dt.datetime | None = None
     ended_at: dt.datetime | None = Field(default=None, validation_alias="finished_at")
     source: str = Field(validation_alias="report_source")

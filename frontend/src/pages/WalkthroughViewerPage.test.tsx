@@ -26,7 +26,7 @@ function renderAt(path: string, auth: AuthState) {
     <AuthContext.Provider value={auth}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/walkthrough/:id" element={<WalkthroughViewerPage />} />
+          <Route path="/w/:workspace/walkthrough/:id" element={<WalkthroughViewerPage />} />
         </Routes>
       </MemoryRouter>
     </AuthContext.Provider>,
@@ -43,7 +43,7 @@ describe('WalkthroughViewerPage — anonymous visitor on a private walkthrough (
   it('offers sign-in rather than a bare error when the detail fetch 404s', async () => {
     getWalkthrough.mockRejectedValue(new api.WalkthroughApiError(404, 'Not found'))
 
-    renderAt('/walkthrough/w-1', ANON)
+    renderAt('/w/connect/walkthrough/w-1', ANON)
 
     const link = await screen.findByRole('link', { name: /sign in with google/i })
     expect(link.getAttribute('href')).toContain('/accounts/google/login/')
@@ -55,7 +55,7 @@ describe('WalkthroughViewerPage — anonymous visitor on a private walkthrough (
   it.each([401, 403])('treats %i the same as 404 — all mean "you cannot see this"', async (status) => {
     getWalkthrough.mockRejectedValue(new api.WalkthroughApiError(status, 'nope'))
 
-    renderAt('/walkthrough/w-1', ANON)
+    renderAt('/w/connect/walkthrough/w-1', ANON)
 
     expect(await screen.findByRole('link', { name: /sign in with google/i })).toBeTruthy()
   })
@@ -63,10 +63,10 @@ describe('WalkthroughViewerPage — anonymous visitor on a private walkthrough (
   it('says the share link is stale when one was supplied and still refused', async () => {
     // A ?t= holder is NOT simply logged out — their token was rotated or is
     // wrong, so "this is shared with Dimagi" would be the wrong explanation.
-    window.history.replaceState({}, '', '/walkthrough/w-1?t=stale-token')
+    window.history.replaceState({}, '', '/w/connect/walkthrough/w-1?t=stale-token')
     getWalkthrough.mockRejectedValue(new api.WalkthroughApiError(404, 'Not found'))
 
-    renderAt('/walkthrough/w-1?t=stale-token', ANON)
+    renderAt('/w/connect/walkthrough/w-1?t=stale-token', ANON)
 
     expect(await screen.findByText(/no longer valid/i)).toBeTruthy()
   })
@@ -76,7 +76,7 @@ describe('WalkthroughViewerPage — anonymous visitor on a private walkthrough (
     // would "fix" it only by coincidence of the reload.
     getWalkthrough.mockRejectedValue(new Error('Failed to fetch'))
 
-    renderAt('/walkthrough/w-1', ANON)
+    renderAt('/w/connect/walkthrough/w-1', ANON)
 
     await waitFor(() => expect(screen.getByText(/Failed to fetch/)).toBeTruthy())
     expect(screen.queryByRole('link', { name: /sign in with google/i })).toBeNull()
@@ -87,7 +87,7 @@ describe('WalkthroughViewerPage — signed-in visitor', () => {
   it('names both live possibilities instead of offering a pointless re-login', async () => {
     getWalkthrough.mockRejectedValue(new api.WalkthroughApiError(404, 'Not found'))
 
-    renderAt('/walkthrough/w-1', AUTHED)
+    renderAt('/w/connect/walkthrough/w-1', AUTHED)
 
     expect(await screen.findByText(/Walkthrough not available/i)).toBeTruthy()
     expect(screen.queryByRole('link', { name: /sign in with google/i })).toBeNull()

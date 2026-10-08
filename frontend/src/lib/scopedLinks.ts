@@ -5,11 +5,16 @@ import { useParams } from 'react-router-dom'
  * links too (owner decision, 2026-10-08; canopy-web#1289). A share token still
  * opens one artifact without a login; it just does so at its workspace's
  * address, and the page asks the API to confirm the row really lives there.
+ *
+ * There is ONE address per artifact and no flat form (canopy-web#1337): a flat
+ * `/walkthrough/…`, `/review/…` or `/share/…` link is a server 404, so a
+ * workspace is required here — nothing falls back to a flat path.
  */
 
-/** `path` under `workspace` (`/w/<ws><path>`); flat when there is none. */
-export function scopedPath(workspace: string | null | undefined, path: string): string {
-  return workspace ? `/w/${encodeURIComponent(workspace)}${path}` : path
+/** `path` under `workspace`: `/w/<ws><path>`. */
+export function scopedPath(workspace: string, path: string): string {
+  if (!workspace) throw new Error(`no workspace to address ${path} under`)
+  return `/w/${encodeURIComponent(workspace)}${path}`
 }
 
 /**
@@ -29,6 +34,6 @@ export function isScopedViewerPath(path: string): boolean {
 /** `scopedPath` bound to the current route's `:workspace` — for links drawn on
  * a tenant page, which already knows where it is. */
 export function useScopedPath(): (path: string) => string {
-  const { workspace } = useParams()
+  const { workspace = '' } = useParams()
   return (path: string) => scopedPath(workspace, path)
 }

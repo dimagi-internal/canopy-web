@@ -22,6 +22,8 @@ def recent_events(
     qs = (
         Walkthrough.objects.filter(Q(run_id__isnull=True) | Q(run_id=""))
         .filter(Q(narrative_slug__isnull=True) | Q(narrative_slug=""))
+        # A walkthrough with no workspace has no address to link to.
+        .filter(workspace__isnull=False)
         .select_related("owner")
         .order_by("-created_at")
     )

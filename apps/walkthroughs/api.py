@@ -92,7 +92,7 @@ def _share_url(w: Walkthrough) -> str | None:
     the request."""
     if w.visibility != Walkthrough.VISIBILITY_LINK or not w.share_token:
         return None
-    return wsvc.scoped_url(w.workspace_id, f"/walkthrough/{w.id}?t={w.share_token}")
+    return wsvc.scoped_url_or_none(w.workspace_id, f"/walkthrough/{w.id}?t={w.share_token}")
 
 
 def _detail_payload(w: Walkthrough, *, is_owner: bool, request: HttpRequest) -> dict:

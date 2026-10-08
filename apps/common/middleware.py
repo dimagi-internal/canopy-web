@@ -13,6 +13,7 @@ from django.shortcuts import redirect
 
 from apps.common.script_prefix import self_full_path
 from config import public_site
+from config.views import FLAT_ARTIFACT_PATH
 
 PUBLIC_PATH_PREFIXES = (
     "/accounts/",            # allauth login/logout/callback
@@ -100,12 +101,14 @@ def _is_public(path: str) -> bool:
     return any(path == p or path.startswith(p) for p in PUBLIC_PATH_PREFIXES)
 
 
-# The same three viewers under their workspace (/w/<ws>/walkthrough/<id>,
-# /w/<ws>/review/<id>, /w/<ws>/share/<token>) — where every link now points
-# (canopy-web#1289). The SPA SHELL only: the page reads the same self-gating
-# APIs as the flat route, passing `ws` so a row from another workspace 404s.
-# `/w/<ws>/walkthroughs` (the list, plural) and every other tenant page stay
-# behind the gate — the trailing slash after the viewer name is load-bearing.
+# The three public viewers, under their workspace (/w/<ws>/walkthrough/<id>,
+# /w/<ws>/review/<id>, /w/<ws>/share/<token>) and the walkthrough's bytes
+# (/w/<ws>/walkthrough/<id>/content) — the ONLY address each has
+# (canopy-web#1337). The SPA shell and the stream self-gate on their token: the
+# page reads self-gating APIs passing `ws`, and the stream 404s a row from
+# another workspace. `/w/<ws>/walkthroughs` (the list, plural) and every other
+# tenant page stay behind the gate — the trailing slash after the viewer name
+# is load-bearing.
 _SCOPED_VIEWER = re.compile(r"^/w/[^/]+/(walkthrough|review|share)/")
 
 
@@ -113,45 +116,29 @@ def _is_scoped_viewer(path: str) -> bool:
     return bool(_SCOPED_VIEWER.match(path))
 
 
-def _is_share_link(path: str) -> bool:
-    # /share/<token> (SPA shell) and the public read API (/api/share/<token>)
-    # self-gate on the opaque share token, so let anonymous visitors through
-    # the middleware. The owner-side /api/sessions/ surface is NOT included —
-    # it stays auth'd.
-    if path.startswith("/share/"):
-        return True
-    return path.startswith("/api/share/")
+# The retired flat addresses (`/walkthrough/…`, `/review/…`, `/share/…`, the
+# pre-tenancy `/w/<uuid>/…`). They serve only a 404 that says links now carry
+# the workspace (config.views.flat_artifact_gone); admitting them means a
+# signed-out reader is told so, instead of being sent to sign in first.
+_FLAT_ARTIFACT = re.compile(r"^/" + FLAT_ARTIFACT_PATH.removeprefix("^"))
 
 
-def _is_review_link(path: str) -> bool:
-    # /review/<uuid>/  (SPA shell) and the per-review API read/submit endpoints
-    # self-enforce token-or-session auth, so let the per-token public link
-    # through the middleware without a session. The bare collection POST
-    # (/api/reviews/) is NOT included — creating a review still requires auth.
-    if path.startswith("/review/"):
-        return True
-    return path.startswith("/api/reviews/") and path != "/api/reviews/"
+def _is_flat_artifact(path: str) -> bool:
+    return bool(_FLAT_ARTIFACT.match(path))
 
 
-# Pre-reclaim content-stream URL, baked into already-rendered artifacts
-# (DDD decks, review embeds). UUID-shaped only — workspace slugs never match.
-_LEGACY_W_CONTENT = re.compile(
-    r"^/w/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/content$"
-)
-
-
-def _is_walkthrough_link(request) -> bool:
-    # The public walkthrough viewer SPA shell (/walkthrough/<uuid>) and the
-    # content stream (/walkthrough/<uuid>/content), plus the per-walkthrough
-    # detail GET, self-enforce token-gated public access (?t=<share_token>),
-    # so let anonymous callers through the middleware. /w/ now means "workspace" (the authed tenant shell)
-    # and is NOT allowlisted — except the legacy /w/<uuid>/content path, which
-    # must reach its back-compat redirect. The bare collection
-    # (/api/walkthroughs/) is NOT included — list/upload still require auth.
+def _is_artifact_api(request) -> bool:
+    # The per-artifact read APIs self-enforce token-or-session access:
+    #   /api/share/<token>          — public read of a shared session;
+    #   /api/reviews/<id>/…         — read + submit (token or session); the bare
+    #                                 collection POST (/api/reviews/) is NOT here;
+    #   GET /api/walkthroughs/<id>/ — detail (?t=<share_token>); list/upload
+    #                                 (/api/walkthroughs/) stay auth'd.
+    # The owner-side /api/sessions/ surface is NOT included.
     path = request.path
-    if path.startswith("/walkthrough/"):
+    if path.startswith("/api/share/"):
         return True
-    if _LEGACY_W_CONTENT.match(path):
+    if path.startswith("/api/reviews/") and path != "/api/reviews/":
         return True
     return (
         request.method == "GET"
@@ -248,10 +235,9 @@ class LoginRequiredMiddleware:
             or _is_public(request.path)
             or _is_about(request.path)
             or public_site.is_public_path(request.path)
-            or _is_walkthrough_link(request)
-            or _is_review_link(request.path)
-            or _is_share_link(request.path)
+            or _is_artifact_api(request)
             or _is_scoped_viewer(request.path)
+            or _is_flat_artifact(request.path)
             or _is_ddd_release_link(request)
             or _is_storyboard_link(request)
             or _is_invite_link(request)

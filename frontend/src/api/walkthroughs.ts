@@ -1,3 +1,4 @@
+import { scopedPath } from "../lib/scopedLinks";
 import { apiV2 } from "./client.v2";
 import type { components } from "./generated";
 import { withBase } from "../lib/basePath";
@@ -130,12 +131,17 @@ export async function uploadWalkthrough(
   return data as unknown as WalkthroughDetail;
 }
 
-export function walkthroughContentUrl(id: string, token?: string | null): string {
-  // Base-aware so the `<video>`/`<iframe>` src resolves under the deployed
-  // sub-path (e.g. `/canopy/walkthrough/<id>/content`), not the origin root.
-  // Anonymous public access carries the share token as ?t=.
+export function walkthroughContentUrl(
+  workspace: string,
+  id: string,
+  token?: string | null,
+): string {
+  // The bytes live under the walkthrough's workspace, like its page — the only
+  // address they have (canopy-web#1337). Base-aware so the `<video>`/`<iframe>`
+  // src resolves under a deployed sub-path, not the origin root. Anonymous
+  // public access carries the share token as ?t=.
   const suffix = token ? `?t=${encodeURIComponent(token)}` : "";
-  return withBase(`/walkthrough/${id}/content${suffix}`);
+  return withBase(scopedPath(workspace, `/walkthrough/${id}/content${suffix}`));
 }
 
 export async function rotateWalkthroughToken(

@@ -5,7 +5,7 @@ Two routers:
   * ``share_router`` (auth=None)   → /api/share     — public read-only view
 
 The public read route is auth=None AND exempted in
-``apps.common.middleware.LoginRequiredMiddleware`` (see ``_is_share_link``) so
+``apps.common.middleware.LoginRequiredMiddleware`` (see ``_is_artifact_api``) so
 an anonymous visitor with a valid token can load it without a dimagi session.
 """
 from __future__ import annotations
@@ -63,10 +63,11 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB — transcripts are JSON, rarely la
 
 
 def share_url(workspace_id: str | None, token: str | None) -> str | None:
-    """The absolute link to a share token's page, under its workspace."""
+    """The absolute link to a share token's page, under its workspace. None for
+    a share with no workspace: it has no address (there is no flat one)."""
     if not token:
         return None
-    return wsvc.scoped_url(workspace_id, f"/share/{token}")
+    return wsvc.scoped_url_or_none(workspace_id, f"/share/{token}")
 
 
 def _share_workspace(request: HttpRequest, what: str):
@@ -592,7 +593,7 @@ def _session_messages_out(session: Session) -> list[SessionMessageOut]:
 
 
 def _at(row, ws: str) -> bool:
-    """Is `row` at the address the page names? No `ws` = the flat link."""
+    """Is `row` at the address the page names? No `ws` = a caller that names none."""
     return not ws or ws == row.workspace_id
 
 

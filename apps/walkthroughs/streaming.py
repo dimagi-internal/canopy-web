@@ -3,8 +3,9 @@
 Preserved as a bare Django view (NOT ported to Ninja) — HTTP Range support
 (for ``<video>`` scrubbing) doesn't fit cleanly into Ninja's contract.
 
-Mounted at /walkthrough/<uuid:wid>/content in config/urls.py (/w/ is now the
-workspace tenant prefix).
+Mounted at /w/<ws>/walkthrough/<wid>/content in config/urls.py — under the
+walkthrough's workspace, like every other artifact URL (canopy-web#1337). There
+is no flat stream: a walkthrough named under any other workspace 404s.
 """
 from __future__ import annotations
 
@@ -88,15 +89,15 @@ def _get_or_404(wid):
 
 
 @xframe_options_sameorigin
-def walkthrough_content(request, wid):
-    """GET /w/<id>/content — stream the file bytes from Drive.
+def walkthrough_content(request, ws, wid):
+    """GET /w/<ws>/walkthrough/<id>/content — stream the file bytes from Drive.
 
     Auth: any authenticated session user OR a public (visibility=link)
     walkthrough presented with its ?t=<share_token>. Anything else 404s
     so existence isn't leaked.
 
     Django's SecurityMiddleware sets ``X-Frame-Options: DENY`` globally,
-    which breaks our own viewer page (``/w/<id>``) when it tries to embed
+    which breaks our own viewer page (``/w/<ws>/walkthrough/<id>``) when it tries to embed
     this endpoint via ``<iframe src=...>``. Override to ``SAMEORIGIN`` —
     the viewer is the only intended embedder and lives on the same host.
     Framing is about who may EMBED it; what the bytes may DO is `_harden`'s
@@ -106,7 +107,7 @@ def walkthrough_content(request, wid):
         raise Http404("walkthroughs disabled")
 
     w = _get_or_404(wid)
-    if w is None:
+    if w is None or w.workspace_id != ws:
         raise Http404("walkthrough not found")
 
     # Readable by a MEMBER of the walkthrough's workspace, or by anyone with a

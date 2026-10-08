@@ -3,7 +3,6 @@ URL configuration for canopy-web project.
 """
 from django.contrib import admin
 from django.urls import include, path, re_path
-from django.views.generic import RedirectView
 
 from apps.api.api import api as api_v2
 from apps.api.views import redoc_docs, scalar_docs
@@ -16,7 +15,7 @@ from apps.tokens import views_mcp_oauth, views_oauth
 from apps.tokens.views_oauth import client_metadata as oauth_client_metadata
 from apps.tokens.views_oauth import jwks as oauth_jwks
 from apps.walkthroughs.streaming import walkthrough_content as views_walkthrough_content
-from config.views import csrf_view, health_check, spa_view
+from config.views import FLAT_ARTIFACT_PATH, csrf_view, flat_artifact_gone, health_check, spa_view
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -63,17 +62,22 @@ urlpatterns = [
     # build like index.html is, not via staticfiles — this is the one URL third
     # parties hard-code, so it must not move with a static prefix.
     path("embed/widget.js", embed_widget_js, name="embed-widget-js"),
-    # <str:> (not <uuid:>) so a malformed id is handled by the view (bare 404)
-    # instead of falling through to the SPA catch-all and painting the whole app
-    # inside a failed content embed. The view 404s any id it can't resolve.
-    path("walkthrough/<str:wid>/content", views_walkthrough_content, name="walkthrough-content"),
-    # Back-compat: the pre-reclaim stream URL is baked into already-rendered
-    # artifacts (DDD decks, review embeds). Redirect, don't fall to the SPA.
+    # A walkthrough's bytes, under its workspace like its page. <str:> (not
+    # <uuid:>) so a malformed id is handled by the view (bare 404) instead of
+    # falling through to the SPA catch-all and painting the whole app inside a
+    # failed content embed. The view 404s any id it can't resolve, and any id
+    # that does not live in `ws`.
     path(
-        "w/<uuid:wid>/content",
-        RedirectView.as_view(pattern_name="walkthrough-content", query_string=True),
-        name="walkthrough-content-legacy",
+        "w/<str:ws>/walkthrough/<str:wid>/content",
+        views_walkthrough_content,
+        name="walkthrough-content",
     ),
+    # The flat artifact addresses — /walkthrough/…, /review/…, /share/… — and
+    # the pre-tenancy /w/<uuid>/… ones are GONE (owner decision, 2026-10-08;
+    # canopy-web#1337): one URL per artifact, under its workspace, and nothing
+    # forwarded. A plain 404 that says so, served before the SPA catch-all so
+    # the app shell never renders under a dead link.
+    re_path(FLAT_ARTIFACT_PATH, flat_artifact_gone, name="flat-artifact-gone"),
     # Slack front door (apps/slack). The webhooks are signed POSTs whose raw
     # body must be read for the signature, so they are bare views registered
     # BEFORE the Ninja `api/` mount; the browser legs need a login, like the

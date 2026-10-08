@@ -15,6 +15,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client, override_settings
 
 from apps.walkthroughs.models import Walkthrough
+from apps.workspaces.testing import a_workspace
 from apps.walkthroughs.streaming import SANDBOX_CSP
 
 
@@ -32,6 +33,7 @@ def _make(owner, **kw):
         content_type="text/html", size_bytes=10,
     )
     defaults.update(kw)
+    defaults.setdefault("workspace", a_workspace())
     return Walkthrough.objects.create(**defaults)
 
 
@@ -39,7 +41,7 @@ def _get(w, **headers):
     token = w.ensure_share_token()
     with patch("apps.walkthroughs.streaming.storage.download",
                return_value=(b"<html>hi!</html>"[:10], 0, 9, 10)):
-        return Client().get(f"/walkthrough/{w.id}/content?t={token}", **headers)
+        return Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}", **headers)
 
 
 def test_the_policy_is_an_opaque_origin_sandbox():
@@ -75,7 +77,7 @@ def test_video_is_not_sandboxed_and_range_still_works(owner):
     token = w.ensure_share_token()
     with patch("apps.walkthroughs.streaming.storage.download",
                return_value=(b"2345", 2, 5, 10)):
-        resp = Client().get(f"/walkthrough/{w.id}/content?t={token}", HTTP_RANGE="bytes=2-5")
+        resp = Client().get(f"/w/{w.workspace_id}/walkthrough/{w.id}/content?t={token}", HTTP_RANGE="bytes=2-5")
     assert resp.status_code == 206
     assert resp["Content-Range"] == "bytes 2-5/10"
     assert resp["Content-Type"] == "video/mp4"
