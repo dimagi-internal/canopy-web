@@ -227,7 +227,27 @@ def test_an_agent_with_its_own_order_is_told_what_it_would_follow(tree):
     c = Client()
     c.force_login(jj)
     body = c.get("/api/w/connect/agents/hal/default-order").json()
-    assert body["own"] is True and body["workspace"] == "dimagi" and body["runners"] == []
+    assert body["own"] is True and body["workspace"] == "dimagi"
+    # Its own order, not an empty list: empty read as "routes nowhere" (#1233).
+    assert [r["runner_id"] for r in body["runners"]] == [str(hal_box.pk)]
+
+
+def test_default_order_echoes_an_own_order_saved_through_put(tree):
+    """#1233: PUT an own order, then default-order must list it, rank for rank."""
+    jj, dimagi, connect, (jj_box, hal_box, cloud) = tree
+    _order(dimagi, jj_box)
+    Agent.objects.create(slug="hal", name="Hal", workspace=connect, owner=jj)
+    c = Client()
+    c.force_login(jj)
+    rows = [{"runner_id": str(cloud.pk)}, {"runner_id": str(hal_box.pk), "enabled": False}]
+    r = c.put("/api/w/connect/agents/hal/runners", {"runners": rows}, content_type="application/json")
+    assert r.status_code == 200, r.content
+    own = c.get("/api/w/connect/agents/hal/runners").json()
+    body = c.get("/api/w/connect/agents/hal/default-order").json()
+    assert body["own"] is True
+    assert body["runners"] == own
+    assert [(x["runner_id"], x["rank"], x["enabled"]) for x in body["runners"]] == [
+        (str(cloud.pk), 0, True), (str(hal_box.pk), 1, False)]
 
 
 def test_a_divisions_agent_takes_its_owners_box_from_the_parent_workspace(tree):

@@ -751,8 +751,11 @@ def get_agent_default_order(request: HttpRequest, slug: str) -> AgentDefaultOrde
     agent = _get_agent_or_404(request, slug)
     if agent.pk in agents_with_own_order([agent.pk]):
         # `workspace` still names the order it WOULD follow, so a screen can
-        # offer "follow it instead".
+        # offer "follow it instead". `runners` is the agent's own list, the same
+        # rows `GET /runners` serves: leaving it empty here read as "routes
+        # nowhere" to every caller of this endpoint (#1233).
         return AgentDefaultOrderOut(own=True, workspace=default_order_source(agent),
+                                    runners=list_agent_runners(request, slug),
                                     repo_url=agent.repo_url or "")
     inh = inherited_orders([agent.pk]).get(agent.pk)
     if inh is None:

@@ -106,8 +106,8 @@ class AgentRunnerOut(StrictModel):
 
 
 class AgentDefaultOrderOut(StrictModel):
-    """What an agent's "everything else" runs on. `own` True: its own list
-    (`GET /runners`). Otherwise it follows `workspace`'s default order —
+    """What an agent's "everything else" runs on. `own` True: `runners` is its
+    own ordered list, the same rows as `GET /runners`. Otherwise it follows `workspace`'s default order —
     `runners` is that order as it applies to this agent, and two kinds of listed
     runner are left out, each named so a screen can say why: laptops without the
     agent's repo (`missing_repo`) and boxes whose owner cannot hold the agent
