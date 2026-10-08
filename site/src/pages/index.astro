@@ -134,8 +134,6 @@ const basedOn = ['The user', 'The agent', 'The channel', 'The environment']
   .based { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-top: 32px; }
   .based-label { font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
   .chip { border: 1px solid var(--indigo); color: var(--indigo); border-radius: 999px; padding: 8px 18px; font-weight: 500; font-size: 15px; }
-  .controls-note { max-width: 760px; margin: 40px auto 0; text-align: center; color: var(--muted); font-size: 16px; }
-
   @media (max-width: 980px) {
     .flow, .cycle { grid-template-columns: 1fr 1fr; }
     .tiles, .controls { grid-template-columns: 1fr 1fr; }
@@ -302,11 +300,6 @@ const basedOn = ['The user', 'The agent', 'The channel', 'The environment']
         <span class="based-label">Based on</span>
         {basedOn.map((b) => <span class="chip">{b}</span>)}
       </div>
-      <p class="controls-note">
-        The limits live in code, not in the prompt. A person sets each agent to manual or auto, and
-        the agent cannot change it. Each agent has its own identity and secrets, and callers are not
-        trusted by default.
-      </p>
     </div>
   </section>
 
