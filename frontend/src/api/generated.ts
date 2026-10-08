@@ -15531,6 +15531,11 @@ export interface components {
              * @default
              */
             readonly summary: string;
+            /**
+             * Priorities Brief
+             * @default
+             */
+            readonly priorities_brief: string;
             /** Deadline At */
             readonly deadline_at?: string | null;
             /**

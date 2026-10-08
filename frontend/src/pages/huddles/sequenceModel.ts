@@ -12,6 +12,7 @@
  * changes", shows each of its messages as a DIRECT arrow from the speaker to the
  * other agent — the leader is not in the middle of it.
  */
+import { priorityNumber } from './briefWords'
 import type { Huddle, HuddleCell } from '@/api/huddles'
 import type { AgentThread, ThreadMessage } from '@/api/threads'
 import { audienceOf, messageState, PENDING_WORDS, POSITION_WORDS, said, statusWords } from '../threads/threadModel'
@@ -63,6 +64,12 @@ export function lanesOf(h: Pick<Huddle, 'leader' | 'members' | 'cells'>): string
 /** One line for what a member's answer DID this step. */
 export function replyLabel(block: Block, member: string, round: number): { label: string; chips?: AnswerChip[] } {
   if (round === 1) {
+    // A brief-era report names where it can move the brief's priorities.
+    const lever = list<Record<string, unknown>>(block.levers).find((l) => l && typeof l === 'object')
+    if (lever) {
+      const n = priorityNumber(lever.priority)
+      return { label: `Can move ${n === null ? 'a priority' : `priority ${n}`}: ${trimPriority(String(lever.move ?? ''), 90)}` }
+    }
     const top = reportSummary(block).top
     return { label: top ? `Top priority: ${trimPriority(top, 90)}` : 'Sent what it is working on' }
   }

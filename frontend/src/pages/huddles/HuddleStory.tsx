@@ -5,6 +5,8 @@ import type { AgentThread } from '@/api/threads'
 import { budgetWords, resultOf, statusWords, threadHref } from '../threads/threadModel'
 import { AnswerPill } from './BlockView'
 import { MemberAvatar } from './MemberAvatar'
+import { costWords, failsWords, leverWords, reportItemWords, servesWords } from './briefWords'
+import { useBrief } from './briefContext'
 import { TaskLine } from './HuddleOutcome'
 import type { Output } from './outcomeSummary'
 import { pairQA, pitchesOf, proposalThreads, type ProposalThread } from './conversationModel'
@@ -118,11 +120,13 @@ function Bullets({ items }: { items: unknown[] }) {
 // ── step 1 ───────────────────────────────────────────────────────────────────
 
 const REPORT_PARTS: [string, string][] = [
+  ['state', "What it's mid-way through"], ['levers', 'Where it can move the priorities'],
   ['worked_on', 'What it worked on'], ['priorities', "What it thinks Jonathan's priorities are"],
   ['projects', 'Projects'], ['offers', 'What it can offer the others'], ['needs', 'What it needs'],
 ]
 
 function FullReport({ b }: { b: Block }) {
+  const brief = useBrief()
   return (
     <div className="space-y-3">
       {REPORT_PARTS.filter(([k]) => list(b[k]).length > 0).map(([k, label]) => (
@@ -141,7 +145,7 @@ function FullReport({ b }: { b: Block }) {
                 )
               })}
             </ul>
-          ) : <Bullets items={list(b[k])} />}
+          ) : <Bullets items={list(b[k]).map((it) => reportItemWords(k, it, brief))} />}
         </div>
       ))}
     </div>
@@ -155,8 +159,9 @@ function StepReports({ huddle, hueOf }: { huddle: Huddle; hueOf: (m: string) => 
       {members.map((m) => {
         const c = cellAt(huddle, m, 1)
         const b = c?.block ? (c.block as Block) : null
-        const did = b ? gistOf(str(list(b.worked_on)[0])) : ''
+        const did = b ? gistOf(str(list(b.worked_on)[0] ?? list(b.state)[0])) : ''
         const top = b ? trimPriority(str(list(b.priorities)[0])) : ''
+        const lever = b && list(b.levers).length ? leverWords(list(b.levers)[0], huddle.priorities_brief) : ''
         return (
           <li key={m} data-report={m} className="flex gap-3 p-3 sm:p-4">
             <MemberAvatar slug={m} hue={hueOf(m)} />
@@ -166,6 +171,7 @@ function StepReports({ huddle, hueOf }: { huddle: Huddle; hueOf: (m: string) => 
                 <>
                   {did && <p className="text-[14px] leading-snug text-foreground">Has been working on: {did}.</p>}
                   {top && <p className="text-[14px] leading-snug text-foreground-secondary">Thinks the top priority is: <span className="text-foreground">{top}</span>.</p>}
+                  {lever && <p className="text-[14px] leading-snug text-foreground-secondary">Can move: <span className="text-foreground">{lever}</span></p>}
                   <More label={`Read ${possessive(m)} full answer`}><FullReport b={b} /></More>
                 </>
               ) : (
@@ -184,6 +190,9 @@ function StepReports({ huddle, hueOf }: { huddle: Huddle; hueOf: (m: string) => 
 // ── step 2 ───────────────────────────────────────────────────────────────────
 
 function IdeaPlan({ raw }: { raw: Record<string, unknown> }) {
+  const serves = servesWords(raw.priority, useBrief())
+  const cost = costWords(raw.cost_to_jonathan)
+  const fails = failsWords(raw.fails_if)
   const asks = raw.ask_of_partners && typeof raw.ask_of_partners === 'object' ? Object.entries(raw.ask_of_partners as Record<string, unknown>) : []
   return (
     <div className="space-y-2">
@@ -196,6 +205,9 @@ function IdeaPlan({ raw }: { raw: Record<string, unknown> }) {
       )}
       {asks.map(([m, ask]) => <p key={m}><span className="font-medium text-foreground">What it needs from {who(m)}: </span>{deJargon(str(ask))}</p>)}
       {str(raw.success_measure) && <p><span className="font-medium text-foreground">Done when: </span>{deJargon(str(raw.success_measure))}</p>}
+      {serves && <p><span className="font-medium text-foreground">{serves.label}{serves.text ? ': ' : ''}</span>{serves.text}</p>}
+      {cost && <p data-needs-you><span className="font-medium text-foreground">Needs from you: </span>{cost}</p>}
+      {fails && <p data-fails-if>{fails}</p>}
     </div>
   )
 }
@@ -433,7 +445,9 @@ export function HuddleStory({ huddle }: { huddle: Huddle }) {
   return (
     <ol data-story className="mx-auto max-w-[760px]">
       <Step n={1} title={stepName(type, 1)}>
-        <Lead>{L} asked each agent what it has been working on and what it thinks Jonathan&apos;s priorities are.</Lead>
+        <Lead>{huddle.priorities_brief
+          ? <>{L} gave each agent Jonathan&apos;s priorities and asked where it could move them.</>
+          : <>{L} asked each agent what it has been working on and what it thinks Jonathan&apos;s priorities are.</>}</Lead>
         {has(1) ? <StepReports huddle={huddle} hueOf={hueOf} /> : <p className="text-[13px] italic text-muted-foreground">Not started yet.</p>}
       </Step>
       <Step n={2} title={stepName(type, 2)}>

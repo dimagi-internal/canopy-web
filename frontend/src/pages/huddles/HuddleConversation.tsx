@@ -6,6 +6,8 @@ import { HuddleSequence } from './HuddleSequence'
 import { MemberAvatar } from './MemberAvatar'
 import { Linkified } from './HuddleOutcome'
 import { HuddleStory } from './HuddleStory'
+import { costWords, failsWords, reportItemWords, servesWords } from './briefWords'
+import { useBrief } from './briefContext'
 import {
   pairQA, proposalThreads, readView, threadFor,
   type ProposalThread, type RawProposal, type Reply, type ThreadRound,
@@ -15,7 +17,7 @@ import {
   type Block,
 } from './huddleModel'
 import {
-  andList, boardLinkText, nextStep, peopleWords, possessive, resolutionWords, stepHeading, taskStatusPlain, trimPriority, VERDICT_WORDS, who,
+  andList, boardLinkText, nextStep, peopleWords, possessive, resolutionWords, stepHeading, taskStatusPlain, VERDICT_WORDS, who,
 } from './plainWords'
 
 /**
@@ -166,6 +168,9 @@ export function PitchCard({ p, proposedBy, hueOf, showTitle = true }: { p: RawPr
   const project = p.project && typeof p.project === 'object' ? (p.project as { name?: unknown; new?: unknown }) : null
   const projectName = project ? str(project.name) : str(p.project)
   const size = sizeWords(str(p.effort), typeof p.confidence === 'number' ? p.confidence : null)
+  const serves = servesWords(p.priority, useBrief())
+  const cost = costWords(p.cost_to_jonathan)
+  const fails = failsWords(p.fails_if)
   const asks = p.ask_of_partners && typeof p.ask_of_partners === 'object' ? Object.entries(p.ask_of_partners as Record<string, unknown>) : []
   return (
     <article data-pitch={str(p.title)}>
@@ -175,10 +180,10 @@ export function PitchCard({ p, proposedBy, hueOf, showTitle = true }: { p: RawPr
         {lead !== proposedBy && partners.length > 0 ? <>, together with {andList(partners)}</> : null}
         {size && <> · {size}</>}
       </p>
-      {(str(p.priority) || projectName) && (
+      {(serves || projectName) && (
         <p className="mt-2 text-[13px] leading-snug">
-          {str(p.priority) && <><span className="font-medium text-foreground-secondary">For the priority:</span> {trimPriority(str(p.priority), 200)}</>}
-          {projectName && <span className="text-muted-foreground">{str(p.priority) ? ' · ' : ''}project {projectName}{project?.new ? ' (new)' : ''}</span>}
+          {serves && <><span className="font-medium text-foreground-secondary">{serves.label}{serves.text ? ':' : ''}</span> {serves.text}</>}
+          {projectName && <span className="text-muted-foreground">{serves ? ' · ' : ''}project {projectName}{project?.new ? ' (new)' : ''}</span>}
         </p>
       )}
       {str(p.why) && <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed"><span className="font-medium text-foreground-secondary">Why: </span>{str(p.why)}</p>}
@@ -200,6 +205,8 @@ export function PitchCard({ p, proposedBy, hueOf, showTitle = true }: { p: RawPr
       {str(p.success_measure) && (
         <p className="mt-2 text-[13px] text-foreground-secondary"><span className="font-medium">Done when: </span>{str(p.success_measure)}</p>
       )}
+      {cost && <p data-needs-you className="mt-2 text-[13px] text-foreground-secondary"><span className="font-medium">Needs from you: </span>{cost}</p>}
+      {fails && <p data-fails-if className="mt-1 text-[13px] text-foreground-secondary">{fails}</p>}
     </article>
   )
 }
@@ -237,12 +244,14 @@ function FeedbackLine({ member, text }: { member: string; text: string }) {
 }
 
 const REPORT_PARTS: [string, string][] = [
+  ['state', "What I'm mid-way through"], ['levers', 'Where I can move the priorities'],
   ['worked_on', 'What I worked on'], ['priorities', "What I think Jonathan's priorities are"], ['projects', 'Projects'],
   ['offers', 'What I can offer'], ['needs', 'What I need'],
 ]
 
 function ReportPart({ k, b }: { k: string; b: Block }) {
-  if (k !== 'projects') return <Bullets items={list(b[k])} />
+  const brief = useBrief()
+  if (k !== 'projects') return <Bullets items={list(b[k]).map((it) => reportItemWords(k, it, brief))} />
   return (
     <ul className="space-y-1.5">
       {list<unknown>(b.projects).map((raw, i) => {

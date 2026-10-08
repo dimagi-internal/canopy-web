@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import { anchorKey, normAnswer, normResolution, type Arc, type ArcState, type Block } from './huddleModel'
 import { ANSWER_WORDS, resolutionWords, sizePlain, who } from './plainWords'
+import { costWords, failsWords, reportItemWords, servesWords } from './briefWords'
+import { useBrief } from './briefContext'
 
 /**
  * A member's ```huddle reply, rendered as what it SAYS — never the raw JSON.
@@ -12,7 +14,7 @@ import { ANSWER_WORDS, resolutionWords, sizePlain, who } from './plainWords'
 
 const ENVELOPE = new Set(['huddle', 'round', 'member'])
 const KNOWN = [
-  'worked_on', 'priorities', 'projects', 'offers', 'needs',
+  'state', 'levers', 'worked_on', 'priorities', 'projects', 'offers', 'needs',
   'proposals', 'critique_answers', 'answers', 'resolutions', 'feedback',
 ] as const
 
@@ -108,6 +110,7 @@ type ProposalRow = {
   title?: unknown; lead?: unknown; with?: unknown; priority?: unknown; project?: unknown
   why?: unknown; plan?: unknown; effort?: unknown; confidence?: unknown
   success_measure?: unknown; ask_of_partners?: unknown
+  cost_to_jonathan?: unknown; fails_if?: unknown
 }
 
 /** `anchored` is false for a revised copy (a round-4 accept), so the arcs keep
@@ -119,6 +122,9 @@ function Proposal({ p, member, arcs, anchored = true, answers = true }: { p: Pro
   const project = p.project && typeof p.project === 'object' ? (p.project as { name?: unknown; new?: unknown }) : null
   const confidence = typeof p.confidence === 'number' ? Math.round(p.confidence * 100) : null
   const asks = p.ask_of_partners && typeof p.ask_of_partners === 'object' ? (p.ask_of_partners as Record<string, unknown>) : {}
+  const serves = servesWords(p.priority, useBrief())
+  const cost = costWords(p.cost_to_jonathan)
+  const fails = failsWords(p.fails_if)
   const stateOf = (partner: string): ArcState =>
     arcs.find((a) => a.partner === partner && a.lead === lead && a.title.toLowerCase() === title.toLowerCase())?.state ?? 'pending'
 
@@ -145,12 +151,12 @@ function Proposal({ p, member, arcs, anchored = true, answers = true }: { p: Pro
           )
         })}
       </div>
-      {(text(p.priority) || project) && (
+      {(serves || project) && (
         <p className="mt-2 text-[12px] leading-snug text-muted-foreground">
-          {text(p.priority) && <>For the priority <span className="text-foreground-secondary">“{text(p.priority)}”</span></>}
+          {serves && <>{serves.label}{serves.text && <>: <span className="text-foreground-secondary">{serves.text}</span></>}</>}
           {project?.name ? (
             <>
-              {text(p.priority) ? ' · ' : ''}project <span className="text-foreground-secondary">{text(project.name)}</span>
+              {serves ? ' · ' : ''}project <span className="text-foreground-secondary">{text(project.name)}</span>
               {project.new ? ' (new)' : ''}
             </>
           ) : null}
@@ -177,11 +183,19 @@ function Proposal({ p, member, arcs, anchored = true, answers = true }: { p: Pro
           <span className="font-medium text-foreground-secondary">Done when</span> {text(p.success_measure)}
         </p>
       )}
+      {cost && (
+        <p data-needs-you className="mt-1 text-[12px] text-muted-foreground">
+          <span className="font-medium text-foreground-secondary">Needs from you:</span> {cost}
+        </p>
+      )}
+      {fails && <p data-fails-if className="mt-1 text-[12px] text-muted-foreground">{fails}</p>}
     </article>
   )
 }
 
 export function BlockView({ block, member, arcs = [] }: { block: Block; member: string; arcs?: Arc[] }) {
+  const brief = useBrief()
+  const lines = (k: string) => asList(block[k]).map((it) => reportItemWords(k, it, brief))
   const rest = Object.entries(block).filter(([k]) => !ENVELOPE.has(k) && !(KNOWN as readonly string[]).includes(k))
   const has = (k: string) => {
     const v = block[k]
@@ -194,6 +208,8 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
 
   return (
     <div className="space-y-3">
+      {has('state') && <Section label="Mid-way through"><Lines items={asList(block.state)} /></Section>}
+      {has('levers') && <Section label="Where I can move the priorities"><Lines items={lines('levers')} /></Section>}
       {has('worked_on') && <Section label="Worked on"><Lines items={asList(block.worked_on)} /></Section>}
       {has('priorities') && <Section label="Priorities as I see them"><Lines items={asList(block.priorities)} /></Section>}
       {has('projects') && (
@@ -213,7 +229,7 @@ export function BlockView({ block, member, arcs = [] }: { block: Block; member: 
         </Section>
       )}
       {has('offers') && <Section label="Can offer"><Lines items={asList(block.offers)} /></Section>}
-      {has('needs') && <Section label="Needs"><Lines items={asList(block.needs)} /></Section>}
+      {has('needs') && <Section label="Needs"><Lines items={lines('needs')} /></Section>}
       {has('proposals') && (
         <Section label="Ideas">
           <div className="space-y-2">

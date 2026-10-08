@@ -254,6 +254,11 @@ def detail(anchor, *, user, visible_qs, workspaces) -> dict:
                  outcome_count=len(outputs))
     # The leader's digest is the anchor's content; same gate as a round's.
     readable = turn_access.can_read_turn_content(user, anchor, memo)
+    # The principal's priorities brief the huddle ran on (canopy `huddle plan
+    # --priorities-file` tags the anchor with it) — what "priority 2" in a
+    # proposal refers to. Content, so the same gate as the digest.
+    brief = str(_ref(anchor).get("priorities_brief") or "")
     return {**base, "summary": anchor.report_summary if readable else "",
+            "priorities_brief": brief if readable else "",
             "deadline_at": (min(r1) + DEADLINE) if r1 else None,
             "cells": cells, "outputs": outputs}

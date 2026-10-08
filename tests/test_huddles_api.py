@@ -168,6 +168,19 @@ def test_detail_reads_reply_from_closeout_row(owner, agents):
     assert d["deadline_at"] is not None and d["finished"] is False
 
 
+def test_detail_carries_the_priorities_brief_from_the_anchor(owner, agents):
+    # canopy `huddle plan --priorities-file` tags the anchor with the brief; the
+    # page needs it to say what "priority 2" in a proposal is.
+    brief = "1. Q4 funders — hard dates: 2026-10-20 — source: goals\n2. IDM talk — hard dates: 2026-10-15"
+    _huddle(agents, priorities_brief=brief)
+    assert _client(owner).get("/api/huddles/h1").json()["priorities_brief"] == brief
+
+
+def test_detail_without_a_brief_has_an_empty_one(owner, agents):
+    _huddle(agents)
+    assert _client(owner).get("/api/huddles/h1").json()["priorities_brief"] == ""
+
+
 def test_detail_reads_reply_from_round_turn_itself(owner, agents):
     # A cloud runner's close-out attaches to the dispatch row it closes.
     anchor, r1 = _huddle(agents)
