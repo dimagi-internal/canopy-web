@@ -405,14 +405,28 @@ class AgentDelegation(models.Model):
     """
 
     GITHUB = "github"
-    SERVICE_CHOICES = [(GITHUB, "GitHub")]
+    #: Salesforce is lent by an AGENT, not a person: chrome-sales acts in Salesforce
+    #: as one delegated identity (Eva's SF user, since 2026-10-07), and the other
+    #: agents borrow it. The row holds no secret (`secret_enc` is ""): it names the
+    #: `lender`, and the credential is resolved from the lender's own
+    #: `AgentCredential` named `salesforce` at use time — so a re-mint by the lender
+    #: reaches every borrower, and deleting one row stops one borrower. A copy per
+    #: borrower would be N secrets to rotate (canopy-web#1291).
+    SALESFORCE = "salesforce"
+    SERVICE_CHOICES = [(GITHUB, "GitHub"), (SALESFORCE, "Salesforce")]
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="agent_delegations",
     )
     agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="delegations")
     service = models.CharField(max_length=32, choices=SERVICE_CHOICES)
-    secret_enc = models.TextField()
+    secret_enc = models.TextField(blank=True, default="")
+    #: The agent whose OWN credential is lent (Salesforce). Null for a person's
+    #: own secret held in `secret_enc` (GitHub).
+    lender = models.ForeignKey(
+        "agents.Agent", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="lent_delegations",
+    )
     meta = models.JSONField(default=dict, blank=True)
     #: From the service when it says (GitHub's token-expiration header); null
     #: for a token that never expires. A column, not just `meta`, so "what

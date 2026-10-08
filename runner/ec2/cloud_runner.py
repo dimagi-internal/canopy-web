@@ -864,6 +864,40 @@ _AGENT_OP: dict[str, tuple[float, str]] = {}
 _AGENT_OP_TTL_SECONDS = float(os.environ.get("AGENT_OP_TTL_SECONDS", "300"))
 
 
+#: The chrome-sales Salesforce credential each agent BORROWS (canopy-web#1291),
+#: fetched on the same resolve call as its 1Password key and cached with it.
+_AGENT_SF: dict[str, str] = {}
+
+
+def _delegated_chrome_sales_home(slug: str) -> pathlib.Path:
+    """Where chrome-sales reads Salesforce creds in THIS agent's turns — the same
+    path the canopy plugin uses on a laptop, so chrome-sales has one rule."""
+    return pathlib.Path.home() / ".canopy" / "delegated" / slug / "chrome-sales"
+
+
+def _stage_salesforce(slug: str) -> pathlib.Path | None:
+    """Write the borrowed `.sf-creds.json` for this agent (0600), or REMOVE a stale
+    one when canopy-web says it borrows none — a withdrawn loan must stop on the
+    box, not linger in a file. Returns the dir to point CHROME_SALES_HOME at."""
+    home = _delegated_chrome_sales_home(slug)
+    target = home / ".sf-creds.json"
+    creds = _AGENT_SF.get(slug, "")
+    try:
+        if not creds:
+            target.unlink(missing_ok=True)
+            return None
+        home.mkdir(parents=True, exist_ok=True, mode=0o700)
+        tmp = target.with_suffix(".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(creds)
+        os.replace(tmp, target)
+        return home
+    except OSError as exc:
+        _log(f"warn: could not stage {slug}'s borrowed Salesforce credential ({exc})")
+        return None
+
+
 def _agent_op_token(slug: str) -> str:
     """THIS agent's 1Password key, or "" — never another agent's, never a
     box-wide one. canopy-web is the custodian (`Agent.op_sa_token_enc`)."""
@@ -876,6 +910,7 @@ def _agent_op_token(slug: str) -> str:
         status, payload = _api("GET", f"/{slug}/credentials/resolve", prefix="/api/agents")
         if status == 200 and isinstance(payload, dict):
             token = str(payload.get("op_sa_token") or "")
+            _AGENT_SF[slug] = str(payload.get("salesforce_creds") or "")
     except Exception as exc:  # noqa: BLE001
         _log(f"warn: could not resolve {slug}'s 1Password key ({exc}); the turn runs without one")
     _AGENT_OP[slug] = (now, token)
@@ -929,6 +964,14 @@ def _agent_env(slug: str | None) -> dict:
         env["OP_SERVICE_ACCOUNT_TOKEN"] = op_token
     else:
         env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
+    # chrome-sales in an agent turn acts in Salesforce only as the identity this
+    # agent BORROWS (canopy-web#1291), never as whatever sits in the box's
+    # ~/.chrome-sales/. No loan → no CHROME_SALES_HOME, and chrome-sales finds no
+    # Salesforce creds for an agent session at all.
+    env.pop("CHROME_SALES_HOME", None)
+    sf_home = _stage_salesforce(slug)
+    if sf_home is not None:
+        env["CHROME_SALES_HOME"] = str(sf_home)
     env_file = pathlib.Path.home() / f".{slug}" / ".env"
     try:
         raw = env_file.read_text()
