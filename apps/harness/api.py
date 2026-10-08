@@ -1122,8 +1122,9 @@ def unpause_runner(request: HttpRequest, runner_id: uuid.UUID):
     return runner
 
 
-def _fleet_hold_out(hold: FleetHold) -> dict:
+def _fleet_hold_out(hold: FleetHold, user) -> dict:
     return {
+        "can_hold": bool(getattr(user, "is_superuser", False)),
         "held": hold.held, "note": hold.note, "held_at": hold.held_at,
         "held_by_email": (hold.held_by.email if hold.held_by_id else ""),
         "queued": Turn.objects.filter(status=Turn.QUEUED).count() if hold.held else 0,
@@ -1134,7 +1135,7 @@ def _fleet_hold_out(hold: FleetHold) -> dict:
 def get_fleet_hold(request: HttpRequest):
     """Is the whole fleet on hold? Readable by anyone signed in — a member whose turn
     is sitting queued should be able to see why."""
-    return _fleet_hold_out(FleetHold.current())
+    return _fleet_hold_out(FleetHold.current(), request.user)
 
 
 @router.post("/fleet-hold", response=FleetHoldOut)
@@ -1153,7 +1154,7 @@ def hold_fleet(request: HttpRequest, payload: FleetHoldIn):
     hold.held = True
     hold.note = (payload.note or "")[:500]
     hold.save()
-    return _fleet_hold_out(hold)
+    return _fleet_hold_out(hold, request.user)
 
 
 @router.post("/fleet-hold/release", response=FleetHoldOut)
@@ -1173,7 +1174,7 @@ def release_fleet_hold(request: HttpRequest):
             groups.publish(groups.runnable_group(slug), {"type": "runner.wake"})
             for slug in slugs
         ])
-    return _fleet_hold_out(hold)
+    return _fleet_hold_out(hold, request.user)
 
 
 @router.post("/runners/{runner_id}/heartbeat", response=RunnerOut)

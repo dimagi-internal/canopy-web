@@ -14437,6 +14437,11 @@ export interface components {
              * @default 0
              */
             readonly queued: number;
+            /**
+             * Can Hold
+             * @default false
+             */
+            readonly can_hold: boolean;
         };
         /** FleetHoldIn */
         readonly FleetHoldIn: {

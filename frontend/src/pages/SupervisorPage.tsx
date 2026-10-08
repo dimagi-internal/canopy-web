@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { listAgents, type AgentOut, type TaskOut } from '@/api/agents'
-import { listRunners, listUnclaimableTurns, retireRunner, type RunnerOut, type UnclaimableTurn } from '@/api/harness'
+import {
+  getFleetHold,
+  listRunners,
+  listUnclaimableTurns,
+  retireRunner,
+  type FleetHoldOut,
+  type RunnerOut,
+  type UnclaimableTurn,
+} from '@/api/harness'
 import { Menu } from 'lucide-react'
 import {
   Button,
@@ -11,6 +19,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
+import { FleetHoldCard } from '@/components/supervisor/FleetHoldCard'
 import { RunnerAlerts } from '@/components/supervisor/RunnerAlerts'
 import { runnerAlerts } from '@/components/supervisor/runnerAlertRules'
 import { SessionFeed } from '@/components/supervisor/SessionFeed'
@@ -109,6 +118,20 @@ export default function SupervisorPage(): JSX.Element {
     return () => { cancelled = true; window.clearInterval(id) }
   }, [])
 
+  // The fleet hold — polled with the stuck list, since releasing it is what
+  // unblocks the queue. Read by everyone; only a superuser gets the control.
+  const [fleetHold, setFleetHold] = useState<FleetHoldOut | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    const load = () =>
+      getFleetHold()
+        .then((h) => { if (!cancelled) setFleetHold(h) })
+        .catch(() => { /* non-fatal: the claim gate is server-side */ })
+    load()
+    const id = window.setInterval(load, 30_000)
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [])
+
   // The wrong-branch banner's one-click resolve for a dead runner. Confirmed,
   // because retiring is permanent for the row (re-pairing mints a fresh one).
   const [retiring, setRetiring] = useState<string | null>(null)
@@ -187,7 +210,11 @@ export default function SupervisorPage(): JSX.Element {
   const go = (value: Screen) =>
     // Push history (not replace) so the phone back button steps back to the feed.
     setSearchParams(value === 'feed' ? {} : { tab: value })
-  const alertCount = runnerAlerts(renderRunners).length + stuck.length
+  // Turns waiting only on the fleet hold are the hold's banner's to explain, not
+  // "stuck": they run the moment it is released.
+  const stuckShown = stuck.filter((t) => t.kind !== 'hold')
+  const fleetHeld = fleetHold?.held ?? false
+  const alertCount = runnerAlerts(renderRunners).length + stuckShown.length + (fleetHeld ? 1 : 0)
 
   // One runner, by link: `?tab=runners&runner=<id>` opens its detail — what
   // Settings → Runners points at, so "where is this box's Claude login" has an
@@ -297,7 +324,9 @@ export default function SupervisorPage(): JSX.Element {
               data-testid="feed-fleet-alert"
               className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-left text-[12px] font-medium text-warning hover:bg-warning/15"
             >
-              ⚠ {alertCount} fleet alert{alertCount === 1 ? '' : 's'} — stuck turns or runner problems. View runners →
+              {fleetHeld
+                ? '⏸ Fleet on hold — no runner starts anything. View runners →'
+                : `⚠ ${alertCount} fleet alert${alertCount === 1 ? '' : 's'} — stuck turns or runner problems. View runners →`}
             </button>
           )}
           {totalWaiting > 0 && (
@@ -355,21 +384,24 @@ export default function SupervisorPage(): JSX.Element {
       {/* Runners — fleet runner health, the LOUD alerts, and per-runner detail. */}
       {tab === 'runners' && (
         <div className="flex flex-col gap-4">
+          {/* The fleet hold: a superuser's control, and everyone's banner while on. */}
+          <FleetHoldCard hold={fleetHold} onChange={setFleetHold} />
+
           {/* LOUD alert: a queued turn addressed to an agent/repo NOTHING online
               declares sits forever with no signal (one sat 12h). */}
-          {stuck.length > 0 && (
+          {stuckShown.length > 0 && (
             <div
               role="alert"
               data-testid="unclaimable-turns-alert"
               className="rounded-lg border-2 border-warning bg-warning/15 p-3 text-warning"
             >
               <p className="text-[13px] font-bold uppercase tracking-wide">
-                {stuck.every((t) => t.kind === 'offline')
-                  ? `⚠ ${stuck.length} queued turn${stuck.length === 1 ? '' : 's'} waiting on an unreachable runner`
-                  : `⚠ ${stuck.length} queued turn${stuck.length === 1 ? '' : 's'} no runner can claim`}
+                {stuckShown.every((t) => t.kind === 'offline')
+                  ? `⚠ ${stuckShown.length} queued turn${stuckShown.length === 1 ? '' : 's'} waiting on an unreachable runner`
+                  : `⚠ ${stuckShown.length} queued turn${stuckShown.length === 1 ? '' : 's'} no runner can claim`}
               </p>
               <ul className="mt-1 space-y-1">
-                {stuck.slice(0, 5).map((t) => (
+                {stuckShown.slice(0, 5).map((t) => (
                   <li key={t.turn_id} className="text-[13px] leading-snug">
                     <span className="rounded bg-warning/20 px-1 font-mono font-semibold">{t.target}</span>{' '}
                     {t.prompt ? <span className="opacity-90">“{t.prompt}”</span> : null}
@@ -378,7 +410,7 @@ export default function SupervisorPage(): JSX.Element {
                 ))}
               </ul>
               <p className="mt-1.5 text-[12px] leading-snug opacity-90">
-                {stuck.every((t) => t.kind === 'offline')
+                {stuckShown.every((t) => t.kind === 'offline')
                   ? 'These will run as soon as a runner reconnects — no action needed unless it stays.'
                   : 'Declare it on a runner (below) or cancel the turn — it will not run otherwise.'}
               </p>

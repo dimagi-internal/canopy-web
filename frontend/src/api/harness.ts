@@ -278,3 +278,20 @@ export async function setRunnerFlags(runnerId: string, flags: string[]): Promise
   })
   return toRunner(unwrap(res, 'setRunnerFlags'))
 }
+
+// The fleet hold (apps/harness/models.py::FleetHold): while held, NO runner claims
+// anything; turns wait queued. Readable by anyone; held/released by a superuser only
+// (`can_hold` says whether the caller is one).
+export type FleetHoldOut = components['schemas']['FleetHoldOut']
+
+export async function getFleetHold(): Promise<FleetHoldOut> {
+  return unwrap(await apiV2.GET('/api/harness/fleet-hold'), 'getFleetHold')
+}
+
+export async function holdFleet(note = ''): Promise<FleetHoldOut> {
+  return unwrap(await apiV2.POST('/api/harness/fleet-hold', { body: { note } }), 'holdFleet')
+}
+
+export async function releaseFleetHold(): Promise<FleetHoldOut> {
+  return unwrap(await apiV2.POST('/api/harness/fleet-hold/release'), 'releaseFleetHold')
+}
