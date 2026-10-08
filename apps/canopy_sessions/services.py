@@ -150,8 +150,10 @@ def with_last_reply(sessions):
 
 def with_driving_turn(sessions):
     """`sessions` annotated with `_turn_mode` / `_turn_origin`: the mode and origin
-    of the newest claimed turn that drove each one — the supervisor feed's "did
-    the agent do this on its own?".
+    of the FIRST claimed turn that drove each one — the session's mode is fixed
+    when it starts (apps/harness/turn_mode.py), so the feed's "did the agent do
+    this on its own?" and the list's mode badge read how it started, not
+    whoever replied last.
 
     A turn drives a session two ways: a chat send carries the session itself
     (`chat_session`), and an agent turn the runner opened a session for carries
@@ -170,7 +172,7 @@ def with_driving_turn(sessions):
             )
         )
         .exclude(turn_mode="")
-        .order_by("-created_at")
+        .order_by("created_at")
     )
     return sessions.annotate(
         _turn_mode=Subquery(driving.values("turn_mode")[:1]),

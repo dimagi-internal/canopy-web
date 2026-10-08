@@ -46,6 +46,15 @@ queued takes effect, as does a demotion. The same holds for a turn canopy
 starts on someone's behalf — a schedule's occurrence is bounded by its
 creator, so a schedule is not a way around the cap.
 
+**A session's mode is fixed when it starts** (Jonathan, 2026-10-07: "the entire
+session is started in auto or manual, it doesn't change because of something that
+happens in the session"). A later turn in the same session — the owner's reply to a
+dispatch waiting for approval, say — takes the mode of the session's first claimed
+turn instead of being judged afresh. One-directional, so it can never raise
+autonomy: a session that started manual keeps every later turn manual, and one that
+started auto still runs each later turn through the rungs below, so an editor or an
+unverified sender posting into it stays manual (`session_started_manual`).
+
 Pure given the loaded rows, like `services.assignment_rows_for` — callable from
 the claim path (which has them) and from the envelope (which loads them).
 """
@@ -154,6 +163,37 @@ def _agent_of(turn):
     return cs.agent if cs is not None and cs.agent_id else None
 
 
+def session_started_manual(turn) -> Resolved | None:
+    """MANUAL when an earlier claimed turn of `turn`'s session was manual, else None.
+
+    The session's mode is its FIRST claimed turn's. Only manual carries forward: an
+    auto start never raises a later turn past what its own sender may have (module
+    note). A turn shares a session through `chat_session` (a reply) or through the
+    agent + Claude session id a runner recorded it under (a dispatch re-run)."""
+    from django.db.models import Q
+
+    from .models import Turn
+
+    same = Q()
+    if turn.chat_session_id:
+        same |= Q(chat_session_id=turn.chat_session_id)
+        binding = getattr(turn.chat_session, "runner_binding", None)
+        key = getattr(binding, "session_key", "") or ""
+        if key and turn.chat_session.agent_id:
+            same |= Q(agent_id=turn.chat_session.agent_id, session_key=key)
+    if turn.agent_id and turn.session_key:
+        same |= Q(agent_id=turn.agent_id, session_key=turn.session_key)
+    if not same:
+        return None
+    first = (
+        Turn.objects.filter(same).exclude(pk=turn.pk).exclude(turn_mode="")
+        .order_by("created_at").values_list("turn_mode", flat=True).first()
+    )
+    if first == MANUAL:
+        return Resolved(MANUAL, "session started manual")
+    return None
+
+
 def for_turn(turn, priorities: dict | None = None, *, fresh: bool = False) -> Resolved | None:
     """The mode for a turn, or None for one with no agent (a project turn).
 
@@ -168,6 +208,9 @@ def for_turn(turn, priorities: dict | None = None, *, fresh: bool = False) -> Re
     agent = _agent_of(turn)
     if agent is None:
         return None
+    started = session_started_manual(turn)
+    if started is not None:
+        return started
     asked = requested(turn, agent)
     if asked is not None:
         return asked

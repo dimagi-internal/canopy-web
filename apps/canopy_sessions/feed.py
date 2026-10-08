@@ -42,7 +42,7 @@ def needs_next_prompt(*, waiting_on_you: bool, agent_spoke_last: bool, running: 
 
 
 def ran_on_its_own(turn_mode: str | None, turn_origin: str | None) -> bool:
-    """Its newest turn ran in `auto` mode from somewhere other than a person's chat."""
+    """It started in `auto` mode from somewhere other than a person's chat."""
     from apps.harness.models import Turn  # framework->framework; lazy to avoid a cycle
 
     return turn_mode == "auto" and turn_origin != Turn.ORIGIN_CANOPY_WEB_CHAT
@@ -78,7 +78,7 @@ def status(
 
 
 def driving_turn(session) -> tuple[str, str]:
-    """(mode, origin) of the newest claimed turn that drove `session` — the one-row
+    """(mode, origin) of the first claimed turn that drove `session` — the one-row
     form of `services.with_driving_turn`, for a caller holding a single session."""
     from .models import Session
     from .services import with_driving_turn

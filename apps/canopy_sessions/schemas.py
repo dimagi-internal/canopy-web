@@ -204,7 +204,7 @@ class SessionOut(Schema):
     # feed renders — and whether the agent had the last word.
     last_reply: str = ""
     agent_spoke_last: bool = False
-    # The mode (`manual` / `auto`) and origin of the newest claimed turn that drove
+    # The mode (`manual` / `auto`) and origin of the FIRST claimed turn that drove
     # this session, on every row; "" when no turn has been claimed. Lets the feed
     # hold back work an agent did on its own, and the list label each card.
     turn_mode: str = ""
