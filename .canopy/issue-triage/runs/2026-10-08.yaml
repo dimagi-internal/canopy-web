@@ -31,7 +31,7 @@ prs:
     blocker: "major action bumps; publish workflows (setup-node v7 drops dummy NODE_AUTH_TOKEN) untested until a release"
     mechanical: false
     refs_issues: []
-    action: held for owner
+    action: "gh pr merge --auto (queued)"
     outcome: null
 verdicts:
   - number: 1188
