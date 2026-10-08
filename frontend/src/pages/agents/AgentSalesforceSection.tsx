@@ -8,6 +8,7 @@ import {
   setAgentSalesforce,
 } from '@/api/agents'
 import { useAuth } from '@/auth/AuthProvider'
+import type { CredStatus } from '@/pages/agents/agentCredentials'
 
 // Salesforce is a DELEGATED identity: chrome-sales acts as one Salesforce user
 // (Eva's), and other agents BORROW it rather than having accounts of their own.
@@ -27,7 +28,7 @@ function day(iso?: string | null): string {
   return iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
 }
 
-export function AgentSalesforceSection({ slug }: { slug: string }) {
+export function AgentSalesforceSection({ slug, onStatus }: { slug: string; onStatus?: (s: CredStatus) => void }) {
   const { user } = useAuth()
   const [sf, setSf] = useState<AgentSalesforce | null>(null)
   const [lender, setLender] = useState('')
@@ -43,6 +44,17 @@ export function AgentSalesforceSection({ slug }: { slug: string }) {
       off = true
     }
   }, [slug])
+
+  useEffect(() => {
+    if (!sf) return
+    onStatus?.(
+      !sf.set
+        ? { label: 'Borrows none', tone: 'muted' }
+        : sf.error
+          ? { label: 'Not working', tone: 'destructive' }
+          : { label: 'Working', tone: 'success' },
+    )
+  }, [sf, onStatus])
 
   const run = async (fn: () => Promise<AgentSalesforce>) => {
     setBusy(true)
@@ -63,7 +75,7 @@ export function AgentSalesforceSection({ slug }: { slug: string }) {
   const tone = sf.set ? (sf.error ? 'destructive' : 'success') : 'muted'
 
   return (
-    <section className="mb-5" data-testid="agent-salesforce">
+    <section id="cred-salesforce" className="mb-5 scroll-mt-6" data-testid="agent-salesforce">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         Salesforce — delegated identity
       </h3>

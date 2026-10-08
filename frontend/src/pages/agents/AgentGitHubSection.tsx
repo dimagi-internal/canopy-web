@@ -8,6 +8,7 @@ import {
   setAgentGitHub,
 } from '@/api/agents'
 import { useAuth } from '@/auth/AuthProvider'
+import type { CredStatus } from '@/pages/agents/agentCredentials'
 
 // GitHub is the OWNER's identity, lent to this one agent — not a secret of the
 // agent's (its vault) nor of the workspace (the shared vault). The owner makes a
@@ -34,7 +35,7 @@ function day(iso?: string | null): string {
   return iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : ''
 }
 
-export function AgentGitHubSection({ slug }: { slug: string }) {
+export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?: (s: CredStatus) => void }) {
   const { user } = useAuth()
   const [gh, setGh] = useState<AgentGitHub | null>(null)
   const [token, setToken] = useState('')
@@ -50,6 +51,22 @@ export function AgentGitHubSection({ slug }: { slug: string }) {
       off = true
     }
   }, [slug])
+
+  useEffect(() => {
+    if (!gh) return
+    const failing = (gh.checks ?? []).some((c) => !c.ok)
+    onStatus?.(
+      !gh.set
+        ? { label: 'Not set', tone: 'muted' }
+        : gh.expired
+          ? { label: 'Expired', tone: 'destructive' }
+          : gh.error || failing
+            ? { label: 'Not working', tone: 'destructive' }
+            : gh.expiring_soon
+              ? { label: 'Expires soon', tone: 'warning' }
+              : { label: 'Working', tone: 'success' },
+    )
+  }, [gh, onStatus])
 
   const run = async (fn: () => Promise<AgentGitHub>) => {
     setBusy(true)
@@ -70,7 +87,7 @@ export function AgentGitHubSection({ slug }: { slug: string }) {
   const tone = !gh.set || gh.expired || gh.error || failing.length ? 'destructive' : gh.expiring_soon ? 'warning' : 'success'
 
   return (
-    <section className="mb-5" data-testid="agent-github">
+    <section id="cred-github" className="mb-5 scroll-mt-6" data-testid="agent-github">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         GitHub — acting as its owner
       </h3>

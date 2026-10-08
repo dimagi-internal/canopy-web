@@ -31,7 +31,15 @@ callers_default: none
 // The agent's declared interface: who may make it do what. LIVE STATE held by
 // canopy-web — not a file in the agent's repo — so owners and admins edit it
 // here, and every member can read it.
-export function AgentInterfaceView({ agentSlug, canEdit = false }: { agentSlug: string; canEdit?: boolean }) {
+export function AgentInterfaceView({
+  agentSlug,
+  agentName,
+  canEdit = false,
+}: {
+  agentSlug: string
+  agentName?: string
+  canEdit?: boolean
+}) {
   const [data, setData] = useState<AgentInterfaceOut | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState<string | null>(null)
@@ -114,7 +122,7 @@ export function AgentInterfaceView({ agentSlug, canEdit = false }: { agentSlug: 
     <div className="flex flex-col gap-2">
       {!published && (
         <p data-testid="interface-none" className="m-0 text-[13px] text-foreground-secondary">
-          Not published. Everyone who can reach this agent gets all of it.
+          No outside callers. Only workspace members can use {agentName ?? agentSlug}.
         </p>
       )}
       {full.length > 0 && (

@@ -56,6 +56,14 @@ export function WorkspaceProvider({
   return <Ctx.Provider value={{ workspaces, active, loading, refresh }}>{children}</Ctx.Provider>
 }
 
+/** The caller's role in `slug`, or null when it is unknown — outside a
+ *  provider, still loading, or not a member. Display hints only. */
+export function useWorkspaceRole(slug: string | null | undefined): string | null {
+  const ctx = useContext(Ctx)
+  if (!ctx || !slug) return null
+  return ctx.workspaces.find((w) => w.slug === slug)?.role ?? null
+}
+
 export function useWorkspace(): WorkspaceCtx {
   const ctx = useContext(Ctx)
   if (!ctx) throw new Error('useWorkspace must be used within WorkspaceProvider')

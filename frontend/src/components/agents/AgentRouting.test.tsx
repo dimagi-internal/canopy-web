@@ -70,10 +70,64 @@ describe('AgentRouting', () => {
     expect(select.selectedOptions[0].textContent).toBe('As below (Auto)')
   })
 
-  it('warns that a named auto rule holds only for verified mail', async () => {
-    await mount([rule({ actor: 'beth@dimagi.com', turn_mode: 'auto' })])
-    expect(screen.getByTestId('runner-rule-verified-email-beth@dimagi.com').textContent)
-      .toMatch(/verified as coming from beth@dimagi.com/)
+  it('says once, under the table, that a named auto rule holds only for verified mail', async () => {
+    await mount([
+      rule({ actor: 'beth@dimagi.com', turn_mode: 'auto' }),
+      rule({ source: 'api', actor: 'jj@dimagi.com', turn_mode: 'auto', runner_id: 'r-mbp', runner_name: 'jj-mbp' }),
+    ])
+    expect(screen.getAllByTestId('routing-verified-note')).toHaveLength(1)
+    expect(screen.getByTestId('routing-verified-note').textContent).toMatch(/verified as theirs/)
+  })
+
+  it('leaves the verified note out when no named rule runs auto', async () => {
+    await mount([rule({ actor: 'beth@dimagi.com' })])
+    expect(screen.queryByTestId('routing-verified-note')).toBeNull()
+    // the detail sits behind one disclosure
+    expect(screen.getByText('How routing works')).toBeTruthy()
+  })
+
+  it('draws identical rules for several kinds of work as one row', async () => {
+    const jj = { actor: 'jj@dimagi.com', runner_id: 'r-mbp', runner_name: 'jj-mbp' }
+    await mount([
+      rule({ source: 'api', ...jj }),
+      rule({ source: 'canopy_web_chat', ...jj }),
+      rule({ source: 'email', ...jj }),
+    ])
+    const row = screen.getByTestId('runner-rule-api+canopy_web_chat+email-jj@dimagi.com')
+    expect(within(row).getByText('other (API)')).toBeTruthy()
+    expect(within(row).getByText('canopy chat')).toBeTruthy()
+    expect(within(row).getByText('email')).toBeTruthy()
+
+    // an edit to the row is an edit to every rule under it
+    fireEvent.click(within(row).getByRole('radio', { name: 'Wait' }))
+    await waitFor(() => expect(saveAgentRunnerRules).toHaveBeenCalled())
+    const next = saveAgentRunnerRules.mock.calls[0][2] as { source: string; strict: boolean }[]
+    expect(next.map((r) => [r.source, r.strict])).toEqual([
+      ['api', true], ['canopy_web_chat', true], ['email', true],
+    ])
+  })
+
+  it('removes one kind of work from a merged row, and adds another', async () => {
+    const jj = { actor: 'jj@dimagi.com', runner_id: 'r-mbp', runner_name: 'jj-mbp' }
+    await mount([rule({ source: 'api', ...jj }), rule({ source: 'email', ...jj })])
+    const row = screen.getByTestId('runner-rule-api+email-jj@dimagi.com')
+    fireEvent.click(within(row).getByRole('button', { name: 'Stop routing email by this rule' }))
+    await waitFor(() => expect(saveAgentRunnerRules).toHaveBeenCalledTimes(1))
+    expect((saveAgentRunnerRules.mock.calls[0][2] as { source: string }[]).map((r) => r.source)).toEqual(['api'])
+  })
+
+  it('adds a kind of work to a rule, copying its runners and sender', async () => {
+    await mount([rule({ actor: 'jj@dimagi.com', runner_id: 'r-mbp', runner_name: 'jj-mbp', strict: true })])
+    const row = screen.getByTestId('runner-rule-email-jj@dimagi.com')
+    const add = within(row).getByRole('combobox', { name: /Add a kind of work/ }) as HTMLSelectElement
+    // a schedule has no sender, so it cannot join a named rule
+    expect(Array.from(add.options).map((o) => o.value)).not.toContain('canopy_scheduler')
+    fireEvent.change(add, { target: { value: 'canopy_web_chat' } })
+    await waitFor(() => expect(saveAgentRunnerRules).toHaveBeenCalled())
+    expect(saveAgentRunnerRules.mock.calls[0][2]).toEqual([
+      { source: 'email', actor: 'jj@dimagi.com', runnerIds: ['r-mbp'], strict: true, turnMode: '' },
+      { source: 'canopy_web_chat', actor: 'jj@dimagi.com', runnerIds: ['r-mbp'], strict: true, turnMode: '' },
+    ])
   })
 
   it('adds "email from beth -> cloud, auto" in one step', async () => {

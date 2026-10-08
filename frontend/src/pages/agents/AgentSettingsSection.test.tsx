@@ -21,6 +21,7 @@ vi.mock('@/components/agents/AgentOwnerControl', () => ({ AgentOwnerControl: () 
 vi.mock('@/components/agents/AgentAccessRoster', () => ({ AgentAccessRoster: () => <div>access-roster</div> }))
 vi.mock('@/components/agents/AgentInterfaceView', () => ({ AgentInterfaceView: () => <div>interface-view</div> }))
 vi.mock('@/pages/agents/AgentVaultSection', () => ({ AgentVaultSection: () => null }))
+let agentOverride: Record<string, unknown> = {}
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useOutletContext: () => ({
@@ -28,6 +29,7 @@ vi.mock('react-router-dom', async (orig) => ({
       slug: 'hal', name: 'Hal', persona: 'The fleet engineer.', description: '', workspace: 'connect',
       task_count: 1, sync_count: 2, skill_count: 4,
       turn_mode: 'manual', slack_enabled: false, owner: null, can_transfer_owner: false,
+      ...agentOverride,
     },
   }),
 }))
@@ -63,9 +65,10 @@ describe('AgentSettingsSection', () => {
     // Turn mode and runners are one table now: a rule can set both.
     expect(where('How it runs', 'Routing')).toBeTruthy()
 
-    // Who may change each one is on the page, not discovered by an error.
+    // Who may change each one is said to someone who cannot (this viewer is
+    // not an admin), not discovered by an error.
     expect(within(screen.getByRole('region', { name: 'Who can reach it' }))
-      .getByText('Workspace owners')).toBeTruthy()
+      .getAllByText("Only Hal's admins can change this.")).toHaveLength(3)
 
     const credentials = screen.getByRole('region', { name: 'Credentials' })
     expect(await within(credentials).findByTestId('cred-CANOPY_PAT')).toBeTruthy()
@@ -86,5 +89,23 @@ describe('AgentSettingsSection', () => {
     )
     expect(screen.getByTestId('where').textContent)
       .toBe('/w/connect/agents/hal/settings?google=ok#credentials')
+  })
+
+  it('shows "who can change this" only to someone who cannot', () => {
+    agentOverride = { is_admin: true, can_manage_admins: true, can_transfer_owner: true }
+    try {
+      render(
+        <MemoryRouter initialEntries={['/w/connect/agents/hal/settings']}>
+          <Routes><Route path="/w/:workspace/agents/:slug/settings" element={<AgentSettingsSection />} /></Routes>
+        </MemoryRouter>,
+      )
+      expect(screen.queryByText("Only Hal's admins can change this.")).toBeNull()
+      expect(screen.queryByText(/workspace owners and Hal's owner can change this/)).toBeNull()
+      // one line per setting
+      expect(screen.getByText('Runs Hal. GitHub features use their GitHub connection.')).toBeTruthy()
+      expect(screen.getByText('The canopy account Hal signs in as.')).toBeTruthy()
+    } finally {
+      agentOverride = {}
+    }
   })
 })

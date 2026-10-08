@@ -3,7 +3,9 @@ import {
   groupRules,
   hasRule,
   inheritedMode,
+  mergeRules,
   nextRulesForActor,
+  nextRulesForCopy,
   nextRulesForAdd,
   nextRulesForMode,
   nextRulesForRemove,
@@ -213,5 +215,62 @@ describe('groupRules', () => {
       .filter((r) => r.actor === 'jj@dimagi.com')
       .map((r) => ({ ...r, online: false, strict: false, turnMode: '' })) as unknown as AgentRunnerRuleOut[]
     expect(groupRules(soft)[0].parked).toBe(false)
+  })
+})
+
+describe('mergeRules', () => {
+  const row = (over: Partial<AgentRunnerRuleOut>): AgentRunnerRuleOut => ({
+    source: 'email', actor: '', rank: 0, runner_id: 'r-cloud', runner_name: 'cloud-1', kind: 'cloud',
+    strict: false, online: true, ready: true, enabled: true, queued_count: 0, turn_mode: '', ...over,
+  })
+
+  it('draws rules that differ only in the kind of work as one row', () => {
+    const m = mergeRules(groupRules([
+      row({ source: 'api', actor: 'jj@dimagi.com', queued_count: 1 }),
+      row({ source: 'email', actor: 'jj@dimagi.com', queued_count: 2 }),
+    ]), 'manual')
+    expect(m).toHaveLength(1)
+    expect(m[0].sources).toEqual(['api', 'email'])
+    expect(m[0].keys).toEqual([K('api', 'jj@dimagi.com'), K('email', 'jj@dimagi.com')])
+    expect(m[0].queuedCount).toBe(3)
+  })
+
+  it('keeps rules apart that differ in anything else', () => {
+    const m = mergeRules(groupRules([
+      row({ source: 'api', actor: 'jj@dimagi.com' }),
+      row({ source: 'email', actor: 'jj@dimagi.com', strict: true }),
+      row({ source: 'ace_web', actor: 'jj@dimagi.com', turn_mode: 'auto' }),
+      row({ source: 'slack', actor: 'beth@dimagi.com' }),
+    ]), 'manual')
+    expect(m).toHaveLength(4)
+  })
+
+  it('keeps apart rules whose "As below" would inherit different modes', () => {
+    const m = mergeRules(groupRules([
+      row({ source: 'api', actor: 'jj@dimagi.com' }),
+      row({ source: 'email', actor: 'jj@dimagi.com' }),
+      row({ source: 'email', actor: '', runner_id: 'r-mbp', turn_mode: 'auto' }),
+    ]), 'manual')
+    expect(m.map((x) => x.sources)).toEqual([['api'], ['email'], ['email']])
+  })
+
+  it('draws every named row above every anyone row', () => {
+    const m = mergeRules(groupRules([
+      row({ source: 'api', actor: '' }),
+      row({ source: 'email', actor: '' }),
+      row({ source: 'email', actor: 'beth@dimagi.com', runner_id: 'r-mbp' }),
+    ]), 'manual')
+    expect(m.map((x) => x.actor)).toEqual(['beth@dimagi.com', ''])
+  })
+})
+
+describe('nextRulesForCopy', () => {
+  it('copies a rule to another kind of work', () => {
+    const next = nextRulesForCopy(rules, K('ace_web'), 'slack')
+    expect(next[2]).toEqual({ ...rules[0], source: 'slack' })
+  })
+
+  it('leaves an existing (kind, sender) alone', () => {
+    expect(nextRulesForCopy(rules, K('ace_web'), 'email')).toEqual(rules)
   })
 })

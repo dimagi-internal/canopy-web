@@ -13,6 +13,8 @@ import { Section, Setting } from '@/pages/agents/sectionLayout'
 import { AgentCanopyUserControl } from '@/components/agents/AgentCanopyUserControl'
 import { CountStat } from '@/components/agents/cards'
 import { WorkbenchSubHeader } from 'canopy-ui'
+import { roleAllows } from '@/lib/workspaceRoles'
+import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
 // EVERYTHING THAT CONFIGURES AN AGENT, on one page of its own.
 //
@@ -30,6 +32,10 @@ import { WorkbenchSubHeader } from 'canopy-ui'
 //   Credentials       — the keys, and the vault they are read from
 export function AgentSettingsSection() {
   const { agent } = useOutletContext<AgentOutletContext>()
+  const isAdmin = agent.is_admin ?? false
+  const admins = `${agent.name}'s admins`
+  // Routing writes are gated on agent.work (route_gates.py): workspace editors.
+  const canRoute = roleAllows(useWorkspaceRole(agent.workspace), 'agent.work')
 
   // `#credentials` is a link people hold: the Google mailbox mint returns to it,
   // and it was the old Credentials page's address twice over. The router does
@@ -55,7 +61,7 @@ export function AgentSettingsSection() {
 
       {/* Persona + counts opened Overview. Overview is gone (Work is the
           landing page now) and this is where "what IS this agent" belongs. */}
-      <Section id="about" title="About" description={`What ${agent.name} is, and how much it has done.`}>
+      <Section id="about" title="About">
         {agent.persona && <p className="text-[14px] text-foreground leading-relaxed">{agent.persona}</p>}
         {agent.description && (
           <p className="text-[13px] text-muted-foreground leading-relaxed mt-2">{agent.description}</p>
@@ -67,16 +73,16 @@ export function AgentSettingsSection() {
         </div>
       </Section>
 
-      <Section
-        id="operators"
-        title="People and roles"
-        description={`Everyone in the workspace, their role on ${agent.name}, and what they can reach.`}
-      >
+      {/* One line per setting (#1314): a section blurb, a "who can change
+          this" label, a description and a footnote were four layers saying
+          much the same thing. */}
+      <Section id="operators" title="People and roles">
         <div className="divide-y divide-border rounded-lg border border-border bg-card">
           <Setting
             title="Owner"
-            who="Workspace owners and the current owner"
-            description={`The person who operates ${agent.name}. Its GitHub-backed features, including History, read the repository through this person's GitHub connection.`}
+            who={`workspace owners and ${agent.name}'s owner`}
+            canEdit={agent.can_transfer_owner ?? false}
+            description={`Runs ${agent.name}. GitHub features use their GitHub connection.`}
           >
             <AgentOwnerControl
               agentSlug={agent.slug}
@@ -87,85 +93,84 @@ export function AgentSettingsSection() {
           </Setting>
           <Setting
             title="Canopy user"
-            who="The agent's owner and admins"
-            description={`The canopy user account ${agent.name} is — the one its own token signs in as. Canopy then treats that account as ${agent.name} itself — for example, acting as itself it is never confined as a caller. One user belongs to one agent instance.`}
+            who={admins}
+            canEdit={isAdmin}
+            description={`The canopy account ${agent.name} signs in as.`}
           >
             <AgentCanopyUserControl
               agentSlug={agent.slug}
               workspace={agent.workspace ?? ''}
               initialUser={agent.canopy_user ?? null}
-              canEdit={agent.is_admin ?? false}
+              canEdit={isAdmin}
             />
           </Setting>
           <Setting
             title="People"
-            who="Admins are granted by the agent's owner and workspace owners"
-            description={`Admins are trusted with all of ${agent.name}: they can change it and set its credentials. Workspace owners are always admins. Everyone else can use it, as far as the caller rules below allow.`}
+            who={`workspace owners and ${agent.name}'s owner`}
+            canEdit={agent.can_manage_admins ?? false}
+            description={`What each workspace role gets on ${agent.name}, and who is set here.`}
           >
-            <AgentAccessRoster agentSlug={agent.slug} canManage={agent.can_manage_admins ?? false} />
+            <AgentAccessRoster
+              agentSlug={agent.slug}
+              agentName={agent.name}
+              workspace={agent.workspace ?? undefined}
+              canManage={agent.can_manage_admins ?? false}
+            />
           </Setting>
         </div>
       </Section>
 
-      <Section
-        id="reach"
-        title="Who can reach it"
-        description={`Who may ask ${agent.name} for something, and through which door.`}
-      >
+      <Section id="reach" title="Who can reach it">
         <div className="divide-y divide-border rounded-lg border border-border bg-card">
           <Setting
             title="Callers"
-            who="The agent's owner and admins"
-            description={`Who else may use ${agent.name}, and for what: the whole agent for addresses you trust (e.g. everyone at your domain), a confined capability for everyone else. Each also appears as an MCP tool.`}
+            who={admins}
+            canEdit={isAdmin}
+            description={`Who outside the workspace may use ${agent.name}, and for what.`}
           >
-            <AgentInterfaceView agentSlug={agent.slug} canEdit={agent.is_admin ?? false} />
+            <AgentInterfaceView agentSlug={agent.slug} agentName={agent.name} canEdit={isAdmin} />
           </Setting>
           <Setting
             title="Slack"
-            who="Workspace owners"
-            description={`Whether people can talk to ${agent.name} from the connected Slack — by @mention, DM, or /canopy ${agent.slug}. Members act as themselves; anyone else is answered as a contact.`}
+            who={admins}
+            canEdit={isAdmin}
+            description={`Whether people can talk to ${agent.name} from the connected Slack.`}
           >
             <SlackAccessToggle agentSlug={agent.slug} initialEnabled={agent.slack_enabled} />
           </Setting>
           <Setting
             title="Remembers people"
-            who="The agent's owner and admins"
-            description={`After someone's conversation with ${agent.name} ends, a short follow-up turn records durable work facts about them (role, projects, preferences, corrections) that every agent in this workspace is told. People can see and retract what is held about them.`}
+            who={admins}
+            canEdit={isAdmin}
+            description={`Records work facts about the people ${agent.name} talks to, which they can see and retract.`}
           >
             <PeopleDigestToggle
               agentSlug={agent.slug}
               initialEnabled={agent.people_digest_enabled ?? true}
-              canEdit={agent.is_admin ?? false}
+              canEdit={isAdmin}
             />
           </Setting>
         </div>
       </Section>
 
-      <Section
-        id="running"
-        title="How it runs"
-        description={`Which machine runs each of ${agent.name}'s turns, and whether it may act without asking you first.`}
-      >
+      <Section id="running" title="How it runs">
         <div className="rounded-lg border border-border bg-card">
           {/* Turn mode and runners were two settings; a routing rule can now set
               both ("Beth's email → cloud, auto"), so they are one table whose
               last row is the agent's own defaults (spec 2026-09-23). */}
           <Setting
             title="Routing"
-            who="Workspace editors and owners"
-            description="Add a rule to send one kind of work, or one person's work, to a different runner or mode."
+            who="workspace editors and above"
+            canEdit={canRoute}
+            description="Which runner takes each kind of work, and whether it may act without approval."
           >
-            <AgentRouting agentSlug={agent.slug} initialTurnMode={agent.turn_mode} />
+            <AgentRouting agentSlug={agent.slug} agentName={agent.name} initialTurnMode={agent.turn_mode} />
           </Setting>
         </div>
       </Section>
 
-      <Section
-        id="credentials"
-        title="Credentials"
-        description={`The secrets ${agent.name} needs to run, and whether each is set. Anyone here can see the status; only the agent's owner and admins can change a value.`}
-      >
-        <AgentCredentialsPanel agent={agent} />
+      <Section id="credentials" title="Credentials">
+        <AgentCredentialsPanel agent={agent} canEdit={isAdmin} />
       </Section>
     </div>
   )
