@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import uuid
 
 from django.db import transaction
 from django.db.models import Case, IntegerField, Q, Value, When
@@ -28,8 +29,9 @@ from .models import Contact, Person, PersonAccess, PersonDigest, PersonFact
 
 logger = logging.getLogger(__name__)
 
-#: Most live facts the envelope carries.
-ENVELOPE_FACTS = 25
+#: Most entries the turn-start recall puts in the envelope (HCP `maxEntries`;
+#: the protocol ceiling is 20). Small on purpose: the agent recalls more itself.
+ENVELOPE_FACTS = 8
 #: The page a person reads everything held about them on (a web path).
 SEE_ALL = "/people/me/"
 #: A conversation's prompt is cut here in `conversations()`.
@@ -150,11 +152,19 @@ def _initiated_by(person: Person) -> Q:
 # --- facts -------------------------------------------------------------------------
 
 
-def live_facts(person: Person, workspace_slug: str | None = None):
+def live_facts(person: Person, workspace_slug: str | None = None, *, for_agent: bool = False):
     """Live facts — neither superseded nor retracted — corrections FIRST (they
-    must always be honoured), then newest."""
+    must always be honoured), then newest.
+
+    `for_agent` narrows to what HCP lets an agent see (`hcp.servable`): never a
+    conflicted, deprecated or expired entry. The person's own view keeps them —
+    a quarantined inference is exactly what they need to see to resolve it."""
+    from . import hcp
+
     qs = PersonFact.objects.filter(person=person, superseded_at__isnull=True,
                                    retracted_at__isnull=True)
+    if for_agent:
+        qs = hcp.servable(qs)
     if workspace_slug is not None:
         qs = qs.filter(workspace_id=workspace_slug)
     return (qs.select_related("project", "workspace")
@@ -177,6 +187,13 @@ def fact_dict(fact: PersonFact) -> dict:
         "project": project,
         "instance_ref": fact.instance_ref,
         "created_at": fact.created_at.isoformat() if fact.created_at else None,
+        # HCP v1 (apps/contacts/hcp.py), additive.
+        "entry_id": f"urn:uuid:{fact.entry_id}",
+        "version": fact.version,
+        "category": fact.category,
+        "dimension": fact.dimension or None,
+        "confidence": fact.confidence or None,
+        "status": fact.status,
     }
 
 
@@ -185,13 +202,28 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
                 basis: str = PersonFact.DECLARED, by_user=None, by_agent=None,
                 source_turn=None, project=None, instance_ref: str = "",
                 supersedes: PersonFact | None = None,
-                source_contact=None) -> PersonFact:
-    """Append a fact. If it `supersedes` another, that one stops being live now.
+                source_contact=None, category: str | None = None,
+                dimension: str | None = None, confidence: str | None = None,
+                provenance_source: str = "", expires_at=None, relationship: str = "",
+                metadata: dict | None = None, user_verified: bool = False,
+                captured_by: str = "", reason: str = "", actor=None,
+                status: str = PersonFact.ACTIVE, audit_event: str | None = None,
+                audit_detail: str = "", check_conflicts: bool = True) -> PersonFact:
+    """Append a fact — one VERSION of an HCP entry.
+
+    Without `supersedes` it starts a new entry (version 1). With it, the new row
+    is the NEXT VERSION of that entry: same `entry_id`, `version` + 1, and the
+    old row stops being current. Either way the write is audited on the
+    person's log and conflict-checked (HCP 2.6), on every path — the REST and
+    MCP routes, `canopy people remember`, a mirrored contact note.
 
     Raises FactError for an unknown kind or basis, an empty or over-long
-    statement, a project from another workspace, or a superseded fact that is
-    not this person's in this workspace.
+    statement, a project from another workspace, a category canopy does not
+    hold, a confidence that does not match the basis, or a superseded fact
+    that is not this person's in this workspace.
     """
+    from . import hcp
+
     kind = (kind or "").strip()
     if kind not in PersonFact.KINDS:
         raise FactError(f"unknown kind {kind!r}; one of {sorted(PersonFact.KINDS)}")
@@ -205,21 +237,51 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
         raise FactError(f"a statement is one sentence, at most {PersonFact.STATEMENT_MAX} characters")
     if project is not None and project.agent.workspace_id != workspace.pk:
         raise FactError("that project belongs to another workspace")
+    category = (category or "").strip() or (supersedes.category if supersedes is not None
+                                             else hcp.KIND_CATEGORY[kind])
+    if not hcp.valid_category(category):
+        raise FactError(f"category {category!r} is not one canopy holds")
+    confidence = (confidence or "").strip().lower()
+    if basis == PersonFact.INFERRED and not confidence:
+        confidence = "medium"     # the pre-HCP callers never said; HCP callers must
+    if basis == PersonFact.INFERRED and confidence not in PersonFact.CONFIDENCES:
+        raise FactError("confidence is high, medium or low")
+    if basis != PersonFact.INFERRED:
+        confidence = ""
+    entry_id, version = uuid.uuid4(), 1
     if supersedes is not None:
         old = PersonFact.objects.select_for_update().filter(pk=supersedes.pk).first()
         if old is None or old.person_id != person.pk or old.workspace_id != workspace.pk:
             raise FactError("a fact can only supersede a fact about the same person in the same workspace")
         if not old.is_live:
             raise FactError("that fact is no longer live")
+        entry_id, version = old.entry_id, old.version + 1
+    if actor is None:
+        actor = (hcp.agent_actor(by_agent) if by_agent is not None
+                 else hcp.user_actor(by_user) if getattr(by_user, "is_authenticated", False)
+                 else hcp.SYSTEM)
+    if supersedes is not None:
+        # The old row stops being current BEFORE the new one exists, so the
+        # (entry_id, version) history never has two current rows.
+        PersonFact.objects.filter(pk=supersedes.pk).update(superseded_at=timezone.now())
     fact = PersonFact.objects.create(
         person=person, workspace=workspace, kind=kind, statement=statement, basis=basis,
         project=project, instance_ref=(instance_ref or "").strip()[:300],
         source_turn=source_turn,
         asserted_by_user=None if by_agent is not None else by_user,
         asserted_by_agent=by_agent, supersedes=supersedes, source_contact=source_contact,
+        entry_id=entry_id, version=version, category=category,
+        dimension=hcp.normalize_dimension(dimension), confidence=confidence, status=status,
+        provenance_source=(provenance_source or "")[:200], expires_at=expires_at,
+        relationship=(relationship or "")[:80], metadata=dict(metadata or {}),
+        user_verified=bool(user_verified), captured_by=(captured_by or actor.id)[:200],
+        reason=(reason or "")[:300],
     )
-    if supersedes is not None:
-        PersonFact.objects.filter(pk=supersedes.pk).update(superseded_at=timezone.now())
+    event = audit_event or ("preference.updated" if supersedes is not None else "preference.created")
+    hcp.audit(person, event, actor=actor, entry=fact, turn=source_turn,
+              detail=audit_detail or (f"version {version}" + (f"; {reason}" if reason else "")))
+    if check_conflicts:
+        hcp.detect_conflicts(fact, actor=actor)
     if project is not None:
         # Any fact filed against a project makes its subject a participant (v1.1).
         from apps.agents import participants
@@ -245,12 +307,24 @@ def may_retract(user, fact: PersonFact) -> bool:
     return perms.can(user, fact.workspace_id, perms.MEMBERS_MANAGE)
 
 
-def retract(fact: PersonFact, *, by) -> PersonFact:
+def retract(fact: PersonFact, *, by, actor=None, reason: str = "") -> PersonFact:
+    """Soft-delete (HCP `deletePreference`, hardDelete false): the entry's
+    status becomes `deleted`. It is still held — the person still sees it and
+    an export still carries it — but no agent is ever served it again."""
+    from . import hcp
+
     if fact.retracted_at is None:
-        PersonFact.objects.filter(pk=fact.pk, retracted_at__isnull=True).update(
-            retracted_at=timezone.now(),
+        updated = PersonFact.objects.filter(pk=fact.pk, retracted_at__isnull=True).update(
+            retracted_at=timezone.now(), status=PersonFact.DELETED,
             retracted_by=by if getattr(by, "is_authenticated", False) else None)
         fact.refresh_from_db()
+        if updated:
+            if actor is None:
+                agent = agent_of_login(by)
+                actor = (hcp.agent_actor(agent) if agent is not None
+                         else hcp.user_actor(by) if getattr(by, "is_authenticated", False)
+                         else hcp.SYSTEM)
+            hcp.audit(fact.person, "preference.deleted", actor=actor, entry=fact, detail=reason)
     return fact
 
 
@@ -298,20 +372,44 @@ def agent_of_login(user):
     return getattr(user, "agent_identity", None) if user is not None else None
 
 
+#: What the turn-start recall says it is for (HCP: every read states a purpose).
+ENVELOPE_PURPOSE = "answer this person's turn: context about who is asking"
+
+
 def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None) -> dict | None:
     """The envelope v3 `person` block, and one `PersonAccess(via=envelope)`.
 
-    None when the asker is not a human. Facts and digest are those of the
-    turn's agent's workspace only (Q2).
+    None when the asker is not a human. Facts are those of the turn's agent's
+    workspace only (Q2).
+
+    **HCP recall.** The block is no longer "the person's profile": it is ONE
+    `searchPreferences` the control plane runs for the agent at turn start —
+    under the grant for this client (agent, channel, host), with the turn's own
+    message as the query — so the agent starts with the few entries relevant to
+    what was asked (at most `ENVELOPE_FACTS`, never padded) and recalls more
+    mid-turn with the `hcp_searchPreferences` tool. The digest is not served
+    here: a whole-profile summary is the bulk read HCP rules out (3.1).
     """
+    from . import hcp
+
     person = initiator_person(turn)
     if person is None:
         return None
-    digest = digest_for(person, workspace_slug)
-    facts = list(live_facts(person, workspace_slug)[:ENVELOPE_FACTS]) if workspace_slug else []
+    grant, facts = None, []
+    if workspace_slug and agent is not None:
+        channel, host = hcp.client_of_turn(turn)
+        grant = hcp.grant_for(person, agent=agent, workspace_slug=workspace_slug,
+                              channel=channel, host=host)
+        if grant is not None:
+            readable = hcp.categories_for(grant, "read")
+            if readable:
+                facts, _, _ = hcp.search(person, workspace_slug=workspace_slug,
+                                         query=turn.prompt or "", categories=readable,
+                                         purpose=ENVELOPE_PURPOSE, max_entries=ENVELOPE_FACTS,
+                                         grant=grant, actor=hcp.agent_actor(agent), turn=turn)
     # "Did the brain have anything to say", recorded NOW, for the coverage
-    # metric (`apps/contacts/coverage.py`): a fact or a non-empty digest.
-    had_context = bool(facts) or bool(digest is not None and digest.text.strip())
+    # metric (`apps/contacts/coverage.py`).
+    had_context = bool(facts)
     log_access(person, via=PersonAccess.VIA_ENVELOPE, workspace_slug=workspace_slug,
                reader_user=reader_user, reader_agent=agent, turn=turn, had_context=had_context)
     return {
@@ -321,9 +419,19 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         # The workspace these facts are from, and where `canopy people remember
         # --workspace <slug>` writes (contract addendum, canopy side).
         "workspace": workspace_slug,
-        "digest": digest.text if digest is not None else "",
-        "digest_updated_at": digest.updated_at.isoformat() if digest is not None else None,
+        "digest": "",
+        "digest_updated_at": None,
         "facts": [fact_dict(f) for f in facts],
+        # HCP: the grant this turn read under (None = the person revoked this
+        # client, so nothing about them is served), and how to recall more.
+        "grant": ({"id": f"urn:uuid:{grant.grant_id}", "client": grant.client_name,
+                   "scopes": list(grant.scopes or [])} if grant is not None else None),
+        "recall": ({"tool": "hcp_searchPreferences", "turn": str(turn.pk),
+                    "categories": hcp.categories_for(grant, "read"),
+                    "hint": "Only the entries relevant to the message are above. To recall "
+                            "more about this person, call hcp_searchPreferences with a query, "
+                            "the categories, a purpose and turn=<this turn id>."}
+                   if grant is not None else None),
         # v1.1, additive: the projects (of this workspace's agents) they take
         # part in, most recently active first, at most 5. Not archived ones.
         "projects": envelope_projects(person, workspace_slug),
@@ -386,9 +494,12 @@ def mirror_contact_notes(contact: Contact, *, by=None) -> PersonFact | None:
                                 or current.workspace_id != contact.workspace_id):
         retract(current, by=by)
         current = None
+    # ATTESTED, not declared: someone other than the person wrote these notes
+    # about them (HCP issuer-attested, 2.2.2).
     return record_fact(person=person, workspace=contact.workspace, kind=NOTES_KIND,
-                       statement=statement, basis=PersonFact.DECLARED,
-                       supersedes=current, source_contact=contact)
+                       statement=statement, basis=PersonFact.ATTESTED,
+                       supersedes=current, source_contact=contact,
+                       provenance_source=f"integration:contact-notes:{contact.pk}")
 
 
 def mirror_all_contact_notes() -> dict:

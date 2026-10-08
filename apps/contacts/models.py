@@ -39,6 +39,8 @@ them would leak one tenant's dealings into another.
 """
 from __future__ import annotations
 
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -461,7 +463,28 @@ class PersonFact(models.Model):
     personal life, no performance judgements or sentiment. A free-text
     "anything" kind is exactly what lets that creep, so `kind` is closed and
     enforced by a CHECK constraint, not only by the API.
+
+    **Each row is one VERSION of an HCP entry** (Human Context Protocol v1,
+    draft 4 — `apps/contacts/hcp.py`). Rows sharing `entry_id` are one entry's
+    revision history: `version` counts up from 1, a new version supersedes the
+    previous row, and the live row carries the entry's lifecycle `status`. The
+    HCP `category` is the grant scope; it is limited to work-context categories
+    by a CHECK constraint for the same reason `kind` is closed.
     """
+
+    # --- HCP v1 (draft 4) -----------------------------------------------------
+    #: Registered HCP categories canopy holds. The spec's others
+    #: (health_context, purchase_history_preferences, values_and_ethics,
+    #: location_context, education_learner_profile) are deliberately absent:
+    #: they are not work context. Custom categories use `hcp-custom:`.
+    CAT_GENERAL, CAT_GOALS = "general_preferences", "goals_and_constraints"
+    CAT_WORK, CAT_COORDINATION = "work_context", "coordination_context"
+    CATEGORIES = (CAT_GENERAL, CAT_GOALS, CAT_WORK, CAT_COORDINATION)
+    CUSTOM_PREFIX = "hcp-custom:"
+
+    ACTIVE, DEPRECATED, CONFLICTED, DELETED = "active", "deprecated", "conflicted", "deleted"
+    STATUSES = (ACTIVE, DEPRECATED, CONFLICTED, DELETED)
+    CONFIDENCES = ("high", "medium", "low")
 
     ROLE, PROJECT, INSTANCE = "role", "project", "instance"
     PREFERENCE, CORRECTION, TERMINOLOGY = "preference", "correction", "terminology"
@@ -475,10 +498,14 @@ class PersonFact(models.Model):
     ]
     KINDS = frozenset(k for k, _ in KIND_CHOICES)
 
-    DECLARED, INFERRED = "declared", "inferred"
+    # HCP `declarationType`: declared ↔ user-declared, inferred ↔ model-inferred,
+    # attested ↔ issuer-attested (a human other than the person asserted it —
+    # an admin's note about a contact, an integration).
+    DECLARED, INFERRED, ATTESTED = "declared", "inferred", "attested"
     BASIS_CHOICES = [
-        (DECLARED, "Declared — the person said it, or a human asserted it"),
+        (DECLARED, "Declared — the person said it"),
         (INFERRED, "Inferred — a model concluded it"),
+        (ATTESTED, "Attested — someone other than the person asserted it"),
     ]
     BASES = frozenset(b for b, _ in BASIS_CHOICES)
 
@@ -517,10 +544,37 @@ class PersonFact(models.Model):
                                        null=True, blank=True, related_name="mirrored_facts")
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # --- HCP v1 entry fields ----------------------------------------------------
+    #: The HCP entry id (`urn:uuid:<entry_id>`) — the same on every version.
+    entry_id = models.UUIDField(default=uuid.uuid4, db_index=True)
+    version = models.PositiveIntegerField(default=1)
+    category = models.CharField(max_length=80, default=CAT_WORK)
+    #: Free-form, scoped within `category`; same category + normalized
+    #: dimension makes an inferred and a declared entry conflict candidates.
+    dimension = models.CharField(max_length=120, blank=True, default="")
+    #: high | medium | low — present iff `basis` is inferred.
+    confidence = models.CharField(max_length=8, blank=True, default="")
+    status = models.CharField(max_length=12, default=ACTIVE)
+    #: Has the person confirmed this entry themself?
+    user_verified = models.BooleanField(default=False)
+    #: `record.provenance.source` — "turn:<id>", "user-input", "integration:…".
+    provenance_source = models.CharField(max_length=200, blank=True, default="")
+    #: `record.provenance.capturedBy` — the agent, and for an inference the model.
+    captured_by = models.CharField(max_length=200, blank=True, default="")
+    #: `claim.expirationDate`; past it the entry is not served.
+    expires_at = models.DateTimeField(null=True, blank=True)
+    #: `claim.subject.relationship` — reserved; confers nothing (HCP 2.2).
+    relationship = models.CharField(max_length=80, blank=True, default="")
+    #: `record.metadata` — free-form; never affects scope or authorization.
+    metadata = models.JSONField(default=dict, blank=True)
+    #: Why this version exists (the update/delete `reason`).
+    reason = models.CharField(max_length=300, blank=True, default="")
+
     class Meta:
         db_table = "contact_person_facts"
         ordering = ["-created_at"]
-        indexes = [models.Index(fields=["person", "workspace", "created_at"])]
+        indexes = [models.Index(fields=["person", "workspace", "created_at"]),
+                   models.Index(fields=["person", "workspace", "category", "status"])]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(kind__in=["role", "project", "instance", "preference",
@@ -528,9 +582,26 @@ class PersonFact(models.Model):
                 name="person_fact_kind_is_work_context",
             ),
             models.CheckConstraint(
-                condition=models.Q(basis__in=["declared", "inferred"]),
-                name="person_fact_basis_known",
+                condition=models.Q(basis__in=["declared", "inferred", "attested"]),
+                name="person_fact_basis_known_v2",
             ),
+            models.CheckConstraint(
+                condition=(models.Q(category__in=["general_preferences", "goals_and_constraints",
+                                                  "work_context", "coordination_context"])
+                           | models.Q(category__startswith="hcp-custom:")),
+                name="person_fact_category_is_work_context",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=["active", "deprecated", "conflicted", "deleted"]),
+                name="person_fact_status_known",
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(basis="inferred", confidence__in=["high", "medium", "low"])
+                           | (~models.Q(basis="inferred") & models.Q(confidence=""))),
+                name="person_fact_confidence_iff_inferred",
+            ),
+            models.UniqueConstraint(fields=["entry_id", "version"],
+                                    name="person_fact_one_row_per_entry_version"),
         ]
 
     def __str__(self) -> str:  # pragma: no cover
@@ -538,7 +609,14 @@ class PersonFact(models.Model):
 
     @property
     def is_live(self) -> bool:
+        """The entry's current version, not deleted. A CONFLICTED entry is live
+        (the person sees it) but is never served to an agent — see `servable`."""
         return self.superseded_at is None and self.retracted_at is None
+
+    @property
+    def is_current(self) -> bool:
+        """The entry's latest version (whatever its status)."""
+        return self.superseded_at is None
 
 
 class PersonDigest(models.Model):
@@ -604,3 +682,135 @@ class PersonAccess(models.Model):
         db_table = "contact_person_accesses"
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["person", "created_at"])]
+
+
+# --- HCP v1 grants and the person's audit log (apps/contacts/hcp.py) -------------
+
+
+class PersonGrant(models.Model):
+    """HCP 4.1.5 — one client's category-scoped, revocable access to a person's
+    entries.
+
+    **The client is a composite, not just an agent.** Who reads is the agent,
+    but the same agent reached over Slack, over email, or embedded in a host
+    site through the SDK is a different client to the person, and they may
+    want to allow one and not another. So a grant is keyed on (person, agent,
+    channel, host) — `client_key` — with `attributes` open for the next
+    dimension, never on the agent alone.
+
+    **Presumed, for now.** canopy is the control plane that decides which agent
+    serves which caller, so the first time a client reaches a person canopy
+    issues the grant itself (`modality=canopy-control-plane`, owner policy
+    2026-10-08) and audits it. A REVOKED grant is never re-presumed: revocation
+    is the person's act and only the person's act reverses it.
+    """
+
+    TEMPORARY, PERSISTENT = "temporary", "persistent"
+    ACTIVE, REVOKED, EXPIRED = "active", "revoked", "expired"
+    MODALITY_CONTROL_PLANE = "canopy-control-plane"
+
+    grant_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="grants")
+    #: The workspace whose entries the grant reaches (an agent serves its own).
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="person_grants")
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True, blank=True,
+                              related_name="person_grants")
+    #: slack | email | chat | web | mcp | api | widget | sdk | … ("" = any).
+    channel = models.CharField(max_length=40, blank=True, default="")
+    #: The embedding host (a connected site) when the channel is an SDK/widget.
+    host = models.CharField(max_length=200, blank=True, default="")
+    #: Further client dimensions, reserved — part of `client_key` when present.
+    attributes = models.JSONField(default=dict, blank=True)
+    client_key = models.CharField(max_length=400, db_index=True)
+    client_name = models.CharField(max_length=200)
+    scopes = models.JSONField(default=list)
+    restrictions = models.JSONField(default=list, blank=True)
+    grant_type = models.CharField(max_length=12, default=PERSISTENT)
+    #: Who authorized it when not the person (HCP 4.1.5 `grantor`); "" = the person.
+    grantor = models.CharField(max_length=200, blank=True, default="")
+    modality = models.CharField(max_length=40, default=MODALITY_CONTROL_PLANE)
+    issued_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=10, default=ACTIVE)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "contact_person_grants"
+        ordering = ["-issued_at"]
+        indexes = [models.Index(fields=["person", "client_key", "issued_at"])]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(status__in=["active", "revoked", "expired"]),
+                                   name="person_grant_status_known"),
+            models.CheckConstraint(condition=models.Q(grant_type__in=["temporary", "persistent"]),
+                                   name="person_grant_type_known"),
+            # 4.1.4: a temporary grant always has an absolute expiry.
+            models.CheckConstraint(
+                condition=~models.Q(grant_type="temporary") | models.Q(expires_at__isnull=False),
+                name="person_grant_temporary_expires"),
+        ]
+
+
+class PersonAuditEvent(models.Model):
+    """HCP 4.3 — the PERSON's audit log: append-only, theirs to read and export,
+    never readable by an agent. Holds identifiers and categories, never entry
+    content, so it survives a hard delete without keeping what was deleted."""
+
+    EVENT_TYPES = (
+        "preference.created", "preference.read", "preference.updated", "preference.deleted",
+        "preference.hardDeleted", "preference.exported", "grant.issued", "grant.revoked",
+        "grant.expired", "conflict.detected", "conflict.resolved", "revocation.notified",
+    )
+    USER, AGENT, SYSTEM = "user", "agent", "system"
+
+    event_id = models.UUIDField(default=uuid.uuid4, unique=True)
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="audit_events")
+    event_type = models.CharField(max_length=32)
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+    actor_id = models.CharField(max_length=200)
+    actor_type = models.CharField(max_length=8)
+    entry_id = models.UUIDField(null=True, blank=True)
+    related_entry_id = models.UUIDField(null=True, blank=True)
+    category = models.CharField(max_length=80, blank=True, default="")
+    purpose = models.CharField(max_length=500, blank=True, default="")
+    grant_id = models.UUIDField(null=True, blank=True)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.SET_NULL,
+                                  null=True, blank=True, related_name="person_audit_events")
+    turn = models.ForeignKey("harness.Turn", on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="person_audit_events")
+    detail = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "contact_person_audit_events"
+        ordering = ["-timestamp", "-pk"]
+        indexes = [models.Index(fields=["person", "timestamp"])]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(actor_type__in=["user", "agent", "system"]),
+                                   name="person_audit_actor_type_known"),
+        ]
+
+    def save(self, *args, **kwargs):
+        # Append-only (HCP 4.3): a row is written once and never changed.
+        if self.pk is not None and not kwargs.pop("_allow_update", False):
+            raise ValueError("PersonAuditEvent is append-only")
+        super().save(*args, **kwargs)
+
+
+class HcpIdempotencyKey(models.Model):
+    """HCP 3.4.3 — a POST/PUT replayed with the same key returns the original
+    response and does not run (or audit) twice. Kept ≥24h."""
+
+    key = models.CharField(max_length=200)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="hcp_idempotency_keys")
+    method = models.CharField(max_length=8)
+    path = models.CharField(max_length=300)
+    body_hash = models.CharField(max_length=64)
+    status = models.PositiveSmallIntegerField()
+    response = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "contact_hcp_idempotency_keys"
+        constraints = [models.UniqueConstraint(fields=["user", "key"],
+                                               name="hcp_idempotency_key_per_user")]

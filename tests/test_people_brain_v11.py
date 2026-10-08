@@ -408,7 +408,8 @@ def _correspondent(ws, address="fatima@llo.org", notes=""):
 def test_mirroring_notes_is_one_role_fact_and_idempotent(world):
     c = _correspondent(world["ws"], notes="Program officer at LLO Foo.\n  Prefers   email.  " + "x" * 600)
     f1 = people.mirror_contact_notes(c)
-    assert (f1.kind, f1.basis, f1.source_contact, f1.workspace_id) == ("role", "declared", c, "connect")
+    # attested (HCP issuer-attested): someone other than the person wrote the notes.
+    assert (f1.kind, f1.basis, f1.source_contact, f1.workspace_id) == ("role", "attested", c, "connect")
     assert f1.asserted_by_user is None and f1.asserted_by_agent is None
     assert f1.statement.startswith("Program officer at LLO Foo. Prefers email. xxx")
     assert "\n" not in f1.statement and len(f1.statement) == PersonFact.STATEMENT_MAX
