@@ -10,7 +10,7 @@
 // waiting to be registered. Reported 2026-09-23: "I don't even see where the
 // 1pass service account goes".
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
@@ -57,10 +57,8 @@ describe('AgentCredentialsPanel', () => {
     expect(screen.getByLabelText('Vault')).toBeTruthy()
     const key = screen.getByLabelText('Service key') as HTMLInputElement
     expect(key.type).toBe('password')
-    // And it still says the declaration is separate, rather than implying the
-    // vault is pointless.
-    expect(screen.getByTestId('agent-credentials-undeclared').textContent)
-      .toContain('Setting the vault above is still worth doing')
+    // Declaring nothing is not narrated any more (#1314): that lives in docs.
+    expect(screen.queryByTestId('agent-credentials-undeclared')).toBeNull()
   })
 
   it('still offers it for an agent that declares refs', async () => {
@@ -84,15 +82,15 @@ describe('AgentCredentialsPanel', () => {
       </MemoryRouter>,
     )
     await waitFor(() => expect(screen.getByText('Connect Google mailbox')).toBeTruthy())
-    expect(screen.getByTestId('agent-credentials-undeclared')).toBeTruthy()
   })
 
   it('offers no mailbox button to an agent with neither a mailbox nor a gog-token', async () => {
     getAgentCredentialStatus.mockResolvedValue([])
     getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 0, locatable: 0 })
     show()
-    await waitFor(() => expect(screen.getByTestId('agent-credentials-undeclared')).toBeTruthy())
+    await waitFor(() => expect(screen.getByTestId('agent-vault')).toBeTruthy())
     expect(screen.queryByText('Connect Google mailbox')).toBeNull()
+    expect(screen.queryByTestId('credential-status-mailbox')).toBeNull()
   })
 
   it('points at the workspace shared vault, which is the other level', async () => {
@@ -102,5 +100,50 @@ describe('AgentCredentialsPanel', () => {
     await waitFor(() => expect(screen.getByTestId('shared-vault-link')).toBeTruthy())
     expect(screen.getByTestId('shared-vault-link').getAttribute('href'))
       .toBe('/w/connect/settings/secrets')
+  })
+
+  it('leads with a status list, the unconnected mailbox and its action on one line', async () => {
+    getAgentCredentialStatus.mockResolvedValue([])
+    getAgentVault.mockResolvedValue({ vault: 'Agent-Echo', key_set: true, declared: 0, locatable: 0 })
+    render(
+      <MemoryRouter>
+        <AgentCredentialsPanel agent={{ ...AGENT, email: 'echo@dimagi-ai.com' }} />
+      </MemoryRouter>,
+    )
+    const vault = await screen.findByTestId('credential-status-vault')
+    await waitFor(() => expect(vault.textContent).toContain('Set'))
+    const mailbox = screen.getByTestId('credential-status-mailbox')
+    expect(mailbox.textContent).toContain('Not connected')
+    expect(within(mailbox).getByRole('button', { name: 'Connect Google mailbox' })).toBeTruthy()
+    // the status list comes before every detail section
+    const list = screen.getByTestId('credential-status')
+    expect(list.compareDocumentPosition(screen.getByTestId('agent-vault')) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+    // "Needs a person" is gone: the status line carries it
+    expect(screen.queryByTestId('needs-you')).toBeNull()
+  })
+
+  it('reads a stored gog-token as a connected mailbox', async () => {
+    getAgentCredentialStatus.mockResolvedValue([
+      { name: 'gog-token', declared: true, set: true, source: 'canopy', updated_at: null },
+    ])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 1, locatable: 0 })
+    show()
+    expect((await screen.findByTestId('credential-status-mailbox')).textContent).toContain('Connected')
+    await waitFor(() => expect(screen.getByTestId('credential-status-vault').textContent).toContain('Not set'))
+  })
+
+  it('says how values are held once, and who may change them only to someone who cannot', async () => {
+    getAgentCredentialStatus.mockResolvedValue([])
+    getAgentVault.mockResolvedValue({ vault: '', key_set: false, declared: 0, locatable: 0 })
+    render(
+      <MemoryRouter>
+        <AgentCredentialsPanel agent={{ ...AGENT, name: 'Echo' }} canEdit={false} />
+      </MemoryRouter>,
+    )
+    const note = await screen.findByTestId('credentials-note')
+    expect(note.textContent).toContain('write-only')
+    expect(note.textContent).toContain('Only Echo’s admins can change them.')
+    expect(screen.getAllByText(/encrypted at rest/i)).toHaveLength(1)
   })
 })

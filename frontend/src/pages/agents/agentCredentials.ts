@@ -2,6 +2,11 @@ import type { components } from '@/api/generated'
 
 export type CredRow = components['schemas']['AgentCredentialStatusOut']
 
+/** One line of the status list that leads the Credentials section (#1314):
+ *  each credential's detail section reports it up, so the one that needs a
+ *  person is visible at the top instead of last on the page. */
+export type CredStatus = { label: string; tone: 'success' | 'warning' | 'destructive' | 'muted' }
+
 // Pure logic behind AgentCredentialsSection.
 //
 // WHAT THIS SCREEN IS NOT. It is not "is this agent provisioned". canopy-web

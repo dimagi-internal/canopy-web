@@ -15,11 +15,14 @@ import {
   ROUTABLE_SOURCES,
   SOURCE_LABEL,
   asRuleMode,
+  forEachKey,
   groupRules,
   hasRule,
   inheritedMode,
+  mergeRules,
   nextRulesForActor,
   nextRulesForAdd,
+  nextRulesForCopy,
   nextRulesForMode,
   nextRulesForRemove,
   nextRulesForRunnerAdd,
@@ -29,6 +32,7 @@ import {
   ruleKey,
   toRows,
   type GroupedRule,
+  type MergedRule,
   type RuleRow,
 } from '@/components/agents/RunnerSourceRules'
 import { TurnModeToggle } from '@/components/agents/TurnModeToggle'
@@ -233,6 +237,9 @@ export function AgentRouting({
   }
 
   const grouped = groupRules(rules)
+  const merged = mergeRules(grouped, agentMode)
+  // Said once, here, rather than under every row it applies to (#1314).
+  const namedAuto = merged.some((m) => m.actor && (m.turnMode || m.inherited) === 'auto')
 
   return (
     <div className="@container flex flex-col gap-2" data-testid={`runner-rules-${agentSlug}`}>
@@ -246,14 +253,8 @@ export function AgentRouting({
           <span />
         </div>
 
-        {grouped.map((g) => (
-          <RuleRowView
-            key={ruleKey(g)}
-            g={g}
-            fleet={fleet}
-            inherited={inheritedMode(g, grouped, agentMode)}
-            mutate={mutate}
-          />
+        {merged.map((m) => (
+          <RuleRowView key={m.keys.join('|')} m={m} all={grouped} fleet={fleet} mutate={mutate} />
         ))}
 
         {adding && (
@@ -316,48 +317,102 @@ export function AgentRouting({
         {error && <span className="text-[11px] text-destructive">{error}</span>}
       </div>
 
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        Rows are checked top to bottom. The first that matches a turn picks its runners and its
-        mode. <span className="text-foreground-secondary">Fall back</span> passes the turn to the
-        rows below when none of the row&apos;s runners is available;{' '}
-        <span className="text-foreground-secondary">Wait</span> holds it until one is.{' '}
-        <span className="text-foreground-secondary">Manual</span>: outbound actions wait for
-        approval. <span className="text-foreground-secondary">Auto</span>: the agent reviews its
-        own work and sends it.
+      {/* One line, and the detail behind a disclosure (#1314): it was two
+          paragraphs under the table, read once and skipped ever after. */}
+      <p className="text-[11px] text-muted-foreground" data-testid="routing-footer">
+        The first row that matches a turn picks its runners and mode.
+        {namedAuto && (
+          <span data-testid="routing-verified-note">
+            {' '}Auto for a named sender holds only when the message is verified as theirs; anything else runs Manual.
+          </span>
+        )}
       </p>
-      {/* The two cases the table cannot show, and the one place `enabled` means
-          two things: a runner switched off under Everything else still takes
-          the work of any rule that names it, because the rule is its own row. */}
-      <p className="text-[10px] text-foreground-subtle">
-        A turn pinned to a runner, or a chat already live on one, skips this table. A rule uses its
-        runners even when they are switched off under Everything else.
-      </p>
+      <details className="text-[11px] text-muted-foreground">
+        <summary className="w-fit cursor-pointer text-primary hover:underline">How routing works</summary>
+        <p className="mt-1 leading-relaxed">
+          Rows are checked top to bottom. <span className="text-foreground-secondary">Fall back</span> passes
+          the turn to the rows below when none of the row&apos;s runners is available;{' '}
+          <span className="text-foreground-secondary">Wait</span> holds it until one is.{' '}
+          <span className="text-foreground-secondary">Manual</span>: outbound actions wait for approval.{' '}
+          <span className="text-foreground-secondary">Auto</span>: the agent reviews its own work and sends it.
+          {/* The cases the table cannot show, and the one place `enabled`
+              means two things: a runner switched off under Everything else
+              still takes the work of any rule that names it. */}{' '}
+          A turn pinned to a runner, or a chat already live on one, skips this table. A rule uses its runners
+          even when they are switched off under Everything else.
+        </p>
+      </details>
     </div>
   )
 }
 
 function RuleRowView({
-  g, fleet, inherited, mutate,
+  m, all, fleet, mutate,
 }: {
-  g: GroupedRule
+  m: MergedRule
+  /** Every rule, so the add-a-kind picker can leave out (kind, sender) pairs that exist. */
+  all: readonly GroupedRule[]
   fleet: readonly RunnerOut[]
-  inherited: 'manual' | 'auto'
   mutate: (fn: (rows: RuleRow[]) => RuleRow[]) => void
 }) {
-  const key = ruleKey(g)
-  const testId = g.actor ? `${g.source}-${g.actor}` : g.source
-  const source = SOURCE_LABEL[g.source] ?? g.source
-  const unused = fleet.filter((f) => !g.runners.some((r) => r.runner_id === f.id))
-  const actorless = ACTORLESS_SOURCES.has(g.source)
-  const effective = g.turnMode || inherited
+  // Every edit to the row is applied to each rule under it.
+  const each = (fn: (rows: RuleRow[], key: string) => RuleRow[]) => mutate((rows) => forEachKey(rows, m.keys, fn))
+  const kinds = m.sources.join('+')
+  const testId = m.actor ? `${kinds}-${m.actor}` : kinds
+  const source = m.sources.map((s) => SOURCE_LABEL[s] ?? s).join(', ')
+  const unused = fleet.filter((f) => !m.runners.some((r) => r.runner_id === f.id))
+  // A schedule has no sender: the sender field shows only when some kind here has one.
+  const actorless = m.sources.every((s) => ACTORLESS_SOURCES.has(s))
+  const senderKeys = m.rules.filter((r) => !ACTORLESS_SOURCES.has(r.source)).map(ruleKey)
+  const addable = ROUTABLE_SOURCES.filter(
+    (s) => !m.sources.includes(s) && !hasRule(all, s, m.actor) && !(m.actor && ACTORLESS_SOURCES.has(s)),
+  )
 
   return (
     <div role="row" className="px-2 py-2" data-testid={`runner-rule-${testId}`}>
       <div className={`flex flex-col gap-1.5 ${GRID}`}>
         <Cell label="Work">
-          <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary">
-            {source}
-          </span>
+          <div className="flex flex-wrap items-center gap-1">
+            {m.rules.map((r) => {
+              const label = SOURCE_LABEL[r.source] ?? r.source
+              return (
+                <span
+                  key={r.source}
+                  className="inline-flex items-center gap-1 whitespace-nowrap rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary"
+                >
+                  {label}
+                  {m.rules.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => mutate((rows) => nextRulesForRemove(rows, ruleKey(r)))}
+                      aria-label={`Stop routing ${label} by this rule`}
+                      className="text-primary/60 hover:text-destructive"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </span>
+              )
+            })}
+            {addable.length > 0 && (
+              <select
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) mutate((rows) => nextRulesForCopy(rows, m.keys[0], e.target.value))
+                }}
+                aria-label={`Add a kind of work to the ${source} rule`}
+                title="Route another kind of work the same way"
+                className="w-9 rounded border border-input bg-input px-1 py-0.5 text-[11px] text-foreground-secondary"
+              >
+                <option value="">+</option>
+                {addable.map((s) => (
+                  <option key={s} value={s}>
+                    {SOURCE_LABEL[s] ?? s}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         </Cell>
 
         <Cell label="From">
@@ -370,11 +425,12 @@ function RuleRowView({
             // server reduces "Name <addr>" to the bare address it routes on.
             <input
               type="text"
-              defaultValue={g.actor}
+              defaultValue={m.actor}
               placeholder="anyone"
               onBlur={(e) => {
                 const v = e.target.value.trim()
-                if (v !== g.actor) mutate((rows) => nextRulesForActor(rows, key, v))
+                if (v !== m.actor)
+                  mutate((rows) => forEachKey(rows, senderKeys, (acc, key) => nextRulesForActor(acc, key, v)))
               }}
               aria-label={`Sender for the ${source} rule`}
               className="w-full rounded border border-input bg-input px-1.5 py-0.5 font-mono text-[11px] text-foreground placeholder:text-muted-foreground"
@@ -384,13 +440,13 @@ function RuleRowView({
 
         <Cell label="Runs on">
           <div className="flex flex-wrap items-center gap-1">
-            {g.runners.map((r, i) => (
+            {m.runners.map((r, i) => (
               <span
                 key={r.runner_id}
                 className="flex min-w-0 max-w-full items-center gap-1 whitespace-nowrap rounded border border-input bg-input px-1.5 py-0.5 text-[11px]"
                 data-testid={`rule-runner-${testId}-${r.runner_name}`}
               >
-                {g.runners.length > 1 && (
+                {m.runners.length > 1 && (
                   <span className="text-[10px] font-semibold text-muted-foreground">{i + 1}</span>
                 )}
                 <span className={r.online ? 'text-success' : 'text-muted-foreground'} title={r.online ? 'online' : 'offline'}>
@@ -400,11 +456,11 @@ function RuleRowView({
                 {hasZdr(fleet.find((f) => f.id === r.runner_id)) && (
                   <ZdrBadge testId={`zdr-badge-${r.runner_name}`} />
                 )}
-                {g.runners.length > 1 && (
+                {m.runners.length > 1 && (
                   <>
                     <button
                       type="button"
-                      onClick={() => mutate((rows) => nextRulesForRunnerMove(rows, key, i, -1))}
+                      onClick={() => each((rows, key) => nextRulesForRunnerMove(rows, key, i, -1))}
                       disabled={i === 0}
                       aria-label={`Move ${r.runner_name} up in the ${source} rule`}
                       className="text-muted-foreground hover:text-primary disabled:opacity-30"
@@ -413,8 +469,8 @@ function RuleRowView({
                     </button>
                     <button
                       type="button"
-                      onClick={() => mutate((rows) => nextRulesForRunnerMove(rows, key, i, 1))}
-                      disabled={i === g.runners.length - 1}
+                      onClick={() => each((rows, key) => nextRulesForRunnerMove(rows, key, i, 1))}
+                      disabled={i === m.runners.length - 1}
                       aria-label={`Move ${r.runner_name} down in the ${source} rule`}
                       className="text-muted-foreground hover:text-primary disabled:opacity-30"
                     >
@@ -424,9 +480,9 @@ function RuleRowView({
                 )}
                 <button
                   type="button"
-                  onClick={() => mutate((rows) => nextRulesForRunnerRemove(rows, key, r.runner_id))}
+                  onClick={() => each((rows, key) => nextRulesForRunnerRemove(rows, key, r.runner_id))}
                   aria-label={`Remove ${r.runner_name} from the ${source} rule`}
-                  title={g.runners.length === 1 ? 'removes the rule' : undefined}
+                  title={m.runners.length === 1 ? 'removes the rule' : undefined}
                   className="text-muted-foreground hover:text-destructive"
                 >
                   ✕
@@ -437,7 +493,7 @@ function RuleRowView({
               <select
                 value=""
                 onChange={(e) => {
-                  if (e.target.value) mutate((rows) => nextRulesForRunnerAdd(rows, key, e.target.value))
+                  if (e.target.value) each((rows, key) => nextRulesForRunnerAdd(rows, key, e.target.value))
                 }}
                 aria-label={`Add a runner to the ${source} rule`}
                 title="Add a runner to this rule"
@@ -457,21 +513,21 @@ function RuleRowView({
         <Cell label="If all down">
           <Segmented
             label={`When the ${source} rule's runners are all down`}
-            value={g.strict ? 'wait' : 'fall'}
+            value={m.strict ? 'wait' : 'fall'}
             options={[
               { value: 'fall', label: 'Fall back' },
               { value: 'wait', label: 'Wait' },
             ]}
-            onChange={() => mutate((rows) => nextRulesForStrict(rows, key))}
+            onChange={() => each((rows, key) => nextRulesForStrict(rows, key))}
           />
         </Cell>
 
         <Cell label="Mode">
           <RuleModeSelect
-            value={g.turnMode}
-            inherited={inherited}
+            value={m.turnMode}
+            inherited={m.inherited}
             label={`Mode for the ${source} rule`}
-            onChange={(m) => mutate((rows) => nextRulesForMode(rows, key, m))}
+            onChange={(mode) => each((rows, key) => nextRulesForMode(rows, key, mode))}
           />
         </Cell>
 
@@ -479,7 +535,7 @@ function RuleRowView({
             a rule is cheap to re-add. */}
         <button
           type="button"
-          onClick={() => mutate((rows) => nextRulesForRemove(rows, key))}
+          onClick={() => each((rows, key) => nextRulesForRemove(rows, key))}
           aria-label={`Remove the ${source} rule`}
           className="self-end text-muted-foreground hover:text-destructive @3xl:self-auto"
         >
@@ -487,24 +543,14 @@ function RuleRowView({
         </button>
       </div>
 
-      {/* An auto that names a person holds only when THIS message proves it is
-          from them — the server enforces it; the operator must not have to
-          discover it from a turn that ran manual. */}
-      {g.actor && effective === 'auto' && (
-        <p className="mt-1 text-[11px] text-muted-foreground" data-testid={`runner-rule-verified-${testId}`}>
-          Auto only when the message is verified as coming from {g.actor}. Anything that cannot
-          prove it runs Manual.
-        </p>
-      )}
-
       {/* Waiting is the toggle working; waiting SILENTLY is the failure. Only
           when EVERY runner is down, since naming two exists so one asleep is
           not a parked queue. */}
-      {g.parked && (
+      {m.parked && (
         <p className="mt-1 text-[11px] text-warning" data-testid={`runner-rule-parked-${testId}`}>
-          ⚠ {g.runners.map((r) => r.runner_name).join(' and ')} {g.runners.length > 1 ? 'are' : 'is'} offline
-          {g.queuedCount > 0
-            ? ` — ${g.queuedCount} ${source} turn${g.queuedCount === 1 ? '' : 's'}${g.actor ? ` from ${g.actor}` : ''} waiting, and will keep waiting.`
+          ⚠ {m.runners.map((r) => r.runner_name).join(' and ')} {m.runners.length > 1 ? 'are' : 'is'} offline
+          {m.queuedCount > 0
+            ? ` — ${m.queuedCount} ${source} turn${m.queuedCount === 1 ? '' : 's'}${m.actor ? ` from ${m.actor}` : ''} waiting, and will keep waiting.`
             : ' — this work will wait until one returns.'}
         </p>
       )}

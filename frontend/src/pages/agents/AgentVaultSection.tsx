@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { getAgentVault, setAgentVault } from '@/api/agents'
+import type { CredStatus } from '@/pages/agents/agentCredentials'
 
 // The 1Password half of the credentials screen.
 //
@@ -17,7 +18,15 @@ import { getAgentVault, setAgentVault } from '@/api/agents'
 // makes canopy-web worth attacking for every agent's secrets at once, where this
 // bounds a compromise to the one agent whose key was taken.
 
-export function AgentVaultSection({ slug, workspace }: { slug: string; workspace?: string | null }) {
+export function AgentVaultSection({
+  slug,
+  workspace,
+  onStatus,
+}: {
+  slug: string
+  workspace?: string | null
+  onStatus?: (s: CredStatus) => void
+}) {
   const [vault, setVault] = useState('')
   const [keySet, setKeySet] = useState(false)
   const [declared, setDeclared] = useState(0)
@@ -26,6 +35,7 @@ export function AgentVaultSection({ slug, workspace }: { slug: string; workspace
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     let off = false
@@ -36,12 +46,18 @@ export function AgentVaultSection({ slug, workspace }: { slug: string; workspace
         setKeySet(Boolean(v.key_set))
         setDeclared(v.declared ?? 0)
         setLocatable(v.locatable ?? 0)
+        setLoaded(true)
       })
       .catch(() => {})
     return () => {
       off = true
     }
   }, [slug])
+
+  useEffect(() => {
+    if (!loaded) return
+    onStatus?.(keySet ? { label: 'Set', tone: 'success' } : { label: 'Not set', tone: 'warning' })
+  }, [loaded, keySet, onStatus])
 
   const save = async () => {
     setBusy(true)
@@ -67,7 +83,7 @@ export function AgentVaultSection({ slug, workspace }: { slug: string; workspace
   }
 
   return (
-    <section className="mb-5" data-testid="agent-vault">
+    <section id="cred-vault" className="mb-5 scroll-mt-6" data-testid="agent-vault">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         1Password — this agent&rsquo;s own vault
       </h3>
@@ -122,9 +138,8 @@ export function AgentVaultSection({ slug, workspace }: { slug: string; workspace
         </div>
 
         <p className="mt-2 text-[11px] text-muted-foreground">
-          A service account scoped to this one vault. <strong>The runner uses it</strong> — canopy-web
-          holds it and hands it to a runner this agent routes to, and never resolves secrets itself.
-          Encrypted at rest, never returned to a browser.
+          A service account scoped to this one vault. <strong>The runner uses it</strong>; canopy-web only
+          holds it and never resolves secrets itself.
         </p>
 
         {declared > 0 && (

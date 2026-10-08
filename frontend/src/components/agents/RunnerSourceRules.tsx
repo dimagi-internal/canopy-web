@@ -41,7 +41,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   canopy_scheduler: 'scheduler',
   canopy_web_chat: 'canopy chat',
   slack: 'slack',
-  api: 'api (unclassified)',
+  api: 'other (API)',
 }
 
 // Sources whose turns have no human sender: a schedule fires on a clock, so a
@@ -225,4 +225,82 @@ export function nextRulesForRunnerRemove(
     const ids = r.runnerIds.filter((id) => id !== runnerId)
     return ids.length ? [{ ...r, runnerIds: ids }] : []
   })
+}
+
+// ONE ROW FOR SEVERAL KINDS OF WORK (#1314). Storage keeps one rule per
+// (source, actor) — that is the routing authority and it stays unchanged — but
+// an operator who sends "my api, chat and email work to my laptop" made three
+// identical rows. Rules that agree on everything but the kind of work are drawn
+// as one, and every edit to that row is applied to each rule under it.
+export type MergedRule = {
+  /** ruleKey of each rule under this row, in display order. */
+  keys: string[]
+  sources: string[]
+  rules: GroupedRule[]
+  actor: string
+  strict: boolean
+  turnMode: RuleTurnMode
+  runners: AgentRunnerRuleOut[]
+  queuedCount: number
+  parked: boolean
+  /** What a '' mode falls to — part of the merge key, so it is the same for all. */
+  inherited: 'manual' | 'auto'
+}
+
+export function mergeRules(
+  grouped: readonly GroupedRule[],
+  agentMode: 'manual' | 'auto',
+): MergedRule[] {
+  const byKey = new Map<string, MergedRule>()
+  const order: MergedRule[] = []
+  for (const g of grouped) {
+    const inherited = inheritedMode(g, grouped, agentMode)
+    const k = [
+      g.actor.toLowerCase(), g.strict, g.turnMode, inherited, g.runners.map((r) => r.runner_id).join(','),
+    ].join('\u0000')
+    const m = byKey.get(k)
+    if (m) {
+      m.keys.push(ruleKey(g))
+      m.sources.push(g.source)
+      m.rules.push(g)
+      m.queuedCount += g.queuedCount
+      continue
+    }
+    const fresh: MergedRule = {
+      keys: [ruleKey(g)],
+      sources: [g.source],
+      rules: [g],
+      actor: g.actor,
+      strict: g.strict,
+      turnMode: g.turnMode,
+      runners: g.runners,
+      queuedCount: g.queuedCount,
+      parked: g.parked,
+      inherited,
+    }
+    byKey.set(k, fresh)
+    order.push(fresh)
+  }
+  // Named-sender rows above anyone rows: a merged row spans sources, so the
+  // per-source "specific above catch-all" order only holds if every named row
+  // is drawn before every anyone row.
+  return [...order.filter((m) => m.actor !== ''), ...order.filter((m) => m.actor === '')]
+}
+
+/** Apply one per-rule transform to every rule under a merged row. */
+export function forEachKey(
+  rules: readonly RuleRow[],
+  keys: readonly string[],
+  fn: (rows: RuleRow[], key: string) => RuleRow[],
+): RuleRow[] {
+  return keys.reduce<RuleRow[]>((acc, k) => fn(acc, k), [...rules])
+}
+
+/** Copy the rule at `fromKey` to another kind of work — how a merged row gains
+ *  one. A (source, actor) that already exists is left alone; the server would
+ *  422 the duplicate. */
+export function nextRulesForCopy(rules: readonly RuleRow[], fromKey: string, source: string): RuleRow[] {
+  const from = rules.find((r) => ruleKey(r) === fromKey)
+  if (!from || hasRule(rules, source, from.actor)) return [...rules]
+  return [...rules, { ...from, source, runnerIds: [...from.runnerIds] }]
 }

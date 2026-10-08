@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   deleteAgentCredential,
@@ -7,7 +7,7 @@ import {
   startGoogleMint,
   type AgentCredentialStatusOut,
 } from '@/api/agents'
-import { headline, sections } from '@/pages/agents/agentCredentials'
+import { headline, sections, type CredStatus } from '@/pages/agents/agentCredentials'
 import { relativeAge } from '@/lib/relativeAge'
 import { declaresMailbox, GOG_TOKEN_REF, mintOutcome } from '@/pages/agents/googleMint'
 import { AgentGitHubSection } from '@/pages/agents/AgentGitHubSection'
@@ -25,11 +25,34 @@ import { WorkbenchSkeleton } from 'canopy-ui'
 // secret. A blank field is not sent — the write is non-clobbering, and "" would
 // wipe a working credential.
 //
+// It LEADS with a status list (#1314): one line per credential — vault, GitHub,
+// Salesforce, Google mailbox — each reported up by its own detail section, so
+// the one that needs a person (a mailbox nobody connected) is the first thing
+// on screen rather than the last, with its action on the same line.
+//
 // A panel, not a page: it lives in the Credentials section of the agent's
 // Overview (it used to be its own rail entry, which is why people could not
 // find settings that sat one click away from each other).
 
-export function AgentCredentialsPanel({ agent }: { agent: { slug: string; workspace?: string | null; email?: string | null } }) {
+const TONE: Record<CredStatus['tone'], string> = {
+  success: 'bg-success/10 text-success border-success/30',
+  warning: 'bg-warning/10 text-warning border-warning/30',
+  destructive: 'bg-destructive/10 text-destructive border-destructive/30',
+  muted: 'bg-muted text-muted-foreground border-border',
+}
+
+const MARK: Record<CredStatus['tone'], string> = { success: '✓', warning: '!', destructive: '✗', muted: '–' }
+
+type StatusKey = 'vault' | 'github' | 'salesforce'
+
+export function AgentCredentialsPanel({
+  agent,
+  canEdit = true,
+}: {
+  agent: { slug: string; name?: string; workspace?: string | null; email?: string | null }
+  /** Display hint: says who may change values when the viewer cannot. */
+  canEdit?: boolean
+}) {
   const [rows, setRows] = useState<AgentCredentialStatusOut[] | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -39,6 +62,15 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
   // Collapsed by DEFAULT. These rows are correct and need nothing; shown as a
   // list of empty inputs they read as forty-five things to type.
   const [showVault, setShowVault] = useState(false)
+  const [status, setStatus] = useState<Partial<Record<StatusKey, CredStatus>>>({})
+  const report = useCallback(
+    (key: StatusKey) => (s: CredStatus) => setStatus((prev) => ({ ...prev, [key]: s })),
+    [],
+  )
+  // Stable per key, so a section's effect does not re-fire on every render.
+  const [onVault] = useState(() => report('vault'))
+  const [onGitHub] = useState(() => report('github'))
+  const [onSalesforce] = useState(() => report('salesforce'))
 
   useEffect(() => {
     let cancelled = false
@@ -105,6 +137,20 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
   // An agent with a mailbox needs `gog-token` whether or not a runtime.yaml says so.
   const implied = agent.email?.trim() ? [GOG_TOKEN_REF] : []
   const sec = sections(rows, implied)
+  const hasMailbox = declaresMailbox(rows, agent.email)
+  const gog = rows.find((r) => r.name === GOG_TOKEN_REF)
+  const mailbox: CredStatus = gog?.set
+    ? { label: 'Connected', tone: 'success' }
+    : gog
+      ? { label: 'From 1Password', tone: 'muted' }
+      : { label: 'Not connected', tone: 'destructive' }
+
+  const statusRows: { key: string; name: string; href?: string; s: CredStatus | undefined }[] = [
+    { key: 'vault', name: '1Password vault', href: '#cred-vault', s: status.vault },
+    { key: 'github', name: 'GitHub', href: '#cred-github', s: status.github },
+    ...(status.salesforce ? [{ key: 'salesforce', name: 'Salesforce', href: '#cred-salesforce', s: status.salesforce }] : []),
+    ...(hasMailbox ? [{ key: 'mailbox', name: 'Google mailbox', s: mailbox }] : []),
+  ]
 
   // One row, used for anything this page actually manages. The vault-resolved
   // refs get the same control once expanded — a value CAN be stored here to
@@ -184,58 +230,64 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
         </p>
       )}
 
+      <table className="mb-6 w-full text-[12px]" data-testid="credential-status">
+        <tbody className="divide-y divide-border">
+          {statusRows.map((r) => (
+            <tr key={r.key} data-testid={`credential-status-${r.key}`}>
+              <td className="w-40 py-1.5 text-foreground">
+                {r.href ? (
+                  <a href={r.href} className="hover:text-primary">
+                    {r.name}
+                  </a>
+                ) : (
+                  r.name
+                )}
+              </td>
+              <td className="py-1.5">
+                {r.s ? (
+                  <span className={`rounded border px-1.5 py-0.5 text-[11px] ${TONE[r.s.tone]}`}>
+                    {MARK[r.s.tone]} {r.s.label}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-muted-foreground">…</span>
+                )}
+              </td>
+              <td className="py-1.5 text-right">
+                {r.key === 'mailbox' && (
+                  // Signing in is the only way a mailbox token is minted, so the
+                  // action sits on its own status line.
+                  <button
+                    type="button"
+                    onClick={() => void connectMailbox()}
+                    disabled={busy}
+                    className={`min-h-11 rounded-md px-3 py-1 text-[12px] font-medium disabled:opacity-40 sm:min-h-0 ${
+                      gog?.set
+                        ? 'border border-input text-foreground hover:border-primary'
+                        : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                    }`}
+                  >
+                    Connect Google mailbox
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
       {/* ALWAYS, and above the declaration-dependent half. Which vault this agent
           reads and the service account that opens it are facts about the agent,
           not about its runtime.yaml — and they were rendered inside the
           "declares some secrets" branch, so the form was hidden on exactly the
-          agents nobody had registered yet (ada/echo/eva/hal, all declared: 0,
-          2026-09-23: "I don't even see where the 1pass service account goes").
-          ace showed it only because it declares 45 refs. */}
-      <AgentVaultSection slug={agent.slug} workspace={agent.workspace} />
-      <AgentGitHubSection slug={agent.slug} />
-      <AgentSalesforceSection slug={agent.slug} />
+          agents nobody had registered yet (2026-09-23). */}
+      <AgentVaultSection slug={agent.slug} workspace={agent.workspace} onStatus={onVault} />
+      <AgentGitHubSection slug={agent.slug} onStatus={onGitHub} />
+      <AgentSalesforceSection slug={agent.slug} onStatus={onSalesforce} />
 
-      {/* Above the declaration-dependent half too, for the same reason as the
-          vault: an agent with a mailbox and no runtime.yaml (ada/echo/eva/hal)
-          needs this button exactly as much as ace does. A browser sign-in mints
-          under the fleet's `canopy-web` client, which every agent's turns accept
-          (canopy agent_email.FLEET_CLIENTS) — there is no "wrong client" here. */}
-      {declaresMailbox(rows, agent.email) && (
-        <section className="mb-5" data-testid="needs-you">
-          <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Needs a person
-          </h3>
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
-            <div className="text-[13px] text-foreground">
-              Google mailbox
-              <span className="ml-2 text-[12px] text-muted-foreground">
-                a token can only be minted by signing in — nothing else here can do it for you
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => void connectMailbox()}
-              disabled={busy}
-              className="ml-auto min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0"
-            >
-              Connect Google mailbox
-            </button>
-          </div>
-        </section>
-      )}
-
-      {rows.length === 0 ? (
-        // Zero refs is UNDECLARED, not provisioned — the state every agent is in
-        // before someone writes a runtime.yaml. Saying "ready" would assert that
-        // a box can run it, which nobody has established.
-        <p className="text-[13px] text-muted-foreground" data-testid="agent-credentials-undeclared">
-          This agent declares no secrets of its own yet. What it needs is listed in its repo’s{' '}
-          <code className="font-mono text-[12px]">runtime.yaml</code> and reaches canopy-web as the
-          registry’s secret refs. Setting the vault above is still worth doing: a runner reads this
-          agent’s <code className="font-mono text-[12px]">.env.tpl</code> from it when it provisions
-          the agent, whether or not anything is declared here.
-        </p>
-      ) : (
+      {/* Zero refs is UNDECLARED, not provisioned: nothing to list. Saying
+          "ready" would assert a box can run it, which nobody has established;
+          the explanation of runtime.yaml that sat here belongs in docs (#1314). */}
+      {rows.length === 0 ? null : (
         <>
           {/* The lede: whether this screen wants anything from the reader. */}
           <p className="mb-4 text-[13px] text-muted-foreground" data-testid="agent-credentials-summary">
@@ -297,9 +349,11 @@ export function AgentCredentialsPanel({ agent }: { agent: { slug: string; worksp
         </p>
       )}
 
-      <p className="mt-4 text-[11px] text-muted-foreground">
-        Values are write-only: encrypted at rest, and readable only by a runner this agent routes to.
-        This page can show whether a secret is set, never what is in it.
+      {/* The one note on how values are held; the vault and GitHub sections
+          each used to repeat it. */}
+      <p className="mt-4 text-[11px] text-muted-foreground" data-testid="credentials-note">
+        Every value here is write-only: encrypted at rest, handed only to a runner this agent routes to, and never
+        shown again.{!canEdit && <> Only {agent.name ?? agent.slug}&rsquo;s admins can change them.</>}
       </p>
     </div>
   )
