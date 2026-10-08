@@ -364,9 +364,20 @@ class AgentDetailOut(AgentOut):
     sync_count: int = 0
     skill_count: int = 0
     task_count: int = 0
-    turn_count: int = 0
+    turn_count: int = Field(
+        default=0,
+        description="Every turn of this agent's work, in any status: the same set "
+        "`GET /api/harness/turns/?agent=` lists (turns targeting the agent, and "
+        "email/Slack turns targeting one of its sessions), counted without that "
+        "endpoint's page limit.",
+    )
     latest_sync_at: dt.datetime | None = None
-    latest_turn_at: dt.datetime | None = None
+    latest_turn_at: dt.datetime | None = Field(
+        default=None,
+        description="When the agent last RAN, over the same set as `turn_count`: "
+        "the newest `started_at`, or the newest `created_at` when none has started "
+        "yet. A queued turn nobody claimed is not a run.",
+    )
 
 
 class AgentAdminOut(StrictModel):

@@ -353,6 +353,16 @@ class Runner(models.Model):
         return frozenset(f.flag for f in self.declared_flags.all())
 
 
+def agent_turns_q(agent) -> models.Q:
+    """Every turn that is this agent's work: the ones targeting it directly, and
+    the ones targeting one of its SESSIONS (an email or Slack thread: enqueue_turn
+    converts those to a session target, and the XOR constraint leaves `agent`
+    NULL). The one definition, so `GET /api/harness/turns/?agent=` and the agent
+    card's `turn_count` / `latest_turn_at` cannot count different sets (#359,
+    #1087)."""
+    return models.Q(agent=agent) | models.Q(agent__isnull=True, chat_session__agent=agent)
+
+
 class Turn(models.Model):
     """One unit of agent work — the execution envelope around board commands."""
 

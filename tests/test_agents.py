@@ -155,6 +155,38 @@ def test_latest_turn_at_ignores_queued_turns_that_never_started():
     assert services.agent_detail(agent)["latest_turn_at"] == ran_at
 
 
+def test_card_counts_the_same_turns_the_harness_lists():
+    """#359: the agent card and `GET /api/harness/turns/?agent=` must count one
+    set. An email/Slack turn targets the agent's SESSION (agent is NULL on the
+    row), so counting `agent.turns` left every one of them out — ace, which works
+    mostly by email, read weeks stale against its own turn list."""
+    from django.contrib.auth.models import User
+    from django.test import Client
+
+    from apps.canopy_sessions.models import Session
+    from apps.workspaces.models import WorkspaceMembership
+
+    agent = _agent()
+    user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=user, workspace=agent.workspace, role=WorkspaceMembership.OWNER)
+    session = Session.objects.create(workspace=agent.workspace, agent=agent, created_by=user, title="mail")
+    direct_at = dt.datetime(2026, 8, 10, 18, 5, tzinfo=dt.UTC)
+    mail_at = dt.datetime(2026, 8, 12, 9, 0, tzinfo=dt.UTC)
+    _dispatch(agent, key="direct", started_at=direct_at)
+    Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_API, status=Turn.DONE,
+                        idempotency_key="mail", started_at=mail_at, prompt="hi")
+
+    detail = services.agent_detail(agent)
+    assert detail["turn_count"] == 2
+    assert detail["latest_turn_at"] == mail_at
+
+    c = Client()
+    c.force_login(user)
+    listed = c.get(f"/api/harness/turns/?agent={agent.slug}").json()
+    assert len(listed) == detail["turn_count"]
+    assert c.get(f"/api/agents/{agent.slug}/").json()["turn_count"] == len(listed)
+
+
 def test_close_out_attaches_to_its_dispatch_row_instead_of_adding_one():
     agent = _agent()
     dispatched = _dispatch(agent, key="k1", task="echo-api-1234-0810-1805")
