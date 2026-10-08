@@ -1,8 +1,8 @@
 import type { JSX } from 'react'
 
-// Which turn mode drove this session — its newest claimed turn's. Read-only: the
-// agent-level switch is TurnModeChip (supervisor/AgentKpiCard). The sessions list
-// shows every session, auto ones included, so this is how a manual session
+// Which mode this session runs in — fixed when it started, so its first claimed
+// turn's (apps/harness/turn_mode.py). Read-only: the agent-level switch is
+// TurnModeChip (supervisor/AgentKpiCard). The sessions list shows every session, auto ones included, so this is how a manual session
 // waiting on you is told apart from an agent's own auto run. Nothing renders
 // until a turn has been claimed (`turn_mode` is "" then).
 export function TurnModeBadge({ mode, testId }: { mode: string | undefined; testId?: string }): JSX.Element | null {
