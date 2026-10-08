@@ -390,6 +390,9 @@ class ResolveSessionIn(Schema):
     project: str = ""  # set instead of agent_slug for a repo session
     workspace: str = ""  # required with project: the turn's tenant (gates the owner)
     thread_key: str
+    # The agent/project turn asking. With it, a session that is mid-turn is never
+    # proposed for reuse (#309). Optional so a runner predating it still works.
+    turn_id: uuid.UUID | None = None
 
 
 #: The retired spelling of `session_key`, still accepted on input.
@@ -423,6 +426,9 @@ class ResolveSessionOut(Schema):
     agent_task_ext_id: str
     summary: str
     link_id: str | None
+    # Why reuse was refused although this runner owns the session: it is mid-turn
+    # (another turn executing in it, or the engine reports it working). "" otherwise.
+    busy: str = ""
 
 
 class RecordSessionIn(Schema):

@@ -913,8 +913,11 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     # A repo turn always carries an explicit prompt (the composer requires it).
     work_prompt = turn.get("prompt") or f"/{agent}:turn"
 
+    # turn_id: never reuse a session that is mid-turn (#309) — the server refuses
+    # and we create fresh below, exactly as for a session that is gone.
     plan = client.resolve_session(
-        runner_id, agent_slug, thread_key, project=project, workspace=workspace
+        runner_id, agent_slug, thread_key, project=project, workspace=workspace,
+        turn_id=turn_id,
     )
     client.start(turn_id)
     # A caller's session starts with its capability's entry, not the admin's turn.
@@ -929,9 +932,9 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     # Log the plan: "why did it create a new session?" must be answerable from the log
     # alone. Without this the reuse decision was invisible and every diagnosis started
     # by guessing (see the 2026-07-15 eva org-research investigation).
-    logger.info("resolve turn=%s agent=%s thread=%s -> reuse=%s task=%r link=%s",
+    logger.info("resolve turn=%s agent=%s thread=%s -> reuse=%s task=%r link=%s busy=%r",
                 turn_id, agent, thread_key, plan.get("reuse"),
-                plan.get("emdash_task_id") or "", plan.get("link_id"))
+                plan.get("emdash_task_id") or "", plan.get("link_id"), plan.get("busy") or "")
 
     # --- reuse the existing session, if the control plane says this runner owns it ---
     if plan.get("reuse") and plan.get("emdash_task_id"):

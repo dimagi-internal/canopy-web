@@ -275,6 +275,29 @@ def test_pair_with_host_and_resolve_record_cycle(client, agent):
     assert again.json()["reuse"] is True and again.json()["agent_task_ext_id"] == "T-9"
 
 
+def test_resolve_session_with_turn_id_refuses_a_working_session(client, agent):
+    """#309 over the wire: `turn_id` reaches the guard and `busy` comes back."""
+    import uuid
+
+    from apps.canopy_sessions.models import RunnerBinding
+    from apps.harness.models import Runner, Turn
+
+    rid = client.post("/api/harness/runners/",
+                      {"name": "rA", "kind": "emdash", "capabilities": {"agents": ["echo"]},
+                       "host": "jjA@mbp"}, content_type="application/json").json()["id"]
+    client.post(f"/api/harness/runners/{rid}/heartbeat", {}, content_type="application/json")
+    client.post(f"/api/harness/runners/{rid}/record-session",
+                {"agent_slug": "echo", "thread_key": "thr-1", "session_key": "etask-1"},
+                content_type="application/json")
+    RunnerBinding.objects.filter(thread_key="thr-1").update(agent_status="working")
+    me = Turn.objects.create(agent=agent, status=Turn.CLAIMED, idempotency_key=uuid.uuid4().hex,
+                             claimed_by=Runner.objects.get(pk=rid))
+    r = client.post(f"/api/harness/runners/{rid}/resolve-session",
+                    {"agent_slug": "echo", "thread_key": "thr-1", "turn_id": str(me.pk)},
+                    content_type="application/json").json()
+    assert r["reuse"] is False and "working" in r["busy"]
+
+
 def test_other_account_runner_cannot_reuse_but_gets_context(client, agent):
     a = client.post("/api/harness/runners/",
                     {"name": "rA", "kind": "emdash", "capabilities": {"agents": ["echo"]}, "host": "jjA@mbp"},

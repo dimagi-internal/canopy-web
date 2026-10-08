@@ -1205,10 +1205,11 @@ def resolve_session(request: HttpRequest, runner_id: uuid.UUID, payload: Resolve
     if payload.project:
         ws = _project_workspace_or_404(request, payload.workspace)
         return services.resolve_session(
-            None, payload.thread_key, runner, project=payload.project, workspace=ws
+            None, payload.thread_key, runner, project=payload.project, workspace=ws,
+            turn_id=payload.turn_id,
         )
     agent = _agent_or_404(request, payload.agent_slug)
-    return services.resolve_session(agent, payload.thread_key, runner)
+    return services.resolve_session(agent, payload.thread_key, runner, turn_id=payload.turn_id)
 
 
 @router.post("/runners/{runner_id}/record-session", response=ResolveSessionOut)

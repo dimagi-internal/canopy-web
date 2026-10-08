@@ -36,8 +36,9 @@ class FakeClient:
         self.failed = []
         self.recorded = []
 
-    def resolve_session(self, runner_id, agent, thread_key, *, project="", workspace=""):
+    def resolve_session(self, runner_id, agent, thread_key, *, project="", workspace="", turn_id=""):
         self.calls.append(("resolve", agent, thread_key, project, workspace))
+        self.resolve_turn_ids = [*getattr(self, "resolve_turn_ids", []), turn_id]
         return dict(self.plan)
 
     def start(self, turn_id, session_id=""):
@@ -77,6 +78,20 @@ def test_reuse_sends_into_existing_session(monkeypatch):
     assert result == "reused:t-1"
     assert sent == {"task": "shaky-baths-listen", "text": "do the thing"}
     assert client.started == ["t-1"] and client.finished and "existing session" in client.finished[0][1]
+
+
+def test_resolve_names_the_turn_and_a_busy_session_is_never_typed_into(monkeypatch):
+    """#309: the runner names its turn on resolve so the server can refuse reuse of
+    a session that is mid-turn; a refused (busy) plan creates fresh, never sends."""
+    monkeypatch.setattr(cdp_control, "open_and_send",
+                        lambda *a, **k: pytest.fail("must NOT type into a busy session"))
+    monkeypatch.setattr(cdp_control, "create_task",
+                        lambda project, prompt, task_name="", port=9222: {"task": "fresh-1"})
+    client = FakeClient({"reuse": False, "emdash_task_id": "busy-one", "summary": "",
+                         "busy": "turn x is executing in it"})
+    result = execute.execute_turn(_cfg(), client, "r-1", _turn(origin_ref={"thread_id": "thr-1"}))
+    assert client.resolve_turn_ids == ["t-1"]
+    assert result.startswith("created:t-1:fresh-1")
 
 
 @pytest.mark.parametrize("state", ["archived", "absent"])

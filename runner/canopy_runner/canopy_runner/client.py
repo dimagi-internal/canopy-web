@@ -226,17 +226,19 @@ class Client:
         return payload if isinstance(payload, list) else []
 
     def resolve_session(self, runner_id: str, agent_slug: str, thread_key: str, *,
-                        project: str = "", workspace: str = "") -> dict:
+                        project: str = "", workspace: str = "", turn_id: str = "") -> dict:
         """Ask the control plane whether THIS runner can reuse an existing emdash
         session for (target, thread) or must spawn fresh + rehydrate. See SessionLink.
 
         Pass EITHER agent_slug OR (project + workspace) — a project session is
-        tenant-gated on its workspace, which the turn carries."""
-        _, payload = self._call(
-            "POST", f"/runners/{runner_id}/resolve-session",
-            {"agent_slug": agent_slug, "project": project, "workspace": workspace,
-             "thread_key": thread_key},
-        )
+        tenant-gated on its workspace, which the turn carries. `turn_id` (the turn
+        asking) lets the server refuse reuse of a session that is mid-turn (#309);
+        the plan's `busy` then says why."""
+        body = {"agent_slug": agent_slug, "project": project, "workspace": workspace,
+                "thread_key": thread_key}
+        if turn_id:
+            body["turn_id"] = turn_id
+        _, payload = self._call("POST", f"/runners/{runner_id}/resolve-session", body)
         return _emdash_plan(payload)
 
     def record_session(self, runner_id: str, agent_slug: str, thread_key: str, *,
