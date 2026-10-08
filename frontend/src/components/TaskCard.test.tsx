@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 const actOnTask = vi.fn()
 vi.mock('@/api/agents', async (orig) => ({
@@ -8,7 +9,7 @@ vi.mock('@/api/agents', async (orig) => ({
   actOnTask: (...a: unknown[]) => actOnTask(...a),
 }))
 
-const { availableActions, TaskCard, TasksBoard } = await import('./TasksBoard')
+const { availableActions, projectHref, TaskCard, TasksBoard } = await import('./TasksBoard')
 const { AgentApiError } = await import('@/api/agents')
 
 afterEach(() => {
@@ -201,6 +202,54 @@ describe('TaskCard', () => {
     render(<TaskCard task={task()} canEdit={false} showAgent />)
     expect(screen.getByTestId('task-T2').textContent).toContain('eva')
   })
+})
+
+describe('TaskCard project', () => {
+  const inProject = { project_ext_id: 'P2', project_name: 'Connect Enterprise' }
+
+  it('links the task to its project page in the route’s workspace', () => {
+    render(
+      <MemoryRouter initialEntries={['/w/connect/agents/eva/tasks']}>
+        <Routes>
+          <Route
+            path="/w/:workspace/agents/:slug/tasks"
+            element={<TaskCard task={task(inProject)} canEdit={false} />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const link = screen.getByTestId('task-project-T2')
+    expect(link.tagName).toBe('A')
+    expect(link.getAttribute('href')).toBe('/w/connect/agents/eva/projects/P2')
+    expect(link.textContent).toContain('P2')
+    expect(link.textContent).toContain('Connect Enterprise')
+  })
+
+  it('uses the workspace it is given off a workspace route (the fleet queue)', () => {
+    render(
+      <MemoryRouter initialEntries={['/supervisor']}>
+        <TaskCard task={task(inProject)} canEdit={false} workspace="dimagi" />
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('task-project-T2').getAttribute('href')).toBe(
+      '/w/dimagi/agents/eva/projects/P2',
+    )
+  })
+
+  it('shows a muted "No project" pill, not a link, when the task has none', () => {
+    render(<TaskCard task={task({ project_ext_id: null })} canEdit={false} />)
+    const pill = screen.getByTestId('task-project-T2')
+    expect(pill.tagName).toBe('SPAN')
+    expect(pill.textContent).toBe('No project')
+  })
+
+  it('hides the project when the caller says every card is in one', () => {
+    render(<TaskCard task={task(inProject)} canEdit={false} showProject={false} />)
+    expect(screen.queryByTestId('task-project-T2')).toBeNull()
+  })
+
+  it('without a workspace, the link resolves through /agents/* (the active workspace)', () =>
+    expect(projectHref(task(inProject))).toBe('/agents/eva/projects/P2'))
 })
 
 describe('TasksBoard sections', () => {

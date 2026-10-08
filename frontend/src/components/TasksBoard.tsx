@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type JSX } from 'react'
+import { Link, useInRouterContext, useParams } from 'react-router-dom'
 import {
   actOnTask,
   AgentApiError,
@@ -190,6 +191,58 @@ function TaskLinkChip({ label, url }: { label: string; url: string }): JSX.Eleme
     >
       <span className="text-primary/70">↗</span>
       {label || url}
+    </a>
+  )
+}
+
+// The task's project, as a link to that project's page — or a muted "No
+// project" pill, so a loose task reads as loose rather than as missing data
+// (Jonathan, 2026-10-08: "tasks need a more clear link back to their project,
+// or a pill that says no-project"). The route is the agent's project page,
+// `/w/:workspace/agents/:slug/projects/:ref`. Off a workspace route (the fleet
+// queue at /supervisor) the caller names the task's workspace; failing that,
+// `/agents/*` resolves the active workspace (TenantRedirect).
+// eslint-disable-next-line react-refresh/only-export-components -- tested pure helper beside its only caller
+export function projectHref(task: TaskOut, workspace?: string): string {
+  const tail = `agents/${task.agent_slug}/projects/${task.project_ext_id}`
+  return workspace ? `/w/${workspace}/${tail}` : `/${tail}`
+}
+
+const PILL =
+  'inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium'
+
+function ProjectPill({ task, workspace }: { task: TaskOut; workspace?: string }): JSX.Element {
+  const inRouter = useInRouterContext()
+  const ref = (task.project_ext_id || '').trim()
+  if (!ref) {
+    return (
+      <span
+        className={`${PILL} border-border bg-muted text-muted-foreground`}
+        data-testid={`task-project-${task.ext_id}`}
+      >
+        No project
+      </span>
+    )
+  }
+  const name = (task.project_name || '').trim()
+  const href = projectHref(task, workspace)
+  const className = `${PILL} border-primary/30 bg-primary/10 text-primary transition-colors hover:border-primary/60 hover:bg-primary/15`
+  const body = (
+    <>
+      <span className="shrink-0 text-primary/70">{ref}</span>
+      {name && <span className="truncate">{name}</span>}
+    </>
+  )
+  const title = name ? `Project ${ref} · ${name}` : `Project ${ref}`
+  const testId = `task-project-${task.ext_id}`
+  // A plain anchor outside a router (a card rendered on its own) still navigates.
+  return inRouter ? (
+    <Link to={href} className={className} title={title} data-testid={testId}>
+      {body}
+    </Link>
+  ) : (
+    <a href={href} className={className} title={title} data-testid={testId}>
+      {body}
     </a>
   )
 }
@@ -425,6 +478,8 @@ export function TaskCard({
   onChanged,
   canEdit,
   showAgent = false,
+  showProject = true,
+  workspace,
   lastApplied,
 }: {
   task: TaskOut
@@ -432,9 +487,16 @@ export function TaskCard({
   canEdit: boolean
   /** Tag the card with its agent — for fleet-wide surfaces. */
   showAgent?: boolean
+  /** Show the task's project link (or "No project"). Off on a project's own
+   *  page, where every card is in that project. */
+  showProject?: boolean
+  /** The task's workspace, for the project link — needed only off a
+   *  `/w/:workspace/…` route (the fleet queue). */
+  workspace?: string
   /** The latest applied action on this task, when the caller has it. */
   lastApplied?: TaskActionOut
 }): JSX.Element {
+  const { workspace: routeWorkspace } = useParams()
   const head = headline(task)
   const outcome = (task.title || '').trim()
   const showOutcome = outcome && outcome !== head
@@ -460,7 +522,8 @@ export function TaskCard({
 
       {/* Age is never conditional — an undecided card with no date on it cannot be
           triaged (Jonathan, 2026-08-12). */}
-      <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] leading-snug text-muted-foreground">
+      <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] leading-snug text-muted-foreground">
+        {showProject && <ProjectPill task={task} workspace={workspace ?? routeWorkspace} />}
         <TaskAge createdAt={task.created_at} closedAt={task.ask_closed_at} />
         {meta && <span>· {meta}</span>}
       </p>

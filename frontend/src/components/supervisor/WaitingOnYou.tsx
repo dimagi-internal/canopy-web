@@ -25,11 +25,15 @@ export function WaitingOnYou({
   tasks,
   canEdit,
   onChanged,
+  workspaceFor,
 }: {
   tasks: TaskOut[]
   /** Whether the viewer may dispatch / mark done on this task's agent. */
   canEdit: (task: TaskOut) => boolean
   onChanged: () => void
+  /** The task's agent's workspace — this queue is off any `/w/…` route, and the
+   *  card's project link needs it. */
+  workspaceFor?: (task: TaskOut) => string | undefined
 }): JSX.Element {
   // Any task moving anywhere may add to or settle this queue.
   useResource(TASK_RESOURCE, onChanged)
@@ -54,6 +58,7 @@ export function WaitingOnYou({
           canEdit={canEdit(task)}
           onChanged={onChanged}
           showAgent
+          workspace={workspaceFor?.(task)}
         />
       ))}
     </div>

@@ -351,7 +351,12 @@ export default function SupervisorPage(): JSX.Element {
         ) : waiting === null ? (
           <Skeleton className="h-24 w-full" />
         ) : (
-          <WaitingOnYou tasks={waiting} canEdit={canEditTask} onChanged={reloadWaiting} />
+          <WaitingOnYou
+            tasks={waiting}
+            canEdit={canEditTask}
+            onChanged={reloadWaiting}
+            workspaceFor={(t) => workspaceOf[t.agent_slug] || undefined}
+          />
         ))}
 
       {/* Sessions — ONE unified list (web-started + runner-discovered). Every row

@@ -1,4 +1,5 @@
 import { useState, type JSX } from 'react'
+import { Link } from 'react-router-dom'
 
 import { createProject, patchProject, type ProjectOut, type TaskOut } from '@/api/agents'
 
@@ -64,7 +65,12 @@ export function ProjectGroupHeader({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-muted-foreground">{project.ext_id}</span>
-            <h3 className="truncate text-sm font-medium text-foreground">{project.name}</h3>
+            {/* The group header is the way back to the project's own page. */}
+            <h3 className="truncate text-sm font-medium text-foreground">
+              <Link to={`../projects/${project.ext_id}`} className="hover:text-primary hover:underline">
+                {project.name}
+              </Link>
+            </h3>
             <StatusChip status={project.status} />
           </div>
           {project.outcome && (

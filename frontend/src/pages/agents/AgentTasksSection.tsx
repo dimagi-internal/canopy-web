@@ -291,6 +291,8 @@ function ByProject({
           onChanged={onChanged}
           canEdit={canEdit}
           lastApplied={lastByTask.get(t.ext_id)}
+          // The group header already names (and links) the project.
+          showProject={false}
         />
       ))}
     </div>
