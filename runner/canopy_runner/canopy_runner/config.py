@@ -16,6 +16,15 @@ class Config:
     # gets picked up. Kept low so delivery feels near-immediate; the claim + heartbeat
     # are cheap HTTP. The heavier session report is throttled separately below.
     poll_seconds: int = 5
+    # Idle back-off (#647). A runner with nothing to do used to tick at poll_seconds
+    # forever — on labs that was ~98% of all ALB traffic on an idle Saturday, with
+    # /claim answering 204 every time. After `idle_after_ticks` quiet ticks, and
+    # ONLY while the WS wake channel is connected (it delivers enqueue, stream,
+    # interrupt and inbox doorbells the instant they happen), the loop waits
+    # `idle_poll_seconds` instead. Any activity snaps it back. Capped well inside
+    # the server's 90s heartbeat window (see main.next_wait); 0 disables it.
+    idle_poll_seconds: int = 30
+    idle_after_ticks: int = 12
     heartbeat_seconds: int = 30
     # Session report throttle: reading up to session_tail_count transcripts is the one
     # expensive thing per tick, so do it at most this often even as poll_seconds drops.

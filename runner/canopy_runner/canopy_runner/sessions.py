@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import emdash, hooks, startup_watch, transcript
+from . import activity, emdash, hooks, startup_watch, transcript
 from .client import Client
 from .config import Config
 from .tail import TailReader
@@ -284,7 +284,10 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
     except Exception:  # noqa: BLE001
         logger.warning("desktop session read failed; reporting emdash sessions only", exc_info=True)
     global _REPORT_NOW
-    changed = session_changed(cfg, sessions) or bool(_PENDING_CLOSED) or _REPORT_NOW
+    grew = session_changed(cfg, sessions)
+    if grew:
+        activity.note()  # live work in a session: keep the normal cadence (#647)
+    changed = grew or bool(_PENDING_CLOSED) or _REPORT_NOW
     _REPORT_NOW = False
     heartbeat = now_fn() - _last_session_report >= cfg.session_report_seconds
     if not changed and not heartbeat:

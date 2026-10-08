@@ -202,6 +202,13 @@ WS_POLL_TIMEOUT = float(os.environ.get("WS_POLL_TIMEOUT", "3"))
 # POLL_SECONDS (the turn-claim clock): at 15s a watcher sees a streaming reply
 # arrive in 15-second lumps. Costs one small GET /streams per tick when idle.
 STREAM_POLL_SECONDS = float(os.environ.get("STREAM_POLL_SECONDS", "3"))
+# Idle back-off for that clock (#647): once no transcript has grown for
+# STREAM_IDLE_AFTER_SECONDS, tail every STREAM_IDLE_POLL_SECONDS instead. A
+# viewer attaching rings the `stream` doorbell, which syncs at once whatever the
+# clock says, and the first growth snaps the clock back to STREAM_POLL_SECONDS.
+# At 3s an idle box asked /streams 1,200 times an hour for nothing.
+STREAM_IDLE_AFTER_SECONDS = float(os.environ.get("STREAM_IDLE_AFTER_SECONDS", "60"))
+STREAM_IDLE_POLL_SECONDS = float(os.environ.get("STREAM_IDLE_POLL_SECONDS", "15"))
 # How often the lease-renewal thread heartbeats WHILE a turn is executing (both
 # loops block inside run_claude() for the whole turn, so nothing else heartbeats
 # during that window). Must stay comfortably under DEFAULT_LEASE_SECONDS (900s,
@@ -3898,6 +3905,16 @@ def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) 
 # id is what `record_session` stored in RunnerBinding.session_key, which is
 # exactly what the stream descriptor hands back.
 _STREAM_READERS: dict[str, dict] = {}
+# monotonic() when a stream last shipped or caught up rows; drives _stream_interval.
+_LAST_STREAM_ACTIVITY = 0.0
+
+
+def _stream_interval(now: float) -> float:
+    """How long to wait between stream syncs (#647): the live clock while
+    transcripts have grown recently, the idle clock once they have not."""
+    if now - _LAST_STREAM_ACTIVITY < STREAM_IDLE_AFTER_SECONDS:
+        return STREAM_POLL_SECONDS
+    return max(STREAM_POLL_SECONDS, STREAM_IDLE_POLL_SECONDS)
 
 
 def _session_transcript_path(session_id: str, session_key: str, project: str = ""):
@@ -3963,6 +3980,7 @@ def _sync_session_streams(runner_id: str) -> None:
     identically. Best-effort throughout — a hiccup here costs live latency, never
     history, because the turn-end ship and the backfill both still run.
     """
+    global _LAST_STREAM_ACTIVITY
     ct = _transcript_core()
     if ct is None:
         return
@@ -4014,10 +4032,13 @@ def _sync_session_streams(runner_id: str) -> None:
                     continue  # nothing consumed — re-attach next tick
                 st["reader"], st["count"] = reader, len(records)
                 _log(f"stream {sid[:8]}: attached ({len(rows)} rows caught up)")
+                if rows:
+                    _LAST_STREAM_ACTIVITY = time.monotonic()
                 continue
             new_records = st["reader"].read_new()
             if not new_records:
                 continue
+            _LAST_STREAM_ACTIVITY = time.monotonic()
             base = st["count"]
             # The offset applies to the RECORD ordinal inside compose_index, never
             # to the composite index — adding it there would shift a row into
@@ -4782,7 +4803,7 @@ def run_over_ws(runner_id: str) -> bool:
                     _drain_inbox(runner_id)
                     last_poll = time.monotonic()
                     last_stream = time.monotonic()
-                elif time.monotonic() - last_stream >= STREAM_POLL_SECONDS:
+                elif time.monotonic() - last_stream >= _stream_interval(time.monotonic()):
                     _sync_session_views(runner_id, with_backfills=False)
                     last_stream = time.monotonic()
         except Exception as exc:

@@ -14,7 +14,7 @@ from pathlib import Path
 # cannot drift on either question (what to ship, and how big a request may be).
 from canopy_transcript import chunk_rows, rows_to_ship
 
-from . import chat_bridge, desktop, hooks, transcript
+from . import activity, chat_bridge, desktop, hooks, transcript
 from .client import Client
 from .config import Config
 from .failure_log import note_failure, note_success
@@ -156,6 +156,7 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
         new_records = reader.read_new()
         if not new_records:
             continue
+        activity.note()  # a transcript grew: someone may be watching it (#647)
         base = st["count"]
         # The batch's records start at `base` in the file; the offset is applied
         # to the RECORD ordinal inside compose_index, never to the composite
