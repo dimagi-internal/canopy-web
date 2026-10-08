@@ -337,6 +337,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "start_session": ("contact",),
     "tokens_contact_list_sessions": ("contact",),
     "tokens_contact_get_session": ("contact",),
+    "contact_archive_session": ("contact",),
     "tokens_contact_send": ("contact",),
     "messages": ("contact",),
     "attach": ("contact",),

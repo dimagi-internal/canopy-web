@@ -478,6 +478,16 @@ describe('the agent and your earlier conversations', () => {
       last_activity_at: '2026-09-25T10:05:00Z' },
   ]
 
+  // The fixtures are dated; the start screen offers only the last week. Only
+  // Date is faked, so the tests' own waits still run on real timers.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   function withHistory() {
     vi.stubGlobal(
       'fetch',
@@ -565,6 +575,38 @@ describe('the agent and your earlier conversations', () => {
 
     expect(await screen.findByText('Newer question')).toBeTruthy()
     expect(screen.queryByText('Conversation')).toBeNull()
+  })
+
+  it('asks only for conversations nobody put away', async () => {
+    withHistory()
+    render(<EmbedApp link={hal()} app="connect-labs" />)
+    await screen.findByText('Newer question')
+
+    const list = calls.find((c) => c.url.includes('/api/canopy-sessions/?'))
+    expect(list?.url).toContain('state=active')
+  })
+
+  it('offers only the last week', async () => {
+    vi.setSystemTime(new Date('2026-09-30T12:00:00Z'))
+    withHistory()
+    render(<EmbedApp link={hal()} app="connect-labs" />)
+
+    expect(await screen.findByText('Newer question')).toBeTruthy()
+    expect(screen.queryByText('Older question')).toBeNull()
+  })
+
+  it('× archives an earlier chat and takes it off the list', async () => {
+    withHistory()
+    render(<EmbedApp link={hal()} app="connect-labs" />)
+    await screen.findByText('Newer question')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove from this list' })[0])
+
+    await waitFor(() => expect(screen.queryByText('Newer question')).toBeNull())
+    expect(screen.getByText('Older question')).toBeTruthy()
+    const archive = calls.find((c) => c.url.endsWith('/api/canopy-sessions/new-hal/archive'))
+    expect(archive?.init?.method).toBe('POST')
+    expect(created()).toBeUndefined()
   })
 
   it('starts a new chat from inside a conversation, in words not a chevron', async () => {

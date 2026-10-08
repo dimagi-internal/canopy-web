@@ -185,6 +185,41 @@ def test_a_contact_lists_only_their_own_conversations():
     assert Session.objects.count() == 2
 
 
+def test_a_contact_puts_a_conversation_away_and_the_active_list_stops_offering_it():
+    """The widget's × on an earlier chat: gone from `state=active` for good,
+    still there under `all` (the default, so other hosts see what they did)."""
+    _owner, _ws, _app, priv, _offered, _private = _world()
+    c, hdr = Client(), _contact_headers(priv)
+    keep = c.post("/api/contact/sessions", data={"agent_slug": "echo"},
+                  content_type="application/json", **hdr).json()["id"]
+    drop = c.post("/api/contact/sessions", data={"agent_slug": "echo"},
+                  content_type="application/json", **hdr).json()["id"]
+
+    r = c.post(f"/api/contact/sessions/{drop}/archive", **hdr)
+    assert r.status_code == 200, r.content
+    assert r.json()["status"] == Session.ARCHIVED
+    assert c.post(f"/api/contact/sessions/{drop}/archive", **hdr).status_code == 200
+
+    active = [s["id"] for s in c.get("/api/contact/sessions?state=active", **hdr).json()]
+    assert active == [keep]
+    archived = [s["id"] for s in c.get("/api/contact/sessions?state=archived", **hdr).json()]
+    assert archived == [drop]
+    assert len(c.get("/api/contact/sessions", **hdr).json()) == 2
+    assert c.get("/api/contact/sessions?state=bogus", **hdr).status_code == 422
+
+
+def test_one_contact_cannot_archive_another_contacts_session():
+    _owner, _ws, _app, priv, _offered, _private = _world()
+    c = Client()
+    mine = _contact_headers(priv, sub="u-42")
+    theirs = _contact_headers(priv, sub="u-99")
+    sid = c.post("/api/contact/sessions", data={"agent_slug": "echo"},
+                 content_type="application/json", **theirs).json()["id"]
+
+    assert c.post(f"/api/contact/sessions/{sid}/archive", **mine).status_code == 404
+    assert Session.objects.get(pk=sid).status == Session.ACTIVE
+
+
 def test_one_contact_cannot_open_another_contacts_session_by_id():
     _owner, _ws, _app, priv, _offered, _private = _world()
     c = Client()

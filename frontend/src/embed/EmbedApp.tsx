@@ -413,7 +413,7 @@ function EmbedStart({
   onOpen: (sessionId: string) => void
   onClose: () => void
 }) {
-  const history = useEarlierChats(client, agent, isContact)
+  const { rows: history, putAway } = useEarlierChats(client, agent, isContact)
   const [body, setBody] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -453,11 +453,14 @@ function EmbedStart({
           </p>
           <ul className="space-y-1">
             {history.map((s) => (
-              <li key={s.id}>
+              <li
+                key={s.id}
+                className="flex items-stretch rounded-lg border border-border bg-card hover:bg-muted"
+              >
                 <button
                   type="button"
                   onClick={() => onOpen(s.id)}
-                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-muted"
+                  className="min-w-0 flex-1 px-3 py-2 text-left"
                 >
                   <span className="block text-[11px] text-muted-foreground">{whenLabel(s.at)}</span>
                   {/* What you first asked — the name you would recognise. The
@@ -465,6 +468,17 @@ function EmbedStart({
                   <span className="block truncate text-sm text-foreground">
                     {s.opening || 'Conversation'}
                   </span>
+                </button>
+                {/* Archives it, so it is not offered here again. Nothing is
+                    deleted — canopy's own chat list still has it. */}
+                <button
+                  type="button"
+                  onClick={() => putAway(s.id)}
+                  aria-label="Remove from this list"
+                  title="Remove from this list"
+                  className="shrink-0 px-3 text-muted-foreground hover:text-foreground"
+                >
+                  ×
                 </button>
               </li>
             ))}
@@ -512,18 +526,28 @@ interface EarlierChat {
   at: string
 }
 
+/** How far back the start screen offers an earlier conversation. Older ones
+ *  are still in canopy's own chat list; here they were a wall of stale rows
+ *  between the visitor and the box they came to type in. */
+const EARLIER_CHATS_DAYS = 7
+
 /** Your earlier conversations with THIS agent on THIS site, newest first.
  *
  *  Canopy already scopes the list to the site (the `embed_app` it stamped at
  *  create, forced for a delegated token) and to the site's own agents, and a
- *  contact's list is their own conversations only — so the only narrowing left
- *  here is to the agent this panel is for. A failed or odd response shows no
+ *  contact's list is their own conversations only — so the narrowing left here
+ *  is to the agent this panel is for, to the last week, and to conversations
+ *  nobody put away (`state=active`: the × archives one, and an archived chat
+ *  must not come back on the next page load). A failed or odd response shows no
  *  history rather than an error: the panel's job is still to let you ask. */
 function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boolean) {
   const [rows, setRows] = useState<EarlierChat[]>([])
   useEffect(() => {
     let cancelled = false
-    const url = isContact ? '/api/contact/sessions' : '/api/canopy-sessions/?state=all&limit=50'
+    const url = isContact
+      ? '/api/contact/sessions?state=active'
+      : '/api/canopy-sessions/?state=active&limit=50'
+    const since = Date.now() - EARLIER_CHATS_DAYS * 24 * 60 * 60 * 1000
     client.rest
       .json<unknown>(url)
       .then((data) => {
@@ -544,6 +568,7 @@ function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boo
             opening: typeof r.opening === 'string' ? r.opening : '',
             at: String(r.last_activity_at ?? r.created_at ?? ''),
           }))
+          .filter((r) => Date.parse(r.at) >= since)
           .sort((a, b) => b.at.localeCompare(a.at))
           .slice(0, 20)
         setRows(mine)
@@ -553,7 +578,26 @@ function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boo
       cancelled = true
     }
   }, [client, agent.slug, isContact])
-  return rows
+
+  // Gone from the list at once; if the archive fails the row comes back, since
+  // a row that silently reappears on the next load is the bug this fixes.
+  const putAway = useCallback(
+    (id: string) => {
+      const removed = rows.find((r) => r.id === id)
+      setRows((prev) => prev.filter((r) => r.id !== id))
+      const url = isContact
+        ? `/api/contact/sessions/${encodeURIComponent(id)}/archive`
+        : `/api/canopy-sessions/${encodeURIComponent(id)}/archive`
+      client.rest.json(url, { method: 'POST' }).catch(() => {
+        if (!removed) return
+        setRows((prev) =>
+          [...prev, removed].sort((a, b) => b.at.localeCompare(a.at)),
+        )
+      })
+    },
+    [client, isContact, rows],
+  )
+  return { rows, putAway }
 }
 
 function whenLabel(iso: string): string {
