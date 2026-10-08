@@ -34,6 +34,9 @@ class WakeListener:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.on_control = on_control
+        # True while the socket is up. The poll loop only backs off when idle if
+        # this holds: without the channel, the poll IS the only way work arrives.
+        self.connected = False
 
     def _handle(self, raw: str) -> None:
         """Set the wake event on a `wake` frame; route other control frames (cancel,
@@ -75,6 +78,7 @@ class WakeListener:
                 self._stop.wait(15)
                 continue
             logger.info("wake listener connected: %s", self._url)
+            self.connected = True
             try:
                 while not self._stop.is_set():
                     try:
@@ -87,6 +91,7 @@ class WakeListener:
             except Exception as exc:  # noqa: BLE001 — a socket error is recoverable
                 logger.debug("wake ws loop error (%s); reconnecting", exc)
             finally:
+                self.connected = False
                 try:
                     ws.close()
                 except Exception:  # noqa: BLE001

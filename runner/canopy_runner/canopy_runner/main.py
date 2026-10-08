@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 
 from . import chat_bridge, chat_pump, close, desktop, hooks, inbox_due, mailbox_probe, sessions
-from . import session_interrupt, streams
+from . import activity, session_interrupt, streams
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -968,6 +968,29 @@ def pair_cmd(args) -> int:
         return 1
 
 
+#: The longest an idle runner waits between ticks. The server reads a runner as
+#: online for 90s after its last heartbeat (HEARTBEAT_ONLINE_WINDOW), so this
+#: leaves room for a slow or retried tick without the box flickering to stale.
+IDLE_POLL_CAP_SECONDS = 45
+
+
+def next_wait(cfg: Config, *, quiet_streak: int, wake_connected: bool) -> float:
+    """How long the loop waits before its next tick (#647).
+
+    `poll_seconds` normally. After `idle_after_ticks` quiet ticks in a row, and
+    only while the WS wake channel is up, `idle_poll_seconds` (capped). The
+    channel is the condition because it is what makes a long wait safe: every
+    enqueue, viewer attach, session stop and inbox doorbell still sets the wake
+    event and ends the wait at once, so the back-off only stretches the ticks
+    nobody was waiting on. With the channel down the poll is the only way work
+    arrives, and the cadence stays exactly as it was."""
+    base = float(cfg.poll_seconds)
+    idle = float(min(max(cfg.idle_poll_seconds, 0), IDLE_POLL_CAP_SECONDS))
+    if not wake_connected or idle <= base or quiet_streak < max(cfg.idle_after_ticks, 1):
+        return base
+    return idle
+
+
 def make_control_handler(cfg: Config, waker, client=None):
     """The runner's control-frame dispatch, built as a factory so it is testable.
 
@@ -1003,6 +1026,9 @@ def make_control_handler(cfg: Config, waker, client=None):
             # `gog` subprocess on the wake-listener thread would block the socket
             # that also carries cancel and wake.
             inbox_due.ring(str(msg["mailbox"]))
+            # Wake the loop too: an idle runner may be in a long back-off wait
+            # (#647), and the doorbell is the whole point of not polling.
+            waker.event.set()
         elif msg.get("type") == "stream":
             # The viewer/backfill doorbell — the frame that had no branch. Wakes
             # the loop so sync_session_streams + drain_backfills run now rather
@@ -1191,6 +1217,7 @@ def main() -> None:
             waker.event.clear()
 
     idle_streak = 0
+    quiet_streak = 0  # consecutive ticks with nothing claimed, carried or observed
     paused = False
     while True:
         _beat()
@@ -1234,7 +1261,16 @@ def main() -> None:
             else:
                 logger.info("cycle: %s", result)
             idle_streak = 0
-        _wait(cfg.poll_seconds)  # wake-aware: claims fire on enqueue, not just poll
+        # Idle back-off (#647): a tick is quiet when it claimed nothing, carries no
+        # in-flight turn and saw no session activity. take() runs every tick so a
+        # note from a busy tick never leaks into a later one.
+        observed = activity.take()
+        quiet = result in ("idle", "cdp_down", "paused") and not observed \
+            and not _active_turn_ids()
+        quiet_streak = quiet_streak + 1 if quiet else 0
+        # wake-aware: claims fire on enqueue, not just poll
+        _wait(next_wait(cfg, quiet_streak=quiet_streak,
+                        wake_connected=bool(wake_on and waker.connected)))
 
 
 if __name__ == "__main__":
