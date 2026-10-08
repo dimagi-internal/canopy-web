@@ -724,3 +724,45 @@ def test_a_blocked_member_address_gets_no_note(ctx, editor):
     turn = _email(agent, headers=DKIM_ONLY)
     assert turn.status == Turn.CANCELLED
     assert caller_context.build(turn)["unproven_member"] is None
+
+
+# --- ...and logged on the turn's event ledger, where an owner reads its history ----
+
+def _unproven_events(turn):
+    return list(turn.events.filter(kind=caller_context.UNPROVEN_MEMBER_EVENT))
+
+
+def test_an_unproven_member_is_logged_once_on_the_turn(ctx, editor):
+    _o, _ws, agent = ctx
+    turn = _email(agent, headers=DKIM_ONLY)
+    [event] = _unproven_events(turn)
+    assert event.payload == caller_context.build(turn)["unproven_member"]
+    assert event.payload["role"] == WorkspaceMembership.EDITOR
+    # The runner re-posting the same unread message is a replay: no second line.
+    again = _email(agent, headers=DKIM_ONLY)
+    assert again.pk == turn.pk and len(_unproven_events(turn)) == 1
+
+
+def test_no_log_line_when_there_is_nothing_to_say(ctx, editor):
+    _o, _ws, agent = ctx
+    aligned = _email(agent, key="aligned", headers=HDRS)          # resolved as the member
+    stranger = _email(agent, key="stranger", headers=DKIM_ONLY, **{"from": "x@else.example"})
+    for t in (aligned, stranger):
+        assert _unproven_events(t) == []
+
+
+def test_a_runner_cannot_post_the_log_line_itself():
+    from apps.harness.api import ALLOWED_EVENT_KINDS
+
+    assert caller_context.UNPROVEN_MEMBER_EVENT not in ALLOWED_EVENT_KINDS
+
+
+def test_a_failed_log_line_never_fails_the_enqueue(ctx, editor, monkeypatch):
+    _o, _ws, agent = ctx
+
+    def boom(turn):
+        raise RuntimeError("ledger down")
+
+    monkeypatch.setattr(caller_context, "unproven_member", boom)
+    turn = _email(agent, headers=DKIM_ONLY)
+    assert turn.pk and _unproven_events(turn) == []

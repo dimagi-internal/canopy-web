@@ -198,6 +198,17 @@ def _contact(contact) -> dict | None:
 _ALIGNED_NEEDS = (Contact.AUTH_DMARC, Contact.AUTH_DKIM_ALIGNED)
 
 
+#: The TurnEvent kind that logs `unproven_member` on the turn (`ledger.append_events`).
+#: Written by canopy at enqueue, never accepted from a runner: it is not in
+#: `harness.api.ALLOWED_EVENT_KINDS`. (`TurnEvent.kind` holds 20 characters.)
+UNPROVEN_MEMBER_EVENT = "unproven_member"
+
+
+def unproven_member(turn) -> dict | None:
+    """`unproven_member` for a turn on its own — what the envelope carries."""
+    return _unproven_member(turn, _agent_of(turn))
+
+
 def _unproven_member(turn, agent) -> dict | None:
     """The member an unaligned email's address belongs to, or None.
 

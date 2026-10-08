@@ -256,7 +256,11 @@ VERSION 2): `who`, `verified` (THIS message), `relationship` (the agent role),
   tied to their account. It tells the agent (and the owner) "your own member,
   whose domain's mail authentication needs fixing", not "a stranger". It grants
   nothing and changes no other field; null otherwise, including for a blocked
-  contact and any non-email turn (canopy-web#1265).
+  contact and any non-email turn (canopy-web#1265). canopy also LOGS it, once, on
+  the turn's event ledger at enqueue: a `TurnEvent` of kind `unproven_member`
+  whose payload is this same object, read by `read_turn_events` and shown (with
+  the note) in the activity drill-down. canopy writes it; a runner cannot post
+  that kind.
 
 Readers accept both spellings: `relationship: caller` means `contact`, `profile:
 restricted` means `confined` (`normalize_relationship`, `normalize_profile`; the

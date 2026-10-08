@@ -271,6 +271,26 @@ def _member_behind_email(agent, contact, subject: str = ""):
     return user
 
 
+def _log_unproven_member(turn) -> None:
+    """Record the envelope's `unproven_member` on the turn's event ledger.
+
+    Where an owner already reads a turn's history (`read_turn_events`, the
+    activity drill-down): "a member wrote in, but this message could not be tied
+    to their account, so they were treated as a contact" (canopy-web#1265).
+    Logging only — it grants nothing, and the turn's initiator, profile and
+    grant are already decided by the time this runs. Never raises: a log line
+    is not worth failing to enqueue someone's mail.
+    """
+    from . import caller_context
+
+    try:
+        note = caller_context.unproven_member(turn)
+        if note is not None:
+            append_events(turn, [{"kind": caller_context.UNPROVEN_MEMBER_EVENT, "payload": note}])
+    except Exception:  # noqa: BLE001
+        logger.exception("could not log unproven_member for turn %s", turn.pk)
+
+
 def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
                         origin_ref, routing) -> tuple[Turn, bool]:
     """Write an email turn from a BLOCKED contact as already cancelled."""
@@ -514,6 +534,8 @@ def enqueue_turn(
         if replay is not None:
             return replay, False
         raise
+    if origin == Turn.ORIGIN_EMAIL:
+        _log_unproven_member(turn)
     if session is not None:
         # New work on the session: it was not done, so drop any pending "done" push.
         from apps.push import services as push_services
