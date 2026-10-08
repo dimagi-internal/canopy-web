@@ -136,6 +136,10 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_agent_github": ("agent-owner",),  # strictly the agent's own owner (delegations.set_github)
     "check_agent_github": ("member",),
     "delete_agent_github": ("member", "self"),  # removes only the caller's own delegation
+    "get_agent_salesforce": ("member",),
+    "set_agent_salesforce": ("agent-owner",),  # owner of BOTH borrower and lender (delegations.set_salesforce)
+    "check_agent_salesforce": ("member",),
+    "delete_agent_salesforce": ("member", "self"),  # removes only the caller's own delegation
     "delete_agent_credential": ("agent-admin",),
     "agent_readiness": ("member",),
     "post_bootstrap_report": ("runner-holds-agent",),
@@ -492,6 +496,8 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "act_on_task": "approve/decline/reply answer what is already on the board (interaction tier); dispatch/done require agent.work",
     "check_agent_github": "re-probes the stored token against GitHub and records the result; grants and changes nothing",
     "delete_agent_github": "withdraws only the caller's OWN GitHub delegation",
+    "check_agent_salesforce": "re-probes the lender's credential against Salesforce and records the result; grants and changes nothing",
+    "delete_agent_salesforce": "withdraws only the caller's OWN Salesforce delegation",
     "pair_runner": "pairing grants nothing by itself: a box serves only workspaces where its owner holds agent.work (runner_tenant_slugs)",
     "resolve_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "record_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",

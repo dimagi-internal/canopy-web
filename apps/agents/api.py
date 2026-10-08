@@ -26,6 +26,8 @@ from .schemas import (
     AgentAdminOut,
     AgentCredentialsIn,
     AgentGitHubIn,
+    AgentSalesforceIn,
+    AgentSalesforceOut,
     AgentCanopyUserIn,
     AgentGitHubOut,
     AgentCredentialsResolveOut,
@@ -1662,6 +1664,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
         values=values, op_vault=vault, op_sa_token=op_token,
         shared_op_vault=shared_vault, shared_op_sa_token=shared_token,
         github_token=delegations.decrypt_secret(delegation.secret_enc) if delegation else "",
+        salesforce_creds=delegations.salesforce_creds_for(agent),
         mailbox=agent.email or "",
     )
 
@@ -1733,6 +1736,48 @@ def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     agent = _get_agent_or_404(request, slug)
     delegations.clear_github(agent, request.user)
     return AgentGitHubOut(**delegations.status(agent))
+
+
+# ---- Salesforce: another agent's own identity, lent to this one ---------------
+# chrome-sales acts in Salesforce as one delegated identity (Eva's SF user). The
+# row names the lender; the credential is the lender's own, resolved at use time.
+# See the Salesforce section of apps/agents/delegations.py.
+
+@router.get("/{slug}/salesforce", response=AgentSalesforceOut,
+            summary="Whose Salesforce identity this agent borrows (masked — never the credential)")
+def get_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
+    agent = _get_agent_or_404(request, slug)
+    return AgentSalesforceOut(**delegations.salesforce_status(agent))
+
+
+@router.put("/{slug}/salesforce", response=AgentSalesforceOut,
+            summary="Lend this agent another agent's Salesforce identity (owner of both)")
+def set_agent_salesforce(request: HttpRequest, slug: str,
+                         payload: AgentSalesforceIn) -> AgentSalesforceOut:
+    """Checked before it is stored: the lender must hold a Salesforce credential
+    and Salesforce must accept it. Refused with the reason otherwise."""
+    agent = _get_agent_or_404(request, slug)
+    try:
+        delegations.set_salesforce(agent, request.user, payload.lender)
+    except delegations.DelegationError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return AgentSalesforceOut(**delegations.salesforce_status(agent))
+
+
+@router.post("/{slug}/salesforce/check", response=AgentSalesforceOut,
+             summary="Re-check the Salesforce identity this agent borrows")
+def check_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
+    agent = _get_agent_or_404(request, slug)
+    delegations.check_salesforce(agent)
+    return AgentSalesforceOut(**delegations.salesforce_status(agent))
+
+
+@router.delete("/{slug}/salesforce", response=AgentSalesforceOut,
+               summary="Stop lending this agent a Salesforce identity")
+def delete_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
+    agent = _get_agent_or_404(request, slug)
+    delegations.clear_salesforce(agent, request.user)
+    return AgentSalesforceOut(**delegations.salesforce_status(agent))
 
 
 # Registered AFTER the literal `status`/`resolve` paths on purpose: Django
