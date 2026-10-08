@@ -1,15 +1,23 @@
 ---
-// The home page. Its story is the Canopy section of Jonathan's IDM AI talk
-// (Claude Design deck "IDM AI Talk (Dimagi brand)"), including the claims that
-// talk's own notes say not to make: no fleet-wide kill switch, no spend limits,
-// and manual-mode approval is procedure rather than a code-enforced pop-up.
-// No fleet roster, live counts or figures from Dimagi's own agents, on purpose:
-// the page describes the product, not who at Dimagi runs it.
+// The home page. Its story is the Canopy section (Part 2) of Jonathan's IDM AI
+// talk, "Attempting to get better at getting better in Equitable AI" (Claude
+// Slides deck; Google Slides snapshot of 2026-10-07), in the talk's own order:
+// the ladder → why oversight (Reef, the honest failure) → what Canopy is →
+// multiplayer as THE key innovation → more people building → how we know it is
+// getting better (human review) → controls.
+//
+// It keeps the talk's rules: every quote verbatim, with its source linked; no
+// claims the talk's notes forbid (no fleet-wide kill switch, no spend limits,
+// manual-mode approval is procedure rather than a code-enforced pop-up); and
+// improvement is how Canopy works, never one agent's property. No fleet roster,
+// live counts or figures from Dimagi's own agents, on purpose: the page describes
+// the product, not who at Dimagi runs it.
 //
 // Built on the shared Dimagi product-site system (public/site/styles.css, the
 // same sheet as Connect, SureAdhere and Open Chat Studio): its .hero, .section,
 // .section-head, .eyebrow, .btn and type scale. The few layouts the system has no
-// class for live in the inline <style> below and use only its tokens.
+// class for live in the inline <style> below and use only its tokens. Quotes use
+// <figure>/<figcaption>, never <footer>: canopy-theme.css colours every footer.
 import Base from '../layouts/Base.astro'
 import { GITHUB_URL, SIGN_IN_URL } from '../site'
 
@@ -22,22 +30,45 @@ const rungs = [
   'Improve AI together, as a team and an org',
 ]
 
-const roles = [
-  ['Users', 'Ask an agent for work from Slack, email or the web. Nothing to install.'],
-  ['Supervisors', 'See every session live, step in, and approve what goes out.'],
-  ['Everyone', 'Read and comment on the outputs where they live, in Google Drive or on the web.'],
+// What Canopy set out to build: the four boxes of the talk's slide, left to right.
+const flow = [
+  ['The expertise', 'Deep skills and expertise', 'What you know, written down as skills, rules and examples.'],
+  ['The agent', 'Does the work', 'With that expertise loaded.'],
+  ['Oversight', 'A person, watching', 'Sees what it is about to say, and can break in.'],
+  ['Users', 'The people it serves', 'Get an answer that has already been checked.'],
 ]
 
-const layers = [
-  ['Context', 'What the model knows at the moment of work: skills, rules and examples.'],
-  ['LLM', 'Used as it is. Canopy improves everything around it.'],
-  ['Harness', 'The software that lets the model act. Claude Code is one.'],
-  ['Runner', 'Where the harness executes: someone’s laptop, or a cloud machine.'],
-  ['Interactions', 'Email, Slack, web chat, and the applications people already use.'],
+const roles = [
+  ['Supervisors', 'See every session live, step in when it is not going right, and approve what goes out.'],
+  ['Users', 'Ask an agent for work from Slack, email or the web. Nothing new to learn.'],
+  ['Everyone', 'Read and edit the outputs wherever you already work: Google Workspace, the web, or your own products.'],
 ]
+
+const cycle = [
+  ['See it work', 'Watch a real session, and an expert step in.'],
+  ['Use it', 'Ask an agent for work by email, Slack or web chat.'],
+  ['Build your own', 'Describe the skills and the persona; Canopy builds it.'],
+  ['Improve and share', 'Fix what went wrong, and others see it and use it.'],
+]
+
+const notJust = [
+  ['Lines of code', 'AI can write a great deal of it.'],
+  ['Usage', 'Runs, sessions, people.'],
+  ['Excitement', 'Our first attempt was exciting too.'],
+]
+
+const controls = [
+  'Where it runs',
+  'What model it uses',
+  'What access it has',
+  'What it is allowed to execute',
+  'What other agents it can talk to',
+  'Who can supervise it',
+]
+const basedOn = ['The user', 'The agent', 'The channel', 'The environment']
 ---
 <Base
-  title="Canopy — the open source control plane for agents"
+  title="Canopy — the open source control plane for agent oversight"
   description="Give an agent deep expertise, let people use it, and let a person step in to verify before it answers. Open source, by Dimagi."
   activeNav="home"
 >
@@ -49,13 +80,26 @@ const layers = [
   /* Screenshots of the multiplayer chat (from the IDM talk deck; to be replaced as better ones arrive). */
   .shot { display: block; width: 100%; height: auto; border-radius: var(--radius); border: 1px solid rgba(8,26,18,0.12); box-shadow: 0 24px 64px -24px rgba(8,26,18,0.45); background: #0a0a0a; }
   .shot-hero { margin: 0; }
-  .shots-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin: 64px 0 0; }
+  .shots-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
   .shots-pair figure { margin: 0; }
   .shots-pair figcaption { margin: 0 0 12px; font-size: 15px; font-weight: 500; color: var(--ink); }
   .shots-note { margin: 18px auto 0; max-width: 720px; text-align: center; font-size: 15px; color: var(--muted); }
 
-  .section-head--center { max-width: 760px; margin: 0 auto 64px; text-align: center; }
+  .section-head--center { max-width: 780px; margin: 0 auto 56px; text-align: center; }
   .section-head--center .section-lede { margin: 0 auto; }
+
+  /* A sourced quote: the words, who said them, and a link to where. */
+  .quote { margin: 0; }
+  .quote blockquote { margin: 0; font-size: 22px; line-height: 1.45; font-weight: 300; color: var(--ink); }
+  .quote blockquote::before { content: "“"; display: block; font-size: 56px; line-height: 0.6; font-weight: 600; color: var(--canopy-leaf); margin-bottom: 14px; }
+  .quote figcaption { margin-top: 14px; font-size: 14px; color: var(--muted); }
+  .quote figcaption b { color: var(--ink); font-weight: 600; }
+  .quote figcaption a { color: var(--indigo); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+  .section.dark .quote blockquote { color: #fff; }
+  .section.dark .quote figcaption { color: rgba(255,255,255,0.70); }
+  .section.dark .quote figcaption b { color: #fff; }
+  .section.dark .quote figcaption a { color: var(--sky); }
+  .quote-center { max-width: 760px; margin: 0 auto 56px; text-align: center; }
 
   /* The six-step ladder. */
   .ladder { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; align-items: end; }
@@ -71,38 +115,60 @@ const layers = [
   .ladder-legend { display: grid; grid-template-columns: 1fr 1fr; margin-top: 16px; font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
   .ladder-legend span:last-child { text-align: right; color: var(--indigo); }
 
-  /* Cards on the dark section. */
-  .tiles { display: grid; gap: 16px; }
-  .tiles-3 { grid-template-columns: repeat(3, 1fr); }
-  .tiles-5 { grid-template-columns: repeat(5, 1fr); margin-top: 32px; }
+  /* Why oversight: the failed first attempt beside the research. */
+  .why { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+  .attempt { background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 36px; }
+  .attempt b { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .attempt h3 { margin-top: 12px; font-size: 26px; font-weight: 400; }
+  .attempt p { margin: 12px 0 0; color: var(--muted); font-size: 17px; line-height: 1.6; }
+  .why-close { max-width: 760px; margin: 56px auto 0; text-align: center; font-size: 19px; line-height: 1.55; color: var(--ink); }
+
+  /* What Canopy set out to build: four boxes and the loop back. */
+  .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .step { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: var(--radius); padding: 24px; }
+  .step.over { background: rgba(63,163,116,0.18); border-color: rgba(143,221,178,0.45); }
+  .step b { font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--sky); }
+  .step h3 { margin-top: 10px; color: #fff; font-size: 20px; font-weight: 400; }
+  .step p { margin: 8px 0 0; color: rgba(255,255,255,0.70); font-size: 15px; line-height: 1.5; }
+  .loop { margin-top: 16px; border: 1px dashed rgba(143,221,178,0.55); border-radius: var(--radius); padding: 16px 24px; text-align: center; color: var(--sky); font-size: 16px; }
+  .tiles { display: grid; gap: 16px; grid-template-columns: repeat(3, 1fr); margin-top: 56px; }
   .tile { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: var(--radius); padding: 26px; }
   .tile h3 { color: #fff; font-size: 21px; font-weight: 400; }
   .tile p { margin: 10px 0 0; color: rgba(255,255,255,0.70); font-size: 15px; line-height: 1.55; }
-  .dark-note { margin: 56px 0 0; max-width: 760px; color: rgba(255,255,255,0.70); font-size: 17px; }
-  .bands { display: grid; gap: 12px; margin-top: 16px; }
-  .band { display: grid; grid-template-columns: 280px 1fr; gap: 24px; align-items: center; border-radius: var(--radius); padding: 20px 26px; }
-  .band b { font-weight: 500; font-size: 17px; }
-  .band span { font-size: 15px; line-height: 1.5; }
-  .band-guard { background: #267A53; color: #fff; } /* leaf darkened: white on #3FA374 is ~3:1 */
-  .band-loop { background: rgba(255,255,255,0.92); color: var(--ink); }
+  .dark-note { margin: 48px 0 0; max-width: 760px; color: rgba(255,255,255,0.70); font-size: 17px; }
 
-  /* Light cards. */
-  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
-  .card { background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 36px; display: flex; flex-direction: column; gap: 14px; }
-  .card h3 { font-size: 24px; font-weight: 400; }
-  .card p { margin: 0; color: var(--muted); font-size: 16px; line-height: 1.6; }
-  .card .card-fact { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--line); font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--indigo); }
+  /* More people building: a cycle of four that feeds the next person in. */
+  .cycle { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+  .turn { border-top: 2px solid var(--indigo); padding-top: 22px; }
+  .turn b { font-family: var(--mono); font-size: 12px; color: var(--indigo); }
+  .turn h3 { margin-top: 10px; font-size: 22px; font-weight: 400; }
+  .turn p { margin: 8px 0 0; color: var(--muted); font-size: 16px; }
+  .cycle-close { margin: 40px 0 0; text-align: center; font-size: 19px; color: var(--indigo); font-weight: 500; }
 
-  .people { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
-  .person { border-top: 2px solid var(--indigo); padding-top: 24px; }
-  .person b { font-family: var(--mono); font-size: 12px; color: var(--indigo); }
-  .person h3 { margin-top: 12px; font-size: 24px; font-weight: 400; }
-  .person p { margin: 10px 0 0; color: var(--muted); font-size: 16px; }
+  /* How we know it is getting better. */
+  .notjust-label { font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin: 0 0 14px; }
+  .notjust { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .notjust div { border: 1px solid rgba(255,255,255,0.14); border-radius: var(--radius); padding: 22px 24px; }
+  .notjust h3 { color: rgba(255,255,255,0.85); font-size: 20px; font-weight: 400; text-decoration: line-through; text-decoration-color: rgba(143,221,178,0.7); }
+  .notjust p { margin: 6px 0 0; color: rgba(255,255,255,0.6); font-size: 15px; }
+  .review { display: grid; grid-template-columns: 1fr 1.1fr; gap: 56px; align-items: center; margin-top: 64px; }
+  .review h3 { color: #fff; font-size: 34px; font-weight: 300; }
+  .review h3 em { font-style: normal; font-weight: 600; color: var(--sky); }
+  .review > div > p { margin: 14px 0 0; color: rgba(255,255,255,0.75); font-size: 17px; line-height: 1.6; }
+
+  /* Controls: six things, set by four. */
+  .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .control { background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 24px; font-size: 18px; color: var(--ink); }
+  .based { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-top: 32px; }
+  .based-label { font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+  .chip { border: 1px solid var(--indigo); color: var(--indigo); border-radius: 999px; padding: 8px 18px; font-weight: 500; font-size: 15px; }
+  .controls-note { max-width: 760px; margin: 40px auto 0; text-align: center; color: var(--muted); font-size: 16px; }
 
   @media (max-width: 980px) {
-    .tiles-3, .tiles-5, .cards, .people { grid-template-columns: 1fr 1fr; }
+    .why, .review { grid-template-columns: 1fr; gap: 32px; }
+    .flow, .cycle { grid-template-columns: 1fr 1fr; }
+    .tiles, .notjust, .controls { grid-template-columns: 1fr 1fr; }
     .shots-pair { grid-template-columns: 1fr; gap: 24px; }
-    .band { grid-template-columns: 1fr; gap: 4px; }
   }
   /* Phones: the ladder turns on its side. Each step is a row that grows longer
      than the one before, so the bars still climb, and the two groups get their
@@ -121,8 +187,9 @@ const layers = [
   }
   @media (max-width: 600px) {
     .section { padding: 72px 0; }
-    .tiles-3, .tiles-5, .cards, .people { grid-template-columns: 1fr; }
-    .card { padding: 28px; }
+    .flow, .cycle, .tiles, .notjust, .controls { grid-template-columns: 1fr; }
+    .attempt { padding: 28px; }
+    .quote blockquote { font-size: 19px; }
   }
   </style>
 
@@ -131,7 +198,7 @@ const layers = [
       <div class="hero-grid">
         <div>
           <span class="eyebrow">Open source · by Dimagi</span>
-          <h1 class="hero-title">The open source control plane for <em>agents</em></h1>
+          <h1 class="hero-title">The open source control plane for agent <em>oversight</em></h1>
           <p class="hero-sub">
             Give an agent deep expertise, let people use it where they already work, and let a
             person step in to verify before it answers.
@@ -156,13 +223,17 @@ const layers = [
     <div class="container">
       <div class="section-head section-head--center">
         <span class="eyebrow">The problem</span>
-        <h2 class="section-title">Most AI tools are built for <em>one person and one chat</em></h2>
-        <p class="section-lede">
-          That covers the first steps of getting better with AI. Nearly everything that matters
-          to an organisation comes after: improving the AI itself, and then improving it together,
-          so an improvement one person makes is available to everyone.
-        </p>
+        <h2 class="section-title">Getting better <em>at getting better</em></h2>
       </div>
+      <figure class="quote quote-center">
+        <blockquote>One of the most important things that you see in thriving organizations, governments, communities… is getting better at getting better.</blockquote>
+        <figcaption><b>Jonathan Jackson</b>, co-founder and CEO of Dimagi · High-Impact Growth podcast, episode 85 · <a href="https://dimagi.com/podcast/podcast-development-innovation-funding/">dimagi.com/podcast</a></figcaption>
+      </figure>
+      <p class="section-lede" style="max-width: 760px; margin: 0 auto 56px; text-align: center;">
+        Most AI tools are built for one person and one chat. That covers the first steps. Nearly
+        everything that matters to an organisation comes after: improving the AI itself, and then
+        improving it together, so an improvement one person makes is available to everyone.
+      </p>
       <div class="ladder" role="list">
         {rungs.map((label, i) => (
           <>
@@ -179,69 +250,69 @@ const layers = [
     </div>
   </section>
 
+  <section class="section warm">
+    <div class="container">
+      <div class="section-head section-head--center">
+        <span class="eyebrow">Why oversight</span>
+        <h2 class="section-title">Our first attempt was fast. <em>It wasn’t reliable.</em></h2>
+      </div>
+      <div class="why">
+        <article class="attempt">
+          <b>Attempt 1 · early 2026</b>
+          <h3>Agents for our management team</h3>
+          <p>
+            We built a whole management system on agents in three weeks, then gave up.
+            Exciting at first. Then we couldn’t get reliable results on complex tasks.
+          </p>
+        </article>
+        <figure class="quote">
+          <blockquote>Experienced users interrupt Claude more often, not less.</blockquote>
+          <figcaption><b>Anthropic research</b> · Measuring AI agent autonomy in practice, February 2026 · <a href="https://www.anthropic.com/research/measuring-agent-autonomy">anthropic.com/research/measuring-agent-autonomy</a></figcaption>
+        </figure>
+      </div>
+      <p class="why-close">
+        So Canopy is not built for full autonomy. It is built so a person can see what an agent is
+        doing, step in, and improve it, while the patterns that prove themselves become more automatic.
+      </p>
+    </div>
+  </section>
+
   <section class="section dark">
     <div class="container">
       <div class="section-head">
-        <span class="eyebrow on-dark">How it fits together</span>
-        <h2 class="section-title">You ask in Slack. It works in your Drive. <em>Your supervisor can watch over its shoulder.</em></h2>
-        <p class="section-lede">Canopy meets each person where they already work.</p>
+        <span class="eyebrow on-dark">What Canopy does</span>
+        <h2 class="section-title">Give an agent deep expertise, let people use it, and <em>let a person step in to verify before it answers.</em></h2>
       </div>
-      <div class="tiles tiles-3">
+      <div class="flow" role="list">
+        {flow.map(([label, title, what]) => (
+          <div class={`step${label === 'Oversight' ? ' over' : ''}`} role="listitem"><b>{label}</b><h3>{title}</h3><p>{what}</p></div>
+        ))}
+      </div>
+      <p class="loop">↺ Improve the agent in real time, not just this one answer</p>
+      <div class="tiles">
         {roles.map(([name, what]) => (
           <div class="tile"><h3>{name}</h3><p>{what}</p></div>
         ))}
       </div>
       <p class="dark-note">
+        You ask in Slack. It works in your Drive. A supervisor can watch over its shoulder.
         Underneath, Canopy is a control plane, the way CI or Kubernetes is one: it decides what
-        runs, when and where, and runners execute it. Agents hand work to each other through the
-        same boards people use, so every handoff is visible and a person can take it over.
+        runs, when and where, and runners execute it.
       </p>
-      <div class="tiles tiles-5">
-        {layers.map(([name, what]) => (
-          <div class="tile"><h3>{name}</h3><p>{what}</p></div>
-        ))}
-      </div>
-      <div class="bands">
-        <div class="band band-guard"><b>Guardrails &amp; verification</b><span>Hooks that make the wrong path impossible, and checks anchored outside the model’s own work.</span></div>
-        <div class="band band-loop"><b>The learning loop</b><span>People see each other’s sessions, and AI reviews those sessions to propose improvements to the system.</span></div>
-      </div>
-      <p class="dark-note">The bands are not layers: guardrails show up in the context, the harness, the runner and every interaction.</p>
     </div>
   </section>
 
   <section class="section">
     <div class="container">
       <div class="section-head section-head--center">
-        <span class="eyebrow">What makes it different</span>
-        <h2 class="section-title">Oversight that teaches, and <em>agents that keep the lesson</em></h2>
-      </div>
-      <div class="cards">
-        <article class="card">
-          <h3>Multiplayer sessions</h3>
-          <p>
-            Several people and an agent in one live conversation. Each person has their own box,
-            every message shows who wrote it, and the agent’s steps stream to everyone. An expert
-            can watch and step in mid-task; others learn by watching.
-          </p>
-          <p class="card-fact">Embeddable in another application</p>
-        </article>
-        <article class="card">
-          <h3>Agents that improve as they run</h3>
-          <p>
-            An improvement changes the agent’s skills and rules, not just one reply, and is there
-            for every run after. Canopy shows each skill’s history, so the improvement is visible.
-          </p>
-          <p class="card-fact">Every skill’s history, replayable</p>
-        </article>
-        <article class="card">
-          <h3>Hard limits live in code</h3>
-          <p>
-            A person sets each agent to manual or auto; the agent cannot change it. Rules are enforced
-            by hooks, each pinned by a test. Each agent has its own identity and secrets, and callers
-            are not trusted by default.
-          </p>
-          <p class="card-fact">Confined agents are given only what they need</p>
-        </article>
+        <span class="eyebrow">The key innovation</span>
+        <h2 class="section-title">Multiplayer: <em>learn by watching, or step into the same session</em></h2>
+        <p class="section-lede">
+          Several people and an agent in one live conversation. Each person has their own box, every
+          message shows who wrote it, and the agent’s steps stream to everyone. An expert can watch
+          and step in mid-task; others learn by watching. Sessions can also be embedded in another
+          application.
+        </p>
       </div>
       <div class="shots-pair">
         <figure>
@@ -262,26 +333,67 @@ const layers = [
   <section class="section warm">
     <div class="container">
       <div class="section-head section-head--center">
-        <span class="eyebrow">Who it’s for</span>
-        <h2 class="section-title">Built for everyone around the agent, <em>not only its builder</em></h2>
+        <span class="eyebrow">More people building and improving</span>
+        <h2 class="section-title">Because people can see what’s really happening, <em>more of them try it</em></h2>
       </div>
-      <div class="people">
-        <div class="person">
-          <b>01</b>
-          <h3>Agent builders and reviewers</h3>
-          <p>Build the agents, write their skills and rules, review what they did, and approve the fixes.</p>
-        </div>
-        <div class="person">
-          <b>02</b>
-          <h3>People who ask for work</h3>
-          <p>Reach an agent by email, Slack, web chat or an application, with nothing to install.</p>
-        </div>
-        <div class="person">
-          <b>03</b>
-          <h3>Learners and viewers</h3>
-          <p>See how the person and the agent work together, and learn what you can do yourself.</p>
-        </div>
+      <ol class="cycle" style="list-style: none; margin: 0; padding: 0;">
+        {cycle.map(([name, what], i) => (
+          <li class="turn"><b>{String(i + 1).padStart(2, '0')}</b><h3>{name}</h3><p>{what}</p></li>
+        ))}
+      </ol>
+      <p class="cycle-close">…which brings the next person in.</p>
+    </div>
+  </section>
+
+  <section class="section dark">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow on-dark">Is it working?</span>
+        <h2 class="section-title">How do we know we are getting better <em>at getting better?</em></h2>
       </div>
+      <p class="notjust-label">It’s not just…</p>
+      <div class="notjust">
+        {notJust.map(([name, what]) => (
+          <div><h3>{name}</h3><p>{what}</p></div>
+        ))}
+      </div>
+      <div class="review">
+        <div>
+          <h3>It’s <em>human review</em></h3>
+          <p>
+            Canopy keeps the record of what agents do and how people interact with them: every
+            session, every time someone stepped in, every correction. That record is what lets it get
+            better at getting better. A correction changes the agent’s skills and rules, not just one
+            reply, and each skill’s history shows what changed and why.
+          </p>
+        </div>
+        <figure class="quote">
+          <blockquote>The first principle is that you must not fool yourself—and you are the easiest person to fool.</blockquote>
+          <figcaption><b>Richard Feynman</b> · “Cargo Cult Science,” Caltech commencement address, 1974 · <a href="https://calteches.library.caltech.edu/51/2/CargoCult.htm">calteches.library.caltech.edu</a></figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <div class="section-head section-head--center">
+        <span class="eyebrow">Controls</span>
+        <h2 class="section-title">The right user experience is as important <em>as the right AI</em></h2>
+        <p class="section-lede">Each of these is controllable, for every agent:</p>
+      </div>
+      <div class="controls" role="list">
+        {controls.map((c) => <div class="control" role="listitem">{c}</div>)}
+      </div>
+      <div class="based">
+        <span class="based-label">Based on</span>
+        {basedOn.map((b) => <span class="chip">{b}</span>)}
+      </div>
+      <p class="controls-note">
+        The limits live in code, not in the prompt. A person sets each agent to manual or auto, and
+        the agent cannot change it. Each agent has its own identity and secrets, and callers are not
+        trusted by default.
+      </p>
     </div>
   </section>
 
