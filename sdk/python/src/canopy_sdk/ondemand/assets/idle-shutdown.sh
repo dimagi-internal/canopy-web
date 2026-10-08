@@ -26,6 +26,9 @@ if [ -z "${ACTIVITY_FILE:-}" ]; then
   ACTIVITY_FILE="/var/run/${CAPABILITY}/last-activity"
 fi
 IDLE_SECONDS="${IDLE_SECONDS:-3600}"
+# Validate before any arithmetic: a non-integer (e.g. "1h") would make the
+# comparison below error, fall through, and halt a box that was just touched.
+[[ $IDLE_SECONDS =~ ^[0-9]+$ ]] || { echo "bad IDLE_SECONDS: $IDLE_SECONDS" >&2; exit 1; }
 stamp() { date -u +%FT%TZ; }
 
 if [ ! -e "$ACTIVITY_FILE" ]; then
@@ -35,6 +38,7 @@ fi
 
 # `date -r FILE` prints FILE's mtime on both GNU and BSD date.
 last=$(date -r "$ACTIVITY_FILE" +%s)
+[[ $last =~ ^[0-9]+$ ]] || { echo "cannot read mtime of $ACTIVITY_FILE: $last" >&2; exit 1; }
 delta=$(( $(date +%s) - last ))
 
 if (( delta < IDLE_SECONDS )); then

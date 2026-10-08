@@ -257,13 +257,22 @@ aws cloudformation deploy --stack-name ondemand-<capability> \
 | `RootVolumeGb` | `30` | encrypted gp3 root volume |
 
 Resources: an egress-only security group (443, DNS); an instance role with
-`AmazonSSMManagedInstanceCore` plus put on the artifacts bucket; a launch
-template (IMDSv2 only, encrypted gp3, stop on shutdown); the instance (retained
-on stack delete); an artifacts bucket (retained; objects expire after 7 days);
-`IdleStopAlarm`; and `ConsumerPolicy`, which grants the consumer
+`AmazonSSMManagedInstanceCore` plus put on the artifacts bucket, and its
+instance profile; a launch template (IMDSv2 only, encrypted gp3, detailed
+monitoring, stop on shutdown); the instance; an artifacts bucket (objects expire
+after 7 days); `IdleStopAlarm`; and `ConsumerPolicy`, which grants the consumer
 `ec2:StartInstances` / `StopInstances` and `ssm:SendCommand` only on instances
 tagged `capability=<capability>` (plus the `AWS-RunShellScript` document, the
-read-only `ec2:Describe*` / `ssm:GetCommandInvocation`, and read on the bucket).
+read-only `ec2:DescribeInstances` / `ec2:DescribeInstanceStatus` and
+`ssm:GetCommandInvocation`, and read on the bucket).
+
+**Deleting the stack does not delete the runner.** The instance, the artifacts
+bucket, and what the instance depends on to keep working — its security group,
+instance role and instance profile — are all `Retain`, so a stack delete leaves
+a working, stoppable instance behind (and completes, rather than failing on a
+security group still attached to it). Removing the runner for good means
+terminating the instance, then deleting those four resources and the bucket by
+hand. The launch template, alarm and `ConsumerPolicy` go with the stack.
 
 Outputs: **`InstanceId`** and **`ArtifactsBucketName`** — the consumer's settings.
 

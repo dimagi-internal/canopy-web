@@ -64,3 +64,16 @@ def test_owner_roundtrips_and_is_omitted_when_unset():
     js.complete(j.job_id, 1)
     assert js.get(j.job_id).owner == "task1:req1"
     assert "owner" not in js.get(js.create("op").job_id).to_dict()
+
+
+def test_jobs_imports_on_python_310():
+    # requires-python is >=3.10; datetime.UTC is 3.11+.
+    import ast
+    from pathlib import Path
+
+    import canopy_sdk.ondemand.jobs as jobs_mod
+
+    tree = ast.parse(Path(jobs_mod.__file__).read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "datetime":
+            assert "UTC" not in {a.name for a in node.names}

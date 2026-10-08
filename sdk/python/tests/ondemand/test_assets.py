@@ -72,10 +72,30 @@ def test_launch_template_stops_on_shutdown_and_passes_user_data(template):
     ebs = data["BlockDeviceMappings"][0]["Ebs"]
     assert ebs["Encrypted"] is True and ebs["VolumeType"] == "gp3"
     assert ebs["VolumeSize"] == {"Ref": "RootVolumeGb"}
-    assert "UserData" in str(data["UserData"])
+    assert data["UserData"] == {"If": ["HasUserData", {"Ref": "UserData"}, {"Ref": "AWS::NoValue"}]}
+    # Detailed (1-minute) monitoring: basic monitoring publishes CPU every 5 min,
+    # which the 60 s IdleStopAlarm would read as missing data and never fire on.
+    assert data["Monitoring"] == {"Enabled": True}
     # The nested-virt CPU option is only added when the parameter is "true".
     assert "WantsNestedVirtualization" in template["Conditions"]
     assert "WantsNestedVirtualization" in str(data["CpuOptions"])
+
+
+def test_launch_template_resource_is_tagged(template):
+    specs = template["Resources"]["LaunchTemplate"]["Properties"]["TagSpecifications"]
+    (spec,) = [s for s in specs if s["ResourceType"] == "launch-template"]
+    tags = {t["Key"]: t["Value"] for t in spec["Tags"]}
+    assert tags["owner"] == {"Ref": "OwnerTag"}
+    assert tags["capability"] == {"Ref": "Capability"}
+
+
+def test_stack_delete_retains_what_the_retained_instance_depends_on(template):
+    # Deleting the SG/role/profile under a retained instance fails the delete
+    # (SG still attached) or strips the instance's SSM credentials.
+    for name in ("Instance", "ArtifactsBucket", "SecurityGroup", "InstanceRole", "InstanceProfile"):
+        res = template["Resources"][name]
+        assert res.get("DeletionPolicy") == "Retain", name
+        assert res.get("UpdateReplacePolicy") == "Retain", name
 
 
 def test_idle_alarm_stops_the_instance(template):
@@ -137,6 +157,17 @@ def test_idle_script_honours_idle_seconds(tmp_path):
     marker.write_text("")
     _age(marker, 120)
     assert "would shut down" in _run_script(marker, "60").stdout
+
+
+def test_idle_script_refuses_a_malformed_threshold(tmp_path):
+    marker = tmp_path / "last-activity"
+    marker.write_text("")  # fresh: must never halt
+    env = {"PATH": os.environ["PATH"], "ACTIVITY_FILE": str(marker), "IDLE_SECONDS": "1h"}
+    out = subprocess.run(["bash", str(asset_path(SCRIPT)), "--dry-run"],
+                         env=env, capture_output=True, text=True)
+    assert out.returncode != 0
+    assert "would shut down" not in out.stdout and "halting" not in out.stdout
+    assert "bad IDLE_SECONDS" in out.stderr
 
 
 def test_idle_script_treats_a_missing_marker_as_not_idle(tmp_path):

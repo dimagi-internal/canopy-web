@@ -85,6 +85,11 @@ Resources:
   # No ingress rules. Access is via SSM only.
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    # Retained with the instance: deleting it under a retained instance would
+    # fail the stack delete (SG still attached) / strip the instance's SSM
+    # credentials (role, profile).
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       GroupName: !Sub "ondemand-${Capability}"
       GroupDescription: !Sub "Egress-only SG for the ${Capability} on-demand runner. SSM only - no inbound."
@@ -115,6 +120,11 @@ Resources:
   # capability upload artifacts to its bucket. Nothing else.
   InstanceRole:
     Type: AWS::IAM::Role
+    # Retained with the instance: deleting it under a retained instance would
+    # fail the stack delete (SG still attached) / strip the instance's SSM
+    # credentials (role, profile).
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       RoleName: !Sub "ondemand-${Capability}-instance"
       Description: !Sub "EC2 instance role for the ${Capability} on-demand runner."
@@ -147,6 +157,11 @@ Resources:
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
+    # Retained with the instance: deleting it under a retained instance would
+    # fail the stack delete (SG still attached) / strip the instance's SSM
+    # credentials (role, profile).
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       InstanceProfileName: !Sub "ondemand-${Capability}-instance"
       Roles:
@@ -156,6 +171,15 @@ Resources:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateName: !Sub "ondemand-${Capability}"
+      # Tags the launch template itself. (AWS::IAM::ManagedPolicy and
+      # AWS::IAM::InstanceProfile have no Tags property in CloudFormation, so
+      # ConsumerPolicy and InstanceProfile are the only untagged resources.)
+      TagSpecifications:
+        - ResourceType: launch-template
+          Tags:
+            - { Key: owner, Value: !Ref OwnerTag }
+            - { Key: capability, Value: !Ref Capability }
+            - { Key: managed-by, Value: cloudformation }
       VersionDescription: !Sub "${Capability} on-demand runner - SSM-only, stops on shutdown."
       LaunchTemplateData:
         ImageId: !Ref AmiId
@@ -166,6 +190,11 @@ Resources:
           - !GetAtt SecurityGroup.GroupId
         # A halt (the in-VM watchdog's `shutdown -h now`) STOPS the instance.
         InstanceInitiatedShutdownBehavior: stop
+        # Detailed (1-minute) monitoring. Basic monitoring publishes CPU only
+        # every 5 minutes, which IdleStopAlarm's 60 s periods would see as
+        # missing data (notBreaching) and never fire on.
+        Monitoring:
+          Enabled: true
         UserData: !If [HasUserData, !Ref UserData, !Ref "AWS::NoValue"]
         CpuOptions: !If
           - WantsNestedVirtualization
