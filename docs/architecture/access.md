@@ -312,3 +312,44 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   At claim a digest turn yields to every other queued turn.
 * **Retention** (`apps/retention`) scrubs turn content, not facts or digests; a
   fact whose source turn was scrubbed keeps its statement.
+
+### v1.1 (canopy#804 follow-ups, 2026-10-07)
+
+* **Project participants.** `AgentProject.participants` (through
+  `ProjectParticipant`: `role` free text ≤ 80, `source` fact | turn | manual,
+  `created_at`; one row per project and person, the FIRST source wins). Filled
+  automatically (`apps/agents/participants.py`): any fact filed against a project
+  makes its subject a participant (`people.record_fact`), and a task in a project
+  whose `raised_by` turn a HUMAN started makes that human one (task create, patch,
+  `set_task_project`). Served only inside the agent's workspace: on the project
+  detail (`participants`: id, display_name, email, role, source, since — same gate
+  as the project), at `GET /api/people/{id}/projects/?workspace=` (same gates as
+  `GET /api/people/{id}/`, logged), and in the envelope `person.projects` (id,
+  ext_id, name, agent — at most 5, most recently active first, archived left out;
+  additive, envelope stays v3). Backfill: migration `agents/0041` (facts) and
+  `manage.py backfill_project_participants` (facts and task raisers).
+* **Coverage — a dead brain must be loud.** `GET /api/people/coverage/?workspace=
+  &days=7` and `manage.py people_coverage --workspace <slug> [--days N] [--json]`
+  (exit 1 when unhealthy), both from `apps/contacts/coverage.py`. Per agent:
+  human-started turns, how many were handed a NON-EMPTY person block (≥ 1 live fact
+  or a non-empty digest), digest turns queued/done/failed/cancelled, facts the
+  agent wrote, and the median digest age of the people it talked to. "Non-empty"
+  is recorded when the envelope is BUILT, as `PersonAccess.had_context` on the
+  envelope read — not re-derived later from facts that have since changed.
+  **Rule:** `healthy` = digest-turn failure rate (failed / (done + failed)) < 20 %
+  AND, with ≥ 10 human turns, ≥ 1 fact written; the facts clause is waived for an
+  agent whose digest is switched off; the workspace is healthy when every agent is
+  and `PEOPLE_DIGEST_ENABLED` is on. Counts only, no person named. Members of the
+  workspace; an agent admin who is not a member (an inherited owner) sees only the
+  agents they administer; anyone else 404.
+* **Per-agent opt-out.** `Agent.people_digest_enabled` (default on), honoured by
+  the digest trigger beside `PEOPLE_DIGEST_ENABLED` (either off stops it). Agent
+  admins flip it: `PATCH /api/agents/{slug}/people-digest` (Settings → Who can
+  reach it → Remembers people); the repo upsert cannot.
+* **`Contact.notes` is mirrored into a fact.** Each non-empty `notes` is ONE live
+  `role` fact (declared, asserted by nobody, statement = the first 500 characters
+  flattened to one line), marked `PersonFact.source_contact`. `PATCH
+  /api/contacts/{id}/` with `notes` supersedes the previous mirror (clearing the
+  notes retracts it), so the brain is the one place agents read. The `notes`
+  field is kept. Backfill: migration `contacts/0011` (historical models,
+  idempotent) and `manage.py mirror_contact_notes`.

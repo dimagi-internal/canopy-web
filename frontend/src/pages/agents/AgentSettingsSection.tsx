@@ -5,6 +5,7 @@ import { AgentAccessRoster } from '@/components/agents/AgentAccessRoster'
 import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
 import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
 import { AgentRouting } from '@/components/agents/AgentRouting'
+import { PeopleDigestToggle } from '@/components/agents/PeopleDigestToggle'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
@@ -125,6 +126,17 @@ export function AgentSettingsSection() {
             description={`Whether people can talk to ${agent.name} from the connected Slack — by @mention, DM, or /canopy ${agent.slug}. Members act as themselves; anyone else is answered as a contact.`}
           >
             <SlackAccessToggle agentSlug={agent.slug} initialEnabled={agent.slack_enabled} />
+          </Setting>
+          <Setting
+            title="Remembers people"
+            who="The agent's owner and admins"
+            description={`After someone's conversation with ${agent.name} ends, a short follow-up turn records durable work facts about them (role, projects, preferences, corrections) that every agent in this workspace is told. People can see and retract what is held about them.`}
+          >
+            <PeopleDigestToggle
+              agentSlug={agent.slug}
+              initialEnabled={agent.people_digest_enabled ?? true}
+              canEdit={agent.is_admin ?? false}
+            />
           </Setting>
         </div>
       </Section>

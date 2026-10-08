@@ -122,6 +122,13 @@ def patch_contact(request: HttpRequest, contact_id: int, payload: ContactPatchIn
         setattr(contact, field, value)
     if data:
         contact.save(update_fields=[*data.keys(), "last_seen_at"])
+    if "notes" in data:
+        # The brain is the one place agents read what canopy knows about a
+        # person, so the notes are mirrored into a `role` fact, superseding the
+        # previous mirror (or retracting it when the notes are cleared).
+        from . import people
+
+        people.mirror_contact_notes(contact, by=request.user)
 
     if blocked is True:
         services.block(contact, reason=reason or "")

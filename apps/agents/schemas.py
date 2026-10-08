@@ -88,6 +88,21 @@ class SlackEnabledOut(StrictModel):
     command_detail: str = ""
 
 
+class PeopleDigestEnabledIn(StrictModel):
+    """Whether this agent's conversations with people feed the fleet brain (a
+    people-digest turn after each one). Its own endpoint, like Slack: the
+    agent-repo upsert must not be able to change it."""
+
+    people_digest_enabled: bool
+
+
+class PeopleDigestEnabledOut(StrictModel):
+    people_digest_enabled: bool
+    #: The fleet-wide kill switch (`PEOPLE_DIGEST_ENABLED`). When False no agent
+    #: runs digest turns, whatever its own switch says.
+    globally_enabled: bool
+
+
 class AgentRunnerOut(StrictModel):
     """One row of an agent's ordered runner list (the routing-matrix UI's read
     model). `online`/`ready` are computed per row from `Runner.live_status` /
@@ -310,6 +325,9 @@ class AgentOut(StrictModel):
     # operational state rather than repo config, so the self-publish upsert
     # cannot turn it on.
     slack_enabled: bool = False
+    # Whether a human's finished turn with the agent starts a people-digest turn
+    # (fleet brain v1.1). Agent-admin flipped, via PATCH /people-digest.
+    people_digest_enabled: bool = True
 
 
 class AgentDefinitionOut(StrictModel):
@@ -812,9 +830,24 @@ class TurnBriefOut(StrictModel):
     task_ext_ids: list[str] = Field(default_factory=list)
 
 
+class ProjectParticipantOut(StrictModel):
+    """A person taking part in the project (fleet brain v1.1)."""
+
+    id: int = Field(description="The person's id — `GET /api/people/{id}/?workspace=`.")
+    display_name: str
+    email: str = ""
+    role: str = Field(default="", description="Free text: the part they play. Blank when canopy linked them itself.")
+    source: Literal["fact", "turn", "manual"] = Field(
+        description="How canopy first learned it: a fact filed against the project, a conversation "
+                    "that raised one of its tasks, or a person adding them.")
+    since: dt.datetime
+
+
 class AgentProjectDetailOut(AgentProjectOut):
     #: The project's tasks, live ones first.
     tasks: list[AgentTaskOut] = Field(default_factory=list)
+    #: The people the work involves, newest first (fleet brain v1.1).
+    participants: list[ProjectParticipantOut] = Field(default_factory=list)
     #: The agent's latest turns that worked on any of those tasks.
     recent_turns: list[TurnBriefOut] = Field(default_factory=list)
 

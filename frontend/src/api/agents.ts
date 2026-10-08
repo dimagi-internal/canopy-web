@@ -387,6 +387,17 @@ export async function setAgentSlackEnabled(slug: string, enabled: boolean): Prom
   return unwrap(res, 'setAgentSlackEnabled')
 }
 
+export type PeopleDigestEnabledOut = Schemas['PeopleDigestEnabledOut']
+
+// Agent admins only. Also says whether the deployment-wide switch is on.
+export async function setAgentPeopleDigestEnabled(slug: string, enabled: boolean): Promise<PeopleDigestEnabledOut> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/people-digest', {
+    params: { path: { slug } },
+    body: { people_digest_enabled: enabled },
+  })
+  return unwrap(res, 'setAgentPeopleDigestEnabled')
+}
+
 // Wholesale replace of an agent's ordered runner list — index = rank. Each
 // row carries its own `enabled`: false keeps the row (rank preserved) but it
 // never routes — the toggle that replaced the old remove-chip affordance.

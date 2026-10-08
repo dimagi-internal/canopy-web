@@ -72,6 +72,9 @@ from .schemas import (
     CountOut,
     RunnerPreferenceIn,
     SkillHistoryOut,
+    PeopleDigestEnabledIn,
+    PeopleDigestEnabledOut,
+    ProjectParticipantOut,
     SlackEnabledIn,
     SlackEnabledOut,
     TurnBriefOut,
@@ -702,6 +705,27 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
             detail = f"Removed {name} from Slack."
     return SlackEnabledOut(slack_enabled=agent.slack_enabled, command_status=result["status"],
                            command_detail=detail)
+
+
+@router.patch("/{slug}/people-digest", response=PeopleDigestEnabledOut,
+              summary="Turn an agent's people digest on or off")
+def set_people_digest_enabled(request: HttpRequest, slug: str,
+                              payload: PeopleDigestEnabledIn) -> PeopleDigestEnabledOut:
+    """Whether a person's finished conversation with this agent starts a
+    people-digest turn — the turn that records durable work-context facts
+    about them and refreshes their digest. Agent admins only. Off stops new
+    digest turns for this agent; facts already recorded, and the caller
+    envelope's `person` block, are unaffected."""
+    # Admin, not editor: it decides whether this agent's conversations feed
+    # what every other agent in the workspace is told about a person.
+    from django.conf import settings as dj_settings
+
+    agent = _agent_for_admin(request, slug)
+    agent.people_digest_enabled = payload.people_digest_enabled
+    agent.save(update_fields=["people_digest_enabled", "updated_at"])
+    return PeopleDigestEnabledOut(
+        people_digest_enabled=agent.people_digest_enabled,
+        globally_enabled=bool(getattr(dj_settings, "PEOPLE_DIGEST_ENABLED", True)))
 
 
 @router.get("/{slug}/runtime", response=AgentRuntimeOut,
@@ -1429,10 +1453,14 @@ def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetail
     # Everyone sees what the agent did; a turn's prompt is a log (turn_access).
     turns = turn_access.redact(_turns_touching(agent, [t.ext_id for t in tasks]), request.user)
     # Built from the plain project shape: `project.tasks` is a manager, not a list.
+    from . import participants
+
     return AgentProjectDetailOut(
         **AgentProjectOut.model_validate(project).model_dump(),
         tasks=[AgentTaskOut.model_validate(t) for t in tasks],
         recent_turns=[_turn_brief(t) for t in turns],
+        # Same gate as the rest of the project: members of the agent's workspace.
+        participants=[ProjectParticipantOut(**p) for p in participants.of_project(project)],
     )
 
 

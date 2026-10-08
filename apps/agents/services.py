@@ -176,6 +176,7 @@ def agent_detail(agent: Agent) -> dict:
         "runner_preference": list(agent.runner_preference or []),
         "turn_mode": agent.turn_mode,
         "slack_enabled": agent.slack_enabled,
+        "people_digest_enabled": agent.people_digest_enabled,
         "created_at": agent.created_at,
         "updated_at": agent.updated_at,
         "sync_count": agent.syncs.count(),
@@ -523,6 +524,15 @@ def set_task_project(task, project) -> None:
     """Put a task in a project (or take it out with None)."""
     task.project = project
     task.save(update_fields=["project", "updated_at"])
+    _link_participants(task)
+
+
+def _link_participants(task) -> None:
+    """A task in a project raised by a human's turn makes them a participant
+    (fleet brain v1.1). Best-effort: never fails the task write."""
+    from . import participants
+
+    participants.on_task(task)
 
 
 # ---- tasks ----
@@ -583,7 +593,7 @@ def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
         ext_id = _claim_ext_id(agent, (p.get("ext_id") or "").strip())
         try:
             with transaction.atomic():  # savepoint
-                out.append(AgentTask.objects.create(
+                task = AgentTask.objects.create(
                     agent=agent,
                     ext_id=ext_id,
                     project=get_project(agent, ref) if ref else None,
@@ -592,7 +602,9 @@ def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
                     raised_by_id=raised_by,
                     waiting_on_user=waiting_on,
                     **fields,
-                ))
+                )
+            out.append(task)
+            _link_participants(task)
         except IntegrityError:
             replay = AgentTask.objects.filter(agent=agent, idempotency_key=key).first() if key else None
             if replay is not None:
@@ -682,6 +694,8 @@ def patch_task(task: AgentTask, data) -> AgentTask:
         ref = (data["project"] or "").strip()
         task.project = get_project(task.agent, ref) if ref else None
     task.save()
+    if "project" in data:
+        _link_participants(task)
     return task
 
 
