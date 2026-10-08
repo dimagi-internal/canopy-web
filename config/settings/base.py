@@ -590,15 +590,13 @@ CANOPY_AUTO_DEBUG_LOST = env.bool("CANOPY_AUTO_DEBUG_LOST", default=False)
 # OFF by default since 2026-10-07. v1 (canopy#804, approved and switched on the same
 # day) started a full agent session per human turn (debounced per agent+person), and the
 # "human" turns included agent dispatches carrying the human as initiator — so every
-# piece of dispatched work spawned a digest session on the owner's laptop runner. v2
-# (canopy#820) replaces that hook with ONE batched turn per agent per day, only for agents
-# with real conversations to digest, pinned to cloud runners — and STAYS off by default:
-# Jonathan flips it. When ON: the first runner heartbeat at or after
-# PEOPLE_DIGEST_SWEEP_HOUR_UTC each day enqueues `/canopy:people-digest --batch` for every
-# agent whose own switch is on and whose digest-candidates list is non-empty. Facts,
-# digests and the envelope `person` block work either way.
+# piece of dispatched work spawned a digest session on the owner's laptop runner. Paused
+# while the design is reworked toward a batched sweep. When ON: a turn a HUMAN started
+# with an agent finishing DONE enqueues a `/canopy:people-digest` turn for that agent, at
+# most once per (agent, person) per PEOPLE_DIGEST_DEBOUNCE_MINUTES. Facts, digests and
+# the envelope `person` block work either way.
 PEOPLE_DIGEST_ENABLED = env.bool("PEOPLE_DIGEST_ENABLED", default=False)
-PEOPLE_DIGEST_SWEEP_HOUR_UTC = env.int("PEOPLE_DIGEST_SWEEP_HOUR_UTC", default=6)
+PEOPLE_DIGEST_DEBOUNCE_MINUTES = env.int("PEOPLE_DIGEST_DEBOUNCE_MINUTES", default=60)
 
 # --- Outbound email (apps/common/email.py) ---
 # OFF unless CANOPY_EMAIL_ENABLED is set: sending needs a verified SES identity

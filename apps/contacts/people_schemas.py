@@ -149,11 +149,8 @@ class AgentCoverageOut(StrictModel):
     """How well the people brain served one agent over the window."""
 
     agent: str
-    enabled: bool = Field(description="This agent's switch AND the fleet-wide one. Only an enabled agent is "
-                                      "judged: a switched-off one is `healthy` with a note.")
-    digest_enabled: bool = Field(description="Same as `enabled` (the v1 name, kept for older readers).")
-    human_turns: int = Field(description="REAL conversations with the agent: a human talking through chat, "
-                                         "email or Slack — not a dispatch, huddle, approval, schedule or digest.")
+    digest_enabled: bool = Field(description="This agent's switch AND the fleet-wide one.")
+    human_turns: int = Field(description="Turns with the agent a human started (not canopy, not another agent).")
     human_turns_with_context: int = Field(
         description="Of those, how many were handed a person block with at least one fact or a digest, "
                     "as recorded when the envelope was built.")
@@ -180,22 +177,3 @@ class PeopleCoverageOut(StrictModel):
     rule: str = Field(description="The rule `healthy` applies, in words.")
     healthy: bool
     agents: list[AgentCoverageOut]
-
-
-class DigestCandidateOut(StrictModel):
-    """Someone with real conversations the agent has not digested yet."""
-
-    person: int
-    display_name: str
-    email: str = ""
-    since: str = Field(description="The agent's last digest of them, or 14 days ago if it never digested them. "
-                                   "Read their conversations from here (`/api/people/{id}/conversations/?since=`).")
-    conversations: int = Field(description="Real conversations with the agent after `since`.")
-
-
-class DigestCandidatesOut(StrictModel):
-    """The people digest's work list for one agent (canopy#820)."""
-
-    agent: str
-    workspace: str
-    candidates: list[DigestCandidateOut]

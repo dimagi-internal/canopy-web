@@ -414,14 +414,7 @@ class Turn(models.Model):
     ]
 
     PREFER_LOCAL, LOCAL_ONLY, ANY = "prefer_local", "local_only", "any"
-    # CLOUD_ONLY: only a `Runner.CLOUD` box may claim it — never a laptop, not even
-    # through a pin (claim_next_turn checks it above the pin). canopy's own
-    # background work sets it (the people digest, canopy#820): a sweep that runs
-    # while nobody is watching must not open sessions on someone's laptop. Not
-    # postable (schemas.Routing): it is server-authored only.
-    CLOUD_ONLY = "cloud_only"
-    ROUTING_CHOICES = [(PREFER_LOCAL, "Prefer local"), (LOCAL_ONLY, "Local only"), (ANY, "Any"),
-                       (CLOUD_ONLY, "Cloud only")]
+    ROUTING_CHOICES = [(PREFER_LOCAL, "Prefer local"), (LOCAL_ONLY, "Local only"), (ANY, "Any")]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     # A turn targets EITHER an agent or a repo — exactly one (see the

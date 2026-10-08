@@ -6512,33 +6512,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/people/digest-candidates/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * Who an agent has talked to since it last digested them
-         * @description The people digest's work list (canopy#820): every person with at least one
-         *     REAL conversation with `agent` (chat, email or Slack from a human — not a
-         *     dispatch, huddle, approval, schedule or digest) since that agent last
-         *     digested them, most recently active first, at most `limit` (1–200).
-         *
-         *     `since` is where to read their conversations from. Only for that agent's OWN
-         *     login, or an admin of that agent — the same gate as its conversations. One
-         *     query; starts nothing.
-         */
-        readonly get: operations["list_digest_candidates"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/people/lookup/": {
         readonly parameters: {
             readonly query?: never;
@@ -16626,18 +16599,13 @@ export interface components {
             /** Agent */
             readonly agent: string;
             /**
-             * Enabled
-             * @description This agent's switch AND the fleet-wide one. Only an enabled agent is judged: a switched-off one is `healthy` with a note.
-             */
-            readonly enabled: boolean;
-            /**
              * Digest Enabled
-             * @description Same as `enabled` (the v1 name, kept for older readers).
+             * @description This agent's switch AND the fleet-wide one.
              */
             readonly digest_enabled: boolean;
             /**
              * Human Turns
-             * @description REAL conversations with the agent: a human talking through chat, email or Slack — not a dispatch, huddle, approval, schedule or digest.
+             * @description Turns with the agent a human started (not canopy, not another agent).
              */
             readonly human_turns: number;
             /**
@@ -16719,43 +16687,6 @@ export interface components {
             readonly healthy: boolean;
             /** Agents */
             readonly agents: readonly components["schemas"]["AgentCoverageOut"][];
-        };
-        /**
-         * DigestCandidateOut
-         * @description Someone with real conversations the agent has not digested yet.
-         */
-        readonly DigestCandidateOut: {
-            /** Person */
-            readonly person: number;
-            /** Display Name */
-            readonly display_name: string;
-            /**
-             * Email
-             * @default
-             */
-            readonly email: string;
-            /**
-             * Since
-             * @description The agent's last digest of them, or 14 days ago if it never digested them. Read their conversations from here (`/api/people/{id}/conversations/?since=`).
-             */
-            readonly since: string;
-            /**
-             * Conversations
-             * @description Real conversations with the agent after `since`.
-             */
-            readonly conversations: number;
-        };
-        /**
-         * DigestCandidatesOut
-         * @description The people digest's work list for one agent (canopy#820).
-         */
-        readonly DigestCandidatesOut: {
-            /** Agent */
-            readonly agent: string;
-            /** Workspace */
-            readonly workspace: string;
-            /** Candidates */
-            readonly candidates: readonly components["schemas"]["DigestCandidateOut"][];
         };
         /** PersonRefOut */
         readonly PersonRefOut: {
@@ -25803,29 +25734,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PeopleCoverageOut"];
-                };
-            };
-        };
-    };
-    readonly list_digest_candidates: {
-        readonly parameters: {
-            readonly query: {
-                readonly agent: string;
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["DigestCandidatesOut"];
                 };
             };
         };

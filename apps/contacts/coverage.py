@@ -8,17 +8,16 @@ brain must be loud.
 
 What is counted, for each agent of the workspace, over the last `days`:
 
-* `human_turns` — REAL conversations with the agent (directly or in one of its
-  chats): `people.real_conversation_q` — a human talking through chat, email or
-  Slack, never a dispatch carrying their name, a huddle, an approval, a schedule
-  or a digest. The same rule picks the digest's candidates (canopy#820).
+* `human_turns` — turns WITH the agent (directly or in one of its chats) that a
+  human started: a canopy user who is not an agent's login or a system account,
+  or a contact. People-digest turns are canopy's (initiator `system`), so they
+  are never in it.
 * `human_turns_with_context` — of those, how many were handed a NON-EMPTY
   `person` block: at least one live fact or a non-empty digest, recorded at the
   moment the envelope was built (`PersonAccess.had_context`). Recorded rather
   than re-derived, because "did the agent know anything" is a fact about that
   moment; the facts may have changed since.
-* `digest_turns` — the digest turns created in the window (v2: one batch turn
-  per agent per day; v1's per-person ones still count), by state: `queued`
+* `digest_turns` — the digest turns created in the window, by state: `queued`
   (not finished yet), `done`, `failed` (failed, lost or missed), `cancelled`.
 * `facts_written` — facts the agent's login asserted in this workspace.
 * `median_digest_age_hours` — for the people who started a human turn with the
@@ -32,18 +31,18 @@ THE RULE (`healthy`), deliberately simple so it can be read off the numbers:
 * when the agent had at least 10 human turns, it wrote at least one fact.
 
 An agent whose digest is switched off (its own switch, or the global
-`PEOPLE_DIGEST_ENABLED`) is reported `enabled: false` and NOT judged: it is
-`healthy` with a note saying why, because "switched off" is a decision, not a
-fault, and a health check that pages on a decision gets ignored (canopy#820).
-The top-level `healthy` is every ENABLED agent's; `digest_enabled_globally`
-says whether the fleet-wide switch is on.
+`PEOPLE_DIGEST_ENABLED`) is reported `digest_enabled: false` and judged only on
+the failure rate: no facts is then expected, not a symptom. The top-level
+`healthy` is every agent's AND the global switch being on — a fleet with the
+brain switched off is, by definition, not running one.
 """
 from __future__ import annotations
 
 import datetime as dt
 import statistics
 
-from django.db.models import Exists, OuterRef
+from django.conf import settings
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 #: Failure rate at or above which the digest is unhealthy.
@@ -54,16 +53,33 @@ MIN_TURNS_FOR_FACTS = 10
 MIN_DAYS, MAX_DAYS = 1, 90
 
 
+def human_turn_q(prefix: str = "") -> Q:
+    """Turns a HUMAN started: a canopy user who is not an agent's own login nor a
+    system account, or a contact. The same rule as `people.initiator_person`,
+    as a query."""
+    p = prefix
+    return (
+        Q(**{f"{p}initiator_kind": "contact", f"{p}initiator_contact__isnull": False})
+        | Q(**{f"{p}initiator_kind": "user", f"{p}initiator_user__isnull": False,
+               f"{p}initiator_user__agent_identity__isnull": True,
+               f"{p}initiator_user__system_account__isnull": True})
+    )
+
+
+def _with_agent(agent) -> Q:
+    return Q(agent=agent) | Q(chat_session__agent=agent)
+
+
 def agent_coverage(agent, *, since: dt.datetime, now: dt.datetime) -> dict:
     from apps.harness.models import Turn
-    from apps.harness.people_digest import KEY_PREFIX, enabled_globally
+    from apps.harness.people_digest import KEY_PREFIX
 
-    from . import people
     from .models import PersonAccess, PersonDigest, PersonFact
 
     ws = agent.workspace_id
-    human = (Turn.objects.filter(people.with_agent_q(agent), created_at__gte=since)
-             .filter(people.real_conversation_q()))
+    human = (Turn.objects.filter(_with_agent(agent), created_at__gte=since)
+             .filter(human_turn_q())
+             .exclude(idempotency_key__startswith=KEY_PREFIX))
     had = PersonAccess.objects.filter(turn=OuterRef("pk"), via=PersonAccess.VIA_ENVELOPE,
                                       had_context=True)
     human_ids = list(human.values_list("pk", flat=True))
@@ -98,15 +114,15 @@ def agent_coverage(agent, *, since: dt.datetime, now: dt.datetime) -> dict:
             .values_list("updated_at", flat=True)]
     median_age = round(statistics.median(ages), 1) if ages else None
 
-    enabled = bool(agent.people_digest_enabled) and enabled_globally()
+    enabled = bool(agent.people_digest_enabled) and bool(getattr(settings, "PEOPLE_DIGEST_ENABLED", True))
     finished = done + failed
     failure_rate = round(failed / finished, 3) if finished else None
-    problems: list[str] = []  # each one makes an ENABLED agent unhealthy
-    if enabled and failure_rate is not None and failure_rate >= MAX_FAILURE_RATE:
+    problems: list[str] = []  # each one makes the agent unhealthy
+    if failure_rate is not None and failure_rate >= MAX_FAILURE_RATE:
         problems.append(f"{failed} of {finished} finished digest turns failed "
                         f"(>= {int(MAX_FAILURE_RATE * 100)}%)")
     if enabled and human_turns >= MIN_TURNS_FOR_FACTS and facts_written == 0:
-        problems.append(f"{human_turns} real conversations and no facts written")
+        problems.append(f"{human_turns} human turns and no facts written")
     notes: list[str] = []  # said, but not judged
     if not enabled:
         notes.append("people digest is switched off for this agent"
@@ -117,7 +133,6 @@ def agent_coverage(agent, *, since: dt.datetime, now: dt.datetime) -> dict:
 
     return {
         "agent": agent.slug,
-        "enabled": enabled,
         "digest_enabled": enabled,
         "human_turns": human_turns,
         "human_turns_with_context": with_context,
@@ -136,7 +151,6 @@ def agent_coverage(agent, *, since: dt.datetime, now: dt.datetime) -> dict:
 def workspace_coverage(workspace_slug: str, *, days: int = 7, agents=None, now=None) -> dict:
     """Coverage for every agent of the workspace (or the given subset)."""
     from apps.agents.models import Agent
-    from apps.harness.people_digest import enabled_globally
 
     days = max(MIN_DAYS, min(MAX_DAYS, int(days)))
     now = now or timezone.now()
@@ -144,7 +158,7 @@ def workspace_coverage(workspace_slug: str, *, days: int = 7, agents=None, now=N
     if agents is None:
         agents = Agent.objects.filter(workspace_id=workspace_slug)
     rows = [agent_coverage(a, since=since, now=now) for a in agents.order_by("slug")]
-    globally = enabled_globally()
+    globally = bool(getattr(settings, "PEOPLE_DIGEST_ENABLED", True))
     return {
         "workspace": workspace_slug,
         "days": days,
@@ -152,9 +166,9 @@ def workspace_coverage(workspace_slug: str, *, days: int = 7, agents=None, now=N
         "generated_at": now.isoformat(),
         "digest_enabled_globally": globally,
         "rule": (f"healthy = digest-turn failure rate < {int(MAX_FAILURE_RATE * 100)}% and, "
-                 f"with >= {MIN_TURNS_FOR_FACTS} real conversations, >= 1 fact written; "
-                 "only ENABLED agents (their own switch and the global one) are judged; "
-                 "the workspace is healthy when every enabled agent is"),
-        "healthy": all(r["healthy"] for r in rows if r["enabled"]),
+                 f"with >= {MIN_TURNS_FOR_FACTS} human turns, >= 1 fact written "
+                 "(the facts clause is waived for an agent whose digest is switched off); "
+                 "the workspace is healthy when every agent is and the global switch is on"),
+        "healthy": globally and all(r["healthy"] for r in rows),
         "agents": rows,
     }

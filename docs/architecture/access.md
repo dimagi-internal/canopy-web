@@ -303,30 +303,13 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   50 reads. Every read — the envelope's and the API's — is a `PersonAccess` row.
 * **Who may retract**: the person, whoever asserted it (the user, or the asserting
   agent's login), or a workspace admin (`members.manage`).
-* **The forced write (v2, canopy#820).** Once a day (the first runner heartbeat at
-  or after `PEOPLE_DIGEST_SWEEP_HOUR_UTC`) canopy enqueues ONE
-  `/canopy:people-digest --batch --agent <slug> --workspace <slug>` turn per agent
-  whose work list is non-empty (`apps/harness/people_digest.py`): initiator
-  `system`, `origin_ref {trigger: people_digest, batch: true, no_outbound: true}`,
-  `routing=cloud_only`, at most one waiting per agent. Off with
-  `PEOPLE_DIGEST_ENABLED` (default off) or the agent's own switch. At claim a
-  digest turn yields to every other queued turn.
-* **A real conversation** (`people.real_conversation_q`, the ONE definition the
-  work list, `/conversations/` and coverage share): a human initiator (not an
-  agent's login, a system account, an agent's mailbox or an address that is an
-  agent's login) through `canopy_web_chat` (incl. widgets), `email` or `slack`;
-  never a task approval, a PAT, an MCP tool call, a session transfer, a huddle
-  anchor or round, or a digest turn. `api`, `ace_web` and `canopy_scheduler`
-  turns never count, whoever they name as initiator.
-* **The work list.** `GET /api/people/digest-candidates/?agent=<slug>&limit=50`
-  — `{agent, workspace, candidates: [{person, display_name, email, since,
-  conversations}]}`: people with ≥ 1 real conversation with the agent since ITS
-  watermark (`PersonDigestMark`, per person and agent, moved when the agent's
-  login writes the digest — to the newest `source_turn_ids` turn, else now) or 14
-  days back. The agent's own login or its admins; one query, starts nothing.
-* **Cloud only.** A `cloud_only` turn is claimed only by a `Runner.CLOUD` box —
-  `claim_next_turn` checks it above the pin, so no laptop takes it, ranked or
-  pinned; with only laptops assigned it reports as unroutable (`config`).
+* **The forced write.** When a turn a human started with an agent finishes DONE,
+  canopy enqueues a `/canopy:people-digest` turn for the same agent
+  (`apps/harness/people_digest.py`): initiator `system`, `origin_ref.trigger =
+  people_digest`, no outbound; debounced per (agent, person) by
+  `PEOPLE_DIGEST_DEBOUNCE_MINUTES`; never for a digest turn, a canopy- or
+  agent-started turn, or a turn with no agent; off with `PEOPLE_DIGEST_ENABLED`.
+  At claim a digest turn yields to every other queued turn.
 * **Retention** (`apps/retention`) scrubs turn content, not facts or digests; a
   fact whose source turn was scrubbed keeps its statement.
 
@@ -354,10 +337,9 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   is recorded when the envelope is BUILT, as `PersonAccess.had_context` on the
   envelope read — not re-derived later from facts that have since changed.
   **Rule:** `healthy` = digest-turn failure rate (failed / (done + failed)) < 20 %
-  AND, with ≥ 10 real conversations, ≥ 1 fact written, judged only for an agent
-  whose digest is ON (`enabled`: its switch and the global one) — a switched-off
-  agent is healthy with a note; the workspace is healthy when every enabled agent
-  is, and says `digest_enabled_globally` (v2, canopy#820). Counts only, no person named. Members of the
+  AND, with ≥ 10 human turns, ≥ 1 fact written; the facts clause is waived for an
+  agent whose digest is switched off; the workspace is healthy when every agent is
+  and `PEOPLE_DIGEST_ENABLED` is on. Counts only, no person named. Members of the
   workspace; an agent admin who is not a member (an inherited owner) sees only the
   agents they administer; anyone else 404.
 * **Per-agent opt-out.** `Agent.people_digest_enabled` (default on), honoured by
