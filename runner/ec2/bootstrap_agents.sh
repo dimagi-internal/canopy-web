@@ -799,8 +799,9 @@ install_agent_plugin() {
 # rather than needing the marketplace to authenticate — which is why that token
 # must also reach the repos its plugins come from; and the clone IS the marketplace, so the `git pull`
 # on a later run is also how the dependency updates. No second copy to keep in sync.
-install_required_plugins() {
+install_required_plugins() {  # <slug> <clone> [vault] [key] [shared-vault] [shared-key]
   local slug="$1" dest="$2"
+  local vault="${3:-}" op_token="${4:-}" shared_vault="${5:-}" shared_token="${6:-}"
   local cfg="$dest/config/agent.json"
   [[ -f "$cfg" ]] || return 0
   if ! command -v claude >/dev/null 2>&1; then
@@ -812,10 +813,15 @@ install_required_plugins() {
   specs="$(python3 "$SCRIPT_DIR/required_plugins.py" "$cfg" 2>/dev/null)" || return 0
   [[ -n "$specs" ]] || return 0
 
-  local pname market mname note pdir
+  local pname market mname note pdir installed
   while IFS=$'\t' read -r pname market mname note; do
     [[ -n "$pname" ]] || continue
-    if claude plugin list 2>/dev/null | grep -q "${pname}@${mname}"; then
+    installed=0
+    claude plugin list 2>/dev/null | grep -q "${pname}@${mname}" && installed=1
+    pdir="$PLUGIN_DEPS_ROOT/$pname"
+    # Installed from somewhere other than a clone of ours (a marketplace, a
+    # laptop-style install): not this function's to refresh.
+    if (( installed )) && [[ ! -d "$pdir/.git" ]]; then
       ok "$slug: required plugin ${pname}@${mname} already installed"
       continue
     fi
@@ -823,7 +829,6 @@ install_required_plugins() {
       warn "$slug: required plugin '$pname' declares no marketplace — cannot install it here"
       continue
     fi
-    pdir="$PLUGIN_DEPS_ROOT/$pname"
     if ! mkdir -p "$PLUGIN_DEPS_ROOT" 2>/dev/null; then
       warn "$slug: cannot create $PLUGIN_DEPS_ROOT — required plugin '$pname' not installed"
       continue
@@ -831,9 +836,23 @@ install_required_plugins() {
     # Keep the REAL error. The first version swallowed stderr and guessed
     # "is the staged GitHub token valid?", which sent the diagnosis at a token that
     # was working fine while the actual fault (an unwritable /opt) went unmentioned.
+    #
+    # Pulled on EVERY pass, installed or not. This used to `continue` as soon as
+    # the plugin was installed, so the clone was never updated again and — once
+    # installed without node deps — never got them (canopy-web#1237).
     local clone_err
     if ! clone_err="$(clone_or_pull "https://github.com/${market}.git" "$pdir" 2>&1 >/dev/null)"; then
       warn "$slug: clone/pull of $market failed: ${clone_err:-(no output)}"
+      (( installed )) || continue
+    fi
+    # A directory-source plugin's MCP servers run FROM this clone, so its node
+    # deps must be here. Without them chrome-sales' servers died at import
+    # (`Cannot find module '@modelcontextprotocol/sdk/...'`), which Claude Code
+    # reports only as CONNECTION_CLOSED — cloud-ec2-2, canopy-web#1237.
+    ensure_clone_node_deps "$pname" "$pdir"
+    stage_plugin_secrets "$slug" "$pname" "$pdir" "$vault" "$op_token" "$shared_vault" "$shared_token"
+    if (( installed )); then
+      ok "$slug: required plugin ${pname}@${mname} already installed (clone refreshed)"
       continue
     fi
     if ! claude plugin marketplace list 2>/dev/null | grep -qE "(^|[[:space:]])${mname}\$"; then
@@ -847,6 +866,62 @@ install_required_plugins() {
       warn "$slug: claude plugin install ${pname}@${mname} failed"
     fi
   done <<<"$specs"
+  return 0
+}
+
+# The key FILES a dependency plugin's MCP servers read from its own root
+# (chrome-sales' gdrive server: `<plugin-root>/.gws-sa-key.json`), declared in
+# the plugin's config/secrets.yaml — the file `canopy provision` reads on a
+# laptop. See plugin_secrets.py for which entries count.
+#
+# Read from the two vaults this box may read, each with its OWN key: the agent's
+# vault, then the workspace's shared vault. The declared vault (a laptop
+# operator's, e.g. AI-Agents) is not one of them. A secret in neither is a
+# warning that names the item to share, never a failure — the plugin is still
+# installed and its other servers still work.
+stage_plugin_secrets() {  # <slug> <plugin> <clone> <vault> <key> <shared-vault> <shared-key>
+  local slug="$1" pname="$2" pdir="$3"
+  local vault="$4" op_token="$5" shared_vault="$6" shared_token="$7"
+  local spec="$pdir/config/secrets.yaml"
+  [[ -f "$spec" ]] || return 0
+  local rows
+  rows="$(python3 "$SCRIPT_DIR/plugin_secrets.py" "$spec" 2>/dev/null)" || return 0
+  [[ -n "$rows" ]] || return 0
+  declare -gA BOOTSTRAP_DETAIL
+
+  local sname item rel mode target tmp got tried pair v t
+  while IFS=$'\t' read -r sname item rel mode; do
+    [[ -n "$sname" ]] || continue
+    target="$pdir/$rel"
+    if [[ -s "$target" ]]; then
+      ok "$slug: ${pname} secret '$sname' already staged"
+      continue
+    fi
+    if ! command -v op >/dev/null 2>&1; then
+      warn "$slug: op unavailable — cannot stage ${pname} secret '$sname'"
+      continue
+    fi
+    tmp="$target.tmp.$$"
+    got=""; tried=""
+    # Unit separator, never a tab or a space: a blank agent vault must not
+    # collapse into the shared vault's slot (see agent_vault_config).
+    for pair in "$vault"$'\x1f'"$op_token" "$shared_vault"$'\x1f'"$shared_token"; do
+      v="${pair%%$'\x1f'*}"; t="${pair#*$'\x1f'}"
+      [[ -n "$v" && -n "$t" ]] || continue
+      tried="${tried:+$tried, }op://$v/$item"
+      if OP_SERVICE_ACCOUNT_TOKEN="$t" op read "op://$v/$item" >"$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+        got="$v"; break
+      fi
+    done
+    if [[ -n "$got" ]]; then
+      mv -f "$tmp" "$target" && chmod "$mode" "$target" 2>/dev/null
+      ok "$slug: staged ${pname} secret '$sname' from $got"
+    else
+      rm -f "$tmp"
+      warn "$slug: ${pname} secret '$sname' is in neither vault this box reads (${tried:-none registered}) — share 1Password item '${item%%/*}' into the workspace's shared vault"
+      mark BOOTSTRAP_DETAIL "$slug" "$(detail_join "$slug" "${pname}: secret '$sname' not staged — share 1Password item '${item%%/*}' into the workspace's shared vault")"
+    fi
+  done <<<"$rows"
 }
 
 # Turns run IN the clone, and a directory-source plugin runs from it, so the
@@ -855,9 +930,19 @@ install_required_plugins() {
 # clone: cloud-ec2-2 (2026-10-05) came up with ace's doctor BROKEN on a missing
 # tsx, and cloud-ec2-1 only passed because something had installed them by hand.
 # `npm ci` when there is a lockfile, so the clone stays clean for `pull --ff-only`.
+#
+# Also re-run when a pull brought a NEWER lockfile than the one npm last
+# installed from (`node_modules/.package-lock.json`, written by every npm >= 7):
+# a dependency added upstream otherwise never arrives, and the server dies at
+# import exactly as if node_modules were missing (canopy-web#1237). A
+# node_modules with no hidden lockfile is left alone — we cannot tell its age.
 ensure_clone_node_deps() {  # <slug> <clone>
   local slug="$1" dest="$2"
-  [[ -f "$dest/package.json" && ! -d "$dest/node_modules" ]] || return 0
+  [[ -f "$dest/package.json" ]] || return 0
+  if [[ -d "$dest/node_modules" ]]; then
+    [[ -f "$dest/package-lock.json" && -f "$dest/node_modules/.package-lock.json" \
+       && "$dest/package-lock.json" -nt "$dest/node_modules/.package-lock.json" ]] || return 0
+  fi
   command -v npm >/dev/null 2>&1 || { warn "$slug: npm not on PATH — no node deps in $dest"; return 0; }
   local verb=install
   [[ -f "$dest/package-lock.json" ]] && verb=ci
@@ -1227,7 +1312,7 @@ bootstrap_one_agent() {
   inject_agent_env "$slug" "$dest" "$vault" "$op_token"
 
   install_agent_plugin "$slug" "$dest"
-  install_required_plugins "$slug" "$dest"
+  install_required_plugins "$slug" "$dest" "$vault" "$op_token" "$shared_vault" "$shared_token"
   CLONE_GH_TOKEN=""
   # The agent's own installer may read 1Password. It gets THIS agent's key and
   # no other — nothing on this box carries a key that spans agents any more.
