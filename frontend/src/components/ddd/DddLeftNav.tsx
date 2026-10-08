@@ -10,6 +10,7 @@ import {
 import { listReviews, type ReviewListItem } from '@/api/reviews'
 import { WorkbenchRail, WorkbenchNavItem } from 'canopy-ui'
 import { useRunSectionNav } from './runSectionNav'
+import { useScopedPath } from '@/lib/scopedLinks'
 
 /**
  * Run-child product-findings review entry, nested under its run. These are NOT
@@ -25,9 +26,10 @@ function FindingsReviewEntry({
   active: boolean
 }) {
   const pending = review.status !== 'resolved'
+  const scoped = useScopedPath()
   return (
     <Link
-      to={`/review/${encodeURIComponent(review.id)}`}
+      to={scoped(`/review/${encodeURIComponent(review.id)}`)}
       className={clsx(
         'flex items-center gap-2 rounded-md px-3 py-0.5 text-[11px] transition-colors',
         active
@@ -108,6 +110,7 @@ function NarrativeRuns({
   activeRunId?: string
 }) {
   const [detail, setDetail] = useState<DddNarrativeDetail | null>(null)
+  const scoped = useScopedPath()
   // Run-child product-findings reviews, grouped by run_id. Sourced from the reviews
   // list (the narrative API doesn't carry run-children), filtered to
   // gate === 'product_findings' so they never show as version rows.
@@ -155,7 +158,7 @@ function NarrativeRuns({
   }
 
   // Highlight a findings-review entry when its /review/:id page is open.
-  const reviewMatch = window.location.pathname.match(/^\/review\/([^/]+)/)
+  const reviewMatch = window.location.pathname.match(/\/review\/([^/]+)/)
   const activeReviewId = reviewMatch ? decodeURIComponent(reviewMatch[1]) : undefined
 
   const currentVersion = detail.current_version?.version ?? null
@@ -193,7 +196,7 @@ function NarrativeRuns({
           <div key={v.review_id ?? `v${v.version ?? 'none'}`} className="flex flex-col gap-0.5">
             {v.review_id != null ? (
               <Link
-                to={`/review/${encodeURIComponent(v.review_id)}`}
+                to={scoped(`/review/${encodeURIComponent(v.review_id)}`)}
                 className={clsx(
                   'flex items-center gap-1.5 rounded-md px-3 py-0.5 transition-colors',
                   isVersionActive

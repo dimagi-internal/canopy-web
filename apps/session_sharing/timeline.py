@@ -1,6 +1,6 @@
 """Timeline source for shared Claude Code sessions.
 
-Link-visible sessions deep-link to the public ``/share/<token>`` viewer; private
+Link-visible sessions deep-link to the public ``/w/<ws>/share/<token>`` viewer; private
 (dimagi-only) sessions fall back to the ``/sessions`` list (there's no per-session
 owner route).
 """
@@ -9,6 +9,8 @@ from __future__ import annotations
 import datetime as dt
 
 from django.db.models import Prefetch
+
+from apps.workspaces.services import scoped_path
 
 from .models import Session, ShareToken
 
@@ -32,7 +34,7 @@ def recent_events(*, limit: int, before: dt.datetime | None, user) -> list:
     for s in cursor_page(qs, "created_at", before=before, limit=limit):
         href = "/sessions"
         if s.visibility == Session.VISIBILITY_LINK and s.active_tokens:
-            href = f"/share/{s.active_tokens[0].token}"
+            href = scoped_path(s.workspace_id, f"/share/{s.active_tokens[0].token}")
         out.append(
             ActivityEvent(
                 subsystem="sessions",

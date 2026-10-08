@@ -100,6 +100,19 @@ def _is_public(path: str) -> bool:
     return any(path == p or path.startswith(p) for p in PUBLIC_PATH_PREFIXES)
 
 
+# The same three viewers under their workspace (/w/<ws>/walkthrough/<id>,
+# /w/<ws>/review/<id>, /w/<ws>/share/<token>) — where every link now points
+# (canopy-web#1289). The SPA SHELL only: the page reads the same self-gating
+# APIs as the flat route, passing `ws` so a row from another workspace 404s.
+# `/w/<ws>/walkthroughs` (the list, plural) and every other tenant page stay
+# behind the gate — the trailing slash after the viewer name is load-bearing.
+_SCOPED_VIEWER = re.compile(r"^/w/[^/]+/(walkthrough|review|share)/")
+
+
+def _is_scoped_viewer(path: str) -> bool:
+    return bool(_SCOPED_VIEWER.match(path))
+
+
 def _is_share_link(path: str) -> bool:
     # /share/<token> (SPA shell) and the public read API (/api/share/<token>)
     # self-gate on the opaque share token, so let anonymous visitors through
@@ -238,6 +251,7 @@ class LoginRequiredMiddleware:
             or _is_walkthrough_link(request)
             or _is_review_link(request.path)
             or _is_share_link(request.path)
+            or _is_scoped_viewer(request.path)
             or _is_ddd_release_link(request)
             or _is_storyboard_link(request)
             or _is_invite_link(request)

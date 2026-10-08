@@ -137,7 +137,11 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Get walkthrough detail */
+        /**
+         * Get walkthrough detail
+         * @description `ws` is the workspace the viewer's URL names (`/w/<ws>/walkthrough/<id>`):
+         *     a walkthrough that lives in another workspace is not at that address.
+         */
         readonly get: operations["get_walkthrough"];
         readonly put?: never;
         readonly post?: never;
@@ -1396,6 +1400,9 @@ export interface paths {
          *     - A member of the review's workspace can read it.
          *     - Anyone may read if visibility=="link" (no token required).
          *     - Otherwise → 404 (don't leak existence).
+         *
+         *     `ws` is the workspace the page's URL names (`/w/<ws>/review/<id>`): a review
+         *     that lives in another workspace is not at that address (404).
          */
         readonly get: operations["get_review"];
         readonly put?: never;
@@ -4022,7 +4029,11 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Public read-only view of a shared session or arc */
+        /**
+         * Public read-only view of a shared session or arc
+         * @description `ws` is the workspace the page's URL names (`/w/<ws>/share/<token>`): a
+         *     share that lives in another workspace is not at that address (404).
+         */
         readonly get: operations["public_share_view"];
         readonly put?: never;
         readonly post?: never;
@@ -6698,6 +6709,8 @@ export interface components {
             readonly links: readonly components["schemas"]["WalkthroughLink"][];
             /** Share Url */
             readonly share_url?: string | null;
+            /** Workspace */
+            readonly workspace?: string | null;
         };
         /**
          * WalkthroughLink
@@ -8384,6 +8397,10 @@ export interface components {
             readonly url: string;
             /** Share Token */
             readonly share_token?: string | null;
+            /** Share Url */
+            readonly share_url?: string | null;
+            /** Workspace */
+            readonly workspace?: string | null;
         };
         /**
          * ReviewCreateIn
@@ -8469,6 +8486,8 @@ export interface components {
             }[];
             /** Is Owner */
             readonly is_owner: boolean;
+            /** Workspace */
+            readonly workspace?: string | null;
             /**
              * Can Decide
              * @default false
@@ -9151,6 +9170,10 @@ export interface components {
             readonly owner_email: string;
             /** Share Token */
             readonly share_token?: string | null;
+            /** Share Url */
+            readonly share_url?: string | null;
+            /** Workspace */
+            readonly workspace?: string | null;
             /**
              * Duplicate
              * @default false
@@ -9186,6 +9209,8 @@ export interface components {
             readonly share_token?: string | null;
             /** Is Owner */
             readonly is_owner: boolean;
+            /** Workspace */
+            readonly workspace?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -9215,6 +9240,10 @@ export interface components {
             readonly owner_email: string;
             /** Share Token */
             readonly share_token?: string | null;
+            /** Share Url */
+            readonly share_url?: string | null;
+            /** Workspace */
+            readonly workspace?: string | null;
         };
         /** ArcCreateIn */
         readonly ArcCreateIn: {
@@ -9271,6 +9300,8 @@ export interface components {
             readonly share_token?: string | null;
             /** Is Owner */
             readonly is_owner: boolean;
+            /** Workspace */
+            readonly workspace?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -9309,6 +9340,8 @@ export interface components {
             readonly share_token?: string | null;
             /** Is Owner */
             readonly is_owner: boolean;
+            /** Workspace */
+            readonly workspace?: string | null;
             /**
              * Created At
              * Format: date-time
@@ -13633,6 +13666,8 @@ export interface components {
             readonly ended_at?: string | null;
             /** Active Seconds */
             readonly active_seconds?: number | null;
+            /** Workspace */
+            readonly workspace?: string | null;
             /**
              * Messages
              * @default []
@@ -16594,6 +16629,7 @@ export interface operations {
         readonly parameters: {
             readonly query?: {
                 readonly t?: string;
+                readonly ws?: string;
             };
             readonly header?: never;
             readonly path: {
@@ -18210,7 +18246,9 @@ export interface operations {
     };
     readonly get_review: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly ws?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly rid: string;
@@ -22190,7 +22228,9 @@ export interface operations {
     };
     readonly public_share_view: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly ws?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly token: string;

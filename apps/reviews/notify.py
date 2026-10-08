@@ -25,7 +25,10 @@ log = logging.getLogger(__name__)
 
 
 def review_path(review: ReviewRequest) -> str:
-    return f"/review/{review.pk}/"
+    """App-relative page URL, under the review's workspace."""
+    from apps.workspaces.services import scoped_path
+
+    return scoped_path(review.workspace_id, f"/review/{review.pk}/")
 
 
 def notify_suggestion(

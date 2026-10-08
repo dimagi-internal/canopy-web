@@ -245,7 +245,7 @@ function AppShell() {
   const presenceReconnectNonce = usePresenceReconnectNonce()
 
   // Anonymous visitors only ever reach the app shell on a public link route
-  // (/walkthrough/:id, /review/:id — see AuthProvider). Every nav destination
+  // (/w/:ws/walkthrough/:id, /w/:ws/review/:id — see AuthProvider). Every nav destination
   // is behind the login gate, so the whole nav (inline + mobile hamburger)
   // would be dead links that bounce to sign-in. Show just the wordmark instead.
   const isAuthed = auth.status === 'authenticated'
@@ -275,6 +275,7 @@ function AppShell() {
   const fullBleed =
     location.pathname.startsWith('/ddd') ||
     location.pathname.startsWith('/review') ||
+    /^\/w\/[^/]+\/review\//.test(location.pathname) ||
     location.pathname.startsWith('/timeline') ||
     // An individual Agent Workspace (/agents/<slug>) is a full-bleed workbench
     // like DDD; the bare /agents LIST stays in the standard container.

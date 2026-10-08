@@ -66,7 +66,7 @@ def ingest_feedback(request: HttpRequest, payload: FeedbackBatchIn) -> dict:
     # default, or their sole membership) — the same resolution every create uses.
     ws = wsvc.creation_workspace(request)
     if ws is None:
-        raise HttpError(422, "no workspace to file feedback in; post via /api/w/{workspace}/feedback/")
+        raise HttpError(422, f"no workspace to file feedback in: {wsvc.creation_refusal(request)}")
     # Filing into the pool is a write to the tenant's product content (the
     # agent's PAT holds editor); reviewers outside it leave notes through the
     # storyboard's own token-gated route, which is unchanged.

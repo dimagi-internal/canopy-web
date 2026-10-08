@@ -22,8 +22,8 @@ export function SessionsPage() {
 
   useEffect(load, [load]);
 
-  const copy = async (token: string) => {
-    await navigator.clipboard.writeText(shareUrl(token));
+  const copy = async (token: string, workspace?: string | null) => {
+    await navigator.clipboard.writeText(shareUrl(token, workspace));
     setCopied(token);
     setTimeout(() => setCopied(null), 1500);
   };
@@ -97,7 +97,7 @@ export function SessionsPage() {
                   <>
                     <a
                       className="text-muted-foreground underline-offset-2 hover:underline"
-                      href={shareUrl(s.share_token)}
+                      href={shareUrl(s.share_token, s.workspace)}
                       target="_blank"
                       rel="noreferrer"
                     >
@@ -105,7 +105,7 @@ export function SessionsPage() {
                     </a>
                     <button
                       className="text-muted-foreground hover:text-foreground"
-                      onClick={() => copy(s.share_token!)}
+                      onClick={() => copy(s.share_token!, s.workspace)}
                     >
                       {copied === s.share_token ? "Copied!" : "Copy link"}
                     </button>

@@ -101,10 +101,7 @@ def upsert_issue(request: HttpRequest, payload: OriginIssueIn) -> Status:
                 422,
                 "No workspace to file this record in",
                 type_=TYPE_VALIDATION,
-                detail=(
-                    "you do not belong to a workspace that can own this; "
-                    "ask an owner for an invite"
-                ),
+                detail=wsvc.creation_refusal(request),
             )
         _require_editor(request, ws.slug, "filing")
         defaults["workspace"] = ws

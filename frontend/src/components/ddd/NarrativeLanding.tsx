@@ -13,6 +13,7 @@ import {
 import { withBase } from '@/lib/basePath'
 import { NarrativeDiff } from './NarrativeDiff'
 import { pairNarrationScenes } from './narrativeScenePairing'
+import { useScopedPath } from '@/lib/scopedLinks'
 
 function fmtDate(iso: string | null): string {
   if (!iso) return ''
@@ -148,6 +149,7 @@ function VersionBlock({
   onChanged: () => void
 }) {
   const [open, setOpen] = useState(isCurrent)
+  const scoped = useScopedPath()
   const [busy, setBusy] = useState(false)
   const label = version.version != null ? `v${version.version}` : 'no narrative'
   // How many scenes this version changed vs the one before it — the thing that
@@ -237,7 +239,7 @@ function VersionBlock({
           )}
           {version.review_id && (
             <a
-              href={withBase(`/review/${version.review_id}`)}
+              href={withBase(scoped(`/review/${version.review_id}`))}
               className="mb-3 inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary transition-colors hover:bg-primary/20"
             >
               Review &amp; edit this version <span aria-hidden>→</span>
@@ -268,6 +270,7 @@ function VersionBlock({
 
 export function NarrativeLanding({ slug }: { slug: string }) {
   const navigate = useNavigate()
+  const scoped = useScopedPath()
   const [detail, setDetail] = useState<DddNarrativeDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -343,7 +346,7 @@ export function NarrativeLanding({ slug }: { slug: string }) {
               "Edit narrative" — neither said a story was waiting (canopy-web#1271). */}
           {detail.current_version?.review_id && (
             <a
-              href={withBase(`/review/${detail.current_version.review_id}`)}
+              href={withBase(scoped(`/review/${detail.current_version.review_id}`))}
               className="mt-2 inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
             >
               Open the current story review <span aria-hidden>→</span>

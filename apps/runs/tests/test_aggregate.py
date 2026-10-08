@@ -65,7 +65,8 @@ def test_build_run_tokenizes_link_visibility_console_embeds():
 
     run = aggregate.build_run(rid)
     assert run["slides"]["content_url"] == f"/walkthrough/{pub.id}/content?t=sekret"
-    assert run["slides"]["viewer_url"] == f"/walkthrough/{pub.id}?t=sekret"
+    # The viewer page lives under its workspace; the content stream stays flat.
+    assert run["slides"]["viewer_url"] == f"/w/{pub.workspace_id}/walkthrough/{pub.id}?t=sekret"
     # Private artifact: no token appended.
     assert run["video"]["content_url"] == f"/walkthrough/{priv.id}/content"
 

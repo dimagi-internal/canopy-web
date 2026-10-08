@@ -399,19 +399,25 @@ def creation_workspace(request) -> Workspace | None:
     It also made `docs/architecture/roles.md` wrong where it says there are
     three ways into a workspace and "no automatic join". There are now three.
 
-    Resolution order, all four legs membership-bound:
+    Resolution, both legs membership-bound:
 
     1. Pinned `/api/w/{ws}/…` — `WorkspaceResolveMiddleware` already gated
        membership before setting `workspace_slug`, so this needs no recheck.
-    2. The org default, IF the caller is a member. This is the leg that keeps
-       every existing flat caller landing exactly where it lands today (the
-       PAT/plugin fleet posts flat, and its humans are `dimagi` members), so
-       the fix is not a behaviour change for anyone legitimate.
-    3. Otherwise the caller's sole membership — unambiguous, so nothing is
-       being guessed on their behalf.
-    4. Otherwise `None`: they belong to nothing, or to several workspaces with
-       no org-default membership to break the tie. Both want an error rather
-       than a guess, and neither leaks anything the caller does not know.
+    2. Otherwise the caller's SOLE workspace (direct memberships plus what they
+       own by inheritance) — unambiguous, so nothing is being guessed.
+    3. Otherwise `None`: they belong to nothing, or to several workspaces and
+       named none. `creation_refusal` says which, for the caller's 422.
+
+    There used to be a leg between 1 and 2: "the org default, if the caller is
+    a member". It silently filed a multi-workspace caller's writes in `dimagi`,
+    which is how the chlorine demo narrative meant for `connect` (its reviewer
+    was a connect member) landed where he could never find it — ACE is an
+    editor in both, named neither, and every write succeeded (canopy-web#1289).
+    Owner decision, 2026-10-08: nothing on canopy outside a workspace, and a
+    caller in more than one must say which.
+
+    Resolving a workspace is not permission to write in it: every caller still
+    checks the editor role on what this returns.
     """
     pinned = getattr(request, "workspace_slug", None)
     if pinned:
@@ -421,10 +427,34 @@ def creation_workspace(request) -> Workspace | None:
     user = getattr(request, "user", None)
     if user is None or not getattr(user, "is_authenticated", False):
         return None
-    default = ensure_default_workspace()
-    if default is not None and is_member(user, default.slug):
-        return default
-    return user_default_workspace(user)
+    # Bootstraps a fresh deployment: the first user owns the org default, so
+    # their first write has somewhere to land. A no-op once it exists.
+    ensure_default_workspace()
+    slugs = user_workspace_slugs(user)
+    if len(slugs) != 1:
+        return None
+    return Workspace.objects.filter(slug=next(iter(slugs))).first()
+
+
+def creation_refusal(request) -> str:
+    """Why `creation_workspace` returned None — the `detail` of the 422.
+
+    Names the caller's workspaces when there are several, because the fix is
+    to pick one, and a refusal that does not say from what is a refusal people
+    work around."""
+    user = getattr(request, "user", None)
+    slugs = (
+        sorted(user_workspace_slugs(user))
+        if user is not None and getattr(user, "is_authenticated", False)
+        else []
+    )
+    if len(slugs) > 1:
+        return (
+            f"you belong to {len(slugs)} workspaces ({', '.join(slugs)}); name the one "
+            "this belongs in: send it to /api/w/<workspace>/… (the MCP tools take "
+            "`workspace`; the canopy CLI reads CANOPY_WEB_WORKSPACE)"
+        )
+    return "you do not belong to a workspace that can own this; ask an owner for an invite"
 
 
 def current_workspace(user, explicit: str | None = None) -> Workspace:
@@ -1095,6 +1125,26 @@ def _who(user) -> str:
 
 def _base_url() -> str:
     return settings.CANOPY_PUBLIC_BASE_URL.rstrip("/")
+
+
+def scoped_path(workspace, path: str) -> str:
+    """`path` under its workspace: `/w/<ws><path>`, app-relative.
+
+    Every page that shows tenant data lives under `/w/:workspace/` — the share
+    links too (owner decision, 2026-10-08). `workspace` is a `Workspace` or a
+    slug; a falsy one leaves the path flat, which is what an unhomed row can
+    honestly offer (the flat routes redirect when they can resolve one)."""
+    slug = getattr(workspace, "slug", workspace)
+    return f"/w/{slug}{path}" if slug else path
+
+
+def scoped_url(workspace, path: str) -> str:
+    """Absolute `scoped_path`, on this deployment's public base URL.
+
+    Never `request.build_absolute_uri`: an MCP tool call reaches the route
+    in-process with no real Host, so that minted `https://localhost/…` links
+    (canopy-web#1289). CANOPY_PUBLIC_BASE_URL is the address people visit."""
+    return f"{_base_url()}{scoped_path(workspace, path)}"
 
 
 def access_request_path(req: WorkspaceAccessRequest) -> str:

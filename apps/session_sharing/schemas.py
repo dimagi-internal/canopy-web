@@ -22,6 +22,8 @@ class SessionListItemOut(StrictModel):
     redaction_count: int = Field(ge=0)
     share_token: str | None = None  # active token, owner only
     is_owner: bool
+    # The workspace it is shared from: its page is /w/<workspace>/share/<token>.
+    workspace: str | None = None
     created_at: dt.datetime
     updated_at: dt.datetime
 
@@ -61,6 +63,10 @@ class SessionUploadOut(StrictModel):
     visibility: SessionVisibility
     owner_email: EmailStr
     share_token: str | None = None
+    # The absolute link to send (…/w/<workspace>/share/<token>); None when private.
+    share_url: str | None = None
+    # The workspace it is shared from: its page is /w/<workspace>/share/<token>.
+    workspace: str | None = None
     duplicate: bool = False
 
 
@@ -118,6 +124,8 @@ class ArcListItemOut(StrictModel):
     item_count: int = Field(ge=0)
     share_token: str | None = None  # active token, owner only
     is_owner: bool
+    # The workspace it is shared from: its page is /w/<workspace>/share/<token>.
+    workspace: str | None = None
     created_at: dt.datetime
     updated_at: dt.datetime
 
@@ -132,6 +140,10 @@ class ArcCreateOut(StrictModel):
     item_count: int = Field(ge=0)
     owner_email: EmailStr
     share_token: str | None = None
+    # The absolute link to send (…/w/<workspace>/share/<token>); None when private.
+    share_url: str | None = None
+    # The workspace it is shared from: its page is /w/<workspace>/share/<token>.
+    workspace: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -168,5 +180,7 @@ class SharedViewOut(StrictModel):
     started_at: dt.datetime | None = None
     ended_at: dt.datetime | None = None
     active_seconds: int | None = None
+    # The workspace it is shared from: its page is /w/<workspace>/share/<token>.
+    workspace: str | None = None
     messages: list[SessionMessageOut] = []  # session kind
     sections: list[SharedSectionOut] = []  # arc kind

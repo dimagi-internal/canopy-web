@@ -47,7 +47,9 @@ export const USER_ROLES: UserRole[] = [
     who: 'An audience. No account, nothing to install, nothing to set up.',
     enforcement: 'No account at all. The only genuinely read-only tier.',
     startHere: 'Open the link. That is the whole of it.',
-    surfaces: ['/storyboard/:slug', '/narrative/:slug', '/walkthrough/:id', '/share/:token'],
+    surfaces: [
+      '/storyboard/:slug', '/narrative/:slug', '/w/:workspace/walkthrough/:id', '/w/:workspace/share/:token',
+    ],
     note:
       'Storyboards, narratives, demo walkthroughs and shared transcripts are all readable ' +
       'anonymously when shared. This is almost certainly the highest-volume interaction ' +

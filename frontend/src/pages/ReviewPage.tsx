@@ -1995,7 +1995,9 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
 // ---------------------------------------------------------------------------
 
 export function ReviewPage() {
-  const { id } = useParams<{ id: string }>()
+  // `workspace` is set on /w/:workspace/review/:id — the API confirms the
+  // review lives there (see FlatArtifactRedirect for the flat route).
+  const { id, workspace } = useParams<{ id: string; workspace?: string }>()
   const auth = useAuth()
 
   // ?t= share-token (stable for page lifetime — intentionally not in deps)
@@ -2007,7 +2009,7 @@ export function ReviewPage() {
   useEffect(() => {
     if (!id) return
     let cancelled = false
-    getReview(id, shareToken)
+    getReview(id, shareToken, workspace)
       .then((d) => { if (!cancelled) setReview(d) })
       .catch((e) => { if (!cancelled) setError(String(e?.message ?? e)) })
     return () => { cancelled = true }

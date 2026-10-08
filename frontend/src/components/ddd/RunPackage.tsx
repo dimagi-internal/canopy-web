@@ -10,6 +10,7 @@ import {
 import { sceneHashFragment, withSceneHash } from '@/lib/sceneHash'
 import { withBase } from '@/lib/basePath'
 import { UPLOADED_CONTENT_SANDBOX } from '@/lib/uploadedContentSandbox'
+import { useScopedPath } from '@/lib/scopedLinks'
 import {
   runSectionDomId,
   useRunSectionNav,
@@ -248,6 +249,7 @@ function ExternalSystemsBlock({ links }: { links: DddLink[] }) {
 
 export function RunPackage({ runId }: { runId: string }) {
   const navigate = useNavigate()
+  const scoped = useScopedPath()
   const location = useLocation()
   const [run, setRun] = useState<DddRunPackage | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -449,7 +451,7 @@ export function RunPackage({ runId }: { runId: string }) {
       >
         {run.narrative?.review_id && (
           <a
-            href={withBase(`/review/${run.narrative.review_id}`)}
+            href={withBase(scoped(`/review/${run.narrative.review_id}`))}
             className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary transition-colors hover:bg-primary/20"
           >
             Edit narrative in review

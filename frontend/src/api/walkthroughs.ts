@@ -63,11 +63,17 @@ export async function listWalkthroughs(
 export async function getWalkthrough(
   id: string,
   token?: string | null,
+  ws?: string | null,
 ): Promise<WalkthroughDetail> {
+  const query = {
+    ...(token ? { t: token } : {}),
+    // The workspace the page's URL names — a walkthrough from another one 404s.
+    ...(ws ? { ws } : {}),
+  };
   const res = await apiV2.GET("/api/walkthroughs/{wid}/", {
     params: {
       path: { wid: id },
-      ...(token ? { query: { t: token } } : {}),
+      ...(Object.keys(query).length ? { query } : {}),
     },
   });
   if (!res.response.ok) {

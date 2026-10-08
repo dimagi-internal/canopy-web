@@ -8,6 +8,8 @@
  */
 
 import { apiUrl, getCsrfToken } from "./base";
+import { withBase } from "../lib/basePath";
+import { scopedPath } from "../lib/scopedLinks";
 
 export type SessionVisibility = "private" | "link";
 export type MessageRole =
@@ -34,6 +36,8 @@ export interface SessionListItem {
   redaction_count: number;
   share_token: string | null;
   is_owner: boolean;
+  /** The workspace it is shared from — its page is /w/<workspace>/share/<token>. */
+  workspace?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -64,6 +68,8 @@ export interface SharedView {
   active_seconds: number | null;
   messages: SessionMessage[]; // session kind
   sections: SharedSection[]; // arc kind
+  /** The workspace it is shared from — its page is /w/<workspace>/share/<token>. */
+  workspace?: string | null;
 }
 
 export class ApiError extends Error {
@@ -102,8 +108,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 /** Public, read-only — works for anonymous visitors with a valid token.
  * Resolves either a single shared session or a multi-session arc. */
-export function getShared(token: string): Promise<SharedView> {
-  return request<SharedView>(`/api/share/${encodeURIComponent(token)}`);
+export function getShared(token: string, ws?: string | null): Promise<SharedView> {
+  // `ws` is the workspace the page's URL names: a share from another one 404s.
+  const q = ws ? `?ws=${encodeURIComponent(ws)}` : "";
+  return request<SharedView>(`/api/share/${encodeURIComponent(token)}${q}`);
 }
 
 export function listMySessions(): Promise<SessionListItem[]> {
@@ -129,6 +137,8 @@ export function deleteSession(slug: string): Promise<void> {
   return request<void>(`/api/sessions/${slug}`, { method: "DELETE" });
 }
 
-export function shareUrl(token: string): string {
-  return `${window.location.origin}/share/${token}`;
+/** The page to send — under the workspace it was shared from (flat when the
+ * row has none; the flat route redirects when it can). */
+export function shareUrl(token: string, workspace?: string | null): string {
+  return `${window.location.origin}${withBase(scopedPath(workspace, `/share/${token}`))}`;
 }

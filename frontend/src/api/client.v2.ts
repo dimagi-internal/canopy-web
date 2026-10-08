@@ -2,6 +2,7 @@ import createClient from "openapi-fetch";
 import type { paths } from "./generated";
 import { API_BASE, getCsrfToken } from "./base";
 import { currentNext, loginHref } from "../auth/loginHref";
+import { isScopedViewerPath } from "../lib/scopedLinks";
 
 // A lapsed session should bounce the user through OAuth exactly ONCE. The guard
 // below is what makes that a bounce and not a loop: if we land back here still
@@ -97,7 +98,8 @@ function isPublicLinkRoute(): boolean {
     p.startsWith("/storyboard/") ||
     p.startsWith("/narrative/") ||
     p.startsWith("/invite/") ||
-    p === "/about"
+    p === "/about" ||
+    isScopedViewerPath(p)
   );
 }
 
@@ -196,6 +198,11 @@ apiV2.use({
     }
     const ws = activeWorkspaceFromUrl();
     if (!ws) return request;
+    // A scoped public viewer (/w/<ws>/walkthrough/<id>?t=…) reads the same
+    // token-gated FLAT route the old link did, naming `ws` as a parameter the
+    // server checks against the row. Rewriting onto /api/w/<ws>/ would put a
+    // membership gate in front of a visitor who holds only the token.
+    if (isScopedViewerPath(window.location.pathname.slice(API_BASE.length))) return request;
     const url = new URL(request.url);
     // openapi-fetch already prefixed API_BASE; match against the
     // deployment-relative path so /canopy/api/agents → /canopy/api/w/:ws/agents.

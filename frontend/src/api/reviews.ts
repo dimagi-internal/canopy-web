@@ -274,6 +274,8 @@ export interface ReviewDetail {
   suggestions: ReviewSuggestion[]
   share_token: string | null
   is_owner: boolean
+  /** The workspace it lives in — its page is /w/<workspace>/review/<id>. */
+  workspace?: string | null
   /** Whether THIS caller may resolve the gate (an editor of the review's workspace).
    *  Everyone else gets the suggest-only editor. */
   can_decide?: boolean
@@ -295,9 +297,13 @@ export interface ReviewDetail {
 // must carry the deployment path prefix themselves.
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '')
 
-function reviewUrl(id: string, token?: string | null): string {
-  const t = token ? `?t=${encodeURIComponent(token)}` : ''
-  return `${API_BASE}/api/reviews/${id}/${t}`
+function reviewUrl(id: string, token?: string | null, ws?: string | null): string {
+  const q = new URLSearchParams()
+  if (token) q.set('t', token)
+  // The workspace the page's URL names — a review from another one 404s there.
+  if (ws) q.set('ws', ws)
+  const qs = q.toString()
+  return `${API_BASE}/api/reviews/${id}/${qs ? `?${qs}` : ''}`
 }
 
 function submitUrl(id: string, token?: string | null): string {
@@ -330,8 +336,12 @@ async function parseResponse<T>(resp: Response): Promise<T> {
 // ---------------------------------------------------------------------------
 
 /** Fetch a review by id. Pass token for link-visibility access. */
-export async function getReview(id: string, token?: string | null): Promise<ReviewDetail> {
-  const resp = await fetch(reviewUrl(id, token), {
+export async function getReview(
+  id: string,
+  token?: string | null,
+  ws?: string | null,
+): Promise<ReviewDetail> {
+  const resp = await fetch(reviewUrl(id, token, ws), {
     credentials: 'same-origin',
   })
   return parseResponse<ReviewDetail>(resp)

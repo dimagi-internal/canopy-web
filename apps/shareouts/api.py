@@ -83,7 +83,7 @@ def create_shareouts(
             422,
             "No workspace to post shareouts in",
             type_=TYPE_VALIDATION,
-            detail="you do not belong to a workspace that can own this; ask an owner for an invite",
+            detail=wsvc.creation_refusal(request),
         )
     if not perms.can(request.user, ws, perms.CONTENT_WRITE):
         raise ProblemError(

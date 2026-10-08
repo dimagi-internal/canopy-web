@@ -93,16 +93,16 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Create a workspace (if eligible)'],
   },
 
-  // --- Public viewers (root; self-enforce visibility) ---
+  // --- Public viewers (under their workspace; self-enforce visibility) ---
   {
-    path: '/walkthrough/:id',
+    path: '/w/:workspace/walkthrough/:id',
     title: 'Walkthrough viewer',
     audience: 'Whoever was sent the link',
     what: 'Plays a single shared walkthrough — an HTML slideshow or a video — with owner-only controls to toggle public/private, rotate the share link, or delete it. Deep-links to a scene (`#scene-N`) or a video timestamp (`#t=`) are supported. A signed-out visitor on a private link is routed to sign in rather than shown a bare error.',
     actions: ['Watch the walkthrough', 'Copy or rotate the public link (owner)', 'Toggle visibility (owner)', 'Delete it (owner)'],
   },
   {
-    path: '/review/:id',
+    path: '/w/:workspace/review/:id',
     title: 'Narrative review',
     audience: 'Whoever the review request was addressed to',
     what: "The DDD narrative-review surface behind a review request: watch the cut, edit any scene's narration/features/personas inline, see grounding and gaps inline per scene, reorder the build sequence, and resolve the gate (approve / send back to redraft, or answer a findings review). External guests land here with a share token and can only suggest edits, never resolve the gate.",
@@ -399,7 +399,7 @@ export const SURFACES: SurfaceDescriptor[] = [
 
   // --- Public, chrome-less routes (mounted outside the app shell) ---
   {
-    path: '/share/:token',
+    path: '/w/:workspace/share/:token',
     title: 'Shared session (public)',
     audience: 'Whoever was sent the link',
     what: 'A public, chrome-less, read-only viewer for a shared Claude Code transcript — or for several grouped as one arc, which lands on a clickable list of the member sessions. No login required. Best-effort secret-scrubbed before sharing.',
