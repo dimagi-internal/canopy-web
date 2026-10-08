@@ -52,6 +52,10 @@ dependencies = [
     # be dropped by an unrelated upgrade, and the failure would be an
     # ImportError in an auth endpoint.
     "pyjwt[crypto]>=2.8,<3.0",
+    # The DMARC lookup behind an interface's mail-domain warning
+    # (apps/contacts/domain_proof.py). Already present through email-validator;
+    # named directly for the same reason as pyjwt above.
+    "dnspython>=2.6,<3.0",
     # The Django-free run-lifecycle core (read model + RunStore Protocol + Drive
     # adapter). Lives in-repo at packages/canopy_agent_runs; resolved as an editable
     # path dep via [tool.uv.sources] below. Django's DbRunStore (apps/agent_runs)

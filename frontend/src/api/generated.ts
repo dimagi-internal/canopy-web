@@ -9965,6 +9965,11 @@ export interface components {
             readonly published_at?: string | null;
             /** Published By Email */
             readonly published_by_email?: string | null;
+            /**
+             * Warnings
+             * @default []
+             */
+            readonly warnings: readonly string[];
         };
         /** AgentInterfaceIn */
         readonly AgentInterfaceIn: {

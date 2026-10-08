@@ -166,6 +166,15 @@ export function AgentInterfaceView({ agentSlug, canEdit = false }: { agentSlug: 
           {data.published_by_email ? ` by ${data.published_by_email}` : ''}. Everything not listed is refused.
         </p>
       )}
+      {(data.warnings ?? []).map((w) => (
+        <p
+          key={w}
+          data-testid="interface-warning"
+          className="m-0 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[12px] text-warning"
+        >
+          {w}
+        </p>
+      ))}
       {canEdit && (
         <div className="flex flex-wrap items-center gap-3">
           <button

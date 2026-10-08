@@ -34,3 +34,16 @@ def default_workspace(db):
     from apps.workspaces.testing import a_workspace
 
     return a_workspace()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_dns(monkeypatch):
+    """No test reaches a real DNS resolver. The interface's mail-domain warning
+    (apps/contacts/domain_proof.py) asks `_dmarc.<domain>` on every interface
+    read; here every lookup answers "unknown", which raises no warning. Tests of
+    that warning patch `_lookup_dmarc` themselves."""
+    try:
+        from apps.contacts import domain_proof
+    except Exception:  # a suite with no Django (runner/*) has nothing to patch
+        return
+    monkeypatch.setattr(domain_proof, "_lookup_dmarc", lambda domain: "unknown")
