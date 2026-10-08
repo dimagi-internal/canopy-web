@@ -1307,6 +1307,17 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         if reducer.rate_limit:
             _log(f"turn {turn_id[:8]}: rate limit {reducer.rate_limit.get('status')} "
                  f"({reducer.rate_limit.get('rateLimitType')})")
+            if reducer.rate_limit.get("status") == "rejected":
+                # The adapter can end a capped turn with a clean `end_turn`, so the
+                # meta is the reliable signal. Fail the turn with cap wording so
+                # `execute_prompt` runs its cascade, and keep the exact reset.
+                ok = False
+                if not _is_usage_cap(final_text):
+                    final_text = (f"{final_text}\n\nYou've hit your "
+                                  f"{reducer.rate_limit.get('rateLimitType') or 'usage'} limit")
+                resets = reducer.rate_limit.get("resetsAt")
+                if isinstance(resets, (int, float)) and resets > 0:
+                    _CAP_RESET_HINT[turn_id] = float(resets)
         return ok, final_text, session_id
     except Exception as exc:  # noqa: BLE001 — a turn must fail, never crash the runner
         flush(final=True)
@@ -1370,6 +1381,7 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
     an ordinary bug and spend real money doing it).
     """
     attempted: list[str] = []
+    resets: list[float] = []      # each capped credential's reset, epoch seconds
     saw_dead_credential = False
     while True:
         ok, text, session_id = _execute_once(
@@ -1377,6 +1389,11 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             resume_session_id=resume_session_id)
         attempted.append(_claude_cred_label())
         capped, dead = _is_usage_cap(text), _is_auth_required(text)
+        hint = _CAP_RESET_HINT.pop(turn_id, None)
+        if capped and not ok:
+            reset = hint or _cap_reset_epoch(text)
+            if reset and reset > time.time():
+                resets.append(reset)
         if ok or not (capped or dead):
             if ok:
                 _promote_working_subscription(turn_id)
@@ -1413,10 +1430,12 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
                         f"someone has to re-authenticate the subscription and set the "
                         f"token (`canopy runner credential`).")
             else:
+                until = _park_until_cap_resets(resets, text, turn_id)
                 note = (f"[runner] every Claude credential on this box is exhausted "
-                        f"(tried: {', '.join(attempted)}). Turns will keep failing "
-                        f"until a cap resets or a new credential is set "
-                        f"(`canopy runner credential`).")
+                        f"(tried: {', '.join(attempted)}). This runner has paused "
+                        f"itself until {until} so other runners take its work; it "
+                        f"resumes on its own then, or sooner if a new credential is "
+                        f"set (`canopy runner credential`) and it is unpaused.")
             return ok, f"{text}\n\n{note}", session_id
         # `--resume` is deliberately dropped on the retry: the failed attempt may
         # have written a partial session, and resuming it under a different
@@ -2785,6 +2804,62 @@ def _is_auth_required(text: str) -> bool:
     """
     low = (text or "").lower()
     return any(m in low for m in _AUTH_REQUIRED_MARKERS)
+
+
+#: turn id -> the reset (epoch s) the ACP adapter reported in `_claude/rateLimit`
+#: meta. Exact where the text form is a parse; popped by `execute_prompt`.
+_CAP_RESET_HINT: dict[str, float] = {}
+
+#: How long to park when no cap named a reset we could read. Short on purpose: a
+#: box parked too long is idle for nothing, one parked too briefly just caps again
+#: on its next turn and re-parks — with, by then, a message we may be able to read.
+CAP_PAUSE_FALLBACK_SECONDS = 30 * 60
+
+
+def _cap_reset_epoch(text: str) -> float | None:
+    """The reset a cap message names, as epoch seconds — or None. The parser lives
+    in canopy_transcript (shared with the laptop runner); without it this box
+    still parks, for the fallback window."""
+    core = _transcript_core()
+    if core is None:
+        return None
+    try:
+        from canopy_transcript.usage_limit import reset_at  # noqa: PLC0415
+        when = reset_at(text)
+    except Exception:  # noqa: BLE001 — a misread reset must not fail the turn
+        return None
+    return when.timestamp() if when else None
+
+
+def _park_until_cap_resets(resets: list[float], text: str, turn_id: str) -> str:
+    """Every credential on this box is capped: pause the runner on canopy-web and
+    schedule the unpause for the EARLIEST reset among them — the first moment any
+    login can work again. Routing then sends this box's work elsewhere instead of
+    feeding turns into the wall. Returns the reset as text for the turn's note.
+
+    The cascade goes back to the primary: when the pause lifts, the login that
+    capped first is the likeliest to have reset, and starting from the last one
+    would only rediscover its cap.
+    """
+    until = min(resets) if resets else time.time() + CAP_PAUSE_FALLBACK_SECONDS
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until))
+    first = next((ln.strip() for ln in (text or "").splitlines() if _is_usage_cap(ln)), "")
+    note = (f"Claude usage cap — resumes {stamp}"
+            + ("" if resets else " (reset unreadable; retrying then)")
+            + (f": {first}" if first else ""))[:200]
+    if _RUNNER_ID:
+        try:
+            status, _ = _api("POST", f"/runners/{_RUNNER_ID}/pause",
+                             {"note": note, "until": stamp})
+            if status == 200:
+                _log(f"turn {turn_id[:8]}: every credential capped — paused until {stamp}")
+            else:
+                _log(f"warn: pausing for the usage cap returned {status}")
+        except Exception as exc:  # noqa: BLE001 — the turn's failure still reports
+            _log(f"warn: could not pause for the usage cap ({exc})")
+    if _CLAUDE_CREDS:
+        _apply_claude_credential(0)
+    return stamp
 
 
 def _claude_cred_label() -> str:

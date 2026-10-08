@@ -10,6 +10,7 @@ it resolves a cwd/session_key to an emdash task. `menu.py` stays the pure
 parser, which is what keeps this dependency one-directional."""
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import threading
 import time
@@ -17,6 +18,7 @@ import uuid
 from pathlib import Path
 
 import canopy_transcript as transcript_core
+from canopy_transcript.usage_limit import reset_at
 
 from . import cdp_control, hook_install, menu
 from .menu_store import MenuStore
@@ -567,6 +569,28 @@ def answer_menu(session_key: str, option, *, selections=None, texts=None,
 
 
 
+#: How long to park when a cap names no reset we can read. Short on purpose: too
+#: long idles a box for nothing; too short just caps again and re-parks.
+CAP_PAUSE_FALLBACK = dt.timedelta(minutes=30)
+
+
+def pause_for_usage_limit(cfg: Config, client: Client, text: str) -> None:
+    """This box's Claude login is capped: pause the runner on canopy-web and have
+    the server unpause it at the reset the CLI named, so routing sends work to a
+    runner that can still spend tokens. The server-side pause flows back down to
+    `~/.canopy/PAUSED` on the next tick (`main.reconcile_pause`), and its
+    scheduled unpause deletes it again — no local timer to drift.
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    until = reset_at(text, now)
+    when = until or now + CAP_PAUSE_FALLBACK
+    note = (f"Claude usage cap — resumes {when:%Y-%m-%dT%H:%MZ}"
+            + ("" if until else " (reset unreadable; retrying then)")
+            + f": {text.strip()}")[:200]
+    client.set_paused(cfg.runner_id, True, note=note, until=when.isoformat())
+    logger.warning("usage cap on this box's Claude login — runner paused until %s", when)
+
+
 def start_hook_listener(cfg: Config, client: Client):
     """Install the user-level hook and start the loopback listener.
 
@@ -613,6 +637,7 @@ def start_hook_listener(cfg: Config, client: Client):
         resolve_task=hook_project_task_keys,
         # Beside runner.json and the PAUSED sentinel — per-box state, not config.
         menu_store=MenuStore(Path.home() / ".canopy" / "pending-menus.json"),
+        on_usage_limit=lambda text: pause_for_usage_limit(cfg, client, text),
     )
     listener.bind_sender(
         lambda session_id, events: client.post_session_stream(

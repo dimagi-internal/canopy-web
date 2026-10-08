@@ -40,6 +40,7 @@ from canopy_transcript import (
     menu_from_hook,
     turn_ended_in_api_error,
 )
+from canopy_transcript.usage_limit import limit_at_transcript_end
 
 # Mirrors `hooks.ANSWERED` — imported lazily there to keep this module free of
 # the runner's CDP/emdash imports, which is what lets it unit-test standalone.
@@ -62,9 +63,16 @@ class HookListener:
     """
 
     def __init__(self, *, port: int, nonce: str, resolve_session, forward,
-                 read_menu=None, resolve_task=None, menu_store=None):
+                 read_menu=None, resolve_task=None, menu_store=None,
+                 on_usage_limit=None):
         self.port = port
         self.nonce = nonce
+        # Injected: called with Claude Code's cap message when ANY session on this
+        # box ends on a usage cap. Every session here shares the box's one Claude
+        # login, so one capped session means the whole runner is capped — the
+        # caller pauses it until the reset. Fired once per cap record.
+        self._on_usage_limit = on_usage_limit
+        self._last_cap_record = ""
         self._resolve_session = resolve_session
         self._forward = forward
         # Injected: cwd -> the (project, emdash task) keys the session report is
@@ -119,6 +127,7 @@ class HookListener:
             # `forward_sessions` being off, and it must be recorded even for a
             # hook kind that forwards nothing.
             self._track_menu(payload)
+            self._check_usage_limit(payload)
             activity = activity_for_hook(payload)
             if activity is not None:
                 cwd = payload.get("cwd") or ""
@@ -167,6 +176,33 @@ class HookListener:
         except Exception:  # noqa: BLE001 — a hook must never see a failure
             logger.debug("hook handling failed (non-fatal)", exc_info=True)
             return "error"
+
+    def _check_usage_limit(self, payload: dict) -> None:
+        """Did this session's turn just end on a Claude usage cap?
+
+        Checked on `Stop` and `Notification` — the cap is written as an API-error
+        record, and like the 500s `turn_ended_in_api_error` handles, it may end
+        the turn with no `Stop`, leaving only the idle notification. Reads the
+        transcript tail, never the hook's own text: only Claude Code's
+        `isApiErrorMessage` record counts, so an agent WRITING about limits
+        cannot park the box. Not gated on canopy knowing the session — a cap in
+        a human's own session on this login caps canopy's turns just the same.
+        """
+        if self._on_usage_limit is None:
+            return
+        if payload.get("hook_event_name") not in ("Stop", "Notification"):
+            return
+        path = payload.get("transcript_path")
+        if not isinstance(path, str) or not path:
+            return
+        try:
+            hit = limit_at_transcript_end(path)
+            if hit is None or hit[0] == self._last_cap_record:
+                return
+            self._last_cap_record = hit[0]
+            self._on_usage_limit(hit[1])
+        except Exception:  # noqa: BLE001 — a hook must never see a failure
+            logger.warning("usage-limit check failed (non-fatal)", exc_info=True)
 
     def _track_menu(self, payload: dict) -> None:
         """Hold, or drop, the dialog this session is waiting on.

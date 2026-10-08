@@ -199,16 +199,19 @@ class Client:
         _, payload = self._call("POST", f"/runners/{runner_id}/heartbeat", body)
         return payload or {}
 
-    def set_paused(self, runner_id: str, paused: bool, note: str = "") -> dict:
+    def set_paused(self, runner_id: str, paused: bool, note: str = "",
+                   until: str = "") -> dict:
         """Push a LOCAL pause change up as a command on the one shared state.
 
         Called only when the `~/.canopy/PAUSED` sentinel CHANGES, never on a level
         every tick: the server is the source of truth, and a runner re-asserting
         "not paused" every five seconds would silently lift any remote pause the
-        moment it landed.
+        moment it landed. Also called once per Claude usage cap, with `until` (ISO
+        8601) — the server then schedules the unpause at the reset.
         """
         path = f"/runners/{runner_id}/{'pause' if paused else 'unpause'}"
-        _, payload = self._call("POST", path, {"note": note} if paused else {})
+        body = {"note": note, **({"until": until} if until else {})} if paused else {}
+        _, payload = self._call("POST", path, body)
         return payload or {}
 
     def set_engine(self, runner_id: str, engine: str) -> dict:

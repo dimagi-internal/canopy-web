@@ -242,8 +242,15 @@ export function RunnerDetail({
           </div>
           {runner.paused ? (
             <p className="text-[12px] text-muted-foreground" data-testid="runner-pause-why">
-              {runner.paused_note || 'No reason given.'} Queued work waits for this
-              runner rather than failing — resume to let it claim again.
+              {runner.paused_note || 'No reason given.'}{' '}
+              {runner.unpause_at ? (
+                <span data-testid="runner-unpause-at">
+                  Resumes on its own at {new Date(runner.unpause_at).toLocaleString()} — resume
+                  now to let it claim sooner.
+                </span>
+              ) : (
+                <>Queued work waits for this runner rather than failing — resume to let it claim again.</>
+              )}
             </p>
           ) : (
             <input
