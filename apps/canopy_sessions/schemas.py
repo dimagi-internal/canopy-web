@@ -508,3 +508,12 @@ class SessionSecretOut(Schema):
 class SessionSecretValueOut(Schema):
     name: str
     value: str
+
+
+class SessionExportOut(Schema):
+    """A session's conversation as readable markdown, to pick it up elsewhere."""
+
+    session_id: uuid.UUID
+    title: str
+    message_count: int
+    markdown: str

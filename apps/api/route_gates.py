@@ -263,6 +263,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "canopy_sessions_send": ("session-acl",),  # write
     "place": ("session-acl",),  # write
     "transfer": ("session-acl",),  # write
+    "export_session": ("session-acl", "self"),  # visible AND you started it
     "answer_menu": ("session-acl",),  # write
     "close_session": ("session-acl",),  # write
     "stop_session_turn": ("session-acl",),  # write
