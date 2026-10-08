@@ -623,6 +623,11 @@ REVIEW_SUGGESTION_NOTIFY_TO = env.list("REVIEW_SUGGESTION_NOTIFY_TO", default=["
 # Who reads access requests from the public site's request-access form
 # (apps/beta_requests). Empty = record them without mailing anyone.
 CANOPY_BETA_REQUESTS_TO = env("CANOPY_BETA_REQUESTS_TO", default="jjackson@dimagi.com")
+# Who may SET the fleet hold (apps/harness/models.py::FleetHold) without being a
+# superuser. Holding only stops new work and loses nothing, so the agent that conducts
+# the fleet (Ada) can pull the brake the moment something looks wrong; RELEASING stays
+# superuser-only, so an agent can stop the fleet but never restart it.
+CANOPY_FLEET_HOLDERS = env.list("CANOPY_FLEET_HOLDERS", default=["ada@dimagi-ai.com"])
 # Django mails ADMINS on every unhandled 500 once a real backend is live;
 # connect-labs learned that the hard way (a message every two minutes into
 # DeliveryDelay on a fresh domain). Errors go to CloudWatch; never mail them.

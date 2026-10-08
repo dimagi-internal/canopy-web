@@ -9,7 +9,9 @@ triggers, trace them, release. The rules these tests hold:
 
   NOTHING IS LOST. Turns still enqueue while held and are claimed after the release.
 
-  SUPERUSER ONLY to set or release (it spans every tenant); anyone signed in may read.
+  SUPERUSER to set or release (it spans every tenant); a NAMED HOLDER
+  (`CANOPY_FLEET_HOLDERS`, Ada) may set it but never release it — an agent can stop
+  the fleet, not restart it. Anyone signed in may read.
 """
 from __future__ import annotations
 
@@ -25,8 +27,8 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 
 
-def _ctx(superuser=True):
-    user = User.objects.create_user("jj", "jj@dimagi.com", "pw", is_superuser=superuser)
+def _ctx(superuser=True, email="jj@dimagi.com"):
+    user = User.objects.create_user("jj", email, "pw", is_superuser=superuser)
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     c = Client()
@@ -111,7 +113,35 @@ def test_only_a_superuser_may_hold_or_release():
                   content_type="application/json").status_code == 403
     assert c.post("/api/harness/fleet-hold/release").status_code == 403
     body = c.get("/api/harness/fleet-hold").json()
-    assert body["held"] is False and body["can_hold"] is False
+    assert body["held"] is False and body["can_hold"] is False and body["can_release"] is False
+
+
+def test_a_named_holder_may_hold_but_never_release(settings):
+    settings.CANOPY_FLEET_HOLDERS = ["ada@dimagi-ai.com"]
+    _u, ws, c, runner = _ctx(superuser=False, email="Ada@dimagi-ai.com")
+    _queued(ws)
+
+    body = c.get("/api/harness/fleet-hold").json()
+    assert body["can_hold"] is True and body["can_release"] is False
+
+    assert c.post("/api/harness/fleet-hold", data={"note": "leak"},
+                  content_type="application/json").status_code == 200
+    assert services.claim_next_turn(runner) is None
+
+    assert c.post("/api/harness/fleet-hold/release").status_code == 403
+    assert FleetHold.current().held is True
+
+
+def test_a_superuser_may_release_a_hold_a_holder_set(settings):
+    settings.CANOPY_FLEET_HOLDERS = ["ada@dimagi-ai.com"]
+    ada = User.objects.create_user("ada", "ada@dimagi-ai.com", "pw")
+    ada_client = Client()
+    ada_client.force_login(ada)
+    _u, _ws, c, _runner = _ctx()
+    ada_client.post("/api/harness/fleet-hold", data={}, content_type="application/json")
+
+    assert c.get("/api/harness/fleet-hold").json()["can_release"] is True
+    assert c.post("/api/harness/fleet-hold/release").json()["held"] is False
 
 
 def test_the_stuck_list_names_the_hold_as_the_reason(settings):
