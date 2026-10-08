@@ -2,9 +2,10 @@
 // The home page. Its story is the Canopy section (Part 2) of Jonathan's IDM AI
 // talk, "Attempting to get better at getting better in Equitable AI" (Claude
 // Slides deck; Google Slides snapshot of 2026-10-07), in the talk's own order:
-// the ladder → why oversight (Reef, the honest failure) → what Canopy is →
-// multiplayer as THE key innovation → more people building → how we know it is
-// getting better (human review) → controls.
+// the ladder → what Canopy is → multiplayer as THE key innovation → more people
+// building → controls. (The talk's "why oversight" and "how do we know it is
+// getting better" beats were on this page briefly and taken off by the owner on
+// 2026-10-07: they belong in the talk, not on the product page.)
 //
 // It keeps the talk's rules: every quote verbatim, with its source linked; no
 // claims the talk's notes forbid (no fleet-wide kill switch, no spend limits,
@@ -51,12 +52,6 @@ const cycle = [
   ['Improve and share', 'Fix what went wrong, and others see it and use it.'],
 ]
 
-const notJust = [
-  ['Lines of code', 'AI can write a great deal of it.'],
-  ['Usage', 'Runs, sessions, people.'],
-  ['Excitement', 'Our first attempt was exciting too.'],
-]
-
 const controls = [
   'Where it runs',
   'What model it uses',
@@ -95,10 +90,6 @@ const basedOn = ['The user', 'The agent', 'The channel', 'The environment']
   .quote figcaption { margin-top: 14px; font-size: 14px; color: var(--muted); }
   .quote figcaption b { color: var(--ink); font-weight: 600; }
   .quote figcaption a { color: var(--indigo); text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
-  .section.dark .quote blockquote { color: #fff; }
-  .section.dark .quote figcaption { color: rgba(255,255,255,0.70); }
-  .section.dark .quote figcaption b { color: #fff; }
-  .section.dark .quote figcaption a { color: var(--sky); }
   .quote-center { max-width: 760px; margin: 0 auto 56px; text-align: center; }
 
   /* The six-step ladder. */
@@ -114,14 +105,6 @@ const basedOn = ['The user', 'The agent', 'The channel', 'The environment']
   .rung-group { display: none; }
   .ladder-legend { display: grid; grid-template-columns: 1fr 1fr; margin-top: 16px; font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
   .ladder-legend span:last-child { text-align: right; color: var(--indigo); }
-
-  /* Why oversight: the failed first attempt beside the research. */
-  .why { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
-  .attempt { background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 36px; }
-  .attempt b { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
-  .attempt h3 { margin-top: 12px; font-size: 26px; font-weight: 400; }
-  .attempt p { margin: 12px 0 0; color: var(--muted); font-size: 17px; line-height: 1.6; }
-  .why-close { max-width: 760px; margin: 56px auto 0; text-align: center; font-size: 19px; line-height: 1.55; color: var(--ink); }
 
   /* What Canopy set out to build: four boxes and the loop back. */
   .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
@@ -145,17 +128,6 @@ const basedOn = ['The user', 'The agent', 'The channel', 'The environment']
   .turn p { margin: 8px 0 0; color: var(--muted); font-size: 16px; }
   .cycle-close { margin: 40px 0 0; text-align: center; font-size: 19px; color: var(--indigo); font-weight: 500; }
 
-  /* How we know it is getting better. */
-  .notjust-label { font-size: 12px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin: 0 0 14px; }
-  .notjust { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  .notjust div { border: 1px solid rgba(255,255,255,0.14); border-radius: var(--radius); padding: 22px 24px; }
-  .notjust h3 { color: rgba(255,255,255,0.85); font-size: 20px; font-weight: 400; text-decoration: line-through; text-decoration-color: rgba(143,221,178,0.7); }
-  .notjust p { margin: 6px 0 0; color: rgba(255,255,255,0.6); font-size: 15px; }
-  .review { display: grid; grid-template-columns: 1fr 1.1fr; gap: 56px; align-items: center; margin-top: 64px; }
-  .review h3 { color: #fff; font-size: 34px; font-weight: 300; }
-  .review h3 em { font-style: normal; font-weight: 600; color: var(--sky); }
-  .review > div > p { margin: 14px 0 0; color: rgba(255,255,255,0.75); font-size: 17px; line-height: 1.6; }
-
   /* Controls: six things, set by four. */
   .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
   .control { background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 24px; font-size: 18px; color: var(--ink); }
@@ -165,9 +137,8 @@ const basedOn = ['The user', 'The agent', 'The channel', 'The environment']
   .controls-note { max-width: 760px; margin: 40px auto 0; text-align: center; color: var(--muted); font-size: 16px; }
 
   @media (max-width: 980px) {
-    .why, .review { grid-template-columns: 1fr; gap: 32px; }
     .flow, .cycle { grid-template-columns: 1fr 1fr; }
-    .tiles, .notjust, .controls { grid-template-columns: 1fr 1fr; }
+    .tiles, .controls { grid-template-columns: 1fr 1fr; }
     .shots-pair { grid-template-columns: 1fr; gap: 24px; }
   }
   /* Phones: the ladder turns on its side. Each step is a row that grows longer
@@ -187,8 +158,7 @@ const basedOn = ['The user', 'The agent', 'The channel', 'The environment']
   }
   @media (max-width: 600px) {
     .section { padding: 72px 0; }
-    .flow, .cycle, .tiles, .notjust, .controls { grid-template-columns: 1fr; }
-    .attempt { padding: 28px; }
+    .flow, .cycle, .tiles, .controls { grid-template-columns: 1fr; }
     .quote blockquote { font-size: 19px; }
   }
   </style>
@@ -247,33 +217,6 @@ const basedOn = ['The user', 'The agent', 'The channel', 'The environment']
         ))}
       </div>
       <div class="ladder-legend" aria-hidden="true"><span>Me and AI</span><span>Us and AI · where Canopy works</span></div>
-    </div>
-  </section>
-
-  <section class="section warm">
-    <div class="container">
-      <div class="section-head section-head--center">
-        <span class="eyebrow">Why oversight</span>
-        <h2 class="section-title">Our first attempt was fast. <em>It wasn’t reliable.</em></h2>
-      </div>
-      <div class="why">
-        <article class="attempt">
-          <b>Attempt 1 · early 2026</b>
-          <h3>Agents for our management team</h3>
-          <p>
-            We built a whole management system on agents in three weeks, then gave up.
-            Exciting at first. Then we couldn’t get reliable results on complex tasks.
-          </p>
-        </article>
-        <figure class="quote">
-          <blockquote>Experienced users interrupt Claude more often, not less.</blockquote>
-          <figcaption><b>Anthropic research</b> · Measuring AI agent autonomy in practice, February 2026 · <a href="https://www.anthropic.com/research/measuring-agent-autonomy">anthropic.com/research/measuring-agent-autonomy</a></figcaption>
-        </figure>
-      </div>
-      <p class="why-close">
-        So Canopy is not built for full autonomy. It is built so a person can see what an agent is
-        doing, step in, and improve it, while the patterns that prove themselves become more automatic.
-      </p>
     </div>
   </section>
 
@@ -342,36 +285,6 @@ const basedOn = ['The user', 'The agent', 'The channel', 'The environment']
         ))}
       </ol>
       <p class="cycle-close">…which brings the next person in.</p>
-    </div>
-  </section>
-
-  <section class="section dark">
-    <div class="container">
-      <div class="section-head">
-        <span class="eyebrow on-dark">Is it working?</span>
-        <h2 class="section-title">How do we know we are getting better <em>at getting better?</em></h2>
-      </div>
-      <p class="notjust-label">It’s not just…</p>
-      <div class="notjust">
-        {notJust.map(([name, what]) => (
-          <div><h3>{name}</h3><p>{what}</p></div>
-        ))}
-      </div>
-      <div class="review">
-        <div>
-          <h3>It’s <em>human review</em></h3>
-          <p>
-            Canopy keeps the record of what agents do and how people interact with them: every
-            session, every time someone stepped in, every correction. That record is what lets it get
-            better at getting better. A correction changes the agent’s skills and rules, not just one
-            reply, and each skill’s history shows what changed and why.
-          </p>
-        </div>
-        <figure class="quote">
-          <blockquote>The first principle is that you must not fool yourself—and you are the easiest person to fool.</blockquote>
-          <figcaption><b>Richard Feynman</b> · “Cargo Cult Science,” Caltech commencement address, 1974 · <a href="https://calteches.library.caltech.edu/51/2/CargoCult.htm">calteches.library.caltech.edu</a></figcaption>
-        </figure>
-      </div>
     </div>
   </section>
 
