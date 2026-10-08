@@ -34,6 +34,15 @@ def issue_credentials(turn):
         from .caller_tokens import mint
 
         turn.mcp_token = mint(turn)
+    else:
+        # A FULL turn asked by someone who is not the agent's owner, an admin or
+        # canopy (a `full:` rule, an editor) is not confined, but must still read
+        # canopy as its asker rather than as the runner's owner (who-is-asking
+        # phase 5, canopy-web#1332).
+        from .caller_tokens import is_caller_scoped, mint
+
+        if is_caller_scoped(turn):
+            turn.mcp_token = mint(turn, scoped=True)
     return turn
 
 

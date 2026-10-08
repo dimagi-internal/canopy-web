@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
-               native_permissions, readiness, session_naming, startup_watch, transcript)
+               native_permissions, readiness, scoped_token, session_naming, startup_watch, transcript)
 from . import whois
 from .client import ClientError
 from .tail import TailReader
@@ -102,7 +102,15 @@ def _confine(client, turn: dict, task: str) -> bool:
     was not what it should be. A full-profile turn is untouched (True).
     """
     if caller.capability(turn) is None:
-        return True
+        # Not confined — but a colleague's full-profile turn still reads canopy as
+        # THEM (scoped_token), and a reused task must not keep the last one's.
+        try:
+            scoped_token.write(turn, task=task)
+            return True
+        except scoped_token.ScopedTokenError as exc:
+            logger.error("turn=%s NOT run — %s", turn.get("id"), exc)
+            client.fail_turn(turn["id"], f"turn not run: {exc}")
+            return False
     try:
         caller.write_profile(task, turn)
         return True

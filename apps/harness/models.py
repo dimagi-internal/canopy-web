@@ -773,6 +773,12 @@ class CallerToken(models.Model):
     chat_session = models.ForeignKey("canopy_sessions.Session", on_delete=models.CASCADE,
                                      null=True, blank=True, related_name="caller_tokens")
     turn = models.ForeignKey("Turn", on_delete=models.CASCADE, related_name="caller_tokens")
+    #: Minted for a FULL-profile turn asked by someone who is not the agent's
+    #: owner, an admin or canopy (a `full:` rule, an editor): the session is not
+    #: confined to a capability, but its canopy reads must still be the ASKER's
+    #: (who-is-asking phase 5). Such a token lists every tool and runs each as
+    #: the conversation's current asker; a confined token never does.
+    scoped = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 

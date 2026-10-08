@@ -42,6 +42,8 @@ def caller_turn_ids() -> list[str] | None:
 
 
 def _allowed(name: str, claims: dict) -> bool:
+    if claims.get("all_tools"):
+        return True             # a full-profile caller: every tool, run as the asker
     return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])
 
 
