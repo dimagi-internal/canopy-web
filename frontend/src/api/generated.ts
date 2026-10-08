@@ -14569,6 +14569,11 @@ export interface components {
              * @default false
              */
             readonly can_hold: boolean;
+            /**
+             * Can Release
+             * @default false
+             */
+            readonly can_release: boolean;
         };
         /** FleetHoldIn */
         readonly FleetHoldIn: {

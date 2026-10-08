@@ -6,7 +6,9 @@ import { holdFleet, releaseFleetHold, type FleetHoldOut } from '@/api/harness'
 // trigger, which is the point: the queue becomes the list of what tried to start.
 //
 // Two audiences, one component:
-// * a superuser (`can_hold`) gets the control — hold with a reason, or release;
+// * a superuser gets the control — hold with a reason (`can_hold`), or release
+//   (`can_release`); a named holder (Ada) may hold but never release, so an agent
+//   can stop the fleet and only a person restarts it;
 // * everyone else sees only the LOUD banner while it is on, so a member whose turn
 //   is sitting queued can see why. Nothing at all when it is off.
 //
@@ -51,7 +53,7 @@ export function FleetHoldCard({
       >
         <div className="flex items-center gap-2">
           <p className="text-[13px] font-bold uppercase tracking-wide">⏸ Fleet on hold — no runner starts anything</p>
-          {hold.can_hold && (
+          {hold.can_release && (
             <button
               type="button"
               onClick={() => act(releaseFleetHold())}
@@ -77,7 +79,7 @@ export function FleetHoldCard({
     )
   }
 
-  // Not held, and the caller is a superuser: the control.
+  // Not held, and the caller may hold: the control.
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3" data-testid="fleet-hold-control">
       <div className="flex items-center gap-2">

@@ -339,9 +339,11 @@ class FleetHoldOut(Schema):
     held_by_email: str = ""
     # Turns waiting on the hold right now — the "what is trying to start" count.
     queued: int = 0
-    # Whether the CALLER may hold or release (a superuser). The UI offers the
-    # control only on this, so nobody else is handed a button that 403s.
+    # Whether the CALLER may hold (a superuser, or a named holder such as Ada) and
+    # release (a superuser only). The UI offers each control only on its flag, so
+    # nobody is handed a button that 403s.
     can_hold: bool = False
+    can_release: bool = False
 
 
 class PauseIn(Schema):

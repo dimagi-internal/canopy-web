@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 //
 // The fleet hold stops every runner in every workspace, so the control is for
-// system admins only (`can_hold` = superuser). Everyone else sees the banner while
+// system admins (`can_hold`, and `can_release` = superuser) — a named holder such as
+// Ada may hold but not release. Everyone else sees the banner while
 // it is on — a member whose turn sits queued should see why — and nothing when off.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -15,7 +16,7 @@ vi.mock('@/api/harness', () => ({ holdFleet, releaseFleetHold }))
 const { FleetHoldCard } = await import('./FleetHoldCard')
 
 function hold(overrides: Partial<FleetHoldOut> = {}): FleetHoldOut {
-  return { held: false, note: '', held_at: null, held_by_email: '', queued: 0, can_hold: false, ...overrides }
+  return { held: false, note: '', held_at: null, held_by_email: '', queued: 0, can_hold: false, can_release: false, ...overrides }
 }
 
 afterEach(() => {
@@ -52,11 +53,18 @@ describe('FleetHoldCard', () => {
 
   it('lets an admin release in one tap', async () => {
     const onChange = vi.fn()
-    releaseFleetHold.mockResolvedValue(hold({ can_hold: true }))
-    render(<FleetHoldCard hold={hold({ held: true, can_hold: true })} onChange={onChange} />)
+    releaseFleetHold.mockResolvedValue(hold({ can_hold: true, can_release: true }))
+    render(<FleetHoldCard hold={hold({ held: true, can_hold: true, can_release: true })} onChange={onChange} />)
 
     fireEvent.click(screen.getByTestId('fleet-hold-release'))
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ held: false })))
+  })
+
+  it('offers a holder who may not release no Release button', () => {
+    render(<FleetHoldCard hold={hold({ held: true, can_hold: true, can_release: false })} onChange={() => {}} />)
+
+    expect(screen.getByTestId('fleet-hold-banner')).toBeTruthy()
+    expect(screen.queryByTestId('fleet-hold-release')).toBeNull()
   })
 })
