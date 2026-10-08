@@ -107,6 +107,10 @@ def _on_turn_finished(turn: Turn) -> Turn | None:
         return None
     if turn.initiator_kind not in (who.USER, who.CONTACT):
         return None
+    from apps.contacts import hcp
+
+    if hcp.is_zdr_turn(turn):
+        return None     # nothing from a zero-data-retention session is ever written
     agent = _agent_of(turn)
     if agent is None or not agent.workspace_id:
         return None

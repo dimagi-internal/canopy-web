@@ -224,6 +224,10 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
     """
     from . import hcp
 
+    # Before anything else: nothing from a zero-data-retention session is ever written
+    # here (hcp.refuse_if_zdr). Every write path — REST, MCP, CLI, the notes mirror —
+    # comes through this function, which is why the check lives here and only here.
+    hcp.refuse_if_zdr(source_turn=source_turn, by_agent=by_agent)
     kind = (kind or "").strip()
     if kind not in PersonFact.KINDS:
         raise FactError(f"unknown kind {kind!r}; one of {sorted(PersonFact.KINDS)}")
@@ -496,10 +500,17 @@ def mirror_contact_notes(contact: Contact, *, by=None) -> PersonFact | None:
         current = None
     # ATTESTED, not declared: someone other than the person wrote these notes
     # about them (HCP issuer-attested, 2.2.2).
-    return record_fact(person=person, workspace=contact.workspace, kind=NOTES_KIND,
-                       statement=statement, basis=PersonFact.ATTESTED,
-                       supersedes=current, source_contact=contact,
-                       provenance_source=f"integration:contact-notes:{contact.pk}")
+    from . import hcp
+
+    try:
+        return record_fact(person=person, workspace=contact.workspace, kind=NOTES_KIND,
+                           statement=statement, basis=PersonFact.ATTESTED,
+                           supersedes=current, source_contact=contact,
+                           provenance_source=f"integration:contact-notes:{contact.pk}")
+    except hcp.ZdrRefused:
+        # Notes edited from inside a zero-data-retention session are not mirrored.
+        logger.info("people: notes of contact %s not mirrored (zero data retention)", contact.pk)
+        return current
 
 
 def mirror_all_contact_notes() -> dict:
@@ -521,11 +532,16 @@ def conversations(person: Person, agent, *, since: dt.datetime | None = None, li
     """
     from apps.harness.models import Turn
 
+    from . import hcp
+
     qs = (Turn.objects.filter(Q(agent=agent) | Q(chat_session__agent=agent))
           .filter(_initiated_by(person)))
     if since is not None:
         qs = qs.filter(created_at__gte=since)
-    return qs.order_by("-created_at")[:limit]
+    # A zero-data-retention session's words never become facts, so they are never
+    # handed to whatever derives facts from conversations (hcp.is_zdr_turn).
+    rows = qs.select_related("chat_session").order_by("-created_at")[:limit]
+    return [t for t in rows if not hcp.is_zdr_turn(t)]
 
 
 def conversation_dict(turn) -> dict:
