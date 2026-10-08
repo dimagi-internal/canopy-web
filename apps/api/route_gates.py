@@ -94,7 +94,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_turn_mode": ("agent.work",),
     "set_slack_enabled": ("agent-admin",),
     "set_people_digest_enabled": ("agent-admin",),  # fleet brain v1.1 per-agent opt-out
-    "set_ship_repos": ("agent-admin",),  # standing ship grant: widens autonomy, like auto
     "get_agent_runtime": ("member",),
     "list_agent_runners": ("member",),
     "get_agent_default_order": ("member",),

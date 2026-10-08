@@ -2066,31 +2066,6 @@ export interface paths {
         readonly patch: operations["set_people_digest_enabled"];
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/ship-repos": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        /**
-         * Set the repos an agent may push / PR / merge in without asking
-         * @description The standing ship grant: on the agent's own turns (its owner, an admin, or
-         *     canopy itself — a schedule), push / PR / merge in these repos are
-         *     pre-approved even when the turn is `manual`. Nothing else is: mail,
-         *     publishing, public writes and deploys still wait for the owner. Owner or
-         *     admin only — like `auto`, it widens what the agent does without asking.
-         *     `[]` clears it.
-         */
-        readonly patch: operations["set_ship_repos"];
-        readonly trace?: never;
-    };
     readonly "/api/agents/{slug}/runtime": {
         readonly parameters: {
             readonly query?: never;
@@ -9859,8 +9834,6 @@ export interface components {
              * @default true
              */
             readonly people_digest_enabled: boolean;
-            /** Ship Repos */
-            readonly ship_repos?: readonly string[];
         };
         /** Page[AgentOut] */
         readonly Page_AgentOut_: {
@@ -9999,8 +9972,6 @@ export interface components {
              * @default true
              */
             readonly people_digest_enabled: boolean;
-            /** Ship Repos */
-            readonly ship_repos?: readonly string[];
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             readonly owner?: components["schemas"]["AgentOwnerOut"] | null;
             readonly canopy_user?: components["schemas"]["AgentOwnerOut"] | null;
@@ -10250,21 +10221,6 @@ export interface components {
         readonly PeopleDigestEnabledIn: {
             /** People Digest Enabled */
             readonly people_digest_enabled: boolean;
-        };
-        /** ShipReposOut */
-        readonly ShipReposOut: {
-            /** Ship Repos */
-            readonly ship_repos: readonly string[];
-        };
-        /**
-         * ShipReposIn
-         * @description The repos an agent may push / PR / merge in without asking, even in
-         *     manual mode. `owner/repo` or a github.com URL; [] clears the grant. Its own
-         *     endpoint, like turn_mode: the agent-repo upsert must never widen it.
-         */
-        readonly ShipReposIn: {
-            /** Ship Repos */
-            readonly ship_repos?: readonly string[];
         };
         /**
          * AgentRuntimeOut
@@ -20007,32 +19963,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PeopleDigestEnabledOut"];
-                };
-            };
-        };
-    };
-    readonly set_ship_repos: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["ShipReposIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["ShipReposOut"];
                 };
             };
         };

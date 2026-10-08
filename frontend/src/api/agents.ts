@@ -122,7 +122,6 @@ export async function listAgents(params: ListAgentsParams = {}): Promise<Page<Ag
     items: page.items.map((a) => ({
       ...a,
       runner_preference: a.runner_preference ? Array.from(a.runner_preference) : undefined,
-      ship_repos: a.ship_repos ? Array.from(a.ship_repos) : undefined,
     })),
   }
 }
@@ -130,17 +129,10 @@ export async function listAgents(params: ListAgentsParams = {}): Promise<Page<Ag
 // AgentDetailOut carries a readonly-array field (runner_preference) that
 // openapi-fetch's Readable<T> degrades to an ArrayLike, breaking type identity
 // (same quirk toPage documents). Rebuild it to a real array at the boundary.
-function normalizeAgentDetail(data: {
-  runner_preference?: ArrayLike<string>
-  ship_repos?: ArrayLike<string>
-}): AgentDetailOut {
+function normalizeAgentDetail(data: { runner_preference?: ArrayLike<string> }): AgentDetailOut {
   // Spread carries every field at runtime; TS only tracks runner_preference here,
   // so bridge through unknown (the degraded ArrayLike doesn't overlap the alias).
-  return {
-    ...data,
-    runner_preference: Array.from(data.runner_preference ?? []),
-    ship_repos: Array.from(data.ship_repos ?? []),
-  } as unknown as AgentDetailOut
+  return { ...data, runner_preference: Array.from(data.runner_preference ?? []) } as unknown as AgentDetailOut
 }
 
 export async function getAgent(slug: string): Promise<AgentDetailOut> {

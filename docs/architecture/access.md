@@ -242,20 +242,9 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
 `no-interface` for a turn with no agent), `capability` (the confined profile),
 `turn_mode` (`{mode, basis}`), and:
 
-* **`ship_grant`** — push / PR / merge pre-approved even in `manual`, in the repos
-  it names (`repos`; `repo` is the first, for older readers). Two sources, merged
-  when both apply:
-  - **per dispatch** — ANOTHER agent's verified login that is this agent's owner or
-    admin dispatched the turn at it: this agent's OWN repo.
-  - **standing** (2026-10-08) — the owner or an admin listed repos on the agent
-    (`PATCH /api/agents/<slug>/ship-repos`, `Agent.ship_repos`). Every verified
-    turn the agent's own authority starts — its owner, an admin, or `system` (a
-    schedule, canopy itself) — carries it. Never a member, a contact, or the
-    slug-only `kind=agent` of an approved item. The repo's self-publish upsert
-    cannot set it, so an agent cannot widen its own grant.
-
-  Code shipping only: mail, publishing, public writes, deploys and other systems'
-  state stay where `turn_mode` puts them.
+* **`ship_grant`** — when ANOTHER agent's verified login that is this agent's
+  owner or admin dispatched the turn at it, push / PR / merge in this agent's OWN
+  repo are pre-approved even in `manual`. Nothing else is.
 * **`system_account`** — `{id, name, description, workspace}` when the asker is
   a system account (an automated sender, see "System accounts"); null for a
   person. The same object is in `who.system_account`.

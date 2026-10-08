@@ -443,65 +443,9 @@ SHIP_ACTIONS = ("push", "pull_request", "merge")
 SHIP_NOT_GRANTED = ("send email or messages", "publish or share documents", "public writes",
                     "deploy or change other systems' state", "spend",
                     "any repo other than the one named")
-SHIP_NOT_GRANTED_STANDING = SHIP_NOT_GRANTED[:-1] + ("any repo other than the ones named",)
 
 
 def _ship_grant(turn, agent, rel: str) -> dict | None:
-    """The ship grant this turn carries, or None: the per-dispatch grant
-    (`_dispatch_grant`), the owner's standing one (`_standing_grant`), or both
-    merged. `repo` stays the first repo so an older canopy hook that reads only
-    that key still sees a valid grant; `repos` is the whole list."""
-    dispatch = _dispatch_grant(turn, agent, rel)
-    standing = _standing_grant(turn, agent, rel)
-    if dispatch is None:
-        return standing
-    if standing is not None:
-        dispatch["repos"] = list(dict.fromkeys(dispatch["repos"] + standing["repos"]))
-        dispatch["basis"] = f"{dispatch['basis']}; {standing['basis']}"
-    return dispatch
-
-
-def _standing_grant(turn, agent, rel: str) -> dict | None:
-    """The owner's STANDING ship grant (`Agent.ship_repos`), or None.
-
-    Jonathan, 2026-10-08: a scheduled Eva turn found and tested a one-line fix,
-    then held the push for approval because `manual` files push / merge beside
-    send / publish — "I didn't intend that design". The agent's repo already said
-    "ship code freely; the PR is not a review gate", but a repo cannot grant
-    itself autonomy, so the owner states it here instead. Every condition:
-
-    * the turn targets an AGENT (`turn.agent`) whose owner listed repos;
-    * the caller holds the agent's own authority on a verified basis — its
-      OWNER, an ADMIN, or SYSTEM (a schedule, canopy itself, the agent's own
-      login). Never a member or a contact: their say-so must not merge code;
-    * not the anonymous `kind=agent` an approved item records — it names a
-      slug, not a login canopy authenticated (same exclusion as the dispatch
-      grant).
-    """
-    if agent is None or not turn.agent_id:
-        return None
-    repos = [r for r in (agent.ship_repos or []) if isinstance(r, str) and _REPO.match(r)]
-    if not repos:
-        return None
-    if rel not in (OWNER, ADMIN, SYSTEM) or not _verified(turn):
-        return None
-    if turn.initiator_kind == who.AGENT:
-        return None
-    owner = getattr(agent.owner, "email", "") or "the owner"
-    return {
-        "repo": repos[0],
-        "repos": repos,
-        "actions": list(SHIP_ACTIONS),
-        "dispatched_by": None,
-        "basis": f"standing grant set on {agent.slug} (owner {owner})",
-        "not_granted": list(SHIP_NOT_GRANTED_STANDING),
-    }
-
-
-_REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
-
-
-def _dispatch_grant(turn, agent, rel: str) -> dict | None:
     """The repo-internal ship grant for an agent-to-agent dispatch, or None.
 
     Owner decision, 2026-10-03 (Jonathan): Ada's fix dispatches to its sibling
@@ -540,7 +484,6 @@ def _dispatch_grant(turn, agent, rel: str) -> dict | None:
         return None
     return {
         "repo": repo,
-        "repos": [repo],
         "actions": list(SHIP_ACTIONS),
         "dispatched_by": {"email": user.email, "agent": dispatcher.slug},
         "basis": f"dispatched by {user.email} (agent {dispatcher.slug}), {rel} of {agent.slug}",
