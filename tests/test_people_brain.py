@@ -147,7 +147,8 @@ def test_envelope_v3_carries_the_person_and_logs_the_read(world):
     _fact(person, ws, "terminology", "Calls the OCS bot 'the coach'.")
     people.put_digest(person=person, workspace=ws, text="Lilianna runs KC.", by_agent=ace)
 
-    env = caller_context.build(_human_turn(ace, lili, "t1"))
+    env = caller_context.build(_human_turn(ace, lili, "t1",
+                                           prompt="What does the coach say to a worker?"))
     assert env["version"] == 3
     block = env["person"]
     assert block["id"] == person.pk
@@ -155,10 +156,13 @@ def test_envelope_v3_carries_the_person_and_logs_the_read(world):
     assert block["email"] == "lili@dimagi.com"
     assert block["workspace"] == "connect"
     assert block["see_all"] == "/people/me/"
-    assert block["digest"] == "Lilianna runs KC."
-    assert block["digest_updated_at"]
+    # HCP: the envelope is a relevance search, not the profile — so no digest.
+    assert block["digest"] == "" and block["digest_updated_at"] is None
     assert block["facts"][0]["kind"] == "correction"            # corrections first
-    assert [f["kind"] for f in block["facts"][1:]] == ["terminology", "role"]  # then newest
+    # then by relevance: "coach" matches the terminology fact; role always rides.
+    assert [f["kind"] for f in block["facts"][1:]] == ["terminology", "role"]
+    assert block["grant"]["client"] == "Ace over Chat"
+    assert block["recall"]["tool"] == "hcp_searchPreferences"
     assert env["contact"] is None                                # unchanged for members
     access = PersonAccess.objects.get(person=person)
     assert (access.via, access.reader_agent, access.workspace_id) == ("envelope", ace, "connect")

@@ -1,21 +1,59 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { getMyPerson, retractFact } from '../api/people'
-import type { PersonFactDetail, PersonMe } from '../api/people'
+import { getMyPerson, listMyAudit, listMyGrants, retractFact, revokeMyGrant } from '../api/people'
+import type { HcpAuditEvent, HcpGrant, PersonFactDetail, PersonMe } from '../api/people'
 
 /** "What agents know about me" — every live fact canopy holds about you, by
- *  workspace, the digest agents read, and every recent read of it. You can
- *  retract any fact. Fleet brain v1 (canopy#804). */
+ *  workspace; which clients (an agent, over a channel, on a host) may read it,
+ *  each revocable; and your audit log of every read and change. You can
+ *  retract any fact. Fleet brain v1 (canopy#804), on HCP v1 (hcp_api.py). */
 export function PeopleMePage() {
   const [me, setMe] = useState<PersonMe | null>(null)
+  const [grants, setGrants] = useState<HcpGrant[]>([])
+  const [audit, setAudit] = useState<HcpAuditEvent[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
+  const [busyGrant, setBusyGrant] = useState<string | null>(null)
 
   const load = useCallback(() => {
     getMyPerson()
       .then(setMe)
       .catch((e: Error) => setError(e.message))
+    listMyGrants()
+      .then(setGrants)
+      .catch((e: Error) => setError(e.message))
+    listMyAudit()
+      .then((page) => {
+        setAudit(page.events)
+        setNextCursor(page.nextCursor)
+      })
+      .catch((e: Error) => setError(e.message))
   }, [])
+
+  const moreAudit = async () => {
+    if (!nextCursor) return
+    try {
+      const page = await listMyAudit(nextCursor)
+      setAudit((prev) => [...prev, ...page.events])
+      setNextCursor(page.nextCursor)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  const onRevoke = async (g: HcpGrant) => {
+    if (!confirm(`Revoke ${g.client.name}? It will stop being told anything about you, and canopy will not grant it again unless you do.`)) return
+    setBusyGrant(g.grantId)
+    try {
+      await revokeMyGrant(g.grantId)
+      load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusyGrant(null)
+    }
+  }
 
   useEffect(load, [load])
 
@@ -38,7 +76,6 @@ export function PeopleMePage() {
 
   const allFacts = me.facts ?? []
   const digests = me.digests ?? []
-  const accesses = me.accesses ?? []
 
   const workspaces = Array.from(
     new Set([...allFacts.map((f) => f.workspace), ...digests.map((d) => d.workspace)]),
@@ -50,9 +87,11 @@ export function PeopleMePage() {
         <h1 className="text-2xl font-semibold text-foreground">What agents know about me</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {me.display_name}
-          {me.email ? ` · ${me.email}` : ''}. Agents are handed these facts and the digest when
-          you talk to them, only within the workspace they were written in. Retract anything that
-          is wrong.
+          {me.email ? ` · ${me.email}` : ''}. When you talk to an agent, it is handed the few facts
+          relevant to what you asked — only within the workspace they were written in — and can
+          look up more while it works. Retract anything that is wrong. A fact marked{' '}
+          <em>conflicted</em> is something an agent guessed that contradicts what you said; agents
+          are not told it until you correct or retract it.
         </p>
       </div>
 
@@ -90,7 +129,13 @@ export function PeopleMePage() {
                     <div className="min-w-0 flex-1">
                       <div className="text-foreground">{f.statement}</div>
                       <div className="mt-0.5 text-xs text-muted-foreground">
+                        {f.status && f.status !== 'active' ? (
+                          <span className="mr-1 rounded bg-destructive/10 px-1 text-destructive">
+                            {f.status}
+                          </span>
+                        ) : null}
                         {f.basis}
+                        {f.confidence ? ` (${f.confidence} confidence)` : ''}
                         {f.asserted_by ? ` · by ${f.asserted_by}` : ''}
                         {f.project ? ` · ${f.project.title}` : ''}
                         {f.instance_ref ? ` · ${f.instance_ref}` : ''}
@@ -113,24 +158,69 @@ export function PeopleMePage() {
       })}
 
       <section>
-        <h2 className="text-sm font-semibold text-foreground">Recent reads</h2>
-        {accesses.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">Nobody has read it yet.</p>
+        <h2 className="text-sm font-semibold text-foreground">Who can read it</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Each agent is allowed separately for each way you reach it — ACE over Slack and ACE over
+          email are two entries. canopy allows an agent the first time it serves you; revoking stops
+          it immediately and for good, unless you allow it again.
+        </p>
+        {grants.length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">No agent has served you yet.</p>
         ) : (
           <ul className="mt-2 divide-y divide-border rounded-lg border border-border text-sm">
-            {accesses.map((a, i) => (
-              <li key={i} className="flex flex-wrap gap-x-3 px-4 py-2">
-                <span className="text-muted-foreground">{new Date(a.created_at).toLocaleString()}</span>
-                <span className="text-foreground">
-                  {a.reader_agent ?? a.reader_user ?? 'someone'}
-                </span>
+            {grants.map((g) => (
+              <li key={g.grantId} className="flex items-start gap-3 px-4 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="text-foreground">{g.client.name}</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {g.status}
+                    {` · ${g.canopy.workspace}`}
+                    {` · since ${new Date(g.issuedAt).toLocaleDateString()}`}
+                    {g.expiresAt ? ` · until ${new Date(g.expiresAt).toLocaleString()}` : ''}
+                    {` · ${Array.from(new Set(g.scopes.map((s) => s.split(':').slice(1, -1).join(':')))).join(', ')}`}
+                  </div>
+                </div>
+                {g.status === 'active' && (
+                  <button
+                    className="shrink-0 text-destructive hover:text-destructive/80 disabled:opacity-50"
+                    disabled={busyGrant === g.grantId}
+                    onClick={() => onRevoke(g)}
+                  >
+                    Revoke
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <h2 className="text-sm font-semibold text-foreground">Audit log</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Every read and change of what canopy holds about you, newest first. Only you can see it.
+        </p>
+        {audit.length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">Nothing yet.</p>
+        ) : (
+          <ul className="mt-2 divide-y divide-border rounded-lg border border-border text-sm">
+            {audit.map((e) => (
+              <li key={e.eventId} className="flex flex-wrap gap-x-3 px-4 py-2">
+                <span className="text-muted-foreground">{new Date(e.timestamp).toLocaleString()}</span>
+                <span className="text-foreground">{e.actorId}</span>
                 <span className="text-muted-foreground">
-                  {a.via === 'envelope' ? 'in a turn' : 'looked it up'}
-                  {a.workspace ? ` · ${a.workspace}` : ''}
+                  {e.eventType}
+                  {e.category ? ` · ${e.category}` : ''}
+                  {e.purpose ? ` · “${e.purpose}”` : ''}
                 </span>
               </li>
             ))}
           </ul>
+        )}
+        {nextCursor && (
+          <button className="mt-2 text-sm text-primary hover:underline" onClick={moreAudit}>
+            Show older
+          </button>
         )}
       </section>
     </div>

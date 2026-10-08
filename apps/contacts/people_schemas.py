@@ -22,6 +22,13 @@ class PersonFactOut(StrictModel):
     project: PersonProjectRef | None = None
     instance_ref: str = ""
     created_at: str | None = None
+    # HCP v1 (apps/contacts/hcp.py): the entry this fact is a version of.
+    entry_id: str | None = Field(default=None, description="urn:uuid:<id>, the same on every version.")
+    version: int = 1
+    category: str = Field(default="work_context", description="The HCP category — the grant scope.")
+    dimension: str | None = None
+    confidence: str | None = Field(default=None, description="high | medium | low — model-inferred only.")
+    status: str = Field(default="active", description="active | deprecated | conflicted | deleted.")
 
 
 class PersonFactDetailOut(PersonFactOut):
@@ -80,7 +87,10 @@ class PersonFactIn(StrictModel):
         default=None, description="The workspace slug the fact is written in (default: the /api/w/{ws}/ one).")
     kind: str = Field(description="role | project | instance | preference | correction | terminology — anything else is a 400.")
     statement: str = Field(description="One sentence, 1–500 characters.")
-    basis: str = Field(default="declared", description="declared | inferred.")
+    basis: str = Field(default="declared", description="declared (the person said it) | inferred (a model concluded it) | attested (someone else asserted it).")
+    category: str | None = Field(default=None, description="HCP category (default: from kind) — work_context, general_preferences, goals_and_constraints, coordination_context or hcp-custom:<name>.")
+    dimension: str | None = Field(default=None, description="HCP dimension within the category; an inferred and a declared fact on the same dimension conflict, and the inference is quarantined.")
+    confidence: str | None = Field(default=None, description="high | medium | low — for an inferred fact.")
     source_turn_id: str | None = None
     project_id: int | None = None
     instance_ref: str = Field(default="", max_length=300)

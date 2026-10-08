@@ -65,6 +65,10 @@ Vocabulary (closed — add to it deliberately, never in passing):
   hold, never release it (``apps/harness/api.py::_may_hold_fleet``).
 * ``host`` — a connected-site / machine protocol endpoint (assertion,
   jwt-bearer, Pub/Sub push).
+* ``hcp-grant`` — the Human Context Protocol subject rule
+  (``apps/contacts/hcp_api.py::_principal``): an agent reaches ONLY the person
+  who started the turn it names, and only under that client's (agent, channel,
+  host) grant, which the person can revoke.
 """
 from __future__ import annotations
 
@@ -75,6 +79,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "agent-admin", "agent-owner", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
+    "hcp-grant",
 })
 
 GATES: dict[str, tuple[str, ...]] = {
@@ -409,6 +414,20 @@ GATES: dict[str, tuple[str, ...]] = {
     # Every per-person route is ALSO gated on `people.known_in` — a person the
     # workspace does not deal with is 404, so ids and addresses confirm nothing.
     "people_me": ("self",),  # only ever the caller's own Person
+    # --- apps/contacts/hcp_api.py  (HCP v1 over the people brain; apps/contacts/hcp.py)
+    # `self` = the person's own instance; `hcp-grant` = an agent, for the person
+    # who started its turn, under that client's grant. A missing entry is 403.
+    "hcp_configuration": ("anonymous",),  # the discovery document; names no person
+    "hcp_searchPreferences": ("self", "hcp-grant"),
+    "hcp_addPreference": ("self", "hcp-grant"),
+    "hcp_createEntry": ("self", "hcp-grant"),
+    "hcp_getPreference": ("self", "hcp-grant"),
+    "hcp_updatePreference": ("self", "hcp-grant"),  # a category change: the person only
+    "hcp_deletePreference": ("self", "hcp-grant"),  # hardDelete: the person only
+    "hcp_listAudit": ("self",),
+    "hcp_listGrants": ("self", "hcp-grant"),  # an agent sees only the grant it reads under
+    "hcp_revokeGrant": ("self",),
+    "hcp_export": ("self",),
     "lookup_person": ("member",),  # 404 unless known in one of the caller's workspaces
     "get_person": ("member",),  # read logged as PersonAccess(via=api)
     "list_person_projects": ("member",),  # same gate as get_person (known_in); read logged

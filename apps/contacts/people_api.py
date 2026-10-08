@@ -177,10 +177,16 @@ def get_person(request: HttpRequest, person_id: int, workspace: str | None = Non
     """Live facts (corrections first) and the digest for `?workspace=`. Members
     of that workspace only, and the read is logged where the person can see it."""
     ws = _workspace(request, workspace)
+    if people.agent_of_login(request.user) is not None:
+        # HCP 3.1: an agent never bulk-reads a person. It recalls what is
+        # relevant about the person it is SERVING, under that client's grant,
+        # with hcp_searchPreferences — the caller-only rule, enforced here.
+        raise ProblemError(403, "Agents recall through HCP", type_=TYPE_FORBIDDEN,
+                           detail="use hcp_searchPreferences with the turn you are serving")
     person = _person_in(person_id, ws)
     digest = people.digest_for(person, ws.pk)
     people.log_access(person, via=PersonAccess.VIA_API, workspace_slug=ws.pk,
-                      reader_user=request.user, reader_agent=people.agent_of_login(request.user))
+                      reader_user=request.user, reader_agent=None)
     return {
         **_ref(person), "workspace": ws.pk,
         "digest": digest.text if digest else "",
@@ -250,7 +256,8 @@ def add_person_fact(request: HttpRequest, person_id: int, payload: PersonFactIn)
             person=person, workspace=ws, kind=payload.kind, statement=payload.statement,
             basis=payload.basis, by_user=request.user,
             by_agent=people.agent_of_login(request.user), source_turn=source_turn,
-            project=project, instance_ref=payload.instance_ref, supersedes=supersedes)
+            project=project, instance_ref=payload.instance_ref, supersedes=supersedes,
+            category=payload.category, dimension=payload.dimension, confidence=payload.confidence)
     except people.FactError as exc:
         raise _bad(str(exc)) from None
     return 201, {**people.fact_dict(fact), "supersedes_id": fact.supersedes_id}

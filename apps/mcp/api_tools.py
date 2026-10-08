@@ -76,6 +76,16 @@ EXCLUDED_PREFIXES: dict[str, str] = {
 EXCLUDED: dict[str, str] = {
     "_auth_smoke": "internal smoke route",
     "health": "health check",
+    # HCP v1 Appendix B: the MCP tool set is the preference operations only;
+    # grants, the audit log and export are the PERSON's, reached over REST and
+    # the /people/me page. The full-HCPEntry POST is REST's; MCP adds through
+    # hcp_addPreference.
+    "hcp_configuration": "HCP discovery document, for HTTP clients",
+    "hcp_createEntry": "REST form of add; MCP clients use hcp_addPreference (HCP 3.2.2)",
+    "hcp_listAudit": "the person's audit log — never an agent's (HCP 4.3.3)",
+    "hcp_listGrants": "grant management is the person's, not an MCP tool (HCP Appendix B)",
+    "hcp_revokeGrant": "grant management is the person's, not an MCP tool (HCP Appendix B)",
+    "hcp_export": "the person's own export — not accessible to agents (HCP 3.3.5)",
     "contact_token": _HOST,
     "public_stats": _ANON,
     "submit_beta_request": _ANON,
