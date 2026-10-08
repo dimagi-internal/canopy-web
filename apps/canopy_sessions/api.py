@@ -38,6 +38,7 @@ from . import (
 )
 from .models import Attachment, Session
 from .schemas import (
+    SessionExportOut,
     AttachmentOut,
     BackfillStateOut,
     MenuAnswerIn,
@@ -1235,3 +1236,35 @@ def delete_secret(request: HttpRequest, session_id: uuid.UUID, name: str):
     session = _session_or_404(request, session_id, write=True)
     session.secrets.filter(name=name).delete()
     return 204, None
+
+
+@router.get("/{session_id}/export", response=SessionExportOut,
+            summary="Export a session's conversation to pick it up in your own Claude")
+def export_session(request: HttpRequest, session_id: uuid.UUID):
+    """This session as readable markdown — the same rows the web view shows, tool
+    output shortened — for handing to your own Claude so it can see where the
+    work stands and carry on. For when the runner
+    is out of tokens, or you want to take it from here yourself.
+
+    `canopy runner export <session>` saves it to a file and prints the prompt to
+    start from. Only the person who started the session can export it."""
+    # Creator only, deliberately narrower than the session ACL: editors and
+    # participants can drive a session, but taking its conversation off canopy is
+    # the starter's call (Jon, 2026-10-08; admins to follow). An embedding site
+    # acting for that user is refused — a widget is not a way to lift a chat out.
+    # Built server-side from Message rows (`exports.build_markdown`); the runner's
+    # raw transcript is never asked for.
+    from apps.tokens import delegation
+
+    from . import exports
+
+    if delegation.acting_app(request) is not None:
+        raise HttpError(403, "session export is not available to an embedded site")
+    session = _session_or_404(request, session_id)
+    if session.created_by_id is None or session.created_by_id != request.user.pk:
+        raise HttpError(403, "only the person who started this session can export it")
+    markdown, count = exports.build_markdown(session)
+    if not count:
+        raise HttpError(409, "this session has no conversation to export yet")
+    return {"session_id": session.id, "title": session.title or "",
+            "message_count": count, "markdown": markdown}

@@ -6390,6 +6390,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/export": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Export a session's conversation to pick it up in your own Claude
+         * @description This session as readable markdown — the same rows the web view shows, tool
+         *     output shortened — for handing to your own Claude so it can see where the
+         *     work stands and carry on. For when the runner
+         *     is out of tokens, or you want to take it from here yourself.
+         *
+         *     `canopy runner export <session>` saves it to a file and prints the prompt to
+         *     start from. Only the person who started the session can export it.
+         */
+        readonly get: operations["export_session"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/session-secrets/key": {
         readonly parameters: {
             readonly query?: never;
@@ -16355,6 +16381,23 @@ export interface components {
             /** Value */
             readonly value: string;
         };
+        /**
+         * SessionExportOut
+         * @description A session's conversation as readable markdown, to pick it up elsewhere.
+         */
+        readonly SessionExportOut: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Title */
+            readonly title: string;
+            /** Message Count */
+            readonly message_count: number;
+            /** Markdown */
+            readonly markdown: string;
+        };
         /** SessionSecretValueOut */
         readonly SessionSecretValueOut: {
             /** Name */
@@ -25595,6 +25638,28 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly export_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionExportOut"];
+                };
             };
         };
     };
