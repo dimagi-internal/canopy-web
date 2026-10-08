@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatSession } from '@/api/chat'
-import { feedSessions, feedSources } from './feedRules'
+import { feedSessions, feedSources, parkedByRunner } from './feedRules'
 
 const s = (id: string, fields: Partial<ChatSession> = {}): ChatSession =>
   ({
@@ -56,5 +56,39 @@ describe('feedSources', () => {
       ['agent:hal', 2],
       ['project:canopy-web', 1],
     ])
+  })
+})
+
+describe('parkedByRunner', () => {
+  const fleet = [
+    { id: 'r1', name: 'box', status_note: 'heartbeat lost', ready_note: 'cdp down', paused_note: 'gone fishing' },
+    { id: 'r2', name: 'other', status_note: '', ready_note: 'emdash CDP unreachable', paused_note: '' },
+  ]
+  it('groups parked sessions by runner, busiest first, with the runner\'s own note', () => {
+    const groups = parkedByRunner(
+      [
+        s('live'),
+        s('a', { feed_status: 'parked', runner_name: 'other', runner_status: 'degraded' }),
+        s('b', { feed_status: 'parked', runner_name: 'box', runner_status: 'stale' }),
+        s('c', { feed_status: 'parked', runner_name: 'other', runner_status: 'degraded', waiting_on_you: true }),
+      ],
+      fleet,
+    )
+    expect(groups.map((g) => [g.runnerName, g.count, g.waiting, g.reason, g.note, g.runner?.id])).toEqual([
+      ['other', 2, 1, 'offline', 'emdash CDP unreachable', 'r2'],
+      ['box', 1, 0, 'offline', 'heartbeat lost', 'r1'],
+    ])
+  })
+
+  it('reads the pause note for a paused runner, and survives a runner the fleet does not list', () => {
+    const groups = parkedByRunner(
+      [
+        s('a', { feed_status: 'parked', runner_name: 'box', runner_status: 'paused' }),
+        s('b', { feed_status: 'parked', runner_name: 'retired-box', runner_status: 'stale' }),
+      ],
+      fleet,
+    )
+    expect(groups.find((g) => g.runnerName === 'box')).toMatchObject({ reason: 'paused', note: 'gone fishing' })
+    expect(groups.find((g) => g.runnerName === 'retired-box')).toMatchObject({ runner: null, note: '' })
   })
 })

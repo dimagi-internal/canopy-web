@@ -179,10 +179,37 @@ describe('SessionFeed', () => {
     expect(screen.getByTestId('feed-card-h1')).toBeTruthy()
   })
 
-  it('counts what it holds back on offline runners', async () => {
-    listSessions.mockResolvedValue([s('a'), s('dead', { runner_online: false, runner_status: 'stale', feed_status: 'parked' })])
+  it('names the runner holding sessions back, why, and links to it', async () => {
+    listSessions.mockResolvedValue([
+      s('a'),
+      s('d1', { runner_online: false, runner_status: 'degraded', runner_name: 'haldimagi-mbp-cdp', feed_status: 'parked' }),
+      s('d2', { runner_online: false, runner_status: 'degraded', runner_name: 'haldimagi-mbp-cdp', feed_status: 'parked', waiting_on_you: true }),
+    ])
+    render(
+      <MemoryRouter>
+        <SessionFeed
+          agents={[{ slug: 'hal', name: 'Hal' } as never]}
+          runners={[{ id: 'r-1', name: 'haldimagi-mbp-cdp', status_note: '', ready_note: 'emdash CDP unreachable on :9224 — not claiming', paused_note: '' }]}
+        />
+      </MemoryRouter>,
+    )
+    const line = await screen.findByTestId('feed-parked-haldimagi-mbp-cdp')
+    expect(line.textContent).toContain('2 sessions are waiting on haldimagi-mbp-cdp')
+    expect(line.textContent).toContain('emdash CDP unreachable on :9224')
+    expect(line.textContent).toContain('1 of them needs an answer')
+    expect(line.querySelector('a')?.getAttribute('href')).toBe('/supervisor?tab=runners&runner=r-1')
+    // Still held back from the cards themselves: a reply would only queue.
+    expect(screen.queryByTestId('feed-card-d1')).toBeNull()
+  })
+
+  it('says a paused runner is paused, and still names an unknown one', async () => {
+    listSessions.mockResolvedValue([
+      s('p', { runner_online: false, runner_status: 'paused', runner_name: 'jj-mbp-cdp', feed_status: 'parked' }),
+    ])
     renderFeed()
-    expect((await screen.findByTestId('feed-parked')).textContent).toContain('1 more')
+    const line = await screen.findByTestId('feed-parked-jj-mbp-cdp')
+    expect(line.textContent).toContain('1 session is waiting on jj-mbp-cdp, which is paused')
+    expect(line.textContent).toContain('Resume it from the runner')
   })
 
   it('offers New chat right on the feed', async () => {

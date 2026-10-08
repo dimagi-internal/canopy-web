@@ -310,7 +310,7 @@ export default function SupervisorPage(): JSX.Element {
               {totalWaiting} task{totalWaiting === 1 ? '' : 's'} waiting on you — reviews and questions →
             </button>
           )}
-          <SessionFeed agents={agents} />
+          <SessionFeed agents={agents} runners={renderRunners} />
         </>
       )}
 
