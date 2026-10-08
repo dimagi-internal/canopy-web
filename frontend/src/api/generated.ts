@@ -4697,7 +4697,8 @@ export interface paths {
          * @description Stop EVERY runner from starting anything — the fleet-wide sibling of
          *     /runners/{id}/pause (see FleetHold). Turns keep enqueuing and wait QUEUED with
          *     their trigger, so `list turns?status=queued` shows what tried to start while
-         *     held. Running turns finish normally. Superuser only: it spans every tenant.
+         *     held. Running turns finish normally. A superuser or a named holder
+         *     (`CANOPY_FLEET_HOLDERS`, i.e. Ada) — it spans every tenant, but only stops work.
          *     Idempotent — holding again refreshes the note.
          */
         readonly post: operations["hold_fleet"];
@@ -4720,6 +4721,7 @@ export interface paths {
          * Release Fleet Hold
          * @description Release the fleet hold; queued turns become claimable again. Wakes every
          *     tenant's runners so the backlog starts now rather than at each box's next poll.
+         *     Superuser only — a named holder may stop the fleet, never restart it.
          */
         readonly post: operations["release_fleet_hold"];
         readonly delete?: never;
