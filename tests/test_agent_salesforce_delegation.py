@@ -134,8 +134,18 @@ def test_only_the_owner_of_both_can_lend(hal, eva, owner, ws, sf):
         delegations.set_salesforce(hal, other, "eva")
     eva.owner = other
     eva.save()
-    with pytest.raises(delegations.DelegationError, match="eva's owner"):
+    with pytest.raises(delegations.DelegationError, match="you own no agent 'eva'"):
         delegations.set_salesforce(hal, owner, "eva")
+
+
+def test_the_lender_may_live_in_another_workspace(hal, owner, sf):
+    # Eva is in one tenant, the agents borrowing her identity in another.
+    other_ws = a_workspace()
+    wsvc.ensure_member(other_ws, owner, WorkspaceMembership.OWNER)
+    lender = Agent.objects.create(slug="eva2", name="Eva", workspace=other_ws, owner=owner)
+    AgentCredential.objects.create(agent=lender, name="salesforce", value_enc=encrypt_secret(json.dumps(CREDS)))
+    delegations.set_salesforce(hal, owner, "eva2")
+    assert json.loads(delegations.salesforce_creds_for(hal))["refreshToken"] == "r1"
 
 
 def test_transferring_the_lender_stops_every_loan(hal, eva, owner, ws, sf):

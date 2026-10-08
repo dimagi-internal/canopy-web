@@ -481,6 +481,10 @@ def _in_force_salesforce(agent: Agent) -> AgentDelegation | None:
     row = delegation_for(agent, AgentDelegation.SALESFORCE)
     if row is None or row.lender is None or row.lender.owner_id != row.user_id:
         return None
+    from apps.workspaces import services as wsvc
+
+    if not wsvc.is_member(row.user, row.lender.workspace_id):
+        return None   # left the lender's tenant: its identity stops lending, as GitHub's does
     return row
 
 
@@ -494,12 +498,14 @@ def set_salesforce(agent: Agent, user, lender_slug: str) -> AgentDelegation:
 
     if agent.owner_id != getattr(user, "pk", None):
         raise DelegationError(f"only {agent.slug}'s owner can lend it a Salesforce identity")
-    lender = AgentModel.objects.filter(
-        workspace_id=agent.workspace_id, slug=(lender_slug or "").strip()).first()
-    if lender is None:
-        raise DelegationError(f"no agent '{lender_slug}' in {agent.slug}'s workspace")
-    if lender.owner_id != user.pk:
-        raise DelegationError(f"only {lender.slug}'s owner can lend its Salesforce identity")
+    # Across workspaces on purpose: the lender lives where it lives (Eva in one
+    # tenant, the agents borrowing her identity in another). The gate is
+    # ownership, which is per person, not per tenant — and `delegation_for` /
+    # `_in_force_salesforce` re-check it at every use. Slugs are globally unique.
+    lender = AgentModel.objects.filter(slug=(lender_slug or "").strip()).first()
+    if lender is None or lender.owner_id != user.pk:
+        # One message for both: a stranger must not learn which slugs exist.
+        raise DelegationError(f"you own no agent '{lender_slug}' to lend")
     meta = probe_salesforce(lender_salesforce_creds(lender))
     row, _ = AgentDelegation.objects.update_or_create(
         user=user, agent=agent, service=AgentDelegation.SALESFORCE,
