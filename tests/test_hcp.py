@@ -351,8 +351,15 @@ def test_export_carries_soft_deleted_entries_unless_excluded(w):
     assert _as(w["ace"].user).get(f"{BASE}/v1/export?turn={turn.pk}").status_code == 403
 
 
-def test_discovery_document_is_public_and_declares_the_profile(w):
-    doc = Client().get(f"{BASE}/.well-known/hcp-configuration").json()
+def test_discovery_document_is_public_and_declares_the_profile(w, settings):
+    # Production's login gate ON: the test settings turn it off, which is how
+    # #1343 shipped a "public" document that answered 401 live.
+    settings.REQUIRE_AUTH = True
+    r = Client().get(f"{BASE}/.well-known/hcp-configuration")
+    assert r.status_code == 200
+    doc = r.json()
+    # ...and only that one path under /api/hcp/ is open.
+    assert Client().get(f"{BASE}/v1/grants").status_code == 401
     assert (doc["authorization_profile"], doc["envelope_form"], doc["minimization_method"]) == (
         "first-party", "grouped", "lexical")
     assert doc["supported_categories"] == list(PersonFact.CATEGORIES)

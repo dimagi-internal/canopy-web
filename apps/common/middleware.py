@@ -72,6 +72,11 @@ PUBLIC_PATH_PREFIXES = (
     "/oauth/host/jwks.json",
     "/.well-known/oauth-authorization-server",
     "/.well-known/oauth-protected-resource",
+    # The Human Context Protocol discovery document (HCP v1 Appendix C) — what
+    # this instance supports, read BEFORE a client holds a credential. It names
+    # no person and returns no entry; every other /api/hcp/ route needs a token.
+    # A full path, so it admits nothing else under /api/hcp/.
+    "/api/hcp/.well-known/hcp-configuration",
     # The contact surface. A contact token deliberately produces no
     # `request.user`, so every one of these would bounce to a login page that
     # a person with no canopy account can never complete. Listed as a PREFIX
