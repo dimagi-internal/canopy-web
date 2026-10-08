@@ -23,6 +23,11 @@ status item like any other app.
 - **Right-click → local controls**: Pause/Resume (writes the `PAUSED` sentinel the
   daemon honors), Start/Stop daemon (launchctl), Open Supervisor in browser, Reload,
   Open Log, Quit.
+- **Close sessions** (right-click submenu): lists this box's open sessions per project
+  (`ace — 6 sessions…`) plus "All sessions", and after a confirm closes them with
+  `canopy-runner close-sessions --project <p> | --all` — each one the same close as the
+  phone's (the emdash task is deleted; transcripts and canopy's record are kept). The
+  same command works from a terminal: `canopy-runner close-sessions --list`.
 
 ## Relationship to the daemon
 

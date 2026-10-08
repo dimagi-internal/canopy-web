@@ -37,7 +37,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import chat_bridge, chat_pump, close, desktop, hooks, inbox_due, mailbox_probe, sessions
+from . import chat_bridge, chat_pump, close, desktop, emdash, hooks, inbox_due, mailbox_probe, sessions
 from . import activity, session_interrupt, streams
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
@@ -903,6 +903,21 @@ def _build_parser() -> argparse.ArgumentParser:
     runtime_parser.add_argument("engine", nargs="?", choices=list(desktop.RUNTIMES))
     runtime_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))
 
+    close_parser = subparsers.add_parser(
+        "close-sessions",
+        help="close this box's open sessions (deletes the emdash tasks, as a close from "
+             "the phone does; transcripts and canopy's record are kept). --list shows "
+             "the open sessions per project; --project closes one project's; --all "
+             "closes every one",
+    )
+    close_parser.add_argument("--config", default=str(Path.home() / ".canopy" / "runner.json"))
+    close_scope = close_parser.add_mutually_exclusive_group(required=True)
+    close_scope.add_argument("--list", action="store_true",
+                             help="print the open sessions per project; close nothing")
+    close_scope.add_argument("--project", help="close every open session of this project")
+    close_scope.add_argument("--all", action="store_true", help="close every open session")
+    close_parser.add_argument("--json", action="store_true", help="machine-readable output")
+
     pair_parser = subparsers.add_parser(
         "pair",
         help="set this macOS account up as a runner: pair with canopy-web (once — a "
@@ -951,6 +966,41 @@ def runtime_cmd(args) -> int:
     print(f"{row.get('name', cfg.runner_id)}: {row.get('engine', 'emdash')}")
     print(desktop.describe_app_features(desktop.app_features()))
     return 0
+
+
+def close_sessions_cmd(args) -> int:
+    """`canopy-runner close-sessions --list | --project P | --all [--json]`."""
+    from . import close_all
+
+    cfg = Config.load(Path(args.config))
+    try:
+        rows = close_all.open_sessions(cfg)
+    except emdash.EmdashReadError as exc:
+        print(f"close-sessions: could not read emdash: {exc}", file=sys.stderr)
+        return 1
+    if args.list:
+        counts = close_all.counts_by_project(rows)
+        if args.json:
+            print(json.dumps({"projects": counts, "total": len(rows)}))
+        else:
+            for project, n in counts.items():
+                print(f"{n:4d}  {project or '(no project)'}")
+            print(f"{len(rows):4d}  total")
+        return 0
+    result = close_all.close_all(cfg, project=None if args.all else args.project, rows=rows)
+    if result["closed"] or result["absent"]:
+        try:
+            close_all.report_closes(cfg, Client(cfg.base_url, cfg.token))
+        except Exception:  # noqa: BLE001 — absence says the same thing, minutes later
+            logger.debug("close report failed (non-fatal)", exc_info=True)
+    if args.json:
+        print(json.dumps(result))
+    else:
+        print(f"closed {len(result['closed'])}, already gone {len(result['absent'])}, "
+              f"failed {len(result['failed'])}, skipped {len(result['skipped'])}")
+        for f in result["failed"]:
+            print(f"  failed {f['project']}/{f['task']}: {f['error']}")
+    return 1 if result["failed"] else 0
 
 
 def pair_cmd(args) -> int:
@@ -1118,6 +1168,9 @@ def main() -> None:
 
     if command == "runtime":
         raise SystemExit(runtime_cmd(args))
+
+    if command == "close-sessions":
+        raise SystemExit(close_sessions_cmd(args))
 
     if command == "verify-emdash":
         if not args.config:
