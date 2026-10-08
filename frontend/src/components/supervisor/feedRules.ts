@@ -65,3 +65,65 @@ export function feedSources(feed: readonly ChatSession[]): { key: string; count:
   }
   return [...by.values()].sort((a, b) => b.count - a.count)
 }
+
+/** The runner fields the parked banner reads — structural, so a test can pass a literal. */
+export type ParkedRunnerInfo = {
+  id: string
+  name: string
+  status_note?: string | null
+  ready_note?: string | null
+  paused_note?: string | null
+}
+
+/** One runner the feed is holding sessions back for. */
+export type ParkedGroup = {
+  /** The runner's name as the session reports it ('' when it reported none). */
+  runnerName: string
+  /** Its fleet row, when the viewer's fleet list has it — that is what links to it. */
+  runner: ParkedRunnerInfo | null
+  /** A pause is somebody's decision; offline/degraded is a box to fix. */
+  reason: 'paused' | 'offline'
+  count: number
+  /** Of those, blocked on a dialog. */
+  waiting: number
+  /** Why the runner cannot take turns, in its own words ('' when it said nothing). */
+  note: string
+}
+
+/**
+ * The parked sessions grouped by the runner holding them, busiest first.
+ *
+ * A bare count ("+ 7 more waiting on a paused or offline runner") reads fine
+ * when one box of many is down, and wrong when the box that is down is the
+ * viewer's own laptop: on 2026-10-04 every one of a person's sessions dropped
+ * off the feed because emdash had been relaunched without CDP, and the only
+ * clue was that link. Naming the runner and its own note — `paused_note` for a
+ * pause, else `status_note`, else `ready_note` (where "emdash CDP unreachable"
+ * lands) — says what to go and fix.
+ */
+export function parkedByRunner(
+  sessions: readonly ChatSession[],
+  runners: readonly ParkedRunnerInfo[] | null | undefined,
+): ParkedGroup[] {
+  const fleet = new Map((runners ?? []).map((r) => [r.name, r] as const))
+  const by = new Map<string, ParkedGroup>()
+  for (const s of sessions) {
+    if (s.feed_status !== 'parked') continue
+    const name = s.runner_name ?? ''
+    const hit = by.get(name)
+    if (hit) {
+      hit.count += 1
+      if (s.waiting_on_you) hit.waiting += 1
+      continue
+    }
+    const reason: ParkedGroup['reason'] = s.runner_status === 'paused' ? 'paused' : 'offline'
+    const runner = fleet.get(name) ?? null
+    const note = runner
+      ? (reason === 'paused' ? runner.paused_note : '') || runner.status_note || runner.ready_note || ''
+      : ''
+    by.set(name, {
+      runnerName: name, runner, reason, count: 1, waiting: s.waiting_on_you ? 1 : 0, note: note.trim(),
+    })
+  }
+  return [...by.values()].sort((a, b) => b.count - a.count)
+}

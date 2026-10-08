@@ -9,7 +9,10 @@ import { CLOSE_POLL_MS, closeIntent, closeResultMessage, settleClosing } from '@
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { NewChatMenu } from '@/components/chat/NewChatMenu'
 import { TurnModeBadge } from '@/components/chat/TurnModeBadge'
-import { CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, sourceKey } from './feedRules'
+import {
+  CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, parkedByRunner, sourceKey,
+  type ParkedGroup, type ParkedRunnerInfo,
+} from './feedRules'
 
 const POLL_MS = 20_000
 // Per-viewer and best-effort: storage can be missing or throw (private window).
@@ -30,7 +33,14 @@ function readShowAuto(): boolean {
  * chat for the full transcript, or Close it — the same close as the chat page
  * and the session list (ends its emdash task).
  */
-export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Element {
+export function SessionFeed({
+  agents,
+  runners = null,
+}: {
+  agents: AgentOut[] | null
+  /** The viewer's fleet, so a runner holding sessions back can be named and linked. */
+  runners?: readonly ParkedRunnerInfo[] | null
+}): JSX.Element {
   const [sessions, setSessions] = useState<ChatSession[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Sent or archived from this screen: hidden at once rather than waiting out
@@ -145,7 +155,8 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
   }
 
   const unhandled = sessions.filter((s) => handled.get(s.id) !== s.last_activity_at)
-  const { feed: pending, parked, auto: autoCount } = feedSessions(unhandled, { showAuto })
+  const { feed: pending, auto: autoCount } = feedSessions(unhandled, { showAuto })
+  const parkedGroups = parkedByRunner(unhandled, runners)
   const sources = feedSources(pending)
   const showChips = pending.length >= CHIPS_AT && sources.length > 1
   // A filter whose source has emptied out falls back to All rather than
@@ -184,6 +195,7 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
         <NewChatMenu agents={agents ?? []} onError={setNewChatError} />
       </div>
       {newChatError && <p className="text-[12px] text-destructive">{newChatError}</p>}
+      {parkedGroups.length > 0 && <ParkedBanner groups={parkedGroups} />}
       {showChips && (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by agent" data-testid="feed-chips">
           {[{ key: null, label: 'All', count: pending.length }, ...sources.map((x) => ({
@@ -232,15 +244,45 @@ export function SessionFeed({ agents }: { agents: AgentOut[] | null }): JSX.Elem
           />
         ))
       )}
-      {parked > 0 && (
-        <Link
-          to="/supervisor?tab=sessions"
-          className="self-start text-[12px] text-muted-foreground hover:text-foreground"
-          data-testid="feed-parked"
-        >
-          + {parked} more waiting on a paused or offline runner →
-        </Link>
-      )}
+    </div>
+  )
+}
+
+/**
+ * Which runners are holding sessions back, and why — at the TOP of the feed, not
+ * a count under it. A pause is somebody's decision (resume it); offline or
+ * degraded is a box to go and fix, in the runner's own words.
+ */
+function ParkedBanner({ groups }: { groups: ParkedGroup[] }): JSX.Element {
+  return (
+    <div
+      className="flex flex-col gap-1.5 rounded-lg border border-warning/30 bg-warning/10 p-3 text-[12px] text-foreground-secondary"
+      role="status"
+      data-testid="feed-parked"
+    >
+      {groups.map((g) => {
+        const n = `${g.count} session${g.count === 1 ? '' : 's'}`
+        const name = g.runnerName || 'a runner'
+        const state = g.reason === 'paused' ? 'is paused' : "can't take turns"
+        const href = g.runner ? `/supervisor?tab=runners&runner=${g.runner.id}` : '/supervisor?tab=runners'
+        return (
+          <p key={g.runnerName} data-testid={`feed-parked-${g.runnerName || 'unknown'}`}>
+            {n} {g.count === 1 ? 'is' : 'are'} waiting on <strong className="text-foreground">{name}</strong>, which{' '}
+            {state}
+            {g.note ? (
+              <>
+                : <em>{g.note}</em>
+              </>
+            ) : (
+              ''
+            )}
+            .{g.waiting > 0 ? ` ${g.waiting} of them need${g.waiting === 1 ? 's' : ''} an answer.` : ''}{' '}
+            <Link to={href} className="font-medium text-foreground underline underline-offset-2">
+              {g.reason === 'paused' ? 'Resume it from the runner →' : 'Open the runner →'}
+            </Link>
+          </p>
+        )
+      })}
     </div>
   )
 }
