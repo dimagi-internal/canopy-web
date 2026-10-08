@@ -135,6 +135,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "resolve_agent_credentials": ("runner-holds-agent",),  # bearer only
     "get_agent_vault": ("member",),
     "set_agent_vault": ("agent-admin",),
+    "list_sender_trust": ("member",),
+    "set_sender_trust": ("agent-admin",),
+    "delete_sender_trust": ("agent-admin",),
     "get_agent_github": ("member",),
     "set_agent_github": ("agent-owner",),  # strictly the agent's own owner (delegations.set_github)
     "check_agent_github": ("member",),
