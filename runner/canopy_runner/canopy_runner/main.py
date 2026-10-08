@@ -949,6 +949,7 @@ def runtime_cmd(args) -> int:
         return 0
     row = next((r for r in client.list_runners() if r.get("id") == cfg.runner_id), {})
     print(f"{row.get('name', cfg.runner_id)}: {row.get('engine', 'emdash')}")
+    print(desktop.describe_app_features(desktop.app_features()))
     return 0
 
 

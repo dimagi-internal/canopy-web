@@ -459,6 +459,73 @@ def ensure_app() -> bool:
     return False
 
 
+# ── the app's server-side feature gates (canopy-web#1238) ───────────────────
+#
+# Two of the app's GrowthBook features decide how this backend should work, and
+# neither is a local setting:
+#   - `start_session` (the in-app `mcp__ccd_session__start_session` tool) exists
+#     only when gate 2371478310 ("sideSessions") is on. It is the real fix for the
+#     deep-link focus steal: a live dispatcher session could start new sessions
+#     with no claude:// URL at all. Off, there is no such tool.
+#   - the unattended idle timeout (900s) arms only when 4041267332 is non-zero.
+#     At 0 a hidden session is never paused, so wakes (deep links) are rare.
+# The app caches the features it last fetched for this account in
+# `<userData>/fcache`: an 8-byte magic header, then gzipped JSON
+# `{timestamp, mode, orgUuid, features: {<id>: {value, on, source, ...}}}`.
+# Reading it is what turns "recheck #1238" from unpacking the app bundle and
+# probing from a mod into one `canopy-runner runtime`.
+
+FCACHE_MAGIC = bytes([67, 76, 70, 2, 0, 154, 183, 226])
+GATE_START_SESSION = "2371478310"
+GATE_IDLE_TIMEOUT = "4041267332"
+
+
+def fcache_path(home: Path | None = None) -> Path:
+    return (home or Path.home()) / "Library" / "Application Support" / "Claude" / "fcache"
+
+
+def app_features(path: Path | None = None) -> dict | None:
+    """What the Claude app last fetched for this account, or None if unreadable.
+
+    {"fetched_at": epoch seconds, "start_session": bool | None,
+     "idle_timeout": int | None}. None for a feature the cache does not name."""
+    import gzip
+
+    try:
+        raw = (path or fcache_path()).read_bytes()
+        if not raw.startswith(FCACHE_MAGIC):
+            return None
+        data = json.loads(gzip.decompress(raw[len(FCACHE_MAGIC):]))
+        features = data.get("features") or {}
+    except (OSError, ValueError, EOFError, AttributeError):
+        return None
+
+    def value(gate):
+        f = features.get(gate)
+        return f.get("value") if isinstance(f, dict) else None
+
+    start = value(GATE_START_SESSION)
+    idle = value(GATE_IDLE_TIMEOUT)
+    return {
+        "fetched_at": (data.get("timestamp") or 0) / 1000,
+        "start_session": bool(start) if start is not None else None,
+        "idle_timeout": idle if isinstance(idle, (int, float)) and not isinstance(idle, bool) else None,
+    }
+
+
+def describe_app_features(features: dict | None) -> str:
+    """One line for `canopy-runner runtime`: the two gates #1238 watches."""
+    if features is None:
+        return "Claude desktop gates: unknown (no readable feature cache on this account)"
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(features["fetched_at"]))
+    start = {True: "ON - switch new sessions to it (canopy-web#1238)",
+             False: "off (new sessions open by deep link)",
+             None: "not in cache"}[features["start_session"]]
+    idle = features["idle_timeout"]
+    idle_txt = "not in cache" if idle is None else ("off" if idle == 0 else f"{idle}s")
+    return f"Claude desktop gates (fetched {when}): start_session {start}; idle timeout {idle_txt}"
+
+
 #: Opens a claude:// URL and hands focus straight back (see the file's header).
 QUIET_OPEN = Path(__file__).resolve().parent / "desktop_quiet_open.js"
 #: How long the helper watches for the app to come forward after the open.
