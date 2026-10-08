@@ -2672,6 +2672,57 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/sender-trust": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List temporary trust rules for members' unaligned email
+         * @description Addresses whose mail is tied to their member account although it is not
+         *     DMARC- or DKIM-aligned — each with why, and when it lapses (expired rules
+         *     are listed with `active: false` until removed).
+         */
+        readonly get: operations["list_sender_trust"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/sender-trust/{email}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Temporarily trust one member's unaligned email
+         * @description For `days` (1–90), mail From: this exact address is tied to its member
+         *     account although it is not DMARC- or DKIM-aligned — as long as it still
+         *     carries a passing DKIM signature, and the address still belongs to exactly
+         *     one member of the agent's workspace. For a member whose domain signs with
+         *     its provider's key (no DMARC, no own-domain DKIM) while that is fixed.
+         *     Re-PUT to extend or reword; DELETE to end it early.
+         */
+        readonly put: operations["set_sender_trust"];
+        readonly post?: never;
+        /**
+         * End a temporary email trust rule
+         * @description Their mail goes back to needing DMARC or own-domain DKIM. Idempotent.
+         */
+        readonly delete: operations["delete_sender_trust"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/github": {
         readonly parameters: {
             readonly query?: never;
@@ -11724,6 +11775,44 @@ export interface components {
             readonly vault?: string | null;
             /** Service Key */
             readonly service_key?: string | null;
+        };
+        /** SenderTrustOut */
+        readonly SenderTrustOut: {
+            /** Email */
+            readonly email: string;
+            /** Reason */
+            readonly reason: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Active */
+            readonly active: boolean;
+            /** Created By */
+            readonly created_by?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /**
+         * SenderTrustIn
+         * @description A TEMPORARY trust rule for one member's unaligned mail (`SenderTrust`).
+         *
+         *     `reason` is required: say why, and what fixes it for good (usually "their
+         *     domain's admin turns on DKIM signing"). `days` is how long it lasts, 1–90;
+         *     re-PUT to extend. There is no permanent form.
+         */
+        readonly SenderTrustIn: {
+            /** Reason */
+            readonly reason: string;
+            /**
+             * Days
+             * @default 14
+             */
+            readonly days: number;
         };
         /** AgentGitHubCheckOut */
         readonly AgentGitHubCheckOut: {
@@ -20898,6 +20987,76 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["AgentVaultOut"];
                 };
+            };
+        };
+    };
+    readonly list_sender_trust: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SenderTrustOut"][];
+                };
+            };
+        };
+    };
+    readonly set_sender_trust: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly email: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SenderTrustIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SenderTrustOut"];
+                };
+            };
+        };
+    };
+    readonly delete_sender_trust: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly email: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
