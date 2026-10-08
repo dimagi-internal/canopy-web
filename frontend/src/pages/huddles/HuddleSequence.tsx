@@ -40,6 +40,19 @@ function clock(iso: string | null): string {
   return iso ? new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : ''
 }
 
+/** The step's first time, when it falls on a different day from the step
+ * before (step 4 can run a day or more after step 3) — the rows only show a
+ * clock time, so the day goes on the step's band. */
+function newDay(steps: { messages: { at: string | null }[] }[], i: number): string | null {
+  const first = (k: number) => steps[k]?.messages.find((m) => m.at)?.at ?? null
+  const here = first(i)
+  if (!here || i === 0) return null
+  let k = i - 1
+  while (k >= 0 && !first(k)) k--
+  const before = k >= 0 ? first(k) : null
+  return before && day(before) !== day(here) ? here : null
+}
+
 function day(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : ''
 }
@@ -223,11 +236,12 @@ export function HuddleSequence({ huddle }: { huddle: Huddle }) {
           <span className="col-start-2 text-[11px] font-semibold md:col-start-auto md:pl-4 uppercase tracking-[0.06em] text-muted-foreground">What was said</span>
         </div>
 
-        {steps.map((s) => (
+        {steps.map((s, i) => (
           <section key={s.step} data-step={s.step} aria-label={s.title}>
             <div className="relative z-10 mb-1 mt-4 grid grid-cols-[4.5rem_minmax(0,1fr)] md:[grid-template-columns:var(--seq-cols)]" style={grid}>
               <div className="col-span-full rounded-md border border-border/70 bg-muted/90 px-3 py-1.5 text-[12px]">
                 <span className="font-semibold text-foreground">{s.step ? `Step ${s.step} · ${s.title}` : s.title}</span>
+                {newDay(steps, i) && <span data-step-day className="ml-2 text-muted-foreground">· {day(newDay(steps, i))}</span>}
               </div>
             </div>
             {s.messages.length === 0 && (

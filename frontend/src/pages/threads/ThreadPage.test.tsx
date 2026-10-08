@@ -35,6 +35,14 @@ describe('the thread page', () => {
     expect(within(ended).getByText('The idea as agreed')).toBeTruthy()
   })
 
+  it('shows the agreed idea the way the huddle does — no raw JSON, no stray "No answer yet"', async () => {
+    const { container } = await renderAt(agreed.id)
+    const ended = container.querySelector('[data-outcome]') as HTMLElement
+    expect(ended.querySelector('[data-proposal="revised"]')).toBeTruthy()
+    expect(ended.textContent).not.toMatch(/[{}]"|"\s*:/)
+    expect(ended.textContent).not.toContain('No answer yet')
+  })
+
   it('lays the messages out as a conversation, each with where its speaker stands', async () => {
     const { container } = await renderAt(agreed.id)
     const rows = [...container.querySelectorAll('[data-thread-message]')] as HTMLElement[]

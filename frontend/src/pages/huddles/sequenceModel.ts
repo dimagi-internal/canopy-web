@@ -145,9 +145,12 @@ export function settlingMessages(h: Huddle): Message[] {
     for (const m of msgs) out.push(directMessageOf(t, m))
     if (t.status !== 'open') {
       out.push({
-        key: `thread-${t.id}-end`, step: 4, kind: 'settled', from: lead, to: [asker],
+        // The moderator closes a thread, so the close is the moderator's line to
+        // both sides — not either agent's (first live thread, 2026-10-08, read
+        // "Eva · Agreed on …").
+        key: `thread-${t.id}-end`, step: 4, kind: 'settled', from: t.moderator || h.leader, to: [lead, asker],
         at: (t.closed_at ?? null) as string | null,
-        label: `${statusWords(t)} on “${title}”`,
+        label: `Closed it: ${who(lead)} and ${who(asker)} — ${statusWords(t).charAt(0).toLowerCase()}${statusWords(t).slice(1)} on “${title}”`,
         thread: { thread: t, title },
       })
     }
