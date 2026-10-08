@@ -26,8 +26,9 @@ const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredenti
 vi.mock('@/api/agents', () => ({
   getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
   deleteAgentCredential, startGoogleMint,
-  // The GitHub section has its own test; here it only has to not throw.
+  // The GitHub and Salesforce sections have their own tests; here they only have to not throw.
   getAgentGitHub: () => new Promise(() => {}),
+  getAgentSalesforce: () => new Promise(() => {}),
 }))
 
 const { AgentCredentialsPanel } = await import('./AgentCredentialsPanel')

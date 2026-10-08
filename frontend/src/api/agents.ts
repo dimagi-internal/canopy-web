@@ -517,6 +517,47 @@ export async function deleteAgentGitHub(slug: string): Promise<AgentGitHub> {
   return githubResult(res as unknown as GitHubRes, 'Removing the token')
 }
 
+// ---- Salesforce: another agent's own identity, lent to this one --------------
+// chrome-sales acts in Salesforce as ONE delegated identity (Eva's SF user); other
+// agents borrow it. See the Salesforce section of apps/agents/delegations.py.
+
+export type AgentSalesforce = Omit<components['schemas']['AgentSalesforceOut'], 'lent_to'> & {
+  lent_to: string[]
+}
+type AgentSalesforceWire = Omit<AgentSalesforce, 'lent_to'> & { lent_to?: ArrayLike<string> | null }
+type SalesforceRes = { data?: AgentSalesforceWire; error?: unknown }
+
+function salesforceResult(res: SalesforceRes, what: string): AgentSalesforce {
+  if (res.error !== undefined || res.data === undefined) {
+    const detail = (res.error as { detail?: unknown } | undefined)?.detail
+    throw new Error(typeof detail === 'string' && detail ? detail : `${what} failed`)
+  }
+  return { ...res.data, lent_to: Array.from(res.data.lent_to ?? []) }
+}
+
+export async function getAgentSalesforce(slug: string): Promise<AgentSalesforce> {
+  const res = await apiV2.GET('/api/agents/{slug}/salesforce', { params: { path: { slug } } })
+  return salesforceResult(res as unknown as SalesforceRes, 'Loading Salesforce status')
+}
+
+export async function setAgentSalesforce(slug: string, lender: string): Promise<AgentSalesforce> {
+  const res = await apiV2.PUT('/api/agents/{slug}/salesforce', {
+    params: { path: { slug } },
+    body: { lender },
+  })
+  return salesforceResult(res as unknown as SalesforceRes, 'Lending')
+}
+
+export async function checkAgentSalesforce(slug: string): Promise<AgentSalesforce> {
+  const res = await apiV2.POST('/api/agents/{slug}/salesforce/check', { params: { path: { slug } } })
+  return salesforceResult(res as unknown as SalesforceRes, 'The check')
+}
+
+export async function deleteAgentSalesforce(slug: string): Promise<AgentSalesforce> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/salesforce', { params: { path: { slug } } })
+  return salesforceResult(res as unknown as SalesforceRes, 'Withdrawing')
+}
+
 export type AgentDefaultOrderOut = components['schemas']['AgentDefaultOrderOut']
 
 // What the agent's "everything else" runs on: its own list, or the workspace
