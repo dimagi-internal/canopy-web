@@ -498,9 +498,20 @@ def enqueue_turn(
         from . import initiator as who
         initiator = who.unknown(via=origin)
     from . import provenance
+    from apps.threads import guard as thread_guard
 
     try:
         with transaction.atomic():
+            if thread_guard.is_thread_message(origin_ref):
+                # An agent-thread message: refused (ThreadRefused, an HttpError)
+                # unless the thread is open, in time, within budget, spoken by a
+                # participant as itself, and next in order. After the idempotency
+                # check above, so a retried message returns its turn; inside this
+                # transaction, so the thread row stays locked until the turn exists.
+                target = (agent.slug if agent is not None
+                          else session.agent.slug if session is not None and session.agent_id
+                          else "")
+                thread_guard.check_message(origin_ref, target)
             turn = Turn.objects.create(
                 **initiator.fields(),
                 **provenance.turn_fields(parent=parent, **(provenance_extra or {})),

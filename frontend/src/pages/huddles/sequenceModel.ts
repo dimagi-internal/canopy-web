@@ -6,14 +6,22 @@
  * the leader's question going out to everyone it was sent to, then each answer
  * coming back in the order it arrived; the huddle ends with the leader's result
  * going to you. Every label is one plain line — the full text opens on click.
+ *
+ * Where a teammate was in only with changes, the idea's lead and that teammate
+ * settle them in a direct conversation (an agreement thread): step 4, "Settling
+ * changes", shows each of its messages as a DIRECT arrow from the speaker to the
+ * other agent — the leader is not in the middle of it.
  */
 import type { Huddle, HuddleCell } from '@/api/huddles'
+import type { AgentThread, ThreadMessage } from '@/api/threads'
+import { audienceOf, messageState, PENDING_WORDS, POSITION_WORDS, said, statusWords } from '../threads/threadModel'
 import { proposalThreads } from './conversationModel'
 import {
-  answerLines, cellState, columns, leaderAsks, normResolution, proposalLines, reportSummary, roundsToShow,
+  agreementParties, agreementThreads, answerLines, cellState, columns, leaderAsks, normResolution, proposalLines,
+  reportSummary, roundsToShow,
   type Answer, type Block, type LeaderAsk,
 } from './huddleModel'
-import { andList, stepAsk, stepName, trimPriority, VERDICT_WORDS, who } from './plainWords'
+import { andList, firstSentence, stepAsk, stepName, trimPriority, VERDICT_WORDS, who } from './plainWords'
 
 export const YOU = 'you'
 
@@ -23,7 +31,9 @@ export type AnswerChip = { answer: Answer; title: string; lead: string }
 export type Message = {
   key: string
   step: number
-  kind: 'ask' | 'reply' | 'result'
+  /** `direct`: one agent speaking straight to another, in an agreement thread;
+   * `settled`: how that conversation ended. */
+  kind: 'ask' | 'reply' | 'result' | 'direct' | 'settled'
   from: string
   /** The lanes it reaches — several for the leader's question to everyone. */
   to: string[]
@@ -37,6 +47,8 @@ export type Message = {
   cell?: HuddleCell
   /** For an ask: the questions put to each member. */
   asks?: { member: string; asks: LeaderAsk[] }[]
+  /** For a direct message: its thread and the message itself. */
+  thread?: { thread: AgentThread; message?: ThreadMessage; title: string }
 }
 
 export type Step = { step: number; title: string; messages: Message[] }
@@ -105,6 +117,47 @@ function resultOf(h: Huddle, after: string | null): Message | null {
   }
 }
 
+/** One direct message of an agreement thread, as a Diagram row. */
+export function directMessageOf(t: AgentThread, m: ThreadMessage): Message {
+  const { title } = agreementParties(t)
+  const state = messageState(m)
+  const base = {
+    key: `thread-${t.id}-${m.n}`, step: 4, kind: 'direct' as const, from: m.speaker,
+    to: audienceOf(t, m.speaker), at: (m.finished_at ?? m.created_at ?? null) as string | null,
+    thread: { thread: t, message: m, title },
+  }
+  if (state !== 'replied') return { ...base, label: PENDING_WORDS[state], pending: state }
+  const { position, says } = said(m)
+  const words = position ? POSITION_WORDS[position] : 'Says'
+  return { ...base, label: `${words}${says ? `: ${firstSentence(says, 120, 40)}` : ''}` }
+}
+
+/** Step 4 as direct conversations: every agreement thread's messages, each
+ * thread closed by a line saying how it ended — all in time order, like every
+ * other step (two threads running at once interleave; each arrow still says
+ * who is talking to whom). A message still being written sorts last. */
+export function settlingMessages(h: Huddle): Message[] {
+  const out: Message[] = []
+  const threads = [...agreementThreads(h)].sort((a, b) => time(a.created_at) - time(b.created_at))
+  for (const t of threads) {
+    const { lead, asker, title } = agreementParties(t)
+    const msgs = [...(t.messages ?? [])].sort((a, b) => a.n - b.n)
+    for (const m of msgs) out.push(directMessageOf(t, m))
+    if (t.status !== 'open') {
+      out.push({
+        key: `thread-${t.id}-end`, step: 4, kind: 'settled', from: lead, to: [asker],
+        at: (t.closed_at ?? null) as string | null,
+        label: `${statusWords(t)} on “${title}”`,
+        thread: { thread: t, title },
+      })
+    }
+  }
+  return out
+    .map((m, i) => ({ m, i }))
+    .sort((a, b) => time(a.m.at) - time(b.m.at) || a.i - b.i)
+    .map(({ m }) => m)
+}
+
 /** The whole huddle as steps of messages, in time order. */
 export function sequenceOf(h: Huddle): Step[] {
   const type = h.type || 'work'
@@ -130,6 +183,13 @@ export function sequenceOf(h: Huddle): Step[] {
       }
     }
     steps.push({ step: r, title: stepName(type, r), messages })
+  }
+  const direct = settlingMessages(h)
+  if (direct.length) {
+    const four = steps.find((s) => s.step === 4)
+    if (four) four.messages.push(...direct)
+    else steps.push({ step: 4, title: stepName(type, 4), messages: direct })
+    for (const m of direct) if (m.at && (!last || time(m.at) > time(last))) last = m.at
   }
   const result = resultOf(h, last)
   if (result) steps.push({ step: 0, title: 'The result', messages: [result] })

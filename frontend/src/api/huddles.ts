@@ -1,11 +1,15 @@
 import { apiV2 } from "./client.v2";
 import { problemMessage } from "./problem";
 import type { components } from "./generated";
+import type { AgentThread } from "./threads";
 
 /** A huddle as the list shows it — derived server-side from its anchor turn. */
 export type HuddleSummary = components["schemas"]["HuddleSummaryOut"];
-/** One huddle in full: a cell per (member, round), plus the tasks it produced. */
-export type Huddle = components["schemas"]["HuddleOut"];
+/** One huddle in full: a cell per (member, round), plus the tasks it produced —
+ * and, joined on the page, the agent threads hanging off it (an agreement thread
+ * per "in, with changes" answer, where the idea's lead and that teammate settle
+ * the changes directly). `threads` carry their messages. */
+export type Huddle = components["schemas"]["HuddleOut"] & { threads?: AgentThread[] };
 export type HuddleCell = components["schemas"]["HuddleCellOut"];
 export type HuddleOutput = components["schemas"]["HuddleOutputOut"];
 

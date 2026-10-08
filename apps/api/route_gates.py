@@ -208,6 +208,11 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/huddles/api.py: a derived view over the same visible turns as harness_list_turns
     "list_huddles": ("member", "session-acl"),  # anchors via visible_turns_qs; summary carries no content
     "get_huddle": ("member", "session-acl", "turn-content"),  # prompt/reply/digest only with turn-content
+    # --- apps/threads/api.py: bounded agent->agent conversations; messages are tagged turns
+    "open_thread": ("agent.work",),  # editor in the moderator agent's workspace
+    "list_threads": ("member",),  # threads in the caller's workspaces; no message content
+    "get_thread": ("member", "session-acl", "turn-content"),  # messages via visible turns; prompt/reply only with turn-content
+    "close_thread": ("agent.work",),  # editor in the thread's workspace
     "get_turn": ("member", "session-acl", "turn-content"),  # redacted unless turn-content
     "get_turn_caller_context": ("turn-content",),
     "append_turn_events": ("runner", "agent.work", "session-acl"),  # claimed: owner; unclaimed: agent.work / chat write

@@ -8,6 +8,7 @@
  * state — an arc is drawn only from what blocks actually say.
  */
 import type { Huddle, HuddleCell, HuddleOutput } from '@/api/huddles'
+import type { AgentThread } from '@/api/threads'
 import { holdSentence, sizePlain, stepAsk, stepName, taskStatusPlain } from './plainWords'
 
 export type Block = Record<string, unknown>
@@ -100,6 +101,31 @@ export type Arc = {
   /** `data-anchor` ids: a cell is `<member>-<round>`, a column head `head-<member>`. */
   from: string
   to: string
+  /** The agreement thread where the lead and this partner settled the changes. */
+  thread?: string
+}
+
+/** What a huddle may carry beside its cells: the agent threads hanging off it. */
+type WithThreads = { id?: string; threads?: AgentThread[] }
+
+/** The agreement threads of a huddle: one per "in, with changes" answer, where
+ * the idea's lead (`parent.lead`, the author) and the teammate who asked for the
+ * changes (the asker) settle them directly instead of through the leader. */
+export function agreementThreads(h: WithThreads): AgentThread[] {
+  return (h.threads ?? []).filter((t) => {
+    const parent = (t.parent ?? {}) as Record<string, unknown>
+    return t.kind === 'agreement' && (!h.id || !parent.huddle || String(parent.huddle) === h.id)
+  })
+}
+
+/** {lead, asker, title} of an agreement thread: the asker is the participant whose
+ * role says so, else the one who is not the lead. */
+export function agreementParties(t: AgentThread): { lead: string; asker: string; title: string } {
+  const parent = (t.parent ?? {}) as Record<string, unknown>
+  const ps = (Array.isArray(t.participants) ? t.participants : []) as { agent?: unknown; role?: unknown }[]
+  const lead = String(parent.lead ?? ps.find((p) => String(p.role) === 'author')?.agent ?? '')
+  const asker = String(ps.find((p) => String(p.role) === 'asker')?.agent ?? ps.find((p) => String(p.agent) !== lead)?.agent ?? '')
+  return { lead, asker, title: String(parent.title ?? '') }
 }
 
 type Proposal = { title?: unknown; lead?: unknown; with?: unknown }
@@ -118,7 +144,7 @@ function list<T>(v: unknown): T[] {
  * replied) still draws, to the lead's column head. An `amend` the lead then
  * resolved in round 4 becomes `amend-accepted` / `amend-rejected`.
  */
-export function arcsFor(h: Pick<Huddle, 'cells'>): Arc[] {
+export function arcsFor(h: Pick<Huddle, 'cells'> & WithThreads): Arc[] {
   const arcs = new Map<string, Arc>()
   const id = (partner: string, lead: string, title: string) => `${partner}|${lead}|${norm(title)}`
 
@@ -169,6 +195,21 @@ export function arcsFor(h: Pick<Huddle, 'cells'>): Arc[] {
         if (a.lead === lead && a.state === 'amend' && norm(a.title) === norm(r.title)) {
           a.state = verdict === 'accept' ? 'amend-accepted' : 'amend-rejected'
         }
+      }
+    }
+  }
+  // An agreement thread settles an amend directly between the lead and the
+  // partner: once it closes, agreed → the changes are agreed (a co-sign), and
+  // anything else (not agreed, out of messages, out of time) → not agreed.
+  for (const t of agreementThreads(h)) {
+    const { lead, asker, title } = agreementParties(t)
+    for (const a of arcs.values()) {
+      if (a.lead !== lead || a.partner !== asker || norm(a.title) !== norm(title)) continue
+      if (!['amend', 'amend-accepted', 'amend-rejected'].includes(a.state)) continue
+      a.thread = t.id
+      if (t.status !== 'open') {
+        const agreed = t.status === 'settled' && String((t.outcome as Record<string, unknown>)?.result ?? '') === 'agreed'
+        a.state = agreed ? 'amend-accepted' : 'amend-rejected'
       }
     }
   }
@@ -301,7 +342,7 @@ function holdFrom(arcs: Arc[]): Hold | null {
 /** What the huddle produced, proposal by proposal: the filed ones with their
  * board tasks grouped beneath, the held ones with why. A proposal with tasks is
  * filed whatever its arcs say — the board is the record of what was filed. */
-export function outcomeOf(h: Pick<Huddle, 'cells' | 'members' | 'outputs' | 'finished'>): Outcome {
+export function outcomeOf(h: Pick<Huddle, 'cells' | 'members' | 'outputs' | 'finished'> & WithThreads): Outcome {
   const proposals = proposalsOf(h)
   const arcs = arcsFor(h)
   const tasks = new Map<string, HuddleOutput[]>()
