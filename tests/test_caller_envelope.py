@@ -767,3 +767,90 @@ def test_a_failed_log_line_never_fails_the_enqueue(ctx, editor, monkeypatch):
     monkeypatch.setattr(caller_context, "unproven_member", boom)
     turn = _email(agent, headers=DKIM_ONLY)
     assert turn.pk and _unproven_events(turn) == []
+
+
+# --- the STANDING ship grant (owner decision, 2026-10-08) ----------------------------
+#
+# A scheduled Eva turn found and tested a one-line fix, then held the push because a
+# `manual` turn files push / merge beside send / publish. The owner lists the repos the
+# agent may ship in (`Agent.ship_repos`); its OWN turns then carry a grant for exactly
+# those, and nothing else changes: the turn is still manual for mail and publishing.
+
+def _schedule(agent, owner, key="s-1"):
+    turn, _ = services.enqueue_turn(agent=agent, origin=Turn.ORIGIN_CANOPY_SCHEDULER,
+                                    idempotency_key=key,
+                                    initiator=who.system(via="schedule:3", accountable=owner))
+    return turn
+
+
+def test_a_scheduled_turn_carries_the_owners_standing_grant(ctx):
+    owner, _ws, agent = ctx
+    agent.ship_repos = ["dimagi-internal/ace", "dimagi-internal/chrome-sales"]
+    agent.save(update_fields=["ship_repos"])
+    env = caller_context.build(_schedule(agent, owner))
+    assert env["relationship"] == caller_context.SYSTEM
+    grant = env["ship_grant"]
+    assert grant["repos"] == ["dimagi-internal/ace", "dimagi-internal/chrome-sales"]
+    assert grant["repo"] == "dimagi-internal/ace"     # older hooks read only this key
+    assert grant["actions"] == ["push", "pull_request", "merge"]
+    assert grant["basis"] == "standing grant set on ace (owner jj@dimagi.com)"
+    assert "send email or messages" in grant["not_granted"]
+    # It lifts the ship wait only; the turn stays manual for everything else.
+    assert env["turn_mode"]["mode"] == "manual"
+
+
+def test_no_listed_repos_means_no_standing_grant(ctx):
+    owner, _ws, agent = ctx
+    assert caller_context.build(_schedule(agent, owner))["ship_grant"] is None
+
+
+def test_the_owner_and_an_admin_get_the_standing_grant(fleet):
+    owner, ws, ace, ada = fleet
+    ace.ship_repos = ["dimagi-internal/ace"]
+    ace.save(update_fields=["ship_repos"])
+    human_admin = User.objects.create_user("ha2", "ha2@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=human_admin, workspace=ws, role=WorkspaceMembership.EDITOR)
+    AgentAdmin.objects.create(agent=ace, user=human_admin)
+    for i, user in enumerate((owner, human_admin)):
+        env = caller_context.build(_dispatch(ace, user, key=f"st-{i}"))
+        assert env["ship_grant"]["repos"] == ["dimagi-internal/ace"], user.username
+
+
+def test_a_member_or_a_contact_never_gets_the_standing_grant(fleet):
+    _owner, _ws, ace, ada = fleet          # ada's login is a workspace editor = member
+    ace.ship_repos = ["dimagi-internal/ace"]
+    ace.save(update_fields=["ship_repos"])
+    env = caller_context.build(_dispatch(ace, ada.user, key="mem"))
+    assert env["relationship"] == caller_context.MEMBER
+    assert env["ship_grant"] is None
+    assert caller_context.build(_email(ace, key="e-st", headers=HDRS))["ship_grant"] is None
+
+
+def test_an_unverified_owner_gets_no_standing_grant(fleet):
+    owner, _ws, ace, _ada = fleet
+    ace.ship_repos = ["dimagi-internal/ace"]
+    ace.save(update_fields=["ship_repos"])
+    env = caller_context.build(_dispatch(ace, owner, key="uv", assurance=who.HOST_SIGNED))
+    assert env["verified"] is False
+    assert env["ship_grant"] is None
+
+
+def test_an_item_dispatch_by_slug_gets_no_standing_grant(fleet):
+    _owner, _ws, ace, _ada = fleet
+    ace.ship_repos = ["dimagi-internal/ace"]
+    ace.save(update_fields=["ship_repos"])
+    turn, _ = services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="item-st",
+                                    initiator=who.for_agent("ada", via="item:1"))
+    assert caller_context.build(turn)["ship_grant"] is None
+
+
+def test_a_dispatch_grant_and_a_standing_grant_merge(fleet):
+    _owner, _ws, ace, ada = fleet
+    AgentAdmin.objects.create(agent=ace, user=ada.user)
+    ace.ship_repos = ["dimagi-internal/canopy", "dimagi-internal/ace"]
+    ace.save(update_fields=["ship_repos"])
+    grant = caller_context.build(_dispatch(ace, ada.user, key="mg"))["ship_grant"]
+    assert grant["repo"] == "dimagi-internal/ace"
+    assert grant["repos"] == ["dimagi-internal/ace", "dimagi-internal/canopy"]
+    assert grant["dispatched_by"]["agent"] == "ada"
+    assert "standing grant set on ace" in grant["basis"]

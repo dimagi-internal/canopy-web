@@ -96,6 +96,18 @@ class PeopleDigestEnabledIn(StrictModel):
     people_digest_enabled: bool
 
 
+class ShipReposIn(StrictModel):
+    """The repos an agent may push / PR / merge in without asking, even in
+    manual mode. `owner/repo` or a github.com URL; [] clears the grant. Its own
+    endpoint, like turn_mode: the agent-repo upsert must never widen it."""
+
+    ship_repos: list[str] = Field(default_factory=list)
+
+
+class ShipReposOut(StrictModel):
+    ship_repos: list[str]
+
+
 class PeopleDigestEnabledOut(StrictModel):
     people_digest_enabled: bool
     #: The fleet-wide kill switch (`PEOPLE_DIGEST_ENABLED`). When False no agent
@@ -328,6 +340,9 @@ class AgentOut(StrictModel):
     # Whether a human's finished turn with the agent starts a people-digest turn
     # (fleet brain v1.1). Agent-admin flipped, via PATCH /people-digest.
     people_digest_enabled: bool = True
+    # Repos the owner pre-approved for push / PR / merge without asking (the
+    # standing ship grant). Admin-set via PATCH /ship-repos.
+    ship_repos: list[str] = Field(default_factory=list)
 
 
 class AgentDefinitionOut(StrictModel):
