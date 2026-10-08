@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import uuid
 
-from django.db import transaction
+from django.db import models, transaction
 from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 
@@ -147,6 +148,154 @@ def _initiated_by(person: Person) -> Q:
     return q
 
 
+# --- what counts as a conversation --------------------------------------------------
+#
+# ONE definition, used by the digest candidates, the conversations an agent reads
+# back, and the coverage metric — so "who has talked to ace since ace last
+# digested them" and "what ace then reads" cannot disagree (canopy#820).
+
+#: The channels a PERSON talks to an agent through: canopy's chat (an embedding
+#: host's widget is the same chat, `via=widget:<host>`), email, and Slack. Not
+#: `api` — every dispatch, drill, digest and huddle round comes in that way, and
+#: a dispatch carries the human it works FOR as its initiator, which is how v1
+#: counted dispatched ACE work as Jonathan talking (2026-10-07). Not `ace_web`
+#: either: ace-web's run dispatcher posts there on a person's behalf. Not
+#: `canopy_scheduler`.
+CONVERSATION_ORIGINS = ("canopy_web_chat", "email", "slack")
+#: `origin_ref.kind` of the turns a huddle files and dispatches (apps/huddles).
+HUDDLE_KINDS = ("huddle", "huddle_round")
+#: How far back the FIRST digest of a (person, agent) pair looks.
+FIRST_LOOKBACK = dt.timedelta(days=14)
+
+
+def human_initiator_q() -> Q:
+    """Turns a HUMAN started: a canopy user who is not an agent's own login nor a
+    system account, or a contact. The same rule as `initiator_person`, as a query."""
+    return (
+        Q(initiator_kind="contact", initiator_contact__isnull=False)
+        | Q(initiator_kind="user", initiator_user__isnull=False,
+            initiator_user__agent_identity__isnull=True,
+            initiator_user__system_account__isnull=True)
+    )
+
+
+def real_conversation_q() -> Q:
+    """A turn that is a person TALKING to an agent — the only thing a digest reads.
+
+    All of:
+    * the initiator is a human (`human_initiator_q`), and a contact is not an
+      agent writing in: not an agent's mailbox address, not linked to an agent's
+      login;
+    * the origin is a human channel (`CONVERSATION_ORIGINS`);
+    * not started by a task approval (`raised_from_task`, assurance `approval`)
+      — the person clicked "approve", the words are the agent's;
+    * not programmatic under a person's name: a personal access token
+      ("a machine acting as its owner", `initiator.PAT`), an MCP tool call
+      (`via=mcp:<tool>`), or a session transfer's brief (`via=transfer`);
+    * not a huddle's anchor or round, and not a people-digest turn.
+
+    Negated JSON lookups are guarded with `has_key`: a bare
+    `~Q(origin_ref__kind=...)` is NULL for a row without the key, and SQL then
+    drops every ordinary turn (see schedule_turns.skip_late_scheduled_turns).
+    """
+    from django.contrib.auth import get_user_model
+    from django.db.models.functions import Lower
+
+    from apps.harness import initiator as who
+    from apps.harness.people_digest import KEY_PREFIX, TRIGGER
+    from apps.inbound.models import InboundMailbox
+
+    mailboxes = InboundMailbox.objects.annotate(_a=Lower("address")).values("_a")
+    agent_logins = (get_user_model().objects.filter(agent_identity__isnull=False)
+                    .exclude(email="").annotate(_a=Lower("email")).values("_a"))
+    return (
+        Q(origin__in=CONVERSATION_ORIGINS)
+        & human_initiator_q()
+        & Q(raised_from_task__isnull=True)
+        & ~Q(initiator_assurance__in=[who.APPROVAL, who.PAT])
+        & ~Q(initiator_via__startswith="mcp:")
+        & ~Q(initiator_via="transfer")
+        & ~Q(initiator_contact__email__in=mailboxes)
+        & ~Q(initiator_contact__email__in=agent_logins)
+        & ~Q(initiator_contact__user__agent_identity__isnull=False)
+        & ~(Q(origin_ref__has_key="kind") & Q(origin_ref__kind__in=list(HUDDLE_KINDS)))
+        & ~(Q(origin_ref__has_key="trigger") & Q(origin_ref__trigger=TRIGGER))
+        & ~Q(idempotency_key__startswith=KEY_PREFIX)
+    )
+
+
+def with_agent_q(agent) -> Q:
+    """Turns WITH `agent`: addressed to it, or in one of its chats."""
+    return Q(agent=agent) | Q(chat_session__agent=agent)
+
+
+def digest_candidates(agent, *, limit: int = 50, now: dt.datetime | None = None) -> list[dict]:
+    """The people who had at least one real conversation with `agent` since
+    `agent` last digested them — the people digest's work list (canopy#820).
+
+    `since` is that agent's watermark for the person (`PersonDigestMark`), or
+    `FIRST_LOOKBACK` ago for a person it never digested; `conversations` counts
+    the real conversations after it. Most recently active first.
+
+    One aggregate query over turns, keyed on the `Person` row (plus one for the
+    names). The caller envelope makes that row at claim, so it nearly always
+    exists; the two cheap reads before the aggregate make the rare missing one
+    (`services.person_for`, idempotent) rather than silently drop its turns.
+    """
+    from django.contrib.auth import get_user_model
+    from django.db.models import Count, DateTimeField, Exists, F, Max, OuterRef, Subquery
+    from django.db.models.functions import Coalesce
+
+    from apps.harness.models import Turn
+
+    from . import services
+    from .models import PersonDigestMark
+
+    now = now or timezone.now()
+    floor = now - FIRST_LOOKBACK
+    talked = Turn.objects.filter(with_agent_q(agent), created_at__gte=floor).filter(real_conversation_q())
+    no_person = ~Exists(Person.objects.filter(user_id=OuterRef("pk")))
+    user_ids = talked.filter(initiator_kind="user").values("initiator_user_id")
+    for user in get_user_model().objects.filter(pk__in=user_ids).filter(no_person):
+        services.person_for(user=user)
+    for contact in Contact.objects.filter(
+            pk__in=talked.filter(initiator_kind="contact").values("initiator_contact_id"),
+            person__isnull=True):
+        services.person_for(contact=contact)
+    person_of = Case(
+        When(initiator_kind="user",
+             then=Subquery(Person.objects.filter(user_id=OuterRef("initiator_user_id"))
+                           .values("pk")[:1])),
+        default=F("initiator_contact__person_id"),
+    )
+    mark = (PersonDigestMark.objects.filter(person_id=OuterRef("_pid"), agent=agent)
+            .values("digested_at")[:1])
+    rows = list(
+        talked
+        .annotate(_pid=person_of)
+        .filter(_pid__isnull=False)
+        .annotate(_since=Coalesce(Subquery(mark), Value(floor), output_field=DateTimeField()))
+        .filter(created_at__gt=F("_since"))
+        .values("_pid", "_since")
+        .annotate(n=Count("pk"), last=Max("created_at"))
+        .order_by("-last", "_pid")[:limit]
+    )
+    persons = Person.objects.select_related("user").in_bulk([r["_pid"] for r in rows])
+    out = []
+    for r in rows:
+        person = persons.get(r["_pid"])
+        if person is None:
+            continue
+        out.append({
+            "person": person.pk,
+            "display_name": display_name(person),
+            "email": email_of(person),
+            "since": r["_since"].isoformat(),
+            "conversations": r["n"],
+        })
+    return out
+
+
 # --- facts -------------------------------------------------------------------------
 
 
@@ -268,7 +417,36 @@ def put_digest(*, person: Person, workspace, text: str, source_turn_ids=(),
         defaults={"text": text, "source_turn_ids": ids, "updated_by_agent": by_agent,
                   "updated_by_user": None if by_agent is not None else by_user},
     )
+    if by_agent is not None:
+        mark_digested(person, by_agent, source_turn_ids=ids)
     return digest
+
+
+def mark_digested(person: Person, agent, *, source_turn_ids=()) -> None:
+    """Move `agent`'s watermark for `person` (`PersonDigestMark`).
+
+    To the newest of the conversations the digest says it read, when it names
+    any of this agent's — so one that arrived while the digest was being written
+    is still unread next time — else to now. Never backwards."""
+    from apps.harness.models import Turn
+
+    from .models import PersonDigestMark
+
+    at = None
+    ids = []
+    for raw in source_turn_ids or ():
+        try:
+            ids.append(uuid.UUID(str(raw)))
+        except ValueError:
+            continue
+    if ids:
+        at = (Turn.objects.filter(with_agent_q(agent), pk__in=ids)
+              .aggregate(newest=models.Max("created_at"))["newest"])
+    at = at or timezone.now()
+    mark, created = PersonDigestMark.objects.get_or_create(
+        person=person, agent=agent, defaults={"digested_at": at})
+    if not created and mark.digested_at < at:
+        PersonDigestMark.objects.filter(pk=mark.pk).update(digested_at=at)
 
 
 def digest_for(person: Person, workspace_slug: str | None) -> PersonDigest | None:
@@ -402,16 +580,20 @@ def mirror_all_contact_notes() -> dict:
 
 
 def conversations(person: Person, agent, *, since: dt.datetime | None = None, limit: int = 200):
-    """The turns `person` started WITH `agent` — directly or in one of its chats.
+    """The REAL conversations (`real_conversation_q`) `person` had WITH `agent`
+    — directly or in one of its chats.
 
     The one new read of turn content the brain adds, and deliberately narrow:
-    only that agent's turns, only ones this person initiated. Gating who may
-    call it (the agent's own login, or its admins) is the route's job.
+    only that agent's turns, only ones this person initiated, and only what they
+    SAID through a human channel — a dispatch or approval carrying their name is
+    the agent's words, not theirs (canopy#820). Gating who may call it (the
+    agent's own login, or its admins) is the route's job.
     """
     from apps.harness.models import Turn
 
-    qs = (Turn.objects.filter(Q(agent=agent) | Q(chat_session__agent=agent))
-          .filter(_initiated_by(person)))
+    qs = (Turn.objects.filter(with_agent_q(agent))
+          .filter(_initiated_by(person))
+          .filter(real_conversation_q()))
     if since is not None:
         qs = qs.filter(created_at__gte=since)
     return qs.order_by("-created_at")[:limit]

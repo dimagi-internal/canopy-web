@@ -231,7 +231,8 @@ def test_coverage_counts_human_turns_context_digests_and_facts(world):
     # No context yet: the envelope is built empty and recorded as such.
     t1 = _human_turn(ace, lili, "t1")
     caller_context.build(t1)
-    _finish(t1)  # → one digest turn (queued)
+    _finish(t1)
+    people_digest.enqueue_batch(ace)  # → one digest turn (queued)
     # Now the brain knows something: the next envelope has context.
     people.record_fact(person=person, workspace=ws, kind="role", statement="Lead.", by_agent=ace)
     people.put_digest(person=person, workspace=ws, text="Lili leads KC.", by_agent=ace)
@@ -268,9 +269,8 @@ def test_a_dead_brain_is_loud_ten_human_turns_and_no_facts(world):
 
 
 def test_a_high_digest_failure_rate_is_unhealthy(world):
-    ace, lili = world["ace"], world["lili"]
-    _finish(_human_turn(ace, lili, "t1"))
-    d = _digest_turns().get()
+    ace = world["ace"]
+    d, _ = people_digest.enqueue_batch(ace)
     Turn.objects.filter(pk=d.pk).update(status=Turn.FAILED)
     row = _row(_report(), "ace")
     assert row["digest_turns"]["failed"] == 1
@@ -285,15 +285,47 @@ def test_an_opted_out_agent_is_not_judged_on_facts(world):
     for i in range(coverage.MIN_TURNS_FOR_FACTS):
         _human_turn(ace, lili, f"t{i}")
     row = _row(_report(), "ace")
-    assert (row["digest_enabled"], row["healthy"]) == (False, True)
+    assert (row["enabled"], row["digest_enabled"], row["healthy"]) == (False, False, True)
     assert "switched off for this agent" in row["reasons"][0]
 
 
-def test_the_global_switch_makes_the_workspace_unhealthy(world, settings):
+def test_a_switched_off_fleet_is_not_reported_unhealthy(world, settings):
+    """canopy#820: off is a decision, not a fault. Every agent reads enabled=false
+    and is not judged — not on facts, not on a failed digest from before the
+    switch — and the workspace stays healthy, with the switch said at the top."""
     settings.PEOPLE_DIGEST_ENABLED = False
+    ace, lili = world["ace"], world["lili"]
+    for i in range(coverage.MIN_TURNS_FOR_FACTS):
+        _human_turn(ace, lili, f"t{i}")
+    d, _ = people_digest.enqueue_batch(ace)
+    Turn.objects.filter(pk=d.pk).update(status=Turn.FAILED)
     report = _report()
     assert report["digest_enabled_globally"] is False
-    assert report["healthy"] is False
+    assert all(r["enabled"] is False for r in report["agents"])
+    row = _row(report, "ace")
+    assert row["healthy"] is True and row["digest_failure_rate"] == 1.0
+    assert "switched off fleet-wide" in row["reasons"][0]
+    assert report["healthy"] is True
+
+
+def test_only_enabled_agents_decide_the_workspace_verdict(world):
+    ace, hal, lili = world["ace"], world["hal"], world["lili"]
+    hal.people_digest_enabled = False
+    hal.save()
+    for i in range(coverage.MIN_TURNS_FOR_FACTS):
+        _human_turn(hal, lili, f"h{i}")
+    report = _report()
+    assert _row(report, "hal")["healthy"] is True and report["healthy"] is True
+    for i in range(coverage.MIN_TURNS_FOR_FACTS):
+        _human_turn(ace, lili, f"a{i}")
+    assert _report()["healthy"] is False
+
+
+def test_coverage_counts_only_real_conversations(world):
+    ace, lili = world["ace"], world["lili"]
+    _human_turn(ace, lili, "chat")
+    _human_turn(ace, lili, "dispatch", origin=Turn.ORIGIN_API)   # a dispatch in her name
+    assert _row(_report(), "ace")["human_turns"] == 1
 
 
 def test_coverage_window_excludes_old_turns(world):
@@ -355,11 +387,11 @@ def test_an_opted_out_agent_starts_no_digest_turn(world):
     ace, hal, lili = world["ace"], world["hal"], world["lili"]
     ace.people_digest_enabled = False
     ace.save()
-    assert people_digest.on_turn_finished(_finish(_human_turn(ace, lili, "t1"))) is None
-    _finish(_human_turn(ace, lili, "t1b"))
+    _finish(_human_turn(ace, lili, "t1"))
+    _finish(_human_turn(hal, lili, "t2"))
+    people_digest.sweep()
     assert not _digest_turns().filter(agent=ace).exists()
-    _finish(_human_turn(hal, lili, "t2"))                       # the others are unaffected
-    assert _digest_turns().filter(agent=hal).count() == 1
+    assert _digest_turns().filter(agent=hal).count() == 1       # the others are unaffected
 
 
 def test_the_switch_is_for_agent_admins_and_is_on_the_agent(world):
