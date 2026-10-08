@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import re
 from typing import Any
 
 from django.db import transaction
@@ -75,8 +74,6 @@ from .schemas import (
     SkillHistoryOut,
     PeopleDigestEnabledIn,
     PeopleDigestEnabledOut,
-    ShipReposIn,
-    ShipReposOut,
     ProjectParticipantOut,
     SlackEnabledIn,
     SlackEnabledOut,
@@ -729,33 +726,6 @@ def set_people_digest_enabled(request: HttpRequest, slug: str,
     return PeopleDigestEnabledOut(
         people_digest_enabled=agent.people_digest_enabled,
         globally_enabled=bool(getattr(dj_settings, "PEOPLE_DIGEST_ENABLED", True)))
-
-
-#: `owner/repo` — the shape a standing ship grant names (`set_ship_repos`).
-_SHIP_REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
-
-
-@router.patch("/{slug}/ship-repos", response=ShipReposOut,
-              summary="Set the repos an agent may push / PR / merge in without asking")
-def set_ship_repos(request: HttpRequest, slug: str, payload: ShipReposIn) -> ShipReposOut:
-    """The standing ship grant: on the agent's own turns (its owner, an admin, or
-    canopy itself — a schedule), push / PR / merge in these repos are
-    pre-approved even when the turn is `manual`. Nothing else is: mail,
-    publishing, public writes and deploys still wait for the owner. Owner or
-    admin only — like `auto`, it widens what the agent does without asking.
-    `[]` clears it."""
-    agent = _agent_for_admin(request, slug)
-    repos: list[str] = []
-    for raw in payload.ship_repos:
-        text = str(raw or "").strip()
-        repo = delegations.repo_full_name(text) if "/" in text and "github" in text.lower() else text
-        if not _SHIP_REPO.match(repo or ""):
-            raise HttpError(422, f"not an owner/repo or a github.com repo URL: {raw!r}")
-        if repo not in repos:
-            repos.append(repo)
-    agent.ship_repos = repos
-    agent.save(update_fields=["ship_repos", "updated_at"])
-    return ShipReposOut(ship_repos=list(agent.ship_repos))
 
 
 @router.get("/{slug}/runtime", response=AgentRuntimeOut,

@@ -166,18 +166,6 @@ class Agent(models.Model):
     #: global `PEOPLE_DIGEST_ENABLED` kill switch — either off stops it. Facts
     #: and the envelope `person` block keep working either way.
     people_digest_enabled = models.BooleanField(default=True)
-    #: Repos the owner has pre-approved this agent to SHIP in (push, open PRs,
-    #: merge) on its own turns, without stopping for approval even when the turn
-    #: is `manual` (Jonathan, 2026-10-08: a scheduled Eva turn held a tested,
-    #: one-line fix for approval because manual mode files push/merge beside
-    #: send/publish — "I didn't intend that design"). `owner/repo` strings; empty,
-    #: the default, is no standing grant and exactly the old behaviour. It covers
-    #: code shipping ONLY: mail, publishing, public writes, deploys and other
-    #: systems' state stay where `turn_mode` puts them. Set by the owner or an
-    #: admin (PATCH /ship-repos); deliberately absent from AgentIn, so the
-    #: repo's self-publish upsert can never widen its own grant. Read by
-    #: `harness.caller_context._ship_grant`.
-    ship_repos = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
