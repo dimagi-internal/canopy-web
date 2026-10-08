@@ -44,7 +44,7 @@ This runbook (L3) closes the one remaining gap: the physical CDP drive into a re
 2. **Dispatch ONE Continue** into the scratch session — from the phone (Sessions → type a
    prompt → Continue), or with the helper:
    ```
-   CANOPY_PAT=<raw> CANOPY_URL=https://labs.connect.dimagi.com/canopy \
+   CANOPY_PAT=<raw> CANOPY_URL=https://canopy.dimagi.com \
      uv run python scripts/qa/dispatch_one_continue.py \
        --project canopy-web --workspace dimagi \
        --thread emdash:<scratch-task-name> --prompt "QA: add a one-line comment to the top of README"

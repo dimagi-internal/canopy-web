@@ -78,7 +78,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import script_provenance  # noqa: E402
 
 SCRIPT = "e2e_session_chat.py"
-DEFAULT_BASE = "https://labs.connect.dimagi.com/canopy"
+DEFAULT_BASE = "https://canopy.dimagi.com"
 RUNNER_CONFIG = Path.home() / ".canopy" / "runner.json"
 
 ALL_STEPS = ("check_runner", "create_session", "send_and_reply",

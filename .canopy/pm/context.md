@@ -17,7 +17,7 @@ A collaborative web workspace for building reusable AI skills from conversations
 - Frontend: React 19, Vite, Tailwind CSS 4, shadcn/ui
 - AI: Anthropic Claude API (SSE streaming), dual backend (`api` direct or `cli` via Claude Code subscription), runtime-switchable via `/api/ai/switch/`
 - Skill runtime adapters: `web`, `claude_code`, `open_claw`
-- Deploy: AWS ECS Fargate on the shared labs platform (labs.connect.dimagi.com/canopy) via the GitHub "Deploy to Labs (AWS)" workflow; infra in deploy/aws/canopy-web.cfn.yaml
+- Deploy: AWS ECS Fargate on the shared labs platform, served at https://canopy.dimagi.com/ via the GitHub "Deploy to Labs (AWS)" workflow; infra in deploy/aws/canopy-web.cfn.yaml
 - Auth: Google OAuth for `@dimagi.com`; debug session-cookie minting endpoint for handing access to AI assistants
 
 ## Current State

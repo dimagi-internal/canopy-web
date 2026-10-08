@@ -1,6 +1,6 @@
 """
 Production Django settings for the AWS ECS Fargate deployment
-(https://labs.connect.dimagi.com/canopy/; provisioned by deploy/aws/canopy-web.cfn.yaml).
+(https://canopy.dimagi.com/; provisioned by deploy/aws/canopy-web.cfn.yaml).
 """
 from django.core.exceptions import ImproperlyConfigured
 

@@ -6,7 +6,7 @@ a Continue into it, confirms the server resolves that to reuse, then cleans up
 writes to your own runner and only `smoke-*` rows, and always cleans up.
 
 Run:
-    CANOPY_PAT=<raw-token> CANOPY_URL=https://labs.connect.dimagi.com/canopy \
+    CANOPY_PAT=<raw-token> CANOPY_URL=https://canopy.dimagi.com \
       uv run python scripts/qa/smoke_mobile_loop.py
 """
 from __future__ import annotations
