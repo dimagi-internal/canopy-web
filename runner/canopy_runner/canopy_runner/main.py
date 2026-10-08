@@ -1169,6 +1169,12 @@ def main() -> None:
     if wake_on:
         logger.info("  wake: WS control channel connected — claims fire on enqueue, not just poll")
     hooks.start_hook_listener(cfg, client)
+    # Sessions canopy created that have not started yet (#1190). Persisted beside
+    # the other runner state so a self-update restart does not lose a stall.
+    from . import startup_watch
+
+    startup_watch.configure(Path(cfg.state_path).with_name("startup-watch.json")
+                            if cfg.state_path else Path.home() / ".canopy" / "startup-watch.json")
 
     def _wait(seconds: float) -> None:
         # With a live wake channel, block until a nudge OR the poll interval,

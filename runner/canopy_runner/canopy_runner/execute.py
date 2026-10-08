@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
-               native_permissions, readiness, session_naming, transcript)
+               native_permissions, readiness, session_naming, startup_watch, transcript)
 from . import whois
 from .client import ClientError
 from .tail import TailReader
@@ -839,6 +839,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             if not _confine(client, turn, task):
                 return f"failed:{turn_id}"
         _native_confine(cfg, client, turn, task)
+        startup_watch.note_created(target, task)
         client.record_session(
             runner_id, agent_slug, thread_key, project=project, workspace=workspace,
             emdash_task_id=task, summary=None,
@@ -992,6 +993,7 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         if not _confine(client, turn, task):
             return f"failed:{turn_id}"
     _native_confine(cfg, client, turn, task)
+    startup_watch.note_created(agent, task)
     logger.info("CREATE turn=%s agent=%s thread=%s -> new session '%s' rehydrated=%s "
                 "(NEW claude session = tokens) %s", turn_id, agent, thread_key, task,
                 bool(summary), whois.brief(turn))
