@@ -630,3 +630,51 @@ def test_closing_a_desktop_session_drops_it_from_the_report(cfg, tmp_path, monke
     assert desktop.open_sessions(cfg) == []
     assert sessions._PENDING_CLOSED == {"sid-close"}
     assert wt.exists()  # not a git checkout git can vouch for: never removed
+
+
+# ── the app's feature gates (canopy-web#1238) ────────────────────────────────
+
+def _write_fcache(path: Path, features: dict, ts_ms: int = 1_791_000_000_000) -> Path:
+    import gzip
+
+    body = gzip.compress(json.dumps({"timestamp": ts_ms, "mode": "1p", "orgUuid": "o",
+                                     "features": features}).encode())
+    path.write_bytes(desktop.FCACHE_MAGIC + body)
+    return path
+
+
+def test_app_features_reads_both_gates_as_the_app_caches_them(tmp_path):
+    # The shape observed on haldimagi 2026-10-07 (Claude 2.26454.2): start_session
+    # off by default, the idle timeout forced to 0.
+    p = _write_fcache(tmp_path / "fcache", {
+        desktop.GATE_START_SESSION: {"value": False, "on": False, "off": True, "source": "defaultValue"},
+        desktop.GATE_IDLE_TIMEOUT: {"value": 0, "on": False, "off": True, "source": "force"},
+    })
+    f = desktop.app_features(p)
+    assert f == {"fetched_at": 1_791_000_000, "start_session": False, "idle_timeout": 0}
+    line = desktop.describe_app_features(f)
+    assert "start_session off" in line and "idle timeout off" in line
+
+
+def test_app_features_says_when_start_session_turns_on(tmp_path):
+    p = _write_fcache(tmp_path / "fcache", {
+        desktop.GATE_START_SESSION: {"value": True, "on": True},
+        desktop.GATE_IDLE_TIMEOUT: {"value": 900, "on": True},
+    })
+    line = desktop.describe_app_features(desktop.app_features(p))
+    assert "start_session ON" in line and "#1238" in line and "idle timeout 900s" in line
+
+
+def test_app_features_missing_gates_are_unknown_not_off(tmp_path):
+    f = desktop.app_features(_write_fcache(tmp_path / "fcache", {}))
+    assert f["start_session"] is None and f["idle_timeout"] is None
+    assert "not in cache" in desktop.describe_app_features(f)
+
+
+@pytest.mark.parametrize("content", [None, b"not a cache", desktop.FCACHE_MAGIC + b"not gzip"])
+def test_app_features_unreadable_cache_is_none(tmp_path, content):
+    p = tmp_path / "fcache"
+    if content is not None:
+        p.write_bytes(content)
+    assert desktop.app_features(p) is None
+    assert "unknown" in desktop.describe_app_features(None)
