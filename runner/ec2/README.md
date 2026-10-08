@@ -235,11 +235,19 @@ canopy-web's stored one (by the token's own `created_at`), then verify with a re
 gmail call (`mailbox_ok`, `turn_ready`, posted to `GET /api/agents/<slug>/readiness`); (4)
 add + install the `canopy` Claude plugin; (5) print a per-agent readiness summary.
 
-**Agent turns run in the agent's clone.** A turn whose target resolves to an agent
-with a clone under `/opt/agents/<slug>` runs `claude -p` there (freshly `git
+**Agent turns run in their own worktree of the agent's clone.** A turn whose target
+resolves to an agent with a clone under `/opt/agents/<slug>` runs `claude -p` in a
+worktree of it at `WORK_DIR/agents/<slug>/<turn>` (the clone is freshly `git
 pull`ed at claim), not in a throwaway scratch dir — so it sees the agent's real
-config, skills, and state. Project/session turns, and an agent bootstrap hasn't
-reached yet, keep the original `WORK_DIR` scratch-dir behavior.
+config and skills, and two concurrent turns for one agent no longer share a
+working tree (#1141). The clone's git-ignored files (`.env`, `node_modules`, local
+settings) are symlinked in. A clean worktree is removed when the turn finishes;
+one with uncommitted work or an unpushed branch is kept and logged, and swept
+after a day once clean. Where each turn's CLI session ran is recorded, so a chat
+reply can resume it and the stream tail can find its transcript. State an agent
+keeps across turns that is neither tracked nor ignored belongs in `~/.<slug>/`.
+Project/session turns, and an agent bootstrap hasn't reached yet, keep their own
+`WORK_DIR` directories.
 
 **Updating bootstrap logic** is a `git push` to `canopy-web` main + a
 `systemctl restart canopy-runner` on the box (or just wait for the next restart) —
