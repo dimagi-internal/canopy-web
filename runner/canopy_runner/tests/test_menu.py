@@ -653,3 +653,98 @@ def test_the_text_marker_is_distinguishable_from_a_keypress():
     sidecar = (pathlib.Path(__file__).resolve().parents[1]
                / "canopy_runner" / "cdp" / "emdash_control.mjs").read_text()
     assert f"'{TEXT_PREFIX}'" in sidecar, "the sidecar does not know the text marker"
+
+
+# --- The question gutter ------------------------------------------------------
+#
+# Newer Claude Code draws a bar down the left of a long AskUserQuestion's prose.
+# Reconstructed from the dialog of 2026-10-08 (screenshot plus the question the
+# runner cached from that screen, which still carried the bars), wrapped the way
+# the grid wraps it: each continued line runs to the frame width and breaks at a
+# space.
+
+def _gutter_frame(width: int = 140) -> str:
+    prose = ("canopy's scheduler (AgentSchedule) can't unpause a runner safely. Its "
+             "jobs are fired by laptop runners checking cron locally, a paused runner "
+             "fires nothing, and every job runs as an LLM agent turn. So for someone "
+             "with one laptop (most new canopy users), the unpause would never fire, "
+             "and when it does fire it spends Claude usage just to call /unpause. How "
+             "should the unpause be scheduled?")
+    rows, row = [], ""
+    for word in prose.split():
+        if row and len("│ " + row + " " + word) > width - 1:
+            rows.append(row)
+            row = word
+        else:
+            row = f"{row} {word}".strip()
+    rows.append(row)
+    body = [("│ " + r + " ").ljust(width) for r in rows[:-1]] + ["│ " + rows[-1]]
+    return "\n".join([
+        "─" * width,
+        " ☐ Unpause via",
+        "",
+        *body,
+        "",
+        "❯ 1. Server-side wake (Recommended)",
+        "     The runner goes into a normal pause with a note.",
+        "  2. Extend AgentSchedule",
+        "  3. Use AgentSchedule as-is",
+        "  4. Type something.",
+        "─" * width,
+        "  5. Chat about this",
+        "",
+        "Enter to select · ↑/↓ to navigate · Esc to cancel",
+    ])
+
+
+GUTTER_DECLARED = [{
+    "index": 0,
+    "question": ("canopy's scheduler (AgentSchedule) can't unpause a runner safely. Its "
+                 "jobs are fired by laptop runners checking cron locally, a paused runner "
+                 "fires nothing, and every job runs as an LLM agent turn. So for someone "
+                 "with one laptop (most new canopy users), the unpause would never fire, "
+                 "and when it does fire it spends Claude usage just to call /unpause. How "
+                 "should the unpause be scheduled?"),
+    "header": "Unpause via",
+    "multi_select": False,
+    "options": [{"number": n, "label": l} for n, l in enumerate(
+        ["Server-side wake (Recommended)", "Extend AgentSchedule",
+         "Use AgentSchedule as-is"], start=1)],
+}]
+
+
+def test_the_question_gutter_is_not_part_of_the_question():
+    """It reached Slack as "a paused │ runner fires nothing"."""
+    menu = find_menu(_gutter_frame())
+    assert menu is not None
+    assert "│" not in menu.question
+    assert menu.question.startswith("canopy's scheduler")
+    assert menu.question.endswith("How should the unpause be scheduled?")
+
+
+def test_a_guttered_question_is_answered_not_refused():
+    """REGRESSION, 2026-10-08. A Slack tap on option 1 came back `unmodelled` and
+    pressed nothing: the screen's question carried the gutter bars, the declared
+    one did not, so `question_index` found no match. Any frame width must work —
+    the bars land before different words when the pane is resized."""
+    from canopy_runner.menu import plan_step
+
+    for width in (100, 140, 180):
+        menu = find_menu(_gutter_frame(width))
+        assert plan_step(menu, GUTTER_DECLARED, [[1]]) == ["1", "\r"], width
+
+
+def test_a_question_cached_with_its_gutter_still_matches():
+    """A menu an older runner cached kept the bars; it must still name the same
+    question as the clean declared text."""
+    from canopy_runner.menu import question_index
+
+    class Shown:
+        question = ("│ canopy's scheduler (AgentSchedule) can't unpause a runner safely. "
+                    "Its jobs are fired by laptop runners checking cron locally, a paused "
+                    "│ runner fires nothing, and every job runs as an LLM agent turn. So "
+                    "for someone with one laptop (most new canopy users), the unpause "
+                    "would │ never fire, and when it does fire it spends Claude usage "
+                    "just to call /unpause. How should the unpause be scheduled?")
+
+    assert question_index(Shown, GUTTER_DECLARED) == 0
