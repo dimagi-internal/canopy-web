@@ -20,7 +20,9 @@ from ninja import File, Form, Router, Status
 from ninja.files import UploadedFile
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, ProblemError
+from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.workspaces import permissions as perms
+from apps.workspaces import services as wsvc
 
 from . import redact
 from .models import (
@@ -60,6 +62,34 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB — transcripts are JSON, rarely la
 # ---------------------------------------------------------------------------
 
 
+def share_url(workspace_id: str | None, token: str | None) -> str | None:
+    """The absolute link to a share token's page, under its workspace."""
+    if not token:
+        return None
+    return wsvc.scoped_url(workspace_id, f"/share/{token}")
+
+
+def _share_workspace(request: HttpRequest, what: str):
+    """The workspace a new share lands in: one the caller names or solely
+    belongs to (`wsvc.creation_workspace`), and edits in."""
+    ws = wsvc.creation_workspace(request)
+    if ws is None:
+        raise ProblemError(
+            422,
+            f"No workspace to share this {what} in",
+            type_=TYPE_VALIDATION,
+            detail=wsvc.creation_refusal(request),
+        )
+    if not perms.can(request.user, ws, perms.CONTENT_WRITE):
+        raise ProblemError(
+            403,
+            "Editor role required",
+            type_=TYPE_FORBIDDEN,
+            detail=f"sharing a {what} requires the editor role in {ws.slug!r}",
+        )
+    return ws
+
+
 def _message_payloads(session: Session) -> list[dict]:
     return [
         {
@@ -90,6 +120,7 @@ def _list_payload(session: Session, *, is_owner: bool) -> dict:
         "redaction_count": session.redaction_count,
         "share_token": token.token if token else None,
         "is_owner": is_owner,
+        "workspace": session.workspace_id,
         "created_at": session.created_at,
         "updated_at": session.updated_at,
     }
@@ -180,16 +211,20 @@ def upload_session(
                     visibility=existing.visibility,
                     owner_email=existing.owner.email,
                     share_token=token.token if token else None,
+                    share_url=share_url(existing.workspace_id, token.token if token else None),
+                    workspace=existing.workspace_id,
                     duplicate=True,
                 ),
             )
 
     resolved_title = (title.strip() or file.name or "Claude session")[:500]
     resolved_project = project_slug.strip() or None
+    ws = _share_workspace(request, "session")
 
     with transaction.atomic():
         session = Session.objects.create(
             owner=request.user,
+            workspace=ws,
             title=resolved_title,
             project_slug=resolved_project,
             visibility=visibility,
@@ -234,6 +269,8 @@ def upload_session(
             visibility=session.visibility,
             owner_email=session.owner.email,
             share_token=token.token if token else None,
+            share_url=share_url(ws.slug, token.token if token else None),
+            workspace=ws.slug,
             duplicate=False,
         ),
     )
@@ -305,6 +342,7 @@ def _arc_list_payload(arc: SessionArc, *, is_owner: bool) -> dict:
         "item_count": arc.items.count(),
         "share_token": token.token if token else None,
         "is_owner": is_owner,
+        "workspace": arc.workspace_id,
         "created_at": arc.created_at,
         "updated_at": arc.updated_at,
     }
@@ -366,9 +404,11 @@ def create_arc(request: HttpRequest, payload: ArcCreateIn) -> Status:
             type_=TYPE_NOT_FOUND,
         )
 
+    ws = _share_workspace(request, "session arc")
     with transaction.atomic():
         arc = SessionArc.objects.create(
             owner=request.user,
+            workspace=ws,
             title=(payload.title or "").strip()[:500],
             project_slug=(payload.project_slug or "").strip() or None,
             visibility=payload.visibility,
@@ -395,6 +435,8 @@ def create_arc(request: HttpRequest, payload: ArcCreateIn) -> Status:
             item_count=len(items),
             owner_email=arc.owner.email,
             share_token=token.token if token else None,
+            share_url=share_url(ws.slug, token.token if token else None),
+            workspace=ws.slug,
         ),
     )
 
@@ -549,20 +591,28 @@ def _session_messages_out(session: Session) -> list[SessionMessageOut]:
     ]
 
 
+def _at(row, ws: str) -> bool:
+    """Is `row` at the address the page names? No `ws` = the flat link."""
+    return not ws or ws == row.workspace_id
+
+
 @share_router.get(
     "/{token}",
     auth=None,
     response=SharedViewOut,
     summary="Public read-only view of a shared session or arc",
 )
-def public_share_view(request: HttpRequest, token: str) -> SharedViewOut:
+def public_share_view(request: HttpRequest, token: str, ws: str = "") -> SharedViewOut:
+    """`ws` is the workspace the page's URL names (`/w/<ws>/share/<token>`): a
+    share that lives in another workspace is not at that address (404)."""
     # A token is either a single-session token or an arc token. Try session
     # first (the common case); 404 on missing OR revoked — never leak which.
     share = ShareToken.objects.select_related("session").filter(token=token).first()
-    if share is not None and share.revoked_at is None:
+    if share is not None and share.revoked_at is None and _at(share.session, ws):
         session = share.session
         return SharedViewOut(
             kind="session",
+            workspace=session.workspace_id,
             title=session.title,
             redaction_count=session.redaction_count,
             turn_count=_turn_count(session),
@@ -575,7 +625,7 @@ def public_share_view(request: HttpRequest, token: str) -> SharedViewOut:
     arc_share = (
         ArcShareToken.objects.select_related("arc").filter(token=token).first()
     )
-    if arc_share is not None and arc_share.revoked_at is None:
+    if arc_share is not None and arc_share.revoked_at is None and _at(arc_share.arc, ws):
         arc = arc_share.arc
         sections = [
             SharedSectionOut(
@@ -594,6 +644,7 @@ def public_share_view(request: HttpRequest, token: str) -> SharedViewOut:
         active_total = sum(s.active_seconds or 0 for s in sections)
         return SharedViewOut(
             kind="arc",
+            workspace=arc.workspace_id,
             title=arc.title,
             redaction_count=sum(s.redaction_count for s in sections),
             turn_count=sum(s.turn_count for s in sections),

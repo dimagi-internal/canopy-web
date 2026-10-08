@@ -54,13 +54,15 @@ def _transcript(session_id: str = "sess-1", *, secret: bool = False) -> bytes:
     return ("\n".join(json.dumps(r) for r in rows) + "\n").encode()
 
 
-def _upload(client, content: bytes, **fields):
+def _upload(client, content: bytes, *, ws: str | None = None, **fields):
     data = {
         "file": SimpleUploadedFile("session.jsonl", content, content_type="application/x-ndjson"),
         "visibility": "link",
         **fields,
     }
-    return client.post("/api/sessions/upload", data=data, format="multipart")
+    # A caller in several workspaces names one (canopy-web#1289).
+    path = f"/api/w/{ws}/sessions/upload" if ws else "/api/sessions/upload"
+    return client.post(path, data=data, format="multipart")
 
 
 @pytest.mark.django_db
@@ -159,7 +161,7 @@ def test_list_includes_link_shared_sessions_from_others(auth_client, owner, othe
     the list is "shared with the team", not "uploaded by me". Their PRIVATE
     sessions stay invisible."""
     _teammates(owner, other)
-    _upload(auth_client, _transcript("mine"))
+    _upload(auth_client, _transcript("mine"), ws="share-team")
     other_client = Client()
     other_client.force_login(other)
     _upload(other_client, _transcript("theirs-link"), title="Agent share")
@@ -197,9 +199,9 @@ def test_non_owner_cannot_read_detail(auth_client, other):
 # ---------------------------------------------------------------------------
 
 
-def _create_arc(client, items, *, title="My Arc", visibility="link"):
+def _create_arc(client, items, *, title="My Arc", visibility="link", ws=None):
     return client.post(
-        "/api/sessions/arcs",
+        f"/api/w/{ws}/sessions/arcs" if ws else "/api/sessions/arcs",
         data=json.dumps({"title": title, "visibility": visibility, "items": items}),
         content_type="application/json",
     )
@@ -243,6 +245,7 @@ def test_single_session_token_still_returns_kind_session(auth_client):
 
 @pytest.mark.django_db
 def test_arc_create_rejects_unowned_session(auth_client, other):
+    _teammates(other)
     other_client = Client()
     other_client.force_login(other)
     theirs = _upload(other_client, _transcript("theirs")).json()["slug"]
@@ -289,8 +292,8 @@ def test_arc_list_and_detail_owner_only(auth_client, other):
 @pytest.mark.django_db
 def test_arc_list_includes_link_shared_arcs_from_others(auth_client, owner, other):
     _teammates(owner, other)
-    s1 = _upload(auth_client, _transcript("v1")).json()["slug"]
-    _create_arc(auth_client, [{"session_slug": s1}], title="Their arc")
+    s1 = _upload(auth_client, _transcript("v1"), ws="share-team").json()["slug"]
+    _create_arc(auth_client, [{"session_slug": s1}], title="Their arc", ws="share-team")
 
     other_client = Client()
     other_client.force_login(other)

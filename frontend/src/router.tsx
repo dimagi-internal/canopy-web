@@ -17,6 +17,7 @@ import { SettingsPage } from './pages/SettingsPage'
 import { WalkthroughsPage } from './pages/WalkthroughsPage'
 import { WalkthroughViewerPage } from './pages/WalkthroughViewerPage'
 import { ReviewPage } from './pages/ReviewPage'
+import { FlatArtifactRedirect } from './pages/FlatArtifactRedirect'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
@@ -232,9 +233,18 @@ export const routeTable: RouteObject[] = [
       // name no workspace, so they live outside /w/:workspace.
       { path: '/beta-requests', element: <BetaRequestsPage /> },
       { path: '/beta-requests/:requestId', element: <BetaRequestPage /> },
-      // --- Public viewers (root; self-enforce visibility) ---
-      { path: '/walkthrough/:id', element: <WalkthroughViewerPage /> },
-      { path: '/review/:id', element: <ReviewPage /> },
+      // --- Old flat viewer links → the same page under its workspace ---
+      // Every link sent before canopy-web#1289 points here, so these resolve the
+      // row's workspace and replace the URL; if they cannot, the page renders in
+      // place and says what it always said (not found, sign in).
+      {
+        path: '/walkthrough/:id',
+        element: <FlatArtifactRedirect kind="walkthrough"><WalkthroughViewerPage /></FlatArtifactRedirect>,
+      },
+      {
+        path: '/review/:id',
+        element: <FlatArtifactRedirect kind="review"><ReviewPage /></FlatArtifactRedirect>,
+      },
       // /invite/:token — the accept page. Deliberately OUTSIDE /w/:workspace:
       // an invitee has no workspace membership yet, so there is no tenant to
       // scope it under. Self-enforces via the preview/accept endpoints
@@ -344,6 +354,12 @@ export const routeTable: RouteObject[] = [
           { path: 'history', element: <Navigate to="../skills/history" replace /> },
         ],
       },
+      // Public viewers, under their workspace: a share token still opens one
+      // artifact without a login (they self-enforce visibility, and the server
+      // and client both let an anonymous visitor reach exactly these three —
+      // lib/scopedLinks.ts), and the API confirms the row lives HERE.
+      { path: '/w/:workspace/walkthrough/:id', element: <WalkthroughViewerPage /> },
+      { path: '/w/:workspace/review/:id', element: <ReviewPage /> },
       { path: '/w/:workspace/ddd', element: <DddPage /> },
       { path: '/w/:workspace/ddd/:narrative', element: <DddPage /> },
       { path: '/w/:workspace/ddd/:narrative/:runId', element: <DddPage /> },
@@ -382,7 +398,13 @@ export const routeTable: RouteObject[] = [
   // `guarded()` below leaves it alone instead of hanging the dark, "back to
   // Canopy"-linking app boundary off a page anonymous visitors can't log
   // into.
-  { path: '/share/:token', element: <SessionSharePage />, errorElement: <ShareRouteErrorBoundary /> },
+  { path: '/w/:workspace/share/:token', element: <SessionSharePage />, errorElement: <ShareRouteErrorBoundary /> },
+  // The old flat link: resolves the share's workspace and moves there.
+  {
+    path: '/share/:token',
+    element: <FlatArtifactRedirect kind="share"><SessionSharePage /></FlatArtifactRedirect>,
+    errorElement: <ShareRouteErrorBoundary />,
+  },
   // The clean, shareable DDD run RELEASE page — also mounted OUTSIDE AppLayout,
   // in a chrome-less PublicLayout, so a `?t=<share_token>` viewer with no Dimagi
   // login is served (the release API self-enforces token-or-member access). New

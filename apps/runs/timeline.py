@@ -17,6 +17,7 @@ import datetime as dt
 
 from apps.reviews.models import ReviewRequest
 from apps.walkthroughs.models import Walkthrough
+from apps.workspaces import services as wsvc
 
 from . import aggregate as agg
 
@@ -117,7 +118,7 @@ def recent_events(
                 summary=f"{r.gate} · {r.status}",
                 project_slug=None,
                 actor=actor_name(r.owner),
-                href=f"/review/{r.id}",
+                href=wsvc.scoped_path(r.workspace_id, f"/review/{r.id}"),
                 id=f"review:{r.id}",
                 icon="narrative",
             )

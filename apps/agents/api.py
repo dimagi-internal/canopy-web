@@ -305,8 +305,8 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
         if home is None:
             raise HttpError(
                 422,
-                "no unambiguous workspace to home this agent in; "
-                "post to /api/w/{workspace}/agents/ or pass `workspace`",
+                "no unambiguous workspace to home this agent in; pass `workspace`: "
+                + wsvc.creation_refusal(request),
             )
 
     # This is the reshaping tier (same as _agent_for_write), but there is no

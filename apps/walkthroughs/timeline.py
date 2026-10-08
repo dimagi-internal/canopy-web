@@ -11,6 +11,7 @@ import datetime as dt
 from django.db.models import Q
 
 from .models import Walkthrough
+from apps.workspaces import services as wsvc
 
 
 def recent_events(
@@ -35,7 +36,7 @@ def recent_events(
             summary=truncate(w.description),
             project_slug=w.project_slug,
             actor=actor_name(w.owner),
-            href=f"/walkthrough/{w.id}",
+            href=wsvc.scoped_path(w.workspace_id, f"/walkthrough/{w.id}"),
             id=f"walkthrough:{w.id}",
             icon="video" if w.kind == Walkthrough.KIND_VIDEO else "deck",
         )

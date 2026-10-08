@@ -42,6 +42,11 @@ const NOT_DOCUMENTABLE = new Set([
   '/ddd-plans',
   '/reviews',
   '/insights', // retired feed; redirects home
+  // Old flat viewer links: they move to the same page under its workspace
+  // (pages/FlatArtifactRedirect.tsx, canopy-web#1289).
+  '/walkthrough/:id',
+  '/review/:id',
+  '/share/:token',
   // The retired workbench Projects page: the workspace index now redirects to
   // the workspace's agents, and old /projects links follow it.
   '/w/:workspace',

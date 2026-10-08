@@ -23,6 +23,7 @@ from apps.reviews.models import ReviewRequest
 from apps.reviews.titles import narrative_title, phase_words
 from apps.walkthroughs import pinned
 from apps.walkthroughs.models import Walkthrough
+from apps.workspaces import services as wsvc
 
 # ---------------------------------------------------------------------------
 # Workspace scoping
@@ -180,7 +181,7 @@ def _content_url(w: Walkthrough) -> str:
 
 
 def _viewer_url(w: Walkthrough) -> str:
-    return _tok(f"/walkthrough/{w.id}", w)
+    return _tok(wsvc.scoped_path(w.workspace_id, f"/walkthrough/{w.id}"), w)
 
 
 def _cut_payload(w: Walkthrough) -> dict:

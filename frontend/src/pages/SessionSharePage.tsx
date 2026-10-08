@@ -79,14 +79,16 @@ const SHELL = "mx-auto max-w-3xl px-4 py-8";
  * clean conversation (prompts + final replies) client-side by default.
  */
 export default function SessionSharePage() {
-  const { token = "" } = useParams();
+  // `workspace` is set on /w/:workspace/share/:token — the API confirms the
+  // share lives there (see FlatArtifactRedirect for the flat route).
+  const { token = "", workspace } = useParams();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [selected, setSelected] = useState<number | null>(null);
 
   useEffect(() => {
     if (!token) return;
     setSelected(null);
-    getShared(token)
+    getShared(token, workspace)
       .then((view) => setState({ kind: "loaded", view }))
       .catch((e) => {
         if (e instanceof ApiError) {
@@ -95,7 +97,7 @@ export default function SessionSharePage() {
           setState({ kind: "error", code: "unknown", message: "Failed to load" });
         }
       });
-  }, [token]);
+  }, [token, workspace]);
 
   if (state.kind === "loading") {
     return (

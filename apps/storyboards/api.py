@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from django.db import transaction
 from django.http import HttpRequest
-from django.urls import get_script_prefix
 from ninja import Router
 from ninja.errors import HttpError
 
@@ -102,18 +101,13 @@ def _editable_or_404(request: HttpRequest, slug: str) -> Storyboard:
 def _share_url(request: HttpRequest, board: Storyboard) -> str | None:
     """The absolute, token-bearing link — the thing you actually send someone.
 
-    Must include the deployment's script prefix: labs serves under
-    ``FORCE_SCRIPT_NAME=/canopy``, and ``build_absolute_uri`` on a leading-slash
-    path drops it, minting a link that 404s. Same fix apps/walkthroughs already
-    carries; reuse it rather than rediscovering it (this one shipped broken and
-    was caught by opening the link).
+    Built on CANOPY_PUBLIC_BASE_URL (which carries any deployment prefix), not
+    `request.build_absolute_uri`: an MCP tool call reaches this route in-process
+    with no real Host, and that minted `https://localhost/…` (canopy-web#1289).
     """
     if not board.share_token:
         return None
-    prefix = get_script_prefix().rstrip("/")  # "" locally, "/canopy" on labs
-    return request.build_absolute_uri(
-        f"{prefix}/storyboard/{board.slug}?t={board.share_token}"
-    )
+    return wsvc.scoped_url(None, f"/storyboard/{board.slug}?t={board.share_token}")
 
 
 # ------------------------------------------------------------------- write ops
@@ -170,12 +164,10 @@ def list_storyboards(request: HttpRequest) -> dict:
 
 @router.post("/", response=StoryboardOut, auth=session_auth, summary="Create a storyboard")
 def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
-    workspace_slug = getattr(request, "workspace_slug", None)
-    if not workspace_slug:
-        ws = wsvc.user_default_workspace(request.user)
-        if ws is None:
-            raise HttpError(400, "no workspace to create this storyboard in")
-        workspace_slug = ws.slug
+    ws = wsvc.creation_workspace(request)
+    if ws is None:
+        raise HttpError(422, f"no workspace to create this storyboard in: {wsvc.creation_refusal(request)}")
+    workspace_slug = ws.slug
     if not perms.can(request.user, workspace_slug, perms.CONTENT_WRITE):
         raise HttpError(403, "creating a storyboard requires the editor role in this workspace")
     with transaction.atomic():

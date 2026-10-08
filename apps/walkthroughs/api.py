@@ -8,7 +8,6 @@ from uuid import UUID
 
 from django.conf import settings
 from django.http import Http404, HttpRequest
-from django.urls import get_script_prefix
 from pydantic import ValidationError
 
 log = logging.getLogger(__name__)
@@ -87,14 +86,13 @@ def _parse_links_field(raw: str) -> list[dict]:
         raise ProblemError(422, "Invalid link entry", detail=str(exc))
 
 
-def _share_url(request: HttpRequest, w: Walkthrough) -> str | None:
-    """Absolute tokened public URL; None unless public + minted."""
+def _share_url(w: Walkthrough) -> str | None:
+    """Absolute tokened public URL, under the walkthrough's workspace; None
+    unless public + minted. See `wsvc.scoped_url` for why it is not built from
+    the request."""
     if w.visibility != Walkthrough.VISIBILITY_LINK or not w.share_token:
         return None
-    prefix = get_script_prefix().rstrip("/")  # "" locally, "/canopy" on labs
-    return request.build_absolute_uri(
-        f"{prefix}/walkthrough/{w.id}?t={w.share_token}"
-    )
+    return wsvc.scoped_url(w.workspace_id, f"/walkthrough/{w.id}?t={w.share_token}")
 
 
 def _detail_payload(w: Walkthrough, *, is_owner: bool, request: HttpRequest) -> dict:
@@ -117,7 +115,8 @@ def _detail_payload(w: Walkthrough, *, is_owner: bool, request: HttpRequest) -> 
         "cut_id": w.cut_id,
         "created_at": w.created_at,
         "updated_at": w.updated_at,
-        "share_url": _share_url(request, w) if is_owner else None,
+        "share_url": _share_url(w) if is_owner else None,
+        "workspace": w.workspace_id,
     }
 
 
@@ -298,7 +297,7 @@ def upload_walkthrough(
             422,
             "No workspace to upload into",
             type_=TYPE_VALIDATION,
-            detail="you do not belong to a workspace that can own this; ask an owner for an invite",
+            detail=wsvc.creation_refusal(request),
         )
     if not perms.can(request.user, ws, perms.CONTENT_WRITE):
         raise ProblemError(
@@ -455,11 +454,17 @@ def list_walkthroughs(
     auth=None,  # Public walkthroughs load with ?t=<share_token>, no session.
     summary="Get walkthrough detail",
 )
-def get_walkthrough(request: HttpRequest, wid: UUID, t: str = "") -> WalkthroughDetailOut:
+def get_walkthrough(
+    request: HttpRequest, wid: UUID, t: str = "", ws: str = ""
+) -> WalkthroughDetailOut:
+    """`ws` is the workspace the viewer's URL names (`/w/<ws>/walkthrough/<id>`):
+    a walkthrough that lives in another workspace is not at that address."""
     _require_enabled()
     w = _get_or_404(wid)
     if not w.readable_by(request):  # member of its workspace, or a matching ?t token
         raise Http404("walkthrough not found")  # don't leak private existence
+    if ws and ws != w.workspace_id:
+        raise Http404("walkthrough not found")
     # `is_owner` drives the edit controls and the share URL, so it answers "may
     # this caller change it", which is the write gate — not bare authorship.
     is_owner = _may_write(request, w)

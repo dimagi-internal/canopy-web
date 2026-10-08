@@ -46,6 +46,8 @@ class ReviewRequestOut(StrictModel):
     # empty for anonymous link readers so one external reviewer can't see another's.
     suggestions: list[dict[str, Any]] = []
     is_owner: bool
+    # The workspace it lives in — where its page is (/w/<workspace>/review/<id>).
+    workspace: str | None = None
     # Whether THIS caller may resolve the gate (an editor of the review's workspace).
     # The page decides between the decide-and-submit editor and the suggest-only
     # editor on this — not on "is anyone signed in", which handed a signed-in
@@ -124,7 +126,12 @@ class ReviewCreateOut(StrictModel):
     """Slim response from POST /api/reviews/: just enough for the orchestrator to poll."""
 
     id: uuid.UUID
+    # App-relative page URL, under the review's workspace (/w/<ws>/review/<id>/).
     url: str
     # For a link-visibility review: the per-review share token that lets an external
     # (non-dimagi) reviewer submit SUGGESTIONS via ?t=<token>. None for private reviews.
     share_token: str | None = None
+    # The absolute link to send: the page on this deployment, carrying the token
+    # for a link-visibility review.
+    share_url: str | None = None
+    workspace: str | None = None

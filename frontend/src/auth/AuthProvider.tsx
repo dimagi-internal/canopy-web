@@ -4,6 +4,7 @@ import { isLoginBounceInFlight, noteAuthSucceeded } from '@/api/client.v2'
 import { getMe, type MeOut as MeResponse } from '@/api/me'
 import { currentNext, loginHref } from './loginHref'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
+import { isScopedViewerPath } from '@/lib/scopedLinks'
 
 type AuthState =
   | { status: 'loading'; user: null }
@@ -19,7 +20,9 @@ export const AuthContext = createContext<AuthState>({ status: 'loading', user: n
 // and reviews. These are tokenless — the UUID in the URL is the only secret, and
 // the API self-enforces (private resources 404 to anonymous callers).
 // Legacy /w/<uuid> walkthrough links pass too (the router redirects them to
-// /walkthrough/<uuid>), but /w/<workspace> tenant paths stay behind the gate.
+// /walkthrough/<uuid>), but /w/<workspace> tenant paths stay behind the gate —
+// except the three scoped viewers (/w/<ws>/walkthrough|review|share/…), where
+// every share link now points (lib/scopedLinks.ts).
 // /invite/<token> is the odd one out: the invitee has no Dimagi session (may
 // not even be a Dimagi address), so the accept page must render for an
 // anonymous visitor — it self-enforces via the token-gated preview/accept
@@ -38,7 +41,8 @@ function isPublicLinkRoute(): boolean {
     path.startsWith('/narrative/') ||
     path.startsWith('/invite/') ||
     path === '/about' ||
-    LEGACY_WALKTHROUGH_RE.test(path)
+    LEGACY_WALKTHROUGH_RE.test(path) ||
+    isScopedViewerPath(path)
   )
 }
 

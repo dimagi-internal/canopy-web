@@ -59,10 +59,13 @@ class WalkthroughDetailOut(WalkthroughListItemOut):
     content_type: str
     is_owner: bool
     links: list[WalkthroughLink] = []
-    # Absolute tokened public URL (…/walkthrough/<id>?t=<token>). Present only
-    # for the owner of a public (visibility=link) walkthrough; never expose the
-    # raw token as its own field.
+    # Absolute tokened public URL (…/w/<ws>/walkthrough/<id>?t=<token>). Present
+    # only for the owner of a public (visibility=link) walkthrough; never expose
+    # the raw token as its own field.
     share_url: str | None = None
+    # The workspace it lives in — where its page is (/w/<workspace>/walkthrough/
+    # <id>). A reader holding the link already has it; a flat link resolves it.
+    workspace: str | None = None
 
 
 class WalkthroughUploadIn(StrictModel):

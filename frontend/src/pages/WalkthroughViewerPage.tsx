@@ -19,7 +19,10 @@ import { UPLOADED_CONTENT_SANDBOX } from '../lib/uploadedContentSandbox'
 type LoadError = { status: number | null; message: string }
 
 export function WalkthroughViewerPage() {
-  const { id } = useParams<{ id: string }>()
+  // `workspace` is set on /w/:workspace/walkthrough/:id — the API confirms the
+  // walkthrough lives there. The flat route only renders here when its
+  // redirect could not resolve one (see FlatArtifactRedirect).
+  const { id, workspace } = useParams<{ id: string; workspace?: string }>()
   const navigate = useNavigate()
   const auth = useAuth()
   const [w, setW] = useState<WalkthroughDetail | null>(null)
@@ -31,7 +34,7 @@ export function WalkthroughViewerPage() {
   useEffect(() => {
     if (!id) return
     let cancelled = false
-    getWalkthrough(id, shareToken)
+    getWalkthrough(id, shareToken, workspace)
       .then((d) => !cancelled && setW(d))
       .catch((e: unknown) => {
         if (cancelled) return
@@ -43,7 +46,7 @@ export function WalkthroughViewerPage() {
     return () => {
       cancelled = true
     }
-  }, [id, shareToken])
+  }, [id, shareToken, workspace])
 
   async function toggleVisibility() {
     if (!w) return

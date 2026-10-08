@@ -82,7 +82,7 @@ def test_upsert_sets_runtime_fields(client, workspace):
     resp = client.post(
         "/api/agents/",
         data={
-            "slug": "echo", "name": "Echo",
+            "slug": "echo", "name": "Echo", "workspace": workspace.slug,
             "repo_url": "https://github.com/dimagi/echo",
             "runtime_engine": "cloud_p", "runtime_secrets": ["canopy-pat"],
         },

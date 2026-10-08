@@ -187,7 +187,7 @@ def test_ddd_run_and_narrative_review(client, owner):
     kinds = {e["kind"]: e for e in body["events"]}
     assert "run" in kinds and "narrative_review" in kinds
     assert kinds["run"]["href"] == f"/ddd/reef/{rid}"
-    assert kinds["narrative_review"]["href"] == f"/review/{rev.id}"
+    assert kinds["narrative_review"]["href"] == f"/w/{rev.workspace_id}/review/{rev.id}"
 
 
 def test_ddd_excludes_standalone_walkthrough_from_walkthroughs(client, owner):

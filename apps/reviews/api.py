@@ -29,7 +29,7 @@ from ninja import Router, Status
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.common.csrf import csrf_rejected
-from apps.reviews.notify import notify_suggestion
+from apps.reviews.notify import notify_suggestion, review_path
 from apps.reviews.titles import narrative_title
 from apps.runs.ddd import (
     RUN_CHILD_GATES,
@@ -200,6 +200,7 @@ def _detail_payload(
         # another's suggested wording.
         "suggestions": (review.suggestions_json or []) if can_write else [],
         "is_owner": is_owner,
+        "workspace": review.workspace_id,
         "can_decide": can_decide,
         "title": _list_title(review.request_json or {}, _narrative_slug_of(review)),
         "created_at": review.created_at,
@@ -369,7 +370,7 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
             422,
             "No workspace to create this review in",
             type_=TYPE_VALIDATION,
-            detail="you do not belong to a workspace that can own this; ask an owner for an invite",
+            detail=wsvc.creation_refusal(request),
         )
     if not perms.can(request.user, ws, perms.CONTENT_WRITE):
         raise ProblemError(
@@ -392,8 +393,8 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
         workspace=ws,
     )
 
-    # Build the hosted-review URL.  The frontend SPA handles /review/<id>.
-    url = f"/review/{review.id}/"
+    # Build the hosted-review URL, under the review's workspace.
+    url = review_path(review)
 
     # For a shareable (link) review, mint a per-review share token so an EXTERNAL
     # (non-dimagi) reviewer can submit SUGGESTIONS via ?t=<token> without a login.
@@ -405,7 +406,13 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
 
     return Status(
         201,
-        ReviewCreateOut(id=review.id, url=url, share_token=token),
+        ReviewCreateOut(
+            id=review.id,
+            url=url,
+            share_token=token,
+            share_url=wsvc.scoped_url(None, url + (f"?t={token}" if token else "")),
+            workspace=review.workspace_id,
+        ),
     )
 
 
@@ -420,7 +427,7 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
     auth=None,  # Public (visibility=link) reviews are readable without a session.
     summary="Get review request detail or poll for resolution",
 )
-def get_review(request: HttpRequest, rid: UUID) -> ReviewRequestOut:
+def get_review(request: HttpRequest, rid: UUID, ws: str = "") -> ReviewRequestOut:
     """
     Returns the full review request + current status.
 
@@ -428,10 +435,15 @@ def get_review(request: HttpRequest, rid: UUID) -> ReviewRequestOut:
     - A member of the review's workspace can read it.
     - Anyone may read if visibility=="link" (no token required).
     - Otherwise → 404 (don't leak existence).
+
+    `ws` is the workspace the page's URL names (`/w/<ws>/review/<id>`): a review
+    that lives in another workspace is not at that address (404).
     """
     review = _get_or_404(rid)
 
     if not _can_read(request, review):
+        raise ProblemError(404, "Review request not found", type_=TYPE_NOT_FOUND)
+    if ws and ws != review.workspace_id:
         raise ProblemError(404, "Review request not found", type_=TYPE_NOT_FOUND)
 
     is_own = _is_owner(request, review)
