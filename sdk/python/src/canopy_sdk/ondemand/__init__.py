@@ -4,9 +4,11 @@ Not imported by ``canopy_sdk`` itself, so the core stays importable without boto
 """
 from .errors import InstanceGone, OnDemandError, SSMFailure, SSMTimeout
 from .instance import OnDemandInstance, Running, Status
+from .jobs import Job, JobStore
+from .lease import Lease
 from .ssm import CommandResult, run_command
 
 __all__ = [
-    "CommandResult", "InstanceGone", "OnDemandError", "OnDemandInstance",
-    "Running", "SSMFailure", "SSMTimeout", "Status", "run_command",
+    "CommandResult", "InstanceGone", "Job", "JobStore", "Lease", "OnDemandError",
+    "OnDemandInstance", "Running", "SSMFailure", "SSMTimeout", "Status", "run_command",
 ]
