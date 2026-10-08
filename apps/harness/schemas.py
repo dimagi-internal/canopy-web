@@ -323,6 +323,21 @@ class RunnerOut(Schema):
         )
 
 
+class FleetHoldIn(Schema):
+    # What you are tracing, so whoever finds the fleet silent knows why and when to
+    # release it. Same argument as PauseIn's note, at fleet scale.
+    note: str = ""
+
+
+class FleetHoldOut(Schema):
+    held: bool
+    note: str
+    held_at: dt.datetime | None = None
+    held_by_email: str = ""
+    # Turns waiting on the hold right now — the "what is trying to start" count.
+    queued: int = 0
+
+
 class PauseIn(Schema):
     # Why this box is parked, for whoever finds it idle later. A pause with no
     # reason is indistinguishable from a broken runner at a glance, and the

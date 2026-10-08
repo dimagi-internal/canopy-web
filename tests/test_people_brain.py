@@ -52,6 +52,12 @@ def _agent(ws, slug, owner, *, login=True):
     return agent
 
 
+@pytest.fixture(autouse=True)
+def _digest_on(settings):
+    # The switch is OFF in production since 2026-10-07; these tests pin what it does ON.
+    settings.PEOPLE_DIGEST_ENABLED = True
+
+
 @pytest.fixture()
 def world():
     owner = User.objects.create_user("jj", "jj@dimagi.com", "pw", first_name="Jonathan")

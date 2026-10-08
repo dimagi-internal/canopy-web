@@ -24,7 +24,8 @@ The brakes, since a hook that starts turns when turns finish is a feedback loop:
   created in the last `PEOPLE_DIGEST_DEBOUNCE_MINUTES` (default 60). Counted
   from the digest turns themselves (their idempotency-key prefix), like
   auto-debug's caps, so there is no second ledger to drift.
-* KILL SWITCH: `PEOPLE_DIGEST_ENABLED=false`. There is no per-agent switch yet:
+* SWITCH: `PEOPLE_DIGEST_ENABLED` — OFF by default since 2026-10-07 (see
+  config/settings/base.py for why). There is no per-agent switch yet:
   `Agent` has no settings document to hang one on, and adding a column for it
   was not worth it before v1 proves itself.
 
@@ -100,7 +101,7 @@ def _on_turn_finished(turn: Turn) -> Turn | None:
 
     from . import initiator as who
 
-    if not getattr(settings, "PEOPLE_DIGEST_ENABLED", True):
+    if not getattr(settings, "PEOPLE_DIGEST_ENABLED", False):
         return None
     if turn.status != Turn.DONE or is_digest_turn(turn):
         return None

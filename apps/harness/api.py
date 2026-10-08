@@ -24,7 +24,7 @@ from apps.workspaces.models import Workspace
 from . import initiator as who
 from . import services
 from . import turn_mode as turn_modes
-from .models import AgentSchedule, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder
+from .models import AgentSchedule, FleetHold, Runner, RunnerAssignment, RunnerDrill, Turn, WorkspaceRunnerOrder
 from .schedule_services import serialize_schedule
 from .schemas import (
     CallerContextOut,
@@ -40,6 +40,8 @@ from .schemas import (
     EmdashSessionOut,
     UnclaimableTurnOut,
     HeartbeatIn,
+    FleetHoldIn,
+    FleetHoldOut,
     PauseIn,
     RecordSessionIn,
     ReportSessionsIn,
@@ -1118,6 +1120,60 @@ def unpause_runner(request: HttpRequest, runner_id: uuid.UUID):
         runner.paused_at = None
         runner.save(update_fields=["paused", "paused_note", "paused_at"])
     return runner
+
+
+def _fleet_hold_out(hold: FleetHold) -> dict:
+    return {
+        "held": hold.held, "note": hold.note, "held_at": hold.held_at,
+        "held_by_email": (hold.held_by.email if hold.held_by_id else ""),
+        "queued": Turn.objects.filter(status=Turn.QUEUED).count() if hold.held else 0,
+    }
+
+
+@router.get("/fleet-hold", response=FleetHoldOut)
+def get_fleet_hold(request: HttpRequest):
+    """Is the whole fleet on hold? Readable by anyone signed in — a member whose turn
+    is sitting queued should be able to see why."""
+    return _fleet_hold_out(FleetHold.current())
+
+
+@router.post("/fleet-hold", response=FleetHoldOut)
+def hold_fleet(request: HttpRequest, payload: FleetHoldIn):
+    """Stop EVERY runner from starting anything — the fleet-wide sibling of
+    /runners/{id}/pause (see FleetHold). Turns keep enqueuing and wait QUEUED with
+    their trigger, so `list turns?status=queued` shows what tried to start while
+    held. Running turns finish normally. Superuser only: it spans every tenant.
+    Idempotent — holding again refreshes the note."""
+    if not request.user.is_superuser:
+        raise HttpError(403, "holding the whole fleet requires a superuser")
+    hold = FleetHold.current()
+    if not hold.held:
+        hold.held_at = timezone.now()
+        hold.held_by = request.user
+    hold.held = True
+    hold.note = (payload.note or "")[:500]
+    hold.save()
+    return _fleet_hold_out(hold)
+
+
+@router.post("/fleet-hold/release", response=FleetHoldOut)
+def release_fleet_hold(request: HttpRequest):
+    """Release the fleet hold; queued turns become claimable again. Wakes every
+    tenant's runners so the backlog starts now rather than at each box's next poll."""
+    if not request.user.is_superuser:
+        raise HttpError(403, "releasing the fleet hold requires a superuser")
+    hold = FleetHold.current()
+    if hold.held:
+        hold.held, hold.note, hold.held_at, hold.held_by = False, "", None, None
+        hold.save()
+        from apps.realtime import groups
+
+        slugs = list(Workspace.objects.values_list("slug", flat=True))
+        transaction.on_commit(lambda: [
+            groups.publish(groups.runnable_group(slug), {"type": "runner.wake"})
+            for slug in slugs
+        ])
+    return _fleet_hold_out(hold)
 
 
 @router.post("/runners/{runner_id}/heartbeat", response=RunnerOut)

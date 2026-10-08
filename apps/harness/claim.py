@@ -25,6 +25,7 @@ from apps.workspaces import services as wsvc
 from .ledger import append_events
 from .people_digest import KEY_PREFIX as PEOPLE_DIGEST_KEY_PREFIX
 from .models import (
+    FleetHold,
     Runner,
     RunnerAssignment,
     RunnerDrill,
@@ -373,6 +374,21 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     )
     if not queued:
         return []
+    # While the fleet is held every queued turn waits on that, and nothing else about
+    # its routing matters until the release — say so instead of a routing diagnosis.
+    hold = FleetHold.objects.filter(pk=FleetHold.SINGLETON_PK, held=True).first()
+    if hold is not None:
+        from . import turn_access
+
+        why = f"the fleet is on hold{f' ({hold.note})' if hold.note else ''} — no runner claims anything until it is released"
+        return [{
+            "turn_id": str(t.pk),
+            "target": (f"agent {t.agent.slug}" if t.agent_id else
+                       "session" if t.chat_session_id else f"project {t.project}"),
+            "prompt": ((t.prompt or "")[:120]
+                       if user is None or turn_access.can_read_turn_content(user, t) else ""),
+            "created_at": t.created_at, "reason": why, "kind": "hold",
+        } for t in queued]
     # Candidate runners for "could ANY runner take this?" are the runners VISIBLE
     # in the caller's tenant, not merely the ones the caller personally paired.
     # Scoping to `owner=user` made every stuck turn read as `config` for
@@ -465,6 +481,15 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # closes — work landing on an account that must not spend tokens. The pinned
     # turn stays QUEUED (queued turns never expire) and lands on unpause.
     if runner.live_status != Runner.ONLINE:
+        return None
+    # The FLEET-WIDE hold (FleetHold): nothing is claimed, ridden or pinned anywhere
+    # while it is on, and queued turns wait — visible, with their trigger — for the
+    # release. ABOVE the sweeps on purpose: `skip_late_scheduled_turns` would close a
+    # held schedule slot as MISSED after 30 minutes, erasing it from the very queue the
+    # hold exists to show. On release the first claim runs the sweeps, so stale slots
+    # close then instead of firing as a burst. Above pin matching for the same reason
+    # the runner pause is: a pin must not punch through an operator's stop.
+    if FleetHold.is_held():
         return None
     sweep_expired_leases()
     # Lazy sweeps, both BEFORE the busy_agents read: a turn released here frees
