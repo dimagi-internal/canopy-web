@@ -617,6 +617,10 @@ class InitiatorOut(Schema):
     user: InitiatorPersonOut | None = None
     contact: InitiatorPersonOut | None = None
     agent: str | None = None
+    # The user is an AGENT'S OWN LOGIN (its slug), not a person; `self` when it is
+    # this turn's own agent — the agent started this turn itself (e.g. testing).
+    agent_login: str | None = None
+    self: bool = False
     # WHICH credential the request that created the turn used — {type, id, label}
     # (`pat`, `oauth`, `session`, `delegated`, `contact`, `caller_token`) — and
     # the program that sent it (X-Canopy-Client). Null when canopy started it.
