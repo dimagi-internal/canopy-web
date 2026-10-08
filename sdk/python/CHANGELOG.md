@@ -2,6 +2,26 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.7.0 — 2026-10-08
+
+`canopy_sdk.ondemand`: run a dedicated capability on a stopped-when-idle EC2
+instance. Minor: a new optional module (the `ondemand` extra: boto3 + redis),
+nothing in the core changed.
+
+- `OnDemandInstance` — start on demand, wait for EC2 status checks and the
+  capability's ready file (`/run/<capability>/ready`) over SSM, touch the
+  activity marker (`/var/run/<capability>/last-activity`), stop; never terminate.
+- `run_command` / `CommandResult` — SSM `AWS-RunShellScript` exec with polling
+  and one throttling retry (ported from ace-web's mobile runner).
+- `Lease` — a cross-process Redis lease per capability; `JobStore` / `Job` —
+  Redis records for long-running operations.
+- Errors: `OnDemandError`, `InstanceGone`, `SSMFailure`, `SSMTimeout`.
+- Package data, via `canopy_sdk.ondemand.assets.asset_path(name)`: the in-VM
+  idle watchdog (`idle-shutdown.sh`, `ondemand-idle-shutdown.service` /
+  `.timer`) and `ondemand-capability.cfn.yaml`, the per-capability stack
+  (instance, egress-only SG, SSM instance role, artifacts bucket, CPU idle-stop
+  alarm, and the consumer's IAM policy scoped by the `capability` tag).
+
 ## 0.6.1 — 2026-10-05
 
 `protected_resource_metadata` no longer adds the grant's tool scopes to

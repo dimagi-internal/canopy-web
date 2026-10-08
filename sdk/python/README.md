@@ -26,13 +26,14 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.6.1#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.7.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.6.1/dimagi_canopy-0.6.1-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.7.0/dimagi_canopy-0.7.0-py3-none-any.whl
 ```
 
-Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`.
+Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
+and the `ondemand` extra (boto3 + redis) for `canopy_sdk.ondemand`.
 The core needs only PyJWT + `cryptography`; outbound fetches use the standard
 library, address-pinned.
 
@@ -46,6 +47,7 @@ library, address-pinned.
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
 | `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `{% canopy_panel %}` |
+| `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `run_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
 | `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
 
 ## A Django host in five steps
@@ -194,6 +196,105 @@ issuer, resource, client id and every URL are configuration. canopy-web mounts
 `canopy_sdk.django` stores in-process so agents on canopy's own pages call its
 OWN MCP (`/api/mcp/`) as the visitor — see canopy-web `apps/tokens/self_host.py`
 and `docs/architecture/embedding-a-canopy-agent.md`.
+
+## On-demand capabilities
+
+`canopy_sdk.ondemand` (the `ondemand` extra) runs a **dedicated capability** — an
+Android emulator, a simulation model, anything too heavy or too stateful for the
+web tier — on its own EC2 instance that is **stopped while idle** and started by
+its consumer when needed. It was extracted from ace-web's cloud mobile runner.
+The instance is never terminated: every idle path only stops it, so its disk
+(and anything the AMI baked) survives between uses.
+
+### The capability contract
+
+A capability is a name (`emod`, `ace-mobile`: lowercase, digits, hyphens) shared
+by the stack, the AMI and the consumer. Given `<capability>`:
+
+| Piece | Who provides it | Contract |
+|---|---|---|
+| **Ready file** `/run/<capability>/ready` | the AMI | created once the capability can take work; `ensure_running` polls for it over SSM (override with `OnDemandInstance(ready_file=...)`) |
+| **Activity marker** `/var/run/<capability>/last-activity` | the consumer | `OnDemandInstance.touch()` updates its mtime over SSM; `ensure_running` touches it, and a consumer doing long work should touch it periodically |
+| **Watchdog** `idle-shutdown.sh` + `ondemand-idle-shutdown.service` / `.timer` | the AMI, from this package | every 60 s, halts the box once the marker is older than `IDLE_SECONDS` (default 3600). A missing marker is "not idle yet" (`/var/run` is tmpfs, so every boot starts without one). Install the script as `/usr/local/bin/ondemand-idle-shutdown`, both units under `/etc/systemd/system/`, enable the timer, and write `/etc/default/ondemand-idle-shutdown` with `CAPABILITY=<capability>` (and optionally `IDLE_SECONDS`, `ACTIVITY_FILE`) |
+| **SSM agent** | the AMI | all access is SSM: the security group has no inbound rule and there is no SSH key |
+| **Stack** `ondemand-capability.cfn.yaml` | the capability's owner | one stack per capability, below |
+
+Idle shutdown has three layers: the consumer's own `stop()`, the in-VM watchdog
+(a halt becomes a stop because the launch template sets
+`InstanceInitiatedShutdownBehavior: stop`), and a CloudWatch alarm that stops the
+instance after 5 minutes of max CPU below 5 %.
+
+The assets ship inside the wheel; get their paths with
+`canopy_sdk.ondemand.assets.asset_path(name)`, e.g. to copy them into a Packer
+build:
+
+```python
+from canopy_sdk.ondemand.assets import asset_path
+asset_path("idle-shutdown.sh")              # also: ondemand-idle-shutdown.service / .timer
+asset_path("ondemand-capability.cfn.yaml")
+```
+
+### The CloudFormation template
+
+```
+aws cloudformation deploy --stack-name ondemand-<capability> \
+  --template-file "$(python -c 'from canopy_sdk.ondemand.assets import asset_path; print(asset_path("ondemand-capability.cfn.yaml"))')" \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides Capability=<capability> OwnerTag=<team> AmiId=ami-... \
+    InstanceType=m8i.xlarge VpcId=vpc-... SubnetId=subnet-... ConsumerTaskRoleName=<role>
+```
+
+| Parameter | Default | |
+|---|---|---|
+| `Capability` | — | the capability name; tags the instance (`capability`) and names every resource `ondemand-<capability>-…` |
+| `OwnerTag` | — | the `owner` tag on every resource |
+| `AmiId` | — | the capability's AMI (SSM agent, watchdog, ready file); root volume at `/dev/sda1` (Ubuntu HVM) |
+| `InstanceType` | — | nested virtualization needs an m8i/c8i/r8i-class type |
+| `VpcId`, `SubnetId` | — | the subnet needs outbound 443 for SSM and S3 |
+| `ConsumerTaskRoleName` | — | the consumer's existing role (e.g. its ECS task role); the stack attaches `ConsumerPolicy` to it and does not own it |
+| `UserData` | `""` | base64 user data for the launch template |
+| `NestedVirtualization` | `"false"` | `"true"` adds `CpuOptions.NestedVirtualization: enabled` (KVM in the instance) |
+| `RootVolumeGb` | `30` | encrypted gp3 root volume |
+
+Resources: an egress-only security group (443, DNS); an instance role with
+`AmazonSSMManagedInstanceCore` plus put on the artifacts bucket; a launch
+template (IMDSv2 only, encrypted gp3, stop on shutdown); the instance (retained
+on stack delete); an artifacts bucket (retained; objects expire after 7 days);
+`IdleStopAlarm`; and `ConsumerPolicy`, which grants the consumer
+`ec2:StartInstances` / `StopInstances` and `ssm:SendCommand` only on instances
+tagged `capability=<capability>` (plus the `AWS-RunShellScript` document, the
+read-only `ec2:Describe*` / `ssm:GetCommandInvocation`, and read on the bucket).
+
+Outputs: **`InstanceId`** and **`ArtifactsBucketName`** — the consumer's settings.
+
+### Consumer usage
+
+```python
+import redis
+from canopy_sdk.ondemand import JobStore, Lease, OnDemandInstance, SSMFailure
+
+r = redis.Redis.from_url(REDIS_URL, decode_responses=True)   # decode_responses is required
+box = OnDemandInstance(INSTANCE_ID, "us-east-1", "emod")     # InstanceId output, region, capability
+lease, jobs = Lease(r, "emod"), JobStore(r, "emod")
+
+job = jobs.create("simulate", owner=user_id)
+# ...then, in a worker (thread, Celery task):
+if not lease.acquire_wait(owner=job.job_id, timeout_s=300):
+    jobs.fail(job.job_id, "runner busy", code="busy")
+else:
+    try:
+        running = box.ensure_running()        # starts a stopped box; waits for the ready file
+        result = box.run(["/opt/emod/run.sh --config /tmp/cfg.json"], timeout_s=1800)
+        box.touch()                           # keep the watchdog from halting it mid-session
+        jobs.complete(job.job_id, {"stdout": result.stdout, "cold": running.cold})
+    except SSMFailure as e:
+        jobs.fail(job.job_id, str(e), code="ssm")
+    finally:
+        lease.release(job.job_id)
+```
+
+`box.status()` reports the EC2 state and, while running, seconds since the last
+touch; `box.stop()` stops it now rather than waiting for the watchdog.
 
 ## Conformance
 
