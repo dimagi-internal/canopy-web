@@ -50,7 +50,7 @@ test('Waiting on you shows open asks, actionable on the card', async ({ page }) 
   await expect(page.getByTestId('filter-waiting')).toHaveAttribute('aria-pressed', 'true')
   const card = page.getByTestId('task-fa-hal-inbox')
   await expect(card).toContainText('hal: discard 81 junk/stale unread emails')
-  await expect(card.getByRole('button', { name: 'Approve & run' })).toBeVisible()
+  await expect(card.getByRole('button', { name: /^Approve/ })).toBeVisible()
   await expect(card.getByRole('button', { name: 'Decline' })).toBeVisible()
 })
 
@@ -96,7 +96,7 @@ test('the queue badge expands to the pending actions; activity stream lists hist
   await page.goto('/w/dimagi/agents/echo/tasks')
   // The badge starts as a count; clicking reveals which actions are pending.
   await page.getByRole('button', { name: /queued for Echo/i }).click()
-  await expect(page.getByText(/dispatched/i).first()).toBeVisible()
+  await expect(page.getByText(/nudged/i).first()).toBeVisible()
   // The activity disclosure lists recent actions across the agent.
   await page.getByRole('button', { name: /^Activity/i }).click()
   await expect(page.getByTestId('agent-activity')).toContainText('completed')
@@ -118,10 +118,10 @@ test('reply leaves a comment for the agent', async ({ page }) => {
   await expect(page.getByTestId('task-t2')).toHaveAttribute('data-status', 'suggested')
 })
 
-test('dispatch queues a "do it now" action for the agent', async ({ page }) => {
+test('nudge starts the agent on an in-progress task', async ({ page }) => {
   await page.goto('/w/dimagi/agents/echo/tasks')
   const card = page.getByTestId('task-t3') // waiting-on-a-human, in progress
-  const [resp] = await Promise.all([acted(page), card.getByRole('button', { name: /do this now/i }).click()])
+  const [resp] = await Promise.all([acted(page), card.getByRole('button', { name: 'Nudge Echo' }).click()])
   expect(resp.status()).toBe(200)
 })
 

@@ -176,9 +176,9 @@ def test_viewer_may_still_answer_a_task(acl, task, action, comment):
     assert _act(acl["client"], task, action, comment).status_code == 200
 
 
-@pytest.mark.parametrize("action", ["done", "dispatch"])
+@pytest.mark.parametrize("action", ["done", "nudge"])
 def test_viewer_refused_on_a_reshaping_action(acl, task, action):
-    """`done` rewrites status and `dispatch` queues fresh agent work — reshapes,
+    """`done` rewrites status and `nudge` starts an agent turn — reshapes,
     so editor. Pinned per action because the gate is a membership test on a SET:
     an action added to the model without a tier decision must be visible here."""
     acl["client"].force_login(acl["viewer"])

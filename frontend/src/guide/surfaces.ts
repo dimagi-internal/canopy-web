@@ -335,8 +335,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/agents/:slug/tasks',
     title: 'Agent tasks',
     audience: 'Anyone in the workspace',
-    what: "Every task this agent has (T1, T2 …), filtered to Waiting on you (an open ask, or parked on you), Open, or Done, and optionally to one project or grouped by project. A task that asks you something says so on its card and offers exactly the actions that apply: approve or decline a review, answer a question, reply, and for editors dispatch or mark done. `?batch=` opens one sitting, e.g. a fleet audit.",
-    actions: ['Approve or decline a review', 'Answer a question', 'Reply on a task', 'Dispatch or complete a task', 'Filter by project or group by project'],
+    what: "Every task this agent has (T1, T2 …), filtered to Waiting on you (an open ask, or parked on you), Open, or Done, and optionally to one project or grouped by project. A task that asks you something says so on its card and offers exactly the actions that apply: approve a review or suggestion (the agent starts on it at once) or decline it, answer a question, reply, and for editors nudge an in-progress task or mark it done. `?batch=` opens one sitting, e.g. a fleet audit.",
+    actions: ['Approve or decline a review', 'Answer a question', 'Reply on a task', 'Nudge or complete a task', 'Filter by project or group by project'],
   },
   {
     path: '/w/:workspace/agents/:slug/turns',

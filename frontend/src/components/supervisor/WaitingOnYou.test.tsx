@@ -65,7 +65,7 @@ describe('WaitingOnYou', () => {
     render(<WaitingOnYou tasks={[task()]} canEdit={() => false} onChanged={() => {}} />)
     const card = screen.getByTestId('task-T4')
     expect(card.textContent).toContain('eva')
-    expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Approve/ })).toBeTruthy()
   })
 
   it('ranks reviews before questions before parked tasks', () => {

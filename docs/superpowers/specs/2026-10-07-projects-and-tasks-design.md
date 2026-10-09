@@ -53,16 +53,26 @@ action.
 
 | Action | Does | Closes an open ask | Agent follow-up | Who may |
 |---|---|---|---|---|
-| `approve` | status → in progress; runs the task's `on_approve` turns if it has any | yes | pending unless `on_approve` ran | viewer |
+| `approve` | status → in progress, and the agent **starts now**: runs the task's `on_approve` turns, or — with none — one turn written from the card (title, next action, plan + the approver's comment) | yes | the turn (row applied) | viewer |
 | `decline` | status → declined; comment kept as the reason | yes | none | viewer |
-| `reply` | adds a comment. On a **question** it is the answer: closes the ask and runs `on_approve` if set | on a question | pending unless `on_approve` ran | viewer |
-| `dispatch` | queue the agent to work this task now | no | pending | editor |
+| `reply` | On an open **question** it is the answer: closes the ask and runs `on_approve` if set (else pending, as before). On anything else a note: an **editor's** starts a turn carrying it; a viewer's stays pending for the agent's next turn | on a question | turn (editor note, or `on_approve`) · else pending | viewer |
+| `nudge` | `in_progress` tasks only: start a turn on the task now, status unchanged | no | the turn (row applied) | editor |
 | `done` | status → done | yes | none | editor |
 
 What it replaces: `accept`+`implement` → **approve**; `decline`+`skip`+`dismiss` →
-**decline**; `comment` + answering a question → **reply**; `dispatch` → **dispatch**;
+**decline**; `comment` + answering a question → **reply**; `dispatch` → **nudge**;
 `done` → **done**; `edit`/`reassign` → **PATCH**; `defer` → removed (not acting *is*
 deferring; the ask stays open).
+
+**Revised 2026-10-08 (Jonathan): an action that hands the agent work starts its turn.**
+As first shipped, approve without `on_approve`, `dispatch`, and a plain reply each only
+wrote a pending row the agent drained whenever it next happened to run — so "approve"
+and "<Agent>, do this now" woke nobody. `dispatch` is deleted (no alias; its rows were
+rewritten to `nudge`); approve always starts the work; `nudge` is the editor's "look at
+this again now" on a task already under way; an editor's reply wakes the agent with the
+note. A board turn reuses a not-yet-started turn of the same task rather than stacking a
+duplicate, and approving a plain task already in progress is refused (409) — otherwise
+any viewer could nudge.
 
 Every action is recorded as an **`AgentTaskAction`** row (renamed from
 `AgentTaskCommand`): `task`, `action`, `comment`, `by` (user + display string),
@@ -147,9 +157,9 @@ Today's board plus one filter bar:
 ```
 
 **One card** (`TaskCard`; `ItemCard` is deleted). A card shows its ask when open and
-offers exactly the actions that apply: an open review → *Approve · Decline*; an open
-question → a reply box (+ *Decline*); any live task → *Reply*, and for editors
-*Dispatch · Done*. Its history is the task's action rows.
+offers exactly the actions that apply: an open review → *Approve — <Agent> starts now ·
+Decline*; an open question → a reply box (+ *Decline*); any live task → *Reply*, and for
+editors *Nudge <Agent>* (in progress only) · *Mark done*. Its history is the task's action rows.
 
 ### Fleet-wide
 

@@ -1553,19 +1553,25 @@ def patch_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskPatc
         raise HttpError(422, str(exc)) from exc
 
 
-#: Actions that RESHAPE work rather than answer it: `dispatch` queues fresh
-#: agent work and `done` declares it finished. approve / decline / reply answer
-#: what is already on the board — the viewer tier ("decide, read the board").
-_EDITOR_ACTIONS = frozenset({"dispatch", "done"})
+#: Actions that RESHAPE work rather than answer it: `nudge` starts an agent turn
+#: on work already under way (the QuickTurn tier) and `done` declares it
+#: finished. approve / decline / reply answer what is already on the board — the
+#: viewer tier ("decide, read the board").
+_EDITOR_ACTIONS = frozenset({"nudge", "done"})
 
 
 @router.post("/{slug}/tasks/{ref}/actions", response=ActOut,
-             summary="Act on a task: approve, decline, reply, dispatch or done",)
+             summary="Act on a task: approve, decline, reply, nudge or done",)
 def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskActionIn) -> ActOut:
-    """approve → in progress, runs `on_approve`. decline → declined (comment is
-    the reason). reply → a comment; on a question it is the answer. dispatch →
-    queue the agent on it now (editor). done → done (editor). 409 when
-    approving or declining an ask that is already closed."""
+    """approve → in progress, and the agent starts now: its `on_approve` turns,
+    or one turn written from the card when it has none. decline → declined (the
+    comment is the reason). reply → on an open question, the answer (closes the
+    ask, runs `on_approve`); on anything else a note — an editor's note starts a
+    turn carrying it, a viewer's waits for the agent's next turn. nudge (editor,
+    in-progress tasks) → start a turn on it now, status unchanged. done → done
+    (editor). 409 when the task is not in a state the action applies to (an
+    ask already closed, a finished task, nudging one that is not in progress);
+    `turn_ids` names the turns the action started."""
     if payload.action in _EDITOR_ACTIONS:
         agent = _agent_for_write(request, slug)
     else:
@@ -1575,7 +1581,13 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
         task, row, turns = services.act(
             task, action=payload.action, comment=payload.comment,
             by=request.user.email or request.user.get_username(), by_user=request.user,
-            actor_workspace_ids=_visible_agent_workspace_ids(request))
+            actor_workspace_ids=_visible_agent_workspace_ids(request),
+            # Who may start a turn is the QuickTurn gate (`enqueue_turn` needs
+            # write); it decides whether a reply wakes the agent. Never the agent
+            # replying on its own card: its note would wake itself, and a turn
+            # that replies again would wake it again.
+            may_start_turns=(_can(request, agent.workspace_id, perms.AGENT_WORK)
+                             and not _is_agent_itself(request, agent)))
     except services.ClosedAskError as exc:
         raise HttpError(409, str(exc)) from exc
     except ValueError as exc:
