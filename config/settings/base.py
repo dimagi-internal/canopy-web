@@ -606,21 +606,11 @@ CANOPY_AUTO_DEBUG_MAX_PER_HOUR = env.int("CANOPY_AUTO_DEBUG_MAX_PER_HOUR", defau
 CANOPY_AUTO_DEBUG_MAX_PER_DAY = env.int("CANOPY_AUTO_DEBUG_MAX_PER_DAY", default=10)
 CANOPY_AUTO_DEBUG_LOST = env.bool("CANOPY_AUTO_DEBUG_LOST", default=False)
 
-# --- People digest: the fleet brain's forced write (apps/harness/people_digest.py) ---
-# OFF by default since 2026-10-07. v1 (canopy#804, approved and switched on the same
-# day) started a full agent session per human turn (debounced per agent+person), and the
-# "human" turns included agent dispatches carrying the human as initiator — so every
-# piece of dispatched work spawned a digest session on the owner's laptop runner. Paused
-# while the design is reworked toward a batched sweep. When ON: a turn a HUMAN started
-# with an agent finishing DONE enqueues a `/canopy:people-digest` turn for that agent, at
-# most once per (agent, person) per PEOPLE_DIGEST_DEBOUNCE_MINUTES. Facts, digests and
-# the envelope `person` block work either way.
-PEOPLE_DIGEST_ENABLED = env.bool("PEOPLE_DIGEST_ENABLED", default=False)
-PEOPLE_DIGEST_DEBOUNCE_MINUTES = env.int("PEOPLE_DIGEST_DEBOUNCE_MINUTES", default=60)
-# Who the digest runs FOR, when it is on: comma-separated addresses, matched against
-# the initiating person's address. Empty = everyone. Lets the digest come back on for
-# one person (Jonathan, 2026-10-09) before the batched-sweep rework lands.
-PEOPLE_DIGEST_PEOPLE = [a.strip().lower() for a in env.list("PEOPLE_DIGEST_PEOPLE", default=[]) if a.strip()]
+# --- People: no digest turn (removed 2026-10-09) ---
+# Facts about a person are recorded IN the session that learned them (the envelope's
+# person block and turn.md tell the agent to `hcp_addPreference`). The per-conversation
+# people-digest turn (canopy#804) and the planned batched sweep are both gone: the
+# session doing the work has the context; a second pass over its transcript does not.
 
 # --- Outbound email (apps/common/email.py) ---
 # OFF unless CANOPY_EMAIL_ENABLED is set: sending needs a verified SES identity

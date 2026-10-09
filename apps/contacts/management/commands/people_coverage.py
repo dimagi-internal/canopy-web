@@ -39,21 +39,15 @@ class Command(BaseCommand):
     def _table(self, report: dict) -> None:
         w = self.stdout.write
         verdict = "HEALTHY" if report["healthy"] else "UNHEALTHY"
-        w(f"people brain — {report['workspace']}, last {report['days']}d: {verdict}"
-          + ("" if report["digest_enabled_globally"] else "  (PEOPLE_DIGEST_ENABLED is off)"))
+        w(f"people brain — {report['workspace']}, last {report['days']}d: {verdict}")
         w(f"rule: {report['rule']}")
-        w(f"{'agent':<14}{'human':>6}{'ctx':>5}{'dq':>4}{'dd':>4}{'df':>4}{'facts':>6}"
-          f"{'ppl':>5}{'dig':>5}{'age_h':>7}  verdict")
+        w(f"{'agent':<14}{'human':>6}{'ctx':>5}{'facts':>6}{'ppl':>5}  verdict")
         for r in report["agents"]:
-            d = r["digest_turns"]
-            age = "-" if r["median_digest_age_hours"] is None else f"{r['median_digest_age_hours']:.1f}"
             ok = "ok" if r["healthy"] else "UNHEALTHY"
             w(f"{r['agent']:<14}{r['human_turns']:>6}{r['human_turns_with_context']:>5}"
-              f"{d['queued']:>4}{d['done']:>4}{d['failed']:>4}{r['facts_written']:>6}"
-              f"{r['people']:>5}{r['people_with_digest']:>5}{age:>7}  {ok}"
+              f"{r['facts_written']:>6}{r['people']:>5}  {ok}"
               + (f" — {'; '.join(r['reasons'])}" if r["reasons"] else ""))
-        w("columns: human turns, with context, digest turns queued/done/failed, facts written, "
-          "people, people with a digest, median digest age (hours)")
+        w("columns: human turns, with context, facts recorded in-session, people")
 
 
 def _dumps(obj) -> str:

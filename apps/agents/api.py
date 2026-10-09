@@ -74,8 +74,6 @@ from .schemas import (
     CountOut,
     RunnerPreferenceIn,
     SkillHistoryOut,
-    PeopleDigestEnabledIn,
-    PeopleDigestEnabledOut,
     ProjectParticipantOut,
     SlackEnabledIn,
     SlackEnabledOut,
@@ -707,27 +705,6 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
             detail = f"Removed {name} from Slack."
     return SlackEnabledOut(slack_enabled=agent.slack_enabled, command_status=result["status"],
                            command_detail=detail)
-
-
-@router.patch("/{slug}/people-digest", response=PeopleDigestEnabledOut,
-              summary="Turn an agent's people digest on or off")
-def set_people_digest_enabled(request: HttpRequest, slug: str,
-                              payload: PeopleDigestEnabledIn) -> PeopleDigestEnabledOut:
-    """Whether a person's finished conversation with this agent starts a
-    people-digest turn — the turn that records durable work-context facts
-    about them and refreshes their digest. Agent admins only. Off stops new
-    digest turns for this agent; facts already recorded, and the caller
-    envelope's `person` block, are unaffected."""
-    # Admin, not editor: it decides whether this agent's conversations feed
-    # what every other agent in the workspace is told about a person.
-    from django.conf import settings as dj_settings
-
-    agent = _agent_for_admin(request, slug)
-    agent.people_digest_enabled = payload.people_digest_enabled
-    agent.save(update_fields=["people_digest_enabled", "updated_at"])
-    return PeopleDigestEnabledOut(
-        people_digest_enabled=agent.people_digest_enabled,
-        globally_enabled=bool(getattr(dj_settings, "PEOPLE_DIGEST_ENABLED", True)))
 
 
 @router.get("/{slug}/runtime", response=AgentRuntimeOut,

@@ -50,9 +50,9 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/people/me',
     title: 'What agents know about me',
     audience: 'Anyone who talks to an agent',
-    what: 'Everything canopy holds about you (the fleet brain): the work-context facts agents have recorded — role, projects, instances, preferences, corrections, terminology — grouped by the workspace they were written in, the digest agents are handed when you talk to them, and every recent time an agent or a person read it. Linked from Settings and from the `see_all` an agent can quote back to you.',
-    needsFirst: 'An agent to have recorded something about you (it happens after you talk to one).',
-    actions: ['Read every fact and digest held about you', 'Retract a fact that is wrong', 'See who read it, and when'],
+    what: 'Everything canopy holds about you (the fleet brain): the work-context facts agents have recorded — role, projects, instances, preferences, corrections, terminology — grouped by the workspace they were written in, and every recent time an agent or a person read it. Linked from Settings and from the `see_all` an agent can quote back to you.',
+    needsFirst: 'An agent to have recorded something about you (it does so in the conversation where it learns it).',
+    actions: ['Read every fact held about you', 'Retract a fact that is wrong', 'See who read it, and when'],
   },
   {
     path: '/supervisor',

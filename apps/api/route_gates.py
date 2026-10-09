@@ -100,7 +100,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_runner_preference": ("agent.work",),
     "set_turn_mode": ("agent.work",),
     "set_slack_enabled": ("agent-admin",),
-    "set_people_digest_enabled": ("agent-admin",),  # fleet brain v1.1 per-agent opt-out
     "get_agent_runtime": ("member",),
     "list_agent_runners": ("member",),
     "get_agent_default_order": ("member",),
@@ -448,7 +447,6 @@ GATES: dict[str, tuple[str, ...]] = {
     "people_coverage": ("member", "agent-admin"),  # counts only; a non-member agent admin sees just their agents
     "add_person_fact": ("member",),
     "retract_person_fact": ("self", "members.manage"),  # the subject, the asserter, or a workspace admin
-    "put_person_digest": ("member",),
     "list_person_conversations": ("agent-admin",),  # or the agent's OWN login; an admin gets only turns turn_access already shows them
     # --- apps/api/api.py
     "_auth_smoke": ("authenticated",),  # internal smoke route
@@ -556,6 +554,5 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "preview_cron": "POST but read-only: computes next fire times, writes nothing",
     "create_session": "starting a chat with an agent is the interaction tier a viewer holds",
     "add_person_fact": "an agent's login is a member, and that is who writes facts (contract canopy#804); a fact is append-only, attributed, visible to its subject and retractable by them",
-    "put_person_digest": "the digest is a regenerable cache written by the people_digest agent turn as the agent's login (a member); visible to its subject",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
 }

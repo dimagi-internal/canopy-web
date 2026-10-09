@@ -159,13 +159,6 @@ class Agent(models.Model):
     # Reachable from Slack (apps/slack). Off by default and owner-only to flip:
     # it opens the agent to a new channel of people, which is a deliberate act.
     slack_enabled = models.BooleanField(default=False)
-    #: Whether a human's finished turn with this agent starts a people-digest
-    #: turn (the fleet brain's forced write, `harness.people_digest`). On by
-    #: default; an agent admin turns it off (PATCH /people-digest) for an agent
-    #: whose conversations should not feed the brain. Honoured ALONGSIDE the
-    #: global `PEOPLE_DIGEST_ENABLED` kill switch — either off stops it. Facts
-    #: and the envelope `person` block keep working either way.
-    people_digest_enabled = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

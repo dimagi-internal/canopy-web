@@ -68,7 +68,7 @@ describe('AgentSettingsSection', () => {
     // Who may change each one is said to someone who cannot (this viewer is
     // not an admin), not discovered by an error.
     expect(within(screen.getByRole('region', { name: 'Who can reach it' }))
-      .getAllByText("Only Hal's admins can change this.")).toHaveLength(3)
+      .getAllByText("Only Hal's admins can change this.")).toHaveLength(2)
 
     const credentials = screen.getByRole('region', { name: 'Credentials' })
     expect(await within(credentials).findByTestId('cred-CANOPY_PAT')).toBeTruthy()

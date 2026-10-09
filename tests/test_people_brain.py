@@ -1,5 +1,5 @@
-"""The fleet brain v1 (canopy#804): facts, digests, the envelope `person` block,
-the /api/people routes and their privacy gates, and the forced digest turn.
+"""The fleet brain v1 (canopy#804): facts, the envelope `person` block, and the
+/api/people routes and their privacy gates.
 
 The privacy tests are the point of this file. The rules they pin:
 
@@ -9,8 +9,8 @@ The privacy tests are the point of this file. The rules they pin:
 * the person can see — and retract — everything held about them;
 * conversations are readable by the agent they were with (its own login) and
   nobody new: another agent's login is refused;
-* the digest turn fires for a human's finished turn only, never for itself, for
-  canopy/agent-started work, or without an agent, and is debounced.
+* a finished turn starts no other turn: facts are recorded in-session (the
+  people-digest turn was removed 2026-10-09).
 """
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ from apps.agents.models import Agent, AgentProject
 from apps.contacts import people
 from apps.contacts import services as contacts
 from apps.contacts.models import Contact, PersonAccess, PersonFact
-from apps.harness import caller_context, people_digest, services
+from apps.harness import caller_context, services
 from apps.harness import initiator as who
-from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -50,12 +50,6 @@ def _agent(ws, slug, owner, *, login=True):
         agent.user = u
         agent.save(update_fields=["user"])
     return agent
-
-
-@pytest.fixture(autouse=True)
-def _digest_on(settings):
-    # The switch is OFF in production since 2026-10-07; these tests pin what it does ON.
-    settings.PEOPLE_DIGEST_ENABLED = True
 
 
 @pytest.fixture()
@@ -90,10 +84,6 @@ def _finish(turn, status=Turn.DONE):
     Turn.objects.filter(pk=turn.pk).update(status=Turn.RUNNING)
     turn.refresh_from_db()
     return services.finish_turn(turn, status=status)
-
-
-def _digest_turns():
-    return Turn.objects.filter(idempotency_key__startswith=people_digest.KEY_PREFIX)
 
 
 def _fact(person, ws, kind="role", statement="Program lead for KC.", **kw):
@@ -149,7 +139,6 @@ def test_envelope_v3_carries_the_person_and_logs_the_read(world):
     _fact(person, ws, "role", "Program lead for KC.")
     _fact(person, ws, "correction", "Say KC (kangaroo care), not KMC.")
     _fact(person, ws, "terminology", "Calls the OCS bot 'the coach'.")
-    people.put_digest(person=person, workspace=ws, text="Lilianna runs KC.", by_agent=ace)
 
     env = caller_context.build(_human_turn(ace, lili, "t1",
                                            prompt="What does the coach say to a worker?"))
@@ -160,8 +149,7 @@ def test_envelope_v3_carries_the_person_and_logs_the_read(world):
     assert block["email"] == "lili@dimagi.com"
     assert block["workspace"] == "connect"
     assert block["see_all"] == "/people/me/"
-    # HCP: the envelope is a relevance search, not the profile — so no digest.
-    assert block["digest"] == "" and block["digest_updated_at"] is None
+    assert "digest" not in block
     assert block["facts"][0]["kind"] == "correction"            # corrections first
     # then by relevance: "coach" matches the terminology fact; role always rides.
     assert [f["kind"] for f in block["facts"][1:]] == ["terminology", "role"]
@@ -177,13 +165,11 @@ def test_facts_of_one_workspace_are_not_served_in_anothers_envelope(world):
     WorkspaceMembership.objects.create(user=lili, workspace=other, role=WorkspaceMembership.EDITOR)
     person = contacts.person_for(user=lili)
     _fact(person, ws, "correction", "Say KC, not KMC.")
-    people.put_digest(person=person, workspace=ws, text="connect-only digest")
 
     env = caller_context.build(_human_turn(eva, lili, "t-eva"))
     assert env["person"]["id"] == person.pk
     assert env["person"]["workspace"] == "dimagi"
     assert env["person"]["facts"] == []
-    assert env["person"]["digest"] == ""
 
 
 def test_person_is_null_for_canopy_and_for_another_agents_login(world):
@@ -208,15 +194,6 @@ def test_a_contact_has_a_person_block_too(world):
     assert env["contact"]["id"] == contact.pk
     assert env["person"]["id"] == contact.person_id
     assert env["person"]["email"] == "fatima@llo.org"
-
-
-def test_the_digest_turn_says_so_in_its_envelope(world):
-    turn = _finish(_human_turn(world["ace"], world["lili"], "t1"))
-    digest = _digest_turns().get()
-    env = caller_context.build(digest)
-    assert env["trigger"]["kind"] == "people_digest"
-    assert env["person"] is None and env["relationship"] == "system"
-    assert caller_context.build(turn)["trigger"]["kind"] is None
 
 
 # --- facts: rules --------------------------------------------------------------------
@@ -278,8 +255,6 @@ def test_a_non_member_is_denied_everything(world):
                data={"workspace": "connect", "kind": "role", "statement": "x"},
                content_type="application/json")
     assert r.status_code == 404
-    assert c.put(f"/api/people/{person.pk}/digest/", data={"workspace": "connect", "text": "x"},
-                 content_type="application/json").status_code == 404
     assert c.post(f"/api/people/{person.pk}/facts/{fact.pk}/retract/").status_code == 404
     assert c.get(f"/api/people/{person.pk}/conversations/?agent=ace").status_code == 404
     assert not PersonAccess.objects.exists()
@@ -368,22 +343,20 @@ def test_the_asserter_and_a_workspace_admin_may_retract(world):
         f"/api/people/{person.pk}/facts/{third.pk}/retract/").status_code == 404
 
 
-def test_put_digest_and_me_shows_everything(world):
+def test_me_shows_everything(world):
     lili = world["lili"]
     person = contacts.person_for(user=lili)
     _fact(person, world["ws"], "correction", "Say KC.")
-    r = _client(world["ace"].user).put(
+    assert _client(world["ace"].user).put(
         f"/api/people/{person.pk}/digest/", content_type="application/json",
-        data={"workspace": "connect", "text": "Runs KC coaching.", "source_turn_ids": ["a"]})
-    assert r.status_code == 200 and r.json()["updated_by"] == "ace"
+        data={"workspace": "connect", "text": "x"}).status_code in (404, 405)
     caller_context.build(_human_turn(world["ace"], lili, "t"))
 
     me = _client(lili).get("/api/people/me/").json()
     assert me["id"] == person.pk and me["display_name"] == "Lilianna Bagnoli"
     assert [f["statement"] for f in me["facts"]] == ["Say KC."]
     assert me["facts"][0]["workspace"] == "connect"
-    assert me["digests"] == [{"workspace": "connect", "text": "Runs KC coaching.",
-                              "updated_at": me["digests"][0]["updated_at"], "updated_by": "ace"}]
+    assert "digests" not in me
     assert me["accesses"][0]["via"] == "envelope" and me["accesses"][0]["reader_agent"] == "ace"
 
 
@@ -425,105 +398,11 @@ def test_conversations_since_filters(world):
     assert r.status_code == 200 and len(r.json()["conversations"]) == 1
 
 
-# --- the digest turn -----------------------------------------------------------------
+# --- no follow-up turn ---------------------------------------------------------------
 
 
-def test_a_finished_human_turn_enqueues_a_digest_turn(world):
-    ace, lili = world["ace"], world["lili"]
-    person = contacts.person_for(user=lili)
-    turn = _finish(_human_turn(ace, lili, "t1"))
-    digest = _digest_turns().get()
-    assert digest.agent == ace
-    assert digest.prompt.splitlines()[0].startswith(
-        f"/canopy:people-digest --person {person.pk} --workspace connect --since ")
-    assert digest.origin_ref["trigger"] == "people_digest"
-    assert digest.origin_ref["no_outbound"] is True
-    assert digest.initiator_kind == who.SYSTEM
-    assert digest.parent_turn == turn
-
-
-def test_digest_turns_never_retrigger(world):
-    _finish(_human_turn(world["ace"], world["lili"], "t1"))
-    digest = _digest_turns().get()
-    with timezone.override("UTC"):
-        Turn.objects.filter(pk=digest.pk).update(
-            created_at=timezone.now() - dt.timedelta(hours=5))
-    _finish(digest)
-    assert _digest_turns().count() == 1
-
-
-def test_no_digest_for_system_or_agent_initiated_turns(world):
-    ace = world["ace"]
-    sched, _ = services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="s",
-                                     initiator=who.system(via="schedule", accountable=world["owner"]))
-    _finish(sched)
-    agent_turn, _ = services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="a",
-                                          initiator=who.for_agent("hal", via="dispatch"))
-    _finish(agent_turn)
-    _finish(_human_turn(ace, world["hal"].user, "hal-login"))  # another agent's LOGIN
-    assert not _digest_turns().exists()
-
-
-def test_no_digest_without_an_agent(world):
-    turn, _ = services.enqueue_turn(
-        project="canopy-web", workspace=world["ws"], origin=Turn.ORIGIN_API, idempotency_key="p",
-        initiator=who.for_user(world["lili"], via="chat", assurance=who.SESSION))
-    _finish(turn)
-    assert not _digest_turns().exists()
-
-
-def test_no_digest_for_a_failed_turn(world):
-    t = _human_turn(world["ace"], world["lili"], "f")
-    Turn.objects.filter(pk=t.pk).update(session_key="s1")
-    _finish(t, Turn.FAILED)
-    assert not _digest_turns().exists()
-
-
-def test_the_digest_turn_is_debounced_per_agent_and_person(world, settings):
-    ace, hal, lili = world["ace"], world["hal"], world["lili"]
-    _finish(_human_turn(ace, lili, "t1"))
-    _finish(_human_turn(ace, lili, "t2"))
-    assert _digest_turns().filter(agent=ace).count() == 1
-    # Another agent, or another person, is its own pair.
-    _finish(_human_turn(hal, lili, "t3"))
-    _finish(_human_turn(ace, world["owner"], "t4"))
-    assert _digest_turns().count() == 3
-    # Past the window, the next one fires and looks back to the last digest.
-    first = _digest_turns().filter(agent=ace, origin_ref__person_id=contacts.person_for(user=lili).pk).get()
-    past = timezone.now() - dt.timedelta(minutes=settings.PEOPLE_DIGEST_DEBOUNCE_MINUTES + 1)
-    Turn.objects.filter(pk=first.pk).update(created_at=past)
-    _finish(_human_turn(ace, lili, "t5"))
-    newest = _digest_turns().filter(agent=ace).order_by("-created_at").first()
-    assert newest.pk != first.pk
-    assert newest.origin_ref["since"] == past.isoformat()
-
-
-def test_the_kill_switch(world, settings):
-    settings.PEOPLE_DIGEST_ENABLED = False
-    _finish(_human_turn(world["ace"], world["lili"], "t1"))
-    assert not _digest_turns().exists()
-
-
-def test_the_allowlist_runs_the_digest_only_for_the_people_it_names(world, settings):
-    settings.PEOPLE_DIGEST_PEOPLE = ["jj@dimagi.com"]
-    _finish(_human_turn(world["ace"], world["lili"], "t1"))
-    assert not _digest_turns().exists()
-    _finish(_human_turn(world["ace"], world["owner"], "t2"))
-    assert _digest_turns().count() == 1
-
-
-def test_a_digest_turn_yields_to_a_persons_next_message_at_claim(world):
-    from apps.agents.models import AgentAdmin
-
-    ace, owner = world["ace"], world["owner"]
-    runner = Runner.objects.create(name="box", kind=Runner.EMDASH, host="box", owner=owner,
-                                   workspace_id="connect", status=Runner.ONLINE,
-                                   last_heartbeat_at=timezone.now(),
-                                   capabilities={"sessions": True})
-    RunnerAssignment.objects.create(agent=ace, runner=runner, rank=0)
-    AgentAdmin.objects.get_or_create(agent=ace, user=owner)
-    _finish(_human_turn(ace, world["lili"], "t1"))
-    assert _digest_turns().count() == 1
-    follow_up = _human_turn(ace, world["lili"], "t2")
-    claimed = services.claim_next_turn(runner)
-    assert claimed.pk == follow_up.pk
+def test_a_finished_human_turn_starts_no_other_turn(world):
+    """Facts are recorded in the session that learned them; canopy does not start a
+    second (digest) turn to go back over it."""
+    turn = _finish(_human_turn(world["ace"], world["lili"], "t1"))
+    assert list(Turn.objects.values_list("pk", flat=True)) == [turn.pk]

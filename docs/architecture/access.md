@@ -262,11 +262,11 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
   the note) in the activity drill-down. canopy writes it; a runner cannot post
   that kind.
 * **`person`** (v3) — what canopy knows about the HUMAN asking:
-  `{id, display_name, email, workspace, digest, digest_updated_at, facts[], see_all}`.
+  `{id, display_name, email, workspace, facts[], see_all}` (plus `grant`, `recall`, `projects`).
   null only when the asker is not a human (canopy, another agent's login, a
   system account, unknown). See "What agents know about a person" below.
-* **`trigger.kind`** (v3) — `people_digest` on a digest turn canopy started; null
-  otherwise.
+* **`trigger.kind`** (v3) — what canopy-initiated work the turn is
+  (`origin_ref.trigger`); null otherwise.
 
 Readers accept both spellings: `relationship: caller` means `contact`, `profile:
 restricted` means `confined` (`normalize_relationship`, `normalize_profile`; the
@@ -285,7 +285,7 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   CHECK constraint as well as the API (anything else is a 400). No health,
   personal life, performance judgements or sentiment. Facts are append-only:
   superseded (same person, same workspace) or retracted, never edited.
-* **Per workspace (v1).** A fact or digest is written in one workspace and served
+* **Per workspace (v1).** A fact is written in one workspace and served
   only there — the envelope carries the facts of the turn's agent's workspace
   and no other. Reading or writing needs membership of that workspace (an agent's
   login is a member), AND the person must be someone that workspace deals with
@@ -299,18 +299,16 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   No other agent, and no plain member, can read them. A fact's `source_turn` is
   a link, readable only by whoever can already read the turn.
 * **The subject sees everything.** `GET /api/people/me/` (the page
-  `/people/me/`): every live fact in every workspace, every digest, and the last
+  `/people/me/`): every live fact in every workspace, and the last
   50 reads. Every read — the envelope's and the API's — is a `PersonAccess` row.
 * **Who may retract**: the person, whoever asserted it (the user, or the asserting
   agent's login), or a workspace admin (`members.manage`).
-* **The forced write.** When a turn a human started with an agent finishes DONE,
-  canopy enqueues a `/canopy:people-digest` turn for the same agent
-  (`apps/harness/people_digest.py`): initiator `system`, `origin_ref.trigger =
-  people_digest`, no outbound; debounced per (agent, person) by
-  `PEOPLE_DIGEST_DEBOUNCE_MINUTES`; never for a digest turn, a canopy- or
-  agent-started turn, or a turn with no agent; off with `PEOPLE_DIGEST_ENABLED`.
-  At claim a digest turn yields to every other queued turn.
-* **Retention** (`apps/retention`) scrubs turn content, not facts or digests; a
+* **Who writes: the session that learned it.** The agent records a fact in the
+  turn where the person said it (HCP `addPreference`, `turn` = that turn), prompted
+  by the envelope's person block and canopy's turn checklist. There is no
+  follow-up turn: the per-conversation `/canopy:people-digest` turn, its switches
+  and the stored per-person digest were removed 2026-10-09.
+* **Retention** (`apps/retention`) scrubs turn content, not facts; a
   fact whose source turn was scrubbed keeps its statement.
 
 ### v1.1 (canopy#804 follow-ups, 2026-10-07)
@@ -331,21 +329,15 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
 * **Coverage — a dead brain must be loud.** `GET /api/people/coverage/?workspace=
   &days=7` and `manage.py people_coverage --workspace <slug> [--days N] [--json]`
   (exit 1 when unhealthy), both from `apps/contacts/coverage.py`. Per agent:
-  human-started turns, how many were handed a NON-EMPTY person block (≥ 1 live fact
-  or a non-empty digest), digest turns queued/done/failed/cancelled, facts the
-  agent wrote, and the median digest age of the people it talked to. "Non-empty"
+  human-started turns, how many were handed a NON-EMPTY person block (≥ 1 live
+  fact), facts the agent recorded IN-SESSION (asserted by it, sourced from one of
+  those human turns), and how many people. "Non-empty"
   is recorded when the envelope is BUILT, as `PersonAccess.had_context` on the
   envelope read — not re-derived later from facts that have since changed.
-  **Rule:** `healthy` = digest-turn failure rate (failed / (done + failed)) < 20 %
-  AND, with ≥ 10 human turns, ≥ 1 fact written; the facts clause is waived for an
-  agent whose digest is switched off; the workspace is healthy when every agent is
-  and `PEOPLE_DIGEST_ENABLED` is on. Counts only, no person named. Members of the
+  **Rule:** `healthy` = with ≥ 10 human turns, ≥ 1 fact recorded in-session; the
+  workspace is healthy when every agent is. Counts only, no person named. Members of the
   workspace; an agent admin who is not a member (an inherited owner) sees only the
   agents they administer; anyone else 404.
-* **Per-agent opt-out.** `Agent.people_digest_enabled` (default on), honoured by
-  the digest trigger beside `PEOPLE_DIGEST_ENABLED` (either off stops it). Agent
-  admins flip it: `PATCH /api/agents/{slug}/people-digest` (Settings → Who can
-  reach it → Remembers people); the repo upsert cannot.
 * **`Contact.notes` is mirrored into a fact.** Each non-empty `notes` is ONE live
   `role` fact (declared, asserted by nobody, statement = the first 500 characters
   flattened to one line), marked `PersonFact.source_contact`. `PATCH

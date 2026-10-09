@@ -490,14 +490,8 @@ def test_the_cli_path_is_caught_by_the_parent_turn_header_and_an_unnamed_agent_w
     assert r.status_code == 201
 
 
-def test_zdr_conversations_are_never_handed_to_the_digest(w, settings):
-    from apps.harness import people_digest
-
-    settings.PEOPLE_DIGEST_ENABLED = True
+def test_zdr_conversations_are_never_listed(w):
     zdr = _claimed_by(_turn(w["ace"], w["lili"], "z", prompt="secret"), _zdr_runner())
     plain = _turn(w["ace"], w["lili"], "p", prompt="hello")
     got = {t.pk for t in people.conversations(w["person"], w["ace"])}
     assert plain.pk in got and zdr.pk not in got
-    Turn.objects.filter(pk=zdr.pk).update(status=Turn.DONE)
-    zdr.refresh_from_db()
-    assert people_digest.on_turn_finished(zdr) is None
