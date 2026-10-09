@@ -4,7 +4,9 @@
 standard, **MCP Apps** (SEP-1865, `io.modelcontextprotocol/ui`, spec status Stable
 2026-01-26; `modelcontextprotocol/ext-apps`, latest v2.0.3). We render a host's UI
 resources sandboxed in the chat, including the embed panel. We do not build a
-canopy-specific widget protocol. Spec only: no code lands with this doc.
+canopy-specific widget protocol. **Owner decisions recorded below (2026-10-08) override
+the open questions and the sandbox-origin design in §7**; implementation lands in the
+staged PRs that follow this doc.
 
 Section references (§) are to `specification/2026-01-26/apps.mdx` in
 `modelcontextprotocol/ext-apps`. Code references are to `origin/main` of this
@@ -54,7 +56,7 @@ with a token the View obtained as the viewer. The model never needs it.
 | Actor | Origin | Role |
 |---|---|---|
 | Host page | `https://canopy.dimagi.com` (ChatPage), or the embed panel at `/embed/chat` framed by `labs.connect.dimagi.com` (`apps/tokens/views_embed.py:220`) | Runs the host bridge, renders the chat |
-| Sandbox proxy | **a different origin**, e.g. `https://canopy-sandbox.dimagi.com` (owner decision 1) | Outer iframe; §Sandbox proxy |
+| Sandbox proxy | `/mcp-apps/sandbox/` on canopy, **opaque origin** (owner decision 1; `MCP_APPS_SANDBOX_URL`) | Outer iframe; §Sandbox proxy |
 | View | inner iframe of the proxy, `srcdoc` | The host app's HTML (`ui://…`) |
 | MCP server | the Connected site's `host_mcp_resource` (Labs: `…/mcp/`) | Serves `tools/list`, `resources/read`, `tools/call` |
 
@@ -201,6 +203,10 @@ as its own user. That is exactly what visibility forbids.
   host, not from the View's claim.
 
 ### 7. The sandbox (§Sandbox proxy, §Security Implications)
+
+> **Amended by owner decision 1:** no separate origin. The proxy is a canopy
+> sub-path made opaque (`sandbox="allow-scripts"`, no `allow-same-origin`). The
+> first two bullets below are the design this replaced; see § Owner decisions.
 
 - **The proxy runs on a different origin** (§Sandbox proxy 1). Its outer iframe
   is `sandbox="allow-scripts allow-same-origin"` (2). It sends
@@ -387,28 +393,61 @@ live. After that it keeps only the non-UI branch.
 | Phishing | A labelled frame; https-only `open-link`; the click result is recorded by the host, not reported by the View |
 | Audit (§Security 2) | Every View RPC goes through canopy REST. Every `tools/call`, `resources/read` and refusal is a `write_audit` row (`apps/mcp/audit.py:75`) naming the session, tool call, site, tool and viewer. Never arguments, never a token, matching `site_call` (`site.py:89-106`) |
 
-## Owner decisions (open)
+## Owner decisions (decided, Jonathan, 2026-10-08)
 
-1. **Sandbox origin and hosting.** *Recommended:* `canopy-sandbox.dimagi.com`, a
-   new host rule on the shared ALB (like `HostListenerRule`,
-   `deploy/aws/canopy-web.cfn.yaml:340-353`, applied with admin credentials), a
-   certificate SAN and a Cloudflare record. Served by the same container behind a
-   host-gated, cookie-less route. *Alternative:* a separate registrable domain
-   (the `*usercontent` pattern) on static hosting. That is stronger, because
-   the sandbox is then not same-site with canopy or Labs, but it needs a new
-   domain. This is an infra decision in either case.
-2. **Should the click be the only way to commit a coaching send?** *Recommended:*
-   no for now. Withhold the token only on UI-negotiated connections (Labs item
-   6), so non-UI surfaces still work through the agent. *Alternative:* Labs marks
-   coaching actions `confirm_via: app` and refuses a commit whose preview was not
-   the View's. That makes the human's yes structural everywhere, but no Slack or
-   Claude Code path could send.
-3. **Views for path D** (the agent's own MCP login, not `site_call`).
-   *Recommended:* yes, matched by host tool name within the session's site. The
-   owner's own sessions on a Labs page are path D today.
-4. **A viewer without a live grant.** *Recommended:* show the View read-only with
-   an open-link to the page. *Alternative:* canopy asks the host for a fresh grant
-   in place.
-5. **Should a commit start a turn?** *Recommended:* `ui/message` on commit only,
-   which spends one turn so the agent follows the execution. Declines and previews
-   only update model context.
+These override the open questions this section used to list.
+
+1. **Sandbox origin: no new DNS.** The proxy is served at a canopy sub-path,
+   `/mcp-apps/sandbox/` (`MCP_APPS_SANDBOX_URL`, a setting, so a dedicated origin
+   later is config only). It is isolated by framing it `sandbox="allow-scripts"`
+   **without** `allow-same-origin`, which makes its origin opaque: no canopy
+   cookies, storage or DOM. The response also carries
+   `Content-Security-Policy: sandbox allow-scripts`, so the document is opaque even
+   opened top-level (the walkthrough-content precedent,
+   `apps/walkthroughs/streaming.py::SANDBOX_CSP`). **This deviates from §Sandbox
+   proxy 1-2** ("different origins", proxy "MUST have `allow-same-origin`"). It is
+   equivalent for isolation: what the standard buys with a separate origin is that
+   the proxy and the View cannot reach the host's cookies, storage or DOM and are
+   cross-origin to it, and an opaque origin is cross-origin to *every* origin,
+   canopy's included. The cost: a View cannot use storage (`localStorage`,
+   IndexedDB, cookies all throw or are empty under an opaque origin). No CORS or
+   credentials are ever sent to the opaque origin (`Origin: null` is not a
+   Connected site origin), and the host's postMessage check accepts the literal
+   `"null"` origin ONLY together with `event.source === <that iframe>.contentWindow`
+   — the source, not the origin, is the check.
+2. **Clicks are the only way to send.** A model-visible preview never carries the
+   commit token; the View holds its own, from its own app-only preview run as the
+   viewer. Labs implements the withholding. canopy guarantees the View's app-only
+   calls never reach the model: `site_tools` hides app-only tools, `site_call`
+   refuses them (`not_allowed`, audited), the View routes are not MCP tools
+   (`api_tools.EXCLUDED`, `_BROWSER`), and they refuse a PAT (what an agent holds).
+3. **Views on both paths.** Path G (`site_call`/host_gateway) and path D (a tool
+   result canopy only sees in the transcript, e.g. the owner's own `connect_labs`
+   login in an emdash session). Rendered wherever canopy's chat shows the session:
+   ChatPage and the embed panel (EmbedApp). Terminals and Slack get the text
+   fallback plus a link to the session in canopy.
+4. **No live grant: a read-only View** with a "Sign in to Labs" link. canopy does
+   not ask the host for a grant in place.
+5. **A Send click starts a short agent turn** (the View's `ui/message`, posted as
+   the viewer), so the agent knows what was picked and Labs' result — and canopy's
+   own receipt of the call rides the next turn's caller context. "Not yet" /
+   decline only records a note (`ui/update-model-context`) the next turn sees.
+
+## Implementation notes (as shipped)
+
+- **`tool_call_id` is the tool call's own correlation id** (the `tool_use` block's
+  `id`, which the result row carries as `tool_use_id`) — the one id that is the
+  same in a live frame and after a reload. canopy's `Message` pk is not: a live
+  row can carry a synthetic id before it is projected.
+- **The UI tool index** is `AppCredential.mcp_apps_index`, refreshed by every
+  listing canopy makes as somebody: the gateway (`site_tools`, `site_call` when the
+  index is older than ten minutes) and every View call (which lists as the viewer).
+  It also caches each fetched View (sha256, effective CSP) for the read-only case.
+- **Receipts** are written for View calls to tools the MODEL could also call (a
+  commit such as `workflow_run_action`), not for app-only helpers (a preview runs
+  on every mount and would bury the one receipt that matters). Every call, receipt
+  or not, is an audit row.
+- **The inner View frame is `sandbox="allow-scripts"`** (no `allow-forms`): a
+  nested frame cannot hold more than the proxy's flags, and a View submits through
+  JS. CSP adds `form-action 'none'` and drops `'self'`, which under an opaque origin
+  could only ever name canopy's own URLs.
