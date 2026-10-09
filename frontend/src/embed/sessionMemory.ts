@@ -67,3 +67,84 @@ export function embedMemorySource(
     },
   }
 }
+
+/** A contact's HCP, from a site canopy trusts for their email
+ *  (`apps/tokens/contact_hcp_api.py`). The site that framed us holds the contact
+ *  token, so every call also carries a single-use FRAME PROOF that only this
+ *  frame can mint: the browser sends canopy's HttpOnly frame cookie and marks the
+ *  request same-origin, neither of which the host page can do. One proof, one call. */
+export interface ContactHcpState {
+  eligible: boolean
+  reason: string
+  opted_in: boolean
+  email: string
+  site: string
+  categories: string[]
+  session_grant_hours: number
+  policy: Partial<Record<MemoryFeature, { available: boolean; default: boolean }>>
+  session: SessionMemory | null
+  grants: { grant_id: string; agent: string; type: string; features: string[]; expires_at: string | null }[]
+  entries?: { entry_id: string; category: string; statement: string; status: string }[]
+}
+
+export function contactHcp(rest: MemoryRest) {
+  async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const { proof } = await rest.json<{ proof: string }>('/api/contact/hcp/proof', {
+      method: 'POST',
+    })
+    return rest.json<T>(`/api/contact/hcp${path}`, {
+      ...init,
+      headers: { ...(init.headers ?? {}), 'X-Canopy-Frame-Proof': proof },
+    })
+  }
+  const body = (b: unknown) => ({ body: JSON.stringify(b) })
+  return {
+    state: (sessionId?: string) =>
+      call<ContactHcpState>(
+        `/state${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`,
+      ),
+    optIn: (sessionId: string, use: boolean) =>
+      call<ContactHcpState>('/opt-in', { method: 'POST', ...body({ session_id: sessionId, use }) }),
+    grant: (sessionId: string, features: MemoryFeature[], duration: GrantDuration) =>
+      call<ContactHcpState>(`/sessions/${encodeURIComponent(sessionId)}/agent-grants`, {
+        method: 'POST',
+        ...body({ features, duration }),
+      }),
+    sessionMemory: (sessionId: string, change: Partial<Record<MemoryFeature, 'on' | 'off' | 'inherit'>>) =>
+      call<ContactHcpState>(`/sessions/${encodeURIComponent(sessionId)}/memory`, {
+        method: 'PUT',
+        ...body(change),
+      }),
+    policy: (change: Partial<Record<MemoryFeature, { available?: boolean; default?: boolean }>>) =>
+      call<ContactHcpState>('/policy', { method: 'PUT', ...body(change) }),
+    revoke: (grantId: string) =>
+      call<ContactHcpState>(`/grants/${encodeURIComponent(grantId)}`, { method: 'DELETE' }),
+    removeEntry: (entryId: string) =>
+      call<ContactHcpState>(`/entries/${encodeURIComponent(entryId)}`, { method: 'DELETE' }),
+    exportAll: () => call<unknown>('/export'),
+  }
+}
+
+export type ContactHcp = ReturnType<typeof contactHcp>
+
+/** The chat page's toggles, for an opted-in contact: same component, the
+ *  contact's own routes. `null` until opted in (the opt-in comes first). */
+export function contactMemorySource(hcp: ContactHcp, sessionId: string): SessionMemorySource {
+  const session = (s: ContactHcpState) => {
+    if (!s.session) throw new Error('no session state')
+    return s.session
+  }
+  return {
+    async load() {
+      try {
+        const s = await hcp.state(sessionId)
+        if (!s.eligible || !s.opted_in || !s.session) return null
+        return { state: s.session, editable: true }
+      } catch {
+        return null
+      }
+    },
+    save: async (change) => session(await hcp.sessionMemory(sessionId, change)),
+    grant: async (features, duration) => session(await hcp.grant(sessionId, features, duration)),
+  }
+}

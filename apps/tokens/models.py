@@ -392,6 +392,15 @@ class AppCredential(models.Model):
     #: constraint, because the useful behaviour is an error naming the app
     #: that already has it rather than an IntegrityError.
     show_on_canopy_pages = models.BooleanField(default=False)
+    #: canopy TRUSTS this site's signed `email_verified: true` as the visitor's
+    #: identity for HCP (Jonathan, 2026-10-09: "allow contacts to start building
+    #: up HCP … from a trusted system like labs where we do trust their e-mail
+    #: identity"). Off by default, and only a canopy superuser may set it: the
+    #: email-keyed `Person` it lets a contact join is canopy-wide, not this
+    #: tenant's, so a tenant owner trusting their own site would let that site
+    #: claim any address in every tenant. Grants nothing by itself — the
+    #: contact still opts in, in canopy's own frame (`contact_hcp_api`).
+    asserts_verified_email = models.BooleanField(default=False)
     #: The site's OWN OAuth authorization server (RFC 8414 `issuer`), when it
     #: grants canopy access to its MCP server as a visitor (host grant contract
     #: v1, `docs/architecture/host-grant-contract.md`). canopy discovers the
@@ -825,18 +834,24 @@ class ContactToken(models.Model):
     #: Runner flags the site required of this visitor's conversations — the
     #: same field, for the same reason, as `DelegatedToken.runner_requirements`.
     runner_requirements = models.JSONField(default=list, blank=True)
+    #: The address a TRUSTED site (`AppCredential.asserts_verified_email`) signed
+    #: `email_verified: true` for on THIS arrival, normalised; "" otherwise. Bound
+    #: to the token, not the contact: `Contact.email` only ever fills a blank, so
+    #: it cannot say which address was verified most recently, or by whom.
+    verified_email = models.CharField(max_length=254, blank=True, default="")
 
     class Meta:
         db_table = "contact_tokens"
         ordering = ["-created_at"]
 
     @classmethod
-    def issue(cls, *, app, contact, ttl_seconds, runner_requirements=()):
+    def issue(cls, *, app, contact, ttl_seconds, runner_requirements=(), verified_email=""):
         from django.utils import timezone
 
         raw = secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, contact=contact, runner_requirements=list(runner_requirements),
+            verified_email=verified_email or "",
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )
@@ -932,3 +947,26 @@ class HostGrant(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - never shows the token
         return f"host grant {self.app_id}:{self.subject} scope={self.scope!r}"
+
+
+class HcpFrameProof(models.Model):
+    """A single-use proof that a request about a contact's HCP came from a human in
+    canopy's OWN frame, not from the site that framed it (`contact_hcp_api`).
+
+    The site holds the visitor's contact token — it minted it — so the token alone
+    cannot tell the visitor's act from the site's call. A proof is minted only to a
+    request that carries canopy's frame cookie (set by the embed shell, HttpOnly,
+    partitioned) and that the browser marks same-origin; it is bound to that cookie
+    and that contact, lives minutes, and is spent by the call it authorizes. Hashed
+    at rest like every other bearer here.
+    """
+
+    contact = models.ForeignKey("contacts.Contact", on_delete=models.CASCADE, related_name="+")
+    proof_hash = models.CharField(max_length=64, unique=True)
+    cookie_hash = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "hcp_frame_proofs"

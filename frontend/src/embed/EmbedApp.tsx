@@ -13,7 +13,8 @@ import { buildPageContextBlock } from './pageContextBlock'
 import { currentFrameBaseUrl } from './frameBase'
 import type { HostInit, HostLink } from './hostLink'
 import { resolvePrincipal, type Principal } from './principal'
-import { embedMemorySource } from './sessionMemory'
+import { ContactMemory } from './ContactMemory'
+import { contactHcp, embedMemorySource } from './sessionMemory'
 
 /**
  * The chat surface inside the widget's iframe.
@@ -758,6 +759,9 @@ function EmbedChat({
     () => (isContact ? null : embedMemorySource(client.rest, sessionId, currentFrameBaseUrl())),
     [client, sessionId, isContact],
   )
+  // A contact on a site canopy trusts for their email may opt in themself, in this
+  // frame (ContactMemory.tsx); anywhere else it renders nothing.
+  const contactMemory = useMemo(() => (isContact ? contactHcp(client.rest) : null), [client, isContact])
   const appHost = useMemo(() => embedAppHost(client, sessionBase(isContact, sessionId)),
                           [client, sessionId, isContact])
 
@@ -876,6 +880,9 @@ function EmbedChat({
         </span>
         <span className="flex shrink-0 items-center gap-1">
           {memorySource && <SessionMemoryToggles sessionId={sessionId} source={memorySource} />}
+          {contactMemory && (
+            <ContactMemory hcp={contactMemory} sessionId={sessionId} agentName={agent.name} />
+          )}
           {/* The ‹ alone was the only way to a new question, and nobody read a
               bare chevron as "new chat". Same destination — the start screen,
               whose composer starts a fresh conversation — said in words. */}

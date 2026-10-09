@@ -247,7 +247,8 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
                                kind="user", host_grant=granted)
 
     raw, token = ContactToken.issue(app=app, contact=contact, ttl_seconds=ttl,
-                                    runner_requirements=runner_reqs)
+                                    runner_requirements=runner_reqs,
+                                    verified_email=_trusted_email(app, claims))
     audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app,
           detail=f"contact={contact.identity} grade=app_signed ttl={ttl}s host_grant={granted}")
     return ContactTokenOut(
@@ -257,6 +258,19 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         display_name=contact.display_name,
         host_grant=granted,
     )
+
+
+def _trusted_email(app, claims: dict) -> str:
+    """The visitor's address as an HCP identity — only from a site canopy trusts
+    for it (`AppCredential.asserts_verified_email`), and only when that site signed
+    `email_verified: true` for it on this arrival. "" otherwise: an untrusted
+    site's address stays what `record_embed_visitor` says it is — recorded, never
+    an identity."""
+    if not getattr(app, "asserts_verified_email", False) or claims.get("email_verified") is not True:
+        return ""
+    from apps.contacts import services as contact_services
+
+    return contact_services._normalize(str(claims.get("email") or ""))
 
 
 def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user,
@@ -850,3 +864,10 @@ def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id
         raise HttpError(422, str(exc)) from None
     session_services.maybe_execute_inline(turn)
     return {"turn_id": str(turn.id) if turn else None, "message_id": str(message.id)}
+
+
+# HCP for contacts who opt in from a trusted site — its own module, mounted here so
+# it shares this router's auth and the `/api/contact/` boundary.
+from .contact_hcp_api import contact_hcp_router  # noqa: E402
+
+contact_router.add_router("/hcp", contact_hcp_router)

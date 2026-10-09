@@ -107,6 +107,7 @@ class BearerTokenAuthMiddleware:
         ctok = ContactToken.lookup(raw)
         if ctok is not None:
             request.contact = ctok.contact
+            request.contact_token = ctok
             request.delegated_app = ctok.app
             # The site's runner requirements (ZDR), from the token — never from
             # anything the request itself carries.

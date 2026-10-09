@@ -1467,6 +1467,199 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/contact/hcp/proof": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A single-use proof that this is canopy's own panel
+         * @description Only canopy's panel can get one: send it as `X-Canopy-Frame-Proof` on the
+         *     next call to `/api/contact/hcp/`. One proof, one call, five minutes.
+         */
+        readonly post: operations["contact_hcp_proof"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/hcp/state": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What canopy may learn about me, from this site
+         * @description Whether you can use agent memory from this site, whether you have opted in,
+         *     your settings, this conversation's state, and every grant you have given.
+         *     Needs a frame proof.
+         */
+        readonly get: operations["contact_hcp_state"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/hcp/opt-in": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Let canopy learn about me in this conversation
+         * @description Your act, in canopy's panel: turns agent memory on for you (learning on by
+         *     default; use only if you ticked it) and lets THIS conversation's agent learn
+         *     — for this conversation only. Keeping it for that agent is a separate choice.
+         *     Needs a frame proof.
+         */
+        readonly post: operations["contact_hcp_opt_in"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/hcp/sessions/{session_id}/agent-grants": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Grant this conversation's agent, or keep it
+         * @description `duration=session`: let this conversation's agent learn / use, for this
+         *     conversation. `duration=always`: keep what this conversation already allows,
+         *     for that agent — a separate act (HCP 4.1.4). Needs a frame proof.
+         */
+        readonly post: operations["contact_hcp_grant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/hcp/sessions/{session_id}/memory": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Turn learning or use on or off for this conversation
+         * @description For this conversation only: `on`, `off` or `inherit` for `record` and `use`.
+         *     Never turns on what you have not made available. Needs a frame proof.
+         */
+        readonly put: operations["contact_hcp_session_memory"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/hcp/policy": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Change what agents may do with what they learn about me
+         * @description Your settings: for `record` and `use`, `available` and `default`. Turning
+         *     both off is opting out — nothing is deleted. Needs a frame proof.
+         */
+        readonly put: operations["contact_hcp_policy"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/hcp/grants/{grant_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Take back a grant
+         * @description Revoke one agent's access, immediately. Needs a frame proof.
+         */
+        readonly delete: operations["contact_hcp_revoke"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/hcp/entries/{entry_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove something canopy holds about me
+         * @description Delete one entry (HCP 3.2.4: soft — it stays in your export and audit log as
+         *     deleted, and no agent is told it again). Needs a frame proof.
+         */
+        readonly delete: operations["contact_hcp_delete_entry"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/hcp/export": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Everything canopy holds about me
+         * @description Every entry held about you (current versions, deleted ones included) and
+         *     your audit log — the same as /api/hcp/v1/export with include=audit. Needs a
+         *     frame proof.
+         */
+        readonly get: operations["contact_hcp_export"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/auth/contact-token": {
         readonly parameters: {
             readonly query?: never;
@@ -9504,6 +9697,129 @@ export interface components {
              */
             readonly client_id: string;
         };
+        /** ProofOut */
+        readonly ProofOut: {
+            /** Proof */
+            readonly proof: string;
+            /** Expires In */
+            readonly expires_in: number;
+        };
+        /** ContactHcpOut */
+        readonly ContactHcpOut: {
+            /** Eligible */
+            readonly eligible: boolean;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+            /**
+             * Opted In
+             * @default false
+             */
+            readonly opted_in: boolean;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /**
+             * Site
+             * @default
+             */
+            readonly site: string;
+            /**
+             * Categories
+             * @default []
+             */
+            readonly categories: readonly string[];
+            /**
+             * Session Grant Hours
+             * @default 24
+             */
+            readonly session_grant_hours: number;
+            /**
+             * Policy
+             * @default {}
+             */
+            readonly policy: {
+                readonly [key: string]: unknown;
+            };
+            /** Session */
+            readonly session?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Grants
+             * @default []
+             */
+            readonly grants: readonly components["schemas"]["HcpGrantOut"][];
+            /**
+             * Entries
+             * @default []
+             */
+            readonly entries: readonly components["schemas"]["HcpEntryOut"][];
+        };
+        /** HcpEntryOut */
+        readonly HcpEntryOut: {
+            /** Entry Id */
+            readonly entry_id: string;
+            /** Category */
+            readonly category: string;
+            /** Statement */
+            readonly statement: string;
+            /** Status */
+            readonly status: string;
+        };
+        /** HcpGrantOut */
+        readonly HcpGrantOut: {
+            /** Grant Id */
+            readonly grant_id: string;
+            /** Agent */
+            readonly agent: string;
+            /** Type */
+            readonly type: string;
+            /** Features */
+            readonly features: readonly string[];
+            /** Expires At */
+            readonly expires_at?: string | null;
+        };
+        /** OptInIn */
+        readonly OptInIn: {
+            /** Session Id */
+            readonly session_id: string;
+            /**
+             * Use
+             * @default false
+             */
+            readonly use: boolean;
+        };
+        /** ContactGrantIn */
+        readonly ContactGrantIn: {
+            /** Features */
+            readonly features: readonly string[];
+            /** Duration */
+            readonly duration: string;
+        };
+        /** SessionChoiceIn */
+        readonly SessionChoiceIn: {
+            /** Record */
+            readonly record?: string | null;
+            /** Use */
+            readonly use?: string | null;
+        };
+        /** FeaturePolicyIn */
+        readonly FeaturePolicyIn: {
+            /** Available */
+            readonly available?: boolean | null;
+            /** Default */
+            readonly default?: boolean | null;
+        };
+        /** PolicyIn */
+        readonly PolicyIn: {
+            readonly record?: components["schemas"]["FeaturePolicyIn"] | null;
+            readonly use?: components["schemas"]["FeaturePolicyIn"] | null;
+        };
         /** ContactTokenOut */
         readonly ContactTokenOut: {
             /** Token */
@@ -14819,6 +15135,11 @@ export interface components {
             readonly runner_requirements: readonly string[];
             /** Shows On Canopy Pages */
             readonly shows_on_canopy_pages: boolean;
+            /**
+             * Asserts Verified Email
+             * @default false
+             */
+            readonly asserts_verified_email: boolean;
             /** Created At */
             readonly created_at: string;
             /** Last Used At */
@@ -14913,6 +15234,8 @@ export interface components {
             readonly host_mcp_resource?: string | null;
             /** Show On Canopy Pages */
             readonly show_on_canopy_pages?: boolean | null;
+            /** Asserts Verified Email */
+            readonly asserts_verified_email?: boolean | null;
         };
         /**
          * ConnectionCheckOut
@@ -20699,6 +21022,210 @@ export interface operations {
                         readonly [key: string]: unknown;
                     };
                 };
+            };
+        };
+    };
+    readonly contact_hcp_proof: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProofOut"];
+                };
+            };
+        };
+    };
+    readonly contact_hcp_state: {
+        readonly parameters: {
+            readonly query?: {
+                readonly session_id?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactHcpOut"];
+                };
+            };
+        };
+    };
+    readonly contact_hcp_opt_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["OptInIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactHcpOut"];
+                };
+            };
+        };
+    };
+    readonly contact_hcp_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ContactGrantIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactHcpOut"];
+                };
+            };
+        };
+    };
+    readonly contact_hcp_session_memory: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionChoiceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactHcpOut"];
+                };
+            };
+        };
+    };
+    readonly contact_hcp_policy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PolicyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactHcpOut"];
+                };
+            };
+        };
+    };
+    readonly contact_hcp_revoke: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactHcpOut"];
+                };
+            };
+        };
+    };
+    readonly contact_hcp_delete_entry: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly entry_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactHcpOut"];
+                };
+            };
+        };
+    };
+    readonly contact_hcp_export: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

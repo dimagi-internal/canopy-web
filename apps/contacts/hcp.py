@@ -336,6 +336,13 @@ class Actor:
 SYSTEM = Actor("canopy", PersonAuditEvent.SYSTEM)
 
 
+def contact_actor(contact) -> Actor:
+    """The person themself, acting through a contact token in canopy's own frame
+    (`tokens/contact_hcp_api`) — a person's act, so `user`, named by the contact
+    because there is no account."""
+    return Actor(f"contact:{contact.pk}", PersonAuditEvent.USER)
+
+
 def agent_actor(agent) -> Actor:
     return Actor(f"agent:{agent.slug}", PersonAuditEvent.AGENT, agent)
 
@@ -809,7 +816,9 @@ def _expire_if_due(grant: PersonGrant) -> PersonGrant:
 SESSION_GRANT_CAP = dt.timedelta(hours=24)
 TEMPORARY_FOR_SESSION, PERSISTENT_FOR_AGENT = "session", "always"
 #: Where the person performed the act (`grant.issued` detail and `PersonGrant.modality`).
-SURFACES = {"chat": "canopy-chat", "widget": "canopy-widget"}
+SURFACES = {"chat": "canopy-chat", "widget": "canopy-widget",
+            # A contact's act in canopy's frame on a site trusted for email identity.
+            "embed-trusted": "canopy-embed-trusted-email"}
 _ACTION_OF = {"record": "write", "use": "read"}
 _FEATURE_OF = {"write": "record", "read": "use"}
 
@@ -932,7 +941,7 @@ def _record_grant(person: Person, *, agent, features, gtype: str, actor: Actor, 
 
 @transaction.atomic
 def issue_agent_grant(person: Person, *, agent, features, duration: str, actor: Actor,
-                      session=None, surface: str = "chat") -> PersonGrant:
+                      session=None, surface: str = "chat", note: str = "") -> PersonGrant:
     """The person's act, in one of their sessions, for that session's agent.
 
     4.1.4: temporary is the default outcome, and persistence is a SEPARATE act that
@@ -947,7 +956,7 @@ def issue_agent_grant(person: Person, *, agent, features, duration: str, actor: 
     if duration not in (TEMPORARY_FOR_SESSION, PERSISTENT_FOR_AGENT):
         raise malformed("duration is session or always")
     if surface not in SURFACES:
-        raise malformed("surface is chat or widget")
+        raise malformed("surface is " + ", ".join(SURFACES))
     if session is None:
         raise malformed("a grant is given in a session")
     for f in features:
@@ -955,7 +964,8 @@ def issue_agent_grant(person: Person, *, agent, features, duration: str, actor: 
             raise denied(f"{f} is not available for you; make it available first")
     if duration == TEMPORARY_FOR_SESSION:
         grant = _record_grant(person, agent=agent, features=features, gtype=PersonGrant.TEMPORARY,
-                              actor=actor, surface=surface, session=session)
+                              actor=actor, surface=surface, session=session,
+                              why=f", {note}" if note else "")
         # Allowing it in a session is also turning the feature on there, when the
         # person's default has it off ("only when the person turns it on in that session").
         state = memory_state(person, session)
@@ -970,7 +980,7 @@ def issue_agent_grant(person: Person, *, agent, features, duration: str, actor: 
     return _record_grant(person, agent=agent, features=features, gtype=PersonGrant.PERSISTENT,
                          actor=actor, surface=surface,
                          why=f", electing persistence after allowing it for this session "
-                             f"(grant {entry_urn(temp.grant_id)})")
+                             f"(grant {entry_urn(temp.grant_id)})" + (f", {note}" if note else ""))
 
 
 def categories_for(grant: PersonGrant, action: str) -> list[str]:

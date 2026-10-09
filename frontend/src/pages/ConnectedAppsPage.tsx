@@ -514,6 +514,13 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   {app.shows_on_canopy_pages && (
                     <p className="text-xs text-primary">Shown on canopy's own pages</p>
                   )}
+                  {app.asserts_verified_email && (
+                    // Set by a canopy superuser, never here: the person a trusted
+                    // address keys is canopy-wide. Changing the site's keys clears it.
+                    <p className="text-xs text-primary">
+                      Trusted for visitors' email — they can choose to let agents remember them
+                    </p>
+                  )}
                 </div>
                 {isOwner && !app.revoked && (
                   // This workspace's own registration. Another workspace using
