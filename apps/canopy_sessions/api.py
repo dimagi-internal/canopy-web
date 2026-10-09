@@ -6,13 +6,17 @@ async instead — no API change when that lands).
 """
 from __future__ import annotations
 
+import base64
+import datetime as dt
 import uuid
 
 from django.db.models import Max
+from django.db.models.functions import Coalesce
 
 from django.conf import settings
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from ninja import File, Router
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
@@ -42,6 +46,7 @@ from .schemas import (
     AttachmentOut,
     BackfillStateOut,
     MenuAnswerIn,
+    HumanInputPageOut,
     MessageOut,
     MessagePageOut,
     PageActionInvokeIn,
@@ -65,6 +70,7 @@ from .schemas import (
     ParticipantOut,
     SessionNotifyIn,
     SessionOut,
+    SessionSearchPageOut,
     SessionSecretIn,
     SessionSecretOut,
     StreamStateOut,
@@ -311,26 +317,25 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     return _out(session)
 
 
-@router.get("/", response=list[SessionOut], summary="List sessions (web + runner-discovered)")
-def list_sessions(
-    request: HttpRequest, state: str = "active", limit: int = 200,
-    source: str = "", opp_slug: str = "", opp_run_id: str = "",
-    origin_key: str = "", embed_app: str = "",
-    resource: str = "", page_path: str = "", reply: bool = False,
-    session_key: str = "",
+def _aware(value: dt.datetime | None) -> dt.datetime | None:
+    """A query-string datetime, read as UTC when it names no zone."""
+    if value is None or timezone.is_aware(value):
+        return value
+    return timezone.make_aware(value, dt.timezone.utc)
+
+
+def _filtered_sessions(
+    request: HttpRequest, *, state: str, source: str = "", opp_slug: str = "",
+    opp_run_id: str = "", origin_key: str = "", embed_app: str = "",
+    resource: str = "", page_path: str = "", session_key: str = "",
+    q: str = "", repo: str = "", since: dt.datetime | None = None,
+    until: dt.datetime | None = None,
 ):
-    # The ONE unified list (Plan 4): every session the caller can see in their
-    # workspaces — their own web sessions UNION any session that has a
-    # RunnerBinding (runner-discovered or live). Deduped, running-first, then
-    # newest. Replaces the creator-only list + the harness OpenSessions projection.
-    #
-    # `state` gives that list an END. Two rules combine into "archived":
-    #   - WRITTEN: status == archived (the runner saw the emdash task archived, or
-    #     a human called /archive). Durable.
-    #   - DERIVED: a RUNNER-origin session whose binding has not been seen within
-    #     SESSION_STALE_AFTER. Computed here, never stored, so it reverses itself
-    #     the moment the task is reported again. Web sessions are exempt — they
-    #     have no runner to be seen by, so only an explicit archive ends them.
+    """Every session the caller may see, narrowed by the list filters, with
+    `_last_msg_at`, `_activity` (= `last_activity_at`, computed in SQL) and
+    `_opening` annotated. Unordered — each route orders it its own way. The
+    list and the search route share it so a filter (and, above all, the
+    delegated-app scoping) cannot exist on one and not the other."""
     from django.db.models import Max, Q
 
     if state not in ("active", "archived", "all"):
@@ -401,12 +406,67 @@ def list_sessions(
         rows = rows.filter(metadata__opp_slug=opp_slug)
     if opp_run_id:
         rows = rows.filter(metadata__opp_run_id=opp_run_id)
-    rows = services.with_opening(rows.annotate(_last_msg_at=Max("messages__created_at"))).distinct().order_by("-created_at")
+    # Free text over what a person reads off a card: the title, or the runner's
+    # session_key (an emdash task name, or a cloud session's Claude UUID).
+    if q:
+        rows = rows.filter(Q(title__icontains=q) | Q(runner_binding__session_key__icontains=q))
+    # The repo a session ran in. Not a field of its own: an agentless repo chat
+    # names it in `project`, and a runner session's binding carries the emdash
+    # project its worktree lives under (`RunnerBinding.emdash_project` — a repo
+    # name, or for an agent's own sessions the agent's repo, i.e. its slug).
+    if repo:
+        rows = rows.filter(Q(project__iexact=repo) | Q(runner_binding__emdash_project__iexact=repo))
+    rows = services.with_opening(rows.annotate(_last_msg_at=Max("messages__created_at"))).distinct()
+    # The SAME rule as services.last_activity_at (binding > newest message >
+    # created), in SQL, so a window and a cursor can be applied to it.
+    rows = rows.annotate(_activity=Coalesce(
+        "runner_binding__last_interacted_at", "_last_msg_at", "created_at"))
+    if since is not None:
+        rows = rows.filter(_activity__gte=_aware(since))
+    if until is not None:
+        rows = rows.filter(_activity__lt=_aware(until))
     unseen = services.unseen_q()   # defined once in staleness.py; see Step 3
     if state == "active":
         rows = rows.filter(status=Session.ACTIVE).exclude(unseen)
     elif state == "archived":
         rows = rows.filter(Q(status=Session.ARCHIVED) | unseen)
+    return rows
+
+
+@router.get("/", response=list[SessionOut], summary="List sessions (web + runner-discovered)")
+def list_sessions(
+    request: HttpRequest, state: str = "active", limit: int = 200,
+    source: str = "", opp_slug: str = "", opp_run_id: str = "",
+    origin_key: str = "", embed_app: str = "",
+    resource: str = "", page_path: str = "", reply: bool = False,
+    session_key: str = "", q: str = "", repo: str = "",
+    since: dt.datetime | None = None, until: dt.datetime | None = None,
+):
+    """The sessions you can see: waiting on you first, then running, then most
+    recent activity — at most `limit` (≤ 500) of them, with no paging.
+
+    Filters: `q` (title or session_key contains), `repo` (the repo it ran in),
+    `since` / `until` (last activity in [since, until)). To reach EVERY session
+    rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
+    """
+    # The ONE unified list (Plan 4): every session the caller can see in their
+    # workspaces — their own web sessions UNION any session that has a
+    # RunnerBinding (runner-discovered or live). Deduped, running-first, then
+    # newest. Replaces the creator-only list + the harness OpenSessions projection.
+    #
+    # `state` gives that list an END. Two rules combine into "archived":
+    #   - WRITTEN: status == archived (the runner saw the emdash task archived, or
+    #     a human called /archive). Durable.
+    #   - DERIVED: a RUNNER-origin session whose binding has not been seen within
+    #     SESSION_STALE_AFTER. Computed here, never stored, so it reverses itself
+    #     the moment the task is reported again. Web sessions are exempt — they
+    #     have no runner to be seen by, so only an explicit archive ends them.
+    rows = _filtered_sessions(
+        request, state=state, source=source, opp_slug=opp_slug, opp_run_id=opp_run_id,
+        origin_key=origin_key, embed_app=embed_app, resource=resource,
+        page_path=page_path, session_key=session_key, q=q, repo=repo,
+        since=since, until=until,
+    ).order_by("-created_at")
 
     # Every row says which mode drove it — the list shows it on each card, so an
     # auto session that just ran and a manual one waiting on you can be told apart.
@@ -431,6 +491,62 @@ def list_sessions(
     # -created_at, so slicing it could drop the running session this sort exists to
     # float. `state=active` already bounds the set; this is a payload backstop.
     return out[: clamp_limit(limit)]
+
+
+def _encode_cursor(activity: dt.datetime, session_id: uuid.UUID) -> str:
+    raw = f"{activity.isoformat()}|{session_id}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[dt.datetime, uuid.UUID]:
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        when, sid = raw.split("|", 1)
+        return _aware(dt.datetime.fromisoformat(when)), uuid.UUID(sid)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HttpError(422, "cursor is not one this endpoint issued; start again without it") from exc
+
+
+@router.get("/search", response=SessionSearchPageOut, summary="Page through every session (cursor)")
+def search_sessions(
+    request: HttpRequest, cursor: str = "", limit: int = 100, state: str = "all",
+    q: str = "", repo: str = "", since: dt.datetime | None = None,
+    until: dt.datetime | None = None, source: str = "", origin_key: str = "",
+    embed_app: str = "", session_key: str = "",
+):
+    """Every session you can see, newest last activity first, `limit` (≤ 500)
+    at a time — the whole history, not just the newest 500.
+
+    Pass the response's `next_cursor` back as `cursor` (with the same filters)
+    for the next page; it is null when the walk is done. Ordered by
+    (last activity, id), descending, so the order is total and stable. `state`
+    defaults to `all`. Filters: `q` (title or session_key contains), `repo` (the
+    repo it ran in), `since` / `until` (last activity in [since, until),
+    ISO-8601, UTC when no zone is given).
+
+    A session that does something mid-walk moves to the front and can be
+    missed by a walk already past it; pass `until` = the time the walk started
+    to freeze the set. Same visibility rule as the list and `GET /{id}`.
+    """
+    from django.db.models import Q
+
+    rows = _filtered_sessions(
+        request, state=state, source=source, origin_key=origin_key,
+        embed_app=embed_app, session_key=session_key, q=q, repo=repo,
+        since=since, until=until,
+    )
+    if cursor:
+        at, sid = _decode_cursor(cursor)
+        rows = rows.filter(Q(_activity__lt=at) | Q(_activity=at, id__lt=sid))
+    limit = clamp_limit(limit)
+    rows = services.with_driving_turn(rows.order_by("-_activity", "-id"))
+    page = list(rows[: limit + 1])
+    more = len(page) > limit
+    page = page[:limit]
+    return {
+        "sessions": [_out(s, viewer=request.user) for s in page],
+        "next_cursor": _encode_cursor(page[-1]._activity, page[-1].id) if more else None,
+    }
 
 
 # Declared BEFORE /{session_id}: Django resolves in declaration order and
@@ -665,6 +781,45 @@ def list_messages(
     return {
         "messages": [MessageOut.from_orm(m) for m in rows],
         "has_more_before": has_more,
+    }
+
+
+@router.get(
+    "/{session_id}/human-inputs",
+    response=HumanInputPageOut,
+    summary="What people typed into a session (cursor)",
+)
+def list_human_inputs(
+    request: HttpRequest,
+    session_id: uuid.UUID,
+    after: int | None = None,
+    limit: int = services.SCROLLBACK_PAGE_DEFAULT,
+):
+    """Only the human side of a session: what a person typed, oldest first,
+    `limit` (≤ 500) at a time. Pass the response's `next_cursor` back as
+    `after` for the next page; it is null when there is no more.
+
+    Excluded, though some are stored on the user's side of a transcript: tool
+    results, the agent's output, system rows, harness records (task
+    notifications, system reminders, local command output) and the prompts
+    PROGRAMS delivered — a scheduled or email turn's `/agent:turn …`, an API
+    caller. A line attributed to a person (`author`) is always kept.
+
+    A session with no durable transcript yet (a local runner session before its
+    backfill) answers from the runner's recent tail, `source: "tail"`, unpaged.
+    Same access rule as `GET /{id}`, and `session_id` may likewise be the
+    runner's `session_key`.
+    """
+    try:
+        session = _session_or_404(request, session_id)
+    except Http404:
+        session = _session_by_key_or_404(request, session_id)
+    rows, next_cursor, source = services.human_inputs(
+        session, after=after, limit=clamp_limit(limit))
+    return {
+        "messages": [MessageOut.from_orm(m) for m in rows],
+        "next_cursor": next_cursor,
+        "source": source,
     }
 
 

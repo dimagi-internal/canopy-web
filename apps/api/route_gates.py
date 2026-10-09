@@ -264,6 +264,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "reset_sessions": ("session-acl",),  # readable rows filtered to can_write
     "canopy_sessions_get_session": ("session-acl",),
     "list_messages": ("session-acl",),
+    "search_sessions": ("session-acl",),  # readable_sessions, via the list's _filtered_sessions
+    "list_human_inputs": ("session-acl",),  # _session_or_404 / _session_by_key_or_404, as get_session
     "archive_session": ("session-acl",),  # write
     "reset_session": ("session-acl",),  # write
     "unarchive_session": ("session-acl",),  # write

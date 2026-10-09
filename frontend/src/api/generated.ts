@@ -5903,11 +5903,51 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List sessions (web + runner-discovered) */
+        /**
+         * List sessions (web + runner-discovered)
+         * @description The sessions you can see: waiting on you first, then running, then most
+         *     recent activity — at most `limit` (≤ 500) of them, with no paging.
+         *
+         *     Filters: `q` (title or session_key contains), `repo` (the repo it ran in),
+         *     `since` / `until` (last activity in [since, until)). To reach EVERY session
+         *     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
+         */
         readonly get: operations["canopy_sessions_list_sessions"];
         readonly put?: never;
         /** Create a chat session */
         readonly post: operations["create_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/search": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Page through every session (cursor)
+         * @description Every session you can see, newest last activity first, `limit` (≤ 500)
+         *     at a time — the whole history, not just the newest 500.
+         *
+         *     Pass the response's `next_cursor` back as `cursor` (with the same filters)
+         *     for the next page; it is null when the walk is done. Ordered by
+         *     (last activity, id), descending, so the order is total and stable. `state`
+         *     defaults to `all`. Filters: `q` (title or session_key contains), `repo` (the
+         *     repo it ran in), `since` / `until` (last activity in [since, until),
+         *     ISO-8601, UTC when no zone is given).
+         *
+         *     A session that does something mid-walk moves to the front and can be
+         *     missed by a walk already past it; pass `until` = the time the walk started
+         *     to freeze the set. Same visibility rule as the list and `GET /{id}`.
+         */
+        readonly get: operations["search_sessions"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -6057,6 +6097,39 @@ export interface paths {
         };
         /** Load earlier transcript (scroll-back) */
         readonly get: operations["list_messages"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/human-inputs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What people typed into a session (cursor)
+         * @description Only the human side of a session: what a person typed, oldest first,
+         *     `limit` (≤ 500) at a time. Pass the response's `next_cursor` back as
+         *     `after` for the next page; it is null when there is no more.
+         *
+         *     Excluded, though some are stored on the user's side of a transcript: tool
+         *     results, the agent's output, system rows, harness records (task
+         *     notifications, system reminders, local command output) and the prompts
+         *     PROGRAMS delivered — a scheduled or email turn's `/agent:turn …`, an API
+         *     caller. A line attributed to a person (`author`) is always kept.
+         *
+         *     A session with no durable transcript yet (a local runner session before its
+         *     backfill) answers from the runner's recent tail, `source: "tail"`, unpaged.
+         *     Same access rule as `GET /{id}`, and `session_id` may likewise be the
+         *     runner's `session_key`.
+         */
+        readonly get: operations["list_human_inputs"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -16788,6 +16861,16 @@ export interface components {
             readonly parent?: components["schemas"]["ParentIn"] | null;
         };
         /**
+         * SessionSearchPageOut
+         * @description One page of a newest-activity-first walk over every visible session.
+         */
+        readonly SessionSearchPageOut: {
+            /** Sessions */
+            readonly sessions: readonly components["schemas"]["SessionOut"][];
+            /** Next Cursor */
+            readonly next_cursor?: string | null;
+        };
+        /**
          * ResetOut
          * @description One session's reset outcome. `reason` is `ok` | `no_binding` |
          *     `runner_unreachable` — stable strings the UI renders as the refusal.
@@ -16919,6 +17002,22 @@ export interface components {
              * @default
              */
             readonly note: string;
+        };
+        /**
+         * HumanInputPageOut
+         * @description One forward page of what PEOPLE typed into a session, oldest first.
+         */
+        readonly HumanInputPageOut: {
+            /** Messages */
+            readonly messages: readonly components["schemas"]["MessageOut"][];
+            /** Next Cursor */
+            readonly next_cursor?: number | null;
+            /**
+             * Source
+             * @default transcript
+             * @enum {string}
+             */
+            readonly source: "transcript" | "tail";
         };
         /** SessionNotifyIn */
         readonly SessionNotifyIn: {
@@ -26229,6 +26328,10 @@ export interface operations {
                 readonly page_path?: string;
                 readonly reply?: boolean;
                 readonly session_key?: string;
+                readonly q?: string;
+                readonly repo?: string;
+                readonly since?: string | null;
+                readonly until?: string | null;
             };
             readonly header?: never;
             readonly path?: never;
@@ -26267,6 +26370,38 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    readonly search_sessions: {
+        readonly parameters: {
+            readonly query?: {
+                readonly cursor?: string;
+                readonly limit?: number;
+                readonly state?: string;
+                readonly q?: string;
+                readonly repo?: string;
+                readonly since?: string | null;
+                readonly until?: string | null;
+                readonly source?: string;
+                readonly origin_key?: string;
+                readonly embed_app?: string;
+                readonly session_key?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionSearchPageOut"];
                 };
             };
         };
@@ -26432,6 +26567,31 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["MessagePageOut"];
+                };
+            };
+        };
+    };
+    readonly list_human_inputs: {
+        readonly parameters: {
+            readonly query?: {
+                readonly after?: number | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HumanInputPageOut"];
                 };
             };
         };
