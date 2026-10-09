@@ -6,7 +6,7 @@ import datetime as dt
 from pydantic import Field
 
 from apps.common.schemas import StrictModel
-from apps.contacts.people_schemas import SessionFeatureOut
+from apps.contacts.people_schemas import SessionMemoryOut
 
 
 class PersonalTokenOut(StrictModel):
@@ -169,14 +169,12 @@ class EmbedSelfTokenOut(StrictModel):
     host_grant: bool = False
 
 
-class EmbedSessionMemoryOut(StrictModel):
-    """`GET /api/embed/sessions/{id}/agent-memory` — agent memory in this session,
-    as the widget may SHOW it. Read-only: a site acting for you never changes it;
-    `manage_path` is where you change it yourself, in canopy."""
+class EmbedSessionMemoryOut(SessionMemoryOut):
+    """`GET /api/embed/sessions/{id}/agent-memory` — agent memory in this session
+    and what you granted its agent, as the widget may SHOW it. Read-only: a site
+    acting for you never changes it or grants anything; `manage_path` is where you
+    do that yourself, in canopy."""
 
-    session_id: str
-    record: SessionFeatureOut
-    use: SessionFeatureOut
     #: canopy's own chat page for this session, relative to canopy's base.
     manage_path: str
 

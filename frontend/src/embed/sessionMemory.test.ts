@@ -43,4 +43,13 @@ describe('embedMemorySource', () => {
       body: JSON.stringify({ use: 'on' }),
     })
   })
+
+  it('grants through the person route only, marked as given in the widget', async () => {
+    const json = vi.fn().mockResolvedValue(state)
+    await embedMemorySource({ json }, 's1', 'https://c').grant(['record'], 'session')
+    expect(json).toHaveBeenCalledWith('/api/people/me/sessions/s1/agent-grants/', {
+      method: 'POST',
+      body: JSON.stringify({ features: ['record'], duration: 'session', surface: 'widget' }),
+    })
+  })
 })

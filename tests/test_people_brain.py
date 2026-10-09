@@ -34,7 +34,7 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture(autouse=True)
-def _agent_memory_on(agent_memory_on):
+def _agent_memory_on(agents_granted):
     # These tests pin what canopy does for a person with agent memory ON; the
     # off state (the default) is pinned in tests/test_agent_memory_switch.py.
     yield
@@ -160,7 +160,7 @@ def test_envelope_v3_carries_the_person_and_logs_the_read(world):
     assert block["facts"][0]["kind"] == "correction"            # corrections first
     # then by relevance: "coach" matches the terminology fact; role always rides.
     assert [f["kind"] for f in block["facts"][1:]] == ["terminology", "role"]
-    assert block["grant"]["client"] == "Ace over Chat"
+    assert block["grant"]["client"] == "Ace"            # the client is the agent
     assert block["recall"]["tool"] == "hcp_searchPreferences"
     assert env["contact"] is None                                # unchanged for members
     access = PersonAccess.objects.get(person=person)

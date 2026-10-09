@@ -177,14 +177,13 @@ def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -
     person = people.initiator_person(turn)
     if person is None:
         raise hcp.denied("no person started that turn")
-    # The person's own switches, checked before any grant is presumed: a person who
-    # has not allowed this kind of operation is not served, and no grant is issued.
+    # The person's switches for this session first (policy + the session's choice),
+    # then a grant THEY gave this agent (nothing is presumed, 4.1.6).
     hcp.require(person, need, turn)
-    channel, host = hcp.client_of_turn(turn)
-    grant = hcp.grant_for(person, agent=serving, workspace_slug=serving.workspace_id,
-                          channel=channel, host=host)
+    action = {hcp.USE: "read", hcp.RECORD: "write"}.get(need)
+    grant = hcp.grant_for(person, agent=serving, session=hcp.session_of(turn), action=action)
     if grant is None:
-        raise hcp.denied("the person has revoked this client's access")
+        raise hcp.denied(hcp.NOT_GRANTED)
     return Principal(person=person, actor=hcp.agent_actor(serving), grant=grant,
                      workspace_slug=serving.workspace_id, turn=turn)
 
@@ -609,7 +608,7 @@ def hcp_list_grants(request: HttpRequest, status: str = "active", turn: str | No
 @hcp_route
 def hcp_revoke_grant(request: HttpRequest, grant_id: str):
     """Revoke one client's access, immediately (HCP 4.2). The person only; never
-    rate-limited. canopy will not presume it again — re-allowing is yours."""
+    rate-limited. Nothing revives it — only a new act of yours grants again."""
     p = _person_principal(request)
     try:
         gid = uuid.UUID(grant_id.split(":")[-1])

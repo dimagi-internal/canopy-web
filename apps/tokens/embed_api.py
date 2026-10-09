@@ -254,7 +254,7 @@ def embed_session_memory(request: HttpRequest, session_id: str) -> EmbedSessionM
     import uuid
 
     from apps.canopy_sessions.models import Session
-    from apps.contacts import hcp, people
+    from apps.contacts import people
     from apps.contacts import services as contact_services
 
     from . import delegation
@@ -273,7 +273,7 @@ def embed_session_memory(request: HttpRequest, session_id: str) -> EmbedSessionM
     person = contact_services.person_for(user=request.user)
     if person is None:
         raise HttpError(404, "Not found")
-    state = hcp.memory_state(person, session)
-    return EmbedSessionMemoryOut(
-        session_id=str(session.pk), record=state["record"], use=state["use"],
-        manage_path=f"/w/{session.workspace_id}/chat/{session.pk}")
+    from apps.contacts.people_api import session_memory_payload
+
+    return EmbedSessionMemoryOut(**session_memory_payload(person, session),
+                                 manage_path=f"/w/{session.workspace_id}/chat/{session.pk}")

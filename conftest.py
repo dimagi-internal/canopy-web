@@ -68,3 +68,42 @@ def agent_memory_on():
     pre_save.connect(_on, sender=Person, dispatch_uid="test-agent-memory-on")
     yield
     pre_save.disconnect(sender=Person, dispatch_uid="test-agent-memory-on")
+
+
+@pytest.fixture()
+def grants_on_turn():
+    """As if every person had already granted ("always") each agent they start a
+    turn with, for whatever they have made available at that moment — through the
+    real act (`hcp.issue_agent_grant`), so the grant rows and `grant.issued` events
+    are the real ones. For suites that pin what a GRANTED agent does; how a grant
+    comes to exist is pinned in tests/test_hcp_agent_grants.py."""
+    from django.db.models.signals import post_save
+
+    from apps.contacts import hcp, people
+    from apps.harness.models import Turn
+
+    def _grant(sender, instance, created, **kwargs):
+        if not created:
+            return
+        agent = (instance.agent if instance.agent_id else
+                 instance.chat_session.agent if instance.chat_session_id else None)
+        person = people.initiator_person(instance) if agent is not None else None
+        if person is None:
+            return
+        features = [f for f in hcp.FEATURES if getattr(person, f"hcp_{f}_available")]
+        have = hcp.granted(person, agent)
+        if any(not have[f] for f in features):
+            actor = (hcp.user_actor(person.user) if person.user_id
+                     else hcp.Actor(f"person:{person.pk}", "user"))
+            hcp._record_grant(person, agent=agent, features=features,
+                              gtype="persistent", actor=actor, surface="chat")
+
+    post_save.connect(_grant, sender=Turn, dispatch_uid="test-grants-on-turn")
+    yield
+    post_save.disconnect(sender=Turn, dispatch_uid="test-grants-on-turn")
+
+
+@pytest.fixture()
+def agents_granted(agent_memory_on, grants_on_turn):
+    """Agent memory on for every person, and every agent they talk to granted."""
+    yield

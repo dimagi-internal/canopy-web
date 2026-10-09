@@ -36,6 +36,13 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def _granted(grants_on_turn):
+    # What the switches do for an agent the person has granted; how grants come to
+    # exist is pinned in tests/test_hcp_agent_grants.py.
+    yield
+
+
 def _member(ws, username):
     u = User.objects.create_user(username, f"{username}@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=u, workspace=ws, role=WorkspaceMembership.EDITOR)
@@ -97,6 +104,11 @@ def _session_turn(agent, user, session, key, prompt="kangaroo care coach"):
 
 def _set_session(user, session, **choices):
     return _json(_as(user), "put", f"/api/people/me/sessions/{session.pk}/agent-memory/", choices)
+
+
+def _core(feature):
+    """The switch part of a session feature (leaving out what is granted)."""
+    return {k: feature[k] for k in ("available", "default", "override", "effective")}
 
 
 def _eff(block):
@@ -181,7 +193,7 @@ def test_available_but_off_by_default_is_off_until_a_session_turns_it_on(w):
     t1 = _session_turn(ace, lili, session, "t1")
     _denied(_search(c, t1), hcp.USE_OFF)
     r = _set_session(lili, session, use="on")
-    assert r.status_code == 200 and r.json()["use"] == {
+    assert r.status_code == 200 and _core(r.json()["use"]) == {
         "available": True, "default": False, "override": True, "effective": True}
     assert _search(c, t1).status_code == 200
     assert _eff(caller_context.build(t1)["person"]) == {"record": True, "use": True}
@@ -199,7 +211,7 @@ def test_a_session_cannot_turn_on_what_is_not_available(w):
     session = _session(lili, ace)
     r = _set_session(lili, session, use="on")
     assert r.status_code == 403
-    assert _as(lili).get(f"/api/people/me/sessions/{session.pk}/agent-memory/").json()["use"] == {
+    assert _core(_as(lili).get(f"/api/people/me/sessions/{session.pk}/agent-memory/").json()["use"]) == {
         "available": False, "default": False, "override": None, "effective": False}
     _set_session(lili, session, record="on")
     _set(lili, record=False)                                          # made unavailable later

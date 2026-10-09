@@ -376,36 +376,46 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
     person = initiator_person(turn)
     if person is None:
         return None
-    state = hcp.memory_state(person, hcp.session_of(turn))
+    session = hcp.session_of(turn)
+    state = hcp.memory_state(person, session)
     record, use = state["record"]["effective"], state["use"]["effective"]
-    # Effective for THIS turn's session, plus what the person makes available at
-    # all — so the hook can say "use is off in this session" vs "not available".
-    switches = {"record": record, "use": use,
+    # Granted to THIS agent (a grant only the person gives, in a session — nothing is
+    # presumed). Access = the switch AND the grant; a switch on without a grant means
+    # the person is asked in the session's UI, never by the agent.
+    has = (hcp.granted(person, agent, session) if agent is not None
+           else {f: False for f in hcp.FEATURES})
+    # Effective for THIS turn's session, what the person makes available at all, and
+    # what this agent has been granted — so the hook can tell "off in this session",
+    # "not available" and "not granted to this agent yet" apart.
+    switches = {"record": record and has["record"], "use": use and has["use"],
                 "available": {f: state[f]["available"] for f in hcp.FEATURES},
-                "session": hcp.session_of(turn) is not None}
-    grant, facts = None, []
-    if workspace_slug and agent is not None and (record or use):
-        # A grant is presumed only for a person who allows SOMETHING; neither on =
-        # nothing served, nothing to record, and `grant: None` (which an older canopy
-        # hook already reads as "do not look it up another way").
-        channel, host = hcp.client_of_turn(turn)
-        grant = hcp.grant_for(person, agent=agent, workspace_slug=workspace_slug,
-                              channel=channel, host=host)
-        if grant is not None and use:
-            readable = hcp.categories_for(grant, "read")
-            if readable:
-                facts, _, _ = hcp.search(person, workspace_slug=workspace_slug,
-                                         query=turn.prompt or "", categories=readable,
-                                         purpose=ENVELOPE_PURPOSE, max_entries=ENVELOPE_FACTS,
-                                         grant=grant, actor=hcp.agent_actor(agent), turn=turn)
-    if use:
+                "session": session is not None,
+                "agent": agent.slug if agent is not None else None,
+                "granted": has,
+                # On for this session but not yet granted to this agent: the UI offers it.
+                "awaiting_grant": [f for f in hcp.FEATURES if state[f]["effective"] and not has[f]]}
+    read_grant = write_grant = None
+    facts = []
+    if workspace_slug and agent is not None:
+        if use:
+            read_grant = hcp.grant_for(person, agent=agent, session=session, action="read")
+        if record:
+            write_grant = hcp.grant_for(person, agent=agent, session=session, action="write")
+        if read_grant is not None:
+            facts, _, _ = hcp.search(person, workspace_slug=workspace_slug,
+                                     query=turn.prompt or "",
+                                     categories=hcp.categories_for(read_grant, "read"),
+                                     purpose=ENVELOPE_PURPOSE, max_entries=ENVELOPE_FACTS,
+                                     grant=read_grant, actor=hcp.agent_actor(agent), turn=turn)
+    if read_grant is not None:
         # "Did the brain have anything to say", recorded NOW, for the coverage
-        # metric (`apps/contacts/coverage.py`). Only a read is logged: with `use`
-        # off nothing about them was read.
+        # metric (`apps/contacts/coverage.py`). Only a read is logged: without use
+        # (switch AND grant) nothing about them was read.
         log_access(person, via=PersonAccess.VIA_ENVELOPE, workspace_slug=workspace_slug,
                    reader_user=reader_user, reader_agent=agent, turn=turn, had_context=bool(facts))
-    can_read = grant is not None and use
-    can_write = grant is not None and record
+    grant = read_grant or write_grant
+    can_read = read_grant is not None
+    can_write = write_grant is not None
     return {
         "id": person.pk,
         "display_name": display_name(person),
@@ -417,19 +427,19 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         # be told it; `available` = what the person allows at all.
         "hcp": switches,
         "facts": [fact_dict(f) for f in facts],
-        # HCP: the grant this turn acts under (None = the person allows nothing, or
-        # revoked this client), how to recall more (only with `use`), and how to
-        # record (only with `record`).
+        # HCP: the grant this turn acts under (None = nothing granted to this agent
+        # for what is on), how to recall more (only with use granted), and how to
+        # record (only with record granted).
         "grant": ({"id": f"urn:uuid:{grant.grant_id}", "client": grant.client_name,
                    "scopes": list(grant.scopes or [])} if grant is not None else None),
         "recall": ({"tool": "hcp_searchPreferences", "turn": str(turn.pk),
-                    "categories": hcp.categories_for(grant, "read"),
+                    "categories": hcp.categories_for(read_grant, "read"),
                     "hint": "Only the entries relevant to the message are above. To recall "
                             "more about this person, call hcp_searchPreferences with a query, "
                             "the categories, a purpose and turn=<this turn id>."}
                    if can_read else None),
         "record": ({"tool": "hcp_addPreference", "turn": str(turn.pk),
-                    "categories": hcp.categories_for(grant, "write")}
+                    "categories": hcp.categories_for(write_grant, "write")}
                    if can_write else None),
         # v1.1, additive: the projects (of this workspace's agents) they take
         # part in, most recently active first, at most 5. Not archived ones.

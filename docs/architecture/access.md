@@ -313,13 +313,21 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
     the envelope's `record` hint.
   * use, "Agents may use what they've learned", gates READS: HCP search/get, and
     the facts and `recall` in the envelope's `person` block.
-  * A refused operation is `scope-denied` before any grant is presumed
-    (`hcp_api._principal(need=)` → `hcp.require(person, need, turn)`). With
-    neither effective, the block has `grant: null`.
+  * These settings are POLICY, never a grant. An agent is served only under a
+    grant the person gave THAT agent in a session (`hcp.issue_agent_grant`,
+    `POST /api/people/me/sessions/{id}/agent-grants/`): "allow for this session"
+    (temporary, ≤ 24 h, ends with the session) and then, as a separate act,
+    "keep allowing" (persistent). Nothing is presumed; migration `contacts/0022`
+    revoked the presumed grants. See `hcp-service.md`.
+  * A refused operation is `scope-denied`: first the switch
+    (`hcp_api._principal(need=)` → `hcp.require(person, need, turn)`), then the
+    agent's grant (`hcp.NOT_GRANTED`). With nothing granted for what is on, the
+    block has `grant: null`.
   * The block always carries `hcp: {record, use, available: {record, use},
-    session}` — the effective values for this turn, what is available at all, and
-    whether the turn is in a session. An envelope read is logged only when `use`
-    is effective.
+    session, agent, granted: {record, use}, awaiting_grant}` — `record`/`use` are
+    the switch AND this agent's grant; `awaiting_grant` lists features on in this
+    session that the person has not granted this agent yet (the UI asks, never the
+    agent). An envelope read is logged only when a read is actually granted.
   * Record-only builds a model of the person that no agent sees yet. Without
     `use` an agent cannot search before adding, so duplicates and contradictions
     are left to HCP's conflict quarantine.

@@ -6998,6 +6998,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/me/sessions/{session_id}/agent-grants/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Grant this session's agent access to what it learns about you
+         * @description Your act (HCP 4.1.6): give the agent of this session of yours `record`
+         *     (it may save what it learns about you) and/or `use` (it may be told what has
+         *     been learned), for this session only (`duration=session`, lapses when the
+         *     session ends or after `session_grant_hours`) or always for that agent
+         *     (`duration=always`, until you revoke it on /people/me). Only features you
+         *     made available can be granted. Granting one that is off by default also turns
+         *     it on for this session. Only you can do this.
+         */
+        readonly post: operations["grant_my_session_agent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/people/coverage/": {
         readonly parameters: {
             readonly query?: never;
@@ -7334,7 +7360,7 @@ export interface paths {
         /**
          * HCP: revoke a grant
          * @description Revoke one client's access, immediately (HCP 4.2). The person only; never
-         *     rate-limited. canopy will not presume it again — re-allowing is yours.
+         *     rate-limited. Nothing revives it — only a new act of yours grants again.
          */
         readonly delete: operations["hcp_revokeGrant"];
         readonly options?: never;
@@ -8976,17 +9002,38 @@ export interface components {
         };
         /**
          * EmbedSessionMemoryOut
-         * @description `GET /api/embed/sessions/{id}/agent-memory` — agent memory in this session,
-         *     as the widget may SHOW it. Read-only: a site acting for you never changes it;
-         *     `manage_path` is where you change it yourself, in canopy.
+         * @description `GET /api/embed/sessions/{id}/agent-memory` — agent memory in this session
+         *     and what you granted its agent, as the widget may SHOW it. Read-only: a site
+         *     acting for you never changes it or grants anything; `manage_path` is where you
+         *     do that yourself, in canopy.
          */
         readonly EmbedSessionMemoryOut: {
             /** Session Id */
             readonly session_id: string;
             readonly record: components["schemas"]["SessionFeatureOut"];
             readonly use: components["schemas"]["SessionFeatureOut"];
+            /** @description The agent a grant here goes to. */
+            readonly agent?: components["schemas"]["SessionAgentOut"] | null;
+            /**
+             * Categories
+             * @description The categories a grant covers (shown before you grant).
+             */
+            readonly categories?: readonly string[];
+            /**
+             * Session Grant Hours
+             * @description A 'for this session' grant lasts at most this long, or until the session ends.
+             * @default 24
+             */
+            readonly session_grant_hours: number;
             /** Manage Path */
             readonly manage_path: string;
+        };
+        /** SessionAgentOut */
+        readonly SessionAgentOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
         };
         /** SessionFeatureOut */
         readonly SessionFeatureOut: {
@@ -9004,6 +9051,28 @@ export interface components {
              * @description What applies in this session: available AND (override, else default).
              */
             readonly effective: boolean;
+            /**
+             * Granted
+             * @description This session's agent holds a live grant for it.
+             * @default false
+             */
+            readonly granted: boolean;
+            readonly grant?: components["schemas"]["SessionGrantOut"] | null;
+        };
+        /**
+         * SessionGrantOut
+         * @description A grant you gave this session's agent (HCP 4.1.5).
+         */
+        readonly SessionGrantOut: {
+            /** Grant Id */
+            readonly grant_id: string;
+            /**
+             * Type
+             * @description temporary (this session) | persistent (always, until revoked).
+             */
+            readonly type: string;
+            /** Expires At */
+            readonly expires_at?: string | null;
         };
         /** ContactAgentOut */
         readonly ContactAgentOut: {
@@ -17841,13 +17910,28 @@ export interface components {
         };
         /**
          * SessionMemoryOut
-         * @description Your agent memory as it applies in one session.
+         * @description Your agent memory as it applies in one session, and what you have granted
+         *     the session's agent. A feature that is on here but not granted is what the
+         *     session asks you about.
          */
         readonly SessionMemoryOut: {
             /** Session Id */
             readonly session_id: string;
             readonly record: components["schemas"]["SessionFeatureOut"];
             readonly use: components["schemas"]["SessionFeatureOut"];
+            /** @description The agent a grant here goes to. */
+            readonly agent?: components["schemas"]["SessionAgentOut"] | null;
+            /**
+             * Categories
+             * @description The categories a grant covers (shown before you grant).
+             */
+            readonly categories?: readonly string[];
+            /**
+             * Session Grant Hours
+             * @description A 'for this session' grant lasts at most this long, or until the session ends.
+             * @default 24
+             */
+            readonly session_grant_hours: number;
         };
         /** SessionMemoryIn */
         readonly SessionMemoryIn: {
@@ -17861,6 +17945,25 @@ export interface components {
              * @description on | off | inherit. Omit to leave it.
              */
             readonly use?: string | null;
+        };
+        /** AgentGrantIn */
+        readonly AgentGrantIn: {
+            /**
+             * Features
+             * @description record and/or use.
+             */
+            readonly features: readonly string[];
+            /**
+             * Duration
+             * @description session (temporary, this session only) | always (this agent, until you revoke it).
+             */
+            readonly duration: string;
+            /**
+             * Surface
+             * @description chat | widget — where you gave it.
+             * @default chat
+             */
+            readonly surface: string;
         };
         /**
          * AgentCoverageOut
@@ -27880,6 +27983,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["SessionMemoryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionMemoryOut"];
+                };
+            };
+        };
+    };
+    readonly grant_my_session_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentGrantIn"];
             };
         };
         readonly responses: {

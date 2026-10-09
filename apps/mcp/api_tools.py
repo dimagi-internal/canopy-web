@@ -96,6 +96,8 @@ EXCLUDED: dict[str, str] = {
                              "read in their own chat UI, not an agent's",
     "set_my_session_memory": "the person's own per-session agent-memory choice — an agent must "
                              "never be able to turn it, and an MCP client with their token is one",
+    "grant_my_session_agent": "the person's own grant to an agent (HCP 4.1.6) — an agent granting "
+                              "itself access would be authorization inferred from its own request",
     "contact_token": _HOST,
     "public_stats": _ANON,
     "submit_beta_request": _ANON,
