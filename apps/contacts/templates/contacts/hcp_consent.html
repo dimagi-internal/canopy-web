@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Allow {{ client.name }}?</title>
+{% include "contacts/_hcp_style.html" %}
+</head>
+<body>
+  <div class="container">
+    <h1>Allow {{ client.name }} to see what canopy knows about you?</h1>
+    <p><strong>{{ client.name }}</strong>, run by <strong>{{ client.operator }}</strong>{% if client.first_party %} (operated by Dimagi){% endif %}, is asking for access to parts of your context. You are signed in as {{ request.user.email }}; it will send you back to {{ redirect_host }}.</p>
+    <table>
+      <thead><tr><th>About you</th><th>Read</th><th>Save or change</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr><td>{{ r.label }}</td><td>{% if r.read %}Yes{% else %}No{% endif %}</td><td>{% if r.write %}Yes{% else %}No{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <ul class="notes">
+      {% for n in settings_notes %}<li>{{ n }}</li>{% endfor %}
+    </ul>
+    <form method="post" action="{{ form_action }}">
+      {% csrf_token %}
+      {% for name, value in params.items %}<input type="hidden" name="{{ name }}" value="{{ value }}">
+      {% endfor %}
+      <fieldset>
+        <legend>What it can reach</legend>
+        <label><input type="checkbox" checked disabled> What you wrote about yourself (personal)</label>
+        {% for w in workspaces %}
+        <label><input type="checkbox" name="workspace" value="{{ w }}"> What agents in <strong>{{ w }}</strong> learned about you</label>
+        {% endfor %}
+      </fieldset>
+      <fieldset>
+        <legend>For how long</legend>
+        <label>Until
+          <select name="expiry">
+            {% for k, label in expiries %}<option value="{{ k }}"{% if k == expiry_default %} selected{% endif %}>{{ label }} from now</option>{% endfor %}
+          </select>
+        </label>
+        <span class="muted">Access ends by itself then. You will be asked next, separately, whether to keep it longer.</span>
+      </fieldset>
+      <div class="actions">
+        <button class="btn btn-plain" type="submit" name="step" value="deny">Deny</button>
+        <button class="btn btn-primary" type="submit" name="step" value="allow">Allow</button>
+      </div>
+    </form>
+    <p class="muted" style="margin-top:1rem">You can see and revoke this at any time on “What agents know about me”. Every read is on your audit log.</p>
+  </div>
+</body>
+</html>

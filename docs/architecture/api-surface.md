@@ -257,6 +257,17 @@ Firing is automatic: on each poll tick the runner syncs its schedules, evaluates
 
 > **Operational note — deleting a user bricks their runners' schedules.** `Runner.owner` is `on_delete=SET_NULL`, and `_runner_schedule_qs` derives the schedule tenant from it, failing closed when it is NULL: deleting a pairing user's Django `User` orphans their runners, and every schedule route then returns nothing for that runner, forever. The runner must be re-paired (a new row); the orphan can only be retired. This is correct — a runner with no owner has no tenant to derive, and inferring one would be privilege escalation — so prefer deactivating a departing user (`is_active=False`) over deleting them if their runners should keep running.
 
+### The HCP service (`apps/contacts/hcp_oauth_views.py`, `hcp_clients_api.py`) — OAuth for apps canopy does not operate
+
+Issuer `<origin>/api/hcp`; design `docs/architecture/hcp-service.md`. Internal only (`HCP_SERVICE_AUDIENCE`).
+
+- `GET|POST /api/hcp/oauth/authorize` — the two-act consent screen (bare view; signs the person in itself). Code + PKCE S256, exact redirect URI, scopes within the client's registration.
+- `POST /api/hcp/oauth/token` — `authorization_code` (with `code_verifier`) or `refresh_token` (rotates; a replay revokes the grant). Form-encoded, public clients.
+- `POST /api/hcp/oauth/revoke` — RFC 7009; revoking any of a grant's tokens revokes the grant.
+- `GET /api/hcp/.well-known/oauth-authorization-server` (and `/.well-known/oauth-authorization-server/api/hcp`) — RFC 8414. `GET /api/hcp/.well-known/mcp-manifest` — Appendix B. `GET /.well-known/hcp-configuration` — Appendix C at the origin.
+- `Authorization: Bearer hcpat_…` on `/api/hcp/v1/…` — one person's grant, its scopes and sources; refused on every other path, and on the person's own audit / export / revoke. 120 requests a minute per client.
+- `GET|POST /api/hcp-admin/clients`, `PATCH /api/hcp-admin/clients/{client_id}` — the registry. Superusers; never MCP. The webhook secret is returned once.
+
 ### People (`apps/contacts/people_api.py`, mounted at `/api/people`) — the fleet brain (canopy#804)
 
 What agents know about a person, per workspace. Rules in `docs/architecture/access.md` → "What agents know about a person".

@@ -12,6 +12,7 @@ from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
 from apps.tokens.github_views import github_connect_callback, github_connect_start
 from apps.tokens.views_embed import embed_chat, embed_widget_js
+from apps.contacts import hcp_oauth_views
 from apps.tokens import views_mcp_oauth, views_oauth
 from apps.tokens.views_oauth import client_metadata as oauth_client_metadata
 from apps.tokens.views_oauth import jwks as oauth_jwks
@@ -49,6 +50,19 @@ urlpatterns = [
     path("oauth/authorize", views_mcp_oauth.authorize, name="oauth-authorize"),
     path("oauth/probe", views_oauth.probe, name="oauth-probe"),
     path("oauth/host/jwks.json", views_oauth.host_jwks, name="oauth-host-jwks"),
+    # The HCP service (apps/contacts/hcp_oauth.py): an OAuth 2.0 authorization
+    # server for apps canopy does not operate, issuer <origin>/api/hcp. Bare views
+    # (HTML consent, form-encoded token/revoke), declared before the Ninja mount so
+    # /api/ does not swallow them. Its RFC 8414 document is at both the path-
+    # inserted address and under the issuer. Public, like the documents below;
+    # authorize signs the person in itself.
+    path("api/hcp/oauth/authorize", hcp_oauth_views.authorize, name="hcp-oauth-authorize"),
+    path("api/hcp/oauth/token", hcp_oauth_views.token, name="hcp-oauth-token"),
+    path("api/hcp/oauth/revoke", hcp_oauth_views.revoke, name="hcp-oauth-revoke"),
+    path("api/hcp/.well-known/oauth-authorization-server", hcp_oauth_views.metadata),
+    path(".well-known/oauth-authorization-server/api/hcp", hcp_oauth_views.metadata),
+    path("api/hcp/.well-known/mcp-manifest", hcp_oauth_views.mcp_manifest),
+    path(".well-known/hcp-configuration", hcp_oauth_views.root_discovery),
     path(".well-known/oauth-authorization-server", views_oauth.authorization_server_metadata),
     path(".well-known/oauth-authorization-server/<path:rest>", views_oauth.authorization_server_metadata),
     path(".well-known/oauth-protected-resource", views_oauth.protected_resource_metadata),

@@ -210,6 +210,7 @@ from apps.canopy_sessions.app_views_api import router as app_views_router  # noq
 from apps.canopy_sessions.secrets_api import router as session_secrets_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
 from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
+from apps.contacts.hcp_clients_api import router as hcp_clients_router  # noqa: E402
 from apps.contacts.people_api import router as people_router  # noqa: E402
 from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
 from apps.tokens.contact_api import contact_router, contact_token_router  # noqa: E402
@@ -275,3 +276,4 @@ api.add_router("/session-secrets", session_secrets_router)
 api.add_router("/contacts", contacts_router)
 api.add_router("/people", people_router)  # fleet brain v1 (canopy#804)
 api.add_router("/hcp", hcp_router)  # Human Context Protocol v1 over the people brain
+api.add_router("/hcp-admin", hcp_clients_router)  # the HCP service's client registry (superusers)

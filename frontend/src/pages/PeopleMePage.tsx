@@ -32,6 +32,19 @@ const MEMORY_SWITCHES = [
   },
 ]
 
+/** 4.1.5.1 Rule 3: show a narrowed grant as narrowed — which of your entries an
+ *  app's grant reaches (your personal ones, plus any workspace you ticked). */
+function reachOf(g: HcpGrant): string {
+  const sources = new Set<string>()
+  for (const r of g.restrictions as { narrowedTo?: { sources?: string[] } }[]) {
+    for (const src of r.narrowedTo?.sources ?? []) sources.add(src)
+  }
+  if (sources.size === 0) return ''
+  return Array.from(sources)
+    .map((src) => (src === 'personal' ? 'your personal entries' : `what ${src.replace('workspace:', '')} learned`))
+    .join(' and ')
+}
+
 /** "What agents know about me" — every live fact canopy holds about you, by
  *  workspace; which clients (an agent, over a channel, on a host) may read it,
  *  each revocable; and your audit log of every read and change. You can
@@ -361,8 +374,9 @@ export function PeopleMePage() {
         <h2 className="text-sm font-semibold text-foreground">Who can read it</h2>
         <p className="mt-1 text-xs text-muted-foreground">
           Each agent is allowed separately for each way you reach it — ACE over Slack and ACE over
-          email are two entries. canopy allows an agent the first time it serves you; revoking stops
-          it immediately and for good, unless you allow it again.
+          email are two entries. canopy allows an agent the first time it serves you. An app outside
+          canopy is here only if you allowed it on its consent screen, and reaches only what it says
+          below. Revoking stops it immediately and for good, unless you allow it again.
         </p>
         {grants.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">No agent has served you yet.</p>
@@ -371,10 +385,19 @@ export function PeopleMePage() {
             {grants.map((g) => (
               <li key={g.grantId} className="flex items-start gap-3 px-4 py-2">
                 <div className="min-w-0 flex-1">
-                  <div className="text-foreground">{g.client.name}</div>
+                  <div className="text-foreground">
+                    {g.client.name}
+                    {g.canopy.client ? (
+                      <span className="text-muted-foreground"> · app run by {g.canopy.client.operator}</span>
+                    ) : null}
+                  </div>
                   <div className="mt-0.5 text-xs text-muted-foreground">
                     {g.status}
+                    {g.canopy.client
+                      ? ` · ${g.grantType === 'persistent' ? 'kept until you revoke it' : 'temporary'}`
+                      : ''}
                     {g.canopy.workspace ? ` · ${g.canopy.workspace}` : ''}
+                    {reachOf(g) ? ` · reaches ${reachOf(g)}` : ''}
                     {` · since ${new Date(g.issuedAt).toLocaleDateString()}`}
                     {g.expiresAt ? ` · until ${new Date(g.expiresAt).toLocaleString()}` : ''}
                     {` · ${Array.from(new Set(g.scopes.map((s) => s.split(':').slice(1, -1).join(':')))).join(', ')}`}

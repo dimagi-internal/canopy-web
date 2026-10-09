@@ -16,7 +16,11 @@ Appendix B says.
 * **an agent** (its own login's PAT) — only the person who STARTED the turn it
   names (`turn`), and only under that client's grant: the caller-only rule
   is the subject resolution, not a convention;
-* **a confined session's caller token** — the same, the turn being the token's.
+* **a confined session's caller token** — the same, the turn being the token's;
+* **an OAuth client of the HCP service** (an `hcpat_` access token,
+  apps/contacts/hcp_oauth.py) — the one person whose grant the token was issued
+  under, only the categories and sources that grant names, and only while that
+  person's own "use" (to read) or "record" (to write) is on.
 
 Errors are RFC 9457 problems with the HCP registered types (3.4.4); a missing
 entry and an unauthorized one are the same 403 (3.3.6).
@@ -48,7 +52,18 @@ from . import hcp, people
 from . import services as contact_services
 from .models import HcpIdempotencyKey, Person, PersonAuditEvent, PersonFact, PersonGrant
 
-router = Router(auth=session_auth, tags=["hcp"])
+class _HcpAuth:
+    """A canopy session/PAT (via `session_auth`), or an HCP service access token —
+    which the bearer middleware has already verified and confined to /api/hcp/v1/."""
+
+    def __call__(self, request: HttpRequest):
+        tok = getattr(request, "hcp_access", None)
+        if tok is not None:
+            return tok
+        return session_auth(request)
+
+
+router = Router(auth=_HcpAuth(), tags=["hcp"])
 
 LD_JSON = "application/ld+json"
 IDEMPOTENCY_TTL_HOURS = 24
@@ -97,6 +112,7 @@ class Principal:
     grant: PersonGrant | None       # None for the person themself
     workspace_slug: str | None      # an agent is confined to its workspace
     turn: object = None
+    client: object = None           # the HcpClient, for an OAuth client of the service
 
 
 def _turn_agent(turn):
@@ -113,6 +129,19 @@ def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -
     turn's session (`hcp.effective`). The person themself is never gated by it."""
     from apps.harness.models import Turn
 
+    from . import hcp_oauth
+
+    tok = getattr(request, "hcp_access", None)
+    if tok is not None:
+        # An OAuth client: the grant its token was issued under decides the person;
+        # the person's own switches still bound every read and write (no session).
+        hcp_oauth.check_rate(tok.client)                                # 3.4.5
+        grant = hcp._expire_if_due(tok.grant)
+        if grant.status != PersonGrant.ACTIVE:
+            raise hcp.HcpError("invalid-token", f"the grant is {grant.status}")
+        hcp.require(grant.person, need, None)
+        return Principal(person=grant.person, actor=hcp_oauth.client_actor(tok.client),
+                         grant=grant, workspace_slug=None, client=tok.client)
     user = request.user
     if not getattr(user, "is_authenticated", False):
         raise hcp.HcpError("invalid-token", "a bearer token is required")
@@ -164,7 +193,8 @@ def _person_principal(request: HttpRequest) -> Principal:
     """The audit log, revocation and export are the PERSON's (4.3.3, 4.2.1,
     3.3.5): an agent — its own login or a caller token — is refused outright,
     whatever turn it names."""
-    if (people.agent_of_login(request.user) is not None
+    if (getattr(request, "hcp_access", None) is not None
+            or people.agent_of_login(request.user) is not None
             or getattr(request, "auth_method", "") == "caller_token"):
         raise hcp.denied("only the person may do this")
     return _principal(request, None)
@@ -196,8 +226,10 @@ def _idempotent(request: HttpRequest, body: dict, run):
         return run()
     digest = hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
     cutoff = timezone.now() - dt.timedelta(hours=IDEMPOTENCY_TTL_HOURS)
-    HcpIdempotencyKey.objects.filter(user=request.user, created_at__lt=cutoff).delete()
-    seen = HcpIdempotencyKey.objects.filter(user=request.user, key=key).first()
+    tok = getattr(request, "hcp_access", None)
+    owner = {"client": tok.client} if tok is not None else {"user": request.user}
+    HcpIdempotencyKey.objects.filter(**owner, created_at__lt=cutoff).delete()
+    seen = HcpIdempotencyKey.objects.filter(**owner, key=key).first()
     if seen is not None:
         if seen.body_hash != digest or seen.method != request.method or seen.path != request.path:
             raise hcp.HcpError("idempotency-conflict", "this Idempotency-Key was used with a different request")
@@ -205,7 +237,7 @@ def _idempotent(request: HttpRequest, body: dict, run):
     with transaction.atomic():
         resp = run()
         if 200 <= resp.status_code < 300:
-            HcpIdempotencyKey.objects.create(user=request.user, key=key, method=request.method,
+            HcpIdempotencyKey.objects.create(**owner, key=key, method=request.method,
                                              path=request.path[:300], body_hash=digest,
                                              status=resp.status_code,
                                              response=json.loads(resp.content))
@@ -263,6 +295,8 @@ def _workspace_for_write(p: Principal, explicit: str | None):
     from apps.workspaces import services as wsvc
     from apps.workspaces.models import Workspace
 
+    if p.client is not None:
+        return None                     # an OAuth client writes the person's personal entries
     slug = p.workspace_slug if not p.actor.is_person else (explicit or "").strip()
     if not slug:
         if p.actor.is_person:
@@ -279,12 +313,34 @@ def _workspace_for_write(p: Principal, explicit: str | None):
 def _search_workspace(p: Principal, explicit: str | None) -> list[str | None]:
     """Where a search looks: an agent, its workspace; the person, the one they
     name, else everywhere they have entries (None = their personal entries)."""
+    if p.client is not None:
+        from . import hcp_oauth
+
+        reach = hcp_oauth.sources_of(p.grant) or {None}
+        return sorted(reach, key=lambda s: (s is not None, s or ""))
     if not p.actor.is_person:
         return [p.workspace_slug]
     if explicit:
         return [explicit.strip()]
     return list(hcp.current_versions(p.person).order_by()
                 .values_list("workspace_id", flat=True).distinct())
+
+
+def _claimed_capture(p: Principal, claimed: str) -> str:
+    """`provenance.capturedBy` an HTTP caller asserts. An OAuth client's claim is
+    kept only UNDER its own id (4.1.8: an identity is never silently upgraded), so
+    a client cannot record an entry as captured by canopy or one of its agents."""
+    claimed = claimed.strip()[:150]
+    if p.client is None:
+        return claimed
+    return p.actor.id + (f"/{claimed}" if claimed and claimed != p.actor.id else "")
+
+
+def _by_user(request: HttpRequest):
+    """The canopy account behind a write — none for an OAuth client."""
+    if getattr(request, "hcp_access", None) is not None:
+        return None
+    return request.user
 
 
 def _render(fact: PersonFact, p: Principal, detail: str = "full") -> dict:
@@ -359,7 +415,7 @@ def hcp_add_preference(request: HttpRequest, payload: HcpAddIn, turn: str | None
             person=p.person, workspace=ws, category=payload.category, statement=payload.preference,
             declaration=payload.declarationType, actor=p.actor, confidence=payload.confidence,
             dimension=payload.dimension, source=payload.sourceContext, source_turn=p.turn,
-            by_user=request.user, user_verified=p.actor.is_person,
+            by_user=_by_user(request), user_verified=p.actor.is_person,
             captured_by_override="" if captured == p.actor.id else captured)
         return _ok({"entry": _render(fact, p)}, status=201)
     return _idempotent(request, body, run)
@@ -399,11 +455,11 @@ def hcp_create_entry(request: HttpRequest, payload: HcpEntryIn, turn: str | None
             statement=str(subject.get("preference") or ""),
             declaration=str(record.get("declarationType") or ""), actor=p.actor,
             confidence=record.get("confidence"), dimension=record.get("dimension"),
-            source=str(prov.get("source") or ""), source_turn=p.turn, by_user=request.user,
+            source=str(prov.get("source") or ""), source_turn=p.turn, by_user=_by_user(request),
             expires_at=expires, relationship=str(subject.get("relationship") or ""),
             metadata={k: v for k, v in meta.items() if not str(k).startswith("canopy:")},
             user_verified=bool(prov.get("userVerified")) and p.actor.is_person,
-            captured_by_override=str(prov.get("capturedBy") or ""))
+            captured_by_override=_claimed_capture(p, str(prov.get("capturedBy") or "")))
         return _ok({"entry": _render(fact, p)}, status=201)
     return _idempotent(request, payload.model_dump(), run)
 
@@ -442,7 +498,7 @@ def hcp_update_preference(request: HttpRequest, entry_id: str, payload: HcpUpdat
         fact = _entry(p, entry_id, "write")
         new = hcp.update_entry(fact, statement=payload.updatedPreference, reason=payload.reason,
                                actor=p.actor, category=payload.category, dimension=payload.dimension,
-                               by_user=request.user, source_turn=p.turn, model=payload.model)
+                               by_user=_by_user(request), source_turn=p.turn, model=payload.model)
         return _ok({"entry": _render(new, p)})
     return _idempotent(request, {"entry": entry_id, **payload.model_dump()}, run)
 
@@ -456,7 +512,7 @@ def hcp_delete_preference(request: HttpRequest, entry_id: str, reason: str = "",
     removes every version permanently (GDPR/CCPA)."""
     p = _principal(request, turn, hcp.RECORD)
     fact = _entry(p, entry_id, "write")
-    hcp.delete_entry(fact, actor=p.actor, reason=reason, hard=hardDelete, by_user=request.user)
+    hcp.delete_entry(fact, actor=p.actor, reason=reason, hard=hardDelete, by_user=_by_user(request))
     return _ok({"entryId": hcp.entry_urn(fact.entry_id), "status": "deleted",
                 "hardDeleted": bool(hardDelete), "timestamp": timezone.now().isoformat()})
 

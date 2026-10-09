@@ -400,10 +400,11 @@ def test_discovery_document_is_public_and_declares_the_profile(w, settings):
     r = Client().get(f"{BASE}/.well-known/hcp-configuration")
     assert r.status_code == 200
     doc = r.json()
-    # ...and only that one path under /api/hcp/ is open.
+    # ...and the person's own routes under /api/hcp/ stay shut.
     assert Client().get(f"{BASE}/v1/grants").status_code == 401
+    # oauth2 since the HCP service (apps/contacts/hcp_oauth.py; tests/test_hcp_service.py).
     assert (doc["authorization_profile"], doc["envelope_form"], doc["minimization_method"]) == (
-        "first-party", "grouped", "lexical")
+        "oauth2", "grouped", "lexical")
     assert doc["supported_categories"] == list(PersonFact.CATEGORIES)
 
 

@@ -76,7 +76,9 @@ PUBLIC_PATH_PREFIXES = (
     # this instance supports, read BEFORE a client holds a credential. It names
     # no person and returns no entry; every other /api/hcp/ route needs a token.
     # A full path, so it admits nothing else under /api/hcp/.
-    "/api/hcp/.well-known/hcp-configuration",
+    "/api/hcp/.well-known/",          # HCP discovery, RFC 8414 metadata, MCP manifest
+    "/api/hcp/oauth/",                # HCP service OAuth: authorize signs in itself; token/revoke are client calls
+    "/.well-known/hcp-configuration",
     # The contact surface. A contact token deliberately produces no
     # `request.user`, so every one of these would bounce to a login page that
     # a person with no canopy account can never complete. Listed as a PREFIX
@@ -247,6 +249,8 @@ class LoginRequiredMiddleware:
 
         if (
             request.user.is_authenticated
+            or (getattr(request, "hcp_access", None) is not None
+                and request.path.startswith("/api/hcp/v1/"))
             or _is_public(request.path)
             or _is_about(request.path)
             or public_site.is_public_path(request.path)

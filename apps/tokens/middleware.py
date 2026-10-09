@@ -56,6 +56,31 @@ class BearerTokenAuthMiddleware:
         user = getattr(request, "user", None)
         already_signed_in = user is not None and getattr(user, "is_authenticated", False)
 
+        # An HCP service access token (apps/contacts/hcp_oauth.py): an app canopy
+        # does not operate, acting under ONE person's grant. It is no canopy user,
+        # so `request.user` stays anonymous, and it opens /api/hcp/v1/ and nothing
+        # else — refused here, before any view, everywhere else.
+        from apps.contacts import hcp_oauth
+
+        if raw.startswith(hcp_oauth.ACCESS_PREFIX):
+            from django.http import JsonResponse
+
+            tok = hcp_oauth.authenticate_access(raw)
+            if tok is None or not request.path_info.startswith("/api/hcp/v1/"):
+                detail = ("the access token is not valid" if tok is None
+                          else "an HCP access token opens /api/hcp/v1/ only")
+                return JsonResponse(
+                    {"type": "https://hcp.me/problems/invalid-token", "title": "invalid token",
+                     "status": 401, "detail": detail, "instance": request.path_info,
+                     "hcp_version": "1.0"},
+                    status=401, content_type="application/problem+json",
+                    headers={"WWW-Authenticate": 'Bearer error="invalid_token"'})
+            request.hcp_access = tok
+            request.auth_method = "hcp-oauth"
+            request.auth_credential = _credential("hcp-oauth", tok.pk, tok.client.name)
+            request._dont_enforce_csrf_checks = True
+            return None
+
         from apps.tokens.models import ContactToken, DelegatedToken, PersonalToken
 
         if not already_signed_in:

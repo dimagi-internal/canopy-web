@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keep {{ client.name }}'s access?</title>
+{% include "contacts/_hcp_style.html" %}
+</head>
+<body>
+  <div class="container">
+    <h1>{{ client.name }} is allowed until {{ until|date:"j M, H:i" }} UTC</h1>
+    <p>One more question. Do you want {{ client.name }} to keep this access <strong>after</strong> that — across visits, until you turn it off yourself?</p>
+    <p class="muted">If you keep it, it stays until you revoke it on “What agents know about me”. If not, it ends at {{ until|date:"H:i" }} and the app will have to ask again.</p>
+    <form method="post" action="{{ form_action }}">
+      {% csrf_token %}
+      <input type="hidden" name="step" value="keep">
+      <input type="hidden" name="nonce" value="{{ nonce }}">
+      <div class="actions">
+        <button class="btn btn-plain" type="submit" name="keep" value="no">No, only until {{ until|date:"H:i" }}</button>
+        <button class="btn btn-plain" type="submit" name="keep" value="yes">Keep access until I turn it off</button>
+      </div>
+    </form>
+  </div>
+</body>
+</html>

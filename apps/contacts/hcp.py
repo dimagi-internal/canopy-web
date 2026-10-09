@@ -836,7 +836,17 @@ def _restricted_entry_ids(grant: PersonGrant, category: str, action: str) -> set
 
 
 def within_grant(fact: PersonFact, grant: PersonGrant | None, action: str) -> bool:
-    if grant is None or fact.workspace_id != grant.workspace_id:
+    """Is this entry inside what the grant reaches? A first-party agent grant
+    reaches its own workspace; an OAuth client's grant reaches the sources its
+    restriction names (the person's personal entries, plus workspaces they chose)."""
+    if grant is None:
+        return False
+    if grant.hcp_client_id:
+        from . import hcp_oauth
+
+        if fact.workspace_id not in (hcp_oauth.sources_of(grant) or {None}):
+            return False
+    elif fact.workspace_id != grant.workspace_id:
         return False
     if not allows(grant, fact.category, action):
         return False
@@ -846,9 +856,13 @@ def within_grant(fact: PersonFact, grant: PersonGrant | None, action: str) -> bo
 
 @transaction.atomic
 def revoke_grant(grant: PersonGrant, *, actor: Actor) -> PersonGrant:
-    """4.2: effective immediately — every read checks the grant row, so there is
-    no token to chase. No webhook is registered by any canopy client, so there
-    is nothing to notify (4.2.3)."""
+    """4.2: effective immediately. A first-party grant has no token to chase —
+    every read checks the grant row. An OAuth client's grant also has its tokens
+    killed and its webhook notified (`hcp_oauth.revoke`)."""
+    if grant.hcp_client_id:
+        from . import hcp_oauth
+
+        return hcp_oauth.revoke(grant, actor=actor, reason="revoked by the person")
     if grant.status == PersonGrant.ACTIVE:
         PersonGrant.objects.filter(pk=grant.pk).update(status=PersonGrant.REVOKED,
                                                        revoked_at=timezone.now())
@@ -859,9 +873,11 @@ def revoke_grant(grant: PersonGrant, *, actor: Actor) -> PersonGrant:
 
 
 def grant_dict(grant: PersonGrant) -> dict:
+    client = grant.hcp_client if grant.hcp_client_id else None
     return {
         "grantId": entry_urn(grant.grant_id),
-        "client": {"id": grant.client_key, "name": grant.client_name},
+        "client": ({"id": client.client_id, "name": client.name} if client is not None
+                   else {"id": grant.client_key, "name": grant.client_name}),
         "scopes": list(grant.scopes or []),
         "restrictions": list(grant.restrictions or []),
         "grantType": grant.grant_type,
@@ -872,7 +888,9 @@ def grant_dict(grant: PersonGrant) -> dict:
         # canopy's own: the dimensions the client key is built from.
         "canopy": {"agent": grant.agent.slug if grant.agent_id else None,
                    "channel": grant.channel, "host": grant.host,
-                   "workspace": grant.workspace_id, "modality": grant.modality},
+                   "workspace": grant.workspace_id, "modality": grant.modality,
+                   "client": ({"id": client.client_id, "name": client.name,
+                               "operator": client.operator} if client is not None else None)},
     }
 
 
@@ -964,27 +982,60 @@ def read_one(fact: PersonFact, *, actor: Actor, grant: PersonGrant | None, purpo
 # --- discovery (Appendix C) ------------------------------------------------------
 
 
+#: What this instance claims, from the self-audit in docs/architecture/
+#: hcp-conformance.md. Not Interop while any Interop MUST is a known gap.
+CONFORMANCE_LEVEL = "HCP-v1-Core"
+KNOWN_GAPS = [
+    "4.1.4/4.1.6: canopy's own agents (first-party, non-OAuth channel) get a persistent "
+    "grant presumed by the canopy control plane, not created by a separate affirmative act "
+    "of the person (owner policy 2026-10-08); OAuth clients of the HCP service do not",
+    "2.1.1: Tier 1 entries are not validated against the published JSON Schema, which "
+    "Appendix A says will be published at https://hcp.me/schemas/v1 and is not yet",
+]
+
+
 def discovery(base_url: str) -> dict:
+    from . import hcp_oauth
+
     return {
         "hcp_version": HCP_VERSION,
         "issuer": base_url,
+        "authorization_endpoint": f"{base_url}/oauth/authorize",
+        "token_endpoint": f"{base_url}/oauth/token",
+        "revocation_endpoint": f"{base_url}/oauth/revoke",
         "preferences_endpoint": f"{base_url}/v1/preferences",
         "grants_endpoint": f"{base_url}/v1/grants",
         "audit_endpoint": f"{base_url}/v1/audit",
         "export_endpoint": f"{base_url}/v1/export",
+        "mcp_manifest_endpoint": f"{base_url}/.well-known/mcp-manifest",
         "mcp_endpoint": base_url.rsplit("/api/", 1)[0] + "/api/mcp/",
         "supported_categories": list(HELD_CATEGORIES),
         "supported_transports": ["mcp", "rest"],
-        "conformance_level": "HCP-v1-Core",
-        "authorization_profile": "first-party",
+        "conformance_level": CONFORMANCE_LEVEL,
+        "authorization_profile": "oauth2",
         "envelope_form": "grouped",
         "minimization_method": MINIMIZATION_METHOD,
         "audit_durability": {"default": "synchronous"},
         "pagination": {"audit": "cursor"},
         "problem_type_base": PROBLEM_BASE,
+        "rate_limits": {"documentation_url": f"{base_url}/.well-known/hcp-configuration",
+                        "oauth_clients": f"{hcp_oauth.RATE_LIMIT_PER_MINUTE} requests a minute per "
+                                         "client on /v1/; 429 with Retry-After",
+                        "never_limited": "DELETE /v1/grants/{grantId}"},
         "canopy": {
-            "grants": "presumed by the canopy control plane per client (agent, channel, host); "
-                      "revocable by the person; never re-presumed after revocation",
+            "service": {
+                "audience": hcp_oauth.audience(),
+                "client_registration": "closed: clients are registered by canopy's administrators",
+                "who_may_authorize": ("Dimagi accounts only" if hcp_oauth.audience() == "internal"
+                                      else "anyone who can sign in to canopy"),
+                "oauth_metadata": f"{base_url}/.well-known/oauth-authorization-server",
+                "transports_for_oauth_clients": ["rest"],
+            },
+            "conformance": {"target": "HCP-v1-Interop", "known_gaps": KNOWN_GAPS},
+            "grants": "OAuth clients: authorization code + PKCE S256, temporary by default, "
+                      "persistence a separate act. canopy's own agents: presumed by the canopy "
+                      "control plane per client (agent, channel, host); revocable by the person; "
+                      "never re-presumed after revocation",
             "tier2": "not supported",
             "custom_categories": f"{PersonFact.CUSTOM_PREFIX}<name>",
         },
