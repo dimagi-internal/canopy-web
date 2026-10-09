@@ -375,51 +375,44 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
     person = initiator_person(turn)
     if person is None:
         return None
-    if not hcp.agents_may_access(person):
-        # Agent memory is off for them: nothing served, nothing to record, no grant
-        # presumed, and no read logged (nothing was read). `grant: None` also makes
-        # an older canopy hook say "do not look it up another way".
-        return {
-            "id": person.pk,
-            "display_name": display_name(person),
-            "email": email_of(person),
-            "workspace": workspace_slug,
-            "hcp": "off",
-            "facts": [],
-            "grant": None,
-            "recall": None,
-            "projects": envelope_projects(person, workspace_slug),
-            "see_all": SEE_ALL,
-        }
+    record, use = hcp.may_record(person), hcp.may_use(person)
+    switches = {"record": record, "use": use}
     grant, facts = None, []
-    if workspace_slug and agent is not None:
+    if workspace_slug and agent is not None and (record or use):
+        # A grant is presumed only for a person who allows SOMETHING; neither on =
+        # nothing served, nothing to record, and `grant: None` (which an older canopy
+        # hook already reads as "do not look it up another way").
         channel, host = hcp.client_of_turn(turn)
         grant = hcp.grant_for(person, agent=agent, workspace_slug=workspace_slug,
                               channel=channel, host=host)
-        if grant is not None:
+        if grant is not None and use:
             readable = hcp.categories_for(grant, "read")
             if readable:
                 facts, _, _ = hcp.search(person, workspace_slug=workspace_slug,
                                          query=turn.prompt or "", categories=readable,
                                          purpose=ENVELOPE_PURPOSE, max_entries=ENVELOPE_FACTS,
                                          grant=grant, actor=hcp.agent_actor(agent), turn=turn)
-    # "Did the brain have anything to say", recorded NOW, for the coverage
-    # metric (`apps/contacts/coverage.py`).
-    had_context = bool(facts)
-    log_access(person, via=PersonAccess.VIA_ENVELOPE, workspace_slug=workspace_slug,
-               reader_user=reader_user, reader_agent=agent, turn=turn, had_context=had_context)
+    if use:
+        # "Did the brain have anything to say", recorded NOW, for the coverage
+        # metric (`apps/contacts/coverage.py`). Only a read is logged: with `use`
+        # off nothing about them was read.
+        log_access(person, via=PersonAccess.VIA_ENVELOPE, workspace_slug=workspace_slug,
+                   reader_user=reader_user, reader_agent=agent, turn=turn, had_context=bool(facts))
+    can_read = grant is not None and use
+    can_write = grant is not None and record
     return {
         "id": person.pk,
         "display_name": display_name(person),
         "email": email_of(person),
-        # The workspace these facts are from, and where `canopy people remember
-        # --workspace <slug>` writes (contract addendum, canopy side).
+        # The workspace these facts are from, and where writes land.
         "workspace": workspace_slug,
-        # The person's agent-memory switch: "on" here; "off" above.
-        "hcp": "on",
+        # The person's own agent-memory switches (`Person.hcp_record` / `hcp_use`):
+        # record = agents may learn about them; use = agents may be told it.
+        "hcp": switches,
         "facts": [fact_dict(f) for f in facts],
-        # HCP: the grant this turn read under (None = the person revoked this
-        # client, so nothing about them is served), and how to recall more.
+        # HCP: the grant this turn acts under (None = the person allows nothing, or
+        # revoked this client), how to recall more (only with `use`), and how to
+        # record (only with `record`).
         "grant": ({"id": f"urn:uuid:{grant.grant_id}", "client": grant.client_name,
                    "scopes": list(grant.scopes or [])} if grant is not None else None),
         "recall": ({"tool": "hcp_searchPreferences", "turn": str(turn.pk),
@@ -427,7 +420,10 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
                     "hint": "Only the entries relevant to the message are above. To recall "
                             "more about this person, call hcp_searchPreferences with a query, "
                             "the categories, a purpose and turn=<this turn id>."}
-                   if grant is not None else None),
+                   if can_read else None),
+        "record": ({"tool": "hcp_addPreference", "turn": str(turn.pk),
+                    "categories": hcp.categories_for(grant, "write")}
+                   if can_write else None),
         # v1.1, additive: the projects (of this workspace's agents) they take
         # part in, most recently active first, at most 5. Not archived ones.
         "projects": envelope_projects(person, workspace_slug),

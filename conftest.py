@@ -51,16 +51,18 @@ def _no_live_dns(monkeypatch):
 
 @pytest.fixture()
 def agent_memory_on():
-    """Every Person created while this is active starts with agent memory ON
-    (`Person.hcp_enabled`; the real default is off). For suites that pin what the
-    people brain / HCP do for a person who has turned it on."""
+    """Every Person created while this is active starts with BOTH agent-memory
+    switches ON (`Person.hcp_record`, `Person.hcp_use`; the real default is off).
+    For suites that pin what the people brain / HCP do for a person who has
+    turned them on."""
     from django.db.models.signals import pre_save
 
     from apps.contacts.models import Person
 
     def _on(sender, instance, **kwargs):
         if instance._state.adding:
-            instance.hcp_enabled = True
+            instance.hcp_record = True
+            instance.hcp_use = True
 
     pre_save.connect(_on, sender=Person, dispatch_uid="test-agent-memory-on")
     yield

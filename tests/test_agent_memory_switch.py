@@ -1,11 +1,15 @@
-"""Agent memory is the PERSON's switch (`Person.hcp_enabled`, Jonathan 2026-10-09:
-"each person should be able to turn it on or off").
+"""Agent memory is the PERSON's own, as two independent switches (Jonathan,
+2026-10-09: "each person should be able to turn it on or off"):
 
-Off — the default — means no agent reads or writes the person: every HCP
-operation is `scope-denied` before a grant is presumed, the legacy fact write
-refuses an agent, and the envelope's `person` block carries nothing and says
-"off". The person keeps their own entries, export and audit log either way, and
-only they can flip it; every flip is on their audit log.
+* `Person.hcp_record` — "Agents may learn about me": agents may WRITE;
+* `Person.hcp_use` — "Agents may use what they've learned": agents may READ.
+
+Both default off; any combination is valid. A refused operation is `scope-denied`
+before a grant is presumed; the legacy fact write refuses an agent without
+`record`; the envelope's `person` block carries `hcp: {record, use}`, facts and
+`recall` only with `use`, and `record` only with `record`. The person keeps their
+own entries, export and audit log whatever the switches say, only they can flip
+them, and each flip is its own audit event.
 """
 from __future__ import annotations
 
@@ -68,8 +72,8 @@ def _json(c, method, path, body):
     return getattr(c, method)(path, data=json.dumps(body), content_type="application/json")
 
 
-def _set(user, enabled):
-    return _json(_as(user), "put", "/api/people/me/agent-memory/", {"enabled": enabled})
+def _set(user, **switches):
+    return _json(_as(user), "put", "/api/people/me/agent-memory/", switches)
 
 
 def _search(c, turn):
@@ -78,86 +82,116 @@ def _search(c, turn):
                   "purpose": "answer the question"})
 
 
-def _add(c, turn):
+def _add(c, turn, statement="Works on KC."):
     return _json(c, "post", f"/api/hcp/v1/preferences/add?turn={turn.pk}",
-                 {"category": "work_context", "preference": "Works on KC.",
+                 {"category": "work_context", "preference": statement,
                   "declarationType": "user-declared", "sourceContext": f"turn:{turn.pk}"})
 
 
-def test_off_is_the_default_and_every_agent_operation_is_scope_denied(w):
+def _seed(w, statement="KC metrics lead."):
+    return people.record_fact(person=w["person"], workspace=w["ws"], kind="role",
+                              statement=statement, basis="declared")
+
+
+def _denied(r, detail):
+    assert r.status_code == 403
+    assert r.json()["type"].endswith("/scope-denied")
+    assert detail in r.json()["detail"]
+
+
+def test_both_off_by_default_and_every_agent_operation_is_scope_denied(w):
     person, c = w["person"], _as(w["ace"].user)
-    assert person.hcp_enabled is False
-    people.record_fact(person=person, workspace=w["ws"], kind="role", statement="KC metrics lead.",
-                       basis="declared")
+    assert (person.hcp_record, person.hcp_use) == (False, False)
+    entry = _seed(w)
     turn = _turn(w["ace"], w["lili"], "t1")
-    for r in (_search(c, turn), _add(c, turn)):
-        assert r.status_code == 403
-        assert r.json()["type"].endswith("/scope-denied")
-        assert hcp.MEMORY_OFF in r.json()["detail"]
-    entry = person.facts.first()
-    r = c.get(f"/api/hcp/v1/preferences/{entry.entry_id}?turn={turn.pk}&purpose=x")
-    assert r.status_code == 403
+    _denied(_search(c, turn), hcp.USE_OFF)
+    _denied(_add(c, turn), hcp.RECORD_OFF)
+    _denied(c.get(f"/api/hcp/v1/preferences/{entry.entry_id}?turn={turn.pk}&purpose=x"),
+            hcp.USE_OFF)
     assert not PersonGrant.objects.filter(person=person).exists()     # nothing presumed
+    block = caller_context.build(turn)["person"]
+    assert block["hcp"] == {"record": False, "use": False}
+    assert block["facts"] == [] and block["grant"] is None
+    assert block["recall"] is None and block["record"] is None
+    assert not PersonAccess.objects.filter(person=person).exists()    # nothing was read
 
 
-def test_the_legacy_fact_write_refuses_an_agent_for_an_off_person(w):
-    r = _json(_as(w["ace"].user), "post", f"/api/people/{w['person'].pk}/facts/",
-              {"workspace": "connect", "kind": "role", "statement": "Works on KC.",
-               "basis": "declared"})
-    assert r.status_code == 403
-    assert not w["person"].facts.exists()
-
-
-def test_the_envelope_says_off_and_serves_nothing(w):
-    people.record_fact(person=w["person"], workspace=w["ws"], kind="role",
-                       statement="KC metrics lead.", basis="declared")
-    env = caller_context.build(_turn(w["ace"], w["lili"], "t1"))
-    block = env["person"]
-    assert block["hcp"] == "off"
-    assert block["facts"] == [] and block["grant"] is None and block["recall"] is None
-    assert not PersonGrant.objects.filter(person=w["person"]).exists()
-    assert not PersonAccess.objects.filter(person=w["person"]).exists()   # nothing was read
-
-
-def test_the_person_turns_it_on_and_off_and_each_flip_is_audited(w):
-    lili, person, c = w["lili"], w["person"], _as(w["ace"].user)
-    r = _set(lili, True)
-    assert r.status_code == 200 and r.json()["agent_memory"] is True
-    turn = _turn(w["ace"], lili, "t1")
-    assert caller_context.build(turn)["person"]["hcp"] == "on"
+def test_record_only_writes_but_never_reads(w):
+    _set(w["lili"], record=True)
+    _seed(w)
+    c, turn = _as(w["ace"].user), _turn(w["ace"], w["lili"], "t1")
     assert _add(c, turn).status_code == 201
+    _denied(_search(c, turn), hcp.USE_OFF)
+    block = caller_context.build(turn)["person"]
+    assert block["hcp"] == {"record": True, "use": False}
+    assert block["facts"] == [] and block["recall"] is None
+    assert block["record"]["tool"] == "hcp_addPreference" and block["record"]["turn"] == str(turn.pk)
+    assert not PersonAccess.objects.filter(person=w["person"]).exists()
+
+
+def test_use_only_reads_but_never_writes(w):
+    _set(w["lili"], use=True)
+    _seed(w)
+    c, turn = _as(w["ace"].user), _turn(w["ace"], w["lili"], "t1")
     assert _search(c, turn).status_code == 200
+    _denied(_add(c, turn), hcp.RECORD_OFF)
+    block = caller_context.build(turn)["person"]
+    assert block["hcp"] == {"record": False, "use": True}
+    assert [f["statement"] for f in block["facts"]] == ["KC metrics lead."]
+    assert block["recall"] is not None and block["record"] is None
 
-    assert _set(lili, False).json()["agent_memory"] is False
-    assert _search(c, turn).status_code == 403
-    # Nothing was deleted, and it is all still the person's.
+
+def test_the_legacy_fact_write_needs_record(w):
+    turn = _turn(w["ace"], w["lili"], "t1")
+
+    def write():
+        return _json(_as(w["ace"].user), "post", f"/api/people/{w['person'].pk}/facts/",
+                     {"workspace": "connect", "kind": "role", "statement": "Works on KC.",
+                      "basis": "declared", "source_turn_id": str(turn.pk)})
+    _set(w["lili"], use=True)
+    assert write().status_code == 403
+    _set(w["lili"], record=True)
+    assert write().status_code == 201
+
+
+def test_each_flip_is_its_own_audit_event_and_off_deletes_nothing(w):
+    lili, person = w["lili"], w["person"]
+    r = _set(lili, record=True, use=True)
+    assert r.status_code == 200 and (r.json()["record"], r.json()["use"]) == (True, True)
+    assert _add(_as(w["ace"].user), _turn(w["ace"], lili, "t1")).status_code == 201
+    assert _set(lili, use=False).json() | {"record_changed_at": None, "use_changed_at": None} == {
+        "record": True, "use": False, "record_changed_at": None, "use_changed_at": None}
+    _set(lili, record=False)
     me = _as(lili).get("/api/people/me/").json()
-    assert me["agent_memory"] is False and len(me["facts"]) == 1
+    assert (me["agent_memory"]["record"], me["agent_memory"]["use"]) == (False, False)
+    assert len(me["facts"]) == 1                                         # nothing deleted
     assert _as(lili).get("/api/hcp/v1/export").status_code == 200
-    kinds = list(PersonAuditEvent.objects.filter(person=person, event_type__startswith="agentAccess.")
+    kinds = list(PersonAuditEvent.objects.filter(person=person, event_type__startswith="agent")
                  .order_by("pk").values_list("event_type", flat=True))
-    assert kinds == ["agentAccess.enabled", "agentAccess.disabled"]
-    assert _set(lili, False).status_code == 200                          # a no-op writes nothing
-    assert PersonAuditEvent.objects.filter(event_type__startswith="agentAccess.").count() == 2
+    assert kinds == ["agentRecord.enabled", "agentUse.enabled", "agentUse.disabled",
+                     "agentRecord.disabled"]
+    _set(lili, record=False, use=False)                                   # a no-op writes nothing
+    assert PersonAuditEvent.objects.filter(event_type__startswith="agent").count() == 4
 
 
-def test_only_the_person_can_flip_it(w):
-    assert _set(w["ace"].user, True).status_code == 403                  # an agent's login
+def test_only_the_person_can_flip_them(w):
+    assert _set(w["ace"].user, record=True, use=True).status_code == 403   # an agent's login
     w["person"].refresh_from_db()
-    assert w["person"].hcp_enabled is False
+    assert (w["person"].hcp_record, w["person"].hcp_use) == (False, False)
 
 
-def test_coverage_counts_only_people_who_turned_it_on(w):
+def test_coverage_counts_only_people_who_let_agents_learn(w):
     for i in range(coverage.MIN_TURNS_FOR_FACTS):
         _turn(w["ace"], w["lili"], f"t{i}")
+    _set(w["lili"], use=True)
     row = coverage.workspace_coverage("connect")["agents"][0]
-    assert row["human_turns"] == 0 and row["healthy"] is True          # off: not a gap
-    _set(w["lili"], True)
+    assert row["human_turns"] == 0 and row["healthy"] is True          # nothing may be recorded
+    _set(w["lili"], record=True)
     row = coverage.workspace_coverage("connect")["agents"][0]
     assert row["human_turns"] == coverage.MIN_TURNS_FOR_FACTS and row["healthy"] is False
 
 
-def test_the_migration_turns_it_on_for_jonathan_only(w):
+def test_the_migration_turns_both_on_for_jonathan_only(w):
     jon = User.objects.create_user("jjackson", "jjackson@dimagi.com", "pw")
     EmailAddress.objects.create(user=jon, email="jjackson@dimagi.com", verified=True, primary=True)
     jon_person = contacts.person_for(user=jon)
@@ -166,6 +200,8 @@ def test_the_migration_turns_it_on_for_jonathan_only(w):
     mig.forwards(django_apps, None)                                        # idempotent
     jon_person.refresh_from_db()
     w["person"].refresh_from_db()
-    assert jon_person.hcp_enabled is True and w["person"].hcp_enabled is False
-    assert PersonAuditEvent.objects.filter(person=jon_person,
-                                           event_type="agentAccess.enabled").count() == 1
+    assert (jon_person.hcp_record, jon_person.hcp_use) == (True, True)
+    assert (w["person"].hcp_record, w["person"].hcp_use) == (False, False)
+    assert sorted(PersonAuditEvent.objects.filter(person=jon_person)
+                  .values_list("event_type", flat=True)) == ["agentRecord.enabled",
+                                                             "agentUse.enabled"]

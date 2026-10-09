@@ -6846,11 +6846,12 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Turn agent memory on or off for yourself
-         * @description Your own switch. On: agents you talk to are told what is relevant about
-         *     you and record what they learn. Off: no agent reads or records anything
-         *     about you; what is already held stays, yours to see, export and retract.
-         *     Only you can flip it — never an agent, an admin, or a session acting for you.
+         * Turn your agent-memory switches on or off
+         * @description Your own two switches, each independent. `record` (agents may learn about
+         *     me): agents record what they learn. `use` (agents may use what they've
+         *     learned): agents are told what is relevant about you. Off deletes nothing:
+         *     what is held stays, yours to see, export and retract. Only you can flip
+         *     them — never an agent, an admin, or a session acting for you.
          */
         readonly put: operations["set_my_agent_memory"];
         readonly post?: never;
@@ -17227,6 +17228,27 @@ export interface components {
             readonly blocked_reason?: string | null;
         };
         /**
+         * AgentMemoryOut
+         * @description Your two agent-memory switches; any combination is valid, and turning one
+         *     off deletes nothing.
+         */
+        readonly AgentMemoryOut: {
+            /**
+             * Record
+             * @description Agents may learn about me (write).
+             */
+            readonly record: boolean;
+            /**
+             * Use
+             * @description Agents may use what they've learned (read).
+             */
+            readonly use: boolean;
+            /** Record Changed At */
+            readonly record_changed_at?: string | null;
+            /** Use Changed At */
+            readonly use_changed_at?: string | null;
+        };
+        /**
          * PersonAccessOut
          * @description One read of what canopy knows about you.
          */
@@ -17329,14 +17351,7 @@ export interface components {
              * @default
              */
             readonly email: string;
-            /**
-             * Agent Memory
-             * @description Your switch: when on, agents you talk to are told what is relevant about you and record what they learn; when off, no agent reads or records anything about you (nothing is deleted).
-             * @default false
-             */
-            readonly agent_memory: boolean;
-            /** Agent Memory Changed At */
-            readonly agent_memory_changed_at?: string | null;
+            readonly agent_memory: components["schemas"]["AgentMemoryOut"];
             /** Facts */
             readonly facts?: readonly components["schemas"]["PersonFactDetailOut"][];
             /** Accesses */
@@ -17358,20 +17373,18 @@ export interface components {
              */
             readonly ext_id: string;
         };
-        /** AgentMemoryOut */
-        readonly AgentMemoryOut: {
-            /** Agent Memory */
-            readonly agent_memory: boolean;
-            /** Agent Memory Changed At */
-            readonly agent_memory_changed_at?: string | null;
-        };
         /** AgentMemoryIn */
         readonly AgentMemoryIn: {
             /**
-             * Enabled
-             * @description True lets agents remember things about you; false stops them.
+             * Record
+             * @description Agents may learn about me: true lets agents record what they learn about you, false stops them. Omit to leave it unchanged.
              */
-            readonly enabled: boolean;
+            readonly record?: boolean | null;
+            /**
+             * Use
+             * @description Agents may use what they've learned: true lets agents be told what has been learned about you, false stops them. Omit to leave it unchanged.
+             */
+            readonly use?: boolean | null;
         };
         /**
          * AgentCoverageOut

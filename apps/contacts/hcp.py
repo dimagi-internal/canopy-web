@@ -92,32 +92,60 @@ def malformed(detail: str) -> HcpError:
     return HcpError("malformed-request", detail)
 
 
-# --- the person's own switch: may agents use this instance at all? -------------------
+# --- the person's own switches: may agents learn about them, and use it? -------------
 
-#: What an agent is told when the person has agent memory off. `scope-denied`,
+#: What an agent is told when the switch an operation needs is off. `scope-denied`,
 #: the registered type for "outside what you are authorized for" (3.4.4).
-MEMORY_OFF = "this person has not turned on agent memory"
+RECORD_OFF = "this person has not let agents learn about them"
+USE_OFF = "this person has not let agents use what they have learned"
+#: Which switch an operation needs: "record" for a write, "use" for a read,
+#: "any" for one that serves no entry content (an agent listing its own grant).
+RECORD, USE, ANY = "record", "use", "any"
 
 
-def agents_may_access(person: Person) -> bool:
-    return bool(person.hcp_enabled)
+def may_record(person: Person) -> bool:
+    return bool(person.hcp_record)
 
 
-def set_agent_access(person: Person, enabled: bool, *, actor: Actor) -> bool:
-    """Turn agent memory on or off for `person`, as the person. Returns whether
-    anything changed; a no-op writes no audit event."""
-    enabled = bool(enabled)
-    if bool(person.hcp_enabled) == enabled:
-        return False
+def may_use(person: Person) -> bool:
+    return bool(person.hcp_use)
+
+
+def require(person: Person, need: str) -> None:
+    """Raise `scope-denied` unless the person's switch for `need` is on."""
+    if need == RECORD and not may_record(person):
+        raise denied(RECORD_OFF)
+    if need == USE and not may_use(person):
+        raise denied(USE_OFF)
+    if need == ANY and not (may_record(person) or may_use(person)):
+        raise denied(RECORD_OFF + ", nor use what they have learned")
+
+
+def set_agent_memory(person: Person, *, actor: Actor, record: bool | None = None,
+                     use: bool | None = None) -> list[str]:
+    """Change the person's switches, as the person. `None` leaves one alone.
+    Returns the audit event types written — one per switch that actually changed."""
+    now, fields, events = timezone.now(), [], []
+    for name, value, event in (("hcp_record", record, "agentRecord"), ("hcp_use", use, "agentUse")):
+        if value is None or bool(getattr(person, name)) == bool(value):
+            continue
+        setattr(person, name, bool(value))
+        setattr(person, f"{name}_changed_at", now)
+        fields += [name, f"{name}_changed_at"]
+        events.append(f"{event}.{'enabled' if value else 'disabled'}")
+    if not fields:
+        return []
+    details = {
+        "agentRecord.enabled": "agents may now record what they learn about you",
+        "agentRecord.disabled": "agents may no longer record anything about you; nothing was deleted",
+        "agentUse.enabled": "agents may now be told what has been learned about you",
+        "agentUse.disabled": "agents are no longer told anything learned about you; nothing was deleted",
+    }
     with transaction.atomic():
-        person.hcp_enabled = enabled
-        person.hcp_enabled_changed_at = timezone.now()
-        person.save(update_fields=["hcp_enabled", "hcp_enabled_changed_at"])
-        audit(person, "agentAccess.enabled" if enabled else "agentAccess.disabled", actor=actor,
-              detail=("agents may now read and record what they learn about you" if enabled
-                      else "agents may no longer read or record anything about you; "
-                           "nothing was deleted"))
-    return True
+        person.save(update_fields=fields)
+        for event in events:
+            audit(person, event, actor=actor, detail=details[event])
+    return events
 
 
 # --- zero data retention: nothing from a ZDR session is ever written ------------------

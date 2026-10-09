@@ -107,7 +107,10 @@ def _turn_agent(turn):
     return None
 
 
-def _principal(request: HttpRequest, turn_id: str | None) -> Principal:
+def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -> Principal:
+    """`need` is the person's switch an AGENT must find on: `hcp.USE` for a read,
+    `hcp.RECORD` for a write (`Person.hcp_use` / `hcp_record`). The person
+    themself is never gated by it."""
     from apps.harness.models import Turn
 
     user = request.user
@@ -145,10 +148,9 @@ def _principal(request: HttpRequest, turn_id: str | None) -> Principal:
     person = people.initiator_person(turn)
     if person is None:
         raise hcp.denied("no person started that turn")
-    if not hcp.agents_may_access(person):
-        # The person's own switch, checked before any grant is presumed: an off
-        # person is not served, and no grant is issued for them.
-        raise hcp.denied(hcp.MEMORY_OFF)
+    # The person's own switches, checked before any grant is presumed: a person who
+    # has not allowed this kind of operation is not served, and no grant is issued.
+    hcp.require(person, need)
     channel, host = hcp.client_of_turn(turn)
     grant = hcp.grant_for(person, agent=serving, workspace_slug=serving.workspace_id,
                           channel=channel, host=host)
@@ -307,7 +309,7 @@ def hcp_search_preferences(request: HttpRequest, payload: HcpSearchIn, turn: str
     serving (`turn`) and gets only that turn's person, under its grant; at most
     `maxEntries` (≤ 20), ordered by relevance, never padded; provenance source
     and capturedBy are redacted. Every call is on the person's audit log."""
-    p = _principal(request, turn)
+    p = _principal(request, turn, hcp.USE)
     if payload.responseDetail not in ("full", "minimal"):
         raise hcp.malformed('responseDetail is "full" or "minimal"')
     hits, searched, retrieval = [], [], None
@@ -334,7 +336,7 @@ def hcp_add_preference(request: HttpRequest, payload: HcpAddIn, turn: str | None
     started `turn`, in a category your grant may write. `model-inferred` needs
     a `confidence`; an inference that contradicts something the person declared
     on the same dimension is quarantined until they resolve it."""
-    p = _principal(request, turn)
+    p = _principal(request, turn, hcp.RECORD)
     body = payload.model_dump()
 
     def run():
@@ -362,7 +364,7 @@ def hcp_create_entry(request: HttpRequest, payload: HcpEntryIn, turn: str | None
                      workspace: str | None = None):
     """POST /v1/preferences: an HCPEntry (grouped or flat form) with the
     server-assigned fields omitted. Tier 1 only; `issuer-attested` allowed here."""
-    p = _principal(request, turn)
+    p = _principal(request, turn, hcp.RECORD)
     if payload.credentialType != "NLPreference":
         raise hcp.malformed("this instance holds Tier 1 (NLPreference) entries only")
     claim, record = payload.claim or {}, payload.record or {}
@@ -405,7 +407,7 @@ def hcp_get_preference(request: HttpRequest, entry_id: str, purpose: str = "",
                        version: int | None = None, turn: str | None = None):
     """GET /v1/preferences/{entryId} (3.3.6). `purpose` is required and logged.
     `version` returns an earlier version. 403 for a missing entry too."""
-    p = _principal(request, turn)
+    p = _principal(request, turn, hcp.USE)
     fact = _entry(p, entry_id, "read")
     if version is not None:
         if not p.actor.is_person:
@@ -426,7 +428,7 @@ def hcp_update_preference(request: HttpRequest, entry_id: str, payload: HcpUpdat
     """Update an existing entry (HCP 3.2.3): a new version, same id, version + 1.
     When the PERSON updates a quarantined inference they accept it — it becomes
     theirs and the entry it contradicted is deprecated."""
-    p = _principal(request, turn)
+    p = _principal(request, turn, hcp.RECORD)
 
     def run():
         fact = _entry(p, entry_id, "write")
@@ -444,7 +446,7 @@ def hcp_delete_preference(request: HttpRequest, entry_id: str, reason: str = "",
                           hardDelete: bool = False, turn: str | None = None):
     """Mark an entry deleted (HCP 3.2.4). `hardDelete=true` — the person only —
     removes every version permanently (GDPR/CCPA)."""
-    p = _principal(request, turn)
+    p = _principal(request, turn, hcp.RECORD)
     fact = _entry(p, entry_id, "write")
     hcp.delete_entry(fact, actor=p.actor, reason=reason, hard=hardDelete, by_user=request.user)
     return _ok({"entryId": hcp.entry_urn(fact.entry_id), "status": "deleted",
@@ -528,7 +530,7 @@ def hcp_list_audit(request: HttpRequest, cursor: str | None = None, limit: int =
 def hcp_list_grants(request: HttpRequest, status: str = "active", turn: str | None = None):
     """The person: every grant (`status` = active | revoked | expired | all).
     An agent: only the grant it is reading under (4.1.5)."""
-    p = _principal(request, turn)
+    p = _principal(request, turn, hcp.ANY)
     if not p.actor.is_person:
         return _ok({"grants": [hcp.grant_dict(p.grant)]})
     qs = PersonGrant.objects.filter(person=p.person).select_related("agent").order_by("-issued_at")
