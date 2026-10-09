@@ -107,6 +107,15 @@ class Person(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="person",
     )
+    #: Agent memory, the PERSON's own switch (Jonathan, 2026-10-09: "each person
+    #: should be able to turn it on or off"). Off — the default — means no agent
+    #: reads or writes this person through HCP (`hcp_api._principal`, the legacy
+    #: fact write, the envelope's `person` block). The person keeps full access to
+    #: their own entries, export and audit log either way, and turning it off
+    #: deletes nothing. Only the person flips it (`PUT /api/people/me/agent-memory/`);
+    #: every flip is on their audit log.
+    hcp_enabled = models.BooleanField(default=False)
+    hcp_enabled_changed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -732,6 +741,9 @@ class PersonAuditEvent(models.Model):
         "preference.created", "preference.read", "preference.updated", "preference.deleted",
         "preference.hardDeleted", "preference.exported", "grant.issued", "grant.revoked",
         "grant.expired", "conflict.detected", "conflict.resolved", "revocation.notified",
+        # canopy's own, beyond the spec's required set (4.3.1 lists what MUST be
+        # logged, not all that may be): the person turned agent memory on / off.
+        "agentAccess.enabled", "agentAccess.disabled",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 

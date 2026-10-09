@@ -33,6 +33,13 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def _agent_memory_on(agent_memory_on):
+    # These tests pin what canopy does for a person with agent memory ON; the
+    # off state (the default) is pinned in tests/test_agent_memory_switch.py.
+    yield
+
+
 # --- fixtures -----------------------------------------------------------------------
 
 

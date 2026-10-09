@@ -30,6 +30,8 @@ from . import hcp, people
 from . import services as contact_services
 from .models import Person, PersonAccess, PersonFact
 from .people_schemas import (
+    AgentMemoryIn,
+    AgentMemoryOut,
     PeopleCoverageOut,
     PersonConversationsOut,
     PersonFactCreatedOut,
@@ -109,7 +111,31 @@ def people_me(request: HttpRequest) -> dict:
         for a in PersonAccess.objects.filter(person=person)
         .select_related("reader_agent", "reader_user").order_by("-created_at", "-pk")[:ME_ACCESSES]
     ]
-    return {**_ref(person), "facts": facts, "accesses": accesses}
+    return {**_ref(person), **_memory(person), "facts": facts, "accesses": accesses}
+
+
+def _memory(person: Person) -> dict:
+    return {"agent_memory": bool(person.hcp_enabled),
+            "agent_memory_changed_at": _iso(person.hcp_enabled_changed_at)}
+
+
+@router.put("/me/agent-memory/", response=AgentMemoryOut,
+            summary="Turn agent memory on or off for yourself")
+def set_my_agent_memory(request: HttpRequest, payload: AgentMemoryIn) -> dict:
+    """Your own switch. On: agents you talk to are told what is relevant about
+    you and record what they learn. Off: no agent reads or records anything
+    about you; what is already held stays, yours to see, export and retract.
+    Only you can flip it — never an agent, an admin, or a session acting for you."""
+    user = request.user
+    if (people.agent_of_login(user) is not None
+            or getattr(request, "auth_method", "") == "caller_token"
+            or not people.is_human_account(user)):
+        raise ProblemError(403, "Only the person may change this", type_=TYPE_FORBIDDEN)
+    person = contact_services.person_for(user=user)
+    if person is None:
+        raise _not_found()
+    hcp.set_agent_access(person, payload.enabled, actor=hcp.user_actor(user))
+    return _memory(person)
 
 
 @router.get("/coverage/", response=PeopleCoverageOut,
@@ -233,6 +259,9 @@ def add_person_fact(request: HttpRequest, person_id: int, payload: PersonFactIn)
         project = AgentProject.objects.select_related("agent").filter(pk=payload.project_id).first()
         if project is None or project.agent.workspace_id != ws.pk:
             raise _bad("project_id is not a project in that workspace")
+    if people.agent_of_login(request.user) is not None and not hcp.agents_may_access(person):
+        raise ProblemError(403, "Agent memory is off for this person", type_=TYPE_FORBIDDEN,
+                           detail=hcp.MEMORY_OFF)
     supersedes = None
     if payload.supersedes_id is not None:
         supersedes = PersonFact.objects.filter(pk=payload.supersedes_id).first()

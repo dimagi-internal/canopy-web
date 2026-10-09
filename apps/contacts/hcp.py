@@ -92,6 +92,34 @@ def malformed(detail: str) -> HcpError:
     return HcpError("malformed-request", detail)
 
 
+# --- the person's own switch: may agents use this instance at all? -------------------
+
+#: What an agent is told when the person has agent memory off. `scope-denied`,
+#: the registered type for "outside what you are authorized for" (3.4.4).
+MEMORY_OFF = "this person has not turned on agent memory"
+
+
+def agents_may_access(person: Person) -> bool:
+    return bool(person.hcp_enabled)
+
+
+def set_agent_access(person: Person, enabled: bool, *, actor: Actor) -> bool:
+    """Turn agent memory on or off for `person`, as the person. Returns whether
+    anything changed; a no-op writes no audit event."""
+    enabled = bool(enabled)
+    if bool(person.hcp_enabled) == enabled:
+        return False
+    with transaction.atomic():
+        person.hcp_enabled = enabled
+        person.hcp_enabled_changed_at = timezone.now()
+        person.save(update_fields=["hcp_enabled", "hcp_enabled_changed_at"])
+        audit(person, "agentAccess.enabled" if enabled else "agentAccess.disabled", actor=actor,
+              detail=("agents may now read and record what they learn about you" if enabled
+                      else "agents may no longer read or record anything about you; "
+                           "nothing was deleted"))
+    return True
+
+
 # --- zero data retention: nothing from a ZDR session is ever written ------------------
 #
 # Owner rule (Jonathan, 2026-10-08): "if we are talking to a zdr runner, nothing should

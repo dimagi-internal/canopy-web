@@ -375,6 +375,22 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
     person = initiator_person(turn)
     if person is None:
         return None
+    if not hcp.agents_may_access(person):
+        # Agent memory is off for them: nothing served, nothing to record, no grant
+        # presumed, and no read logged (nothing was read). `grant: None` also makes
+        # an older canopy hook say "do not look it up another way".
+        return {
+            "id": person.pk,
+            "display_name": display_name(person),
+            "email": email_of(person),
+            "workspace": workspace_slug,
+            "hcp": "off",
+            "facts": [],
+            "grant": None,
+            "recall": None,
+            "projects": envelope_projects(person, workspace_slug),
+            "see_all": SEE_ALL,
+        }
     grant, facts = None, []
     if workspace_slug and agent is not None:
         channel, host = hcp.client_of_turn(turn)
@@ -399,6 +415,8 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         # The workspace these facts are from, and where `canopy people remember
         # --workspace <slug>` writes (contract addendum, canopy side).
         "workspace": workspace_slug,
+        # The person's agent-memory switch: "on" here; "off" above.
+        "hcp": "on",
         "facts": [fact_dict(f) for f in facts],
         # HCP: the grant this turn read under (None = the person revoked this
         # client, so nothing about them is served), and how to recall more.

@@ -86,6 +86,8 @@ EXCLUDED: dict[str, str] = {
     "hcp_listGrants": "grant management is the person's, not an MCP tool (HCP Appendix B)",
     "hcp_revokeGrant": "grant management is the person's, not an MCP tool (HCP Appendix B)",
     "hcp_export": "the person's own export — not accessible to agents (HCP 3.3.5)",
+    "set_my_agent_memory": "the person's own agent-memory switch — an agent must never be able "
+                           "to turn it, and an MCP client acting with the person's token is one",
     "contact_token": _HOST,
     "public_stats": _ANON,
     "submit_beta_request": _ANON,

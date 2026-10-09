@@ -44,6 +44,13 @@ from tests.test_people_brain import (
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def _agent_memory_on(agent_memory_on):
+    # These tests pin what canopy does for a person with agent memory ON; the
+    # off state (the default) is pinned in tests/test_agent_memory_switch.py.
+    yield
+
+
 @pytest.fixture()
 def world():
     """The same world as `test_people_brain.py`: ace and hal in `connect`, eva in
@@ -54,6 +61,11 @@ def world():
     other = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=other, role=WorkspaceMembership.OWNER)
     lili = _member(ws, "lili", first_name="Lilianna", last_name="Bagnoli")
+    # Their Persons exist up front (with agent memory on — the autouse fixture):
+    # coverage counts only people who have turned it on, and a Person canopy has
+    # not met yet has not.
+    contacts.person_for(user=owner)
+    contacts.person_for(user=lili)
     return {"owner": owner, "ws": ws, "other": other, "lili": lili,
             "ace": _agent(ws, "ace", owner), "hal": _agent(ws, "hal", owner),
             "eva": _agent(other, "eva", owner)}

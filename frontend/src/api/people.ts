@@ -11,6 +11,18 @@ export async function getMyPerson(): Promise<PersonMe> {
   return data as PersonMe
 }
 
+/** Your own agent-memory switch: on lets agents read and record what they learn
+ *  about you; off stops every agent (nothing is deleted). Only you can flip it. */
+export async function setMyAgentMemory(
+  enabled: boolean,
+): Promise<{ agent_memory: boolean; agent_memory_changed_at?: string | null }> {
+  const { data, error } = await apiV2.PUT('/api/people/me/agent-memory/', {
+    body: { enabled },
+  })
+  if (error) throw new Error('Failed to change agent memory')
+  return data as { agent_memory: boolean; agent_memory_changed_at?: string | null }
+}
+
 export async function retractFact(personId: number, factId: number): Promise<void> {
   const { error } = await apiV2.POST('/api/people/{person_id}/facts/{fact_id}/retract/', {
     params: { path: { person_id: personId, fact_id: factId } },

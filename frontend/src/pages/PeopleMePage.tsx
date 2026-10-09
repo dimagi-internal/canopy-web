@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { getMyPerson, listMyAudit, listMyGrants, retractFact, revokeMyGrant } from '../api/people'
+import {
+  getMyPerson,
+  listMyAudit,
+  listMyGrants,
+  retractFact,
+  revokeMyGrant,
+  setMyAgentMemory,
+} from '../api/people'
 import type { HcpAuditEvent, HcpGrant, PersonFactDetail, PersonMe } from '../api/people'
 
 /** "What agents know about me" — every live fact canopy holds about you, by
@@ -15,6 +22,7 @@ export function PeopleMePage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const [busyGrant, setBusyGrant] = useState<string | null>(null)
+  const [busyMemory, setBusyMemory] = useState(false)
 
   const load = useCallback(() => {
     getMyPerson()
@@ -57,6 +65,27 @@ export function PeopleMePage() {
 
   useEffect(load, [load])
 
+  const onToggleMemory = async () => {
+    if (!me) return
+    const next = !me.agent_memory
+    if (
+      !next &&
+      !confirm(
+        'Turn agent memory off? Agents will stop being told anything about you and stop recording what they learn. Nothing already recorded is deleted.',
+      )
+    )
+      return
+    setBusyMemory(true)
+    try {
+      await setMyAgentMemory(next)
+      load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusyMemory(false)
+    }
+  }
+
   const onRetract = async (fact: PersonFactDetail) => {
     if (!me) return
     if (!confirm(`Retract "${fact.statement}"? Agents will stop being told it.`)) return
@@ -91,6 +120,36 @@ export function PeopleMePage() {
           are not told it until you correct or retract it.
         </p>
       </div>
+
+      <section
+        aria-label="Agent memory"
+        className="flex flex-col gap-3 rounded-lg border border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-foreground">
+            Let agents remember things about me
+          </div>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {me.agent_memory
+              ? 'On: agents you talk to are told what is relevant about you, and record what they learn.'
+              : 'Off: no agent is told anything about you or records anything. Nothing below is deleted.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={me.agent_memory ?? false}
+          onClick={onToggleMemory}
+          disabled={busyMemory}
+          className={`shrink-0 rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 ${
+            me.agent_memory
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+              : 'border border-border text-foreground hover:bg-muted'
+          }`}
+        >
+          {busyMemory ? 'Saving…' : me.agent_memory ? 'On' : 'Off'}
+        </button>
+      </section>
 
       {workspaces.length === 0 && (
         <p className="text-muted-foreground">Nothing yet — no agent has recorded anything about you.</p>

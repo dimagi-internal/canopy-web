@@ -10,7 +10,8 @@ What is counted, for each agent of the workspace, over the last `days`:
 
 * `human_turns` — turns WITH the agent (directly or in one of its chats) that a
   human started: a canopy user who is not an agent's login or a system account,
-  or a contact.
+  or a contact — and only humans who have agent memory ON (`Person.hcp_enabled`,
+  their own switch). Every other count below is over these turns.
 * `human_turns_with_context` — of those, how many were handed a NON-EMPTY
   `person` block (at least one fact), recorded at the moment the envelope was
   built (`PersonAccess.had_context`). Recorded rather than re-derived, because
@@ -51,6 +52,15 @@ def human_turn_q(prefix: str = "") -> Q:
     )
 
 
+def memory_on_q(prefix: str = "") -> Q:
+    """Turns started by a person who has agent memory ON (`Person.hcp_enabled`).
+    Someone who has it off is not a gap in coverage: nothing may be recorded."""
+    p = prefix
+    return (Q(**{f"{p}initiator_kind": "user", f"{p}initiator_user__person__hcp_enabled": True})
+            | Q(**{f"{p}initiator_kind": "contact",
+                   f"{p}initiator_contact__person__hcp_enabled": True}))
+
+
 def _with_agent(agent) -> Q:
     return Q(agent=agent) | Q(chat_session__agent=agent)
 
@@ -62,7 +72,7 @@ def agent_coverage(agent, *, since: dt.datetime, now: dt.datetime) -> dict:
 
     ws = agent.workspace_id
     human = (Turn.objects.filter(_with_agent(agent), created_at__gte=since)
-             .filter(human_turn_q()))
+             .filter(human_turn_q()).filter(memory_on_q()))
     had = PersonAccess.objects.filter(turn=OuterRef("pk"), via=PersonAccess.VIA_ENVELOPE,
                                       had_context=True)
     human_ids = list(human.values_list("pk", flat=True))
@@ -115,7 +125,8 @@ def workspace_coverage(workspace_slug: str, *, days: int = 7, agents=None, now=N
         "since": since.isoformat(),
         "generated_at": now.isoformat(),
         "rule": (f"healthy = with >= {MIN_TURNS_FOR_FACTS} human turns, >= 1 fact recorded "
-                 "in-session; the workspace is healthy when every agent is"),
+                 "in-session; the workspace is healthy when every agent is. Counts only people "
+                 "who have turned agent memory on"),
         "healthy": all(r["healthy"] for r in rows),
         "agents": rows,
     }

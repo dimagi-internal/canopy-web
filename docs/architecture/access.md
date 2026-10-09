@@ -298,6 +298,19 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   of the agent may call it but sees only turns the turn ACL already shows them.
   No other agent, and no plain member, can read them. A fact's `source_turn` is
   a link, readable only by whoever can already read the turn.
+* **The person's own switch decides whether agents get anything at all.**
+  `Person.hcp_enabled` ("Let agents remember things about me" at the top of
+  `/people/me/`, `PUT /api/people/me/agent-memory/`), OFF by default; on for
+  Jonathan from 2026-10-09 (migration `contacts/0017`). Off: every HCP operation
+  by an agent or a caller token is `scope-denied` before any grant is presumed
+  (`hcp_api._principal`), the legacy `POST /api/people/{id}/facts/` refuses an
+  agent's login, and the envelope's `person` block is `"hcp": "off"` with no facts,
+  no grant and no recall. Nothing is deleted, and the person's own access (page,
+  export, audit) is unchanged. Only the person flips it — never an agent's login,
+  a caller token, a system account or an admin — and it is off MCP. Each flip is an
+  `agentAccess.enabled` / `agentAccess.disabled` event on their HCP audit log
+  (canopy's own types, beyond the spec's required set). Coverage counts only
+  people who have it on.
 * **The subject sees everything.** `GET /api/people/me/` (the page
   `/people/me/`): every live fact in every workspace, and the last
   50 reads. Every read — the envelope's and the API's — is a `PersonAccess` row.

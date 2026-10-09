@@ -430,6 +430,9 @@ GATES: dict[str, tuple[str, ...]] = {
     # Every per-person route is ALSO gated on `people.known_in` — a person the
     # workspace does not deal with is 404, so ids and addresses confirm nothing.
     "people_me": ("self",),  # only ever the caller's own Person
+    # The person's agent-memory switch: their own Person only, and refused to an agent's
+    # login, a caller token and a system account — nobody may flip it for them.
+    "set_my_agent_memory": ("self",),
     # --- apps/contacts/hcp_api.py  (HCP v1 over the people brain; apps/contacts/hcp.py)
     # `self` = the person's own instance; `hcp-grant` = an agent, for the person
     # who started its turn, under that client's grant. A missing entry is 403.

@@ -145,6 +145,10 @@ def _principal(request: HttpRequest, turn_id: str | None) -> Principal:
     person = people.initiator_person(turn)
     if person is None:
         raise hcp.denied("no person started that turn")
+    if not hcp.agents_may_access(person):
+        # The person's own switch, checked before any grant is presumed: an off
+        # person is not served, and no grant is issued for them.
+        raise hcp.denied(hcp.MEMORY_OFF)
     channel, host = hcp.client_of_turn(turn)
     grant = hcp.grant_for(person, agent=serving, workspace_slug=serving.workspace_id,
                           channel=channel, host=host)

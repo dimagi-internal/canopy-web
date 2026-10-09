@@ -68,8 +68,23 @@ class PersonMeOut(PersonRefOut):
     """Everything canopy holds about the caller: live facts in every workspace,
     and the last 50 reads."""
 
+    agent_memory: bool = Field(
+        default=False,
+        description="Your switch: when on, agents you talk to are told what is relevant about you "
+                    "and record what they learn; when off, no agent reads or records anything "
+                    "about you (nothing is deleted).")
+    agent_memory_changed_at: str | None = None
     facts: list[PersonFactDetailOut] = Field(default_factory=list)
     accesses: list[PersonAccessOut] = Field(default_factory=list)
+
+
+class AgentMemoryIn(StrictModel):
+    enabled: bool = Field(description="True lets agents remember things about you; false stops them.")
+
+
+class AgentMemoryOut(StrictModel):
+    agent_memory: bool
+    agent_memory_changed_at: str | None = None
 
 
 class PersonFactIn(StrictModel):

@@ -6837,6 +6837,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/me/agent-memory/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Turn agent memory on or off for yourself
+         * @description Your own switch. On: agents you talk to are told what is relevant about
+         *     you and record what they learn. Off: no agent reads or records anything
+         *     about you; what is already held stays, yours to see, export and retract.
+         *     Only you can flip it — never an agent, an admin, or a session acting for you.
+         */
+        readonly put: operations["set_my_agent_memory"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/people/coverage/": {
         readonly parameters: {
             readonly query?: never;
@@ -17306,6 +17329,14 @@ export interface components {
              * @default
              */
             readonly email: string;
+            /**
+             * Agent Memory
+             * @description Your switch: when on, agents you talk to are told what is relevant about you and record what they learn; when off, no agent reads or records anything about you (nothing is deleted).
+             * @default false
+             */
+            readonly agent_memory: boolean;
+            /** Agent Memory Changed At */
+            readonly agent_memory_changed_at?: string | null;
             /** Facts */
             readonly facts?: readonly components["schemas"]["PersonFactDetailOut"][];
             /** Accesses */
@@ -17326,6 +17357,21 @@ export interface components {
              * @default
              */
             readonly ext_id: string;
+        };
+        /** AgentMemoryOut */
+        readonly AgentMemoryOut: {
+            /** Agent Memory */
+            readonly agent_memory: boolean;
+            /** Agent Memory Changed At */
+            readonly agent_memory_changed_at?: string | null;
+        };
+        /** AgentMemoryIn */
+        readonly AgentMemoryIn: {
+            /**
+             * Enabled
+             * @description True lets agents remember things about you; false stops them.
+             */
+            readonly enabled: boolean;
         };
         /**
          * AgentCoverageOut
@@ -27040,6 +27086,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PersonMeOut"];
+                };
+            };
+        };
+    };
+    readonly set_my_agent_memory: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentMemoryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentMemoryOut"];
                 };
             };
         };
