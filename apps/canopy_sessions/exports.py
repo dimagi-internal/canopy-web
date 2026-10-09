@@ -72,3 +72,50 @@ def _speaker(m: Message) -> str:
 
 def _day(when: dt.datetime) -> str:
     return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+#: The most a branch's seed carries into its first prompt. It is typed into the
+#: runner's composer (emdash `insertText`) or passed as `claude -p`, so it is kept
+#: to the conversation itself — what was asked and answered — and, past this,
+#: to its opening ask and its most recent part.
+BRANCH_SEED_CHARS = 30_000
+#: A tool call shrinks to its name and the start of its input; its output is dropped.
+BRANCH_TOOL_CHARS = 120
+
+
+def build_branch_seed(session: Session, *, max_chars: int = BRANCH_SEED_CHARS) -> tuple[str, int]:
+    """(the conversation so far, condensed, for a BRANCH of `session` to start from;
+    how many of its messages were left out).
+
+    Unlike `build_markdown` (a person's export, tool output shortened), a branch
+    seed is a prompt: tool results are dropped and tool calls cut to a line, and
+    a long conversation keeps its first ask and as much of its end as fits.
+    """
+    who = session.agent.slug if session.agent_id else "Agent"
+    blocks = [b for b in (_seed_line(m, who) for m in session.messages.order_by("turn_index")) if b]
+    if not blocks:
+        return "", 0
+    if sum(len(b) + 1 for b in blocks) <= max_chars:
+        return "\n".join(blocks), 0
+    head, tail, used = blocks[0], [], len(blocks[0])
+    for b in reversed(blocks[1:]):
+        if used + len(b) + 1 > max_chars:
+            break
+        tail.append(b)
+        used += len(b) + 1
+    omitted = len(blocks) - 1 - len(tail)
+    marker = f"_[… {omitted} earlier message(s) left out to fit …]_\n"
+    return "\n".join([head, marker, *reversed(tail)]), omitted
+
+
+def _seed_line(m: Message, agent: str) -> str:
+    text = (m.plaintext or "").strip()
+    if m.role == Message.USER and text:
+        return f"## {_speaker(m)}\n\n{text}\n"
+    if m.role == Message.ASSISTANT and text:
+        return f"## {agent}\n\n{text}\n"
+    if m.role == Message.TOOL_USE:
+        c = m.content or {}
+        args = json.dumps(c.get("input") or {}, ensure_ascii=False)
+        return f"→ `{c.get('name') or 'tool'}` {_cut(args, BRANCH_TOOL_CHARS)}"
+    return ""
