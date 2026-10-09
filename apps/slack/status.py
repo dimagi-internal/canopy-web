@@ -110,12 +110,13 @@ def _header(turn: Turn) -> str:
 
 
 def _confined_note(turn: Turn, agent: str) -> str:
-    """Why this reply is NOT going into the conversation above it.
+    """What this reply can and cannot do.
 
-    A confined turn runs in its own session on the runner (`<thread>#<capability>`,
-    a `cx-` session), apart from the one the thread's owner is in. In Slack it
-    looks exactly like typing into the thread, so without this line a colleague's
-    reply silently forked into a session the owner never saw (2026-10-01).
+    A confined turn runs in its own session, apart from any the thread's owner is
+    in. A reply that would have been confined in SOMEONE ELSE'S thread is moved to
+    a Slack thread of its own (`services._fork_confined`), so this line no longer
+    has to warn that it "does not reach the session above" — it only says why the
+    agent is answering questions and not acting.
     """
     if turn.initiator_user_id:
         u = turn.initiator_user
@@ -124,10 +125,9 @@ def _confined_note(turn: Turn, agent: str) -> str:
         c = turn.initiator_contact if turn.initiator_contact_id else None
         who = (getattr(c, "display_name", "") or getattr(c, "email", "") or "").strip()
     who = who or "This sender"
-    return (f":lock: *Separate session* — {who} isn't a member of this conversation in canopy, so "
-            f"{agent} answers this on its own in `{turn.capability}` mode (questions only, no "
-            "actions), and it does not reach the session above. To bring them in, add them to "
-            "the agent's canopy workspace and have them reply again.")
+    return (f":lock: *Questions only* — {who} isn't a member of this agent's conversation in "
+            f"canopy, so {agent} answers in `{turn.capability}` mode (no actions), in a session of "
+            "its own. To give them more, add them to the agent's canopy workspace.")
 
 
 def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:

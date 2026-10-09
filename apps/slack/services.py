@@ -526,12 +526,115 @@ def handle_message(inbound: Inbound) -> Outcome:
             + (f" — {ask}" if ask else "")
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
                                       title=title)
+    if not created and win is None and _confined_elsewhere(session, agent, principal, inbound):
+        return _fork_confined(installation, session, agent, principal, inbound, prompt, named=named)
     if created and win is None and inbound.thread_ts and not inbound.is_dm:
         # Mentioned partway into a thread: the agent starts with the thread so
         # far, not just the line that named it. Only on creation — from here on
         # every message in the thread reaches the session as it is posted.
         prompt = _with_thread(installation, principal, agent, inbound, prompt)
     return _send(session, created, agent, principal, prompt, inbound, named=named)
+
+
+#: Session metadata on a confined fork: the thread key and session it was split from.
+FORKED_FROM_KEY, FORKED_FROM_SESSION = "slack_forked_from", "slack_forked_session"
+
+
+def _owns(session: Session, principal: Principal) -> bool:
+    if principal.user is not None:
+        return session.created_by_id == principal.user.pk
+    return principal.contact is not None and session.contact_id == principal.contact.pk
+
+
+def _confined_elsewhere(session: Session, agent: Agent, principal: Principal, inbound: Inbound) -> bool:
+    """Would this message run confined in SOMEONE ELSE'S thread session?
+
+    Asked of an unsaved probe turn through THE rule (`access.decide_for_turn`),
+    so it cannot disagree with the capability the real turn would be stamped.
+    A confined turn in the owner's conversation reaches nothing of it — it runs
+    apart on the runner — yet it shared the owner's chat session, so it queued
+    behind the owner's turn and its answer landed in the owner's thread as if it
+    were part of it (2026-10-09, a colleague's correction on an ace thread).
+    """
+    if inbound.is_dm or not inbound.thread_ts or _owns(session, principal):
+        return False
+    from apps.agents import access
+
+    probe = Turn(chat_session=session, origin=Turn.ORIGIN_SLACK, origin_ref={},
+                 **principal.initiator(inbound.team_id).fields())
+    return access.decide_for_turn(probe, agent).access == access.CONFINED
+
+
+def _principal_name(principal: Principal, slack_user_id: str) -> str:
+    if principal.user is not None:
+        name = (principal.user.get_full_name() or principal.user.email or "").strip()
+    else:
+        c = principal.contact
+        name = (getattr(c, "display_name", "") or getattr(c, "email", "") or "").strip()
+    return name or f"<@{slack_user_id}>"
+
+
+def _link(url: str, label: str) -> str:
+    return f"<{url}|{label}>" if url else label
+
+
+def _fork_confined(installation: SlackInstallation, parent: Session, agent: Agent, principal: Principal,
+                   inbound: Inbound, prompt: str, *, named: bool) -> Outcome:
+    """Answer a confined reply in a Slack thread OF ITS OWN, and say so in the original.
+
+    The reply gets its own top-level message, its own thread and its own canopy
+    session, owned by the person who wrote it — so it runs at once instead of
+    queueing behind the owner's turn, its answers do not land in the owner's
+    thread, and its later replies continue it there. The original thread gets a
+    line linking to it, so the people in it know the message went somewhere.
+    One fork per (thread, person): writing in the original thread again
+    continues the same fork.
+    """
+    from dataclasses import replace
+
+    token = installation.bot_token
+    origin_key = (parent.metadata or {}).get(SLACK_THREAD_KEY, "")
+    who_name = _principal_name(principal, inbound.slack_user_id)
+    owner_q = ({"created_by": principal.user} if principal.user is not None
+               else {"contact": principal.contact})
+    fork = (Session.objects.filter(agent=agent, **owner_q, **{f"metadata__{FORKED_FROM_KEY}": origin_key})
+            .exclude(status=Session.ARCHIVED).order_by("-created_at").first())
+    asked_at = client.permalink(token, channel=inbound.channel_id, ts=inbound.ts)
+    created = fork is None
+    if created:
+        root_ts = client.post_message(token, channel=inbound.channel_id, text=(
+            f":lock: *{who_name}* asked `{agent.slug}` {_link(asked_at, 'in another thread')}. "
+            f"They aren't a member of that conversation in canopy, so `{agent.slug}` answers them "
+            "here, in a session of their own. Reply in this thread to continue."))
+        fork_inbound = replace(inbound, thread_ts=root_ts, follow=False, adopt_ts="", adopt_prefix="")
+        fork, _ = thread_session(agent=agent, principal=principal,
+                                 key=thread_key(inbound.team_id, inbound.channel_id, root_ts),
+                                 inbound=fork_inbound, title=prompt or "Slack thread")
+        fork.metadata = {**(fork.metadata or {}), FORKED_FROM_KEY: origin_key,
+                         FORKED_FROM_SESSION: str(parent.pk)}
+        fork.save(update_fields=["metadata", "updated_at"])
+        # It starts with the thread the person was reading — nothing they
+        # cannot already see in Slack, exactly as a mention partway in does.
+        prompt = _with_thread(installation, principal, agent, inbound, prompt)
+    else:
+        root_ts = str((fork.metadata or {}).get("slack_thread_ts") or "")
+        fork_inbound = replace(inbound, thread_ts=root_ts, follow=False, adopt_ts="", adopt_prefix="")
+    outcome = _send(fork, created, agent, principal, prompt, fork_inbound, named=named)
+    if outcome.status == SENT:
+        fork_url = client.permalink(token, channel=inbound.channel_id, ts=root_ts)
+        try:
+            client.post_message(token, channel=inbound.channel_id, thread_ts=inbound.thread_ts, text=(
+                f":twisted_rightwards_arrows: *{who_name}* isn't a member of this conversation in "
+                f"canopy, so `{agent.slug}` is answering them in "
+                f"{_link(fork_url, 'a separate thread')} (`{outcome.turn.capability or 'confined'}` "
+                "mode). Their message does not reach the session here — to bring them in, add them "
+                "to the agent's canopy workspace.") if created else (
+                f":twisted_rightwards_arrows: Sent to *{who_name}*'s "
+                f"{_link(fork_url, 'separate thread')} with `{agent.slug}`."))
+        except client.SlackApiError:
+            logger.exception("could not point the original Slack thread at its confined fork")
+        outcome.extra = {**outcome.extra, "forked_from": str(parent.pk)}
+    return outcome
 
 
 def _closed_thread_session(agent: Agent, key: str) -> Session | None:
