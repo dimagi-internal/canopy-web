@@ -499,7 +499,8 @@ def to_entry(fact: PersonFact, *, redact: bool) -> dict:
         "type": ["HCPEntry"],
         "credentialType": "NLPreference",
         "claim": {
-            "issuer": {"id": f"https://canopy.dimagi.com/w/{fact.workspace_id}", "type": "HCPSource"},
+            "issuer": {"id": (f"https://canopy.dimagi.com/w/{fact.workspace_id}" if fact.workspace_id
+                              else "https://canopy.dimagi.com/people/me"), "type": "HCPSource"},
             "issuanceDate": _iso(fact.created_at),
             "expirationDate": _iso(fact.expires_at),
             "subject": {"id": subject_id(fact.person), "relationship": fact.relationship or None,
@@ -520,7 +521,7 @@ def _metadata(fact: PersonFact) -> dict:
     """canopy's own bookkeeping, in `record.metadata` (2.2: never affects scope)."""
     meta = dict(fact.metadata or {})
     meta["canopy:kind"] = fact.kind
-    meta["canopy:workspace"] = fact.workspace_id
+    meta["canopy:workspace"] = fact.workspace_id      # None: a personal entry
     if fact.instance_ref:
         meta["canopy:instance"] = fact.instance_ref
     if fact.project_id:

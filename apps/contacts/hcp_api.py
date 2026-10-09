@@ -257,11 +257,16 @@ class HcpUpdateIn(_Body):
 
 
 def _workspace_for_write(p: Principal, explicit: str | None):
+    """Where a write lands. An agent writes in its own workspace. The person
+    writes a PERSONAL entry unless they name a workspace they belong to — so a
+    person with no workspace at all can still keep their own context."""
     from apps.workspaces import services as wsvc
     from apps.workspaces.models import Workspace
 
     slug = p.workspace_slug if not p.actor.is_person else (explicit or "").strip()
     if not slug:
+        if p.actor.is_person:
+            return None                                    # a personal entry
         raise hcp.malformed("say which workspace the entry belongs to: workspace=<slug>")
     if p.actor.is_person and not (p.person.user_id and wsvc.is_member(p.person.user, slug)):
         raise hcp.denied("not a workspace you are a member of")
@@ -271,12 +276,15 @@ def _workspace_for_write(p: Principal, explicit: str | None):
     return ws
 
 
-def _search_workspace(p: Principal, explicit: str | None) -> list[str]:
+def _search_workspace(p: Principal, explicit: str | None) -> list[str | None]:
+    """Where a search looks: an agent, its workspace; the person, the one they
+    name, else everywhere they have entries (None = their personal entries)."""
     if not p.actor.is_person:
         return [p.workspace_slug]
     if explicit:
         return [explicit.strip()]
-    return list(hcp.current_versions(p.person).values_list("workspace_id", flat=True).distinct())
+    return list(hcp.current_versions(p.person).order_by()
+                .values_list("workspace_id", flat=True).distinct())
 
 
 def _render(fact: PersonFact, p: Principal, detail: str = "full") -> dict:

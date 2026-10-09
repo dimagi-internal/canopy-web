@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
 import {
+  MY_CATEGORIES,
+  addMyEntry,
+  correctMyEntry,
+  exportMine,
   getMyPerson,
   listMyAudit,
   listMyGrants,
@@ -41,6 +45,9 @@ export function PeopleMePage() {
   const [busy, setBusy] = useState<number | null>(null)
   const [busyGrant, setBusyGrant] = useState<string | null>(null)
   const [busyMemory, setBusyMemory] = useState<string | null>(null)
+  const [newCategory, setNewCategory] = useState<string>(MY_CATEGORIES[0].value)
+  const [newText, setNewText] = useState('')
+  const [adding, setAdding] = useState(false)
 
   const load = useCallback(() => {
     getMyPerson()
@@ -129,12 +136,59 @@ export function PeopleMePage() {
     }
   }
 
+  const onCorrect = async (fact: PersonFactDetail) => {
+    if (!fact.entry_id) return
+    const text = prompt('Correct this. Agents will be told the corrected version.', fact.statement)
+    if (text === null || !text.trim() || text.trim() === fact.statement) return
+    setBusy(fact.id)
+    try {
+      await correctMyEntry(fact.entry_id, text.trim())
+      load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onAdd = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!newText.trim()) return
+    setAdding(true)
+    try {
+      await addMyEntry(newCategory, newText.trim())
+      setNewText('')
+      load()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  const onExport = async () => {
+    try {
+      const blob = await exportMine()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'what-canopy-knows-about-me.jsonld'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   if (error) return <div className="p-6 text-destructive">{error}</div>
   if (me === null) return <div className="p-6 text-muted-foreground">Loading…</div>
 
   const allFacts = me.facts ?? []
 
-  const workspaces = Array.from(new Set(allFacts.map((f) => f.workspace))).sort()
+  // A personal entry (no workspace) is grouped first, under "Personal".
+  const PERSONAL = ''
+  const keyOf = (f: PersonFactDetail) => f.workspace ?? PERSONAL
+  const workspaces = Array.from(new Set(allFacts.map(keyOf))).sort()
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 space-y-6">
@@ -204,16 +258,53 @@ export function PeopleMePage() {
         })}
       </section>
 
+      <form onSubmit={onAdd} aria-label="Add something about yourself" className="rounded-lg border border-border px-4 py-3">
+        <div className="text-sm font-semibold text-foreground">Add something about yourself</div>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          Saved as a personal entry: yours, in no workspace. Agents in your workspaces are not told it;
+          you, and any app you allow below, are.
+        </p>
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+          <select
+            aria-label="Category"
+            value={newCategory}
+            onChange={(e) => setNewCategory(e.target.value)}
+            className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+          >
+            {MY_CATEGORIES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label="What to remember"
+            value={newText}
+            onChange={(e) => setNewText(e.target.value)}
+            maxLength={500}
+            placeholder="One sentence, e.g. I prefer a short answer with links."
+            className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+          />
+          <button
+            type="submit"
+            disabled={adding || !newText.trim()}
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {adding ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </form>
+
       {workspaces.length === 0 && (
-        <p className="text-muted-foreground">Nothing yet — no agent has recorded anything about you.</p>
+        <p className="text-muted-foreground">Nothing yet — nothing has been recorded about you.</p>
       )}
 
       {workspaces.map((ws) => {
-        const facts = allFacts.filter((f) => f.workspace === ws)
+        const facts = allFacts.filter((f) => keyOf(f) === ws)
         return (
           <section key={ws} className="rounded-lg border border-border">
             <h2 className="border-b border-border px-4 py-2 text-sm font-semibold text-foreground">
-              {ws}
+              {ws === PERSONAL ? 'Personal — yours, in no workspace' : ws}
             </h2>
             {facts.length === 0 ? (
               <p className="px-4 py-3 text-sm text-muted-foreground">No facts.</p>
@@ -240,13 +331,24 @@ export function PeopleMePage() {
                         {f.created_at ? ` · ${new Date(f.created_at).toLocaleDateString()}` : ''}
                       </div>
                     </div>
-                    <button
-                      className="shrink-0 text-destructive hover:text-destructive/80 disabled:opacity-50"
-                      disabled={busy === f.id}
-                      onClick={() => onRetract(f)}
-                    >
-                      Retract
-                    </button>
+                    <div className="flex shrink-0 gap-3">
+                      {f.entry_id && (
+                        <button
+                          className="text-primary hover:underline disabled:opacity-50"
+                          disabled={busy === f.id}
+                          onClick={() => onCorrect(f)}
+                        >
+                          Correct
+                        </button>
+                      )}
+                      <button
+                        className="text-destructive hover:text-destructive/80 disabled:opacity-50"
+                        disabled={busy === f.id}
+                        onClick={() => onRetract(f)}
+                      >
+                        Retract
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -272,7 +374,7 @@ export function PeopleMePage() {
                   <div className="text-foreground">{g.client.name}</div>
                   <div className="mt-0.5 text-xs text-muted-foreground">
                     {g.status}
-                    {` · ${g.canopy.workspace}`}
+                    {g.canopy.workspace ? ` · ${g.canopy.workspace}` : ''}
                     {` · since ${new Date(g.issuedAt).toLocaleDateString()}`}
                     {g.expiresAt ? ` · until ${new Date(g.expiresAt).toLocaleString()}` : ''}
                     {` · ${Array.from(new Set(g.scopes.map((s) => s.split(':').slice(1, -1).join(':')))).join(', ')}`}
@@ -294,7 +396,12 @@ export function PeopleMePage() {
       </section>
 
       <section>
-        <h2 className="text-sm font-semibold text-foreground">Audit log</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-foreground">Audit log</h2>
+          <button className="text-sm text-primary hover:underline" onClick={onExport}>
+            Download everything (JSON-LD)
+          </button>
+        </div>
         <p className="mt-1 text-xs text-muted-foreground">
           Every read and change of what canopy holds about you, newest first. Only you can see it.
         </p>

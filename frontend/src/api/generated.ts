@@ -17366,8 +17366,11 @@ export interface components {
              * @default active
              */
             readonly status: string;
-            /** Workspace */
-            readonly workspace: string;
+            /**
+             * Workspace
+             * @description The workspace it was written in; null for a personal entry.
+             */
+            readonly workspace?: string | null;
             /**
              * Asserted By
              * @description The agent slug or the person's email that asserted it.

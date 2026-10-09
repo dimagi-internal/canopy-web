@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { useAuth } from '@/auth/AuthProvider'
 import {
@@ -147,6 +147,15 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
           </>
         )}
       </p>
+      {!alreadyAMember && (
+        <p className="mt-3 text-[13px] leading-relaxed text-foreground-secondary">
+          You don&apos;t need one to keep your own context: on{' '}
+          <Link to="/people/me" className="font-medium text-primary hover:underline">
+            What agents know about me
+          </Link>{' '}
+          you can write down how you like to work, see who may read it, and download it all.
+        </p>
+      )}
 
       {requestable.length > 0 ? (
         <div className="mt-8 space-y-3">
