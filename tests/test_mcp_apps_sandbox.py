@@ -111,8 +111,7 @@ def test_the_proxy_serves_with_an_opaque_sandbox_and_no_cookies(site, settings):
     assert d["sandbox"] == ["allow-scripts"]
     assert d["connect-src"] == ["https://labs.connect.test"]
     # canopy's own pages and every Connected site's (the embed nests four deep).
-    assert "https://canopy.test" in d["frame-ancestors"]
-    assert "https://labs.connect.test" in d["frame-ancestors"]
+    assert {"https://canopy.test", "https://labs.connect.test"} <= set(d["frame-ancestors"])
     assert "X-Frame-Options" not in r.headers
     assert r["Referrer-Policy"] == "no-referrer"
     body = r.content.decode()
