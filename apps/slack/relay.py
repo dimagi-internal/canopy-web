@@ -54,6 +54,37 @@ def to_mrkdwn(text: str) -> str:
     return "".join(out)
 
 
+#: One `markdown` block per post, under Slack's 12,000-character cap on all
+#: `markdown` blocks in a payload.
+MARKDOWN_POST_CHARS = 11_000
+#: Slack's refusals of a block it will not render; the reply then goes as text.
+BLOCK_REFUSALS = {"invalid_blocks", "invalid_blocks_format", "msg_too_long", "msg_blocks_too_long"}
+
+
+def post_reply(token: str, *, channel: str, thread_ts: str, text: str, persona: dict | None) -> str:
+    """Post an agent's Markdown so Slack renders it as Markdown. Returns the last ts.
+
+    A `markdown` block renders standard Markdown — tables, headings, nested
+    lists — which `mrkdwn` cannot: a table arrived as rows of pipes (2026-10-09).
+    `text` still carries the `mrkdwn` form, which is what notifications and
+    screen readers show. A block Slack refuses goes out the old way instead, so a
+    rendering choice never costs the reply.
+    """
+    ts = ""
+    for chunk in split(text, MARKDOWN_POST_CHARS):
+        try:
+            ts = client.post_message(token, channel=channel, text=to_mrkdwn(chunk), thread_ts=thread_ts,
+                                     blocks=[{"type": "markdown", "text": chunk}], persona=persona)
+        except client.SlackApiError as e:
+            if e.error not in BLOCK_REFUSALS:
+                raise
+            logger.warning("slack refused a markdown block (%s); posting as text", e.error)
+            for part in split(to_mrkdwn(chunk)):
+                ts = client.post_message(token, channel=channel, text=part, thread_ts=thread_ts,
+                                         persona=persona)
+    return ts
+
+
 def split(text: str, limit: int = MAX_POST_CHARS) -> list[str]:
     """Chunks of at most `limit`, broken at a paragraph, then a line, then hard."""
     text = text.strip()
@@ -181,10 +212,8 @@ def relay(turn, rows) -> int:
         except IntegrityError:
             continue  # already relayed — a re-delivered signal, or a concurrent append
         try:
-            ts = ""
-            for chunk in split(to_mrkdwn(text)):
-                ts = client.post_message(installation.bot_token, channel=channel, text=chunk,
-                                         thread_ts=thread_ts, persona=persona(turn.chat_session.agent))
+            ts = post_reply(installation.bot_token, channel=channel, thread_ts=thread_ts, text=text,
+                            persona=persona(turn.chat_session.agent))
             record.slack_ts = ts
             record.save(update_fields=["slack_ts"])
             posted += 1
@@ -485,10 +514,8 @@ def relay_after_turn(session, replies) -> int:
         except IntegrityError:
             continue
         try:
-            ts = ""
-            for chunk in split(to_mrkdwn(text)):
-                ts = client.post_message(installation.bot_token, channel=channel, text=chunk,
-                                         thread_ts=thread_ts, persona=persona(agent))
+            ts = post_reply(installation.bot_token, channel=channel, thread_ts=thread_ts, text=text,
+                            persona=persona(agent))
             record.slack_ts = ts
             record.save(update_fields=["slack_ts"])
             posted += 1
