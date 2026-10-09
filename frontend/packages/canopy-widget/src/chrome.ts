@@ -243,7 +243,15 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   // run, same-origin so it can reach its own canopy APIs and storage, and forms
   // for the composer. Deliberately NOT allow-top-navigation — a widget must not
   // be able to navigate the page it is embedded in.
-  iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups')
+  //
+  // allow-popups-to-escape-sandbox: a tab the panel opens (a link in a reply, an
+  // MCP Apps card's ui/open-link) is a normal page, not a copy of this sandbox.
+  // Without it the new tab inherited these flags and a sign-in redirect there
+  // rendered blank (Labs' "Connect Open Chat Studio" OAuth start, 2026-10-09).
+  iframe.setAttribute(
+    'sandbox',
+    'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox',
+  )
   panel.appendChild(iframe)
   root.appendChild(panel)
 
