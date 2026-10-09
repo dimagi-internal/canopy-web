@@ -369,6 +369,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_embeddable_agents": ("member",),  # delegated token required; app allowlist ∩ caller's workspaces
     "embed_self": ("authenticated",),
     "embed_self_token": ("self",),
+    "embed_session_memory": ("self",),  # read-only: the caller's OWN session with an agent this app offers; writes stay person-only on /api/people/me/
     "embed_ws_ticket": ("self",),  # a one-time socket ticket standing for the caller's own delegated token  # mints a 15-min DelegatedToken for the caller
     # --- apps/agent_runs/documents.py  (run docs; mounted with agent_runs)
     "list_run_docs": ("member",),

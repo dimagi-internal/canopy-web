@@ -620,3 +620,73 @@ describe('the agent and your earlier conversations', () => {
     expect(created()).toBeUndefined()
   })
 })
+
+describe('agent memory in the conversation header', () => {
+  const MEMORY = {
+    session_id: 'sess-1',
+    record: { available: true, default: true, override: null, effective: true },
+    use: { available: true, default: false, override: null, effective: false },
+  }
+
+  function serve(personStatus: number) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        const path = String(url)
+        if (path.includes('/api/embed/agents')) {
+          return { ok: true, status: 200, json: async () => AGENTS } as Response
+        }
+        if (path.includes('/api/people/me/sessions/')) {
+          return personStatus === 200
+            ? ({ ok: true, status: 200, json: async () => MEMORY } as Response)
+            : ({ ok: false, status: personStatus, json: async () => ({}) } as Response)
+        }
+        if (path.includes('/api/embed/sessions/')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ...MEMORY, manage_path: '/w/connect/chat/sess-1' }),
+          } as Response
+        }
+        return { ok: true, status: 200, json: async () => ({ id: 'sess-1' }) } as Response
+      }),
+    )
+  }
+
+  const open = () =>
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }) })}
+        app="canopy-web"
+      />,
+    )
+
+  it("canopy's own widget gets the real toggles", async () => {
+    serve(200)
+    open()
+    await say()
+    expect(await screen.findByRole('switch', { name: /Learn about me/ })).toBeTruthy()
+    expect(screen.getByText('Use: off')).toBeTruthy()
+    expect(screen.queryByText('Change in canopy')).toBeNull()
+  })
+
+  it('a site acting for the person shows the state read-only, with a link to change it', async () => {
+    serve(403)
+    open()
+    await say()
+    expect(await screen.findByText('Change in canopy')).toBeTruthy()
+    expect(screen.getByText('Learn: on')).toBeTruthy()
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(calls.some((c) => c.url.includes('/api/embed/sessions/sess-1/agent-memory'))).toBe(true)
+  })
+
+  it('not the visitor\'s session: nothing is shown', async () => {
+    serve(404)
+    open()
+    await say()
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/api/people/me/sessions/'))).toBe(true))
+    expect(screen.queryByText(/Learn:/)).toBeNull()
+    expect(calls.some((c) => c.url.includes('/api/embed/sessions/'))).toBe(false)
+  })
+})

@@ -51,4 +51,55 @@ describe('SessionMemoryToggles', () => {
     await waitFor(() => expect(screen.getByText('Use: off')).toBeTruthy())
     expect(setSessionMemory).toHaveBeenLastCalledWith('s1', { use: 'inherit' })
   })
+
+  it('a read-only source shows the state as text with a link to change it in canopy', async () => {
+    const save = vi.fn()
+    const source = {
+      load: vi.fn().mockResolvedValue({
+        state: { session_id: 's1', record: feature(true, true), use: feature(true, false) },
+        editable: false,
+        manageUrl: 'https://canopy.example/w/connect/chat/s1',
+      }),
+      save,
+    }
+    render(<SessionMemoryToggles sessionId="s1" source={source} />)
+    await waitFor(() => expect(screen.getByText('Learn: on')).toBeTruthy())
+    expect(screen.queryByRole('switch')).toBeNull()
+    fireEvent.click(screen.getByText('Learn: on'))
+    expect(save).not.toHaveBeenCalled()
+    const link = screen.getByText('Change in canopy') as HTMLAnchorElement
+    expect(link.href).toBe('https://canopy.example/w/connect/chat/s1')
+    expect(link.target).toBe('_blank')
+  })
+
+  it('an editable injected source is what reads and writes, not the app routes', async () => {
+    const source = {
+      load: vi.fn().mockResolvedValue({
+        state: { session_id: 's1', record: feature(true, true), use: feature(false, false) },
+        editable: true,
+      }),
+      save: vi.fn().mockResolvedValue({ session_id: 's1', record: feature(true, true, false), use: feature(false, false) }),
+    }
+    render(<SessionMemoryToggles sessionId="s1" source={source} />)
+    await waitFor(() => expect(screen.getByText('Learn: on')).toBeTruthy())
+    fireEvent.click(screen.getByRole('switch'))
+    await waitFor(() => expect(screen.getByText('Learn: off')).toBeTruthy())
+    expect(source.save).toHaveBeenCalledWith({ record: 'off' })
+    expect(getSessionMemory).not.toHaveBeenCalled()
+    expect(setSessionMemory).not.toHaveBeenCalled()
+  })
+
+  it('a source that answers null hides everything', async () => {
+    const source = { load: vi.fn().mockResolvedValue(null), save: vi.fn() }
+    const { container } = render(<SessionMemoryToggles sessionId="s1" source={source} />)
+    await waitFor(() => expect(source.load).toHaveBeenCalled())
+    expect(container.textContent).toBe('')
+  })
+
+  it('an answer it does not recognise hides the toggles instead of crashing', async () => {
+    const source = { load: vi.fn().mockResolvedValue({ state: { id: 'sess-1' }, editable: true }), save: vi.fn() }
+    const { container } = render(<SessionMemoryToggles sessionId="s1" source={source as never} />)
+    await waitFor(() => expect(source.load).toHaveBeenCalled())
+    expect(container.textContent).toBe('')
+  })
 })
