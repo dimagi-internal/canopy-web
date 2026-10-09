@@ -2428,7 +2428,7 @@ def test_branching_twice_makes_two_siblings(slack, linked, hal):
     assert Session.objects.filter(parent_session=parent).count() == 2
 
 
-def test_only_the_starter_or_an_agent_admin_may_branch(slack, linked, hal, installation, ws):
+def test_a_member_outside_the_conversation_may_not_branch(slack, linked, hal, installation, ws):
     bob = a_user("bob@dimagi.com")
     wsvc.ensure_member(ws, bob, WorkspaceMembership.EDITOR)
     SlackUserLink.objects.create(installation=installation, slack_user_id=BOB, user=bob)
@@ -2436,7 +2436,20 @@ def test_only_the_starter_or_an_agent_admin_may_branch(slack, linked, hal, insta
     mention("branch my way", user=BOB, ts="1700000080.000100", thread_ts="1700000000.000100")
     assert Session.objects.count() == 1
     (note,) = slack.said("chat.postEphemeral")
-    assert "Only the person who started this conversation" in note["text"]
+    assert "Only people in this conversation" in note["text"]
+
+
+def test_an_editor_in_the_conversation_may_branch(slack, linked, hal, installation, ws):
+    slack.ts_seq = [f"17000010{i:02d}.000100" for i in range(20)]
+    bob = a_user("bob@dimagi.com")
+    wsvc.ensure_member(ws, bob, WorkspaceMembership.EDITOR)
+    SlackUserLink.objects.create(installation=installation, slack_user_id=BOB, user=bob)
+    mention("hal build it", ts="1700000000.000100")
+    mention("hal and the timeline?", user=BOB, ts="1700000060.000100", thread_ts="1700000000.000100")
+    mention("branch my way", user=BOB, ts="1700000080.000100", thread_ts="1700000000.000100")
+    parent = Session.objects.get(parent_session__isnull=True)
+    child = Session.objects.get(parent_session=parent)
+    assert child.created_by == bob
 
 
 def test_branch_outside_a_thread_says_how_it_works(slack, linked, hal):
