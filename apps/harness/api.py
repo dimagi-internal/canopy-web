@@ -1536,7 +1536,8 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # call legible.
         created = chat_services.persist_transcript_rows(binding.session, [
             {"index": e.index, "role": e.kind,
-             "text": (e.payload or {}).get("text", ""), "content": e.payload or {}}
+             "text": (e.payload or {}).get("text", ""), "content": e.payload or {},
+             "cwd": e.cwd, "git_branch": e.git_branch}
             for e in payload.events if e.index >= 0
         ])
         from apps.canopy_sessions.authorship import parse as parse_marker

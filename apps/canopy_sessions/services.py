@@ -24,6 +24,7 @@ from apps.harness import provenance
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
+from . import activity as session_activity
 from . import attach, authorship
 from .models import Message, RunnerBinding, Session
 from canopy_transcript import BLOCK_STRIDE  # noqa: F401  (the ordinal scheme's one definition)
@@ -588,6 +589,9 @@ def _ensure_current_ordinal_scheme(locked_session, offset: int = 0) -> int:
     ).delete()
     locked_session.ordinal_scheme = ORDINAL_SCHEME
     locked_session.save(update_fields=["ordinal_scheme", "updated_at"])
+    # The dropped rows are about to be re-shipped and folded again; recount from
+    # what is left so they are not counted twice.
+    session_activity.rebuild(locked_session)
     return deleted
 
 
@@ -650,6 +654,12 @@ def ensure_transcript_identity(session, transcript_id: str) -> int:
         ).delete()
         binding.transcript_id = transcript_id
         binding.save(update_fields=["transcript_id", "updated_at"])
+        # Recount activity from what survived (inherited history below the
+        # offset), so the re-shipped rows are not counted twice. Locking the
+        # session AFTER the binding is the order replace_reported_sessions and
+        # fork_if_name_reused already use — the deadlock warned of above is the
+        # reverse order.
+        session_activity.rebuild(Session.objects.select_for_update().get(pk=session.pk))
         return deleted
 
 
@@ -955,8 +965,6 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
             text = scrub_nul(text)
             content = storage_content(scrub_nul(content), text)
             prepared.append((index, role, text, content, author, turn_hex))
-        if not prepared:
-            return 0
         # `held` was computed above, before matching — reused here, not
         # re-queried.
         fresh = [
@@ -965,6 +973,16 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
             for (i, r, t, c, a, h) in prepared
             if i not in held
         ]
+        # What the session DID (activity.py). Context (cwd / gitBranch) is a set
+        # union, so every shipped row may contribute it, re-ships included; the
+        # counted signals come from `fresh` only, which is what keeps a re-ship
+        # from double-counting. Saved even when nothing is fresh: a re-ship from a
+        # newer runner is how a session ingested before this learns its context.
+        act = session_activity.Activity(locked.activity)
+        for row in rows:
+            act.context(row.get("cwd"), row.get("git_branch"))
+        session_activity.fold_rows(act, ((m.role, m.plaintext, m.content) for m in fresh))
+        session_activity.store(locked, act)
         if not fresh:
             return 0
         # `ignore_conflicts` is belt-and-braces on top of the row lock above (which
@@ -1358,6 +1376,7 @@ def reset_session(session, *, dry_run: bool = False) -> dict:
     if reason != RESET_OK or dry_run:
         return out
     Message.objects.filter(session=session).delete()
+    session_activity.rebuild(session)   # counters restart; the re-derive refolds them
     _merge_metadata(session, {TRANSCRIPT_SOURCED: True})
     request_backfill(session)
     return out
@@ -2195,6 +2214,7 @@ def project_events(turn: Turn, rows) -> int:
     created = 0
     with transaction.atomic():
         session = Session.objects.select_for_update().get(pk=turn.chat_session_id)
+        act = session_activity.Activity(session.activity)
         index = _next_index(session)
         for row in rows:
             role = _ROLE_FOR_KIND.get(row.kind)
@@ -2208,8 +2228,10 @@ def project_events(turn: Turn, rows) -> int:
                 content={**payload, "source_seq": row.seq},
                 plaintext=str(payload.get("text", "")),
             )
+            act.row(role, str(payload.get("text", "")), payload)
             index += 1
             created += 1
+        session_activity.store(session, act)
     return created
 
 

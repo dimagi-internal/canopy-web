@@ -249,15 +249,46 @@ def conversational_messages(
     """
     out: list[dict] = []
     for i, rec in enumerate(records):
+        context = record_context(rec)
         for row in rows_for_record(rec):
             index = compose_index(i + record_offset, row["block"])
             if index <= since:
                 continue
             out.append({
                 "index": index, "role": row["role"],
-                "text": row["text"], "content": row["content"],
+                "text": row["text"], "content": row["content"], **context,
             })
     return out
+
+
+def record_context(rec: dict) -> dict:
+    """The record's working directory and git branch, as {"cwd", "git_branch"}
+    (each only when present).
+
+    Claude Code stamps both on every record, so they change mid-session — a long
+    session `cd`s into other checkouts and opens branch after branch. The server
+    folds them into Session.activity ("which sessions worked on repo X / branch
+    Y?"); they ride beside a row, never inside its stored content.
+    """
+    out = {}
+    cwd, branch = rec.get("cwd"), rec.get("gitBranch")
+    if isinstance(cwd, str) and cwd:
+        out["cwd"] = cwd
+    if isinstance(branch, str) and branch:
+        out["git_branch"] = branch
+    return out
+
+
+def stream_event(row: dict) -> dict:
+    """A conversational row as a live `session-stream` event. seq == index (the
+    composite transcript ordinal). The ONE builder, shared by both runners, so a
+    field added to the wire cannot reach one fleet half and not the other."""
+    event = {"kind": row["role"], "seq": row["index"], "index": row["index"],
+             "payload": row_payload(row)}
+    for key in ("cwd", "git_branch"):
+        if row.get(key):
+            event[key] = row[key]
+    return event
 
 
 def row_payload(row: dict) -> dict:

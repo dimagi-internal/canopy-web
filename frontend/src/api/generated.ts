@@ -5917,7 +5917,9 @@ export interface paths {
          * @description The sessions you can see: waiting on you first, then running, then most
          *     recent activity — at most `limit` (≤ 500) of them, with no paging.
          *
-         *     Filters: `q` (title or session_key contains), `repo` (the repo it ran in),
+         *     Filters: `q` (title or session_key contains), `repo` (the repo it ran in or
+         *     worked on — a name or owner/name), `branch` (any branch its transcript saw),
+         *     `pr` (a PR it created or asked to merge — N, owner/name#N or a URL),
          *     `since` / `until` (last activity in [since, until)). To reach EVERY session
          *     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
          */
@@ -5947,8 +5949,8 @@ export interface paths {
          *     for the next page; it is null when the walk is done. Ordered by
          *     (last activity, id), descending, so the order is total and stable. `state`
          *     defaults to `all`. Filters: `q` (title or session_key contains), `repo` (the
-         *     repo it ran in), `since` / `until` (last activity in [since, until),
-         *     ISO-8601, UTC when no zone is given).
+         *     repo it ran in or worked on), `branch`, `pr` (as on the list), `since` /
+         *     `until` (last activity in [since, until), ISO-8601, UTC when no zone is given).
          *
          *     A session that does something mid-walk moves to the front and can be
          *     missed by a walk already past it; pass `until` = the time the walk started
@@ -10833,6 +10835,13 @@ export interface components {
              * @default
              */
             readonly parent_claude_session: string;
+            /**
+             * Activity
+             * @default {}
+             */
+            readonly activity: {
+                readonly [key: string]: unknown;
+            };
             /** Messages */
             readonly messages: readonly components["schemas"]["MessageOut"][];
             /** Menu */
@@ -16072,6 +16081,16 @@ export interface components {
             readonly payload: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Cwd
+             * @default
+             */
+            readonly cwd: string;
+            /**
+             * Git Branch
+             * @default
+             */
+            readonly git_branch: string;
         };
         /** SessionStreamIn */
         readonly SessionStreamIn: {
@@ -16202,6 +16221,16 @@ export interface components {
             readonly content: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Cwd
+             * @default
+             */
+            readonly cwd: string;
+            /**
+             * Git Branch
+             * @default
+             */
+            readonly git_branch: string;
         };
         /** SessionBackfillIn */
         readonly SessionBackfillIn: {
@@ -17103,6 +17132,13 @@ export interface components {
              * @default
              */
             readonly parent_claude_session: string;
+            /**
+             * Activity
+             * @default {}
+             */
+            readonly activity: {
+                readonly [key: string]: unknown;
+            };
         };
         /** SessionCreateIn */
         readonly SessionCreateIn: {
@@ -26661,6 +26697,8 @@ export interface operations {
                 readonly session_key?: string;
                 readonly q?: string;
                 readonly repo?: string;
+                readonly branch?: string;
+                readonly pr?: string;
                 readonly since?: string | null;
                 readonly until?: string | null;
             };
@@ -26719,6 +26757,8 @@ export interface operations {
                 readonly origin_key?: string;
                 readonly embed_app?: string;
                 readonly session_key?: string;
+                readonly branch?: string;
+                readonly pr?: string;
             };
             readonly header?: never;
             readonly path?: never;
