@@ -1247,6 +1247,21 @@ class RunnerMintResultIn(Schema):
     detail: str = ""
 
 
+class SignInRequestIn(Schema):
+    provider: str = "aws"
+    # The device-authorization URL the CLI on the box printed, code included.
+    url: str
+    # What is being signed in to, e.g. the AWS profile name ("labs").
+    label: str = ""
+    # Who is waiting on it, e.g. the agent ("hal"). Shown in the notification.
+    requested_by: str = ""
+
+
+class SignInRequestOut(Schema):
+    # Devices the notification reached. 0 = nobody saw it; fall back to another channel.
+    sent: int
+
+
 class RunnerCredentialStatusOut(Schema):
     """Masked view — booleans, never values. The POST response + any UI."""
 

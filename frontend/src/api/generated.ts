@@ -4488,6 +4488,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/sign-in-request": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Ask the runner's owner to approve a cloud sign-in from their phone
+         * @description The box started a device-code sign-in (`aws sso login --use-device-code`)
+         *     and needs a person to approve it. This pushes the approval link to the
+         *     runner's owner, and tapping it opens the AWS page with the code filled in.
+         *     The CLI on the box finishes on its own once the person approves.
+         *
+         *     `sent` is how many devices the notification reached. 0 means nobody saw
+         *     it, so the caller falls back to another channel. canopy-web stores nothing.
+         *     See `apps/harness/sign_in_requests.py` for why the push goes only to the
+         *     owner and only to AWS hosts.
+         */
+        readonly post: operations["post_sign_in_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/admins": {
         readonly parameters: {
             readonly query?: never;
@@ -14870,6 +14898,31 @@ export interface components {
              */
             readonly detail: string;
         };
+        /** SignInRequestOut */
+        readonly SignInRequestOut: {
+            /** Sent */
+            readonly sent: number;
+        };
+        /** SignInRequestIn */
+        readonly SignInRequestIn: {
+            /**
+             * Provider
+             * @default aws
+             */
+            readonly provider: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Requested By
+             * @default
+             */
+            readonly requested_by: string;
+        };
         /**
          * RunnerAdminOut
          * @description One explicit grant. No secret here — who, by whom, when.
@@ -24149,6 +24202,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerMintOut"];
+                };
+            };
+        };
+    };
+    readonly post_sign_in_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SignInRequestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SignInRequestOut"];
                 };
             };
         };
