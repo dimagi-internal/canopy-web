@@ -110,6 +110,17 @@ class Session(models.Model):
     )
     parent_task = models.CharField(max_length=300, blank=True, default="")
     parent_claude_session = models.CharField(max_length=100, blank=True, default="")
+    #: What the session DID — repos, cwd, branches, PRs, edited directories and MCP
+    #: tools — folded from its transcript rows as they are ingested. Shape, sources
+    #: and limits: apps/canopy_sessions/activity.py. Served on SessionOut and
+    #: filtered by the list's `?repo=` / `?branch=` / `?pr=`.
+    activity = models.JSONField(default=dict, blank=True)
+    #: `activity`'s filterable values as newline-delimited `kind:value` tokens
+    #: (`repo:`, `remote:`, `branch:`, `pr:`), derived from it on every write
+    #: (`activity.store`). A plain text column so the list filters are one
+    #: portable `LIKE` — jsonb containment does not exist on the SQLite the tests
+    #: run on, and a filter that only works in production is untested.
+    activity_keys = models.TextField(blank=True, default="")
     #: What the attached page says it can do — the host's `registerAction`
     #: declarations, as a list of `{name, description, parameters}` where
     #: `parameters` is JSON-Schema.

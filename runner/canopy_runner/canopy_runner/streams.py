@@ -41,11 +41,7 @@ def post_stream_rows(
     transcript ordinal): monotonic per session forever, so the WS-derived
     `seq:<n>` message ids can never collide across detaches, restarts, or
     failovers — including between two rows of the same transcript record."""
-    events = [
-        {"kind": r["role"], "seq": r["index"], "index": r["index"],
-         "payload": chat_bridge.row_payload(r)}
-        for r in rows
-    ]
+    events = [chat_bridge.stream_event(r) for r in rows]
     try:
         # Chunked for the same reason the backfill is: a first-attach ship now
         # carries a session's whole history, which on the longest transcripts

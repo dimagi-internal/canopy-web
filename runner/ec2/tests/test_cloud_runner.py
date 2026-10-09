@@ -1473,6 +1473,10 @@ class _FakeCore:
 
     chunk_rows = staticmethod(_chunk_rows)
     rows_to_ship = staticmethod(_rows_to_ship)
+    # The wire shape of a row: real for the same reason — it is the one builder
+    # both runners share, so a fake could hide a field one of them drops.
+    from canopy_transcript import stream_event as _stream_event
+    stream_event = staticmethod(_stream_event)
 
     class TailReader:
         def __init__(self, path):

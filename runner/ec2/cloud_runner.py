@@ -4209,11 +4209,7 @@ def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) 
     rows = ct.conversational_messages(ct.read_records(path), -1)
     if not rows:
         return
-    events = [
-        {"kind": r["role"], "seq": r["index"], "index": r["index"],
-         "payload": ct.row_payload(r)}
-        for r in rows
-    ]
+    events = [ct.stream_event(r) for r in rows]
     status, _ = _api("POST", f"/runners/{runner_id}/session-stream",
                      {"session_id": session_id, "events": events})
     _log(f"turn {turn['id'][:8]}: shipped {len(events)} transcript rows -> {status}")
@@ -4277,11 +4273,7 @@ def _post_stream_rows(runner_id: str, session_id: str, rows: list,
     ct = _transcript_core()
     if ct is None:
         return False
-    events = [
-        {"kind": r["role"], "seq": r["index"], "index": r["index"],
-         "payload": ct.row_payload(r)}
-        for r in rows
-    ]
+    events = [ct.stream_event(r) for r in rows]
     # Chunked: a first-sight ship now carries a session's whole history, which on
     # the longest transcripts blows past the server's 2.5 MB request ceiling and
     # dies as an unhandled 500 (RequestDataTooBig, raised before the view runs).

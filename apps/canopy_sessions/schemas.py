@@ -251,6 +251,11 @@ class SessionOut(Schema):
     parent_session_id: uuid.UUID | None = None
     parent_task: str = ""
     parent_claude_session: str = ""
+    # What the session DID, folded from its transcript as it was ingested: cwd(s),
+    # repos, remotes, branches, PRs created/merge-requested, edited directories,
+    # MCP tool counts. Shape and limits: apps/canopy_sessions/activity.py. The
+    # list filters `?repo=`, `?branch=`, `?pr=` read it.
+    activity: dict = {}
 
 
 class SessionSearchPageOut(Schema):

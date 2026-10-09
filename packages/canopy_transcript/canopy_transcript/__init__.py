@@ -41,10 +41,12 @@ from .rows import (
     compose_index,
     conversational_messages,
     end_index,
+    record_context,
     row_payload,
     rows_for_record,
     rows_to_ship,
     scrub,
+    stream_event,
     user_text,
 )
 from .tail import TailReader
@@ -58,7 +60,7 @@ __all__ = [
     "TOOL_INPUT_JSON_MAX", "TOOL_INPUT_STR_MAX", "TOOL_TEXT_MAX",
     "TRANSCRIPT_BATCH_MAX_BYTES", "TailReader", "assistant_text", "chunk_raw_lines",
     "chunk_rows", "compose_index", "conversational_messages", "encode_project_dir",
-    "end_index", "rows_to_ship",
+    "end_index", "record_context", "rows_to_ship", "stream_event",
     "activity_for_hook", "emdash_task_candidates", "events_for_hook", "parse_emdash_worktree",
     "read_records", "resolve_cli_transcript",
     "resolve_emdash_transcript", "rows_for_hook",

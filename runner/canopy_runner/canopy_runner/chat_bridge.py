@@ -43,6 +43,7 @@ from canopy_transcript import (  # noqa: F401
     read_records,
     row_payload,
     scrub,
+    stream_event,
     user_text as _user_text,
 )
 

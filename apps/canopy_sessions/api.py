@@ -40,6 +40,7 @@ from . import (
     services,
     status_feed,
 )
+from . import activity as session_activity
 from .models import Attachment, Session
 from .schemas import (
     SessionExportOut,
@@ -202,6 +203,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "parent_session_id": session.parent_session_id,
         "parent_task": session.parent_task,
         "parent_claude_session": session.parent_claude_session,
+        "activity": session_activity.public(session.activity),
     }
 
 
@@ -328,7 +330,8 @@ def _filtered_sessions(
     request: HttpRequest, *, state: str, source: str = "", opp_slug: str = "",
     opp_run_id: str = "", origin_key: str = "", embed_app: str = "",
     resource: str = "", page_path: str = "", session_key: str = "",
-    q: str = "", repo: str = "", since: dt.datetime | None = None,
+    q: str = "", repo: str = "", branch: str = "", pr: str = "",
+    since: dt.datetime | None = None,
     until: dt.datetime | None = None,
 ):
     """Every session the caller may see, narrowed by the list filters, with
@@ -410,12 +413,23 @@ def _filtered_sessions(
     # session_key (an emdash task name, or a cloud session's Claude UUID).
     if q:
         rows = rows.filter(Q(title__icontains=q) | Q(runner_binding__session_key__icontains=q))
-    # The repo a session ran in. Not a field of its own: an agentless repo chat
-    # names it in `project`, and a runner session's binding carries the emdash
-    # project its worktree lives under (`RunnerBinding.emdash_project` — a repo
-    # name, or for an agent's own sessions the agent's repo, i.e. its slug).
+    # The repo a session ran in — or worked on. An agentless repo chat names it
+    # in `project`, a runner session's binding carries the emdash project its
+    # worktree lives under (`RunnerBinding.emdash_project`), and Session.activity
+    # (folded at ingest, activity.py) holds every repo the session cd'd into,
+    # edited, pushed to or opened a PR on — so an agent session that built
+    # connect-labs matches `repo=connect-labs` too. `repo` takes a bare name or
+    # owner/name; `branch` any branch the transcript saw; `pr` a number,
+    # owner/name#N or a PR URL.
     if repo:
-        rows = rows.filter(Q(project__iexact=repo) | Q(runner_binding__emdash_project__iexact=repo))
+        name = repo.strip().lower().removesuffix(".git").split("/")[-1]
+        rows = rows.filter(Q(project__iexact=name) | Q(runner_binding__emdash_project__iexact=name)
+                           | session_activity.filter_q(repo=repo))
+    if branch or pr:
+        try:
+            rows = rows.filter(session_activity.filter_q(branch=branch, pr=pr))
+        except ValueError as exc:
+            raise HttpError(422, str(exc)) from exc
     rows = services.with_opening(rows.annotate(_last_msg_at=Max("messages__created_at"))).distinct()
     # The SAME rule as services.last_activity_at (binding > newest message >
     # created), in SQL, so a window and a cursor can be applied to it.
@@ -439,13 +453,15 @@ def list_sessions(
     source: str = "", opp_slug: str = "", opp_run_id: str = "",
     origin_key: str = "", embed_app: str = "",
     resource: str = "", page_path: str = "", reply: bool = False,
-    session_key: str = "", q: str = "", repo: str = "",
+    session_key: str = "", q: str = "", repo: str = "", branch: str = "", pr: str = "",
     since: dt.datetime | None = None, until: dt.datetime | None = None,
 ):
     """The sessions you can see: waiting on you first, then running, then most
     recent activity — at most `limit` (≤ 500) of them, with no paging.
 
-    Filters: `q` (title or session_key contains), `repo` (the repo it ran in),
+    Filters: `q` (title or session_key contains), `repo` (the repo it ran in or
+    worked on — a name or owner/name), `branch` (any branch its transcript saw),
+    `pr` (a PR it created or asked to merge — N, owner/name#N or a URL),
     `since` / `until` (last activity in [since, until)). To reach EVERY session
     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
     """
@@ -465,7 +481,7 @@ def list_sessions(
         request, state=state, source=source, opp_slug=opp_slug, opp_run_id=opp_run_id,
         origin_key=origin_key, embed_app=embed_app, resource=resource,
         page_path=page_path, session_key=session_key, q=q, repo=repo,
-        since=since, until=until,
+        branch=branch, pr=pr, since=since, until=until,
     ).order_by("-created_at")
 
     # Every row says which mode drove it — the list shows it on each card, so an
@@ -512,7 +528,7 @@ def search_sessions(
     request: HttpRequest, cursor: str = "", limit: int = 100, state: str = "all",
     q: str = "", repo: str = "", since: dt.datetime | None = None,
     until: dt.datetime | None = None, source: str = "", origin_key: str = "",
-    embed_app: str = "", session_key: str = "",
+    embed_app: str = "", session_key: str = "", branch: str = "", pr: str = "",
 ):
     """Every session you can see, newest last activity first, `limit` (≤ 500)
     at a time — the whole history, not just the newest 500.
@@ -521,8 +537,8 @@ def search_sessions(
     for the next page; it is null when the walk is done. Ordered by
     (last activity, id), descending, so the order is total and stable. `state`
     defaults to `all`. Filters: `q` (title or session_key contains), `repo` (the
-    repo it ran in), `since` / `until` (last activity in [since, until),
-    ISO-8601, UTC when no zone is given).
+    repo it ran in or worked on), `branch`, `pr` (as on the list), `since` /
+    `until` (last activity in [since, until), ISO-8601, UTC when no zone is given).
 
     A session that does something mid-walk moves to the front and can be
     missed by a walk already past it; pass `until` = the time the walk started
@@ -533,7 +549,7 @@ def search_sessions(
     rows = _filtered_sessions(
         request, state=state, source=source, origin_key=origin_key,
         embed_app=embed_app, session_key=session_key, q=q, repo=repo,
-        since=since, until=until,
+        branch=branch, pr=pr, since=since, until=until,
     )
     if cursor:
         at, sid = _decode_cursor(cursor)

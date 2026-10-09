@@ -1068,6 +1068,11 @@ class LiveEventIn(Schema):
     # (persisting assistant-only rows would kill the tail fallback's user side).
     index: int = -1
     payload: dict = {}
+    # The transcript record's `cwd` and `gitBranch`, which Claude Code stamps on
+    # every record. Folded into Session.activity (canopy_sessions.activity), never
+    # stored per row. "" = an old runner, or a record that carried none.
+    cwd: str = ""
+    git_branch: str = ""
 
 
 class SessionStreamIn(Schema):
@@ -1110,6 +1115,9 @@ class BackfillMessageIn(Schema):
     # tool_result's {tool_use_id,is_error}. Empty for plain text. Stored as the
     # Message's content so history renders identically to the live stream.
     content: dict = {}
+    # Same as LiveEventIn's: the record's cwd / gitBranch, for Session.activity.
+    cwd: str = ""
+    git_branch: str = ""
 
 
 class SessionBackfillIn(Schema):
