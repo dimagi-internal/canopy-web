@@ -144,6 +144,19 @@ class Agent(models.Model):
         help_text="1Password vault holding this agent's secrets, e.g. Agent-Ace.",
     )
     op_sa_token_enc = models.TextField(blank=True, default="")
+    # Which backend `canopy cred` resolves this agent's secrets from (canopy#850,
+    # design revision 2026-10-09). Both are first-class: canopy-web already
+    # custodies the agent's 1Password service-account key, so keeping values off
+    # canopy-web buys no real security. `1password` = the runner/human resolves
+    # through `op` with that key; `canopy-web` = values come from AgentCredential
+    # via GET /credentials/resolve. Set only by the agent's owner or an admin
+    # (PATCH /credential-source) — never by the repo's self-publish upsert.
+    ONEPASSWORD, CANOPY_WEB = "1password", "canopy-web"
+    CREDENTIAL_SOURCE_CHOICES = [(ONEPASSWORD, "1Password (op, via the agent's vault key)"),
+                                 (CANOPY_WEB, "canopy-web (AgentCredential values)")]
+    credential_source = models.CharField(
+        max_length=16, choices=CREDENTIAL_SOURCE_CHOICES, default=ONEPASSWORD,
+    )
 
 
     # Runtime autonomy posture, read by the fleet-canonical turn procedure at

@@ -193,7 +193,13 @@ Deliberately off the ladder:
   authorize out by hand: a non-member of an EXISTING agent's workspace gets 404 (a 403 would
   make it an oracle over every agent name, since `Agent.slug` is globally unique).
 - **`GET /{slug}/credentials/resolve`** returns plaintext, bearer-only, to a box that may hold
-  the agent (above). A browser session only ever sees the masked status.
+  the agent (above) — or, since canopy#850, to the agent's owner or an admin (`Agent.is_admin`)
+  resolving for a local Claude Code session. The audit event records which (`via: runner |
+  admin`). A browser session only ever sees the masked status.
+- **`GET /{slug}/credentials/access`** (member, session or bearer) answers the same gate for
+  the caller without returning values: `{agent, credential_source, may_resolve, via, reason}`.
+- **`PATCH /{slug}/credential-source`** (`1password` | `canopy-web`) is agent-admin, like the
+  credentials and vault pointer it governs.
 
 ### A token can do whatever its person can
 

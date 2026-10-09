@@ -30,6 +30,7 @@ from .schemas import (
     AgentSalesforceOut,
     AgentCanopyUserIn,
     AgentGitHubOut,
+    AgentCredentialAccessOut,
     AgentCredentialsResolveOut,
     AgentCredentialStatusOut,
     AgentDetailOut,
@@ -79,6 +80,7 @@ from .schemas import (
     SlackEnabledOut,
     TurnBriefOut,
     TurnModeIn,
+    CredentialSourceIn,
 )
 
 logger = logging.getLogger(__name__)
@@ -676,6 +678,24 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
         _refuse_auto_unless_admin(request, agent, "setting the agent's turn mode")
     agent.turn_mode = payload.turn_mode
     agent.save(update_fields=["turn_mode", "updated_at"])
+    return _detail(request, agent)
+
+
+@router.patch("/{slug}/credential-source", response=AgentDetailOut,
+              summary="Set where an agent's secrets resolve from (1password | canopy-web)")
+def set_credential_source(request: HttpRequest, slug: str,
+                          payload: CredentialSourceIn) -> AgentDetailOut:
+    """Choose the backend `canopy cred` resolves this agent's secrets from
+    (canopy#850). `1password`: through `op`, with the agent's vault key.
+    `canopy-web`: the AgentCredential values, via GET /credentials/resolve.
+
+    The agent's owner or an admin only (`_agent_for_admin`), like the
+    credentials and the vault pointer themselves: choosing where an agent's
+    secrets come from is part of controlling them. Absent from AgentIn, so the
+    repo's self-publish upsert cannot move it."""
+    agent = _agent_for_admin(request, slug)
+    agent.credential_source = payload.credential_source
+    agent.save(update_fields=["credential_source", "updated_at"])
     return _detail(request, agent)
 
 
@@ -1648,6 +1668,47 @@ def agent_credential_status(request: HttpRequest, slug: str):
     return services.agent_credential_status(agent)
 
 
+def _credential_access(request: HttpRequest, agent) -> tuple[str | None, str]:
+    """Who the caller is, for the purpose of reading this agent's plaintext:
+    `("runner", "")`, `("admin", "")`, or `(None, <what access to get>)`.
+
+    The one decision both `/credentials/resolve` and `/credentials/access`
+    make, so the cheap check can never disagree with the real gate. `runner`
+    wins when both hold (`caller_runs_agent` already implies admin), because it
+    is the more specific claim and the audit trail should say a box read it.
+    """
+    if services.caller_runs_agent(request.user, agent):
+        return "runner", ""
+    if agent.is_admin(request.user):
+        return "admin", ""
+    owner = getattr(agent.owner, "email", "") if agent.owner_id else ""
+    ask = f"ask its owner ({owner})" if owner else "ask its owner or a workspace owner"
+    return None, (
+        f"resolving {agent.slug}'s secrets needs either a live runner you pair that "
+        f"{agent.slug} routes to, or being {agent.slug}'s owner or an agent admin; "
+        f"{ask} to make you an admin (PUT /api/agents/{agent.slug}/admins/<your user id>)"
+    )
+
+
+@router.get("/{slug}/credentials/access", response=AgentCredentialAccessOut,
+            summary="May the caller resolve this agent's secrets? (never values)")
+def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialAccessOut:
+    """The cheap check `canopy cred` makes before fetching anything
+    (canopy#850): which backend the agent resolves from, and whether THIS
+    caller would be let through `/credentials/resolve` — and as whom.
+
+    Session or bearer: it returns no values, so the browser may ask it too.
+    A non-member gets 404, as everywhere else. `may_resolve` does not account
+    for resolve's bearer-only rule, which is a property of the request rather
+    than the caller."""
+    agent = _get_agent_or_404(request, slug)
+    via, reason = _credential_access(request, agent)
+    return AgentCredentialAccessOut(
+        agent=agent.slug, credential_source=agent.credential_source,
+        may_resolve=via is not None, via=via, reason=reason,
+    )
+
+
 @router.get("/{slug}/credentials/resolve", response=AgentCredentialsResolveOut,
             summary="PLAINTEXT — a runner stages this agent's secrets")
 def resolve_agent_credentials(request: HttpRequest, slug: str):
@@ -1659,10 +1720,16 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
        what makes "the browser never sees plaintext" a property of the system
        rather than a habit of the UI — a future page cannot accidentally acquire
        the ability to render a secret.
-    2. **The caller must pair a live runner this agent routes to.** Tighter than
-       workspace membership on purpose: plaintext should reach a box that runs
-       the agent, not everyone who can see it. Mirrors the runner credential
-       fetch, whose boundary is "the caller who can claim turns as this runner".
+    2. **The caller must be one of two principals** (`_credential_access`):
+       - `runner`: pairs a live runner this agent routes to. Mirrors the runner
+         credential fetch, whose boundary is "the caller who can claim turns as
+         this runner".
+       - `admin`: is the agent's owner or an admin (`Agent.is_admin`) — a human
+         resolving for a local Claude Code session (canopy#850). Not a widening
+         in substance: an admin can already write every value, swap the vault
+         key, and put their own box on the agent to read them back.
+       Anyone else — a member, an editor — is refused, and told which access to
+       ask for. Tighter than workspace membership on purpose.
 
     Every read is recorded, so a credential fetch is visible in the fleet log
     rather than silent.
@@ -1671,8 +1738,9 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
         raise HttpError(403, "resolve requires a bearer token; a browser session is never given values")
 
     agent = _get_agent_or_404(request, slug)
-    if not services.caller_runs_agent(request.user, agent):
-        raise HttpError(403, "no live runner you pair is assigned to this agent")
+    via, reason = _credential_access(request, agent)
+    if via is None:
+        raise HttpError(403, reason)
 
     values = services.resolve_agent_credentials(agent)
     vault, op_token = services.resolve_agent_vault(agent)
@@ -1687,7 +1755,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
                 "level": "info",
                 "key": f"{agent.slug}:{request.user.pk}",
                 "summary": f"{len(values)} secret(s) resolved for {agent.slug}",
-                "payload": {"agent": agent.slug, "count": len(values)},
+                "payload": {"agent": agent.slug, "count": len(values), "via": via},
             }],
             workspace=agent.workspace,
         )

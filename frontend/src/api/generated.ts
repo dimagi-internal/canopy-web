@@ -2130,6 +2130,33 @@ export interface paths {
         readonly patch: operations["set_turn_mode"];
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/credential-source": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Set where an agent's secrets resolve from (1password | canopy-web)
+         * @description Choose the backend `canopy cred` resolves this agent's secrets from
+         *     (canopy#850). `1password`: through `op`, with the agent's vault key.
+         *     `canopy-web`: the AgentCredential values, via GET /credentials/resolve.
+         *
+         *     The agent's owner or an admin only (`_agent_for_admin`), like the
+         *     credentials and the vault pointer themselves: choosing where an agent's
+         *     secrets come from is part of controlling them. Absent from AgentIn, so the
+         *     repo's self-publish upsert cannot move it.
+         */
+        readonly patch: operations["set_credential_source"];
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/slack": {
         readonly parameters: {
             readonly query?: never;
@@ -2706,6 +2733,33 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/credentials/access": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * May the caller resolve this agent's secrets? (never values)
+         * @description The cheap check `canopy cred` makes before fetching anything
+         *     (canopy#850): which backend the agent resolves from, and whether THIS
+         *     caller would be let through `/credentials/resolve` — and as whom.
+         *
+         *     Session or bearer: it returns no values, so the browser may ask it too.
+         *     A non-member gets 404, as everywhere else. `may_resolve` does not account
+         *     for resolve's bearer-only rule, which is a property of the request rather
+         *     than the caller.
+         */
+        readonly get: operations["agent_credential_access"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/credentials/resolve": {
         readonly parameters: {
             readonly query?: never;
@@ -2723,10 +2777,16 @@ export interface paths {
          *        what makes "the browser never sees plaintext" a property of the system
          *        rather than a habit of the UI — a future page cannot accidentally acquire
          *        the ability to render a secret.
-         *     2. **The caller must pair a live runner this agent routes to.** Tighter than
-         *        workspace membership on purpose: plaintext should reach a box that runs
-         *        the agent, not everyone who can see it. Mirrors the runner credential
-         *        fetch, whose boundary is "the caller who can claim turns as this runner".
+         *     2. **The caller must be one of two principals** (`_credential_access`):
+         *        - `runner`: pairs a live runner this agent routes to. Mirrors the runner
+         *          credential fetch, whose boundary is "the caller who can claim turns as
+         *          this runner".
+         *        - `admin`: is the agent's owner or an admin (`Agent.is_admin`) — a human
+         *          resolving for a local Claude Code session (canopy#850). Not a widening
+         *          in substance: an admin can already write every value, swap the vault
+         *          key, and put their own box on the agent to read them back.
+         *        Anyone else — a member, an editor — is refused, and told which access to
+         *        ask for. Tighter than workspace membership on purpose.
          *
          *     Every read is recorded, so a credential fetch is visible in the fleet log
          *     rather than silent.
@@ -10368,6 +10428,12 @@ export interface components {
              * @default false
              */
             readonly slack_enabled: boolean;
+            /**
+             * Credential Source
+             * @default 1password
+             * @enum {string}
+             */
+            readonly credential_source: "1password" | "canopy-web";
         };
         /** Page[AgentOut] */
         readonly Page_AgentOut_: {
@@ -10501,6 +10567,12 @@ export interface components {
              * @default false
              */
             readonly slack_enabled: boolean;
+            /**
+             * Credential Source
+             * @default 1password
+             * @enum {string}
+             */
+            readonly credential_source: "1password" | "canopy-web";
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             readonly owner?: components["schemas"]["AgentOwnerOut"] | null;
             readonly canopy_user?: components["schemas"]["AgentOwnerOut"] | null;
@@ -10704,6 +10776,20 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "manual" | "auto";
+        };
+        /**
+         * CredentialSourceIn
+         * @description Choose where `canopy cred` resolves this agent's secrets from (canopy#850).
+         *
+         *     Its own endpoint, owner/admin only, for the same reason as TurnModeIn: the
+         *     agent-repo self-publish upsert must never be able to move its own secrets.
+         */
+        readonly CredentialSourceIn: {
+            /**
+             * Credential Source
+             * @enum {string}
+             */
+            readonly credential_source: "1password" | "canopy-web";
         };
         /**
          * SlackEnabledOut
@@ -12153,6 +12239,35 @@ export interface components {
             readonly values?: {
                 readonly [key: string]: string;
             };
+        };
+        /**
+         * AgentCredentialAccessOut
+         * @description Whether the CALLER may resolve this agent's secrets — never the values.
+         *
+         *     The cheap check `canopy cred` makes before deciding how to resolve
+         *     (canopy#850). `may_resolve` mirrors GET /credentials/resolve exactly, minus
+         *     its bearer requirement (that is a property of the request, not of the
+         *     caller): `via` is `runner` when the caller pairs a live runner this agent
+         *     routes to, `admin` when they are the agent's owner or an admin, and null
+         *     when neither holds — then `reason` names the access to ask for.
+         */
+        readonly AgentCredentialAccessOut: {
+            /** Agent */
+            readonly agent: string;
+            /**
+             * Credential Source
+             * @enum {string}
+             */
+            readonly credential_source: "1password" | "canopy-web";
+            /** May Resolve */
+            readonly may_resolve: boolean;
+            /** Via */
+            readonly via?: ("runner" | "admin") | null;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
         };
         /**
          * AgentCredentialsResolveOut
@@ -20843,6 +20958,32 @@ export interface operations {
             };
         };
     };
+    readonly set_credential_source: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CredentialSourceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
     readonly set_slack_enabled: {
         readonly parameters: {
             readonly query?: never;
@@ -21729,6 +21870,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentCredentialStatusOut"][];
+                };
+            };
+        };
+    };
+    readonly agent_credential_access: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentCredentialAccessOut"];
                 };
             };
         };
