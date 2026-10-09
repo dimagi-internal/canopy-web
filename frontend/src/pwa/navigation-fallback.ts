@@ -89,6 +89,7 @@ export const NAVIGATE_FALLBACK_DENYLIST: RegExp[] = [
   /^\/(canopy\/)?auth\//,
   /^\/(canopy\/)?health\/?$/,
   /^\/(canopy\/)?w\/.*\/content(?:\?.*)?$/, // streamed artifact bytes (Django)
+  /^\/(canopy\/)?w\/[^/]+\/(marketplace\.json|plugins\/)/, // Claude Code plugin marketplace (Django, apps/plugins)
 ]
 
 /**

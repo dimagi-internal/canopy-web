@@ -6,6 +6,7 @@ from django.urls import include, path, re_path
 
 from apps.api.api import api as api_v2
 from apps.api.views import redoc_docs, scalar_docs
+from apps.plugins import views as plugin_views
 from apps.slack import views as slack_views
 from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
@@ -71,6 +72,15 @@ urlpatterns = [
         "w/<str:ws>/walkthrough/<str:wid>/content",
         views_walkthrough_content,
         name="walkthrough-content",
+    ),
+    # Each workspace's agent plugins as a Claude Code marketplace
+    # (canopy-web#1376, docs/plugin-marketplace.md). Bare views: Claude Code
+    # fetches these exact addresses, and they self-enforce auth (401 / 404).
+    path("w/<str:ws>/marketplace.json", plugin_views.marketplace_json, name="plugin-marketplace"),
+    path(
+        "w/<str:ws>/plugins/<str:agent>/<str:version>.zip",
+        plugin_views.plugin_archive,
+        name="plugin-archive",
     ),
     # The flat artifact addresses — /walkthrough/…, /review/…, /share/… — and
     # the pre-tenancy /w/<uuid>/… ones are GONE (owner decision, 2026-10-08;
