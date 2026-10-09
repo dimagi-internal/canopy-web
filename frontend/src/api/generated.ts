@@ -4564,6 +4564,9 @@ export interface paths {
          *     runner's owner, and tapping it opens the AWS page with the code filled in.
          *     The CLI on the box finishes on its own once the person approves.
          *
+         *     `reason` is required (422 without it). The notification names who is
+         *     asking, the runner, and why, so the owner can decide from the lock screen.
+         *
          *     `sent` is how many devices the notification reached. 0 means nobody saw
          *     it, so the caller falls back to another channel. canopy-web stores nothing.
          *     See `apps/harness/sign_in_requests.py` for why the push goes only to the
@@ -15037,6 +15040,11 @@ export interface components {
              * @default
              */
             readonly requested_by: string;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
         };
         /**
          * RunnerAdminOut

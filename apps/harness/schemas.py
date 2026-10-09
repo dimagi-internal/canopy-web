@@ -1255,6 +1255,8 @@ class SignInRequestIn(Schema):
     label: str = ""
     # Who is waiting on it, e.g. the agent ("hal"). Shown in the notification.
     requested_by: str = ""
+    # Why the sign-in is needed. Required: a 422 without it.
+    reason: str = ""
 
 
 class SignInRequestOut(Schema):

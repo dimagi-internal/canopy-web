@@ -65,28 +65,37 @@ def validate_url(provider: str, url: str) -> str:
 
 
 def push_sign_in_request(runner, *, provider: str, url: str, label: str = "",
-                         requested_by: str = "") -> int:
+                         requested_by: str = "", reason: str = "") -> int:
     """Push the approval link to the runner's owner. Returns the number of
     devices reached, and 0 means nobody saw it. The caller has to treat 0 as "fall
     back to another channel", not as success. The owner may not have enabled
     notifications on any device, or push may not be configured on this
     deployment.
+
+    `reason` is required. The notification must say who is asking, on which
+    box, and why, so the owner can decide from the lock screen without opening
+    the session to find out what an approval is for (Jonathan, 2026-10-09). A
+    credential grant with no stated purpose is also the shape a person should
+    learn to refuse.
     """
     from apps.push.services import send_to_user
 
     url = validate_url(provider, url)
+    reason = " ".join((reason or "").split())[:200]
+    if not reason:
+        raise SignInRequestError("a sign-in request must say why it is needed (reason)")
     owner = runner.owner
     if owner is None:
         return 0
     label = (label or "").strip()[:60]
     who = (requested_by or "").strip()[:60] or "An agent"
     what = f"AWS sign-in ({label})" if label else "AWS sign-in"
-    title = f"{what} needed on {runner.name}"
-    body = f"{who} is waiting on it. Tap to approve. The link expires in about 10 minutes."
+    title = f"{who} needs {what}"
+    body = f"On {runner.name}: {reason}. Tap to approve. The link expires in about 10 minutes."
     sent = send_to_user(owner, title=title, body=body, url=url)
     # The audit trail for "who put an approval in front of me": an approved
     # device code is a credential grant, so every request is logged whether or
     # not it reached a device.
-    logger.info("sign-in request: runner=%s owner=%s provider=%s label=%r by=%r sent=%d",
-                runner.pk, owner.pk, provider, label, who, sent)
+    logger.info("sign-in request: runner=%s owner=%s provider=%s label=%r by=%r reason=%r sent=%d",
+                runner.pk, owner.pk, provider, label, who, reason, sent)
     return sent
