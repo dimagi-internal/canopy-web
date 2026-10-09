@@ -98,8 +98,16 @@ WIDGET_HIDDEN_ROLES = frozenset({Message.TOOL_USE, Message.TOOL_RESULT})
 
 
 def for_widget(messages):
-    """`messages` as an embedded widget may see them — without tool rows."""
-    return [m for m in messages if getattr(m, "role", None) not in WIDGET_HIDDEN_ROLES]
+    """`messages` as an embedded widget may see them — without tool rows.
+
+    Except a tool result that carries an MCP Apps View (`app`, set by
+    `tokens.mcp_apps_views.annotate`): the View IS the host's UI for the person
+    on the page, so it reaches the widget — stripped to its call id, never the
+    raw result (the View reads what it needs as the viewer)."""
+    from apps.tokens.mcp_apps_views import strip_for_widget
+
+    return [strip_for_widget(m) if getattr(m, "app", None) else m for m in messages
+            if getattr(m, "role", None) not in WIDGET_HIDDEN_ROLES or getattr(m, "app", None)]
 
 
 #: How much of a conversation's first message a list shows to name it.
@@ -1022,6 +1030,9 @@ SERVER_OWNED_METADATA = frozenset({
     # A host's runner requirements (ZDR, apps/harness/runner_requirements.py),
     # copied from the token that started or sent into the session.
     "runner_requirements",
+    # MCP Apps receipts + model context (apps/tokens/mcp_apps_views.py): canopy's
+    # own record of what a View did — a host must never be able to write it.
+    "mcp_apps",
 })
 MAX_HOST_METADATA_KEYS = 20
 MAX_HOST_METADATA_BYTES = 4096

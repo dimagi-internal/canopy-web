@@ -387,7 +387,21 @@ def build(turn, *, reader_user=None) -> dict:
         # message stays exactly what they typed. Until 2026-09-26 the widget
         # pasted it, and every transcript showed a JSON dump under the question.
         "page": _page(cs),
+        # MCP APPS (spec 2026-10-08 §6): what a site's View in this conversation
+        # last said about its state (`ui/update-model-context`, latest wins) and
+        # canopy's OWN receipts of the calls a person made by clicking in one —
+        # recorded by the host, never reported by the View. null when no View
+        # has said or done anything here.
+        "apps": _apps(cs),
     }
+
+
+def _apps(cs) -> dict | None:
+    if cs is None:
+        return None
+    from apps.tokens.mcp_apps_views import envelope_block
+
+    return envelope_block(cs)
 
 
 def _person(turn, agent, reader_user) -> dict | None:

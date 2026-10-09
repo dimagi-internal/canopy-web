@@ -46,6 +46,8 @@ def message_dto(msg: Message) -> dict:
         "started_at": None,
         "completed_at": None,
         "created_at": _iso(msg.created_at),
+        # MCP Apps: this tool result has a View (`tokens/mcp_apps_views.annotate`).
+        **({"app": msg.app} if getattr(msg, "app", None) else {}),
     }
 
 

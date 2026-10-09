@@ -43,18 +43,32 @@ _TOOL_EVENTS = frozenset({"chat.tool_use", "chat.tool_result"})
 
 
 def without_tools(frame: dict) -> dict | None:
-    """`frame` as an embedded widget sees it, or None to send nothing."""
+    """`frame` as an embedded widget sees it, or None to send nothing.
+
+    A tool result that carries an MCP Apps View (`app`) still goes through,
+    stripped to its call id — the View is the host's UI for this person; its raw
+    result is not (`services.for_widget` is the REST twin)."""
     event = frame.get("event")
+    if event == "chat.tool_result" and (frame.get("data") or {}).get("app"):
+        data = frame["data"]
+        block = {"tool_use_id": (data.get("block") or {}).get("tool_use_id")}
+        return {**frame, "data": {**data, "block": block}}
     if event in _TOOL_EVENTS:
         return None
     if event == "session.state":
         data = frame.get("data") or {}
         messages = data.get("messages")
         if messages:
-            kept = [m for m in messages if m.get("role") not in chat_services.WIDGET_HIDDEN_ROLES]
-            if len(kept) != len(messages):
+            kept = [_stripped_view_row(m) if m.get("app") else m for m in messages
+                    if m.get("role") not in chat_services.WIDGET_HIDDEN_ROLES or m.get("app")]
+            if kept != messages:
                 return {**frame, "data": {**data, "messages": kept}}
     return frame
+
+
+def _stripped_view_row(row: dict) -> dict:
+    return {**row, "content": {"tool_use_id": (row.get("content") or {}).get("tool_use_id")},
+            "plaintext": ""}
 
 log = logging.getLogger(__name__)
 
@@ -458,7 +472,21 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         turn_id = message.get("turn_id")
         mid = await database_sync_to_async(self._resolve_message_id_sync)(turn_id, evt.get("seq"))
         for frame in stream_map.turn_event_to_frames(evt, lambda _seq: mid):
+            if frame.get("event") == "chat.tool_result":
+                # MCP Apps: decided server-side, on the live frame as on a reload.
+                app = await database_sync_to_async(self._app_for_result)(frame["data"].get("block"))
+                if app:
+                    frame["data"]["app"] = app
             await self.send_json(frame)
+
+    def _app_for_result(self, block):
+        from apps.tokens import mcp_apps_views
+
+        try:
+            return mcp_apps_views.app_for_result_block(self.session, block or {})
+        except Exception:  # noqa: BLE001 - a View is an extra; never break the stream
+            log.exception("mcp_apps: could not decide a View for a live tool result")
+            return None
 
     async def chat_user_message(self, message):
         """A ledger-sourced send (`services._publish_user_message`), fanned out to
@@ -646,6 +674,9 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # falling back to the binding tail for a local session with no Message rows.
         # REST and this snapshot MUST agree — see tests/test_transcript_parity.py.
         messages, _has_more, _oldest = chat_services.visible_transcript(self.session)
+        from apps.tokens import mcp_apps_views
+
+        mcp_apps_views.annotate(self.session, messages)
         return {
             "event": "session.state",
             "data": serializers.session_state_dto(

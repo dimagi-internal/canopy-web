@@ -286,6 +286,14 @@ GATES: dict[str, tuple[str, ...]] = {
     "canopy_sessions_declare_page_actions": ("session-acl",),  # write
     "list_page_actions": ("session-acl",),
     "canopy_sessions_declare_page_state": ("session-acl",),  # write
+    # MCP Apps View plumbing (apps/tokens/mcp_apps_views.py): a session reader may
+    # load a View read-only; every act (call/read/context/message) needs a WRITE
+    # role in the session and the viewer's OWN host grant, and a PAT is refused.
+    "app_view_resource": ("session-acl",),
+    "app_view_call": ("session-acl",),  # write + the viewer's own host grant
+    "app_view_read": ("session-acl",),  # the viewer's own host grant
+    "app_view_context": ("session-acl",),  # write
+    "app_view_message": ("session-acl",),  # write
     "declare_run_input": ("session-acl",),  # write
     "read_page_state": ("session-acl",),
     "invoke_page_action": ("session-acl",),  # write
@@ -333,6 +341,11 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/tokens/contact_api.py  (/api/contact/: ContactAuth; contact_session_q)
     "contact_token": ("host",),  # auth=None; site-signed assertion (+ optional ID-JAG)
     "contact_me": ("contact",),
+    "contact_app_view_resource": ("contact",),
+    "contact_app_view_call": ("contact",),  # own session + own host grant
+    "contact_app_view_read": ("contact",),
+    "contact_app_view_context": ("contact",),
+    "contact_app_view_message": ("contact",),
     "contact_ws_ticket": ("contact",),  # a one-time socket ticket standing for the caller's own contact token
     "start_session": ("contact",),
     "tokens_contact_list_sessions": ("contact",),

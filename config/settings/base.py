@@ -576,6 +576,8 @@ MCP_APPS_SANDBOX_URL = env("MCP_APPS_SANDBOX_URL", default="/mcp-apps/sandbox/")
 # with every live Connected site's frame origins for the embed panel). Empty =
 # derived: CANOPY_PUBLIC_BASE_URL, CANOPY_FORMER_BASE_URLS and the request's own.
 MCP_APPS_HOST_ORIGINS = env.list("MCP_APPS_HOST_ORIGINS", default=[])
+# Refresh a site's UI tool index in the background when a visitor arrives.
+MCP_APPS_BACKGROUND_REFRESH = True
 
 # The `provider` of every A2A Agent Card this deployment serves (apps/agents/agent_card.py).
 CANOPY_A2A_PROVIDER_ORGANIZATION = env("CANOPY_A2A_PROVIDER_ORGANIZATION", default="Dimagi")

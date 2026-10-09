@@ -206,6 +206,7 @@ from apps.harness.api_investigations import router as investigations_router  # n
 from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
 from apps.push.api import router as push_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
+from apps.canopy_sessions.app_views_api import router as app_views_router  # noqa: E402
 from apps.canopy_sessions.secrets_api import router as session_secrets_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
 from apps.contacts.hcp_api import router as hcp_router  # noqa: E402
@@ -268,6 +269,8 @@ api.add_router("/huddles", huddles_router)
 api.add_router("/threads", threads_router)
 api.add_router("/push", push_router)
 api.add_router("/canopy-sessions", canopy_sessions_router)
+# MCP Apps: a rendered View's browser plumbing (apps/tokens/mcp_apps_views.py).
+api.add_router("/canopy-sessions", app_views_router)
 api.add_router("/session-secrets", session_secrets_router)
 api.add_router("/contacts", contacts_router)
 api.add_router("/people", people_router)  # fleet brain v1 (canopy#804)
