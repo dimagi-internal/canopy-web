@@ -208,12 +208,12 @@ jobs:
       # for the whole cloud fleet and cannot be tested against live EC2, so this
       # suite is the only gate it has.
       #
-      # NOTE: this does NOT run in a bare env, whatever the comment in the
-      # root pyproject.toml says. runner/ec2 has no pyproject.toml, so uv
-      # discovers the ROOT project and Django et al. are importable here.
-      # A truly bare run (`--no-project`) currently fails: the tests import
-      # canopy_transcript and yaml. Tracked separately; unchanged by the job
-      # split.
+      # NOTE: this does NOT run in a bare env. runner/ec2 has no
+      # pyproject.toml, so uv discovers the ROOT project and Django et al. are
+      # importable here. That is fine: the stdlib-only invariant is checked
+      # against the module itself by tests/test_stdlib_only.py (#1351), not
+      # inferred from the env — a `--no-project` run would still have to carry
+      # canopy_transcript and yaml for the tests, which proves nothing.
       - name: Run cloud_runner tests
         working-directory: runner/ec2
         run: uv run --with pytest --with pytest-timeout pytest -q

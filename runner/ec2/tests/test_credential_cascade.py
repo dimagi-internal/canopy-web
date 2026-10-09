@@ -8,6 +8,8 @@ re-run against every credential in turn, spending real money on a plain bug.
 """
 from __future__ import annotations
 
+import calendar
+
 import pytest
 
 CAP_TEXT = "You've hit your weekly limit · resets Aug 3, 11pm (UTC)"
@@ -281,7 +283,10 @@ def test_an_unreadable_reset_still_parks_for_the_fallback_window(cr, monkeypatch
     cr.execute_prompt("do it", "turn-abcdef12", lambda e: None)
     body = [c for c in calls if c[1] == "/runners/rid-1/pause"][0][2]
     assert "unreadable" in body["note"]
-    parked = _time.mktime(_time.strptime(body["until"], "%Y-%m-%dT%H:%M:%SZ")) - _time.timezone
+    # timegm, not mktime() - timezone: `timezone` is the STANDARD offset, so
+    # that form is an hour off during DST anywhere but UTC (red on a laptop,
+    # green in CI).
+    parked = calendar.timegm(_time.strptime(body["until"], "%Y-%m-%dT%H:%M:%SZ"))
     assert abs(parked - (before + cr.CAP_PAUSE_FALLBACK_SECONDS)) < 5
 
 
