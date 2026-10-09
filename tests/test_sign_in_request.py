@@ -47,19 +47,31 @@ def sent(monkeypatch):
 def _post(user, runner, body):
     c = Client()
     c.force_login(user)
+    body = {"reason": "read the canopy-web 5xx logs", **body}
     return c.post(f"/api/harness/runners/{runner.id}/sign-in-request",
                   data=json.dumps(body), content_type="application/json")
 
 
 def test_the_owner_is_pushed_a_tap_to_approve_link(owner, runner, sent):
-    r = _post(owner, runner, {"url": AWS_URL, "label": "labs", "requested_by": "hal"})
+    r = _post(owner, runner, {"url": AWS_URL, "label": "labs", "requested_by": "hal",
+                              "reason": "confirm the 5xx alarm cause in /ecs/labs-jj-canopy-web"})
     assert r.status_code == 200, r.content
     assert r.json() == {"sent": 1}
     [push] = sent
     assert push["user"] == "owner"
     assert push["url"] == AWS_URL, "tapping must open the AWS page with the code filled in"
-    assert "labs" in push["title"] and "jj-mbp" in push["title"]
-    assert "hal" in push["body"]
+    # Who, what, where and why, readable from the lock screen.
+    assert push["title"] == "hal needs AWS sign-in (labs)"
+    assert push["body"].startswith(
+        "On jj-mbp: confirm the 5xx alarm cause in /ecs/labs-jj-canopy-web.")
+
+
+@pytest.mark.parametrize("reason", ["", "   "])
+def test_a_request_that_does_not_say_why_is_refused(owner, runner, sent, reason):
+    r = _post(owner, runner, {"url": AWS_URL, "reason": reason})
+    assert r.status_code == 422, r.content
+    assert "reason" in r.json()["detail"]
+    assert sent == []
 
 
 def test_the_regional_device_page_is_accepted(owner, runner, sent):
