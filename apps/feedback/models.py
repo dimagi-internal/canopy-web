@@ -142,3 +142,43 @@ class Feedback(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"feedback:{self.target_kind}:{self.target_ref}:{self.pk}"
+
+
+class ArtifactView(models.Model):
+    """That a signed-in person OPENED an artifact — the silent half of a reaction.
+
+    Feedback records what someone SAID. Most people who find an artifact useful
+    say nothing; the one signal they always leave is that they looked. Without
+    this row canopy could not tell "the human never opened it" from "the human
+    opened it twice and moved on" — and a "useful artifact" is defined as one the
+    agent judged good OR one the human responded to (T76, 2026-10-09).
+
+    Same discipline as ``Feedback``: generic over its target by string
+    (``target_kind`` + ``target_ref``), never an FK, so this framework app never
+    imports the product app that owns the target. One row per (target, user),
+    upserted on each view — a count and two timestamps, not an access log.
+    Anonymous (share-token) readers are not recorded: they have no identity to
+    count, and the question this answers is about a known person.
+    """
+
+    target_kind = models.CharField(max_length=32)
+    """``"walkthrough"`` (ref = its uuid), ``"narrative"`` (ref = its slug),
+    ``"storyboard"`` (ref = its slug)."""
+    target_ref = models.CharField(max_length=200)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="artifact_views"
+    )
+    view_count = models.PositiveIntegerField(default=1)
+    first_viewed_at = models.DateTimeField(auto_now_add=True)
+    last_viewed_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["target_kind", "target_ref", "user"], name="uniq_artifact_view_user"
+            ),
+        ]
+        indexes = [models.Index(fields=["target_kind", "target_ref"])]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"view:{self.target_kind}:{self.target_ref}:{self.user_id}"

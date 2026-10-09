@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Literal
 
 from apps.common.schemas import StrictModel
+from apps.feedback.schemas import ArtifactSignalsOut
 
 Capability = Literal["read", "comment", "suggest"]
 Layout = Literal["review", "reel"]
@@ -64,7 +65,7 @@ class NotesOut(StrictModel):
     items: list[NoteOut]
 
 
-class StoryboardListItemOut(StrictModel):
+class StoryboardListItemOut(ArtifactSignalsOut):
     slug: str
     title: str
     lede: str
@@ -104,6 +105,11 @@ class StoryboardIn(StrictModel):
     capability: Capability = "read"
     layout: Layout = "review"
     acts: list[ActIn] = []
+    # What made it (T76) — optional overrides of the caller's X-Canopy-Parent-*
+    # headers and of the parent turn's board-task project.
+    session_id: str | None = None
+    turn_id: str | None = None
+    agent_project: str | None = None
 
 
 class StoryboardPatchIn(StrictModel):

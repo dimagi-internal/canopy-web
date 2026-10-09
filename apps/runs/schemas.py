@@ -6,10 +6,11 @@ import uuid
 from typing import Any, Literal
 
 from apps.common.schemas import StrictModel
+from apps.feedback.schemas import ArtifactSignalsOut
 from apps.walkthroughs.schemas import WalkthroughKind, WalkthroughLink
 
 
-class NarrativeListItemOut(StrictModel):
+class NarrativeListItemOut(ArtifactSignalsOut):
     slug: str
     title: str | None = None
     phase: str | None = None
@@ -84,7 +85,7 @@ class NarrativeStoryOut(StrictModel):
     cuts: list[NarrativeCutOut] = []
 
 
-class NarrativeDetailOut(StrictModel):
+class NarrativeDetailOut(ArtifactSignalsOut):
     slug: str
     title: str | None = None
     story: str | None = None

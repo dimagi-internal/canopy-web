@@ -29,6 +29,8 @@ from ninja import Router, Status
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.common.csrf import csrf_rejected
+from apps.feedback import reactions
+from apps.harness import artifact_origin
 from apps.reviews.notify import notify_suggestion, review_path
 from apps.reviews.titles import narrative_title
 from apps.runs.ddd import (
@@ -188,11 +190,49 @@ def _pinned_videos(request: HttpRequest, review: ReviewRequest) -> dict:
     }
 
 
+def _view_target(review: ReviewRequest) -> tuple[str, str]:
+    """Where a view of this review is recorded: its NARRATIVE (a person reading
+    any version of a story has looked at that story), or the review itself for a
+    run-child gate that belongs to no narrative."""
+    slug = _narrative_slug_of(review)
+    return (reactions.NARRATIVE, slug) if slug else ("review", str(review.id))
+
+
+def _signals(reviews) -> dict[str, dict]:
+    """Origin + reaction fields for a batch of reviews (board task hal/T76).
+
+    Comments are Feedback on this narrative VERSION plus the review's own
+    external suggestions; views are views of its narrative. Constant queries."""
+    reviews = list(reviews)
+    targets = []
+    for r in reviews:
+        slug = _narrative_slug_of(r)
+        targets.append(reactions.Target(
+            key=str(r.id),
+            feedback=[(reactions.NARRATIVE, slug, r.version)] if slug else [],
+            views=[_view_target(r)],
+            creator_id=r.owner_id,
+            extra_commenters=[reactions.suggestion_identity(e) for e in (r.suggestions_json or [])],
+        ))
+    summary = reactions.summarize(targets)
+    return {
+        str(r.id): {
+            "project_slug": r.project_slug,
+            "session_id": r.source_session_id,
+            "turn_id": r.source_turn_id,
+            "agent_project": artifact_origin.project_out(r.agent_project),
+            **summary[str(r.id)],
+        }
+        for r in reviews
+    }
+
+
 def _detail_payload(
     review: ReviewRequest, *, is_owner: bool, can_write: bool = False, can_decide: bool = False,
     videos: dict | None = None,
 ) -> dict:
     return {
+        **_signals([review])[str(review.id)],
         "id": review.id,
         "run_id": review.run_id,
         "gate": review.gate,
@@ -227,7 +267,7 @@ def _list_title(request_json: dict, narrative_slug: str | None = None) -> str | 
     return narrative_title(request_json, narrative_slug)
 
 
-def _list_item_payload(request: HttpRequest, review: ReviewRequest) -> dict:
+def _list_item_payload(request: HttpRequest, review: ReviewRequest, signals: dict) -> dict:
     rj = review.request_json if isinstance(review.request_json, dict) else {}
     narration = rj.get("narration") or []
     is_own = _is_owner(request, review)
@@ -237,6 +277,7 @@ def _list_item_payload(request: HttpRequest, review: ReviewRequest) -> dict:
     else:
         item_count = len(narration) if isinstance(narration, list) else 0
     return {
+        **signals,
         "id": review.id,
         "run_id": review.run_id,
         "gate": review.gate,
@@ -267,6 +308,10 @@ def list_reviews(
     q: str = "",
     status: str = "",
     order: str = "-last_activity",
+    project: str = "",
+    session: str = "",
+    turn: str = "",
+    agent_project: str = "",
 ) -> list[ReviewListItemOut]:
     """
     List every review request for the DDD-plans dashboard.
@@ -284,10 +329,26 @@ def list_reviews(
     qs = ReviewRequest.objects.filter(workspace_id__in=wsvc.request_workspace_slugs(request))
     if status in (ReviewRequest.STATUS_PENDING, ReviewRequest.STATUS_RESOLVED):
         qs = qs.filter(status=status)
+    # Origin filters (T76): `project` = the repo project_slug; `agent_project` =
+    # the board project (`hal/P5`, `hal:P5` or an id); `session` / `turn` = the
+    # canopy session / turn the review was opened from.
+    if project:
+        qs = qs.filter(project_slug=project)
+    for field, value in (("source_session_id", session), ("source_turn_id", turn)):
+        if value:
+            try:
+                qs = qs.filter(**{field: UUID(value.strip())})
+            except ValueError:
+                qs = qs.none()
+    project_filter = artifact_origin.parse_project_filter(agent_project)
+    if project_filter:
+        qs = qs.filter(**project_filter)
 
     # Build derived rows once, then filter/sort in Python — the review set is
     # team-internal and small, and narrative_slug/title live inside the JSON payload.
-    items = [_list_item_payload(request, r) for r in qs.iterator()]
+    rows = list(qs.select_related("agent_project__agent"))
+    signals = _signals(rows)
+    items = [_list_item_payload(request, r, signals[str(r.id)]) for r in rows]
 
     needle = q.strip().lower()
     if needle:
@@ -386,7 +447,16 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
             detail=f"opening a review requires the editor role in {ws.slug!r}",
         )
 
+    # What made it (T76) — see apps/harness/artifact_origin.py. Never refuses.
+    origin = artifact_origin.resolve(
+        request, session=payload.session_id or "", turn=payload.turn_id or "",
+        agent_project=payload.agent_project or "", run_id=run_id,
+    )
+    project_slug = (payload.project_slug or str(request_json.get("project_slug") or "")).strip()[:200]
+
     review = ReviewRequest.objects.create(
+        **origin,
+        project_slug=project_slug or None,
         run_id=run_id,
         narrative_slug=narrative_slug,
         version=version,
@@ -453,6 +523,7 @@ def get_review(request: HttpRequest, rid: UUID, ws: str = "") -> ReviewRequestOu
         raise ProblemError(404, "Review request not found", type_=TYPE_NOT_FOUND)
 
     is_own = _is_owner(request, review)
+    reactions.record_view(request, *_view_target(review))
 
     # Suggestions are internal reading — any member of the review's workspace
     # sees them, a viewer included; only an anonymous link reader does not.

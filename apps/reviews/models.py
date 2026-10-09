@@ -69,6 +69,26 @@ class ReviewRequest(models.Model):
             "own tenant root via this FK."
         ),
     )
+    # The repo/project slug this narrative is about — the same free string
+    # Walkthrough.project_slug carries (a repo name). Sent by the DDD loop in
+    # request_json.project_slug, or as a top-level field.
+    project_slug = models.CharField(max_length=200, blank=True, null=True, db_index=True)
+    # What MADE this artifact (board task hal/T76): the canopy chat session and
+    # turn it was uploaded from — stamped server-side from the uploader's
+    # X-Canopy-Parent-* headers — and the agent project the work served. All
+    # SET_NULL: retention deleting a turn must not take its artifacts with it.
+    # See apps/harness/artifact_origin.py.
+    source_session = models.ForeignKey(
+        "canopy_sessions.Session", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    source_turn = models.ForeignKey(
+        "harness.Turn", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    agent_project = models.ForeignKey(
+        "agents.AgentProject", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
