@@ -264,3 +264,32 @@ def test_index_zero_is_a_real_ordinal_not_a_falsy_marker():
     would read it as "holds nothing" and re-ship the whole history every tick."""
     rows = _rows(0, 64)
     assert rows_to_ship(rows, first_held=0, last_held=0) == _rows(64)
+
+
+def test_an_ordinary_nested_mcp_input_is_kept_whole():
+    """An MCP Apps View re-reads its tool input from this copy. Labs' coaching call nests
+    picture.params.topics seven levels down; at a depth cap of 6 the topics became
+    ["…","…","…"] and the View failed (2026-10-09)."""
+    from canopy_transcript.rows import _tool_input
+
+    raw = {
+        "run_id": 8478,
+        "arguments": {
+            "workers": [
+                {
+                    "key": "10092::cr_g02",
+                    "picture": {"type": "peer_comparison", "params": {"topics": ["CL_X1", "CL_X2"]}},
+                }
+            ]
+        },
+    }
+    assert _tool_input(raw) == raw
+
+
+def test_pathological_nesting_is_still_cut():
+    from canopy_transcript.rows import TOOL_INPUT_MAX_DEPTH, _tool_input
+
+    deep = "leaf"
+    for _ in range(TOOL_INPUT_MAX_DEPTH + 5):
+        deep = {"n": deep}
+    assert "…" in str(_tool_input(deep))
