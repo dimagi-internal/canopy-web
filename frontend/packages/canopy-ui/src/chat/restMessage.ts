@@ -27,6 +27,8 @@ export interface RestMessage {
   content: Record<string, unknown>;
   plaintext: string;
   created_at: string;
+  /** MCP Apps View on a tool result (`MessageOut.app`). */
+  app?: Message["app"];
 }
 
 /**
@@ -50,5 +52,6 @@ export function restToKitMessage(m: RestMessage): Message {
     started_at: null,
     completed_at: m.created_at,
     created_at: m.created_at,
+    ...(m.app ? { app: m.app } : {}),
   };
 }

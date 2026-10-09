@@ -40,7 +40,9 @@ export function groupToolRuns(
   };
 
   for (const row of rows) {
-    if (row.kind === "tool_pair") {
+    // A call with an MCP Apps View is something the person ACTS on, so it is
+    // never folded into a collapsed run.
+    if (row.kind === "tool_pair" && !row.result?.app) {
       run.push(row);
       continue;
     }

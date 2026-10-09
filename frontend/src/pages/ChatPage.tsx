@@ -26,6 +26,7 @@ import {
   type ChatSessionDetail,
   uploadAttachment,
   deleteAttachment,
+  appHostFor,
 } from '@/api/chat'
 import {
   CLOSE_POLL_MS,
@@ -87,6 +88,7 @@ const BACKFILL_TIMEOUT_MS = 30_000
  */
 export function ChatPage() {
   const { id = '' } = useParams()
+  const appHost = useMemo(() => appHostFor(id), [id])
   const navigate = useNavigate()
   const [meta, setMeta] = useState<ChatSessionDetail | null>(null)
   const [metaError, setMetaError] = useState<string | null>(null)
@@ -843,6 +845,8 @@ export function ChatPage() {
           // Nothing else holds it: alone in a session the body is never
           // mirrored to the server until the moment you send.
           draftPersistKey={id}
+          // MCP Apps: a Connected site's View for a tool result, acting as you.
+          appHost={appHost}
           emptyState={emptyState}
           historySlot={historySlot}
           // Refuse the send outright rather than queueing it at a box that

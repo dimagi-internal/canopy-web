@@ -6,6 +6,7 @@ import { Button } from "../ui/button";
 import type { RenderMarkdown } from "./MessageItem";
 import { MessageItem, ThinkingIndicator } from "./MessageItem";
 import { ToolCallPair } from "./ToolCallPair";
+import { AppView } from "./mcpApps/AppView";
 import { pairToolMessages } from "./pairToolMessages";
 import { groupToolRuns, runHasError, runIsActive, summariseRun } from "./groupToolRuns";
 
@@ -145,13 +146,22 @@ export function MessageList({
             );
           }
           if (row.kind === "tool_pair") {
-            return (
+            const pair = (
               <ToolCallPair
                 key={row.key}
                 use={row.use}
                 result={row.result}
                 forceOpen={forceToolOpen}
               />
+            );
+            // MCP Apps: the View first, the (collapsed) tool row below it.
+            return row.result?.app ? (
+              <div key={row.key}>
+                <AppView app={row.result.app} />
+                {pair}
+              </div>
+            ) : (
+              pair
             );
           }
           return (
