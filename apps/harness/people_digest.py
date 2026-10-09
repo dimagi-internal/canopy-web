@@ -28,6 +28,7 @@ The brakes, since a hook that starts turns when turns finish is a feedback loop:
   2026-10-07 (see config/settings/base.py for why) — and an agent's own
   `Agent.people_digest_enabled` (v1.1, default on; an agent admin flips it with
   `PATCH /api/agents/{slug}/people-digest`). Both must be on: either off is off.
+  `PEOPLE_DIGEST_PEOPLE` narrows it to the listed addresses (empty = everyone).
 
 `on_turn_finished` never raises and runs in a savepoint: a digest is never worth
 a failed finish.
@@ -118,6 +119,9 @@ def _on_turn_finished(turn: Turn) -> Turn | None:
         return None
     person = people.initiator_person(turn)
     if person is None:
+        return None
+    allowed = getattr(settings, "PEOPLE_DIGEST_PEOPLE", None) or []
+    if allowed and people.email_of(person).lower() not in allowed:
         return None
 
     from apps.agents.models import Agent

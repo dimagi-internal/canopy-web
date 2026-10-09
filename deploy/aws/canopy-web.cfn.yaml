@@ -439,6 +439,10 @@ Resources:
             # and the config set routes bounces/complaints to labs-jj-email-events.
             - { Name: CANOPY_EMAIL_ENABLED, Value: "true" }
             - { Name: CANOPY_SES_CONFIGURATION_SET, Value: labs-jj-email }
+            # People digest (apps/harness/people_digest.py): back on for Jonathan
+            # only (2026-10-09). Widen by adding addresses; empty list = everyone.
+            - { Name: PEOPLE_DIGEST_ENABLED, Value: "true" }
+            - { Name: PEOPLE_DIGEST_PEOPLE, Value: jjackson@dimagi.com }
             - { Name: CANOPY_ATTACHMENTS_BUCKET, Value: labs-jj-canopy-web-attachments-858923557655 }
             # Web Push (VAPID). The public key is not a secret — it ships in the
             # JS bundle so the browser can subscribe with it; it is the other

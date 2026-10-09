@@ -617,6 +617,10 @@ CANOPY_AUTO_DEBUG_LOST = env.bool("CANOPY_AUTO_DEBUG_LOST", default=False)
 # the envelope `person` block work either way.
 PEOPLE_DIGEST_ENABLED = env.bool("PEOPLE_DIGEST_ENABLED", default=False)
 PEOPLE_DIGEST_DEBOUNCE_MINUTES = env.int("PEOPLE_DIGEST_DEBOUNCE_MINUTES", default=60)
+# Who the digest runs FOR, when it is on: comma-separated addresses, matched against
+# the initiating person's address. Empty = everyone. Lets the digest come back on for
+# one person (Jonathan, 2026-10-09) before the batched-sweep rework lands.
+PEOPLE_DIGEST_PEOPLE = [a.strip().lower() for a in env.list("PEOPLE_DIGEST_PEOPLE", default=[]) if a.strip()]
 
 # --- Outbound email (apps/common/email.py) ---
 # OFF unless CANOPY_EMAIL_ENABLED is set: sending needs a verified SES identity
