@@ -230,6 +230,7 @@ class HcpAddIn(_Body):
     declarationType: str = Field(description="user-declared (the person said it) or model-inferred (you concluded it).")
     confidence: str | None = Field(default=None, description="high | medium | low — required for model-inferred, omitted otherwise.")
     sourceContext: str = Field(description="Conversation or document id this was derived from (e.g. turn:<id>).")
+    model: str | None = Field(default=None, description="The model id that produced a model-inferred entry, e.g. claude-opus-5-5")
 
 
 class HcpEntryIn(_Body):
@@ -246,6 +247,7 @@ class HcpUpdateIn(_Body):
     reason: str = Field(description="Reason for the update. Logged to the person's audit trail.")
     category: str | None = Field(default=None, description="The person only: move the entry to another category.")
     dimension: str | None = Field(default=None, description="Optional: revise the dimension.")
+    model: str | None = Field(default=None, description="The model id that produced a model-inferred entry, e.g. claude-opus-5-5")
 
 
 def _workspace_for_write(p: Principal, explicit: str | None):
@@ -336,12 +338,15 @@ def hcp_add_preference(request: HttpRequest, payload: HcpAddIn, turn: str | None
             raise hcp.malformed("declarationType is user-declared or model-inferred")
         if not p.actor.is_person and not hcp.allows(p.grant, payload.category, "write"):
             raise hcp.denied(f"not authorized to write {payload.category}")
+        captured = hcp.captured_by_model(
+            p.actor, inferred=payload.declarationType == "model-inferred", model=payload.model)
         ws = _workspace_for_write(p, workspace)
         fact = hcp.add_entry(
             person=p.person, workspace=ws, category=payload.category, statement=payload.preference,
             declaration=payload.declarationType, actor=p.actor, confidence=payload.confidence,
             dimension=payload.dimension, source=payload.sourceContext, source_turn=p.turn,
-            by_user=request.user, user_verified=p.actor.is_person)
+            by_user=request.user, user_verified=p.actor.is_person,
+            captured_by_override="" if captured == p.actor.id else captured)
         return _ok({"entry": _render(fact, p)}, status=201)
     return _idempotent(request, body, run)
 
@@ -423,7 +428,7 @@ def hcp_update_preference(request: HttpRequest, entry_id: str, payload: HcpUpdat
         fact = _entry(p, entry_id, "write")
         new = hcp.update_entry(fact, statement=payload.updatedPreference, reason=payload.reason,
                                actor=p.actor, category=payload.category, dimension=payload.dimension,
-                               by_user=request.user, source_turn=p.turn)
+                               by_user=request.user, source_turn=p.turn, model=payload.model)
         return _ok({"entry": _render(new, p)})
     return _idempotent(request, {"entry": entry_id, **payload.model_dump()}, run)
 

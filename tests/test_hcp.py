@@ -126,6 +126,41 @@ def test_confidence_is_required_for_an_inference_and_forbidden_otherwise(w):
 # --- conflicts (2.6) ---------------------------------------------------------
 
 
+def test_an_inference_records_the_model_that_made_it(w):
+    # 2.2.2: capturedBy SHOULD name the inferring model, not only the application.
+    c, turn = _as(w["ace"].user), _turn(w["ace"], w["lili"], "t")
+    base = {"category": "work_context", "preference": "Works on KC.", "sourceContext": "turn:x",
+            "declarationType": "model-inferred", "confidence": "medium"}
+    r = _post(c, f"/v1/preferences/add?turn={turn.pk}", {**base, "model": "claude-opus-5-5"})
+    assert r.status_code == 201
+    entry_id = hcp.parse_entry_id(r.json()["entry"]["id"])
+    fact = hcp.current(entry_id)
+    assert fact.captured_by == "agent:ace/model:claude-opus-5-5"
+    assert "capturedBy" not in r.json()["entry"]["record"].get("provenance", {})   # still redacted
+    new = hcp.update_entry(fact, statement="Leads KC.", reason="refined",
+                           actor=hcp.agent_actor(w["ace"]), source_turn=turn,
+                           model="claude-opus-5-5")
+    assert new.captured_by == "agent:ace/model:claude-opus-5-5"
+
+
+def test_a_malformed_model_is_refused(w):
+    c, turn = _as(w["ace"].user), _turn(w["ace"], w["lili"], "t")
+    r = _post(c, f"/v1/preferences/add?turn={turn.pk}", {
+        "category": "work_context", "preference": "Works on KC.", "sourceContext": "turn:x",
+        "declarationType": "model-inferred", "confidence": "low", "model": "claude opus/../x"})
+    assert r.status_code == 422 and r.json()["type"] == hcp.PROBLEM_BASE + "malformed-request"
+
+
+def test_a_model_is_ignored_on_a_declared_entry(w):
+    c, turn = _as(w["ace"].user), _turn(w["ace"], w["lili"], "t")
+    r = _post(c, f"/v1/preferences/add?turn={turn.pk}", {
+        "category": "work_context", "preference": "Works on KC.", "sourceContext": "turn:x",
+        "declarationType": "user-declared", "model": "claude-opus-5-5"})
+    assert r.status_code == 201
+    fact = hcp.current(hcp.parse_entry_id(r.json()["entry"]["id"]))
+    assert fact.captured_by == "agent:ace"
+
+
 @pytest.mark.parametrize("declared_first", [True, False])
 def test_an_inference_contradicting_a_declaration_is_quarantined_either_order(w, declared_first):
     p, ws = w["person"], w["ws"]

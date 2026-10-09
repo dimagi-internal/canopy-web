@@ -17580,6 +17580,11 @@ export interface components {
              * @description Conversation or document id this was derived from (e.g. turn:<id>).
              */
             readonly sourceContext: string;
+            /**
+             * Model
+             * @description The model id that produced a model-inferred entry, e.g. claude-opus-5-5
+             */
+            readonly model?: string | null;
         };
         /**
          * HcpEntryIn
@@ -17624,6 +17629,11 @@ export interface components {
              * @description Optional: revise the dimension.
              */
             readonly dimension?: string | null;
+            /**
+             * Model
+             * @description The model id that produced a model-inferred entry, e.g. claude-opus-5-5
+             */
+            readonly model?: string | null;
         };
     };
     responses: never;
