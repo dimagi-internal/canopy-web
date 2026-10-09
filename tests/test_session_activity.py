@@ -243,3 +243,55 @@ def test_rows_and_stream_events_carry_record_context():
     assert ev["cwd"] == WT and ev["git_branch"] == "hal/t75"
     assert "cwd" not in ev["payload"]
     assert "cwd" not in stream_event(rows[1])
+
+
+# --- noise (prod backfill, 2026-10-09: `$r` repos, one "repo" per worktree topic) --
+
+def test_unexpanded_shell_tokens_are_never_repos_remotes_or_branches():
+    d = _fold([
+        _bash(1, 'for r in ace hal; do cd ~/emdash/repositories/$r && git log; done'),
+        _bash(2, 'gh pr list -R dimagi-internal/$r --json number'),
+        _bash(3, 'cp -R skills/linkedin-mentions /tmp/x && grep -R connect_labs/supply_chain .'),
+        _bash(4, 'git checkout -b "hal/$(date +%s)" && git switch -c feat/*'),
+        {"role": "assistant", "text": "x", "cwd": WT, "git_branch": "`whoami`"},
+    ])
+    activity.normalize(d)
+    assert d.get("remotes", []) == []
+    assert d["repos"] == ["hal"]                    # from the cwd only
+    assert d.get("branches", []) == []
+
+
+def test_worktree_folders_map_to_their_repo():
+    remotes = {"canopy-web", "connect-labs"}
+    assert activity.canonical_repo("canopy-web-popup-escape", remotes) == "canopy-web"
+    assert activity.canonical_repo("connect-labs-today-flake", remotes) == "connect-labs"
+    assert activity.canonical_repo("cw-fixes", set()) == "canopy-web"          # alias
+    assert activity.canonical_repo("ace-web-assert", set()) == "ace-web"       # longest known prefix
+    assert activity.canonical_repo("eva-allowlist2", set()) == "eva"
+    assert activity.canonical_repo("labs-sql-explorer", remotes) == ""         # unexplained, has remotes
+    assert activity.canonical_repo("dimagi-brand-mcp", set()) == "dimagi-brand-mcp"   # no remotes: kept
+    assert activity.canonical_repo("$r", set()) == ""
+
+
+def test_store_normalizes_a_noisy_activity_and_rebuild_recomputes_row_derived_keys():
+    user, ws, runner, s, c = _ctx()
+    Message.objects.create(session=s, turn_index=1, role="tool_use", plaintext="", content={
+        "id": "t1", "name": "Edit",
+        "input": {"file_path": "/Users/jj/emdash/repositories/connect-labs-today-flake/connect_labs/supply_chain/x.py"}})
+    # What the first extractor stored on prod for sessions like this one.
+    s.activity = {"cwds": [WT], "cwd": WT, "branches": ["main", "$b"],
+                  "repos": ["$r", "connect-labs-today-flake", "supply_chain"],
+                  "remotes": ["dimagi-internal/connect-labs", "connect_labs/supply_chain"],
+                  "paths": {"connect-labs-today-flake:connect_labs/supply_chain": 3}}
+    s.save(update_fields=["activity"])
+    call_command("rebuild_session_activity", "--all")
+    s.refresh_from_db()
+    a = s.activity
+    assert a["repos"] == ["hal", "connect-labs"]
+    assert "remotes" not in a or a["remotes"] == []    # row-derived: no gh/push rows -> none
+    assert a["branches"] == ["main"]
+    assert a["paths"] == {"connect-labs:connect_labs/supply_chain": 1}
+    ids = {r["id"] for r in c.get("/api/canopy-sessions/?state=all&repo=supply_chain").json()}
+    assert str(s.id) not in ids
+    ids = {r["id"] for r in c.get("/api/canopy-sessions/?state=all&repo=connect-labs").json()}
+    assert str(s.id) in ids
