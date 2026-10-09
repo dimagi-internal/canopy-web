@@ -26,6 +26,8 @@ from apps.api.errors import (
     ProblemError,
 )
 
+from apps.feedback import reactions
+from apps.harness import artifact_origin
 from apps.runs.ddd import narrative_slug_from_run_id
 from apps.runs.aggregate import has_narrative_version
 from apps.workspaces import permissions as perms
@@ -95,8 +97,49 @@ def _share_url(w: Walkthrough) -> str | None:
     return wsvc.scoped_url_or_none(w.workspace_id, f"/walkthrough/{w.id}?t={w.share_token}")
 
 
-def _detail_payload(w: Walkthrough, *, is_owner: bool, request: HttpRequest) -> dict:
+def _signals(rows) -> dict[str, dict]:
+    """Origin + reaction fields for a batch of walkthroughs (board task hal/T76).
+
+    A walkthrough's comments are Feedback aimed at it directly PLUS feedback on
+    the narrative version it renders (``narrative_review_id``) — a DDD video is
+    reviewed through its narrative, so that is where its reactions land. A
+    constant number of queries for the whole batch."""
+    from apps.reviews.models import ReviewRequest
+
+    rows = list(rows)
+    versions = dict(
+        ReviewRequest.objects.filter(
+            pk__in={w.narrative_review_id for w in rows if w.narrative_review_id}
+        ).values_list("pk", "version")
+    )
+    targets = []
+    for w in rows:
+        fb = [(reactions.WALKTHROUGH, str(w.id), None)]
+        if w.narrative_review_id in versions and w.narrative_slug:
+            fb.append((reactions.NARRATIVE, w.narrative_slug, versions[w.narrative_review_id]))
+        targets.append(reactions.Target(
+            key=str(w.id), feedback=fb, views=[(reactions.WALKTHROUGH, str(w.id))],
+            creator_id=w.owner_id,
+        ))
+    summary = reactions.summarize(targets)
     return {
+        str(w.id): {
+            "session_id": w.source_session_id,
+            "turn_id": w.source_turn_id,
+            "agent_project": artifact_origin.project_out(w.agent_project),
+            **summary[str(w.id)],
+        }
+        for w in rows
+    }
+
+
+def _detail_payload(
+    w: Walkthrough, *, is_owner: bool, request: HttpRequest, signals: dict | None = None
+) -> dict:
+    if signals is None:
+        signals = _signals([w])[str(w.id)]
+    return {
+        **signals,
         "id": w.id,
         "title": w.title,
         "description": w.description,
@@ -120,8 +163,9 @@ def _detail_payload(w: Walkthrough, *, is_owner: bool, request: HttpRequest) -> 
     }
 
 
-def _list_item_payload(w: Walkthrough) -> dict:
+def _list_item_payload(w: Walkthrough, signals: dict) -> dict:
     return {
+        **signals,
         "id": w.id,
         "title": w.title,
         "description": w.description,
@@ -138,6 +182,14 @@ def _list_item_payload(w: Walkthrough) -> dict:
         "created_at": w.created_at,
         "updated_at": w.updated_at,
     }
+
+
+def _uuid_or_none(value: str) -> UUID | None:
+    """A filter value as a UUID; a malformed one matches nothing (not a 500)."""
+    try:
+        return UUID(value.strip())
+    except ValueError:
+        return None
 
 
 def _get_or_404(wid: UUID) -> Walkthrough:
@@ -205,6 +257,9 @@ def upload_walkthrough(
     narrative_review_id: str = Form(""),
     cut_id: str = Form(""),
     cut_scene_ids: str = Form(""),
+    session_id: str = Form(""),
+    turn_id: str = Form(""),
+    agent_project: str = Form(""),
 ) -> Status:
     _require_enabled()
 
@@ -307,8 +362,17 @@ def upload_walkthrough(
             detail=f"uploading a walkthrough requires the editor role in {ws.slug!r}",
         )
 
+    # What made it (T76): the session/turn from the provenance headers (or the
+    # explicit fields), and the agent project — explicit, else the DDD run doc,
+    # else the parent turn's board task. Never refuses the upload.
+    origin = artifact_origin.resolve(
+        request, session=session_id, turn=turn_id, agent_project=agent_project,
+        run_id=resolved_run_id,
+    )
+
     # Create ORM row first — if Drive fails, delete to avoid orphan row.
     w = Walkthrough.objects.create(
+        **origin,
         title=resolved_title,
         description=resolved_description,
         kind=kind,
@@ -421,25 +485,41 @@ def list_walkthroughs(
     project: str = "",
     kind: str = "",
     mine: str = "",
+    session: str = "",
+    turn: str = "",
+    agent_project: str = "",
 ) -> list[WalkthroughListItemOut]:
+    """`project` matches the repo `project_slug`; `agent_project` the board
+    project (`hal/P5`, `hal:P5` or an id); `session` / `turn` the canopy
+    session / turn the walkthrough was made from (T76)."""
     _require_enabled()
 
     # Scope to the caller's workspace(s): the /w/{ws} prefix pins one workspace;
     # a flat call spans every workspace the caller belongs to. A row with no
     # workspace is in nobody's scope (it used to be in everybody's on the flat
     # mount — the NULL-means-allow leg).
-    qs = Walkthrough.objects.select_related("owner").filter(
+    qs = Walkthrough.objects.select_related("owner", "agent_project__agent").filter(
         workspace_id__in=wsvc.request_workspace_slugs(request)
     )
     if project:
         qs = qs.filter(project_slug=project)
+    for field, value in (("source_session_id", session), ("source_turn_id", turn)):
+        if value:
+            wanted = _uuid_or_none(value)
+            qs = qs.filter(**{field: wanted}) if wanted else qs.none()
+    project_filter = artifact_origin.parse_project_filter(agent_project)
+    if project_filter:
+        qs = qs.filter(**project_filter)
     if kind in (Walkthrough.KIND_HTML, Walkthrough.KIND_VIDEO):
         qs = qs.filter(kind=kind)
     if mine == "true" and request.user.is_authenticated:
         qs = qs.filter(owner=request.user)
 
+    rows = list(qs)
+    signals = _signals(rows)
     return [
-        WalkthroughListItemOut.model_validate(_list_item_payload(w)) for w in qs
+        WalkthroughListItemOut.model_validate(_list_item_payload(w, signals[str(w.id)]))
+        for w in rows
     ]
 
 
@@ -468,6 +548,7 @@ def get_walkthrough(
     # `is_owner` drives the edit controls and the share URL, so it answers "may
     # this caller change it", which is the write gate — not bare authorship.
     is_owner = _may_write(request, w)
+    reactions.record_view(request, reactions.WALKTHROUGH, w.id)
     return WalkthroughDetailOut.model_validate(
         _detail_payload(w, is_owner=is_owner, request=request)
     )

@@ -68,6 +68,22 @@ class Storyboard(models.Model):
     cosmetic: on a reel every affordance that leads somewhere else is a way to
     lose the reader before they have watched three minutes of video."""
 
+    # What MADE this storyboard (board task hal/T76): the canopy chat session and
+    # turn it was created from — stamped server-side from the caller's
+    # X-Canopy-Parent-* headers — and the agent project the work served. All
+    # SET_NULL. See apps/harness/artifact_origin.py.
+    source_session = models.ForeignKey(
+        "canopy_sessions.Session", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    source_turn = models.ForeignKey(
+        "harness.Turn", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    agent_project = models.ForeignKey(
+        "agents.AgentProject", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

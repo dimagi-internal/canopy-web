@@ -638,7 +638,95 @@ def _blank_narrative(slug: str) -> dict[str, Any]:
         "has_narrative": False,
         "_latest_rev_at": None,
         "_latest_narr_at": None,
+        # Origin (T76): the newest artifact/version that carries one wins.
+        "agent_project_id": None,
+        "_project_at": None,
+        "session_id": None,
+        "turn_id": None,
+        "_origin_at": None,
+        "session_ids": set(),
+        "creator_id": None,
     }
+
+
+def _note_origin(a: dict, obj) -> None:
+    """Fold one walkthrough's / review's origin into its narrative (newest wins)."""
+    at = obj.created_at
+    if obj.agent_project_id and (a["_project_at"] is None or at > a["_project_at"]):
+        a["agent_project_id"], a["_project_at"] = obj.agent_project_id, at
+    if obj.source_session_id:
+        a["session_ids"].add(obj.source_session_id)
+    if (obj.source_session_id or obj.source_turn_id) and (
+        a["_origin_at"] is None or at > a["_origin_at"]
+    ):
+        a["session_id"], a["turn_id"] = obj.source_session_id, obj.source_turn_id
+        a["_origin_at"] = at
+
+
+def narrative_signals(narr: dict[str, dict]) -> dict[str, dict]:
+    """Origin + reaction fields per narrative (board task hal/T76), for the
+    whole aggregate in a constant number of queries.
+
+    The agent project falls back to the DDD run doc (``AgentRun`` with this
+    narrative as its ``subject``) — the one place a narrative's project was
+    already recorded. Comments are Feedback on the narrative (any version);
+    views are views of the narrative (its review page, its console, its
+    storyboard read); the creator is whoever opened its newest story version."""
+    from apps.agent_runs.models import AgentRun
+    from apps.agents.models import AgentProject
+    from apps.feedback import reactions
+    from apps.harness import artifact_origin
+
+    missing = [slug for slug, a in narr.items() if a["agent_project_id"] is None]
+    if missing:
+        for subject, project_id in (
+            AgentRun.objects.filter(subject__in=missing, project__isnull=False)
+            .order_by("created_at")
+            .values_list("subject", "project_id")
+        ):
+            narr[subject]["agent_project_id"] = project_id  # newest wins (ascending)
+    projects = {
+        p.pk: p
+        for p in AgentProject.objects.select_related("agent").filter(
+            pk__in={a["agent_project_id"] for a in narr.values() if a["agent_project_id"]}
+        )
+    }
+    summary = reactions.summarize(
+        reactions.Target(
+            key=slug,
+            feedback=[(reactions.NARRATIVE, slug, None)],
+            views=[(reactions.NARRATIVE, slug)],
+            creator_id=a["creator_id"],
+            extra_commenters=a.get("_suggesters", []),
+        )
+        for slug, a in narr.items()
+    )
+    return {
+        slug: {
+            "session_id": a["session_id"],
+            "turn_id": a["turn_id"],
+            "agent_project": artifact_origin.project_out(projects.get(a["agent_project_id"])),
+            **summary[slug],
+        }
+        for slug, a in narr.items()
+    }
+
+
+def _suggestion_identity(entry) -> str:
+    from apps.feedback.reactions import suggestion_identity
+
+    return suggestion_identity(entry)
+
+
+def _project_matches(project: dict | None, wanted: str) -> bool:
+    """Does a narrative's resolved agent project match a list filter value?"""
+    if project is None:
+        return False
+    wanted = wanted.strip()
+    if wanted.isdigit():
+        return project["id"] == int(wanted)
+    agent, _, ext = wanted.replace(":", "/").rpartition("/")
+    return project["ext_id"] == ext and (not agent or project["agent"] == agent)
 
 
 def _max(a: datetime | None, b: datetime | None) -> datetime | None:
@@ -675,6 +763,9 @@ def _aggregate(
             a["project_slugs"].add(w.project_slug)
             if a["project_slug"] is None:
                 a["project_slug"] = w.project_slug
+        _note_origin(a, w)
+        if a["creator_id"] is None:
+            a["creator_id"] = w.owner_id
         a["owner_ids"].add(w.owner_id)
         a["visibilities"].add(w.visibility)
         a["latest_at"] = _max(a["latest_at"], w.created_at)
@@ -700,6 +791,14 @@ def _aggregate(
                 continue
             a = narr.setdefault(slug, _blank_narrative(slug))
         a["run_ids"].add(r.run_id)
+        if r.project_slug:
+            a["project_slugs"].add(r.project_slug)
+            if a["project_slug"] is None:
+                a["project_slug"] = r.project_slug
+        _note_origin(a, r)
+        a.setdefault("_suggesters", []).extend(
+            _suggestion_identity(e) for e in (r.suggestions_json or [])
+        )
         if r.owner_id:
             a["owner_ids"].add(r.owner_id)
         a["visibilities"].add(r.visibility)
@@ -714,6 +813,8 @@ def _aggregate(
         ):
             a["_latest_narr_at"] = r.created_at
             a["has_narrative"] = True
+            if r.owner_id:
+                a["creator_id"] = r.owner_id
             a["title"] = _title_from_review(r)
             rj = r.request_json if isinstance(r.request_json, dict) else {}
             a["story"] = (rj.get("narrative") or "").strip() or None
@@ -733,11 +834,23 @@ def list_narratives(
     project: str | None = None,
     owner_id: int | None = None,
     workspace_slugs: set[str] | None = None,
+    session: str | None = None,
+    agent_project: str | None = None,
 ) -> list[dict]:
-    """Narrative list items, newest activity first."""
+    """Narrative list items, newest activity first.
+
+    ``session`` keeps narratives with any artifact/version made from that canopy
+    session; ``agent_project`` those serving that board project (``hal/P5``,
+    ``hal:P5`` or an id) — T76."""
     narr = _aggregate(project, owner_id, workspace_slugs)
+    if session:
+        narr = {s: a for s, a in narr.items() if session in {str(x) for x in a["session_ids"]}}
+    signals = narrative_signals(narr)
+    if agent_project:
+        narr = {s: a for s, a in narr.items() if _project_matches(signals[s]["agent_project"], agent_project)}
     items = [
         {
+            **signals[a["slug"]],
             "slug": a["slug"],
             "title": a["title"],
             "phase": a["phase"],
@@ -911,6 +1024,7 @@ def build_narrative(
         }
 
     return {
+        **narrative_signals({slug: a})[slug],
         "slug": slug,
         "title": a["title"],
         "story": a["story"],

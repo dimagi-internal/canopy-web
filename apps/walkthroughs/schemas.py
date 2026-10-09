@@ -13,6 +13,7 @@ from typing import Literal
 from pydantic import EmailStr, Field
 
 from apps.common.schemas import StrictModel
+from apps.feedback.schemas import ArtifactSignalsOut
 
 WalkthroughKind = Literal["html", "video"]
 WalkthroughVisibility = Literal["private", "link"]
@@ -33,7 +34,7 @@ class WalkthroughLink(StrictModel):
     kind: WalkthroughLinkKind = "reference"
 
 
-class WalkthroughListItemOut(StrictModel):
+class WalkthroughListItemOut(ArtifactSignalsOut):
     id: uuid.UUID
     title: str
     description: str = ""

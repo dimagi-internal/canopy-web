@@ -5,7 +5,10 @@ import datetime as dt
 import uuid
 from typing import Any, Literal
 
+from pydantic import Field
+
 from apps.common.schemas import StrictModel
+from apps.feedback.schemas import ArtifactSignalsOut
 
 ReviewStatus = Literal["pending", "resolved"]
 ReviewVisibility = Literal["private", "link"]
@@ -29,7 +32,7 @@ class ReviewPinnedVideoOut(StrictModel):
     duration_sec: int | None = None
 
 
-class ReviewRequestOut(StrictModel):
+class ReviewRequestOut(ArtifactSignalsOut):
     """Detail/list output for a review request."""
 
     id: uuid.UUID
@@ -39,6 +42,8 @@ class ReviewRequestOut(StrictModel):
     # None for a run-child gate, which belongs to no narrative: the DDD shell is not
     # its chrome and highlighting one would be a lie.
     narrative_slug: str | None = None
+    # The repo/project slug the narrative is about (T76).
+    project_slug: str | None = None
     gate: str
     status: ReviewStatus
     visibility: ReviewVisibility
@@ -69,7 +74,7 @@ class ReviewRequestOut(StrictModel):
     cut_videos: list[ReviewPinnedVideoOut] = []
 
 
-class ReviewListItemOut(StrictModel):
+class ReviewListItemOut(ArtifactSignalsOut):
     """One row in the DDD-plans dashboard list (GET /api/reviews/)."""
 
     id: uuid.UUID
@@ -80,6 +85,7 @@ class ReviewListItemOut(StrictModel):
     # Derived from request_json for a scannable list — never the raw payload.
     # None for a run-child gate (see ReviewRequestOut.narrative_slug).
     narrative_slug: str | None = None
+    project_slug: str | None = None
     title: str | None = None
     scene_count: int = 0
     created_at: dt.datetime
@@ -96,6 +102,14 @@ class ReviewCreateIn(StrictModel):
     request_json: dict[str, Any]
     # Optional: link visibility so the review page is publicly shareable.
     visibility: ReviewVisibility = "link"
+    # What made it (T76) — all optional, all overrides. The session/turn default
+    # to the caller's X-Canopy-Parent-* headers; the agent project to the DDD run
+    # doc for this run_id, else the parent turn's board task. `project_slug` may
+    # also ride in request_json (what older servers tolerate).
+    project_slug: str | None = Field(default=None, max_length=200)
+    session_id: str | None = Field(default=None, max_length=64)
+    turn_id: str | None = Field(default=None, max_length=64)
+    agent_project: str | None = Field(default=None, max_length=170)
 
 
 class ReviewSubmitIn(StrictModel):

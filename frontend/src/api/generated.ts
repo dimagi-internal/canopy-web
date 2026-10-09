@@ -119,7 +119,12 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List walkthroughs */
+        /**
+         * List walkthroughs
+         * @description `project` matches the repo `project_slug`; `agent_project` the board
+         *     project (`hal/P5`, `hal:P5` or an id); `session` / `turn` the canopy
+         *     session / turn the walkthrough was made from (T76).
+         */
         readonly get: operations["list_walkthroughs"];
         readonly put?: never;
         /** Upload a walkthrough (multipart) */
@@ -668,7 +673,11 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** List storyboards */
+        /**
+         * List storyboards
+         * @description `session` / `turn` = the canopy session / turn a board was made from;
+         *     `agent_project` = its board project (`hal/P5`, `hal:P5` or an id). T76.
+         */
         readonly get: operations["list_storyboards"];
         readonly put?: never;
         /** Create a storyboard */
@@ -7586,10 +7595,46 @@ export interface components {
             readonly status: string;
         };
         /**
+         * ArtifactProjectOut
+         * @description The agent project (``agents.AgentProject``) the artifact's work served.
+         */
+        readonly ArtifactProjectOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent */
+            readonly agent: string;
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Name */
+            readonly name: string;
+        };
+        /**
          * WalkthroughDetailOut
          * @description Detail view adds content_type, is_owner, and the owner-only share_url.
          */
         readonly WalkthroughDetailOut: {
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            readonly agent_project?: components["schemas"]["ArtifactProjectOut"] | null;
+            /**
+             * Comment Count
+             * @default 0
+             */
+            readonly comment_count: number;
+            /**
+             * Commenter Count
+             * @default 0
+             */
+            readonly commenter_count: number;
+            /**
+             * Viewer Count
+             * @default 0
+             */
+            readonly viewer_count: number;
+            /** Owner Viewed At */
+            readonly owner_viewed_at?: string | null;
             /**
              * Id
              * Format: uuid
@@ -7681,6 +7726,28 @@ export interface components {
         };
         /** WalkthroughListItemOut */
         readonly WalkthroughListItemOut: {
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            readonly agent_project?: components["schemas"]["ArtifactProjectOut"] | null;
+            /**
+             * Comment Count
+             * @default 0
+             */
+            readonly comment_count: number;
+            /**
+             * Commenter Count
+             * @default 0
+             */
+            readonly commenter_count: number;
+            /**
+             * Viewer Count
+             * @default 0
+             */
+            readonly viewer_count: number;
+            /** Owner Viewed At */
+            readonly owner_viewed_at?: string | null;
             /**
              * Id
              * Format: uuid
@@ -8481,6 +8548,28 @@ export interface components {
         };
         /** StoryboardListItemOut */
         readonly StoryboardListItemOut: {
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            readonly agent_project?: components["schemas"]["ArtifactProjectOut"] | null;
+            /**
+             * Comment Count
+             * @default 0
+             */
+            readonly comment_count: number;
+            /**
+             * Commenter Count
+             * @default 0
+             */
+            readonly commenter_count: number;
+            /**
+             * Viewer Count
+             * @default 0
+             */
+            readonly viewer_count: number;
+            /** Owner Viewed At */
+            readonly owner_viewed_at?: string | null;
             /** Slug */
             readonly slug: string;
             /** Title */
@@ -8613,6 +8702,12 @@ export interface components {
              * @default []
              */
             readonly acts: readonly components["schemas"]["ActIn"][];
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            /** Agent Project */
+            readonly agent_project?: string | null;
         };
         /**
          * StoryboardPatchIn
@@ -9379,6 +9474,28 @@ export interface components {
          * @description One row in the DDD-plans dashboard list (GET /api/reviews/).
          */
         readonly ReviewListItemOut: {
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            readonly agent_project?: components["schemas"]["ArtifactProjectOut"] | null;
+            /**
+             * Comment Count
+             * @default 0
+             */
+            readonly comment_count: number;
+            /**
+             * Commenter Count
+             * @default 0
+             */
+            readonly commenter_count: number;
+            /**
+             * Viewer Count
+             * @default 0
+             */
+            readonly viewer_count: number;
+            /** Owner Viewed At */
+            readonly owner_viewed_at?: string | null;
             /**
              * Id
              * Format: uuid
@@ -9400,6 +9517,8 @@ export interface components {
             readonly visibility: "private" | "link";
             /** Narrative Slug */
             readonly narrative_slug?: string | null;
+            /** Project Slug */
+            readonly project_slug?: string | null;
             /** Title */
             readonly title?: string | null;
             /**
@@ -9456,6 +9575,14 @@ export interface components {
              * @enum {string}
              */
             readonly visibility: "private" | "link";
+            /** Project Slug */
+            readonly project_slug?: string | null;
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            /** Agent Project */
+            readonly agent_project?: string | null;
         };
         /**
          * ReviewPinnedVideoOut
@@ -9491,6 +9618,28 @@ export interface components {
          * @description Detail/list output for a review request.
          */
         readonly ReviewRequestOut: {
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            readonly agent_project?: components["schemas"]["ArtifactProjectOut"] | null;
+            /**
+             * Comment Count
+             * @default 0
+             */
+            readonly comment_count: number;
+            /**
+             * Commenter Count
+             * @default 0
+             */
+            readonly commenter_count: number;
+            /**
+             * Viewer Count
+             * @default 0
+             */
+            readonly viewer_count: number;
+            /** Owner Viewed At */
+            readonly owner_viewed_at?: string | null;
             /**
              * Id
              * Format: uuid
@@ -9500,6 +9649,8 @@ export interface components {
             readonly run_id: string;
             /** Narrative Slug */
             readonly narrative_slug?: string | null;
+            /** Project Slug */
+            readonly project_slug?: string | null;
             /** Gate */
             readonly gate: string;
             /**
@@ -9592,6 +9743,28 @@ export interface components {
         };
         /** NarrativeListItemOut */
         readonly NarrativeListItemOut: {
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            readonly agent_project?: components["schemas"]["ArtifactProjectOut"] | null;
+            /**
+             * Comment Count
+             * @default 0
+             */
+            readonly comment_count: number;
+            /**
+             * Commenter Count
+             * @default 0
+             */
+            readonly commenter_count: number;
+            /**
+             * Viewer Count
+             * @default 0
+             */
+            readonly viewer_count: number;
+            /** Owner Viewed At */
+            readonly owner_viewed_at?: string | null;
             /** Slug */
             readonly slug: string;
             /** Title */
@@ -9655,6 +9828,28 @@ export interface components {
         };
         /** NarrativeDetailOut */
         readonly NarrativeDetailOut: {
+            /** Session Id */
+            readonly session_id?: string | null;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            readonly agent_project?: components["schemas"]["ArtifactProjectOut"] | null;
+            /**
+             * Comment Count
+             * @default 0
+             */
+            readonly comment_count: number;
+            /**
+             * Commenter Count
+             * @default 0
+             */
+            readonly commenter_count: number;
+            /**
+             * Viewer Count
+             * @default 0
+             */
+            readonly viewer_count: number;
+            /** Owner Viewed At */
+            readonly owner_viewed_at?: string | null;
             /** Slug */
             readonly slug: string;
             /** Title */
@@ -18498,6 +18693,9 @@ export interface operations {
                 readonly project?: string;
                 readonly kind?: string;
                 readonly mine?: string;
+                readonly session?: string;
+                readonly turn?: string;
+                readonly agent_project?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -18592,6 +18790,21 @@ export interface operations {
                      * @default
                      */
                     readonly cut_scene_ids?: string;
+                    /**
+                     * Session Id
+                     * @default
+                     */
+                    readonly session_id?: string;
+                    /**
+                     * Turn Id
+                     * @default
+                     */
+                    readonly turn_id?: string;
+                    /**
+                     * Agent Project
+                     * @default
+                     */
+                    readonly agent_project?: string;
                 };
             };
         };
@@ -19368,7 +19581,11 @@ export interface operations {
     };
     readonly list_storyboards: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly session?: string;
+                readonly turn?: string;
+                readonly agent_project?: string;
+            };
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -20376,6 +20593,10 @@ export interface operations {
                 readonly q?: string;
                 readonly status?: string;
                 readonly order?: string;
+                readonly project?: string;
+                readonly session?: string;
+                readonly turn?: string;
+                readonly agent_project?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -20519,6 +20740,8 @@ export interface operations {
             readonly query?: {
                 readonly project?: string;
                 readonly mine?: string;
+                readonly session?: string;
+                readonly agent_project?: string;
             };
             readonly header?: never;
             readonly path?: never;

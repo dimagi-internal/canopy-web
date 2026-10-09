@@ -15,13 +15,17 @@ layer is request-free.
 """
 from __future__ import annotations
 
+import uuid
+
 from django.db import transaction
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.feedback import reactions
 from apps.feedback import services as feedback_services
+from apps.harness import artifact_origin
 from apps.storyboards import services
 from apps.storyboards.act_keys import act_key
 from apps.storyboards.models import Act, Entry, Storyboard
@@ -153,18 +157,67 @@ def _replace_acts(board: Storyboard, acts) -> None:
 # --------------------------------------------------------------------- routes
 
 
+def _signals(boards) -> dict[int, dict]:
+    """Origin + reaction fields for a batch of boards (board task hal/T76).
+
+    Comments match what the board's notes panel shows: feedback on the board
+    and on the narratives it carries. Views are recorded per board id (a slug is
+    only unique per workspace). A board has no owner column, so its creator is
+    the agent whose turn made it, when one did."""
+    targets = []
+    for b in boards:
+        slugs = {e.narrative_slug for a in b.acts.all() for e in a.entries.all()}
+        turn = b.source_turn
+        creator = turn.agent.user_id if turn is not None and turn.agent_id else None
+        targets.append(reactions.Target(
+            key=str(b.pk),
+            feedback=[(reactions.STORYBOARD, b.slug, None)]
+            + [(reactions.NARRATIVE, s, None) for s in sorted(slugs)],
+            views=[(reactions.STORYBOARD, str(b.pk))],
+            creator_id=creator,
+        ))
+    summary = reactions.summarize(targets)
+    return {
+        b.pk: {
+            "session_id": b.source_session_id,
+            "turn_id": b.source_turn_id,
+            "agent_project": artifact_origin.project_out(b.agent_project),
+            **summary[str(b.pk)],
+        }
+        for b in boards
+    }
+
+
 @router.get("/", response=StoryboardListOut, auth=session_auth, summary="List storyboards")
-def list_storyboards(request: HttpRequest) -> dict:
-    boards = _member_boards(request).prefetch_related("acts")
+def list_storyboards(
+    request: HttpRequest, session: str = "", turn: str = "", agent_project: str = ""
+) -> dict:
+    """`session` / `turn` = the canopy session / turn a board was made from;
+    `agent_project` = its board project (`hal/P5`, `hal:P5` or an id). T76."""
+    boards = _member_boards(request).select_related(
+        "agent_project__agent", "source_turn__agent"
+    ).prefetch_related("acts__entries")
+    for field, value in (("source_session_id", session), ("source_turn_id", turn)):
+        if value:
+            try:
+                boards = boards.filter(**{field: uuid.UUID(value.strip())})
+            except ValueError:
+                boards = boards.none()
+    project_filter = artifact_origin.parse_project_filter(agent_project)
+    if project_filter:
+        boards = boards.filter(**project_filter)
+    boards = list(boards)
+    signals = _signals(boards)
     return {
         "items": [
             {
+                **signals[b.pk],
                 "slug": b.slug,
                 "title": b.title,
                 "lede": b.lede,
                 "capability": b.capability,
                 "layout": b.layout,
-                "act_count": b.acts.count(),
+                "act_count": len(b.acts.all()),
                 "share_url": _share_url(request, b),
             }
             for b in boards
@@ -180,8 +233,13 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
     workspace_slug = ws.slug
     if not perms.can(request.user, workspace_slug, perms.CONTENT_WRITE):
         raise HttpError(403, "creating a storyboard requires the editor role in this workspace")
+    origin = artifact_origin.resolve(
+        request, session=payload.session_id or "", turn=payload.turn_id or "",
+        agent_project=payload.agent_project or "",
+    )
     with transaction.atomic():
         board = Storyboard.objects.create(
+            **origin,
             slug=payload.slug,
             title=payload.title,
             lede=payload.lede,
@@ -203,6 +261,7 @@ def get_storyboard(request: HttpRequest, slug: str, ws: str = "") -> dict:
     """Anonymous-capable; the handler self-enforces. See the module docstring.
     `ws` is the workspace the page's URL names; a board elsewhere 404s."""
     board = _readable_or_404(request, slug, ws)
+    reactions.record_view(request, reactions.STORYBOARD, board.pk)
     return services.resolve_board(board, is_member=_is_member(request, board))
 
 
@@ -357,4 +416,5 @@ def get_board_narrative(request: HttpRequest, slug: str, narrative_slug: str, ws
     data = services.resolve_narrative(board, narrative_slug)
     if data is None:
         raise HttpError(404, "no such narrative on this storyboard")
+    reactions.record_view(request, reactions.NARRATIVE, narrative_slug)
     return data

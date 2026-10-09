@@ -64,7 +64,8 @@ def _forbidden(what: str) -> ProblemError:
     summary="List DDD narratives",
 )
 def list_narratives(
-    request: HttpRequest, project: str = "", mine: str = ""
+    request: HttpRequest, project: str = "", mine: str = "", session: str = "",
+    agent_project: str = "",
 ) -> list[NarrativeListItemOut]:
     owner_id = (
         request.user.id if (mine == "true" and request.user.is_authenticated) else None
@@ -73,6 +74,8 @@ def list_narratives(
         project=project.strip() or None,
         owner_id=owner_id,
         workspace_slugs=_workspace_slugs(request),
+        session=session.strip() or None,
+        agent_project=agent_project.strip() or None,
     )
     return [NarrativeListItemOut.model_validate(it) for it in items]
 
@@ -86,6 +89,9 @@ def get_narrative(request: HttpRequest, slug: str) -> NarrativeDetailOut:
     data = aggregate.build_narrative(slug, workspace_slugs=_workspace_slugs(request))
     if data is None:
         raise ProblemError(404, "Narrative not found", type_=TYPE_NOT_FOUND)
+    from apps.feedback import reactions
+
+    reactions.record_view(request, reactions.NARRATIVE, slug)
     return NarrativeDetailOut.model_validate(data)
 
 
