@@ -117,7 +117,7 @@ def session_of(turn):
     return turn.chat_session
 
 
-def _override(person: Person, session) -> "SessionAgentMemory | None":
+def _override(person: Person, session):
     if session is None:
         return None
     from .models import SessionAgentMemory
