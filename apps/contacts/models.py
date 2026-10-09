@@ -537,9 +537,13 @@ class PersonFact(models.Model):
     STATEMENT_MAX = 500
 
     person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="facts")
-    #: Where it was written. v1 serves a fact only inside this workspace.
+    #: Where it was written. v1 serves a fact to an AGENT only inside this
+    #: workspace. NULL = a PERSONAL entry: one the person wrote about themself,
+    #: or one a client they authorized over OAuth wrote (docs/architecture/
+    #: hcp-service.md). No workspace's agents read a personal entry; the person
+    #: and the OAuth clients they grant do.
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
-                                  related_name="person_facts")
+                                  null=True, blank=True, related_name="person_facts")
     kind = models.CharField(max_length=16, choices=KIND_CHOICES)
     statement = models.CharField(max_length=STATEMENT_MAX)
     basis = models.CharField(max_length=10, choices=BASIS_CHOICES, default=DECLARED)
@@ -708,8 +712,11 @@ class PersonGrant(models.Model):
     grant_id = models.UUIDField(default=uuid.uuid4, unique=True)
     person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="grants")
     #: The workspace whose entries the grant reaches (an agent serves its own).
+    #: NULL for a grant to an OAuth client (`hcp_client`), whose reach is the
+    #: person's personal entries plus any workspaces they chose, recorded as a
+    #: restriction (4.1.5.1).
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
-                                  related_name="person_grants")
+                                  null=True, blank=True, related_name="person_grants")
     agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True, blank=True,
                               related_name="person_grants")
     #: slack | email | chat | web | mcp | api | widget | sdk | … ("" = any).

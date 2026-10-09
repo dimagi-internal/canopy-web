@@ -239,7 +239,8 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
         raise FactError("a fact needs a statement")
     if len(statement) > PersonFact.STATEMENT_MAX:
         raise FactError(f"a statement is one sentence, at most {PersonFact.STATEMENT_MAX} characters")
-    if project is not None and project.agent.workspace_id != workspace.pk:
+    ws_id = workspace.pk if workspace is not None else None
+    if project is not None and (ws_id is None or project.agent.workspace_id != ws_id):
         raise FactError("that project belongs to another workspace")
     category = (category or "").strip() or (supersedes.category if supersedes is not None
                                              else hcp.KIND_CATEGORY[kind])
@@ -255,7 +256,7 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
     entry_id, version = uuid.uuid4(), 1
     if supersedes is not None:
         old = PersonFact.objects.select_for_update().filter(pk=supersedes.pk).first()
-        if old is None or old.person_id != person.pk or old.workspace_id != workspace.pk:
+        if old is None or old.person_id != person.pk or old.workspace_id != ws_id:
             raise FactError("a fact can only supersede a fact about the same person in the same workspace")
         if not old.is_live:
             raise FactError("that fact is no longer live")

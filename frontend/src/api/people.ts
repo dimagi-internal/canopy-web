@@ -70,7 +70,15 @@ export interface HcpGrant {
   issuedAt: string
   expiresAt: string | null
   status: 'active' | 'revoked' | 'expired'
-  canopy: { agent: string | null; channel: string; host: string; workspace: string; modality: string }
+  canopy: {
+    agent: string | null
+    channel: string
+    host: string
+    workspace: string | null
+    modality: string
+    /** The OAuth client the grant was issued to, when it was one (HCP service). */
+    client?: { id: string; name: string; operator: string } | null
+  }
 }
 
 /** One event on your audit log (HCP 4.3.2). */
@@ -107,4 +115,49 @@ export async function listMyAudit(
   })
   if (error) throw new Error('Failed to load your audit log')
   return data as unknown as { events: HcpAuditEvent[]; nextCursor: string | null }
+}
+
+// --- your own entries (HCP 3.2 / 3.3, as the person) -----------------------------
+
+/** The categories you can file something about yourself under (canopy holds work
+ *  context only — PersonFact.CATEGORIES). */
+export const MY_CATEGORIES = [
+  { value: 'general_preferences', label: 'How I like to work' },
+  { value: 'work_context', label: 'My work and role' },
+  { value: 'goals_and_constraints', label: 'My goals and constraints' },
+  { value: 'coordination_context', label: 'How to coordinate with me' },
+] as const
+
+/** Add a PERSONAL entry — yours, in no workspace. No agent in a workspace reads a
+ *  personal entry; you do, and any client you authorize does. */
+export async function addMyEntry(category: string, preference: string): Promise<void> {
+  const { error } = await apiV2.POST('/api/hcp/v1/preferences/add', {
+    body: {
+      category,
+      preference,
+      declarationType: 'user-declared',
+      sourceContext: 'user-input',
+    },
+  })
+  if (error) throw new Error('Failed to save that')
+}
+
+/** Correct an entry: a new version, same id (HCP 3.2.3). Correcting an agent's
+ *  inference makes it yours (2.6.3). */
+export async function correctMyEntry(entryId: string, text: string): Promise<void> {
+  const { error } = await apiV2.PUT('/api/hcp/v1/preferences/{entry_id}', {
+    params: { path: { entry_id: entryId } },
+    body: { updatedPreference: text, reason: 'corrected by the person on /people/me' },
+  })
+  if (error) throw new Error('Failed to save the correction')
+}
+
+/** Everything canopy holds about you, as one JSON-LD file (HCP 3.3.5), with every
+ *  version and your audit log. */
+export async function exportMine(): Promise<Blob> {
+  const { data, error } = await apiV2.GET('/api/hcp/v1/export', {
+    params: { query: { include: 'audit,versions' } },
+  })
+  if (error) throw new Error('Failed to export')
+  return new Blob([JSON.stringify(data, null, 2)], { type: 'application/ld+json' })
 }

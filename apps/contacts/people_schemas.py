@@ -34,7 +34,8 @@ class PersonFactOut(StrictModel):
 class PersonFactDetailOut(PersonFactOut):
     """A fact as its subject sees it on their own page: where and who."""
 
-    workspace: str
+    workspace: str | None = Field(default=None, description="The workspace it was written in; "
+                                                            "null for a personal entry.")
     asserted_by: str = Field(default="", description="The agent slug or the person's email that asserted it.")
     source_turn_id: str | None = None
 
