@@ -220,6 +220,18 @@ def test_the_viewers_grant_is_used_not_the_initiators(w, labs):
     assert TOKENS["owner"] not in {tok for _, tok in labs.calls}
 
 
+def test_a_read_only_call_from_a_view_leaves_no_receipt(w, labs):
+    """A View's status poll is audited but not recorded in the chat: a receipt witnesses a
+    person changing something (2026-10-09: "Done: workflow_action_status" beside a send)."""
+    c = client_for(w["editor"])
+    polled = through(labs, lambda: post(c, base(w) + "/call", {
+        "name": "workflow_action_status", "arguments": {"run_id": 5, "execution_id": 77}}))
+    assert polled.json()["isError"] is False
+    w["session"].refresh_from_db()
+    assert mcp_apps_views.receipts_for(w["session"], CALL_ID) == []
+    assert MCPAuditLog.objects.filter(tool="app_view_call", ok=True).count() == 1
+
+
 def test_a_commit_leaves_a_receipt_and_a_preview_does_not(w, labs):
     c = client_for(w["editor"])
     through(labs, lambda: post(c, base(w) + "/call", {
