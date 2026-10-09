@@ -198,6 +198,17 @@ def test_a_runner_rows_result_text_reaches_the_view(w, labs):
     assert r.json()["tool_result"]["content"][0]["text"] == text
 
 
+def test_a_refused_call_gets_no_view(w):
+    """The host refused the call (is_error): no card, live or on reload."""
+    Message.objects.filter(session=w["session"], role=Message.TOOL_RESULT).update(
+        content={"is_error": True, "tool_use_id": CALL_ID})
+    rows = list(Message.objects.filter(session=w["session"]).order_by("turn_index"))
+    mcp_apps_views.annotate(w["session"], rows)
+    assert not any(getattr(m, "app", None) for m in rows)
+    assert mcp_apps_views.app_for_result_block(
+        w["session"], {"tool_use_id": CALL_ID, "is_error": True}) is None
+
+
 def test_the_resource_is_read_as_the_viewer_and_carries_the_call(w, labs):
     r = through(labs, lambda: client_for(w["editor"]).get(base(w) + "/resource"))
     assert r.status_code == 200, r.content
