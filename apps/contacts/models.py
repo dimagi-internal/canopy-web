@@ -107,22 +107,29 @@ class Person(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="person",
     )
-    #: Agent memory is the PERSON's own, as two independent switches (Jonathan,
-    #: 2026-10-09: "each person should be able to turn it on or off"), both OFF by
-    #: default; any combination is valid.
+    #: Agent memory is the PERSON's own, as two independent features (Jonathan,
+    #: 2026-10-09: "each person should be able to turn it on or off"; then "it
+    #: should be available per session, not just at the system level"):
     #:
-    #: * `hcp_record` — "Agents may learn about me": agents may WRITE (HCP add /
-    #:   update / delete, the legacy fact write) and are told to record.
-    #: * `hcp_use` — "Agents may use what they've learned": agents may READ (HCP
-    #:   search / get, and the facts served in the envelope's `person` block).
+    #: * record — "Agents may learn about me": agents may WRITE (HCP add / update /
+    #:   delete, the legacy fact write) and are told to record.
+    #: * use — "Agents may use what they've learned": agents may READ (HCP search /
+    #:   get, and the facts served in the envelope's `person` block).
     #:
-    #: Record-only builds a model of the person that no agent uses yet. The person
-    #: keeps full access to their own entries, export and audit log whatever the
-    #: switches say, and turning either off deletes nothing. Only the person flips
-    #: them (`PUT /api/people/me/agent-memory/`); every flip is on their audit log.
-    hcp_record = models.BooleanField(default=False)
+    #: Each has two canopy-level settings: `*_available` — may it be on at all —
+    #: and `*_default` — is it on in a session that says nothing. A session may
+    #: override either (`SessionAgentMemory`) but never turn on what is not
+    #: available: effective = available AND (session override, else default). Both
+    #: start unavailable for everyone. Record-only builds a model of the person that
+    #: no agent uses yet. The person keeps full access to their own entries, export
+    #: and audit log whatever these say, and turning one off deletes nothing. Only
+    #: the person changes them (`PUT /api/people/me/agent-memory/`, and per session
+    #: `PUT /api/people/me/sessions/{id}/agent-memory/`); every change is audited.
+    hcp_record_available = models.BooleanField(default=False)
+    hcp_record_default = models.BooleanField(default=False)
     hcp_record_changed_at = models.DateTimeField(null=True, blank=True)
-    hcp_use = models.BooleanField(default=False)
+    hcp_use_available = models.BooleanField(default=False)
+    hcp_use_default = models.BooleanField(default=False)
     hcp_use_changed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -751,8 +758,15 @@ class PersonAuditEvent(models.Model):
         "grant.expired", "conflict.detected", "conflict.resolved", "revocation.notified",
         # canopy's own, beyond the spec's required set (4.3.1 lists what MUST be
         # logged, not all that may be): the person turned one of their two
-        # agent-memory switches on / off (`Person.hcp_record`, `Person.hcp_use`).
+        # agent-memory settings. `agentX.enabled|disabled` = the feature made
+        # available / unavailable (`Person.hcp_*_available`); `agentX.defaultOn|
+        # defaultOff` = its default for sessions (`hcp_*_default`); `sessionX.on|off|
+        # inherit` = one session's override (`SessionAgentMemory`).
         "agentRecord.enabled", "agentRecord.disabled", "agentUse.enabled", "agentUse.disabled",
+        "agentRecord.defaultOn", "agentRecord.defaultOff",
+        "agentUse.defaultOn", "agentUse.defaultOff",
+        "sessionRecord.on", "sessionRecord.off", "sessionRecord.inherit",
+        "sessionUse.on", "sessionUse.off", "sessionUse.inherit",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 
@@ -787,6 +801,28 @@ class PersonAuditEvent(models.Model):
         if self.pk is not None and not kwargs.pop("_allow_update", False):
             raise ValueError("PersonAuditEvent is append-only")
         super().save(*args, **kwargs)
+
+
+class SessionAgentMemory(models.Model):
+    """One session's override of a person's agent-memory defaults (Jonathan,
+    2026-10-09: "in any given session, you can provide yes to either if they are
+    enabled at the canopy level"). `None` = inherit the person's default. It can
+    never turn on a feature the person has not made available — `hcp.effective`
+    applies `available AND (override, else default)`. Keyed by (session, person) so
+    in a shared session one person's choice never speaks for another; only the
+    person sets it, and each change is on their audit log."""
+
+    session = models.ForeignKey("canopy_sessions.Session", on_delete=models.CASCADE,
+                                related_name="agent_memory")
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="session_memory")
+    record = models.BooleanField(null=True, blank=True)
+    use = models.BooleanField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "contact_session_agent_memory"
+        constraints = [models.UniqueConstraint(fields=["session", "person"],
+                                               name="session_agent_memory_once")]
 
 
 class HcpIdempotencyKey(models.Model):

@@ -433,6 +433,9 @@ GATES: dict[str, tuple[str, ...]] = {
     # The person's agent-memory switch: their own Person only, and refused to an agent's
     # login, a caller token and a system account — nobody may flip it for them.
     "set_my_agent_memory": ("self",),
+    # One of the caller's OWN sessions (`created_by`), as that person only — same refusals.
+    "get_my_session_memory": ("self",),
+    "set_my_session_memory": ("self",),
     # --- apps/contacts/hcp_api.py  (HCP v1 over the people brain; apps/contacts/hcp.py)
     # `self` = the person's own instance; `hcp-grant` = an agent, for the person
     # who started its turn, under that client's grant. A missing entry is 403.

@@ -375,8 +375,13 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
     person = initiator_person(turn)
     if person is None:
         return None
-    record, use = hcp.may_record(person), hcp.may_use(person)
-    switches = {"record": record, "use": use}
+    state = hcp.memory_state(person, hcp.session_of(turn))
+    record, use = state["record"]["effective"], state["use"]["effective"]
+    # Effective for THIS turn's session, plus what the person makes available at
+    # all — so the hook can say "use is off in this session" vs "not available".
+    switches = {"record": record, "use": use,
+                "available": {f: state[f]["available"] for f in hcp.FEATURES},
+                "session": hcp.session_of(turn) is not None}
     grant, facts = None, []
     if workspace_slug and agent is not None and (record or use):
         # A grant is presumed only for a person who allows SOMETHING; neither on =
@@ -406,8 +411,9 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         "email": email_of(person),
         # The workspace these facts are from, and where writes land.
         "workspace": workspace_slug,
-        # The person's own agent-memory switches (`Person.hcp_record` / `hcp_use`):
-        # record = agents may learn about them; use = agents may be told it.
+        # The person's agent memory as it applies in this turn's session
+        # (`hcp.effective`): record = agents may learn about them; use = agents may
+        # be told it; `available` = what the person allows at all.
         "hcp": switches,
         "facts": [fact_dict(f) for f in facts],
         # HCP: the grant this turn acts under (None = the person allows nothing, or

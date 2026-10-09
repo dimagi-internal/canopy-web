@@ -298,31 +298,43 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   of the agent may call it but sees only turns the turn ACL already shows them.
   No other agent, and no plain member, can read them. A fact's `source_turn` is
   a link, readable only by whoever can already read the turn.
-* **The person's own two switches decide what agents get.** Both OFF by
-  default; on for Jonathan from 2026-10-09 (migration `contacts/0017`); any
-  combination is valid. Set at the top of `/people/me/` or with
-  `PUT /api/people/me/agent-memory/` (`{record?, use?}`).
-  * `Person.hcp_record`, "Agents may learn about me", gates WRITES: HCP
-    add/create/update/delete, the legacy `POST /api/people/{id}/facts/` by an
-    agent's login, and the envelope's `record` hint.
-  * `Person.hcp_use`, "Agents may use what they've learned", gates READS: HCP
-    search/get, and the facts and `recall` in the envelope's `person` block.
+* **The person's own settings decide what agents get — per session.** Two
+  features, record and use, each with a canopy-level `available` + `default`
+  (`Person.hcp_*_available` / `hcp_*_default`, `PUT /api/people/me/agent-memory/`
+  `{record?: {available?, default?}, use?: {…}}`) and a per-session override
+  (`SessionAgentMemory`, `PUT /api/people/me/sessions/{id}/agent-memory/`
+  `{record?, use?}` = `on|off|inherit`). Effective for a turn = available AND
+  (that turn's session's override, else default); a turn with no chat session
+  uses the defaults; a session never turns on what is not available (403).
+  Everything starts unavailable; Jonathan is record available + on by default,
+  use not available (migration `contacts/0019`).
+  * record, "Agents may learn about me", gates WRITES: HCP add/create/update/
+    delete, the legacy `POST /api/people/{id}/facts/` by an agent's login, and
+    the envelope's `record` hint.
+  * use, "Agents may use what they've learned", gates READS: HCP search/get, and
+    the facts and `recall` in the envelope's `person` block.
   * A refused operation is `scope-denied` before any grant is presumed
-    (`hcp_api._principal(need=)`). With neither switch on, the block has
-    `grant: null`.
-  * The block always carries `hcp: {record, use}`. An envelope read is logged
-    only when `use` is on.
+    (`hcp_api._principal(need=)` → `hcp.require(person, need, turn)`). With
+    neither effective, the block has `grant: null`.
+  * The block always carries `hcp: {record, use, available: {record, use},
+    session}` — the effective values for this turn, what is available at all, and
+    whether the turn is in a session. An envelope read is logged only when `use`
+    is effective.
   * Record-only builds a model of the person that no agent sees yet. Without
     `use` an agent cannot search before adding, so duplicates and contradictions
     are left to HCP's conflict quarantine.
-  * Nothing is deleted when a switch goes off. The person's own access (page,
+  * Nothing is deleted when anything goes off. The person's own access (page,
     export, audit) never changes.
-  * Only the person flips them, never an agent's login, a caller token, a system
-    account or an admin, and the route is off MCP.
-  * Each flip is its own audit event: `agentRecord.enabled|disabled` and
-    `agentUse.enabled|disabled`. These are canopy's own types, beyond the spec's
-    required set.
-  * Coverage counts only people with `record` on.
+  * Only the person changes them — the canopy level as themself, a session's
+    override only for a session they created (`created_by`; anyone else 404) —
+    never an agent's login, a caller token, a system account or an admin; the
+    routes are off MCP.
+  * Each change is its own audit event: `agentRecord|agentUse.enabled|disabled`
+    (available), `.defaultOn|defaultOff` (default), and `sessionRecord|sessionUse.
+    on|off|inherit` (a session's override). These are canopy's own types, beyond
+    the spec's required set.
+  * Coverage counts only people who make record available (a session may still
+    turn it off; coverage does not see that).
 * **The subject sees everything.** `GET /api/people/me/` (the page
   `/people/me/`): every live fact in every workspace, and the last
   50 reads. Every read — the envelope's and the API's — is a `PersonAccess` row.

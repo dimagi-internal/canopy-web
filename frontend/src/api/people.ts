@@ -12,14 +12,42 @@ export async function getMyPerson(): Promise<PersonMe> {
 }
 
 export type AgentMemory = components['schemas']['AgentMemoryOut']
+export type MemoryFeature = 'record' | 'use'
+export type SessionMemory = components['schemas']['SessionMemoryOut']
 
-/** Your own agent-memory switches, each independent: `record` lets agents learn
+/** Your agent memory at the canopy level, per feature: `available` — may it be on
+ *  at all — and `default` — is it on in a new session. `record` lets agents learn
  *  about you (write); `use` lets them be told what they learned (read). Off
- *  deletes nothing. Only you can flip them. Omit one to leave it unchanged. */
-export async function setMyAgentMemory(change: { record?: boolean; use?: boolean }): Promise<AgentMemory> {
+ *  deletes nothing. Only you can change these. Omit a key to leave it. */
+export async function setMyAgentMemory(
+  change: Partial<Record<MemoryFeature, { available?: boolean; default?: boolean }>>,
+): Promise<AgentMemory> {
   const { data, error } = await apiV2.PUT('/api/people/me/agent-memory/', { body: change })
   if (error) throw new Error('Failed to change agent memory')
   return data as AgentMemory
+}
+
+/** Agent memory as it applies in one of your sessions. Throws on 404 (not your
+ *  session) — callers treat that as "show nothing". */
+export async function getSessionMemory(sessionId: string): Promise<SessionMemory> {
+  const { data, error } = await apiV2.GET('/api/people/me/sessions/{session_id}/agent-memory/', {
+    params: { path: { session_id: sessionId } },
+  })
+  if (error) throw new Error('Failed to load agent memory for this session')
+  return data as SessionMemory
+}
+
+/** Turn a feature on or off for this session only, or back to your default. */
+export async function setSessionMemory(
+  sessionId: string,
+  change: Partial<Record<MemoryFeature, 'on' | 'off' | 'inherit'>>,
+): Promise<SessionMemory> {
+  const { data, error } = await apiV2.PUT('/api/people/me/sessions/{session_id}/agent-memory/', {
+    params: { path: { session_id: sessionId } },
+    body: change,
+  })
+  if (error) throw new Error('Failed to change agent memory for this session')
+  return data as SessionMemory
 }
 
 export async function retractFact(personId: number, factId: number): Promise<void> {

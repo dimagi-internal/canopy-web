@@ -103,48 +103,143 @@ USE_OFF = "this person has not let agents use what they have learned"
 RECORD, USE, ANY = "record", "use", "any"
 
 
-def may_record(person: Person) -> bool:
-    return bool(person.hcp_record)
+FEATURES = ("record", "use")
+#: The audit event types for each setting change, by feature.
+_EVENTS = {"record": "agentRecord", "use": "agentUse"}
+_SESSION_EVENTS = {"record": "sessionRecord", "use": "sessionUse"}
 
 
-def may_use(person: Person) -> bool:
-    return bool(person.hcp_use)
+def session_of(turn):
+    """The canopy chat session a turn belongs to, or None (a turn with no session
+    uses the person's defaults)."""
+    if turn is None or not getattr(turn, "chat_session_id", None):
+        return None
+    return turn.chat_session
 
 
-def require(person: Person, need: str) -> None:
-    """Raise `scope-denied` unless the person's switch for `need` is on."""
-    if need == RECORD and not may_record(person):
+def _override(person: Person, session) -> "SessionAgentMemory | None":
+    if session is None:
+        return None
+    from .models import SessionAgentMemory
+
+    return SessionAgentMemory.objects.filter(session=session, person=person).first()
+
+
+def memory_state(person: Person, session=None) -> dict:
+    """Per feature: `available`, `default`, this session's `override` (None =
+    inherit) and the `effective` value — available AND (override, else default)."""
+    row = _override(person, session)
+    out = {}
+    for f in FEATURES:
+        available = bool(getattr(person, f"hcp_{f}_available"))
+        default = bool(getattr(person, f"hcp_{f}_default"))
+        override = getattr(row, f) if row is not None else None
+        out[f] = {"available": available, "default": default, "override": override,
+                  "effective": available and (default if override is None else bool(override))}
+    return out
+
+
+def effective(person: Person, turn=None) -> dict:
+    """{record, use} as they apply to the turn being served."""
+    state = memory_state(person, session_of(turn))
+    return {f: state[f]["effective"] for f in FEATURES}
+
+
+def may_record(person: Person, turn=None) -> bool:
+    return effective(person, turn)["record"]
+
+
+def may_use(person: Person, turn=None) -> bool:
+    return effective(person, turn)["use"]
+
+
+def require(person: Person, need: str, turn=None) -> None:
+    """Raise `scope-denied` unless what `need` requires is on for this turn."""
+    eff = effective(person, turn)
+    if need == RECORD and not eff["record"]:
         raise denied(RECORD_OFF)
-    if need == USE and not may_use(person):
+    if need == USE and not eff["use"]:
         raise denied(USE_OFF)
-    if need == ANY and not (may_record(person) or may_use(person)):
+    if need == ANY and not (eff["record"] or eff["use"]):
         raise denied(RECORD_OFF + ", nor use what they have learned")
 
 
-def set_agent_memory(person: Person, *, actor: Actor, record: bool | None = None,
-                     use: bool | None = None) -> list[str]:
-    """Change the person's switches, as the person. `None` leaves one alone.
-    Returns the audit event types written — one per switch that actually changed."""
+_DETAILS = {
+    "agentRecord.enabled": "agents may now be allowed to record what they learn about you",
+    "agentRecord.disabled": "agents may no longer record anything about you; nothing was deleted",
+    "agentUse.enabled": "agents may now be allowed to use what has been learned about you",
+    "agentUse.disabled": "agents are no longer told anything learned about you; nothing was deleted",
+    "agentRecord.defaultOn": "new sessions let agents record what they learn about you",
+    "agentRecord.defaultOff": "new sessions do not let agents record unless you turn it on",
+    "agentUse.defaultOn": "new sessions let agents use what has been learned about you",
+    "agentUse.defaultOff": "new sessions do not let agents use it unless you turn it on",
+}
+
+
+def set_agent_memory(person: Person, *, actor: Actor, record: dict | None = None,
+                     use: dict | None = None) -> list[str]:
+    """Change the person's canopy-level settings, as the person. Each of `record` /
+    `use` is `{available?, default?}`; a missing key leaves it alone. Returns the
+    audit event types written — one per setting that actually changed."""
     now, fields, events = timezone.now(), [], []
-    for name, value, event in (("hcp_record", record, "agentRecord"), ("hcp_use", use, "agentUse")):
-        if value is None or bool(getattr(person, name)) == bool(value):
-            continue
-        setattr(person, name, bool(value))
-        setattr(person, f"{name}_changed_at", now)
-        fields += [name, f"{name}_changed_at"]
-        events.append(f"{event}.{'enabled' if value else 'disabled'}")
+    for f, change in (("record", record), ("use", use)):
+        for key, (on, off) in (("available", ("enabled", "disabled")),
+                               ("default", ("defaultOn", "defaultOff"))):
+            value = (change or {}).get(key)
+            name = f"hcp_{f}_{key}"
+            if value is None or bool(getattr(person, name)) == bool(value):
+                continue
+            setattr(person, name, bool(value))
+            fields.append(name)
+            stamp = f"hcp_{f}_changed_at"
+            setattr(person, stamp, now)
+            if stamp not in fields:
+                fields.append(stamp)
+            events.append(f"{_EVENTS[f]}.{on if value else off}")
     if not fields:
         return []
-    details = {
-        "agentRecord.enabled": "agents may now record what they learn about you",
-        "agentRecord.disabled": "agents may no longer record anything about you; nothing was deleted",
-        "agentUse.enabled": "agents may now be told what has been learned about you",
-        "agentUse.disabled": "agents are no longer told anything learned about you; nothing was deleted",
-    }
     with transaction.atomic():
         person.save(update_fields=fields)
         for event in events:
-            audit(person, event, actor=actor, detail=details[event])
+            audit(person, event, actor=actor, detail=_DETAILS[event])
+    return events
+
+
+#: What a session override may be set to.
+ON, OFF, INHERIT = "on", "off", "inherit"
+
+
+def set_session_memory(person: Person, session, *, actor: Actor, record: str | None = None,
+                       use: str | None = None) -> list[str]:
+    """Set this person's override for one session: "on" / "off" / "inherit" per
+    feature (`None` leaves it alone). Setting "on" for a feature the person has not
+    made available is refused — a session never widens the canopy level."""
+    from .models import SessionAgentMemory
+
+    changes = {"record": record, "use": use}
+    for f, value in changes.items():
+        if value not in (None, ON, OFF, INHERIT):
+            raise malformed(f"{f} is on, off or inherit")
+        if value == ON and not getattr(person, f"hcp_{f}_available"):
+            raise denied(f"{f} is not available for you; make it available first")
+    events = []
+    with transaction.atomic():
+        row, _ = SessionAgentMemory.objects.select_for_update().get_or_create(
+            session=session, person=person)
+        fields = []
+        for f, value in changes.items():
+            if value is None:
+                continue
+            new = None if value == INHERIT else (value == ON)
+            if getattr(row, f) == new:
+                continue
+            setattr(row, f, new)
+            fields.append(f)
+            events.append(f"{_SESSION_EVENTS[f]}.{value}")
+        if fields:
+            row.save(update_fields=fields + ["updated_at"])
+            for event in events:
+                audit(person, event, actor=actor, detail=f"session {session.pk}")
     return events
 
 

@@ -32,6 +32,8 @@ from .models import Person, PersonAccess, PersonFact
 from .people_schemas import (
     AgentMemoryIn,
     AgentMemoryOut,
+    SessionMemoryIn,
+    SessionMemoryOut,
     PeopleCoverageOut,
     PersonConversationsOut,
     PersonFactCreatedOut,
@@ -116,19 +118,15 @@ def people_me(request: HttpRequest) -> dict:
 
 def _memory(person: Person) -> dict:
     return {"agent_memory": {
-        "record": bool(person.hcp_record), "use": bool(person.hcp_use),
-        "record_changed_at": _iso(person.hcp_record_changed_at),
-        "use_changed_at": _iso(person.hcp_use_changed_at)}}
+        f: {"available": bool(getattr(person, f"hcp_{f}_available")),
+            "default": bool(getattr(person, f"hcp_{f}_default")),
+            "changed_at": _iso(getattr(person, f"hcp_{f}_changed_at"))}
+        for f in hcp.FEATURES}}
 
 
-@router.put("/me/agent-memory/", response=AgentMemoryOut,
-            summary="Turn your agent-memory switches on or off")
-def set_my_agent_memory(request: HttpRequest, payload: AgentMemoryIn) -> dict:
-    """Your own two switches, each independent. `record` (agents may learn about
-    me): agents record what they learn. `use` (agents may use what they've
-    learned): agents are told what is relevant about you. Off deletes nothing:
-    what is held stays, yours to see, export and retract. Only you can flip
-    them — never an agent, an admin, or a session acting for you."""
+def _the_person_themself(request: HttpRequest) -> Person:
+    """Only the person — never an agent's login, a session acting for them (a caller
+    token), or a system account."""
     user = request.user
     if (people.agent_of_login(user) is not None
             or getattr(request, "auth_method", "") == "caller_token"
@@ -137,8 +135,67 @@ def set_my_agent_memory(request: HttpRequest, payload: AgentMemoryIn) -> dict:
     person = contact_services.person_for(user=user)
     if person is None:
         raise _not_found()
-    hcp.set_agent_memory(person, actor=hcp.user_actor(user), record=payload.record, use=payload.use)
+    return person
+
+
+@router.put("/me/agent-memory/", response=AgentMemoryOut,
+            summary="Choose what agent memory is available, and its defaults")
+def set_my_agent_memory(request: HttpRequest, payload: AgentMemoryIn) -> dict:
+    """Your agent memory at the canopy level. For each of `record` (agents may
+    learn about me) and `use` (agents may use what they've learned): `available`
+    — may it be on at all — and `default` — is it on in a new session. A session
+    can turn either on or off for itself, but never turn on what is not
+    available. Off deletes nothing. Only you can change these."""
+    person = _the_person_themself(request)
+    hcp.set_agent_memory(person, actor=hcp.user_actor(request.user),
+                         record=payload.record.model_dump() if payload.record else None,
+                         use=payload.use.model_dump() if payload.use else None)
     return _memory(person)["agent_memory"]
+
+
+def _my_session(request: HttpRequest, session_id: str):
+    from apps.canopy_sessions.models import Session
+
+    try:
+        sid = uuid.UUID(str(session_id))
+    except ValueError:
+        raise _not_found() from None
+    session = Session.objects.filter(pk=sid, created_by=request.user).first()
+    if session is None:            # not yours, or not there: the same answer
+        raise _not_found()
+    return session
+
+
+def _session_memory(person: Person, session) -> dict:
+    return {"session_id": str(session.pk), **hcp.memory_state(person, session)}
+
+
+@router.get("/me/sessions/{session_id}/agent-memory/", response=SessionMemoryOut,
+            summary="Agent memory in one of your sessions")
+def get_my_session_memory(request: HttpRequest, session_id: str) -> dict:
+    """What applies in this session of yours: per feature, whether it is
+    available, its default, this session's choice, and the effective value."""
+    person = _the_person_themself(request)
+    return _session_memory(person, _my_session(request, session_id))
+
+
+@router.put("/me/sessions/{session_id}/agent-memory/", response=SessionMemoryOut,
+            summary="Turn agent memory on or off for one of your sessions")
+def set_my_session_memory(request: HttpRequest, session_id: str,
+                          payload: SessionMemoryIn) -> dict:
+    """For this session only: `on`, `off` or `inherit` (use your default) for
+    `record` and `use`. A feature you have not made available cannot be turned
+    on here. Only you can change it."""
+    person = _the_person_themself(request)
+    session = _my_session(request, session_id)
+    try:
+        hcp.set_session_memory(person, session, actor=hcp.user_actor(request.user),
+                               record=payload.record, use=payload.use)
+    except hcp.HcpError as exc:
+        raise ProblemError(exc.status, "Not changed",
+                           type_=TYPE_VALIDATION if exc.status == 422 else TYPE_FORBIDDEN,
+                           detail=exc.detail) from None
+    return _session_memory(person, session)
 
 
 @router.get("/coverage/", response=PeopleCoverageOut,
@@ -262,7 +319,7 @@ def add_person_fact(request: HttpRequest, person_id: int, payload: PersonFactIn)
         project = AgentProject.objects.select_related("agent").filter(pk=payload.project_id).first()
         if project is None or project.agent.workspace_id != ws.pk:
             raise _bad("project_id is not a project in that workspace")
-    if people.agent_of_login(request.user) is not None and not hcp.may_record(person):
+    if people.agent_of_login(request.user) is not None and not hcp.may_record(person, source_turn):
         raise ProblemError(403, "This person has not let agents learn about them",
                            type_=TYPE_FORBIDDEN, detail=hcp.RECORD_OFF)
     supersedes = None

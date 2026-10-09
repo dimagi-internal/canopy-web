@@ -6849,14 +6849,41 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Turn your agent-memory switches on or off
-         * @description Your own two switches, each independent. `record` (agents may learn about
-         *     me): agents record what they learn. `use` (agents may use what they've
-         *     learned): agents are told what is relevant about you. Off deletes nothing:
-         *     what is held stays, yours to see, export and retract. Only you can flip
-         *     them — never an agent, an admin, or a session acting for you.
+         * Choose what agent memory is available, and its defaults
+         * @description Your agent memory at the canopy level. For each of `record` (agents may
+         *     learn about me) and `use` (agents may use what they've learned): `available`
+         *     — may it be on at all — and `default` — is it on in a new session. A session
+         *     can turn either on or off for itself, but never turn on what is not
+         *     available. Off deletes nothing. Only you can change these.
          */
         readonly put: operations["set_my_agent_memory"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/me/sessions/{session_id}/agent-memory/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Agent memory in one of your sessions
+         * @description What applies in this session of yours: per feature, whether it is
+         *     available, its default, this session's choice, and the effective value.
+         */
+        readonly get: operations["get_my_session_memory"];
+        /**
+         * Turn agent memory on or off for one of your sessions
+         * @description For this session only: `on`, `off` or `inherit` (use your default) for
+         *     `record` and `use`. A feature you have not made available cannot be turned
+         *     on here. Only you can change it.
+         */
+        readonly put: operations["set_my_session_memory"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -17237,24 +17264,30 @@ export interface components {
         };
         /**
          * AgentMemoryOut
-         * @description Your two agent-memory switches; any combination is valid, and turning one
-         *     off deletes nothing.
+         * @description Your agent memory at the canopy level: two features, each with whether it is
+         *     available and whether it is on by default in a new session. Turning one off
+         *     deletes nothing.
          */
         readonly AgentMemoryOut: {
+            /** @description Agents may learn about me (write). */
+            readonly record: components["schemas"]["MemoryFeatureOut"];
+            /** @description Agents may use what they've learned (read). */
+            readonly use: components["schemas"]["MemoryFeatureOut"];
+        };
+        /** MemoryFeatureOut */
+        readonly MemoryFeatureOut: {
             /**
-             * Record
-             * @description Agents may learn about me (write).
+             * Available
+             * @description May this be on at all. Off = no session can turn it on.
              */
-            readonly record: boolean;
+            readonly available: boolean;
             /**
-             * Use
-             * @description Agents may use what they've learned (read).
+             * Default
+             * @description On in a session that says nothing (only when available).
              */
-            readonly use: boolean;
-            /** Record Changed At */
-            readonly record_changed_at?: string | null;
-            /** Use Changed At */
-            readonly use_changed_at?: string | null;
+            readonly default: boolean;
+            /** Changed At */
+            readonly changed_at?: string | null;
         };
         /**
          * PersonAccessOut
@@ -17383,16 +17416,63 @@ export interface components {
         };
         /** AgentMemoryIn */
         readonly AgentMemoryIn: {
+            /** @description Agents may learn about me. Omit to leave it unchanged. */
+            readonly record?: components["schemas"]["MemoryFeatureIn"] | null;
+            /** @description Agents may use what they've learned. Omit to leave it unchanged. */
+            readonly use?: components["schemas"]["MemoryFeatureIn"] | null;
+        };
+        /** MemoryFeatureIn */
+        readonly MemoryFeatureIn: {
+            /**
+             * Available
+             * @description Make it available (true) or not (false). Omit to leave it.
+             */
+            readonly available?: boolean | null;
+            /**
+             * Default
+             * @description On (true) or off (false) by default in new sessions. Omit to leave it.
+             */
+            readonly default?: boolean | null;
+        };
+        /** SessionFeatureOut */
+        readonly SessionFeatureOut: {
+            /** Available */
+            readonly available: boolean;
+            /** Default */
+            readonly default: boolean;
+            /**
+             * Override
+             * @description This session's choice; null = use the default.
+             */
+            readonly override: boolean | null;
+            /**
+             * Effective
+             * @description What applies in this session: available AND (override, else default).
+             */
+            readonly effective: boolean;
+        };
+        /**
+         * SessionMemoryOut
+         * @description Your agent memory as it applies in one session.
+         */
+        readonly SessionMemoryOut: {
+            /** Session Id */
+            readonly session_id: string;
+            readonly record: components["schemas"]["SessionFeatureOut"];
+            readonly use: components["schemas"]["SessionFeatureOut"];
+        };
+        /** SessionMemoryIn */
+        readonly SessionMemoryIn: {
             /**
              * Record
-             * @description Agents may learn about me: true lets agents record what they learn about you, false stops them. Omit to leave it unchanged.
+             * @description on | off | inherit. Omit to leave it.
              */
-            readonly record?: boolean | null;
+            readonly record?: string | null;
             /**
              * Use
-             * @description Agents may use what they've learned: true lets agents be told what has been learned about you, false stops them. Omit to leave it unchanged.
+             * @description on | off | inherit. Omit to leave it.
              */
-            readonly use?: boolean | null;
+            readonly use?: string | null;
         };
         /**
          * AgentCoverageOut
@@ -27131,6 +27211,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentMemoryOut"];
+                };
+            };
+        };
+    };
+    readonly get_my_session_memory: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionMemoryOut"];
+                };
+            };
+        };
+    };
+    readonly set_my_session_memory: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionMemoryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionMemoryOut"];
                 };
             };
         };
