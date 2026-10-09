@@ -400,6 +400,10 @@ def rebuild(session, *, save: bool = True) -> Activity:
         act._repo(locate(cwd)[0])
     fold_rows(act, Message.objects.filter(session=session).order_by("turn_index")
               .values_list("role", "plaintext", "content").iterator(chunk_size=500))
+    # Here as well as in `store`, so a `save=False` caller (the command's
+    # --dry-run) sees and counts what WOULD be written. Without it the 2026-10-09
+    # prod dry run reported 49 changes against a real run of 150.
+    normalize(act.d)
     if save:
         store(session, act)
     return act
