@@ -264,17 +264,38 @@ def test_a_disabled_assignment_still_gets_credentials(fleet):
 
 def test_no_assignment_at_all_is_still_refused(fleet):
     """Disabling loosens automatic ROUTING, not trust. A runner this agent's work
-    can never be directed at — pinned or otherwise — gets nothing."""
-    from apps.harness.models import RunnerAssignment
+    can never be directed at — pinned or otherwise — gets nothing as a RUNNER.
+
+    Its pairing human may still resolve as the agent's owner/admin (canopy#850's
+    admin path) — but that is a different principal, audited as `via: admin`,
+    and a non-admin with the same unassigned box is refused outright."""
+    from django.utils import timezone
+
+    from apps.events.models import Event
+    from apps.harness.models import Runner, RunnerAssignment
 
     RunnerAssignment.objects.filter(agent=fleet["agent"]).delete()
     _set_vault(fleet["client"], vault="Agent-Ace", service_key="ops_tok")
+
+    member = get_user_model().objects.create_user(username="mem", email="mem@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet["agent"].workspace, user=member,
+                                       role=WorkspaceMembership.EDITOR)
+    Runner.objects.create(name="mem-box", kind=Runner.CLOUD, owner=member, status=Runner.ONLINE,
+                          last_heartbeat_at=timezone.now(), capabilities={})
+    res = Client().get(
+        "/api/agents/ace/credentials/resolve",
+        HTTP_AUTHORIZATION=f"Bearer {_pat_for(member)}",
+    )
+    assert res.status_code == 403
+    assert "ops_tok" not in res.content.decode()
 
     res = Client().get(
         "/api/agents/ace/credentials/resolve",
         HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
     )
-    assert res.status_code == 403
+    assert res.status_code == 200
+    ev = Event.objects.filter(kind="agent.credentials.resolved").latest("id")
+    assert ev.payload["via"] == "admin"
 
 
 # ---- the tenant's SHARED vault (spec 2026-09-07) ------------------------------

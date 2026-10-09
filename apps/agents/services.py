@@ -176,6 +176,7 @@ def agent_detail(agent: Agent) -> dict:
         "runner_preference": list(agent.runner_preference or []),
         "turn_mode": agent.turn_mode,
         "slack_enabled": agent.slack_enabled,
+        "credential_source": agent.credential_source,
         "created_at": agent.created_at,
         "updated_at": agent.updated_at,
         "sync_count": agent.syncs.count(),

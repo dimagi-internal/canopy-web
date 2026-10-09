@@ -68,6 +68,15 @@ class TurnModeIn(StrictModel):
     turn_mode: Literal["manual", "auto"]
 
 
+class CredentialSourceIn(StrictModel):
+    """Choose where `canopy cred` resolves this agent's secrets from (canopy#850).
+
+    Its own endpoint, owner/admin only, for the same reason as TurnModeIn: the
+    agent-repo self-publish upsert must never be able to move its own secrets."""
+
+    credential_source: Literal["1password", "canopy-web"]
+
+
 class SlackEnabledIn(StrictModel):
     """Turn Slack access to an agent on or off. Its own endpoint, for the same
     reason as TurnModeIn: the agent-repo upsert must not be able to open the
@@ -310,6 +319,10 @@ class AgentOut(StrictModel):
     # operational state rather than repo config, so the self-publish upsert
     # cannot turn it on.
     slack_enabled: bool = False
+    # Which backend `canopy cred` resolves this agent's secrets from (canopy#850).
+    # Owner/admin-set via PATCH /credential-source; absent from AgentIn so the
+    # self-publish upsert cannot move an agent's secrets.
+    credential_source: Literal["1password", "canopy-web"] = "1password"
 
 
 class AgentDefinitionOut(StrictModel):
@@ -926,6 +939,23 @@ class AgentCredentialStatusOut(StrictModel):
     source: str
     updated_at: dt.datetime | None = None
     updated_by_email: str | None = None
+
+
+class AgentCredentialAccessOut(StrictModel):
+    """Whether the CALLER may resolve this agent's secrets — never the values.
+
+    The cheap check `canopy cred` makes before deciding how to resolve
+    (canopy#850). `may_resolve` mirrors GET /credentials/resolve exactly, minus
+    its bearer requirement (that is a property of the request, not of the
+    caller): `via` is `runner` when the caller pairs a live runner this agent
+    routes to, `admin` when they are the agent's owner or an admin, and null
+    when neither holds — then `reason` names the access to ask for."""
+
+    agent: str
+    credential_source: Literal["1password", "canopy-web"]
+    may_resolve: bool
+    via: Literal["runner", "admin"] | None = None
+    reason: str = ""
 
 
 class AgentCredentialsResolveOut(StrictModel):

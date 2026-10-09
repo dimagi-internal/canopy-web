@@ -99,6 +99,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "delete_agent": ("agent.work",),
     "set_runner_preference": ("agent.work",),
     "set_turn_mode": ("agent.work",),
+    "set_credential_source": ("agent-admin",),
     "set_slack_enabled": ("agent-admin",),
     "get_agent_runtime": ("member",),
     "list_agent_runners": ("member",),
@@ -138,7 +139,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_fleet_projects": ("member",),
     "set_agent_credentials": ("agent-admin",),
     "agent_credential_status": ("member",),
-    "resolve_agent_credentials": ("runner-holds-agent",),  # bearer only
+    "agent_credential_access": ("member",),  # no values; reports the resolve gate for the caller
+    "resolve_agent_credentials": ("runner-holds-agent", "agent-admin"),  # bearer only
     "get_agent_vault": ("member",),
     "set_agent_vault": ("agent-admin",),
     "list_sender_trust": ("member",),
