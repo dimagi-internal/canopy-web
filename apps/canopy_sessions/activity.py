@@ -72,14 +72,35 @@ _EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 _SLUG = r"[\w.-]+/[\w.-]+"
 _PR_URL = re.compile(
     r"https://github\.com/(?P<owner>[\w.-]+)/(?P<name>[\w.-]+)/pull/(?P<num>\d+)\b")
-_PR_REF = re.compile(rf"(?<![\w/.-])(?P<slug>{_SLUG})#(?P<num>\d+)\b")
+# Only gh's own "… pull request owner/name#N" line — a bare `x/y#N` anywhere in
+# the output (help text, a quoted example) is not a PR this session touched.
+_PR_REF = re.compile(rf"\bpull request (?P<slug>{_SLUG})#(?P<num>\d+)\b")
 _PUSH_TO = re.compile(
     r"^To (?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
     r"(?P<owner>[\w.-]+)/(?P<name>[\w.-]+?)(?:\.git)?/?\s*$", re.M)
 _PUSH_NEW = re.compile(
     r"https://github\.com/(?P<owner>[\w.-]+)/(?P<name>[\w.-]+)/pull/new/(?P<branch>\S+)")
 _PUSH_BRANCH = re.compile(r"\*\s+\[new branch\]\s+\S+\s+->\s+(?P<branch>\S+)")
-_GH_REPO_FLAG = re.compile(rf"(?:^|\s)(?:-R|--repo)(?:\s+|=)['\"]?(?P<slug>{_SLUG})")
+# `-R owner/name` as a WHOLE token: `-R dimagi-internal/$r` is a variable, not a
+# repo, and the lookahead refuses the `dimagi-internal/` prefix it would leave.
+# Read only from a `gh` invocation — `cp -R skills/x`, `grep -R a/b` are paths.
+_GH_REPO_FLAG = re.compile(
+    rf"(?:^|\s)(?:-R|--repo)(?:\s+|=)['\"]?(?P<slug>{_SLUG})(?=$|[\s'\";&|)])")
+_GH_CALL = re.compile(r"(?:^|[\s(])gh\s")
+#: A repo or owner name as GitHub allows it. Anything else — `$r`, a glob, a
+#: backtick — is an unexpanded shell token, not a repo.
+_NAME_OK = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+_BRANCH_BAD = re.compile(r"[$`*?\[\]{}()<>|;&\\\s~^:]")
+#: Repos the fleet works in, for mapping a scratch-worktree folder
+#: (`canopy-web-<topic>`, `connect-labs-<topic>`) back to its repo when the
+#: session's own remotes do not name it. Longest prefix wins.
+KNOWN_REPOS = (
+    "canopy-web", "canopy", "connect-labs", "ace-web", "ace", "hal", "eva", "ada", "echo",
+    "chrome-sales", "commcare-connect", "commcare-hq", "commcare-nova", "nova-plugin",
+    "open-chat-studio", "scout",
+)
+#: Worktree-folder shorthands seen in the fleet: `cw-<topic>` is canopy-web, `cl-` connect-labs.
+REPO_ALIASES = {"cw": "canopy-web", "cl": "connect-labs"}
 _NEW_BRANCH = re.compile(
     r"\bgit\s+(?:-C\s+\S+\s+)?(?:(?:checkout|switch)\s+(?:\S+\s+)*?-[bBcC]"
     r"|worktree\s+add\b(?:\s+\S+)*?\s+-[bB])\s+(?P<branch>[^\s;&|)]+)")
@@ -148,19 +169,23 @@ class Activity:
             counts[name] = counts.get(name, 0) + 1
 
     def _repo(self, name: str) -> None:
-        self._add("repos", (name or "").lower())
+        name = (name or "").lower()
+        if _NAME_OK.match(name):
+            self._add("repos", name)
 
     def _remote(self, owner: str, name: str) -> str:
         slug = f"{owner}/{name}".lower()
         if slug.endswith(".git"):
             slug = slug[:-4]
+        if not _valid_slug(slug):
+            return ""
         self._add("remotes", slug)
         self._repo(slug.split("/", 1)[1])
         return slug
 
     def _branch(self, branch: str) -> None:
         branch = (branch or "").strip().strip("'\"")
-        if branch and branch != "HEAD" and "$" not in branch and "`" not in branch:
+        if branch and branch != "HEAD" and not _BRANCH_BAD.search(branch):
             self._add("branches", branch)
 
     def _pr(self, repo: str, number: int, url: str, action: str) -> None:
@@ -234,9 +259,10 @@ class Activity:
         self._count("paths", f"{repo}:{_dir_prefix(rel)}" if repo else _dir_prefix(rel))
 
     def _bash(self, call_id: str, command: str) -> None:
-        for m in _GH_REPO_FLAG.finditer(command):
-            owner, name = m.group("slug").split("/", 1)
-            self._remote(owner, name)
+        for segment in _SEGMENT_SPLIT.split(command):
+            if _GH_CALL.search(segment):
+                for m in _GH_REPO_FLAG.finditer(segment):
+                    self._remote(*m.group("slug").split("/", 1))
         for m in _NEW_BRANCH.finditer(command):
             self._branch(m.group("branch"))
         for m in _CD_TARGET.finditer(command):
@@ -251,6 +277,7 @@ class Activity:
                 continue
             flag = _GH_REPO_FLAG.search(segment)
             repo = flag.group("slug").lower() if flag else ""
+            repo = repo if _valid_slug(repo) else ""
             if pr.group(1) == "create":
                 ops["create"] = {"repo": repo}
             else:
@@ -347,18 +374,30 @@ def fold_rows(act: Activity, rows) -> None:
         act.row(role, text or "", content)
 
 
+#: Keys derived only from Message rows, so a rebuild recomputes them from
+#: scratch. That is also how a rebuild sheds values an older extractor got
+#: wrong. The runner-only context (cwd, cwds, branches) is not in the rows, so
+#: it is kept, cleaned by `normalize`.
+_ROW_DERIVED = ("remotes", "repos", "prs")
+
+
 def rebuild(session, *, save: bool = True) -> Activity:
-    """Re-derive the counters from the session's CURRENT Message rows.
+    """Re-derive everything row-derived from the session's CURRENT Message rows.
 
     For the paths that delete derived rows to re-derive them (ordinal-scheme
-    change, transcript identity change, reset), and for backfilling sessions
-    ingested before this existed. Set-like keys are kept as they are — they are
-    unions, so refolding cannot double them, and the runner-only context they hold
-    (cwd, gitBranch) is not in the rows to be refolded from."""
+    change, transcript identity change, reset), and for backfilling or
+    re-extracting sessions (`rebuild_session_activity`). Counters and the
+    row-derived sets are recomputed; cwd/cwds/branches, which only the runner's
+    context carries, are kept and the cwds re-yield their repos. Rows already
+    removed by retention cannot be refolded, so their PRs and remotes go too."""
     from .models import Message
 
     act = Activity(session.activity)
     act.reset_counters()
+    for key in _ROW_DERIVED:
+        act.d.pop(key, None)
+    for cwd in list(act.d.get("cwds", [])):
+        act._repo(locate(cwd)[0])
     fold_rows(act, Message.objects.filter(session=session).order_by("turn_index")
               .values_list("role", "plaintext", "content").iterator(chunk_size=500))
     if save:
@@ -370,6 +409,7 @@ def store(session, act: Activity) -> bool:
     """Write `act` onto the session — `activity` and the `activity_keys` derived
     from it, together, so the filter column cannot drift from the data. Only when
     something changed. Returns whether it wrote."""
+    normalize(act.d)
     keys = index_keys(act.d)
     if not act.changed and keys == session.activity_keys:
         return False
@@ -377,6 +417,70 @@ def store(session, act: Activity) -> bool:
     session.activity_keys = keys
     session.save(update_fields=["activity", "activity_keys"])
     return True
+
+
+def _valid_slug(slug: str) -> bool:
+    owner, _, name = (slug or "").partition("/")
+    return bool(_NAME_OK.match(owner) and _NAME_OK.match(name))
+
+
+def canonical_repo(name: str, remote_names: set[str]) -> str:
+    """The repo a folder name stands for, or "" to drop it.
+
+    A scratch worktree's folder (`canopy-web-popup-escape`, `cw-fixes`) is named
+    after its repo plus a topic, and it was being indexed as a repo of its own —
+    so `?repo=connect-labs` missed sessions that only touched
+    `connect-labs-today-flake/`, and the list grew a "repo" per topic. Order:
+    the session's own remotes (exact, then as a prefix), then the fleet's known
+    repos and aliases as a prefix. A name none of those explain is kept only when
+    the session has no remotes at all — with remotes, the remote is the better
+    answer and an unexplained folder is noise."""
+    name = (name or "").lower()
+    if not _NAME_OK.match(name):
+        return ""
+    if name in remote_names or name in KNOWN_REPOS:
+        return name
+    head = re.split(r"[-_.]", name, maxsplit=1)[0]
+    if head in REPO_ALIASES and name != head:
+        return REPO_ALIASES[head]
+    for candidates in (remote_names, KNOWN_REPOS):
+        hits = [c for c in candidates if any(name.startswith(c + sep) for sep in "-_.")]
+        if hits:
+            return max(hits, key=len)
+    return "" if remote_names else name
+
+
+def normalize(data: dict) -> dict:
+    """Clean `data` in place before it is stored: drop shell tokens, map
+    worktree folders to their repo (`canonical_repo`), and re-key `paths` to
+    match. Idempotent, so applying it on every write is safe."""
+    remotes = [r for r in data.get("remotes", []) if _valid_slug(r)]
+    if "remotes" in data:
+        data["remotes"] = remotes
+    names = {r.split("/", 1)[1] for r in remotes}
+    if "repos" in data:
+        repos: list[str] = []
+        for r in data["repos"]:
+            c = canonical_repo(r, names)
+            if c and c not in repos:
+                repos.append(c)
+        data["repos"] = repos
+    if "paths" in data:
+        paths: dict[str, int] = {}
+        for key, n in data["paths"].items():
+            repo, sep, rest = key.partition(":")
+            if sep:
+                c = canonical_repo(repo, names)
+                key = f"{c}:{rest}" if c else rest
+            paths[key] = paths.get(key, 0) + n
+        data["paths"] = paths
+    if "branches" in data:
+        data["branches"] = [b for b in data["branches"]
+                            if b and b != "HEAD" and not _BRANCH_BAD.search(b)]
+    for pr in data.get("prs", []):
+        if pr.get("repo") and not _valid_slug(pr["repo"]):
+            pr["repo"] = ""
+    return data
 
 
 # --- list filters -------------------------------------------------------------
