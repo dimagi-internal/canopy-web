@@ -26,10 +26,11 @@ def _review(agent, **over):
     return services.create_tasks(agent, [p])[0]
 
 
-def _act(task, u, ws, action, comment="", *, editor=True):
+def _act(task, u, ws, action, comment="", *, editor=True, itself=False):
     # Workspace's primary key is its slug, which is what dispatch compares against.
     return services.act(task, action=action, comment=comment, by=u.email, by_user=u,
-                        actor_workspace_ids={ws.pk}, may_start_turns=editor)
+                        actor_workspace_ids={ws.pk}, may_start_turns=editor and not itself,
+                        by_agent_itself=itself)
 
 
 def test_batch_create_replays_by_key_and_creates_new(world):
@@ -181,12 +182,44 @@ def test_decline_closes_and_keeps_reason(world):
 def test_reply_answers_a_question_but_not_a_review(world):
     u, ws, agent = world
     q = _review(agent, ask_kind="question", idempotency_key="q")
-    q, row, turns = _act(q, u, ws, "reply", "Tuesday")
-    # The Answer behaviour is unchanged: no `on_approve` → a pending answer, no turn.
-    assert not q.ask_is_open and row.status == AgentTaskAction.PENDING and turns == []
+    q, _row, _ = _act(q, u, ws, "reply", "Tuesday")
+    assert not q.ask_is_open
     r = _review(agent, idempotency_key="r")
     r, _row, _ = _act(r, u, ws, "reply", "what's the budget?")
     assert r.ask_is_open
+
+
+@pytest.mark.parametrize("editor", [True, False])
+def test_answer_without_on_approve_wakes_the_agent_with_the_answer(world, editor):
+    """The agent asked for this answer, so it hears it now — from anyone allowed
+    to answer, viewer included — rather than whenever it next happens to run."""
+    u, ws, agent = world
+    q = _review(agent, ask_kind="question", title="Which day for the call?",
+                ask_body="Tuesday or Thursday?", idempotency_key="q")
+    q, row, turns = _act(q, u, ws, "reply", "Tuesday", editor=editor)
+    assert not q.ask_is_open and q.waiting_on_user is None
+    assert row.status == AgentTaskAction.APPLIED and row.applied_at is not None
+    assert len(turns) == 1 and Turn.objects.count() == 1
+    turn = turns[0]
+    assert turn.origin_ref["trigger"] == "task_answer"
+    assert turn.idempotency_key == f"task-{q.pk}-answer-{row.pk}"
+    assert turn.raised_from_task_id == q.pk
+    assert "answered your question on task" in turn.prompt
+    assert "Tuesday or Thursday?" in turn.prompt  # the question rides along
+    assert "ANSWERED BY jj@dimagi.com" in turn.prompt and "Tuesday" in turn.prompt
+    assert DISPATCH_MARKER in turn.prompt and HUMAN_REPLY_OPEN in turn.prompt
+    assert q.status == AgentTask.IN_PROGRESS  # the agent has the ball now
+    # Nothing left in the drain queue: the turn IS the follow-up.
+    assert not services.pending_actions(agent).exists()
+
+
+def test_the_agent_answering_its_own_question_does_not_wake_itself(world):
+    u, ws, agent = world
+    q = _review(agent, ask_kind="question", idempotency_key="q")
+    q, row, turns = _act(q, u, ws, "reply", "never mind, found it", itself=True)
+    assert not q.ask_is_open
+    assert turns == [] and not Turn.objects.exists()
+    assert row.status == AgentTaskAction.PENDING
 
 
 def test_answer_with_on_approve_runs_it_with_the_answer(world):
@@ -196,6 +229,9 @@ def test_answer_with_on_approve_runs_it_with_the_answer(world):
     assert len(turns) == 1 and row.status == AgentTaskAction.APPLIED
     assert "ANSWERED BY" in turns[0].prompt and "Tuesday" in turns[0].prompt
     assert q.status == AgentTask.IN_PROGRESS
+    # The card's own spec ran — not a second, board-written answer turn on top.
+    assert Turn.objects.count() == 1 and "/eva:turn book it" in turns[0].prompt
+    assert turns[0].origin_ref.get("trigger") != "task_answer"
 
 
 def test_editor_reply_on_a_live_task_starts_a_turn_carrying_it(world):

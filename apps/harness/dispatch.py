@@ -170,7 +170,7 @@ def _dispatch_parent(task) -> dict | None:
     return parent
 
 
-# ---- the board's own turns: approve with no `on_approve`, nudge, reply ------
+# ---- the board's own turns: approve with no `on_approve`, nudge, reply, answer
 #
 # A task without `on_approve` used to approve into a pending action row and
 # nothing else — no turn, so the agent heard about it only whenever it next
@@ -180,7 +180,12 @@ def _dispatch_parent(task) -> dict | None:
 # as `dispatch()`: same stamp, same initiator, same parent, same task link.
 
 #: action -> origin_ref["trigger"], what this board turn IS.
-TASK_TRIGGERS = {"approve": "task_approve", "nudge": "task_nudge", "reply": "task_reply"}
+TASK_TRIGGERS = {"approve": "task_approve", "nudge": "task_nudge", "reply": "task_reply",
+                 "answer": "task_answer"}
+
+#: action -> the label the person's own words are spliced in under.
+_TASK_LABELS = {"approve": "APPROVED BY", "nudge": "NUDGED BY", "reply": "NOTE FROM",
+                "answer": "ANSWERED BY"}
 
 #: A board turn reuses a turn of the same task that has not STARTED yet rather
 #: than stacking a second one behind it — the guard against a double-click, two
@@ -209,7 +214,11 @@ def task_turn_prompt(task, *, action: str, by: str = "") -> str:
     """The brief for a board turn on `task`, before the stamp and the human's words."""
     who = by or "a person"
     ref = f"{task.agent.slug}/{task.ext_id}"
-    if action == "reply":
+    if action == "answer":
+        head = (f"{who} answered your question on task {task.ext_id}: {task.title}\n\n"
+                f"The answer is below. Act on it now — carry on with the work it unblocks, "
+                f"or do what it says instead if it redirects you.")
+    elif action == "reply":
         head = (f"{who} left a note on task {task.ext_id}: {task.title}\n\n"
                 f"Read it, answer it on the task, and fold it into the work if it changes "
                 f"anything. Do not restart work the note does not ask for.")
@@ -224,8 +233,12 @@ def task_turn_prompt(task, *, action: str, by: str = "") -> str:
     return "\n\n".join(part for part in (head, context, tail) if part)
 
 
-def enqueue_task_turn(task, *, action) -> tuple[Turn, bool]:
+def enqueue_task_turn(task, *, action, kind: str | None = None) -> tuple[Turn, bool]:
     """Enqueue the one turn a board action implies for a task with no `on_approve`.
+
+    `kind` overrides the row's action where one action means two things: a
+    `reply` that answers an open question is `"answer"` (the agent asked for it,
+    so the turn says so and splices it in as ANSWERED BY).
 
     Returns (turn, created). `action` is the saved AgentTaskAction row: its pk
     keys the turn (`task-<pk>-<action>-<row>`, so every deliberate click is its
@@ -235,25 +248,24 @@ def enqueue_task_turn(task, *, action) -> tuple[Turn, bool]:
     An approve or nudge with nothing to say reuses a not-yet-started turn of the
     same task instead of queueing a duplicate — `created` is False then. A reply
     always enqueues: its words are new, and a queued turn's prompt does not
-    carry them.
+    carry them. So does an answer, for the same reason.
     """
-    kind = action.action
+    kind = kind or action.action
     if kind not in TASK_TRIGGERS:
         raise ValueError(f"no board turn for action {kind!r}")
     comment = (action.comment or "").strip()
-    if kind != "reply" and not comment:
+    if kind not in ("reply", "answer") and not comment:
         waiting = (Turn.objects.filter(raised_from_task=task, status__in=_NOT_STARTED)
                    .order_by("created_at").first())
         if waiting is not None:
             return waiting, False
     brief = stamp_dispatched(task_turn_prompt(task, action=kind, by=action.by),
                              sender=task.agent.slug)
-    label = "NOTE FROM" if kind == "reply" else "APPROVED BY" if kind == "approve" else "NUDGED BY"
     turn, created = services.enqueue_turn(
         agent=task.agent,
         origin=Turn.ORIGIN_API,
         idempotency_key=f"task-{task.pk}-{kind}-{action.pk}",
-        prompt=_with_reply(brief, comment, action.by, label=label),
+        prompt=_with_reply(brief, comment, action.by, label=_TASK_LABELS[kind]),
         origin_ref={"task_title": task.title, "task": task.ext_id,
                     "trigger": TASK_TRIGGERS[kind]},
         initiator=_dispatch_initiator(task, action),

@@ -1566,12 +1566,14 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
     """approve → in progress, and the agent starts now: its `on_approve` turns,
     or one turn written from the card when it has none. decline → declined (the
     comment is the reason). reply → on an open question, the answer (closes the
-    ask, runs `on_approve`); on anything else a note — an editor's note starts a
-    turn carrying it, a viewer's waits for the agent's next turn. nudge (editor,
-    in-progress tasks) → start a turn on it now, status unchanged. done → done
-    (editor). 409 when the task is not in a state the action applies to (an
-    ask already closed, a finished task, nudging one that is not in progress);
-    `turn_ids` names the turns the action started."""
+    ask; runs `on_approve`, or with none starts one turn carrying the answer —
+    whoever answers, unless it is the agent itself); on anything else a note —
+    an editor's note starts a turn carrying it, a viewer's waits for the
+    agent's next turn. nudge (editor, in-progress tasks) → start a turn on it
+    now, status unchanged. done → done (editor). 409 when the task is not in a
+    state the action applies to (an ask already closed, a finished task,
+    nudging one that is not in progress); `turn_ids` names the turns the action
+    started."""
     if payload.action in _EDITOR_ACTIONS:
         agent = _agent_for_write(request, slug)
     else:
@@ -1587,7 +1589,10 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
             # replying on its own card: its note would wake itself, and a turn
             # that replies again would wake it again.
             may_start_turns=(_can(request, agent.workspace_id, perms.AGENT_WORK)
-                             and not _is_agent_itself(request, agent)))
+                             and not _is_agent_itself(request, agent)),
+            # An ANSWER to an open question wakes the agent whoever writes it (it
+            # is the response the agent asked for) — but never the agent itself.
+            by_agent_itself=_is_agent_itself(request, agent))
     except services.ClosedAskError as exc:
         raise HttpError(409, str(exc)) from exc
     except ValueError as exc:
