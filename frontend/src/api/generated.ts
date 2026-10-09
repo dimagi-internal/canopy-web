@@ -15645,6 +15645,11 @@ export interface components {
             /** Emdash Task */
             readonly emdash_task: string;
             /**
+             * Task Uid
+             * @default
+             */
+            readonly task_uid: string;
+            /**
              * Project
              * @default
              */

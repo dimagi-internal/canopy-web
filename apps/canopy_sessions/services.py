@@ -613,24 +613,91 @@ def fork_if_name_reused(session, transcript_id: str):
         if not binding.transcript_id or binding.transcript_id == transcript_id:
             old.save(update_fields=["metadata", "updated_at"])
             return None
+        return _move_binding_to_successor(old, binding, transcript_id=transcript_id)
+
+
+def _move_binding_to_successor(old, binding, *, transcript_id: str = "", successor=None):
+    """Re-point `binding` from `old` to a successor Session and archive `old` with
+    its rows and metadata intact. The successor is `successor` when given (a
+    session this binding was moved off earlier — see `fork_if_task_changed`),
+    else a new Session. Caller holds the binding lock and `old`'s lock, in that
+    order (the order every writer here uses), inside a transaction.
+
+    The binding's derived state belongs to the conversation it was describing,
+    so it is reset: the transcript identity (blank makes the runner ship the
+    successor's whole history — see `ensure_transcript_identity`), the epoch
+    offset, any dialog, and the per-viewer flags (a viewer is attached to the OLD
+    session's id, not the successor's)."""
+    if successor is None:
+        meta = old.metadata or {}
         new_meta = {TRANSCRIPT_SOURCED: True} if meta.get(TRANSCRIPT_SOURCED) else {}
-        new = Session.objects.create(
+        successor = Session.objects.create(
             agent=old.agent, project=old.project, workspace=old.workspace,
             origin=old.origin, ordinal_scheme=old.ordinal_scheme,
             title=(binding.session_key or old.title)[:200], metadata=new_meta,
             # The successor of the session whose task name was reused.
             **provenance.session_fields(parent={"session": old}, forked_from=str(old.pk)),
         )
-        old.status = Session.ARCHIVED
-        old.save(update_fields=["metadata", "status", "updated_at"])
-        binding.session = new
-        binding.transcript_id = transcript_id
-        binding.index_offset = 0
-        binding.transferred_at = binding.transferred_from = None
-        binding.pending_question = None
-        binding.pending_answer = None
-        binding.save()
-        return new
+    elif successor.status != Session.ACTIVE:
+        successor.status = Session.ACTIVE
+        successor.save(update_fields=["status", "updated_at"])
+    old.status = Session.ARCHIVED
+    old.save(update_fields=["metadata", "status", "updated_at"])
+    binding.session = successor
+    binding.transcript_id = transcript_id
+    binding.index_offset = 0
+    binding.transferred_at = binding.transferred_from = None
+    binding.pending_question = None
+    binding.pending_answer = None
+    binding.stream_desired = False
+    binding.backfill_requested = False
+    binding.close_requested = False
+    binding.save()
+    return successor
+
+
+#: Stamped on a session whose binding moved to another emdash task of the same
+#: name: the task id it WAS for, so the record can be found again if that task
+#: comes back to the front (two live namesakes in one project alternate in the
+#: report, which keeps only the newest — see harness.replace_reported_sessions).
+TASK_UID_KEY = "emdash_task_uid"
+
+
+def fork_if_task_changed(binding, task_uid: str):
+    """The Session `binding` now belongs to, when the emdash TASK behind its name
+    changed; None when it is the same task (or either side makes no claim).
+
+    The report-side sibling of `fork_if_name_reused`, keyed on the evidence that
+    actually decides the question: emdash's task id (`RunnerBinding.task_uid`).
+    A new task that reused a name gets its own session, the old record is
+    archived with its rows intact, and `claude --resume` / `--continue` /
+    `/clear` inside one task — same id — never fork. Called by the report loop
+    while it holds the binding lock; takes the session lock itself.
+
+    A blank on either side is no evidence and only FILLS the column (the first
+    report after this deploys adopts whatever task is live, as the binding
+    already assumed). If the reported task was this binding's before — it has a
+    session archived under its id with no binding of its own — that session is
+    re-bound instead of creating a third record.
+    """
+    if not task_uid:
+        return None
+    if not binding.task_uid:
+        binding.task_uid = task_uid
+        return None
+    if binding.task_uid == task_uid:
+        return None
+    old = Session.objects.select_for_update().get(pk=binding.session_id)
+    old.metadata = {**(old.metadata or {}), TASK_UID_KEY: binding.task_uid}
+    old.metadata.pop(REOPENED_KEY, None)
+    previous = (
+        Session.objects.select_for_update()
+        .filter(runner_binding__isnull=True, workspace=old.workspace,
+                origin=old.origin, **{f"metadata__{TASK_UID_KEY}": task_uid})
+        .order_by("-created_at").first()
+    )
+    binding.task_uid = task_uid
+    return _move_binding_to_successor(old, binding, successor=previous)
 
 
 def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:

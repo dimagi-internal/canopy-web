@@ -483,6 +483,11 @@ class RecordSessionIn(Schema):
 
 class ReportedSessionIn(Schema):
     emdash_task: str  # the emdash task NAME
+    # emdash's `tasks.id` — the task's IDENTITY, which the name is not (names are
+    # reused over time). A change behind the same name forks a new session record
+    # (canopy_sessions.services.fork_if_task_changed). "" = an old runner or a
+    # session with no emdash task, which makes no claim.
+    task_uid: str = ""
     project: str = ""
     status: str = ""
     # Emdash's own per-conversation liveness flag: "working" | "awaiting-input" | "".
