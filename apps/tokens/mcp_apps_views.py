@@ -227,9 +227,18 @@ def find(session, tool_call_id: str) -> ViewRow:
                                   content__id=tool_call_id)
            .values_list("content", flat=True).first()) if app is not None else None
     ref = app_ref(app, use) if use else None
-    result = (Message.objects.filter(session=session, role=Message.TOOL_RESULT,
-                                     content__tool_use_id=tool_call_id)
-              .values_list("content", flat=True).first()) if ref else None
+    found = (Message.objects.filter(session=session, role=Message.TOOL_RESULT,
+                                    content__tool_use_id=tool_call_id)
+             .values_list("content", "plaintext").first()) if ref else None
+    result = None
+    if found is not None:
+        content, plaintext = found
+        result = dict(content or {})
+        # The runner's transcript rows keep a result's TEXT in `plaintext`, with only
+        # {is_error, tool_use_id} in `content` -- so a path-D View got an empty result
+        # and fell back on a depth-elided input copy (Labs' coaching card, 2026-10-09).
+        if not result.get("content") and plaintext:
+            result["content"] = plaintext
     if ref is None or result is None:
         raise ViewRefusal(GATES[2], "there is no app view for that tool call here", 404)
     return ViewRow(app=app, ref=ref, use=use, result=result)
