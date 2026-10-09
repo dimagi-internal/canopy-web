@@ -295,3 +295,16 @@ def test_store_normalizes_a_noisy_activity_and_rebuild_recomputes_row_derived_ke
     assert str(s.id) not in ids
     ids = {r["id"] for r in c.get("/api/canopy-sessions/?state=all&repo=connect-labs").json()}
     assert str(s.id) in ids
+
+
+def test_dry_run_reports_what_a_real_run_would_write():
+    user, ws, runner, s, c = _ctx()
+    Message.objects.create(session=s, turn_index=1, role="tool_use", plaintext="", content={
+        "id": "t1", "name": "Bash",
+        "input": {"command": "cd ~/emdash/repositories/canopy-web-popup-escape && git status"}})
+    s.activity = {"repos": ["canopy-web-popup-escape"], "cwds": []}
+    s.save(update_fields=["activity"])
+    act = activity.rebuild(s, save=False)
+    assert act.d["repos"] == ["canopy-web"] and act.changed
+    s.refresh_from_db()
+    assert s.activity["repos"] == ["canopy-web-popup-escape"]   # nothing written
