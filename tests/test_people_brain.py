@@ -504,6 +504,14 @@ def test_the_kill_switch(world, settings):
     assert not _digest_turns().exists()
 
 
+def test_the_allowlist_runs_the_digest_only_for_the_people_it_names(world, settings):
+    settings.PEOPLE_DIGEST_PEOPLE = ["jj@dimagi.com"]
+    _finish(_human_turn(world["ace"], world["lili"], "t1"))
+    assert not _digest_turns().exists()
+    _finish(_human_turn(world["ace"], world["owner"], "t2"))
+    assert _digest_turns().count() == 1
+
+
 def test_a_digest_turn_yields_to_a_persons_next_message_at_claim(world):
     from apps.agents.models import AgentAdmin
 
