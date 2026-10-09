@@ -4,17 +4,18 @@ Spec: "Human Context Protocol (HCP) v1 — Draft Reference Specification",
 1.0-draft-4 (Stanford HAI, Sept 2026). Profile implemented here:
 
 * **HCP v1 Core, Tier 1 only, grouped envelope, `authorization_profile:
-  first-party`.** Tier 2 (Verifiable Credentials) is optional at v1 and not
-  built. OAuth wire flows are not offered (5.2.1): canopy only serves clients
-  it operates — its own agents — so it is not eligible for Interop.
+  oauth2`.** Tier 2 (Verifiable Credentials) is optional at v1 and not built.
+  Apps canopy does not operate use the HCP service's OAuth flow (`hcp_oauth`);
+  what still keeps the level at Core is listed in `KNOWN_GAPS` and
+  docs/architecture/hcp-conformance.md.
 * **An entry is the people brain's `PersonFact` chain** (`entry_id` shared by
   every version). The brain was built two days before this spec arrived and is
   reshaped to it rather than duplicated beside it.
-* **Grants are presumed by the control plane** (owner policy, 2026-10-08):
-  canopy decides which agent serves which caller, so the first time a client
-  reaches a person it issues the grant itself and audits it. A grant's client
-  is (agent, channel, host) — see `PersonGrant`. A revoked grant is never
-  re-presumed.
+* **A grant is only ever the person's act** (Jonathan, 2026-10-09; 4.1.6). For
+  canopy's own agents the client is the agent, granted in a session's UI "for
+  this session" or "always" (`issue_agent_grant`); the person's settings are
+  policy that bounds it. Nothing is presumed. OAuth apps consent on the HCP
+  service's screen (`hcp_oauth`).
 * **Relevance is lexical** (4.4.3): term overlap between the query and the
   entry, with a person's corrections and role always relevant to their own turn.
 
@@ -98,6 +99,8 @@ def malformed(detail: str) -> HcpError:
 #: the registered type for "outside what you are authorized for" (3.4.4).
 RECORD_OFF = "this person has not let agents learn about them"
 USE_OFF = "this person has not let agents use what they have learned"
+NOT_GRANTED = ("this person has not granted this agent access for that yet — they are asked "
+               "in the session, not by the agent")
 #: Which switch an operation needs: "record" for a write, "use" for a read,
 #: "any" for one that serves no entry content (an agent listing its own grant).
 RECORD, USE, ANY = "record", "use", "any"
@@ -380,7 +383,7 @@ def scope(category: str, action: str) -> str:
 
 
 def default_scopes() -> list[str]:
-    """What a presumed grant covers: read and write on every held category.
+    """Read and write on every held category.
     Custom categories are never included — wildcards are not permitted (4.1.1)."""
     return [scope(c, a) for c in HELD_CATEGORIES for a in ACTIONS]
 
@@ -782,30 +785,192 @@ def _expire_if_due(grant: PersonGrant) -> PersonGrant:
     return grant
 
 
-@transaction.atomic
-def grant_for(person: Person, *, agent, workspace_slug: str, channel: str = "", host: str = "",
-              attributes: dict | None = None, presume: bool = True) -> PersonGrant | None:
-    """The active grant for this client, presuming one if the client has never
-    had one. None when the person revoked it (or it expired): never re-presumed."""
-    key = client_key(agent, channel, host, attributes)
-    latest = (PersonGrant.objects.select_for_update().select_related("person")
-              .filter(person=person, client_key=key, workspace_id=workspace_slug)
-              .order_by("-issued_at", "-pk").first())
-    if latest is not None:
-        latest = _expire_if_due(latest)
-        return latest if latest.status == PersonGrant.ACTIVE else None
-    if not presume:
+# --- first-party grants: per agent, and only by the person's act (4.1.4, 4.1.6) ---------
+#
+# Jonathan, 2026-10-09: "each agent session / entry should obtain the grant explicitly
+# or due to previous granting to this agent." So:
+#
+# * The HCP CLIENT is the agent. A grant is keyed on the agent alone — not on how the
+#   person reached it (channel) or where (host): "previous granting to this agent" is
+#   what is reused. (`client_key(agent, "", "")`.)
+# * The person's canopy-level settings (`Person.hcp_*_available/default`) are POLICY.
+#   They bound what a grant may carry and what a session offers; they issue nothing.
+# * A grant exists only because the person clicked one, in a session, after being shown
+#   the agent, the categories, the actions and the duration (4.1.6). Two durations, two
+#   separate acts with nothing preselected (4.1.4): "for this session" (temporary —
+#   expires at `SESSION_GRANT_CAP` or when the session is archived, whichever is first)
+#   and "always for <agent>" (persistent, until revoked).
+# * Access for an operation = the session's switch for that feature (policy + this
+#   session's choice, `effective`) AND a live grant to this agent carrying the scope.
+#   Until granted, the agent behaves as if the feature were off; the UI does the asking.
+# * Nothing is ever presumed. A widening (a feature the agent's grant does not carry)
+#   is a new act and a new grant that replaces the old one.
+
+SESSION_GRANT_CAP = dt.timedelta(hours=24)
+TEMPORARY_FOR_SESSION, PERSISTENT_FOR_AGENT = "session", "always"
+#: Where the person performed the act (`grant.issued` detail and `PersonGrant.modality`).
+SURFACES = {"chat": "canopy-chat", "widget": "canopy-widget"}
+_ACTION_OF = {"record": "write", "use": "read"}
+_FEATURE_OF = {"write": "record", "read": "use"}
+
+
+def feature_scopes(features) -> list[str]:
+    """The scopes a grant for these features carries: write (record) and/or read
+    (use) on every held category — custom categories never (4.1.1)."""
+    actions = {_ACTION_OF[f] for f in features}
+    return [scope(c, a) for c in HELD_CATEGORIES for a in ACTIONS if a in actions]
+
+
+def features_of(grant: PersonGrant | None) -> set[str]:
+    if grant is None:
+        return set()
+    return {_FEATURE_OF[a] for a in ACTIONS if categories_for(grant, a)}
+
+
+def _agent_key(agent, session=None) -> str:
+    return client_key(agent, "", "", {"session": str(session.pk)} if session is not None else None)
+
+
+def _live(person: Person, agent, *, key: str, grant_type: str, session=None) -> PersonGrant | None:
+    g = (PersonGrant.objects.select_related("person")
+         .filter(person=person, client_key=key, workspace_id=agent.workspace_id,
+                 grant_type=grant_type, status=PersonGrant.ACTIVE)
+         .order_by("-issued_at", "-pk").first())
+    if g is None:
         return None
+    if session is not None and g.status == PersonGrant.ACTIVE and \
+            getattr(session, "status", "") == "archived":
+        # The session ended: its temporary grant lapses with it (4.1.4), never revived.
+        PersonGrant.objects.filter(pk=g.pk, status=PersonGrant.ACTIVE).update(
+            status=PersonGrant.EXPIRED)
+        g.status = PersonGrant.EXPIRED
+        audit(person, "grant.expired", actor=SYSTEM, grant=g, workspace_slug=g.workspace_id,
+              detail=f"{g.client_name}: the session ended")
+        return None
+    g = _expire_if_due(g)
+    return g if g.status == PersonGrant.ACTIVE else None
+
+
+def agent_grants(person: Person, agent, session=None) -> list[PersonGrant]:
+    """This agent's live grants for this person: the session's temporary one first,
+    then the persistent one. Empty = never granted (or revoked, or lapsed)."""
+    out = []
+    if agent is None:
+        return out
+    if session is not None:
+        g = _live(person, agent, key=_agent_key(agent, session), grant_type=PersonGrant.TEMPORARY,
+                  session=session)
+        if g is not None:
+            out.append(g)
+    g = _live(person, agent, key=_agent_key(agent), grant_type=PersonGrant.PERSISTENT)
+    if g is not None:
+        out.append(g)
+    return out
+
+
+def grant_for(person: Person, *, agent, session=None, action: str | None = None) -> PersonGrant | None:
+    """The live grant this agent acts under for `action` ("read" / "write"; None =
+    any). Never creates one."""
+    for g in agent_grants(person, agent, session):
+        if action is None or categories_for(g, action):
+            return g
+    return None
+
+
+def granted(person: Person, agent, session=None) -> dict:
+    """{record, use}: does this agent hold a live grant for each, in this session."""
+    have = set()
+    for g in agent_grants(person, agent, session):
+        have |= features_of(g)
+    return {f: f in have for f in FEATURES}
+
+
+def _disclosure(agent, features, duration: str, expires_at) -> str:
+    cats = ", ".join(HELD_CATEGORIES)
+    acts = " and ".join(sorted(_ACTION_OF[f] for f in features))
+    how = ("for this session, until " + _iso(expires_at) if duration == TEMPORARY_FOR_SESSION
+           else f"always for {agent.name or agent.slug}, until you revoke it")
+    return f"shown: agent={agent.slug}; categories={cats}; actions={acts}; {how}"
+
+
+def _record_grant(person: Person, *, agent, features, gtype: str, actor: Actor, surface: str,
+                  session=None, why: str = "") -> PersonGrant:
+    """Write the grant the person's act produced: replace a live grant of the same
+    key with one carrying the union (a widening is its own act and its own
+    `grant.issued`); asking for what is already held changes nothing."""
+    if gtype == PersonGrant.TEMPORARY:
+        key, expires_at = _agent_key(agent, session), timezone.now() + SESSION_GRANT_CAP
+        current = _live(person, agent, key=key, grant_type=gtype, session=session)
+        duration = TEMPORARY_FOR_SESSION
+    else:
+        key, expires_at = _agent_key(agent), None
+        current = _live(person, agent, key=key, grant_type=gtype)
+        duration = PERSISTENT_FOR_AGENT
+    have = features_of(current)
+    if current is not None and set(features) <= have:
+        return current
+    want = sorted(have | set(features))
+    if current is not None:
+        PersonGrant.objects.filter(pk=current.pk).update(status=PersonGrant.REVOKED,
+                                                         revoked_at=timezone.now())
+        audit(person, "grant.revoked", actor=actor, grant=current,
+              workspace_slug=current.workspace_id,
+              detail=f"{current.client_name}: replaced by a wider grant the person gave")
     grant = PersonGrant.objects.create(
-        person=person, workspace_id=workspace_slug, agent=agent, channel=channel, host=host,
-        attributes=attributes or {}, client_key=key, client_name=client_name(agent, channel, host),
-        scopes=default_scopes(), grant_type=PersonGrant.PERSISTENT,
-        modality=PersonGrant.MODALITY_CONTROL_PLANE)
-    audit(person, "grant.issued", actor=SYSTEM, grant=grant, workspace_slug=workspace_slug,
-          detail=(f"client={grant.client_name}; key={key}; type=persistent; "
-                  f"modality={grant.modality} (presumed by the canopy control plane); "
-                  f"scopes={' '.join(grant.scopes)}; restrictions={grant.restrictions or []}"))
+        person=person, workspace_id=agent.workspace_id, agent=agent,
+        attributes={"session": str(session.pk)} if gtype == PersonGrant.TEMPORARY else {},
+        client_key=key, client_name=client_name(agent, "", ""),
+        scopes=feature_scopes(want), grant_type=gtype, modality=SURFACES[surface],
+        expires_at=expires_at)
+    audit(person, "grant.issued", actor=actor, grant=grant, workspace_slug=agent.workspace_id,
+          detail=(f"client={grant.client_name}; key={key}; type={gtype}; "
+                  f"modality={grant.modality} (the person's act){why}; "
+                  f"expires={_iso(expires_at) or 'never'}; scopes={' '.join(grant.scopes)}; "
+                  f"restrictions=[]; {_disclosure(agent, want, duration, expires_at)}"))
     return grant
+
+
+@transaction.atomic
+def issue_agent_grant(person: Person, *, agent, features, duration: str, actor: Actor,
+                      session=None, surface: str = "chat") -> PersonGrant:
+    """The person's act, in one of their sessions, for that session's agent.
+
+    4.1.4: temporary is the default outcome, and persistence is a SEPARATE act that
+    never also authorizes. So `duration=session` is the authorizing act (a temporary
+    grant for this session, at most `SESSION_GRANT_CAP`); `duration=always` only
+    ELECTS persistence for what this session's temporary grant already carries —
+    asked for without one, it is refused. Bounded by policy: a feature not
+    available is refused."""
+    features = [f for f in FEATURES if f in set(features or [])]
+    if not features:
+        raise malformed("name record and/or use")
+    if duration not in (TEMPORARY_FOR_SESSION, PERSISTENT_FOR_AGENT):
+        raise malformed("duration is session or always")
+    if surface not in SURFACES:
+        raise malformed("surface is chat or widget")
+    if session is None:
+        raise malformed("a grant is given in a session")
+    for f in features:
+        if not getattr(person, f"hcp_{f}_available"):
+            raise denied(f"{f} is not available for you; make it available first")
+    if duration == TEMPORARY_FOR_SESSION:
+        grant = _record_grant(person, agent=agent, features=features, gtype=PersonGrant.TEMPORARY,
+                              actor=actor, surface=surface, session=session)
+        # Allowing it in a session is also turning the feature on there, when the
+        # person's default has it off ("only when the person turns it on in that session").
+        state = memory_state(person, session)
+        turn_on = {f: ON for f in features if not state[f]["effective"]}
+        if turn_on:
+            set_session_memory(person, session, actor=actor, **turn_on)
+        return grant
+    temp = _live(person, agent, key=_agent_key(agent, session), grant_type=PersonGrant.TEMPORARY,
+                 session=session)
+    if not set(features) <= features_of(temp):
+        raise malformed("allow it for this session first; keeping it always is a separate choice")
+    return _record_grant(person, agent=agent, features=features, gtype=PersonGrant.PERSISTENT,
+                         actor=actor, surface=surface,
+                         why=f", electing persistence after allowing it for this session "
+                             f"(grant {entry_urn(temp.grant_id)})")
 
 
 def categories_for(grant: PersonGrant, action: str) -> list[str]:
@@ -986,9 +1151,6 @@ def read_one(fact: PersonFact, *, actor: Actor, grant: PersonGrant | None, purpo
 #: hcp-conformance.md. Not Interop while any Interop MUST is a known gap.
 CONFORMANCE_LEVEL = "HCP-v1-Core"
 KNOWN_GAPS = [
-    "4.1.4/4.1.6: canopy's own agents (first-party, non-OAuth channel) get a persistent "
-    "grant presumed by the canopy control plane, not created by a separate affirmative act "
-    "of the person (owner policy 2026-10-08); OAuth clients of the HCP service do not",
     "2.1.1: Tier 1 entries are not validated against the published JSON Schema, which "
     "Appendix A says will be published at https://hcp.me/schemas/v1 and is not yet",
 ]
@@ -1033,9 +1195,11 @@ def discovery(base_url: str) -> dict:
             },
             "conformance": {"target": "HCP-v1-Interop", "known_gaps": KNOWN_GAPS},
             "grants": "OAuth clients: authorization code + PKCE S256, temporary by default, "
-                      "persistence a separate act. canopy's own agents: presumed by the canopy "
-                      "control plane per client (agent, channel, host); revocable by the person; "
-                      "never re-presumed after revocation",
+                      "persistence a separate act. canopy's own agents: per agent, only by the "
+                      "person's act in a session (non-OAuth channel, 4.1.6) — 'for this session' "
+                      "(temporary, ends with the session, at most 24 h) or 'always for this "
+                      "agent' (persistent), nothing preselected; bounded by the person's "
+                      "settings; revocable; never presumed",
             "tier2": "not supported",
             "custom_categories": f"{PersonFact.CUSTOM_PREFIX}<name>",
         },

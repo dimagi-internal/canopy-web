@@ -5,8 +5,9 @@ rules on top of it:
 
 * an agent reaches ONLY the person who started the turn it names (caller-only),
   and only under that client's grant;
-* a grant is per client = (agent, channel, host), presumed by the control
-  plane once, and never re-presumed after the person revokes it.
+* a grant is per agent and only ever the person's act — pinned in
+  tests/test_hcp_agent_grants.py (here every agent is pre-granted by the
+  `agents_granted` fixture, through that same act).
 """
 from __future__ import annotations
 
@@ -29,9 +30,11 @@ pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture(autouse=True)
-def _agent_memory_on(agent_memory_on):
-    # These tests pin what canopy does for a person with agent memory ON; the
-    # off state (the default) is pinned in tests/test_agent_memory_switch.py.
+def _agent_memory_on(agents_granted):
+    # These tests pin what canopy does for a person with agent memory ON who has
+    # granted the agent they talk to; the off state is pinned in
+    # tests/test_agent_memory_switch.py, and how grants come to exist in
+    # tests/test_hcp_agent_grants.py.
     yield
 
 BASE = "/api/hcp"
@@ -219,39 +222,6 @@ def test_the_person_resolves_a_conflict_by_accepting_or_rejecting(w):
 
 
 # --- grants (4.1) ------------------------------------------------------------
-
-
-def test_the_envelope_presumes_one_grant_per_client_and_audits_it(w):
-    p = w["person"]
-    caller_context.build(_turn(w["ace"], w["lili"], "a"))
-    caller_context.build(_turn(w["ace"], w["lili"], "b"))                   # same client
-    caller_context.build(_turn(w["ace"], w["lili"], "c", via="slack"))      # another channel
-    grants = PersonGrant.objects.filter(person=p).order_by("pk")
-    assert [(g.agent.slug, g.channel, g.grant_type, g.modality) for g in grants] == [
-        ("ace", "chat", "persistent", "canopy-control-plane"),
-        ("ace", "slack", "persistent", "canopy-control-plane")]
-    issued = _events(p, "grant.issued")
-    assert len(issued) == 2 and "presumed by the canopy control plane" in issued[0].detail
-    assert "scopes=hcp:general_preferences:read" in issued[0].detail
-
-
-def test_a_revoked_client_is_never_re_presumed_and_other_clients_are_unaffected(w):
-    p = w["person"]
-    _add(p, w["ws"], "KC metrics lead.")
-    caller_context.build(_turn(w["ace"], w["lili"], "a"))
-    slack = _turn(w["ace"], w["lili"], "s", via="slack")
-    caller_context.build(slack)
-    chat = PersonGrant.objects.get(person=p, channel="chat")
-    r = _as(w["lili"]).delete(f"{BASE}/v1/grants/urn:uuid:{chat.grant_id}")
-    assert r.status_code == 200 and r.json()["grant"]["status"] == "revoked"
-    assert _events(p, "grant.revoked")
-    env = caller_context.build(_turn(w["ace"], w["lili"], "b"))
-    assert env["person"]["facts"] == [] and env["person"]["grant"] is None
-    assert PersonGrant.objects.filter(person=p, channel="chat").count() == 1   # not re-presumed
-    later = _turn(w["ace"], w["lili"], "b2")
-    assert _search(_as(w["ace"].user), later).status_code == 403
-    # Slack is a different client: still served.
-    assert _search(_as(w["ace"].user), slack).json()["entries"]
 
 
 def test_an_agent_lists_only_its_own_grant_and_cannot_revoke(w):

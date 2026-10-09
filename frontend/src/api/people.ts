@@ -50,6 +50,27 @@ export async function setSessionMemory(
   return data as SessionMemory
 }
 
+export type GrantDuration = 'session' | 'always'
+
+/** Your act (HCP 4.1.6) in one of your sessions, for its agent: `session` allows
+ *  it for this session (temporary — the default outcome); `always` then keeps it
+ *  for that agent until you revoke it, and is refused unless this session already
+ *  allows it (4.1.4: one act never both allows and keeps). Show the agent, the
+ *  categories, the actions and the duration first. */
+export async function grantSessionAgent(
+  sessionId: string,
+  features: MemoryFeature[],
+  duration: GrantDuration,
+  surface: 'chat' | 'widget' = 'chat',
+): Promise<SessionMemory> {
+  const { data, error } = await apiV2.POST('/api/people/me/sessions/{session_id}/agent-grants/', {
+    params: { path: { session_id: sessionId } },
+    body: { features, duration, surface },
+  })
+  if (error) throw new Error('Failed to grant this agent')
+  return data as SessionMemory
+}
+
 export async function retractFact(personId: number, factId: number): Promise<void> {
   const { error } = await apiV2.POST('/api/people/{person_id}/facts/{fact_id}/retract/', {
     params: { path: { person_id: personId, fact_id: factId } },

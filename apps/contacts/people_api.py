@@ -30,6 +30,7 @@ from . import hcp, people
 from . import services as contact_services
 from .models import Person, PersonAccess, PersonFact
 from .people_schemas import (
+    AgentGrantIn,
     AgentMemoryIn,
     AgentMemoryOut,
     SessionMemoryIn,
@@ -166,8 +167,20 @@ def _my_session(request: HttpRequest, session_id: str):
     return session
 
 
-def _session_memory(person: Person, session) -> dict:
-    return {"session_id": str(session.pk), **hcp.memory_state(person, session)}
+def session_memory_payload(person: Person, session) -> dict:
+    state = hcp.memory_state(person, session)
+    agent = getattr(session, "agent", None)
+    grants = hcp.agent_grants(person, agent, session) if agent is not None else []
+    for f in hcp.FEATURES:
+        g = next((g for g in grants if f in hcp.features_of(g)), None)
+        state[f]["granted"] = g is not None
+        state[f]["grant"] = ({"grant_id": hcp.entry_urn(g.grant_id), "type": g.grant_type,
+                              "expires_at": _iso(g.expires_at)} if g is not None else None)
+    return {"session_id": str(session.pk), **state,
+            "agent": ({"slug": agent.slug, "name": agent.name or agent.slug}
+                      if agent is not None else None),
+            "categories": list(hcp.HELD_CATEGORIES),
+            "session_grant_hours": int(hcp.SESSION_GRANT_CAP.total_seconds() // 3600)}
 
 
 @router.get("/me/sessions/{session_id}/agent-memory/", response=SessionMemoryOut,
@@ -176,7 +189,7 @@ def get_my_session_memory(request: HttpRequest, session_id: str) -> dict:
     """What applies in this session of yours: per feature, whether it is
     available, its default, this session's choice, and the effective value."""
     person = _the_person_themself(request)
-    return _session_memory(person, _my_session(request, session_id))
+    return session_memory_payload(person, _my_session(request, session_id))
 
 
 @router.put("/me/sessions/{session_id}/agent-memory/", response=SessionMemoryOut,
@@ -195,7 +208,33 @@ def set_my_session_memory(request: HttpRequest, session_id: str,
         raise ProblemError(exc.status, "Not changed",
                            type_=TYPE_VALIDATION if exc.status == 422 else TYPE_FORBIDDEN,
                            detail=exc.detail) from None
-    return _session_memory(person, session)
+    return session_memory_payload(person, session)
+
+
+@router.post("/me/sessions/{session_id}/agent-grants/", response=SessionMemoryOut,
+             summary="Grant this session's agent access to what it learns about you")
+def grant_my_session_agent(request: HttpRequest, session_id: str, payload: AgentGrantIn) -> dict:
+    """Your act (HCP 4.1.6): give the agent of this session of yours `record`
+    (it may save what it learns about you) and/or `use` (it may be told what has
+    been learned), for this session only (`duration=session`, lapses when the
+    session ends or after `session_grant_hours`) or always for that agent
+    (`duration=always`, until you revoke it on /people/me). Only features you
+    made available can be granted. Granting one that is off by default also turns
+    it on for this session. Only you can do this."""
+    person = _the_person_themself(request)
+    session = _my_session(request, session_id)
+    agent = getattr(session, "agent", None)
+    if agent is None:
+        raise _bad("this session has no agent to grant")
+    try:
+        hcp.issue_agent_grant(person, agent=agent, features=payload.features,
+                              duration=payload.duration, actor=hcp.user_actor(request.user),
+                              session=session, surface=payload.surface)
+    except hcp.HcpError as exc:
+        raise ProblemError(exc.status, "Not granted",
+                           type_=TYPE_VALIDATION if exc.status == 422 else TYPE_FORBIDDEN,
+                           detail=exc.detail) from None
+    return session_memory_payload(person, session)
 
 
 @router.get("/coverage/", response=PeopleCoverageOut,

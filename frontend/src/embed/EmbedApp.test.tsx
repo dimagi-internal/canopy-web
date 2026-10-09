@@ -624,7 +624,7 @@ describe('the agent and your earlier conversations', () => {
 describe('agent memory in the conversation header', () => {
   const MEMORY = {
     session_id: 'sess-1',
-    record: { available: true, default: true, override: null, effective: true },
+    record: { available: true, default: true, override: null, effective: true, granted: true },
     use: { available: true, default: false, override: null, effective: false },
   }
 

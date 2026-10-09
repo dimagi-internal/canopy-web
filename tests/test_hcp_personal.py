@@ -107,7 +107,7 @@ def test_naming_a_workspace_they_are_not_in_is_refused(loner):
     assert r.status_code == 403
 
 
-def test_no_workspace_agent_is_told_a_personal_entry(agent_memory_on):
+def test_no_workspace_agent_is_told_a_personal_entry(agents_granted):
     owner = User.objects.create_user("jj", "jj@dimagi.com", "pw")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)

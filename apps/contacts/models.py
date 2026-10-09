@@ -691,18 +691,18 @@ class PersonGrant(models.Model):
     """HCP 4.1.5 — one client's category-scoped, revocable access to a person's
     entries.
 
-    **The client is a composite, not just an agent.** Who reads is the agent,
-    but the same agent reached over Slack, over email, or embedded in a host
-    site through the SDK is a different client to the person, and they may
-    want to allow one and not another. So a grant is keyed on (person, agent,
-    channel, host) — `client_key` — with `attributes` open for the next
-    dimension, never on the agent alone.
+    **A first-party client is the agent** (Jonathan, 2026-10-09: "each agent
+    session / entry should obtain the grant explicitly or due to previous
+    granting to this agent"). Its `client_key` names the agent only; a
+    "for this session" grant adds the session to `attributes`. The channel/host
+    columns stay for older rows. An OAuth app's grant is keyed on `hcp_client`.
 
-    **Presumed, for now.** canopy is the control plane that decides which agent
-    serves which caller, so the first time a client reaches a person canopy
-    issues the grant itself (`modality=canopy-control-plane`, owner policy
-    2026-10-08) and audits it. A REVOKED grant is never re-presumed: revocation
-    is the person's act and only the person's act reverses it.
+    **Only ever the person's act** (4.1.6): given in a session's UI after the
+    agent, categories, actions and duration are shown (`hcp.issue_agent_grant`,
+    `modality=canopy-chat|canopy-widget`), or through the HCP service's consent
+    screen. Nothing is presumed; the control plane's presumed grants
+    (`canopy-control-plane`) were retired by migration 0022. A revoked grant is
+    never revived: only a new act gives a new one.
     """
 
     TEMPORARY, PERSISTENT = "temporary", "persistent"

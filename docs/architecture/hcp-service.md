@@ -2,7 +2,9 @@
 
 canopy holds each person's **Human Context Protocol** instance (HCP v1, draft 4:
 `apps/contacts/hcp.py`, `hcp_api.py`). Until 2026-10-09 only canopy's own agents
-could reach it, so it declared `authorization_profile: first-party`. The **HCP
+could reach it, so it declared `authorization_profile: first-party`. Those agents
+are now granted per agent, by the person, in a session — see "canopy's own
+agents" below. The **HCP
 service** lets an application canopy does not operate ask a person, through
 OAuth 2.0, for access to parts of their instance. That makes the profile `oauth2`
 and the service eligible for HCP v1 Interop (spec 5.2.1).
@@ -171,6 +173,78 @@ their context is exactly the escalation to rule out.
 **Account without a workspace.** Any account that can sign in can already reach
 `/people/me`. It now can also add, correct and export entries there without being
 in any workspace. First run points a workspace-less person to it.
+
+## canopy's own agents: grants per agent, only by the person's act
+
+Jonathan, 2026-10-09: *"each agent session / entry should obtain the grant
+explicitly or due to previous granting to this agent."* This closed the last
+authorization gap in `hcp-conformance.md` (presumed first-party grants).
+
+| Piece | Where |
+|---|---|
+| The act (domain) | `hcp.issue_agent_grant`, `hcp._record_grant` |
+| The act (route) | `POST /api/people/me/sessions/{id}/agent-grants/` — person only, off MCP |
+| What the UI asks from | `GET /api/people/me/sessions/{id}/agent-memory/` (+ the widget's read-only `/api/embed/…`): per feature `granted`/`grant`, plus `agent`, `categories`, `session_grant_hours` |
+| The prompt | `SessionMemoryToggles.tsx` (chat page and canopy's own widget) |
+| What the agent is told | envelope `person.hcp`: `record`/`use` = switch AND grant; `granted`; `awaiting_grant` |
+| Retiring presumed grants | migration `contacts/0022_retire_presumed_grants` |
+
+**The client is the agent.** A first-party grant's `client_key` names the agent
+only, not how the person reached it (channel) or from where (host). "Previous
+granting to this agent" is what is reused; asking again per channel would be
+noise for the same agent. A "for this session" grant adds the session to
+`attributes`, so it never reaches another session of the same agent.
+
+**Settings are policy, never a grant.** `Person.hcp_*_available/default` bound
+what a grant may carry (`available`) and what a session offers (`default`). They
+issue nothing. Access for an operation = the session's switch (policy plus the
+session's choice) AND a live grant to this agent carrying the scope.
+
+**Two acts, never one (4.1.4).** The prompt shows the agent, the categories, the
+actions (read / write), and "for this session only, until <time> or when it
+ends". **Allow for this session** is the authorizing act and is temporary, the
+default outcome. Only after it does a separate question ask **Keep allowing
+<agent>?**, saying first that it carries over to every session and lasts until
+revoked. Nothing is preselected, and "Just this session" / "Not now" grant
+nothing more. The server enforces the order: `duration=always` is refused unless
+this session's temporary grant already carries those features.
+
+**Default on = offered at session start; default off = offered when turned on.**
+A feature on by default but not granted to this agent shows the prompt as soon
+as the session opens. A default-off feature is offered only after the person
+turns it on in that session. Allowing a default-off feature also turns it on for
+that session.
+
+**A session grant ends with the session or after 24 hours.** The absolute expiry
+(4.1.4's 24-hour ceiling) is fixed when it is issued. An archived session's grant
+is marked `expired` the next time it is presented, with `grant.expired` on the
+person's log. Unarchiving does not revive it.
+
+**Widening is a new act and a new grant.** Allowing a feature the agent's grant
+lacks replaces that grant with one carrying the union: the old one is
+`grant.revoked` ("replaced by a wider grant the person gave") and the new one is
+its own `grant.issued`. Asking for what is already held changes nothing.
+
+**Until granted, the agent is served as if the feature were off.** The envelope
+says which features await a grant, so the hook tells the agent the person is
+being asked in the UI. The agent never asks the person to grant or flip anything.
+
+**The widget.** canopy's own widget, signed in as the person, gets the real
+prompt (`surface=widget`, `modality=canopy-widget`). A site's widget acting for
+its visitor is not the person (#1383): it shows "Not granted to <agent> yet —
+grant it in canopy" with a link, and its token cannot reach the grant route, so
+a host can never grant on a visitor's behalf.
+
+**Contacts can't grant.** A person who reaches an agent only as an email contact
+has no session UI and no account, so they have no way to act, and no agent is
+granted for them. That is the conformant result. It changes nothing in practice
+today: everyone but Jonathan has nothing available.
+
+**Retiring the presumed grants.** No presumed grant was the person's act, so
+migration `0022` revokes every active `canopy-control-plane` grant and logs a
+`grant.revoked` on each person's log saying why. Policy is untouched. Jonathan
+(record available and on by default, use not available) is offered "record" by
+the next agent he talks to in a session.
 
 ## Internal only — the one gate
 

@@ -20,7 +20,7 @@
  * Anything else (not this visitor's session, a contact, a broken token) hides
  * the toggles — the panel says nothing rather than something wrong.
  */
-import type { MemoryFeature, SessionMemory } from '@/api/people'
+import type { GrantDuration, MemoryFeature, SessionMemory } from '@/api/people'
 import type { SessionMemorySource } from '@/components/chat/SessionMemoryToggles'
 
 /** The subset of the frame's REST client this needs, so it is testable alone. */
@@ -56,6 +56,14 @@ export function embedMemorySource(
     },
     save(change: Partial<Record<MemoryFeature, 'on' | 'off' | 'inherit'>>) {
       return rest.json<SessionMemory>(personPath, { method: 'PUT', body: JSON.stringify(change) })
+    },
+    // Only reachable signed in as the person (canopy's own widget); a site's token
+    // is refused here exactly as for the toggles, so a host can never grant.
+    grant(features: MemoryFeature[], duration: GrantDuration) {
+      return rest.json<SessionMemory>(`/api/people/me/sessions/${id}/agent-grants/`, {
+        method: 'POST',
+        body: JSON.stringify({ features, duration, surface: 'widget' }),
+      })
     },
   }
 }

@@ -23,6 +23,13 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def _granted(grants_on_turn):
+    # What the switches do for an agent the person has granted; how grants come to
+    # exist is pinned in tests/test_hcp_agent_grants.py.
+    yield
+
+
 @pytest.fixture()
 def w():
     owner = User.objects.create_user("jj", "jj@dimagi.com", "pw")
@@ -62,7 +69,8 @@ def test_the_widget_shows_the_effective_state_of_your_own_session(w):
     r = Client().get(f"/api/embed/sessions/{s.pk}/agent-memory", **_bearer(w["app"], w["lili"]))
     assert r.status_code == 200, r.content
     body = r.json()
-    assert body["record"] == {"available": True, "default": True, "override": None, "effective": True}
+    assert {k: body["record"][k] for k in ("available", "default", "override", "effective")} == {
+        "available": True, "default": True, "override": None, "effective": True}
     assert body["use"]["available"] is True and body["use"]["effective"] is False
     assert body["manage_path"] == f"/w/connect/chat/{s.pk}"
 

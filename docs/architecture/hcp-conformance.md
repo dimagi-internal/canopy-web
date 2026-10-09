@@ -14,18 +14,25 @@ the reason), **n/a**, or **SHOULD-gap**. Evidence is a code path, or a test in
 **Interop needs Core plus `authorization_profile: oauth2` (5.1, 5.2.1).**
 - **The OAuth half is met.** The HCP service is an RFC 6749 authorization-code
   server with PKCE S256.
-- **Two Core MUSTs are open, so neither level is fully met.** One is presumed
-  first-party grants, the other is Tier 1 JSON Schema validation (below).
+- **One Core MUST is open, so neither level is fully met:** Tier 1 JSON Schema
+  validation (below). The presumed first-party grants gap was closed on
+  2026-10-09 (see "Closed").
 - **What discovery declares:** `conformance_level: HCP-v1-Core` with the gaps
   listed in `canopy.conformance.known_gaps`, and does not claim Interop. Per 5.2.1
   the discovery document is authoritative, so it must not overclaim.
-- **When to claim Interop:** close both gaps, then change `hcp.CONFORMANCE_LEVEL`
-  to `HCP-v1-Interop`.
+- **When to claim Interop:** once the schema is published and entries validate
+  against it, change `hcp.CONFORMANCE_LEVEL` to `HCP-v1-Interop`. Until then
+  discovery stays at Core, because 2.1.1 is a Core MUST.
 
 | Open MUST | Why it is open | What closes it |
 |---|---|---|
-| **4.1.4 / 4.1.6 for canopy's own agents.** A first-party agent's grant is *presumed* persistent by the canopy control plane the first time it serves a person, not created by a separate affirmative act. | Owner policy (Jonathan, 2026-10-08): canopy decides which agent serves whom. The person's agent-memory switches (#1380/#1381) are affirmative, but they are not a per-client grant act with categories, actions, type and expiry shown. | A first-run per-agent consent (the non-OAuth channel of 4.1.6) in chat or on `/people/me`, or routing canopy's agents through the same consent the HCP service uses. OAuth clients already conform. |
 | **2.1.1 Tier 1 JSON Schema validation.** | Appendix A says the schema *will be* published at `https://hcp.me/schemas/v1`. It is not, so there is nothing authoritative to validate against. | Validate on write and emit once the schema is published. |
+
+### Closed
+
+| MUST | Closed by | Evidence |
+|---|---|---|
+| **4.1.4 / 4.1.6 for canopy's own agents** (was: grants presumed persistent by the control plane). | Grants are per agent and only the person's act (Jonathan, 2026-10-09). In a session's UI the person is shown the agent, categories, actions and expiry, then **allows it for this session** (temporary, the default outcome, ≤ 24 h and ending with the session). **Keeping it** is a second, separate act asked afterwards, with what persistent means stated first and nothing preselected; the server refuses `always` unless that session already allows it. Each act is a `grant.issued` recording type, modality (`canopy-chat` / `canopy-widget`) and what was shown. The person's settings are policy that bounds a grant, never a grant. Presumed grants were revoked by migration `contacts/0022`, each with a `grant.revoked` on the person's log. | `hcp.issue_agent_grant`, `hcp._record_grant`; `tests/test_hcp_agent_grants.py`: `test_nothing_is_granted_without_the_persons_act`, `test_one_act_never_both_allows_and_keeps_it`, `test_a_session_grant_is_temporary_shown_logged_and_works`, `test_a_session_grant_lapses_with_the_session_and_after_the_cap`, `test_an_always_grant_is_reused_in_later_sessions_without_asking`, `test_granting_one_agent_grants_no_other`, `test_widening_is_its_own_act_and_replaces_the_grant`, `test_the_migration_retires_every_presumed_grant`; frontend `SessionMemoryToggles.test.tsx` |
 
 ## Data model
 
@@ -65,16 +72,16 @@ the reason), **n/a**, or **SHOULD-gap**. Evidence is a code path, or a test in
 | Criterion | Status | Evidence |
 |---|---|---|
 | Category-scoped, revocable grants exposed per 4.1.5 | pass | `PersonGrant`, `hcp.grant_dict` |
-| Authorization distinct from authentication (4.1.6), no silent scope expansion | pass for OAuth clients; **gap** for presumed first-party grants | consent acts 1 + 2; a client asking beyond its grant needs a new grant |
+| Authorization distinct from authentication (4.1.6), no silent scope expansion | pass | OAuth: consent acts 1 + 2. canopy's agents: the session's allow act, after the disclosure; a feature the agent's grant lacks needs a new act (`test_widening_is_its_own_act…`) |
 | Grants SHOULD use OAuth 2.0; else declared per 5.2.1 | pass | `authorization_profile: oauth2` |
 | Grant objects; the person can enumerate and revoke | pass | `GET` / `DELETE /v1/grants`; `/people/me` |
 | A grant never disclosed to another client | pass | `GET /v1/grants` with a client token returns its own; `test_a_token_opens_hcp_v1_only…` |
 | `grantor` when the authorizer is not the subject | pass | always the subject at v1; `grantor` null |
 | Narrowed grants: restriction carried, presented, enforced (4.1.5.1) | pass | OAuth grants carry `narrowedTo.sources`; `/people/me` shows the reach; `within_grant` enforces it. `test_workspace_entries_are_reached_only_when_ticked` |
 | REST: `GET /v1/grants` scoped to the client's own | pass | as above |
-| Temporary vs persistent; temporary the default | pass for OAuth; **gap** for presumed first-party (persistent) | `issue_grant`; first-party see Verdict |
+| Temporary vs persistent; temporary the default | pass | OAuth: `issue_grant`. canopy's agents: "allow for this session" is the only authorizing act, and it is temporary (`test_one_act_never_both_allows_and_keeps_it`) |
 | Temporary grants carry `expiresAt`, shown at authorization time | pass | DB check constraint; consent shows the duration and act 2 the time |
-| Persistence needs a distinct affirmative act | pass for OAuth | act 2; `test_the_keep_question_preselects_nothing`, `test_keeping_access_is_its_own_act…` |
+| Persistence needs a distinct affirmative act | pass | OAuth: act 2; `test_the_keep_question_preselects_nothing`, `test_keeping_access_is_its_own_act…`. canopy's agents: the "Keep allowing" question after allowing; the server refuses `always` without the session's grant |
 | Revocation available and propagates per 4.2 | pass | `hcp_oauth.revoke`: every token at once; audited in the same transaction |
 | Revocation notifications signed and retried; revocation independent of delivery | pass | `HcpRevocationDelivery`, `attempt`, heartbeat; `test_revoking_kills_every_token…`, `test_a_failing_webhook…` |
 | Token lifetimes per 4.1.3 | pass | access 1 h; refresh 30 d persistent, grant expiry temporary; codes 10 min |

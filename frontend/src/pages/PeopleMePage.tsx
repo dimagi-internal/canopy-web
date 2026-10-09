@@ -15,19 +15,20 @@ import {
 import type { HcpAuditEvent, HcpGrant, PersonFactDetail, PersonMe } from '../api/people'
 
 /** The person's two agent-memory features, each with a canopy-level "available"
- *  and "on by default in new sessions"; a session can override the default but
- *  never turn on what is not available. One plain line for each state. */
+ *  and "on by default in new sessions". These are POLICY: they grant no agent
+ *  anything. An agent is granted only when you allow it in a session (and,
+ *  separately, choose to keep allowing it), within what is available here. */
 const MEMORY_SWITCHES = [
   {
     key: 'record' as const,
     label: 'Agents may learn about me',
-    on: 'Available: agents you talk to may record what they learn about your work.',
+    on: 'Available: an agent you allow may record what it learns about your work.',
     off: 'Not available: no agent records anything new about you, in any session.',
   },
   {
     key: 'use' as const,
     label: "Agents may use what they've learned",
-    on: 'Available: agents you talk to may be told what is relevant about you.',
+    on: 'Available: an agent you allow may be told what is relevant about you.',
     off: 'Not available: no agent is told anything about you, in any session. Nothing below is deleted.',
   },
 ]
@@ -231,8 +232,8 @@ export function PeopleMePage() {
                   {available ? sw.on : sw.off}
                   {available
                     ? byDefault
-                      ? ' On in new sessions; you can turn it off in any one.'
-                      : ' Off in new sessions; you can turn it on in any one.'
+                      ? ' On in new sessions: each agent asks you once, in the session, before it starts.'
+                      : ' Off in new sessions; turn it on in a session and that agent asks you there.'
                     : ''}
                 </p>
               </div>
@@ -373,13 +374,13 @@ export function PeopleMePage() {
       <section>
         <h2 className="text-sm font-semibold text-foreground">Who can read it</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          Each agent is allowed separately for each way you reach it — ACE over Slack and ACE over
-          email are two entries. canopy allows an agent the first time it serves you. An app outside
-          canopy is here only if you allowed it on its consent screen, and reaches only what it says
-          below. Revoking stops it immediately and for good, unless you allow it again.
+          An agent is here only if you allowed it in a session — for that session, or kept for that
+          agent. Allowing one agent allows no other. An app outside canopy is here only if you
+          allowed it on its consent screen, and reaches only what it says below. Revoking stops it
+          immediately and for good, unless you allow it again.
         </p>
         {grants.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">No agent has served you yet.</p>
+          <p className="mt-2 text-sm text-muted-foreground">You have not allowed any agent or app.</p>
         ) : (
           <ul className="mt-2 divide-y divide-border rounded-lg border border-border text-sm">
             {grants.map((g) => (
@@ -393,9 +394,11 @@ export function PeopleMePage() {
                   </div>
                   <div className="mt-0.5 text-xs text-muted-foreground">
                     {g.status}
-                    {g.canopy.client
-                      ? ` · ${g.grantType === 'persistent' ? 'kept until you revoke it' : 'temporary'}`
-                      : ''}
+                    {g.grantType === 'persistent'
+                      ? ' · kept until you revoke it'
+                      : g.canopy.client
+                        ? ' · temporary'
+                        : ` · this session only${g.expiresAt ? `, until ${new Date(g.expiresAt).toLocaleString()}` : ''}`}
                     {g.canopy.workspace ? ` · ${g.canopy.workspace}` : ''}
                     {reachOf(g) ? ` · reaches ${reachOf(g)}` : ''}
                     {` · since ${new Date(g.issuedAt).toLocaleDateString()}`}

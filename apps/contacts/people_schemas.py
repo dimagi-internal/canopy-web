@@ -80,20 +80,49 @@ class AgentMemoryOut(StrictModel):
     use: MemoryFeatureOut = Field(description="Agents may use what they've learned (read).")
 
 
+class SessionGrantOut(StrictModel):
+    """A grant you gave this session's agent (HCP 4.1.5)."""
+
+    grant_id: str
+    type: str = Field(description="temporary (this session) | persistent (always, until revoked).")
+    expires_at: str | None = None
+
+
 class SessionFeatureOut(StrictModel):
     available: bool
     default: bool
     override: bool | None = Field(description="This session's choice; null = use the default.")
     effective: bool = Field(description="What applies in this session: available AND "
                                         "(override, else default).")
+    granted: bool = Field(default=False, description="This session's agent holds a live grant for it.")
+    grant: SessionGrantOut | None = None
+
+
+class SessionAgentOut(StrictModel):
+    slug: str
+    name: str
 
 
 class SessionMemoryOut(StrictModel):
-    """Your agent memory as it applies in one session."""
+    """Your agent memory as it applies in one session, and what you have granted
+    the session's agent. A feature that is on here but not granted is what the
+    session asks you about."""
 
     session_id: str
     record: SessionFeatureOut
     use: SessionFeatureOut
+    agent: SessionAgentOut | None = Field(default=None, description="The agent a grant here goes to.")
+    categories: list[str] = Field(default_factory=list,
+                                  description="The categories a grant covers (shown before you grant).")
+    session_grant_hours: int = Field(default=24, description="A 'for this session' grant lasts at "
+                                                             "most this long, or until the session ends.")
+
+
+class AgentGrantIn(StrictModel):
+    features: list[str] = Field(description="record and/or use.")
+    duration: str = Field(description="session (temporary, this session only) | always (this "
+                                      "agent, until you revoke it).")
+    surface: str = Field(default="chat", description="chat | widget — where you gave it.")
 
 
 class PersonMeOut(PersonRefOut):
