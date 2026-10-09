@@ -36,6 +36,7 @@ import {
   closeResultMessage,
 } from '@/components/chat/closeAction'
 import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
+import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import { getAgent } from '@/api/agents'
@@ -781,6 +782,7 @@ export function ChatPage() {
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {closeNote && <span className="text-[12px] text-muted-foreground">{closeNote}</span>}
           {resetNote && <span className="text-[12px] text-muted-foreground">{resetNote}</span>}
+          {id && <SessionMemoryToggles sessionId={id} />}
           {id && (
             <ChatSessionMenu
               sessionId={id}

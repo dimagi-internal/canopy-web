@@ -64,14 +64,35 @@ class PersonAccessOut(StrictModel):
     turn_id: str | None = None
 
 
-class AgentMemoryOut(StrictModel):
-    """Your two agent-memory switches; any combination is valid, and turning one
-    off deletes nothing."""
+class MemoryFeatureOut(StrictModel):
+    available: bool = Field(description="May this be on at all. Off = no session can turn it on.")
+    default: bool = Field(description="On in a session that says nothing (only when available).")
+    changed_at: str | None = None
 
-    record: bool = Field(description="Agents may learn about me (write).")
-    use: bool = Field(description="Agents may use what they've learned (read).")
-    record_changed_at: str | None = None
-    use_changed_at: str | None = None
+
+class AgentMemoryOut(StrictModel):
+    """Your agent memory at the canopy level: two features, each with whether it is
+    available and whether it is on by default in a new session. Turning one off
+    deletes nothing."""
+
+    record: MemoryFeatureOut = Field(description="Agents may learn about me (write).")
+    use: MemoryFeatureOut = Field(description="Agents may use what they've learned (read).")
+
+
+class SessionFeatureOut(StrictModel):
+    available: bool
+    default: bool
+    override: bool | None = Field(description="This session's choice; null = use the default.")
+    effective: bool = Field(description="What applies in this session: available AND "
+                                        "(override, else default).")
+
+
+class SessionMemoryOut(StrictModel):
+    """Your agent memory as it applies in one session."""
+
+    session_id: str
+    record: SessionFeatureOut
+    use: SessionFeatureOut
 
 
 class PersonMeOut(PersonRefOut):
@@ -83,14 +104,23 @@ class PersonMeOut(PersonRefOut):
     accesses: list[PersonAccessOut] = Field(default_factory=list)
 
 
+class MemoryFeatureIn(StrictModel):
+    available: bool | None = Field(default=None, description="Make it available (true) or not "
+                                                             "(false). Omit to leave it.")
+    default: bool | None = Field(default=None, description="On (true) or off (false) by default in "
+                                                           "new sessions. Omit to leave it.")
+
+
 class AgentMemoryIn(StrictModel):
-    record: bool | None = Field(
-        default=None, description="Agents may learn about me: true lets agents record what they "
-                                  "learn about you, false stops them. Omit to leave it unchanged.")
-    use: bool | None = Field(
-        default=None, description="Agents may use what they've learned: true lets agents be told "
-                                  "what has been learned about you, false stops them. Omit to "
-                                  "leave it unchanged.")
+    record: MemoryFeatureIn | None = Field(
+        default=None, description="Agents may learn about me. Omit to leave it unchanged.")
+    use: MemoryFeatureIn | None = Field(
+        default=None, description="Agents may use what they've learned. Omit to leave it unchanged.")
+
+
+class SessionMemoryIn(StrictModel):
+    record: str | None = Field(default=None, description="on | off | inherit. Omit to leave it.")
+    use: str | None = Field(default=None, description="on | off | inherit. Omit to leave it.")
 
 
 class PersonFactIn(StrictModel):

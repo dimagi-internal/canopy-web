@@ -108,9 +108,9 @@ def _turn_agent(turn):
 
 
 def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -> Principal:
-    """`need` is the person's switch an AGENT must find on: `hcp.USE` for a read,
-    `hcp.RECORD` for a write (`Person.hcp_use` / `hcp_record`). The person
-    themself is never gated by it."""
+    """`need` is what an AGENT must find on for the turn it serves: `hcp.USE` for a
+    read, `hcp.RECORD` for a write — the person's setting as it applies in that
+    turn's session (`hcp.effective`). The person themself is never gated by it."""
     from apps.harness.models import Turn
 
     user = request.user
@@ -150,7 +150,7 @@ def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -
         raise hcp.denied("no person started that turn")
     # The person's own switches, checked before any grant is presumed: a person who
     # has not allowed this kind of operation is not served, and no grant is issued.
-    hcp.require(person, need)
+    hcp.require(person, need, turn)
     channel, host = hcp.client_of_turn(turn)
     grant = hcp.grant_for(person, agent=serving, workspace_slug=serving.workspace_id,
                           channel=channel, host=host)

@@ -10,20 +10,21 @@ import {
 } from '../api/people'
 import type { HcpAuditEvent, HcpGrant, PersonFactDetail, PersonMe } from '../api/people'
 
-/** The person's two agent-memory switches (`Person.hcp_record` / `hcp_use`), each
- *  independent; one plain line for each state. */
+/** The person's two agent-memory features, each with a canopy-level "available"
+ *  and "on by default in new sessions"; a session can override the default but
+ *  never turn on what is not available. One plain line for each state. */
 const MEMORY_SWITCHES = [
   {
     key: 'record' as const,
     label: 'Agents may learn about me',
-    on: 'On: agents you talk to record what they learn about your work.',
-    off: 'Off: no agent records anything new about you.',
+    on: 'Available: agents you talk to may record what they learn about your work.',
+    off: 'Not available: no agent records anything new about you, in any session.',
   },
   {
     key: 'use' as const,
     label: "Agents may use what they've learned",
-    on: 'On: agents you talk to are told what is relevant about you.',
-    off: 'Off: no agent is told anything about you. Nothing below is deleted.',
+    on: 'Available: agents you talk to may be told what is relevant about you.',
+    off: 'Not available: no agent is told anything about you, in any session. Nothing below is deleted.',
   },
 ]
 
@@ -39,7 +40,7 @@ export function PeopleMePage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const [busyGrant, setBusyGrant] = useState<string | null>(null)
-  const [busyMemory, setBusyMemory] = useState<'record' | 'use' | null>(null)
+  const [busyMemory, setBusyMemory] = useState<string | null>(null)
 
   const load = useCallback(() => {
     getMyPerson()
@@ -82,17 +83,30 @@ export function PeopleMePage() {
 
   useEffect(load, [load])
 
-  const onToggleMemory = async (which: 'record' | 'use') => {
+  const onToggleAvailable = async (which: 'record' | 'use') => {
     if (!me) return
-    const next = !me.agent_memory[which]
+    const next = !me.agent_memory[which].available
     const offWarning =
       which === 'record'
-        ? 'Stop agents learning about you? They will stop recording what they learn. Nothing already recorded is deleted.'
-        : 'Stop agents using what they have learned? They will no longer be told anything about you. Nothing is deleted.'
+        ? 'Stop agents learning about you, in every session? Nothing already recorded is deleted.'
+        : 'Stop agents using what they have learned, in every session? Nothing is deleted.'
     if (!next && !confirm(offWarning)) return
-    setBusyMemory(which)
+    setBusyMemory(`${which}:available`)
     try {
-      await setMyAgentMemory({ [which]: next })
+      await setMyAgentMemory({ [which]: { available: next } })
+      load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusyMemory(null)
+    }
+  }
+
+  const onToggleDefault = async (which: 'record' | 'use') => {
+    if (!me) return
+    setBusyMemory(`${which}:default`)
+    try {
+      await setMyAgentMemory({ [which]: { default: !me.agent_memory[which].default } })
       load()
     } catch (e) {
       setError((e as Error).message)
@@ -138,7 +152,7 @@ export function PeopleMePage() {
 
       <section aria-label="Agent memory" className="divide-y divide-border rounded-lg border border-border">
         {MEMORY_SWITCHES.map((sw) => {
-          const on = me.agent_memory[sw.key]
+          const { available, default: byDefault } = me.agent_memory[sw.key]
           return (
             <div
               key={sw.key}
@@ -146,23 +160,45 @@ export function PeopleMePage() {
             >
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-foreground">{sw.label}</div>
-                <p className="mt-0.5 text-sm text-muted-foreground">{on ? sw.on : sw.off}</p>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  {available ? sw.on : sw.off}
+                  {available
+                    ? byDefault
+                      ? ' On in new sessions; you can turn it off in any one.'
+                      : ' Off in new sessions; you can turn it on in any one.'
+                    : ''}
+                </p>
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={on}
-                aria-label={sw.label}
-                onClick={() => onToggleMemory(sw.key)}
-                disabled={busyMemory !== null}
-                className={`shrink-0 rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 ${
-                  on
-                    ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                    : 'border border-border text-foreground hover:bg-muted'
-                }`}
-              >
-                {busyMemory === sw.key ? 'Saving…' : on ? 'On' : 'Off'}
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={available}
+                  aria-label={`${sw.label}: available`}
+                  onClick={() => onToggleAvailable(sw.key)}
+                  disabled={busyMemory !== null}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 ${
+                    available
+                      ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                      : 'border border-border text-foreground hover:bg-muted'
+                  }`}
+                >
+                  {busyMemory === `${sw.key}:available` ? 'Saving…' : available ? 'Available' : 'Not available'}
+                </button>
+                {available && (
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={byDefault}
+                    aria-label={`${sw.label}: on by default in new sessions`}
+                    onClick={() => onToggleDefault(sw.key)}
+                    disabled={busyMemory !== null}
+                    className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:opacity-50"
+                  >
+                    {busyMemory === `${sw.key}:default` ? 'Saving…' : byDefault ? 'On by default' : 'Off by default'}
+                  </button>
+                )}
+              </div>
             </div>
           )
         })}

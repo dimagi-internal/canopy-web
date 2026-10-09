@@ -88,6 +88,10 @@ EXCLUDED: dict[str, str] = {
     "hcp_export": "the person's own export — not accessible to agents (HCP 3.3.5)",
     "set_my_agent_memory": "the person's own agent-memory switch — an agent must never be able "
                            "to turn it, and an MCP client acting with the person's token is one",
+    "get_my_session_memory": "the person's own per-session agent-memory choice — the person's, "
+                             "read in their own chat UI, not an agent's",
+    "set_my_session_memory": "the person's own per-session agent-memory choice — an agent must "
+                             "never be able to turn it, and an MCP client with their token is one",
     "contact_token": _HOST,
     "public_stats": _ANON,
     "submit_beta_request": _ANON,

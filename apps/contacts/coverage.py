@@ -10,8 +10,9 @@ What is counted, for each agent of the workspace, over the last `days`:
 
 * `human_turns` — turns WITH the agent (directly or in one of its chats) that a
   human started: a canopy user who is not an agent's login or a system account,
-  or a contact — and only humans who let agents LEARN about them
-  (`Person.hcp_record`, their own switch). Every other count below is over these turns.
+  or a contact — and only humans who make recording AVAILABLE
+  (`Person.hcp_record_available`; a session may still turn it off, which this
+  count does not see). Every other count below is over these turns.
 * `human_turns_with_context` — of those, how many were handed a NON-EMPTY
   `person` block (at least one fact), recorded at the moment the envelope was
   built (`PersonAccess.had_context`). Recorded rather than re-derived, because
@@ -53,12 +54,12 @@ def human_turn_q(prefix: str = "") -> Q:
 
 
 def memory_on_q(prefix: str = "") -> Q:
-    """Turns started by a person who lets agents learn about them (`Person.hcp_record`).
+    """Turns started by a person who makes recording available (`Person.hcp_record_available`).
     Someone who has it off is not a gap in coverage: nothing may be recorded."""
     p = prefix
-    return (Q(**{f"{p}initiator_kind": "user", f"{p}initiator_user__person__hcp_record": True})
+    return (Q(**{f"{p}initiator_kind": "user", f"{p}initiator_user__person__hcp_record_available": True})
             | Q(**{f"{p}initiator_kind": "contact",
-                   f"{p}initiator_contact__person__hcp_record": True}))
+                   f"{p}initiator_contact__person__hcp_record_available": True}))
 
 
 def _with_agent(agent) -> Q:
