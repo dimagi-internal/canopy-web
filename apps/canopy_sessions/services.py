@@ -89,6 +89,90 @@ def messages_before(session: Session, before: int, limit: int | None = None):
     return messages, has_more
 
 
+def _normalized_prompt(text: str) -> str:
+    return authorship.without_attachment_note(text or "").strip()
+
+
+def program_prompts(session: Session) -> set[str]:
+    """The prompts PROGRAMS delivered into this session, normalized.
+
+    A USER row is whatever arrived on the human's side of the transcript, and
+    not all of it was typed by a person: a scheduled turn (`/hal:turn`), an
+    email turn, an MCP/API caller or a transfer preamble lands there too. The
+    turns that drove the session say which: a chat send (`authorship.
+    is_chat_send`) is a person; every other turn on the session — a chat-bound
+    one, or an agent turn the runner opened this session for (same agent and
+    `session_key`, the `with_driving_turn` rule) — is a program, and its prompt
+    is what its USER row reads.
+    """
+    from django.db.models import Q
+
+    match = Q(chat_session=session)
+    binding = getattr(session, "runner_binding", None)
+    if binding is not None and binding.session_key and session.agent_id:
+        match |= Q(agent_id=session.agent_id, session_key=binding.session_key)
+    turns = Turn.objects.filter(match).only(
+        "prompt", "origin", "idempotency_key", "chat_session_id",
+        "initiator_user_id", "initiator_contact_id",
+    )
+    return {_normalized_prompt(t.prompt) for t in turns
+            if t.prompt and not authorship.is_chat_send(t)}
+
+
+def is_human_input(message, program: set[str]) -> bool:
+    """Is this row something a person typed? A USER row that is neither the
+    harness's own records (`is_system_noise` — re-applied on read, since rows
+    persisted before a prefix was added still carry it) nor a program's prompt.
+    A row attributed to a person (`author`) is theirs whatever it says."""
+    if getattr(message, "role", None) != Message.USER:
+        return False
+    text = message.plaintext or ""
+    if is_system_noise(text):
+        return False
+    if getattr(message, "author", None):
+        return True
+    return _normalized_prompt(text) not in program
+
+
+def human_inputs(session: Session, *, after: int | None = None, limit: int = SCROLLBACK_PAGE_DEFAULT):
+    """What PEOPLE typed into this session, oldest first, `limit` at a time.
+
+    Returns (messages, next_cursor, source). `after` is an exclusive turn_index
+    cursor (None = from the start); `next_cursor` is the turn_index to pass back,
+    or None when nothing later exists. Tool results, the agent's own output,
+    system rows, harness records and program prompts are all excluded — see
+    `is_human_input`.
+
+    A session with no durable rows yet (a local runner session before its
+    backfill) answers from the binding's rolling tail, source "tail", unpaged.
+    """
+    program = program_prompts(session)
+    users = session.messages.filter(role=Message.USER).order_by("turn_index")
+    if after is None and not session.messages.exists():
+        tail = [m for m in tail_as_messages(session, getattr(session, "runner_binding", None))
+                if is_human_input(m, program)]
+        return tail[-limit:], None, "tail"
+    out: list = []
+    cursor = after
+    # Scan in chunks: filtering is per-row in Python (the noise rule is a prefix
+    # list shared with the runners, not a query), so a chunk may yield fewer
+    # than `limit`; keep going until the page is full or the rows run out.
+    chunk = max(limit, 50)
+    while len(out) < limit:
+        qs = users if cursor is None else users.filter(turn_index__gt=cursor)
+        batch = list(qs[:chunk])
+        if not batch:
+            return out, None, "transcript"
+        for m in batch:
+            cursor = m.turn_index
+            if is_human_input(m, program):
+                out.append(m)
+                if len(out) == limit:
+                    break
+    more = users.filter(turn_index__gt=cursor).exists()
+    return out, (cursor if more else None), "transcript"
+
+
 #: What an embedded widget never receives: the agent's tool calls and their
 #: results. A widget's visitor asked a question and wants the answer; which MCP
 #: tools ran, with what arguments, is noise to them and often a page of JSON.

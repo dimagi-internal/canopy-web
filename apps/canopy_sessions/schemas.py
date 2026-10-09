@@ -159,6 +159,17 @@ class MessagePageOut(Schema):
     has_more_before: bool
 
 
+class HumanInputPageOut(Schema):
+    """One forward page of what PEOPLE typed into a session, oldest first."""
+    messages: list[MessageOut]
+    #: Pass back as `?after=` for the next page; null when there is no more.
+    next_cursor: int | None = None
+    #: "transcript" — canopy's durable rows. "tail" — the session has no durable
+    #: rows yet (a local runner session before its backfill), so these come from
+    #: the runner's rolling tail: recent only, and never paged.
+    source: Literal["transcript", "tail"] = "transcript"
+
+
 class SessionOut(Schema):
     # A requested full-history ship is still outstanding (the runner has not sent
     # its final chunk). Lets "Load full session" wait on an exact signal rather
@@ -240,6 +251,14 @@ class SessionOut(Schema):
     parent_session_id: uuid.UUID | None = None
     parent_task: str = ""
     parent_claude_session: str = ""
+
+
+class SessionSearchPageOut(Schema):
+    """One page of a newest-activity-first walk over every visible session."""
+    sessions: list[SessionOut]
+    #: Opaque. Pass back as `?cursor=` (with the same filters) for the next
+    #: page; null when the walk is complete.
+    next_cursor: str | None = None
 
 
 class SessionDetailOut(SessionOut):
