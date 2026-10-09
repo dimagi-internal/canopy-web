@@ -764,12 +764,39 @@ def test_a_dm_reply_goes_to_the_dm_unthreaded(slack, linked, hal, django_capture
 
 def test_a_long_reply_is_split_into_whole_posts(slack, linked, hal, django_capture_on_commit_callbacks):
     mention("hal summarise")
-    body = "\n\n".join(f"paragraph {i} " + "x" * 900 for i in range(8))
+    body = "\n\n".join(f"paragraph {i} " + "x" * 2900 for i in range(8))
     _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": body}},
            capture=django_capture_on_commit_callbacks)
-    posts = slack.said("chat.postMessage")
-    assert len(posts) > 1 and all(len(p["text"]) <= 3500 for p in posts)
-    assert "".join(p["text"] for p in posts).count("paragraph") == 8
+    posts = [p for p in slack.said("chat.postMessage") if p.get("blocks")]
+    assert len(posts) > 1 and all(len(p["blocks"][0]["text"]) <= 11_000 for p in posts)
+    assert "".join(p["blocks"][0]["text"] for p in posts).count("paragraph") == 8
+
+
+def test_a_reply_renders_as_markdown_tables_included(slack, linked, hal, django_capture_on_commit_callbacks):
+    """A table arrived as rows of pipes (2026-10-09): mrkdwn has no tables, a markdown block does."""
+    mention("hal summarise")
+    body = "**Plan**\n\n| Piece | New? |\n|---|---|\n| `state` meta | **New** |"
+    _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": body}},
+           capture=django_capture_on_commit_callbacks)
+    post = next(p for p in slack.said("chat.postMessage") if p.get("blocks"))
+    assert post["blocks"] == [{"type": "markdown", "text": body}]   # the agent's own Markdown
+    assert post["text"].startswith("*Plan*")                          # mrkdwn for notifications
+
+
+def test_a_refused_markdown_block_still_delivers_the_reply(slack, linked, hal,
+                                                           django_capture_on_commit_callbacks):
+    from apps.slack import relay
+
+    with mock.patch.object(relay.client, "post_message", wraps=relay.client.post_message) as post:
+        def refuse(*a, **kw):
+            if kw.get("blocks"):
+                raise relay.client.SlackApiError("chat.postMessage", "invalid_blocks")
+            return "1700000999.000100"
+        post.side_effect = refuse
+        mention("hal summarise")
+        _reply(Turn.objects.get(), {"kind": "assistant", "payload": {"text": "**done**"}},
+               capture=django_capture_on_commit_callbacks)
+    assert any(c.kwargs.get("text") == "*done*" and not c.kwargs.get("blocks") for c in post.call_args_list)
 
 
 def test_a_non_slack_session_is_left_alone(slack, hal, alice, django_capture_on_commit_callbacks):
