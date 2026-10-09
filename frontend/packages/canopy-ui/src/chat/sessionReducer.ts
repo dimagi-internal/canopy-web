@@ -329,6 +329,9 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
                   turn_index: frame.data.turn_index ?? m.turn_index,
                   content: block,
                   plaintext,
+                  ...(role === "tool_result" && "app" in frame.data && frame.data.app
+                    ? { app: frame.data.app }
+                    : {}),
                 }
               : m,
           ),
@@ -345,6 +348,9 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
         role,
         content: block,
         plaintext,
+        ...(role === "tool_result" && "app" in frame.data && frame.data.app
+          ? { app: frame.data.app }
+          : {}),
         status: block.is_error === true ? "error" : "complete",
         error_detail: null,
         started_at: nowIso,

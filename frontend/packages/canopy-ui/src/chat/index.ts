@@ -8,6 +8,7 @@
 export type {
   Message,
   MessageAuthor,
+  MessageAppRef,
   MessageRole,
   MessageStatus,
   Draft,
@@ -92,6 +93,19 @@ export {
   type PlacementBannerProps,
   type PlacementRunner,
 } from "./PlacementBanner";
+// MCP Apps (SEP-1865): render a Connected site's View for a tool result, and
+// the host side of its postMessage wire (spec 2026-10-08).
+export { AppView } from "./mcpApps/AppView";
+export {
+  AppHostContext,
+  useAppHost,
+  type AppHost,
+  type AppRef,
+  type AppReceipt,
+  type AppViewResource,
+} from "./mcpApps/context";
+export { AppBridge, PROTOCOL_VERSION as MCP_APPS_PROTOCOL_VERSION, type AppBridgeHandlers,
+         type AppBridgeOptions, type CallToolResult } from "./mcpApps/bridge";
 // The AG-UI projection's inverse. Exported so a consumer can translate a stream
 // it obtained some other way — and so the round-trip test can reach it.
 export { fromAgui, resetAguiState, CUSTOM_PREFIX, METADATA_KEY } from "./agui";

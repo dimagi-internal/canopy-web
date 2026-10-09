@@ -12,6 +12,7 @@
 
 import type { components } from "./generated";
 import { apiUrl, getCsrfToken } from "./base";
+import type { AppHost, AppViewResource, CallToolResult } from "canopy-ui/chat";
 
 export type ChatSession = components["schemas"]["SessionOut"];
 export type ChatSessionDetail = components["schemas"]["SessionDetailOut"];
@@ -397,4 +398,32 @@ export function deleteSecret(id: string, name: string): Promise<void> {
     `/api/canopy-sessions/${encodeURIComponent(id)}/secrets/${encodeURIComponent(name)}`,
     { method: "DELETE" },
   );
+}
+
+// --- MCP Apps (spec 2026-10-08): the browser plumbing behind a rendered View ---
+
+/** How canopy's own chat page reaches a session's MCP Apps Views. Every call
+ *  runs as the SIGNED-IN person (session cookie) — the person looking, never
+ *  the agent. A sandbox URL (absolute, if the sandbox ever moves to its own
+ *  origin) passes through; a path gets the app's base. */
+export function appHostFor(sessionId: string): AppHost {
+  const base = `/api/canopy-sessions/${encodeURIComponent(sessionId)}/apps`;
+  const at = (callId: string) => `${base}/${encodeURIComponent(callId)}`;
+  const json = (method: string, body: unknown): RequestInit => ({
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return {
+    load: (callId) => request<AppViewResource>(`${at(callId)}/resource`),
+    callTool: (callId, name, args) =>
+      request<CallToolResult>(`${at(callId)}/call`, json("POST", { name, arguments: args })),
+    readResource: (callId, uri) => request(`${at(callId)}/read`, json("POST", { uri })),
+    updateContext: (callId, params) =>
+      request<void>(`${at(callId)}/context`, json("PUT", params)).then(() => undefined),
+    sendMessage: (callId, text) =>
+      request<void>(`${at(callId)}/message`, json("POST", { text, client_id: `appview-${crypto.randomUUID()}` }))
+        .then(() => undefined),
+    resolveUrl: (path) => (/^https?:\/\//.test(path) ? path : apiUrl(path)),
+  };
 }

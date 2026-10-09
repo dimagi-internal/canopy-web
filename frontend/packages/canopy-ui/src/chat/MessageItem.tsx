@@ -5,6 +5,8 @@ import type { Message, MessageAuthor } from "./protocol";
 import { isMine } from "./identity";
 import { authorColor } from "./personColor";
 import { ToolCallPair } from "./ToolCallPair";
+import { AppView } from "./mcpApps/AppView";
+import { useAppHost } from "./mcpApps/context";
 
 /** How to render assistant/system markdown. Injected by the app so the kit
  *  stays free of `react-markdown`. Defaults to plain text in a <span>. */
@@ -90,6 +92,7 @@ export function MessageItem({
   currentUserId,
   currentContactId,
 }: Props) {
+  const appHost = useAppHost();
   const text = message.plaintext;
   const isStreaming = message.status === "streaming";
   const isPending = message.status === "pending";
@@ -102,6 +105,11 @@ export function MessageItem({
   // ToolCallPair so we never reach here for those.
   if (message.role === "tool_use") {
     return <ToolCallPair use={message} result={null} forceOpen={forceToolOpen} />;
+  }
+  if (message.role === "tool_result" && message.app && appHost) {
+    // A View row with no tool_use beside it — the embed widget, which receives
+    // the View but never the raw tool rows (`for_widget`).
+    return <AppView app={message.app} />;
   }
   if (message.role === "tool_result") {
     // Synthesize a fake "use" message so the pair component can render

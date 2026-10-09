@@ -1,4 +1,7 @@
-import { ChatPanel, MenuPrompt, SendBox, newClientId, useSessionSocket } from 'canopy-ui/chat'
+import {
+  ChatPanel, MenuPrompt, SendBox, newClientId, useSessionSocket,
+  type AppHost, type AppViewResource, type CallToolResult,
+} from 'canopy-ui/chat'
 import { createCanopyClient, type CanopyClient } from 'canopy-client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -746,6 +749,8 @@ function EmbedChat({
     sendOverHttp: isContact ? sendOverHttp : undefined,
   })
   const menu = socket.state.menu ?? null
+  const appHost = useMemo(() => embedAppHost(client, sessionBase(isContact, sessionId)),
+                          [client, sessionId, isContact])
 
   // Tell canopy what this page can do, so the agent's tool list includes it.
   // Re-sent whenever the host's set changes — a page the user navigated to
@@ -883,6 +888,9 @@ function EmbedChat({
       </header>
       <div className="min-h-0 flex-1">
         <ChatPanel
+          // MCP Apps: a Connected site's View for a tool result, acting as this
+          // visitor (their own host grant), narrow-panel sized.
+          appHost={appHost}
           state={socket.state}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}
@@ -947,4 +955,26 @@ function EmbedChat({
       </div>
     </div>
   )
+}
+
+
+/** The embed panel's MCP Apps host: the same five routes as canopy's chat page,
+ *  under `/api/contact/` for a contact (their whole surface) — through the
+ *  panel's own client, so the visitor's token is what authorises every click. */
+function embedAppHost(client: CanopyClient, sessionPath: string): AppHost {
+  const at = (callId: string) => `${sessionPath}/apps/${encodeURIComponent(callId)}`
+  const send = <T,>(path: string, method: string, body: unknown) =>
+    client.rest.json(path, { method, body: JSON.stringify(body) }) as Promise<T>
+  return {
+    load: (callId) => client.rest.json(`${at(callId)}/resource`) as Promise<AppViewResource>,
+    callTool: (callId, name, args) =>
+      send<CallToolResult>(`${at(callId)}/call`, 'POST', { name, arguments: args }),
+    readResource: (callId, uri) => send(`${at(callId)}/read`, 'POST', { uri }),
+    updateContext: (callId, params) =>
+      send<void>(`${at(callId)}/context`, 'PUT', params).then(() => undefined),
+    sendMessage: (callId, text) =>
+      send<void>(`${at(callId)}/message`, 'POST', { text, client_id: newClientId() }).then(() => undefined),
+    resolveUrl: (path) => (/^https?:\/\//.test(path) ? path : `${currentFrameBaseUrl()}${path}`),
+    maxWidth: 420,
+  }
 }

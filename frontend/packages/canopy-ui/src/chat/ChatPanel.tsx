@@ -12,6 +12,7 @@ import { SendBox, type PendingAttachment } from "./SendBox";
 import { type DraftStorage } from "./drafts";
 import { agentHasFloor as computeAgentHasFloor, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
 import { useStickyBottom } from "./useStickyBottom";
+import { AppHostContext, type AppHost } from "./mcpApps/context";
 
 export interface ChatPanelProps {
   state: SessionState;
@@ -54,6 +55,9 @@ export interface ChatPanelProps {
    *  a host with no draft sync (a contact) passes neither. */
   typingVisibility?: TypingVisibility;
   onTypingVisibilityChange?: (visibility: TypingVisibility) => void;
+  /** MCP Apps: how this page reaches canopy for the session's Views. Omit and
+   *  a tool result with a View renders as an ordinary tool row. */
+  appHost?: AppHost;
 }
 
 /**
@@ -85,6 +89,7 @@ export function ChatPanel({
   draftStorage,
   typingVisibility,
   onTypingVisibilityChange,
+  appHost,
 }: ChatPanelProps) {
   // `onDiscard` is part of the public surface (co-edit teardown) even though
   // the default composer doesn't render a discard button. Referenced to keep
@@ -197,6 +202,7 @@ export function ChatPanel({
   const typingUserIds = useMemo(() => peerDrafts.map((p) => p.author.id), [peerDrafts]);
 
   return (
+    <AppHostContext.Provider value={appHost ?? null}>
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-border bg-background px-3 py-1.5 text-xs">
         <ConnectionStatus connected={connected} />
@@ -275,5 +281,6 @@ export function ChatPanel({
         onTypingVisibilityChange={onTypingVisibilityChange}
       />
     </div>
+    </AppHostContext.Provider>
   );
 }
