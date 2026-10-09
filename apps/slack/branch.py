@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 
+from apps.canopy_sessions import access as session_access
 from apps.canopy_sessions.models import Session
 
 from . import client
@@ -68,9 +69,12 @@ def handle(installation, inbound: Inbound, ask: str) -> Outcome:
     if refusal is not None:
         return refusal
     user = principal.user
-    if user is None or not (parent.created_by_id == user.pk or agent.is_admin(user)):
-        return Outcome(BLOCKED, "Only the person who started this conversation, or an admin of "
-                       f"`{agent.slug}`, can branch it.", session=parent, agent=agent,
+    # Anyone who may write into the conversation may branch it: they could already
+    # start a new one and paste it all in. A viewer, or a member who never joined
+    # the thread, may not.
+    if user is None or not (session_access.can_write(user, parent) or agent.is_admin(user)):
+        return Outcome(BLOCKED, "Only people in this conversation (its owner or an editor), or an "
+                       f"admin of `{agent.slug}`, can branch it.", session=parent, agent=agent,
                        workspace_id=agent.workspace_id)
     from apps.canopy_sessions import exports
 
