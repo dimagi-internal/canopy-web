@@ -54,6 +54,8 @@ describe('navigate-fallback ownership', () => {
       '/health/',
       `/w/connect/walkthrough/${UUID}/content`, // the reported bug: iframe stream
       `/w/connect/walkthrough/${UUID}/content?t=tok`, // …even with a share token
+      '/w/connect/marketplace.json', // the Claude Code plugin marketplace (apps/plugins)
+      '/w/connect/plugins/echo/0123456789ab.zip',
       // The retired flat addresses: a server 404 that says links now carry the
       // workspace (canopy-web#1337) — never the app shell.
       `/walkthrough/${UUID}`,
@@ -151,6 +153,8 @@ describe('the matcher workbox inlines into the SW', () => {
     `/walkthrough/${UUID}/content?t=tok`,
     `/w/${UUID}/content`,
     `/w/connect/walkthrough/${UUID}/content`,
+    '/w/connect/marketplace.json',
+    '/w/connect/plugins/echo/0123456789ab.zip',
     '/foo/bar',
     '/nope',
     '/canopy/supervisor',

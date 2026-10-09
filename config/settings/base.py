@@ -111,6 +111,7 @@ INSTALLED_APPS = [
     "apps.slack",
     "apps.contacts",
     "apps.retention",
+    "apps.plugins",
     # The canopy SDK's Django half (app label `canopy_host`): the single-use jti
     # table and the delegated-token table canopy-web uses as a HOST of its own
     # MCP (apps/tokens/self_host.py). Its own tables, never `tokens`' —

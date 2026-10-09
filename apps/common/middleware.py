@@ -124,6 +124,18 @@ def _is_scoped_viewer(path: str) -> bool:
     return bool(_SCOPED_VIEWER.match(path))
 
 
+# The plugin marketplace (apps/plugins/views.py): Claude Code fetches these with
+# a bearer token, and a signed-out request must get the view's 401 — this
+# middleware's fallback is a 302 to Google sign-in, which Claude Code would
+# follow and fail on. The views self-enforce: 401 without an identity, 404 for
+# a non-member.
+_PLUGIN_MARKETPLACE = re.compile(r"^/w/[^/]+/(marketplace\.json$|plugins/)")
+
+
+def _is_plugin_marketplace(path: str) -> bool:
+    return bool(_PLUGIN_MARKETPLACE.match(path))
+
+
 # The retired flat addresses (`/walkthrough/…`, `/review/…`, `/share/…`,
 # `/storyboard/…`, `/narrative/…`, `/ddd-release/…`, the pre-tenancy
 # `/w/<uuid>/…`). They serve only a 404 that says links now carry
@@ -240,6 +252,7 @@ class LoginRequiredMiddleware:
             or public_site.is_public_path(request.path)
             or _is_artifact_api(request)
             or _is_scoped_viewer(request.path)
+            or _is_plugin_marketplace(request.path)
             or _is_flat_artifact(request.path)
             or _is_ddd_release_link(request)
             or _is_storyboard_link(request)
