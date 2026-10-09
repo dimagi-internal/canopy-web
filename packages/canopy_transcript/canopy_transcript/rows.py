@@ -100,11 +100,19 @@ def _truncate(text: str, limit: int) -> str:
     return text[:limit] + f"\n… [truncated {len(text) - limit} chars]"
 
 
+#: How deep a tool input is kept before a branch becomes "…". The size is already
+#: bounded by TOOL_INPUT_STR_MAX per string and TOOL_INPUT_JSON_MAX overall; depth
+#: only guards against pathological nesting. It was 6, which elided ordinary MCP calls:
+#: an MCP Apps View re-reads its tool input from this copy, and Labs' coaching card got
+#: picture.params.topics as ["…","…","…"] (depth 7) and failed (2026-10-09).
+TOOL_INPUT_MAX_DEPTH = 32
+
+
 def _truncate_input(value, depth: int = 0):
     """Recursively cap the string leaves of a tool input. Structure is preserved
     (the UI renders the input as JSON, and a shape with elided values still tells
     you what the call did); only the bulk goes."""
-    if depth > 6:
+    if depth > TOOL_INPUT_MAX_DEPTH:
         return "…"
     if isinstance(value, str):
         return _truncate(value, TOOL_INPUT_STR_MAX)  # _truncate scrubs NUL
