@@ -288,8 +288,9 @@ def _agent_statuses(conn: sqlite3.Connection) -> dict[str, str]:
 
 def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
     """READ-ONLY: the un-archived emdash tasks, newest-first, capped. Returns
-    [{emdash_task, project, status, agent_status, last_interacted_at}]. The task NAME is the identity
-    open_and_send targets; project is joined from `projects` for display + the continue
+    [{emdash_task, task_uid, project, status, agent_status, last_interacted_at}]. The task NAME
+    is the handle open_and_send targets (`task_uid` is the task's emdash id, which tells a
+    reused name apart); project is joined from `projects` for display + the continue
     turn's target.
 
     A MISSING db degrades to [] so the runner loop survives ("no emdash here"). A real
@@ -330,9 +331,16 @@ def list_open_sessions(db_path: str, limit: int = 30) -> list[dict]:
     out = []
     for r in rows:
         s = dict(r)
-        # task_id is a join key, not part of the report: the server keys sessions on
-        # the task NAME, and a field nothing reads is a field that goes stale.
-        s["agent_status"] = statuses.get(s.pop("task_id"), "")
+        task_id = s.pop("task_id")
+        s["agent_status"] = statuses.get(task_id, "")
+        # The task's own IDENTITY, which the name is not. The server keys a binding on
+        # the task NAME (+ project), and emdash names are reused over time: close a
+        # "supply" task, open another "supply", and the second is a different
+        # conversation under the same key. The id is what tells the two apart — it is
+        # stable across `claude --resume`/`--continue`/`/clear` inside one task, and
+        # new for every new task — so the server forks a new session record when it
+        # changes (harness.services.replace_reported_sessions, board task T74).
+        s["task_uid"] = str(task_id or "")
         out.append(s)
     return out
 

@@ -1757,7 +1757,15 @@ def replace_reported_sessions(
                 binding.emdash_project = project
                 binding.thread_key = f"emdash:{s.emdash_task}"
                 binding.host = runner.host
+                binding.task_uid = str(getattr(s, "task_uid", "") or "")[:100]
             else:
+                # The NAME matched; is it the same TASK? A new emdash task that reused
+                # a name gets its own session here, and the old record keeps its rows
+                # (board task T74). getattr: lightweight session objects reach this
+                # service too, and an old runner sends no id — which forks nothing.
+                from apps.canopy_sessions.services import fork_if_task_changed
+
+                fork_if_task_changed(binding, str(getattr(s, "task_uid", "") or "")[:100])
                 # Correct a GENERATED title on an existing session. A brand-new
                 # session above is titled from the emdash task, but an existing one
                 # never was — so a session created on the phone kept its autotitle

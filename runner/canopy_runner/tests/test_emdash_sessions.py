@@ -95,3 +95,14 @@ def test_archived_list_is_fail_soft_on_a_missing_db_and_loud_on_a_bad_one(tmp_pa
     sqlite3.connect(str(bad)).execute("CREATE TABLE tasks (id TEXT)")
     with pytest.raises(emdash.EmdashReadError):
         emdash.list_recently_archived_tasks(str(bad))
+
+
+def test_reports_the_task_id_so_a_reused_name_is_distinguishable(tmp_path):
+    """The NAME is reused over time; the id is not. The server forks a new session
+    record when the id behind a name changes (board task T74), so the report has
+    to carry it."""
+    db = tmp_path / "emdash4.db"
+    _make_db(str(db))
+    out = emdash.list_open_sessions(str(db))
+    assert [s["task_uid"] for s in out] == ["t1", "t2"]
+    assert "task_id" not in out[0]

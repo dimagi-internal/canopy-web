@@ -417,6 +417,25 @@ class RunnerBinding(models.Model):
     # already does for a change of ordinal SCHEME. Blank = never reported (an old
     # runner, or a session whose runner has not shipped since this landed).
     transcript_id = models.CharField(max_length=100, blank=True, default="")
+    # WHICH emdash task this binding is for — emdash's own `tasks.id`, reported by
+    # the runner on every session report (`task_uid`). The other half of "names are
+    # reused over time", settled at the source instead of inferred from the
+    # transcript: the id is stable across everything that legitimately continues
+    # ONE task (`claude --resume`, `--continue`, `/clear`, a runner restart) and new
+    # for every new task, whatever it is called.
+    #
+    # `fork_if_name_reused` already forks a successor when a name comes back — but
+    # only for a session the server had ARCHIVED first, and archiving takes two
+    # complete reports of absence (or an explicit archived signal). Close a task and
+    # open its namesake inside that window, or on a report the runner's limit cut
+    # short, and the new conversation was matched to the old record and wiped its
+    # rows (`ensure_transcript_identity`). Measured 2026-10-09 (hal board T74): 5 of
+    # 20 core Supply sessions folded into namesakes — one `supply` record spanned
+    # 2026-07-28 → 2026-10-02 across three separate tasks.
+    #
+    # Blank = never reported (an old runner, a desktop session with no emdash task,
+    # a cloud runner). Blank on either side makes no claim and never forks.
+    task_uid = models.CharField(max_length=100, blank=True, default="")
     # How far this session's `turn_index` space has been SHIFTED past the history
     # already held — added to every incoming transcript ordinal before it becomes
     # a Message row, and subtracted again when the markers are reported back to
