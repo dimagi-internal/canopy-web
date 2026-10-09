@@ -80,6 +80,12 @@ class FakeLabs:
             return {"label": action, "image": {"data_uri": "data:image/png;base64,AAAA"},
                     "confirm": f"confirm-{tok}", "confirm_expires_in": 300}
 
+        # Model- and app-visible but read-only (MCP readOnlyHint), like Labs' status poll.
+        @server.tool(annotations={"readOnlyHint": True})
+        def workflow_action_status(run_id: int, execution_id: int | None = None) -> dict:
+            fake.calls.append(("workflow_action_status", caller()))
+            return {"executions": [{"id": execution_id or 77, "status": "completed"}]}
+
         @server.tool(meta={"ui": {"visibility": ["model"]}})
         def model_only_report(run_id: int) -> dict:
             fake.calls.append(("model_only_report", caller()))

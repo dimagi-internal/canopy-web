@@ -437,6 +437,12 @@ def call(session, viewer: Viewer, tool_call_id: str, name: str, arguments: dict)
         if not mcp_apps.app_visible(getattr(listed, "meta", None) or {}):
             raise host_gateway.GatewayRefusal(GATES[4], f"{tool} cannot be called from a view")
         check.meta = getattr(listed, "meta", None) or {}
+        annotations = getattr(listed, "annotations", None)
+        # MCP SDK v2 names it read_only_hint; older clients readOnlyHint.
+        check.read_only = bool(
+            getattr(annotations, "read_only_hint", None) if hasattr(annotations, "read_only_hint")
+            else getattr(annotations, "readOnlyHint", False)
+        )
 
     try:
         result = async_to_sync(host_gateway.view_call)(ctx, tool, arguments or {}, check=check)
@@ -445,7 +451,10 @@ def call(session, viewer: Viewer, tool_call_id: str, name: str, arguments: dict)
         _refuse(session, viewer, ref, "call", tool, ViewRefusal(exc.code, exc.message, status))
     is_error = bool(result.get("isError"))
     _audit(session, viewer, ref, what="call", tool=tool, ok=True, extra=f"is_error={is_error}")
-    if mcp_apps.model_visible(getattr(check, "meta", {})):
+    # A receipt is canopy's witness of a person CHANGING something from a View. A call the
+    # host declares read-only (MCP readOnlyHint) -- a status poll -- is audited but not
+    # recorded in the chat (2026-10-09: "Done: workflow_action_status" beside each send).
+    if mcp_apps.model_visible(getattr(check, "meta", {})) and not getattr(check, "read_only", False):
         _receipt(session, viewer, ref, tool, result)
     return result
 
