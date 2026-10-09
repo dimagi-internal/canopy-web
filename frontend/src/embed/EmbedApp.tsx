@@ -6,12 +6,14 @@ import { createCanopyClient, type CanopyClient } from 'canopy-client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Markdown } from '@/components/Markdown'
+import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
 import { menuBlocksComposer } from '@/pages/chatPageLogic'
 
 import { buildPageContextBlock } from './pageContextBlock'
 import { currentFrameBaseUrl } from './frameBase'
 import type { HostInit, HostLink } from './hostLink'
 import { resolvePrincipal, type Principal } from './principal'
+import { embedMemorySource } from './sessionMemory'
 
 /**
  * The chat surface inside the widget's iframe.
@@ -749,6 +751,13 @@ function EmbedChat({
     sendOverHttp: isContact ? sendOverHttp : undefined,
   })
   const menu = socket.state.menu ?? null
+  // Agent memory for this conversation — the chat page's own toggles, through
+  // the frame's client. A contact has no canopy account to own the setting, so
+  // nothing is asked for them (sessionMemory.ts says who may change it).
+  const memorySource = useMemo(
+    () => (isContact ? null : embedMemorySource(client.rest, sessionId, currentFrameBaseUrl())),
+    [client, sessionId, isContact],
+  )
   const appHost = useMemo(() => embedAppHost(client, sessionBase(isContact, sessionId)),
                           [client, sessionId, isContact])
 
@@ -866,6 +875,7 @@ function EmbedChat({
           <span className="truncate text-[12px] text-muted-foreground">{agent.name}</span>
         </span>
         <span className="flex shrink-0 items-center gap-1">
+          {memorySource && <SessionMemoryToggles sessionId={sessionId} source={memorySource} />}
           {/* The ‹ alone was the only way to a new question, and nobody read a
               bare chevron as "new chat". Same destination — the start screen,
               whose composer starts a fresh conversation — said in words. */}

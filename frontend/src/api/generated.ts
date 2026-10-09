@@ -1014,6 +1014,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/embed/sessions/{session_id}/agent-memory": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Agent memory in this session, for the widget to show
+         * @description What applies in this conversation of yours: per feature (`record` — agents
+         *     may learn about you; `use` — agents are told what they learned), whether it is
+         *     available to you, its default, this session's choice and the effective value.
+         *
+         *     Read-only. Only your own session with one of the agents this app offers;
+         *     anything else is 404. Change it in canopy, at `manage_path`.
+         */
+        readonly get: operations["embed_session_memory"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/contact/ws-ticket": {
         readonly parameters: {
             readonly query?: never;
@@ -8733,6 +8758,37 @@ export interface components {
             readonly ticket: string;
             /** Expires In */
             readonly expires_in: number;
+        };
+        /**
+         * EmbedSessionMemoryOut
+         * @description `GET /api/embed/sessions/{id}/agent-memory` — agent memory in this session,
+         *     as the widget may SHOW it. Read-only: a site acting for you never changes it;
+         *     `manage_path` is where you change it yourself, in canopy.
+         */
+        readonly EmbedSessionMemoryOut: {
+            /** Session Id */
+            readonly session_id: string;
+            readonly record: components["schemas"]["SessionFeatureOut"];
+            readonly use: components["schemas"]["SessionFeatureOut"];
+            /** Manage Path */
+            readonly manage_path: string;
+        };
+        /** SessionFeatureOut */
+        readonly SessionFeatureOut: {
+            /** Available */
+            readonly available: boolean;
+            /** Default */
+            readonly default: boolean;
+            /**
+             * Override
+             * @description This session's choice; null = use the default.
+             */
+            readonly override: boolean | null;
+            /**
+             * Effective
+             * @description What applies in this session: available AND (override, else default).
+             */
+            readonly effective: boolean;
         };
         /** ContactAgentOut */
         readonly ContactAgentOut: {
@@ -17437,23 +17493,6 @@ export interface components {
              */
             readonly default?: boolean | null;
         };
-        /** SessionFeatureOut */
-        readonly SessionFeatureOut: {
-            /** Available */
-            readonly available: boolean;
-            /** Default */
-            readonly default: boolean;
-            /**
-             * Override
-             * @description This session's choice; null = use the default.
-             */
-            readonly override: boolean | null;
-            /**
-             * Effective
-             * @description What applies in this session: available AND (override, else default).
-             */
-            readonly effective: boolean;
-        };
         /**
          * SessionMemoryOut
          * @description Your agent memory as it applies in one session.
@@ -19453,6 +19492,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["WsTicketOut"];
+                };
+            };
+        };
+    };
+    readonly embed_session_memory: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EmbedSessionMemoryOut"];
                 };
             };
         };

@@ -6,6 +6,7 @@ import datetime as dt
 from pydantic import Field
 
 from apps.common.schemas import StrictModel
+from apps.contacts.people_schemas import SessionFeatureOut
 
 
 class PersonalTokenOut(StrictModel):
@@ -166,6 +167,18 @@ class EmbedSelfTokenOut(StrictModel):
     #: the page you named (`?page=`) — see `apps/tokens/self_host.py`. False
     #: for an unregistered page, or when canopy-web is not set up as a host.
     host_grant: bool = False
+
+
+class EmbedSessionMemoryOut(StrictModel):
+    """`GET /api/embed/sessions/{id}/agent-memory` — agent memory in this session,
+    as the widget may SHOW it. Read-only: a site acting for you never changes it;
+    `manage_path` is where you change it yourself, in canopy."""
+
+    session_id: str
+    record: SessionFeatureOut
+    use: SessionFeatureOut
+    #: canopy's own chat page for this session, relative to canopy's base.
+    manage_path: str
 
 
 class McpClientOut(StrictModel):

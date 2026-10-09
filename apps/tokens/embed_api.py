@@ -27,7 +27,13 @@ from apps.workspaces import services as wsvc
 from .audit import record as audit
 from .models import AppCredential, DelegatedToken, EmbedAuditLog
 from .rate_limit import MintRateLimitError, check_mint_limit
-from .schemas import EmbedAgentOut, EmbedSelfOut, EmbedSelfTokenOut, WsTicketOut
+from .schemas import (
+    EmbedAgentOut,
+    EmbedSelfOut,
+    EmbedSelfTokenOut,
+    EmbedSessionMemoryOut,
+    WsTicketOut,
+)
 
 embed_router = Router(auth=session_auth, tags=["embed"])
 
@@ -228,3 +234,46 @@ def embed_ws_ticket(request: HttpRequest) -> WsTicketOut:
     if getattr(request, "delegated_app", None) is None or DelegatedToken.lookup(raw) is None:
         raise HttpError(400, "present the delegated token this ticket should stand for")
     return WsTicketOut(ticket=ws_ticket.mint(raw), expires_in=ws_ticket.TICKET_TTL_SECONDS)
+
+
+@embed_router.get("/sessions/{session_id}/agent-memory", response=EmbedSessionMemoryOut,
+                  summary="Agent memory in this session, for the widget to show")
+def embed_session_memory(request: HttpRequest, session_id: str) -> EmbedSessionMemoryOut:
+    """What applies in this conversation of yours: per feature (`record` — agents
+    may learn about you; `use` — agents are told what they learned), whether it is
+    available to you, its default, this session's choice and the effective value.
+
+    Read-only. Only your own session with one of the agents this app offers;
+    anything else is 404. Change it in canopy, at `manage_path`."""
+    # A site acting for the person is not the person (people_api._the_person_themself
+    # refuses `caller_token` for the same reason): it may SHOW what applies in a
+    # conversation it hosts, never change it — otherwise a host could switch on
+    # learning for every visitor. The write stays on /api/people/me/…, which a
+    # delegated token cannot reach (tokens/delegation.py); canopy's own widget,
+    # signed in by its session cookie, reaches it and gets the real toggles.
+    import uuid
+
+    from apps.canopy_sessions.models import Session
+    from apps.contacts import hcp, people
+    from apps.contacts import services as contact_services
+
+    from . import delegation
+
+    app = _acting_app(request)
+    if people.agent_of_login(request.user) is not None or not people.is_human_account(request.user):
+        raise HttpError(404, "Not found")
+    try:
+        sid = uuid.UUID(str(session_id))
+    except ValueError:
+        raise HttpError(404, "Not found") from None
+    session = Session.objects.filter(pk=sid, created_by=request.user).first()
+    offered = delegation.offered_agent_ids(app) or set()
+    if session is None or session.agent_id not in offered:
+        raise HttpError(404, "Not found")
+    person = contact_services.person_for(user=request.user)
+    if person is None:
+        raise HttpError(404, "Not found")
+    state = hcp.memory_state(person, session)
+    return EmbedSessionMemoryOut(
+        session_id=str(session.pk), record=state["record"], use=state["use"],
+        manage_path=f"/w/{session.workspace_id}/chat/{session.pk}")
