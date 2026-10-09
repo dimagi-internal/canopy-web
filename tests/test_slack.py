@@ -2256,10 +2256,97 @@ def test_a_confined_reply_says_it_is_a_separate_session(slack, installation, hal
     mention("hal who owns the budget?")
     assert Turn.objects.get().capability == "ask"
     text = _line(slack)["text"]
-    assert "Separate session" in text and "Alice A" in text and "`ask`" in text
+    assert "Questions only" in text and "Alice A" in text and "`ask`" in text
 
 
 def test_a_member_in_full_gets_no_separate_session_note(slack, linked, hal):
     mention("hal summarise")
     assert Turn.objects.get().capability == ""
-    assert "Separate session" not in _line(slack)["text"]
+    assert "Questions only" not in _line(slack)["text"]
+
+
+# ---- a confined reply in someone else's thread gets a thread of its own ----------------
+
+ROOT = "1700000999.000100"   # FakeSlack's ts for every chat.postMessage
+
+
+def _ask_for_contacts(agent):
+    from apps.agents.interface import parse
+
+    agent.interface = parse({"capabilities": {"ask": {"description": "Ask", "callers": ["contact"]}}})
+    agent.save(update_fields=["interface"])
+
+
+def test_a_confined_reply_in_a_members_thread_forks_to_its_own_thread(slack, linked, hal, alice):
+    """2026-10-09: a colleague's correction on an ace thread queued behind the owner's
+    turn and was answered in a side session nobody could find. It now gets its own
+    Slack thread and session, and the original thread links to it."""
+    from apps.harness import routing
+
+    _ask_for_contacts(hal)
+    mention("hal build the bot", ts="1700000000.000100")
+    owner_turn = Turn.objects.get()
+    owner_turn.status = Turn.RUNNING
+    owner_turn.save(update_fields=["status"])
+    before = len(slack.said("chat.postMessage"))
+
+    mention("hal discharge is 4+ visits, not weight", user=BOB, ts="1700000050.000100",
+            thread_ts="1700000000.000100")
+
+    fork_turn = Turn.objects.exclude(pk=owner_turn.pk).get()
+    fork = fork_turn.chat_session
+    parent = owner_turn.chat_session
+    assert fork.pk != parent.pk and fork_turn.capability == "ask"
+    assert fork.created_by_id is None and fork.contact.email == "bob@dimagi.com"
+    assert fork.metadata[services.SLACK_THREAD_KEY] == f"slack:{TEAM}:C1:{ROOT}"
+    assert fork.metadata[services.FORKED_FROM_SESSION] == str(parent.pk)
+    # Its own conversation, so nothing of the owner's holds it.
+    assert routing.blocking_turn(fork_turn) is None
+
+    posts = slack.said("chat.postMessage")[before:]
+    root = next(p for p in posts if "thread_ts" not in p)
+    assert "Bob B" in root["text"] and "a session of their own" in root["text"]
+    pointer = next(p for p in posts if p.get("thread_ts") == "1700000000.000100")
+    assert "separate thread" in pointer["text"] and "Bob B" in pointer["text"]
+    assert any(p.get("thread_ts") == ROOT for p in posts)       # its status line goes to the fork
+    # The fork starts with the thread Bob was reading.
+    assert "discharge is 4+ visits" in fork_turn.prompt
+
+
+def test_writing_again_in_the_original_thread_continues_the_same_fork(slack, linked, hal):
+    _ask_for_contacts(hal)
+    mention("hal build the bot", ts="1700000000.000100")
+    mention("hal one", user=BOB, ts="1700000050.000100", thread_ts="1700000000.000100")
+    mention("hal two", user=BOB, ts="1700000060.000100", thread_ts="1700000000.000100")
+    forks = Session.objects.filter(**{f"metadata__{services.FORKED_FROM_KEY}__isnull": False})
+    assert forks.count() == 1
+    assert Turn.objects.filter(chat_session=forks.get()).count() == 2
+    assert any("Sent to *Bob B*'s" in p["text"] and p.get("thread_ts") == "1700000000.000100"
+               for p in slack.said("chat.postMessage"))
+
+
+def test_a_reply_inside_the_fork_continues_it_without_forking_again(slack, linked, hal):
+    _ask_for_contacts(hal)
+    mention("hal build the bot", ts="1700000000.000100")
+    mention("hal one", user=BOB, ts="1700000050.000100", thread_ts="1700000000.000100")
+    mention("hal and another", user=BOB, ts="1700000070.000100", thread_ts=ROOT)
+    assert Session.objects.count() == 2
+    fork = Session.objects.get(**{f"metadata__{services.FORKED_FROM_KEY}__isnull": False})
+    assert Turn.objects.filter(chat_session=fork).count() == 2
+
+
+def test_a_member_in_full_still_joins_the_owners_thread(slack, linked, hal, installation, ws):
+    bob = a_user("bob@dimagi.com")
+    wsvc.ensure_member(ws, bob, WorkspaceMembership.EDITOR)
+    SlackUserLink.objects.create(installation=installation, slack_user_id=BOB, user=bob)
+    _ask_for_contacts(hal)
+    mention("hal first")
+    mention("hal me too", user=BOB, ts="1700000060.000100", thread_ts="1700000000.000100")
+    assert Session.objects.count() == 1
+
+
+def test_a_contact_starting_their_own_thread_is_not_forked(slack, installation, hal):
+    _ask_for_contacts(hal)
+    mention("hal who owns the budget?", user=BOB)
+    mention("hal and the timeline?", user=BOB, ts="1700000060.000100", thread_ts="1700000000.000100")
+    assert Session.objects.count() == 1
