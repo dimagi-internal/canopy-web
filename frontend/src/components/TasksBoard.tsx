@@ -49,7 +49,7 @@ const ACTION_VERB: Record<string, string> = {
   approve: 'approved',
   decline: 'declined',
   reply: 'replied to',
-  dispatch: 'dispatched',
+  nudge: 'nudged',
   done: 'completed',
 }
 
@@ -78,14 +78,17 @@ export function agentDisplayName(slug: string): string {
 //   open review            → + approve · decline
 //   open question          → reply is the answer · + decline
 //   suggested, asks nothing → + approve · decline (a suggestion IS the
-//                             question "should I do this?"; the server allows
-//                             both on a live plain task — ruling R6)
+//                             question "should I do this?")
 //   ask closed             → reply only (approve/decline would 409)
-//   editors, live          → + dispatch · done
+//   editors, in progress   → + nudge
+//   editors, live          → + done
 //   done/declined          → nothing
-// Viewers may approve/decline/reply; dispatch/done need edit (403 otherwise),
-// so they are not offered to a viewer at all. Decline takes the text in the
-// reply box, when there is any, as its reason.
+// An action that hands the agent work STARTS its turn (Jonathan, 2026-10-08):
+// approve always does, for anyone; nudge does (editors); an editor's reply does,
+// while a viewer's reply is a note the agent reads on its next turn — the copy
+// says which. Viewers may approve/decline/reply; nudge/done need edit (403
+// otherwise), so they are not offered to a viewer at all. Decline takes the text
+// in the reply box, when there is any, as its reason.
 
 function isLive(task: TaskOut): boolean {
   return task.status === 'suggested' || task.status === 'in_progress'
@@ -101,7 +104,10 @@ export function availableActions(task: TaskOut, canEdit: boolean): TaskAction[] 
   if (task.ask_open && kind === 'review') actions = [...actions, 'approve', 'decline']
   else if (task.ask_open && kind === 'question') actions = [...actions, 'decline']
   else if (!kind && task.status === 'suggested') actions = [...actions, 'approve', 'decline']
-  if (canEdit) actions = [...actions, 'dispatch', 'done']
+  // Nudge re-starts work already under way; a suggested task is started by
+  // approving it (the server refuses a nudge on one, 409).
+  if (canEdit && task.status === 'in_progress') actions = [...actions, 'nudge']
+  if (canEdit) actions = [...actions, 'done']
   return actions
 }
 
@@ -332,6 +338,14 @@ function onApproveHint(task: TaskOut): string {
   return targets.length ? `runs on ${targets.join(', ')}` : ''
 }
 
+/** Who starts when the task is approved: its `on_approve` targets, else its own agent. */
+function startsOnApprove(task: TaskOut): string {
+  const targets = (task.on_approve ?? [])
+    .map((d) => (d as { target_agent?: string }).target_agent || task.agent_slug)
+    .filter((v, i, a) => a.indexOf(v) === i)
+  return (targets.length ? targets : [task.agent_slug]).map(agentDisplayName).join(', ')
+}
+
 // ── The action row ──────────────────────────────────────────────────────────
 //
 // `min-h-11 sm:min-h-0` on every control: measured on a Pixel 7 against the
@@ -342,6 +356,15 @@ const BTN =
   'min-h-11 sm:min-h-0 rounded-md border border-border px-3 py-1 text-[12px] text-foreground transition-colors hover:bg-muted disabled:opacity-50'
 const BTN_QUIET =
   'min-h-11 sm:min-h-0 rounded-md px-3 py-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50'
+
+/** The reply box's hint says what sending does: an editor's reply starts the
+ *  agent now, a viewer's waits for the agent's next turn. With Approve or
+ *  Decline on the card, the text also rides along with either as its note. */
+function replyPlaceholder(task: TaskOut, canEdit: boolean, isQuestion: boolean): string {
+  if (isQuestion) return 'Type an answer…'
+  const name = agentDisplayName(task.agent_slug)
+  return canEdit ? `Reply — ${name} picks it up now…` : `Leave ${name} a note for its next turn…`
+}
 
 function errorText(e: unknown): string {
   if (e instanceof AgentApiError && e.detail) return e.detail
@@ -370,6 +393,8 @@ function TaskActions({
   const runs = (task.on_approve ?? []).length > 0
   const isQuestion = task.ask_open && (task.ask_kind || '').trim() === 'question'
   const replyLabel = isQuestion ? (runs ? 'Answer & run' : 'Answer') : 'Reply'
+  // Every agent's board renders this card, so the name comes from the task.
+  const name = agentDisplayName(task.agent_slug)
 
   async function run(action: TaskAction, comment?: string) {
     // A ref, not `busy`: state is stale inside a double-click's second handler.
@@ -386,7 +411,7 @@ function TaskActions({
       // 409: the ask was closed elsewhere — the card is stale, so refetch it.
       if (e instanceof AgentApiError && e.status === 409) onChanged?.()
     } finally {
-      // The card stays mounted (keyed by ext_id) after a reply/dispatch, so it
+      // The card stays mounted (keyed by ext_id) after a reply/nudge, so it
       // must come back enabled — a second reply is a normal thing to do.
       inFlight.current = false
       setBusy(false)
@@ -401,13 +426,7 @@ function TaskActions({
             type="text"
             value={reply}
             disabled={busy}
-            placeholder={
-              isQuestion
-                ? 'Type an answer…'
-                : has('decline')
-                  ? 'Reply, or a reason to decline…'
-                  : 'Reply to the agent…'
-            }
+            placeholder={replyPlaceholder(task, canEdit, isQuestion)}
             aria-label={isQuestion ? 'Answer' : 'Reply'}
             onChange={(e) => setReply(e.target.value)}
             onKeyDown={(e) => {
@@ -429,11 +448,18 @@ function TaskActions({
         </div>
       )}
 
-      {(has('approve') || has('decline') || has('dispatch') || has('done')) && (
+      {(has('approve') || has('decline') || has('nudge') || has('done')) && (
         <div className={`flex flex-wrap items-center gap-2 ${has('reply') ? 'mt-2' : ''}`}>
           {has('approve') && (
-            <button type="button" disabled={busy} onClick={() => run('approve')} className={BTN}>
-              {runs ? 'Approve & run' : 'Approve'}
+            <button
+              type="button"
+              disabled={busy}
+              // Like Decline's reason: anything typed above rides along with the approval.
+              onClick={() => run('approve', reply.trim() || undefined)}
+              title="Approve — anything typed above goes with it"
+              className={BTN}
+            >
+              Approve — {startsOnApprove(task)} starts now
             </button>
           )}
           {has('decline') && (
@@ -448,10 +474,15 @@ function TaskActions({
               Decline
             </button>
           )}
-          {has('dispatch') && (
-            <button type="button" disabled={busy} onClick={() => run('dispatch')} className={BTN}>
-              {/* Every agent's board renders this card, so the name comes from the task. */}
-              {agentDisplayName(task.agent_slug)}, do this now
+          {has('nudge') && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => run('nudge')}
+              title={`Start a ${name} turn on this now — the status stays as it is`}
+              className={BTN}
+            >
+              Nudge {name}
             </button>
           )}
           {has('done') && (

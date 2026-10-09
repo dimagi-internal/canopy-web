@@ -43,7 +43,7 @@ test('approving from Waiting on you runs the task and takes it off the queue', a
   await expect(card).toContainText('ada')
   await expect(card).toContainText('runs on hal')
 
-  const [resp] = await Promise.all([acted(page), card.getByRole('button', { name: 'Approve & run' }).click()])
+  const [resp] = await Promise.all([acted(page), card.getByRole('button', { name: /^Approve/ }).click()])
   expect(resp.status()).toBe(200)
 
   // Approved: the ask is closed, so it no longer waits on anyone.

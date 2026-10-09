@@ -23,16 +23,34 @@ describe('availableActions', () => {
   it('open review', () =>
     expect(availableActions(t({ ask_kind: 'review', ask_open: true }), false)).toEqual(['reply', 'approve', 'decline']))
   it('open question', () => expect(availableActions(t({ ask_kind: 'question', ask_open: true }), false)).toEqual(['reply', 'decline']))
-  it('in-progress task, editor', () => expect(availableActions(t({ status: 'in_progress' }), true)).toEqual(['reply', 'dispatch', 'done']))
+  it('in-progress task, editor: nudge + done', () =>
+    expect(availableActions(t({ status: 'in_progress' }), true)).toEqual(['reply', 'nudge', 'done']))
   it('in-progress task, viewer', () => expect(availableActions(t({ status: 'in_progress' }), false)).toEqual(['reply']))
   it('suggested task with no ask, viewer', () =>
     expect(availableActions(t({ status: 'suggested' }), false)).toEqual(['reply', 'approve', 'decline']))
   it('suggested task whose ask is closed offers no approve/decline (the server 409s them)', () =>
     expect(availableActions(t({ status: 'suggested', ask_kind: 'question', ask_open: false }), false)).toEqual(['reply']))
-  it('suggested task whose ask is closed, editor', () =>
-    expect(availableActions(t({ status: 'suggested', ask_kind: 'review', ask_open: false }), true)).toEqual(['reply', 'dispatch', 'done']))
-  it('open review, editor', () =>
-    expect(availableActions(t({ ask_kind: 'review', ask_open: true }), true)).toEqual(['reply', 'approve', 'decline', 'dispatch', 'done']))
+  it('suggested task whose ask is closed, editor: no nudge (not in progress)', () =>
+    expect(availableActions(t({ status: 'suggested', ask_kind: 'review', ask_open: false }), true)).toEqual(['reply', 'done']))
+  it('open review, editor: approve starts it, so no nudge', () =>
+    expect(availableActions(t({ ask_kind: 'review', ask_open: true }), true)).toEqual(['reply', 'approve', 'decline', 'done']))
+  it('suggested task with no ask, editor', () =>
+    expect(availableActions(t({ status: 'suggested' }), true)).toEqual(['reply', 'approve', 'decline', 'done']))
+  it('in-progress task with an open review, editor', () =>
+    expect(availableActions(t({ status: 'in_progress', ask_kind: 'review', ask_open: true }), true)).toEqual([
+      'reply',
+      'approve',
+      'decline',
+      'nudge',
+      'done',
+    ]))
+  it('never offers the retired dispatch action', () => {
+    for (const status of ['suggested', 'in_progress']) {
+      for (const canEdit of [true, false]) {
+        expect(availableActions(t({ status }), canEdit)).not.toContain('dispatch')
+      }
+    }
+  })
   it('finished', () => expect(availableActions(t({ status: 'done' }), true)).toEqual([]))
   it('declined', () => expect(availableActions(t({ status: 'declined' }), true)).toEqual([]))
 })
@@ -92,15 +110,28 @@ describe('TaskCard', () => {
     expect(buttons()).toContain('Answer & run')
   })
 
-  it('offers Reply, Approve & run and Decline on an open review with a follow-up', () => {
+  it('offers Reply, Approve and Decline on an open review — Approve names who starts', () => {
     render(<TaskCard task={task({ ask_kind: 'review', on_approve: [{ prompt: 'go' }] })} canEdit={false} />)
-    expect(buttons()).toEqual(['Reply', 'Approve & run', 'Decline'])
+    expect(buttons()).toEqual(['Reply', 'Approve — Eva starts now', 'Decline'])
     expect(screen.getByTestId('task-reply-T2')).toBeTruthy()
   })
 
   it('a suggested task with no ask can be approved or declined by a viewer', () => {
     render(<TaskCard task={task({ status: 'suggested', ask_kind: '', ask_open: false })} canEdit={false} />)
-    expect(buttons()).toEqual(['Reply', 'Approve', 'Decline'])
+    expect(buttons()).toEqual(['Reply', 'Approve — Eva starts now', 'Decline'])
+  })
+
+  it('an approve that fans out names the agent it starts', () => {
+    render(<TaskCard task={task({ ask_kind: 'review', on_approve: [{ prompt: 'go', target_agent: 'hal' }] })} canEdit={false} />)
+    expect(buttons()).toContain('Approve — Hal starts now')
+  })
+
+  it('approve sends the reply box text as its note', async () => {
+    actOnTask.mockResolvedValue({ task: {}, action: {}, turn_ids: ['t1'] })
+    render(<TaskCard task={task({ ask_kind: 'review' })} onChanged={() => {}} canEdit={false} />)
+    fireEvent.change(screen.getByTestId('task-reply-T2'), { target: { value: 'one page only' } })
+    fireEvent.click(screen.getByRole('button', { name: /^Approve/ }))
+    await waitFor(() => expect(actOnTask).toHaveBeenLastCalledWith('eva', 'T2', 'approve', 'one page only'))
   })
 
   it('decline sends the reply box text as the reason, or nothing', async () => {
@@ -113,14 +144,27 @@ describe('TaskCard', () => {
     await waitFor(() => expect(actOnTask).toHaveBeenLastCalledWith('eva', 'T2', 'decline', 'duplicate of T1'))
   })
 
-  it('a live task offers Reply, and editors also get Dispatch and Done', () => {
+  it('an in-progress task offers Reply, and editors also get Nudge and Done', () => {
     render(<TaskCard task={task({ ask_kind: '', ask_open: false })} canEdit />)
-    expect(buttons()).toEqual(['Reply', 'Eva, do this now', 'Mark done'])
+    expect(buttons()).toEqual(['Reply', 'Nudge Eva', 'Mark done'])
   })
 
-  it('a viewer gets no Dispatch / Done', () => {
+  it('nudge posts the nudge action', async () => {
+    actOnTask.mockResolvedValue({ task: {}, action: {}, turn_ids: ['t1'] })
+    render(<TaskCard task={task({ ask_kind: '', ask_open: false })} onChanged={() => {}} canEdit />)
+    fireEvent.click(screen.getByRole('button', { name: 'Nudge Eva' }))
+    await waitFor(() => expect(actOnTask).toHaveBeenCalledWith('eva', 'T2', 'nudge', undefined))
+  })
+
+  it('a viewer gets no Nudge / Done, and the reply box says their note waits', () => {
     render(<TaskCard task={task({ ask_kind: '', ask_open: false })} canEdit={false} />)
     expect(buttons()).toEqual(['Reply'])
+    expect(screen.getByTestId('task-reply-T2').getAttribute('placeholder')).toBe('Leave Eva a note for its next turn…')
+  })
+
+  it('an editor’s reply box says the agent picks it up now', () => {
+    render(<TaskCard task={task({ ask_kind: '', ask_open: false })} canEdit />)
+    expect(screen.getByTestId('task-reply-T2').getAttribute('placeholder')).toBe('Reply — Eva picks it up now…')
   })
 
   it('a finished task offers nothing', () => {
@@ -131,7 +175,7 @@ describe('TaskCard', () => {
   it('approve posts the approve action', async () => {
     actOnTask.mockResolvedValue({ task: {}, action: {}, turn_ids: [] })
     render(<TaskCard task={task({ ask_kind: 'review' })} canEdit={false} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Approve/ }))
     await waitFor(() => expect(actOnTask).toHaveBeenCalledWith('eva', 'T2', 'approve', undefined))
   })
 
@@ -139,7 +183,7 @@ describe('TaskCard', () => {
     actOnTask.mockRejectedValue(new AgentApiError('actOnTask failed', 409, 'This ask is already closed.'))
     const onChanged = vi.fn()
     render(<TaskCard task={task({ ask_kind: 'review' })} onChanged={onChanged} canEdit={false} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Approve/ }))
     await waitFor(() => expect(screen.getByText('This ask is already closed.')).toBeTruthy())
     expect(screen.getByText('This ask is already closed.').className).toContain('text-destructive')
     expect(onChanged).toHaveBeenCalled()
@@ -173,7 +217,7 @@ describe('TaskCard', () => {
     let resolve: (v: unknown) => void = () => {}
     actOnTask.mockReturnValue(new Promise((r) => (resolve = r)))
     render(<TaskCard task={task({ ask_kind: 'review' })} canEdit={false} />)
-    const approve = screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement
+    const approve = screen.getByRole('button', { name: /^Approve/ }) as HTMLButtonElement
     fireEvent.click(approve)
     fireEvent.click(approve)
     resolve({ task: {}, action: {}, turn_ids: [] })

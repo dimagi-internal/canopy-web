@@ -44,7 +44,7 @@ class TurnSpec:
         )
 
 
-def _with_reply(prompt: str, reply: str, answered_by: str = "") -> str:
+def _with_reply(prompt: str, reply: str, answered_by: str = "", *, label: str = "ANSWERED BY") -> str:
     """Carry the human's own words to the agent that will act on them.
 
     A card's `prompt` is written BEFORE the human replies, so on its own it is the
@@ -64,7 +64,7 @@ def _with_reply(prompt: str, reply: str, answered_by: str = "") -> str:
     # "instead of", and scores as a forceful correction entirely on its own).
     return (
         f"{prompt}\n\n---\n"
-        f"ANSWERED BY {answered_by or 'a human'}: {wrap_human_reply(reply)}\n\n"
+        f"{label} {answered_by or 'a human'}: {wrap_human_reply(reply)}\n\n"
         f"That reply is the authority on this card and OVERRIDES the brief above wherever "
         f"the two disagree. If it redirects the work, narrows it, declines it, or asks a "
         f"question back, do THAT — and report on the task instead of executing the "
@@ -168,3 +168,98 @@ def _dispatch_parent(task) -> dict | None:
     if raised_by.chat_session_id:
         parent["session"] = raised_by.chat_session
     return parent
+
+
+# ---- the board's own turns: approve with no `on_approve`, nudge, reply ------
+#
+# A task without `on_approve` used to approve into a pending action row and
+# nothing else — no turn, so the agent heard about it only whenever it next
+# happened to run (Jonathan, 2026-10-08: approve ALWAYS starts the work). When
+# the card carries no spec of its own, canopy-web writes the one turn the
+# action implies, from the card itself, and runs it through the same enqueue
+# as `dispatch()`: same stamp, same initiator, same parent, same task link.
+
+#: action -> origin_ref["trigger"], what this board turn IS.
+TASK_TRIGGERS = {"approve": "task_approve", "nudge": "task_nudge", "reply": "task_reply"}
+
+#: A board turn reuses a turn of the same task that has not STARTED yet rather
+#: than stacking a second one behind it — the guard against a double-click, two
+#: tabs, or approve-then-nudge. A running turn does not count: a nudge while the
+#: agent is mid-turn is a deliberate "and then look again".
+_NOT_STARTED = (Turn.QUEUED, Turn.CLAIMED)
+
+
+def _task_context(task) -> str:
+    """What the agent needs to act without re-reading the board first."""
+    lines = []
+    if task.project_id:
+        project = task.project
+        lines.append(f"Project: {project.ext_id} · {project.name}")
+    for label, value in (("Next action", task.next_action), ("Plan", task.plan),
+                         ("Why", task.rationale), ("Source", task.source_url)):
+        value = (value or "").strip()
+        if value:
+            lines.append(f"{label}:\n{value}" if "\n" in value else f"{label}: {value}")
+    if task.ask_kind and (task.ask_body or "").strip():
+        lines.append(f"The ask on the card:\n{task.ask_body.strip()}")
+    return "\n".join(lines)
+
+
+def task_turn_prompt(task, *, action: str, by: str = "") -> str:
+    """The brief for a board turn on `task`, before the stamp and the human's words."""
+    who = by or "a person"
+    ref = f"{task.agent.slug}/{task.ext_id}"
+    if action == "reply":
+        head = (f"{who} left a note on task {task.ext_id}: {task.title}\n\n"
+                f"Read it, answer it on the task, and fold it into the work if it changes "
+                f"anything. Do not restart work the note does not ask for.")
+    else:
+        verb = ("approved this task on the board" if action == "approve"
+                else "nudged this in-progress task on the board")
+        head = (f"Work task {task.ext_id}: {task.title}\n\n"
+                f"{who} {verb} — work it now, starting from the next action.")
+    tail = (f"Report on the task when you stop: update {ref} (status, next_action, notes) "
+            f"so the board shows where it stands.")
+    context = _task_context(task)
+    return "\n\n".join(part for part in (head, context, tail) if part)
+
+
+def enqueue_task_turn(task, *, action) -> tuple[Turn, bool]:
+    """Enqueue the one turn a board action implies for a task with no `on_approve`.
+
+    Returns (turn, created). `action` is the saved AgentTaskAction row: its pk
+    keys the turn (`task-<pk>-<action>-<row>`, so every deliberate click is its
+    own enqueue and a replayed one is the same turn), and its comment rides
+    along as the person's own words.
+
+    An approve or nudge with nothing to say reuses a not-yet-started turn of the
+    same task instead of queueing a duplicate — `created` is False then. A reply
+    always enqueues: its words are new, and a queued turn's prompt does not
+    carry them.
+    """
+    kind = action.action
+    if kind not in TASK_TRIGGERS:
+        raise ValueError(f"no board turn for action {kind!r}")
+    comment = (action.comment or "").strip()
+    if kind != "reply" and not comment:
+        waiting = (Turn.objects.filter(raised_from_task=task, status__in=_NOT_STARTED)
+                   .order_by("created_at").first())
+        if waiting is not None:
+            return waiting, False
+    brief = stamp_dispatched(task_turn_prompt(task, action=kind, by=action.by),
+                             sender=task.agent.slug)
+    label = "NOTE FROM" if kind == "reply" else "APPROVED BY" if kind == "approve" else "NUDGED BY"
+    turn, created = services.enqueue_turn(
+        agent=task.agent,
+        origin=Turn.ORIGIN_API,
+        idempotency_key=f"task-{task.pk}-{kind}-{action.pk}",
+        prompt=_with_reply(brief, comment, action.by, label=label),
+        origin_ref={"task_title": task.title, "task": task.ext_id,
+                    "trigger": TASK_TRIGGERS[kind]},
+        initiator=_dispatch_initiator(task, action),
+        parent=_dispatch_parent(task),
+    )
+    if turn.raised_from_task_id is None:
+        turn.raised_from_task = task
+        turn.save(update_fields=["raised_from_task"])
+    return turn, created

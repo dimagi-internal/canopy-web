@@ -47,13 +47,49 @@ def test_create_list_filter_act(c):
     r = client.post("/api/agents/eva/tasks/T2/actions", {"action": "approve"},
                     content_type="application/json")
     assert r.status_code == 200 and r.json()["task"]["status"] == "in_progress"
+    # Approve started the work: one turn, and nothing left in the agent's queue.
+    assert len(r.json()["turn_ids"]) == 1 and r.json()["action"]["status"] == "applied"
     assert client.post("/api/agents/eva/tasks/T2/actions", {"action": "decline"},
                        content_type="application/json").status_code == 409
+    assert client.get("/api/agents/eva/actions/?status=pending").json() == []
+    # A viewer's note is what still waits in the queue for the agent to drain.
+    viewer, _v = _viewer(agent)
+    r = viewer.post("/api/agents/eva/tasks/T1/actions", {"action": "reply", "comment": "fyi"},
+                    content_type="application/json")
+    assert r.status_code == 200 and r.json()["turn_ids"] == []
     queue = client.get("/api/agents/eva/actions/?status=pending").json()
-    assert [a["task_ext_id"] for a in queue] == ["T2"]
+    assert [a["task_ext_id"] for a in queue] == ["T1"]
     r = client.post(f"/api/agents/eva/actions/{queue[0]['id']}/applied", {},
                     content_type="application/json")
     assert r.json()["status"] == "applied"
+
+
+def test_editor_reply_and_nudge_start_turns(c):
+    client, agent, _u = c
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="w", status="in_progress")
+    r = client.post("/api/agents/eva/tasks/T1/actions", {"action": "reply", "comment": "also X"},
+                    content_type="application/json")
+    assert r.status_code == 200 and len(r.json()["turn_ids"]) == 1
+    r = client.post("/api/agents/eva/tasks/T1/actions", {"action": "nudge"},
+                    content_type="application/json")
+    assert r.status_code == 200 and len(r.json()["turn_ids"]) == 1
+    assert r.json()["task"]["status"] == "in_progress"
+
+
+def test_nudge_on_a_suggested_task_is_409(c):
+    client, agent, _u = c
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="w")
+    r = client.post("/api/agents/eva/tasks/T1/actions", {"action": "nudge"},
+                    content_type="application/json")
+    assert r.status_code == 409, r.content
+
+
+def test_dispatch_action_is_gone(c):
+    client, agent, _u = c
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="w", status="in_progress")
+    r = client.post("/api/agents/eva/tasks/T1/actions", {"action": "dispatch"},
+                    content_type="application/json")
+    assert r.status_code == 422
 
 
 def test_empty_reply_is_422(c):
@@ -128,12 +164,12 @@ def test_create_unknown_waiting_on_is_422(c):
     assert AgentTask.objects.count() == 0
 
 
-def test_viewer_may_approve_but_not_dispatch_done_create_or_patch(c):
+def test_viewer_may_approve_but_not_nudge_done_create_or_patch(c):
     _client, agent, _u = c
     AgentTask.objects.create(agent=agent, ext_id="T1", title="q", ask_kind="review")
-    AgentTask.objects.create(agent=agent, ext_id="T2", title="w")
+    AgentTask.objects.create(agent=agent, ext_id="T2", title="w", status="in_progress")
     viewer, _v = _viewer(agent)
-    for action in ("dispatch", "done"):
+    for action in ("nudge", "done"):
         r = viewer.post("/api/agents/eva/tasks/T2/actions", {"action": action},
                         content_type="application/json")
         assert r.status_code == 403, action
@@ -435,3 +471,21 @@ def test_actions_list_is_capped_and_puts_pending_first(c):
     assert ids("") == [old_pending.id] + [a.id for a in reversed(applied)]
     assert ids("?status=applied&limit=1") == [applied[-1].id]
     assert len(ids("?limit=0")) == 1  # clamped, not a 500
+
+
+def test_the_agent_replying_on_its_own_card_does_not_wake_itself(c):
+    """An agent's own login is an editor of its workspace, but its note on its own
+    task must not enqueue a turn of itself — a turn that replies again would loop."""
+    _client, agent, _u = c
+    bot = User.objects.create_user("eva-bot", "eva@dimagi-ai.com", "pw")
+    WorkspaceMembership.objects.create(user=bot, workspace=agent.workspace,
+                                       role=WorkspaceMembership.EDITOR)
+    agent.user = bot
+    agent.save(update_fields=["user"])
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="w", status="in_progress")
+    as_agent = Client()
+    as_agent.force_login(bot)
+    r = as_agent.post("/api/agents/eva/tasks/T1/actions", {"action": "reply", "comment": "noted"},
+                      content_type="application/json")
+    assert r.status_code == 200 and r.json()["turn_ids"] == []
+    assert r.json()["action"]["status"] == "pending"

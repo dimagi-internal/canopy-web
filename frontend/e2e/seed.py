@@ -58,7 +58,7 @@ t(ext_id="t4", title="Ideas backlog upkeep", next_action="Append new ideas",
   status="in_progress", owner="Matt", assigned="Echo", position=3, project=p1)
 t(ext_id="t5", title="Agent workspace shipped", next_action="", status="done",
   owner="Jonathan", assigned="Echo", position=4)
-AgentTaskAction.objects.create(agent=a, task=a.tasks.get(ext_id="t4"), action="dispatch",
+AgentTaskAction.objects.create(agent=a, task=a.tasks.get(ext_id="t4"), action="nudge",
                                status="pending", by="jonathan@dimagi.com")
 # An applied action carries the outcome Echo recorded — surfaced on the card's
 # "last:" line and in the activity stream.

@@ -870,8 +870,8 @@ class AgentTaskAction(models.Model):
     while `pending`, the agent's to-do: it drains pending rows on its next turn
     and marks each applied."""
 
-    APPROVE, DECLINE, REPLY, DISPATCH, DONE = "approve", "decline", "reply", "dispatch", "done"
-    ACTION_CHOICES = [(a, a) for a in (APPROVE, DECLINE, REPLY, DISPATCH, DONE)]
+    APPROVE, DECLINE, REPLY, NUDGE, DONE = "approve", "decline", "reply", "nudge", "done"
+    ACTION_CHOICES = [(a, a) for a in (APPROVE, DECLINE, REPLY, NUDGE, DONE)]
     PENDING, APPLIED = "pending", "applied"
     STATUS_CHOICES = [(PENDING, "Pending"), (APPLIED, "Applied")]
 

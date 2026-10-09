@@ -797,9 +797,9 @@ class AgentTaskPatch(StrictModel):
 
 # ---- actions: everything a person does TO a task ----
 class AgentTaskActionIn(StrictModel):
-    #: approve · decline · reply (a reply needs a comment) · dispatch · done.
+    #: approve · decline · reply (a reply needs a comment) · nudge · done.
     #: Field changes are a PATCH, not an action.
-    action: Literal["approve", "decline", "reply", "dispatch", "done"]
+    action: Literal["approve", "decline", "reply", "nudge", "done"]
     comment: str = ""
 
 

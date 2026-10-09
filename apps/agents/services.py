@@ -732,14 +732,23 @@ def list_tasks(agent: Agent) -> list[AgentTask]:
 
 # ---- actions: everything a person does TO a task ------------------------
 #
-# Five of them — approve, decline, reply, dispatch, done — through one function.
+# Five of them — approve, decline, reply, nudge, done — through one function.
 # Each is recorded as an `AgentTaskAction` row, which is both the task's history
 # ("who approved this and why" is the closing row) and, while `pending`, the
 # agent's to-do: it drains pending rows on its next turn and marks each applied.
+#
+# An action that hands the agent work STARTS a turn rather than leaving a row
+# for whenever the agent next runs (Jonathan, 2026-10-08): approve always does,
+# nudge always does, a reply does when an editor writes it. The task's own
+# `on_approve` specs run when it has them; otherwise canopy-web writes the one
+# turn from the card (`apps.harness.dispatch.enqueue_task_turn`). A row whose
+# turn was enqueued is `applied` — the turn IS the follow-up.
 
 
 class ClosedAskError(Exception):
-    """The ask is already closed — acting on it again would dispatch twice."""
+    """The task is not in a state this action applies to — the ask is already
+    closed, the task is finished, or (nudge) it is not in progress. Acting
+    anyway would dispatch twice or start unapproved work."""
 
 
 #: action -> (closes the ask?, new status or None, needs agent follow-up?)
@@ -747,15 +756,22 @@ _EFFECT = {
     AgentTaskAction.APPROVE: (True, AgentTask.IN_PROGRESS, True),
     AgentTaskAction.DECLINE: (True, AgentTask.DECLINED, False),
     AgentTaskAction.REPLY: (None, None, True),  # closes only a question
-    AgentTaskAction.DISPATCH: (False, None, True),
+    AgentTaskAction.NUDGE: (False, None, True),
     AgentTaskAction.DONE: (True, AgentTask.DONE, False),
 }
 
 
 @transaction.atomic
 def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=None,
-        actor_workspace_ids: set) -> tuple[AgentTask, AgentTaskAction, list[Turn]]:
+        actor_workspace_ids: set, may_start_turns: bool = False,
+        ) -> tuple[AgentTask, AgentTaskAction, list[Turn]]:
     """Do one of the five actions to `task`; returns (task, action row, turns).
+
+    `may_start_turns` is whether the actor holds the tier that may start an
+    agent turn (editor — the QuickTurn gate). It decides only whether a REPLY
+    wakes the agent: an approve is the decision a viewer exists to make, and it
+    starts the work whoever makes it (as `on_approve` always has); a nudge is
+    editor-gated at the route.
 
     Atomic, and that is the whole ballgame: `dispatch()` raises on a bad
     `on_approve` spec, and committing the action first would leave the ask
@@ -767,7 +783,7 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     stale copies and dispatch the work twice; locked, the second one waits,
     then sees the ask closed and gets `ClosedAskError`.
     """
-    from apps.harness.dispatch import dispatch
+    from apps.harness.dispatch import dispatch, enqueue_task_turn
 
     if action not in _EFFECT:
         raise ValueError(f"action must be one of {'|'.join(_EFFECT)}, got {action!r}")
@@ -784,10 +800,22 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
         # is live — approving a finished one would quietly re-open it.
         if not task.ask_kind and task.status not in LIVE_STATUSES:
             raise ClosedAskError(f"{task.agent.slug}/{task.ext_id} is already {task.status}")
+        # ...and approvable only once: approving starts a turn, so approving a
+        # plain task that is already in progress would be a nudge any viewer
+        # could send. Nudge is the action for that, and it is an editor's.
+        if (action == AgentTaskAction.APPROVE and not task.ask_kind
+                and task.status == AgentTask.IN_PROGRESS):
+            raise ClosedAskError(
+                f"{task.agent.slug}/{task.ext_id} is already in progress — nudge it instead")
+    if action == AgentTaskAction.NUDGE and task.status != AgentTask.IN_PROGRESS:
+        # A suggested task is started by approving it; nudging it would start
+        # work nobody approved. A finished one has nothing to nudge.
+        raise ClosedAskError(
+            f"{task.agent.slug}/{task.ext_id} is {task.status}, not in progress — nothing to nudge")
 
     closes, status, follow_up = _EFFECT[action]
     if action == AgentTaskAction.REPLY:
-        # A reply on a question IS the answer; on anything else it is a comment.
+        # A reply on a question IS the answer; on anything else it is a note.
         closes = task.ask_kind == AgentTask.ASK_QUESTION and task.ask_is_open
 
     row = AgentTaskAction(
@@ -795,23 +823,36 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
         by_user=by_user if getattr(by_user, "is_authenticated", False) else None,
     )
     turns: list[Turn] = []
-    runs = action == AgentTaskAction.APPROVE or (action == AgentTaskAction.REPLY and closes)
-    if runs and task.on_approve:
+    # Answering a question keeps its old behaviour: it runs `on_approve` when the
+    # card has one, and is otherwise the agent's pending answer to drain.
+    runs_on_approve = action == AgentTaskAction.APPROVE or (action == AgentTaskAction.REPLY and closes)
+    if runs_on_approve and task.on_approve:
         turns = dispatch(task, action=row, actor_workspace_ids=actor_workspace_ids)
         task.dispatched_at = timezone.now()
         follow_up = False  # the dispatched turn IS the follow-up
+    elif (action in (AgentTaskAction.APPROVE, AgentTaskAction.NUDGE)
+          or (action == AgentTaskAction.REPLY and not closes and may_start_turns)):
+        # No spec of its own: the card's own turn. The row is saved first because
+        # its pk keys the turn (one enqueue per click; a replay is the same turn).
+        row.status = AgentTaskAction.APPLIED
+        row.applied_at = timezone.now()
+        row.save()
+        turn, _created = enqueue_task_turn(task, action=row)
+        turns = [turn]
+        task.dispatched_at = timezone.now()
+        follow_up = False
     if closes and task.ask_is_open:
         task.ask_closed_at = timezone.now()
         # Answered: nobody is waiting on a person any more.
         task.waiting_on_user = None
     if status:
         task.status = status
-    elif runs and turns:
+    elif runs_on_approve and turns:
         task.status = AgentTask.IN_PROGRESS  # the agent has the ball now
     task.save()
 
     row.status = AgentTaskAction.PENDING if follow_up else AgentTaskAction.APPLIED
-    row.applied_at = None if follow_up else timezone.now()
+    row.applied_at = None if follow_up else (row.applied_at or timezone.now())
     row.save()
     return task, row, turns
 
