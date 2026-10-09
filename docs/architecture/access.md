@@ -298,19 +298,31 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   of the agent may call it but sees only turns the turn ACL already shows them.
   No other agent, and no plain member, can read them. A fact's `source_turn` is
   a link, readable only by whoever can already read the turn.
-* **The person's own switch decides whether agents get anything at all.**
-  `Person.hcp_enabled` ("Let agents remember things about me" at the top of
-  `/people/me/`, `PUT /api/people/me/agent-memory/`), OFF by default; on for
-  Jonathan from 2026-10-09 (migration `contacts/0017`). Off: every HCP operation
-  by an agent or a caller token is `scope-denied` before any grant is presumed
-  (`hcp_api._principal`), the legacy `POST /api/people/{id}/facts/` refuses an
-  agent's login, and the envelope's `person` block is `"hcp": "off"` with no facts,
-  no grant and no recall. Nothing is deleted, and the person's own access (page,
-  export, audit) is unchanged. Only the person flips it — never an agent's login,
-  a caller token, a system account or an admin — and it is off MCP. Each flip is an
-  `agentAccess.enabled` / `agentAccess.disabled` event on their HCP audit log
-  (canopy's own types, beyond the spec's required set). Coverage counts only
-  people who have it on.
+* **The person's own two switches decide what agents get.** Both OFF by
+  default; on for Jonathan from 2026-10-09 (migration `contacts/0017`); any
+  combination is valid. Set at the top of `/people/me/` or with
+  `PUT /api/people/me/agent-memory/` (`{record?, use?}`).
+  * `Person.hcp_record`, "Agents may learn about me", gates WRITES: HCP
+    add/create/update/delete, the legacy `POST /api/people/{id}/facts/` by an
+    agent's login, and the envelope's `record` hint.
+  * `Person.hcp_use`, "Agents may use what they've learned", gates READS: HCP
+    search/get, and the facts and `recall` in the envelope's `person` block.
+  * A refused operation is `scope-denied` before any grant is presumed
+    (`hcp_api._principal(need=)`). With neither switch on, the block has
+    `grant: null`.
+  * The block always carries `hcp: {record, use}`. An envelope read is logged
+    only when `use` is on.
+  * Record-only builds a model of the person that no agent sees yet. Without
+    `use` an agent cannot search before adding, so duplicates and contradictions
+    are left to HCP's conflict quarantine.
+  * Nothing is deleted when a switch goes off. The person's own access (page,
+    export, audit) never changes.
+  * Only the person flips them, never an agent's login, a caller token, a system
+    account or an admin, and the route is off MCP.
+  * Each flip is its own audit event: `agentRecord.enabled|disabled` and
+    `agentUse.enabled|disabled`. These are canopy's own types, beyond the spec's
+    required set.
+  * Coverage counts only people with `record` on.
 * **The subject sees everything.** `GET /api/people/me/` (the page
   `/people/me/`): every live fact in every workspace, and the last
   50 reads. Every read — the envelope's and the API's — is a `PersonAccess` row.
