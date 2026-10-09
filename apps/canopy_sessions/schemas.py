@@ -138,6 +138,10 @@ class MessageOut(Schema):
     content: dict
     author: dict | None = None
     created_at: dt.datetime
+    #: MCP Apps (spec 2026-10-08 §3): set on a tool_result whose call has a View
+    #: — `{tool_call_id, site, tool, resource_uri, path}`. Decided server-side;
+    #: a client never guesses which tools have Views.
+    app: dict | None = None
 
 
 class MessagePageOut(Schema):

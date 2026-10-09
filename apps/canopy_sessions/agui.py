@@ -325,6 +325,8 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                     turn_index=data.get("turn_index"),
                     parent_message_id=data.get("parent_message_id"),
                     block=block,
+                    # MCP Apps (spec 2026-10-08 §3): this result has a View.
+                    app=data.get("app"),
                 ),
             )
         ]

@@ -120,14 +120,43 @@ def session_destination(session):
     return installation, channel, str(meta.get("slack_thread_ts") or "")
 
 
-def _message_for(row) -> str:
+def _message_for(row, turn=None) -> str:
     payload = row.payload or {}
     if row.kind == "assistant":
         return str(payload.get("text") or "").strip()
+    if row.kind in ("tool_result", "tool_end"):
+        return _app_view_line(row, turn)
     if row.kind == "status" and payload.get("status") == "failed":
         note = str(payload.get("result_note") or "").strip()
         return "⚠️ This turn failed" + (f": {note}" if note else ".")
     return ""
+
+
+#: Most of a View-bearing result's text a thread gets before the link.
+APP_VIEW_EXCERPT = 600
+
+
+def _app_view_line(row, turn=None) -> str:
+    """A tool result with an MCP Apps View, as Slack can carry it: the result's
+    own text (a host MUST make it meaningful without the UI) and a link to the
+    session in canopy, where the View renders. Never a button — Slack cannot
+    present the viewer's own grant, so the click that acts happens in canopy
+    (spec 2026-10-08 §9). Every other tool result stays out of the thread."""
+    from apps.tokens import mcp_apps_views
+
+    from .services import session_url
+
+    turn = turn or getattr(row, "turn", None)
+    session = getattr(turn, "chat_session", None) if turn is not None else None
+    payload = row.payload or {}
+    if session is None or not mcp_apps_views.app_for_result_block(session, payload):
+        return ""
+    body = payload.get("content")
+    blocks = body if isinstance(body, list) else [{"text": body}] if isinstance(body, str) else []
+    text = " ".join(str(b.get("text") or "") for b in blocks if isinstance(b, dict)).strip()
+    if len(text) > APP_VIEW_EXCERPT:
+        text = text[: APP_VIEW_EXCERPT - 1] + "…"
+    return (f"{text}\n" if text else "") + f"Open it to act: {session_url(session)}"
 
 
 def relay(turn, rows) -> int:
@@ -140,7 +169,7 @@ def relay(turn, rows) -> int:
     installation, channel, thread_ts = dest
     posted = 0
     for row in rows:
-        text = _message_for(row)
+        text = _message_for(row, turn)
         if not text:
             continue
         try:

@@ -27,3 +27,7 @@ PASSWORD_HASHERS = [
 # Default tests to unauthenticated access so existing suites keep passing.
 # Auth-specific tests override this per-test via settings().
 REQUIRE_AUTH = False
+
+# MCP Apps: no background index refresh threads in tests (a thread outlives the
+# test's transaction); tests that want it call `mcp_apps_views._refresh` directly.
+MCP_APPS_BACKGROUND_REFRESH = False

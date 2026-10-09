@@ -445,6 +445,63 @@ async def call_tool(ctx: SiteContext, tool: str, arguments: dict) -> dict:
             "content": content, "structured": result.structured_content}
 
 
+# --- MCP Apps: a View's own calls, as the VIEWER ---------------------------------
+#
+# These serve the browser routes behind a rendered View (spec 2026-10-08 §4-5,
+# `apps/tokens/mcp_apps_views.py`), never the agent. `ctx` comes from
+# `mcp_apps_views.resolve_for_viewer`: the grant of whoever CLICKED, not the
+# turn's initiator. Results are returned whole (`content`, `structuredContent`,
+# `isError`) because the View, unlike the agent, renders `structuredContent`.
+
+
+def _unreachable(ctx: SiteContext, exc: Exception) -> GatewayRefusal:
+    return GatewayRefusal("host_unreachable", f"{ctx.site} did not answer ({type(exc).__name__})")
+
+
+async def view_call(ctx: SiteContext, name: str, arguments: dict, *, check) -> dict:
+    """List as the viewer, let `check(tool_or_None)` refuse (it raises a
+    GatewayRefusal), then call — one MCP session, so the visibility decided is
+    the visibility of the server the call goes to (§Visibility gate 3-4)."""
+    await _check_target(ctx)
+    try:
+        async with _client(ctx) as client:
+            tools = await _listing(ctx, client)
+            check(next((t for t in tools if t.name == name), None))
+            result = await client.call_tool(name, arguments or {}, raise_on_error=False)
+    except GatewayRefusal:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the type only; never the token
+        raise _unreachable(ctx, exc) from None
+    out = {"content": [b.model_dump(mode="json", by_alias=True, exclude_none=True)
+                       for b in result.content or []],
+           "isError": bool(result.is_error)}
+    if result.structured_content is not None:
+        out["structuredContent"] = result.structured_content
+    return out
+
+
+async def view_read(ctx: SiteContext, uri: str) -> list[dict]:
+    """`resources/read` as the viewer: each content as `{uri, mimeType, text|blob, _meta}`."""
+    await _check_target(ctx)
+    try:
+        async with _client(ctx) as client:
+            contents = await client.read_resource(uri)
+    except Exception as exc:  # noqa: BLE001
+        raise _unreachable(ctx, exc) from None
+    return [c.model_dump(mode="json", by_alias=True, exclude_none=True) for c in contents or []]
+
+
+async def view_list(ctx: SiteContext) -> list[tuple[str, dict]]:
+    """`tools/list` as `ctx`'s grant, folded into the index — `(name, _meta)`."""
+    await _check_target(ctx)
+    try:
+        async with _client(ctx) as client:
+            tools = await _listing(ctx, client)
+    except Exception as exc:  # noqa: BLE001
+        raise _unreachable(ctx, exc) from None
+    return [(t.name, getattr(t, "meta", None) or {}) for t in tools]
+
+
 # --- the live probe's view of a call -------------------------------------------
 
 

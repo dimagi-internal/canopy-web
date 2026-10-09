@@ -292,6 +292,11 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
                                    detail=type(exc).__name__)
         return False
     host_grants.record_outcome(app, ok=True, subject=subject, scope=grant.scope)
+    # MCP Apps: list the site's tools as this visitor in the background, so a
+    # result from the agent's own login (path D) finds its View.
+    from . import mcp_apps_views
+
+    mcp_apps_views.refresh_index_soon(app, grant)
     return True
 
 
@@ -587,7 +592,11 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
     rows, has_more = session_services.messages_before(
         session, before=before, limit=clamp_limit(limit)
     )
-    # A contact only ever talks through a widget, which never shows tool calls.
+    # A contact only ever talks through a widget, which never shows tool calls
+    # (except a tool result that carries an app View — `for_widget`).
+    from . import mcp_apps_views
+
+    mcp_apps_views.annotate(session, rows)
     rows = session_services.for_widget(rows)
     return {"messages": [MessageOut.from_orm(m) for m in rows], "has_more_before": has_more}
 
@@ -751,3 +760,93 @@ def my_turn_transcript(request: HttpRequest, turn_id: str):
 
     return StreamingHttpResponse(harness_services.iter_transcript(_turn_or_404(request, turn_id)),
                                  content_type="application/x-ndjson")
+
+
+# --- MCP Apps: the View a contact is looking at (spec 2026-10-08 §5) -------------
+#
+# The same five routes a canopy user's chat has (`canopy_sessions/app_views_api.py`),
+# for a contact in their OWN session. `/api/contact/` is excluded from MCP whole.
+
+
+from apps.canopy_sessions.app_views_api import (  # noqa: E402
+    AppCallIn, AppContextIn, AppMessageIn, AppReadIn,
+)
+
+
+def _app_viewer(request):
+    from . import mcp_apps_views
+
+    return mcp_apps_views.Viewer(contact=request.contact)
+
+
+def _app_run(fn, *args):
+    from . import mcp_apps_views
+
+    try:
+        return fn(*args)
+    except mcp_apps_views.ViewRefusal as exc:
+        raise HttpError(exc.status, f"{exc.code}: {exc.message}") from None
+
+
+@contact_router.get("/sessions/{session_id}/apps/{tool_call_id}/resource", response=dict,
+                    summary="Load an app view, as you")
+def contact_app_view_resource(request: HttpRequest, session_id: str, tool_call_id: str):
+    from . import mcp_apps_views
+
+    return _app_run(mcp_apps_views.resource, _session_or_404(request, session_id),
+                    _app_viewer(request), tool_call_id)
+
+
+@contact_router.post("/sessions/{session_id}/apps/{tool_call_id}/call", response=dict,
+                     summary="An app view's tools/call, as you")
+def contact_app_view_call(request: HttpRequest, session_id: str, tool_call_id: str,
+                          payload: AppCallIn):
+    from . import mcp_apps_views
+
+    return _app_run(mcp_apps_views.call, _session_or_404(request, session_id),
+                    _app_viewer(request), tool_call_id, payload.name, payload.arguments or {})
+
+
+@contact_router.post("/sessions/{session_id}/apps/{tool_call_id}/read", response=dict,
+                     summary="An app view's resources/read, as you")
+def contact_app_view_read(request: HttpRequest, session_id: str, tool_call_id: str,
+                          payload: AppReadIn):
+    from . import mcp_apps_views
+
+    return _app_run(mcp_apps_views.read, _session_or_404(request, session_id),
+                    _app_viewer(request), tool_call_id, payload.uri)
+
+
+@contact_router.put("/sessions/{session_id}/apps/{tool_call_id}/context", response=dict,
+                    summary="An app view's ui/update-model-context")
+def contact_app_view_context(request: HttpRequest, session_id: str, tool_call_id: str,
+                             payload: AppContextIn):
+    from . import mcp_apps_views
+
+    _app_run(mcp_apps_views.update_context, _session_or_404(request, session_id),
+             _app_viewer(request), tool_call_id, payload.dict(exclude_none=True))
+    return {}
+
+
+@contact_router.post("/sessions/{session_id}/apps/{tool_call_id}/message", response=dict,
+                     summary="An app view's ui/message: a message from you, which starts a turn")
+def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id: str,
+                             payload: AppMessageIn):
+    from apps.canopy_sessions import services as session_services
+
+    from . import mcp_apps_views
+
+    session = _session_or_404(request, session_id)
+    text = payload.text
+    ref = _app_run(mcp_apps_views.check_message, session, _app_viewer(request), tool_call_id, text)
+    session_services.add_runner_requirements(session, getattr(request, "runner_requirements", ()))
+    try:
+        message, turn = session_services.send_message(
+            session=session, text=text, user=request.user,
+            client_id=(payload.client_id or "")[:100],
+            initiator=who.for_request(request, via=f"app_view:{ref['site']}"),
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from None
+    session_services.maybe_execute_inline(turn)
+    return {"turn_id": str(turn.id) if turn else None, "message_id": str(message.id)}

@@ -136,6 +136,14 @@ EXCLUDED: dict[str, str] = {
     "subscribe": _BROWSER,
     "unsubscribe": _BROWSER,
     "attachment_content": _BYTES,
+    # MCP Apps (spec 2026-10-08 §5): a rendered View's plumbing. NOT noise here —
+    # a security line: as tools, the agent could call app-only tools as its own
+    # user, exactly what `visibility: ["app"]` forbids. The routes also refuse a PAT.
+    "app_view_resource": _BROWSER,
+    "app_view_call": _BROWSER,
+    "app_view_read": _BROWSER,
+    "app_view_context": _BROWSER,
+    "app_view_message": _BROWSER,
     # Deprecated.
     "set_runner_preference": "deprecated; superseded by replace_agent_runners",
 }
