@@ -261,8 +261,8 @@ Firing is automatic: on each poll tick the runner syncs its schedules, evaluates
 
 What agents know about a person, per workspace. Rules in `docs/architecture/access.md` → "What agents know about a person".
 
-- `GET /api/people/me/` — everything held about the caller: live facts in every workspace, last 50 reads (`PersonAccess`). Any signed-in user, only their own
-- `GET /api/people/lookup/?email=…[&workspace=…]` — `{id, display_name, email}`, 404 unless a workspace the caller is in deals with that person. Creates nothing
+- `GET /api/people/me/` — everything held about the caller: their two agent-memory switches (`agent_memory: {record, use, …_changed_at}`), live facts in every workspace, last 50 reads (`PersonAccess`). Any signed-in user, only their own
+- `PUT /api/people/me/agent-memory/` (`{record?, use?}`) — the person's own switches, each independent: `record` lets agents write (learn about them), `use` lets agents read (be told it). Off deletes nothing. The person only — 403 for an agent's login, a caller token or a system account; not an MCP tool. Each flip audited (`agentRecord.*`, `agentUse.*`)
 - `GET /api/people/{id}/?workspace=<slug>` — the person, that workspace's live facts (corrections first). Members; logged. 403 for an agent's login (agents recall through HCP)
 - `POST /api/people/{id}/facts/` — `{workspace, kind, statement, basis, source_turn_id?, project_id?, instance_ref?, supersedes_id?}` → 201. Unknown kind → 400. Asserted by the agent when the caller is an agent's login
 - `POST /api/people/{id}/facts/{fid}/retract/` — the person, the asserter, or a workspace admin; else 404

@@ -1,7 +1,31 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { getMyPerson, listMyAudit, listMyGrants, retractFact, revokeMyGrant } from '../api/people'
+import {
+  getMyPerson,
+  listMyAudit,
+  listMyGrants,
+  retractFact,
+  revokeMyGrant,
+  setMyAgentMemory,
+} from '../api/people'
 import type { HcpAuditEvent, HcpGrant, PersonFactDetail, PersonMe } from '../api/people'
+
+/** The person's two agent-memory switches (`Person.hcp_record` / `hcp_use`), each
+ *  independent; one plain line for each state. */
+const MEMORY_SWITCHES = [
+  {
+    key: 'record' as const,
+    label: 'Agents may learn about me',
+    on: 'On: agents you talk to record what they learn about your work.',
+    off: 'Off: no agent records anything new about you.',
+  },
+  {
+    key: 'use' as const,
+    label: "Agents may use what they've learned",
+    on: 'On: agents you talk to are told what is relevant about you.',
+    off: 'Off: no agent is told anything about you. Nothing below is deleted.',
+  },
+]
 
 /** "What agents know about me" — every live fact canopy holds about you, by
  *  workspace; which clients (an agent, over a channel, on a host) may read it,
@@ -15,6 +39,7 @@ export function PeopleMePage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const [busyGrant, setBusyGrant] = useState<string | null>(null)
+  const [busyMemory, setBusyMemory] = useState<'record' | 'use' | null>(null)
 
   const load = useCallback(() => {
     getMyPerson()
@@ -57,6 +82,25 @@ export function PeopleMePage() {
 
   useEffect(load, [load])
 
+  const onToggleMemory = async (which: 'record' | 'use') => {
+    if (!me) return
+    const next = !me.agent_memory[which]
+    const offWarning =
+      which === 'record'
+        ? 'Stop agents learning about you? They will stop recording what they learn. Nothing already recorded is deleted.'
+        : 'Stop agents using what they have learned? They will no longer be told anything about you. Nothing is deleted.'
+    if (!next && !confirm(offWarning)) return
+    setBusyMemory(which)
+    try {
+      await setMyAgentMemory({ [which]: next })
+      load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusyMemory(null)
+    }
+  }
+
   const onRetract = async (fact: PersonFactDetail) => {
     if (!me) return
     if (!confirm(`Retract "${fact.statement}"? Agents will stop being told it.`)) return
@@ -91,6 +135,38 @@ export function PeopleMePage() {
           are not told it until you correct or retract it.
         </p>
       </div>
+
+      <section aria-label="Agent memory" className="divide-y divide-border rounded-lg border border-border">
+        {MEMORY_SWITCHES.map((sw) => {
+          const on = me.agent_memory[sw.key]
+          return (
+            <div
+              key={sw.key}
+              className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-foreground">{sw.label}</div>
+                <p className="mt-0.5 text-sm text-muted-foreground">{on ? sw.on : sw.off}</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={on}
+                aria-label={sw.label}
+                onClick={() => onToggleMemory(sw.key)}
+                disabled={busyMemory !== null}
+                className={`shrink-0 rounded-md px-3 py-1.5 text-sm font-medium disabled:opacity-50 ${
+                  on
+                    ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                    : 'border border-border text-foreground hover:bg-muted'
+                }`}
+              >
+                {busyMemory === sw.key ? 'Saving…' : on ? 'On' : 'Off'}
+              </button>
+            </div>
+          )
+        })}
+      </section>
 
       {workspaces.length === 0 && (
         <p className="text-muted-foreground">Nothing yet — no agent has recorded anything about you.</p>

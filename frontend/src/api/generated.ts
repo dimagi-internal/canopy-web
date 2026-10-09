@@ -6840,6 +6840,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/me/agent-memory/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Turn your agent-memory switches on or off
+         * @description Your own two switches, each independent. `record` (agents may learn about
+         *     me): agents record what they learn. `use` (agents may use what they've
+         *     learned): agents are told what is relevant about you. Off deletes nothing:
+         *     what is held stays, yours to see, export and retract. Only you can flip
+         *     them — never an agent, an admin, or a session acting for you.
+         */
+        readonly put: operations["set_my_agent_memory"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/people/coverage/": {
         readonly parameters: {
             readonly query?: never;
@@ -17212,6 +17236,27 @@ export interface components {
             readonly blocked_reason?: string | null;
         };
         /**
+         * AgentMemoryOut
+         * @description Your two agent-memory switches; any combination is valid, and turning one
+         *     off deletes nothing.
+         */
+        readonly AgentMemoryOut: {
+            /**
+             * Record
+             * @description Agents may learn about me (write).
+             */
+            readonly record: boolean;
+            /**
+             * Use
+             * @description Agents may use what they've learned (read).
+             */
+            readonly use: boolean;
+            /** Record Changed At */
+            readonly record_changed_at?: string | null;
+            /** Use Changed At */
+            readonly use_changed_at?: string | null;
+        };
+        /**
          * PersonAccessOut
          * @description One read of what canopy knows about you.
          */
@@ -17314,6 +17359,7 @@ export interface components {
              * @default
              */
             readonly email: string;
+            readonly agent_memory: components["schemas"]["AgentMemoryOut"];
             /** Facts */
             readonly facts?: readonly components["schemas"]["PersonFactDetailOut"][];
             /** Accesses */
@@ -17334,6 +17380,19 @@ export interface components {
              * @default
              */
             readonly ext_id: string;
+        };
+        /** AgentMemoryIn */
+        readonly AgentMemoryIn: {
+            /**
+             * Record
+             * @description Agents may learn about me: true lets agents record what they learn about you, false stops them. Omit to leave it unchanged.
+             */
+            readonly record?: boolean | null;
+            /**
+             * Use
+             * @description Agents may use what they've learned: true lets agents be told what has been learned about you, false stops them. Omit to leave it unchanged.
+             */
+            readonly use?: boolean | null;
         };
         /**
          * AgentCoverageOut
@@ -27048,6 +27107,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PersonMeOut"];
+                };
+            };
+        };
+    };
+    readonly set_my_agent_memory: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentMemoryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentMemoryOut"];
                 };
             };
         };

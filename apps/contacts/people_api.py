@@ -30,6 +30,8 @@ from . import hcp, people
 from . import services as contact_services
 from .models import Person, PersonAccess, PersonFact
 from .people_schemas import (
+    AgentMemoryIn,
+    AgentMemoryOut,
     PeopleCoverageOut,
     PersonConversationsOut,
     PersonFactCreatedOut,
@@ -109,7 +111,34 @@ def people_me(request: HttpRequest) -> dict:
         for a in PersonAccess.objects.filter(person=person)
         .select_related("reader_agent", "reader_user").order_by("-created_at", "-pk")[:ME_ACCESSES]
     ]
-    return {**_ref(person), "facts": facts, "accesses": accesses}
+    return {**_ref(person), **_memory(person), "facts": facts, "accesses": accesses}
+
+
+def _memory(person: Person) -> dict:
+    return {"agent_memory": {
+        "record": bool(person.hcp_record), "use": bool(person.hcp_use),
+        "record_changed_at": _iso(person.hcp_record_changed_at),
+        "use_changed_at": _iso(person.hcp_use_changed_at)}}
+
+
+@router.put("/me/agent-memory/", response=AgentMemoryOut,
+            summary="Turn your agent-memory switches on or off")
+def set_my_agent_memory(request: HttpRequest, payload: AgentMemoryIn) -> dict:
+    """Your own two switches, each independent. `record` (agents may learn about
+    me): agents record what they learn. `use` (agents may use what they've
+    learned): agents are told what is relevant about you. Off deletes nothing:
+    what is held stays, yours to see, export and retract. Only you can flip
+    them — never an agent, an admin, or a session acting for you."""
+    user = request.user
+    if (people.agent_of_login(user) is not None
+            or getattr(request, "auth_method", "") == "caller_token"
+            or not people.is_human_account(user)):
+        raise ProblemError(403, "Only the person may change this", type_=TYPE_FORBIDDEN)
+    person = contact_services.person_for(user=user)
+    if person is None:
+        raise _not_found()
+    hcp.set_agent_memory(person, actor=hcp.user_actor(user), record=payload.record, use=payload.use)
+    return _memory(person)["agent_memory"]
 
 
 @router.get("/coverage/", response=PeopleCoverageOut,
@@ -233,6 +262,9 @@ def add_person_fact(request: HttpRequest, person_id: int, payload: PersonFactIn)
         project = AgentProject.objects.select_related("agent").filter(pk=payload.project_id).first()
         if project is None or project.agent.workspace_id != ws.pk:
             raise _bad("project_id is not a project in that workspace")
+    if people.agent_of_login(request.user) is not None and not hcp.may_record(person):
+        raise ProblemError(403, "This person has not let agents learn about them",
+                           type_=TYPE_FORBIDDEN, detail=hcp.RECORD_OFF)
     supersedes = None
     if payload.supersedes_id is not None:
         supersedes = PersonFact.objects.filter(pk=payload.supersedes_id).first()

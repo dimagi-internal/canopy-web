@@ -47,3 +47,23 @@ def _no_live_dns(monkeypatch):
     except Exception:  # a suite with no Django (runner/*) has nothing to patch
         return
     monkeypatch.setattr(domain_proof, "_lookup_dmarc", lambda domain: "unknown")
+
+
+@pytest.fixture()
+def agent_memory_on():
+    """Every Person created while this is active starts with BOTH agent-memory
+    switches ON (`Person.hcp_record`, `Person.hcp_use`; the real default is off).
+    For suites that pin what the people brain / HCP do for a person who has
+    turned them on."""
+    from django.db.models.signals import pre_save
+
+    from apps.contacts.models import Person
+
+    def _on(sender, instance, **kwargs):
+        if instance._state.adding:
+            instance.hcp_record = True
+            instance.hcp_use = True
+
+    pre_save.connect(_on, sender=Person, dispatch_uid="test-agent-memory-on")
+    yield
+    pre_save.disconnect(sender=Person, dispatch_uid="test-agent-memory-on")

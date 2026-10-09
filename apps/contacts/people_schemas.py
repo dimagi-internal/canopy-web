@@ -64,12 +64,33 @@ class PersonAccessOut(StrictModel):
     turn_id: str | None = None
 
 
+class AgentMemoryOut(StrictModel):
+    """Your two agent-memory switches; any combination is valid, and turning one
+    off deletes nothing."""
+
+    record: bool = Field(description="Agents may learn about me (write).")
+    use: bool = Field(description="Agents may use what they've learned (read).")
+    record_changed_at: str | None = None
+    use_changed_at: str | None = None
+
+
 class PersonMeOut(PersonRefOut):
     """Everything canopy holds about the caller: live facts in every workspace,
     and the last 50 reads."""
 
+    agent_memory: AgentMemoryOut
     facts: list[PersonFactDetailOut] = Field(default_factory=list)
     accesses: list[PersonAccessOut] = Field(default_factory=list)
+
+
+class AgentMemoryIn(StrictModel):
+    record: bool | None = Field(
+        default=None, description="Agents may learn about me: true lets agents record what they "
+                                  "learn about you, false stops them. Omit to leave it unchanged.")
+    use: bool | None = Field(
+        default=None, description="Agents may use what they've learned: true lets agents be told "
+                                  "what has been learned about you, false stops them. Omit to "
+                                  "leave it unchanged.")
 
 
 class PersonFactIn(StrictModel):

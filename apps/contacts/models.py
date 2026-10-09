@@ -107,6 +107,23 @@ class Person(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="person",
     )
+    #: Agent memory is the PERSON's own, as two independent switches (Jonathan,
+    #: 2026-10-09: "each person should be able to turn it on or off"), both OFF by
+    #: default; any combination is valid.
+    #:
+    #: * `hcp_record` — "Agents may learn about me": agents may WRITE (HCP add /
+    #:   update / delete, the legacy fact write) and are told to record.
+    #: * `hcp_use` — "Agents may use what they've learned": agents may READ (HCP
+    #:   search / get, and the facts served in the envelope's `person` block).
+    #:
+    #: Record-only builds a model of the person that no agent uses yet. The person
+    #: keeps full access to their own entries, export and audit log whatever the
+    #: switches say, and turning either off deletes nothing. Only the person flips
+    #: them (`PUT /api/people/me/agent-memory/`); every flip is on their audit log.
+    hcp_record = models.BooleanField(default=False)
+    hcp_record_changed_at = models.DateTimeField(null=True, blank=True)
+    hcp_use = models.BooleanField(default=False)
+    hcp_use_changed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -732,6 +749,10 @@ class PersonAuditEvent(models.Model):
         "preference.created", "preference.read", "preference.updated", "preference.deleted",
         "preference.hardDeleted", "preference.exported", "grant.issued", "grant.revoked",
         "grant.expired", "conflict.detected", "conflict.resolved", "revocation.notified",
+        # canopy's own, beyond the spec's required set (4.3.1 lists what MUST be
+        # logged, not all that may be): the person turned one of their two
+        # agent-memory switches on / off (`Person.hcp_record`, `Person.hcp_use`).
+        "agentRecord.enabled", "agentRecord.disabled", "agentUse.enabled", "agentUse.disabled",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 
