@@ -186,6 +186,26 @@ def agent_actor(agent) -> Actor:
     return Actor(f"agent:{agent.slug}", PersonAuditEvent.AGENT, agent)
 
 
+#: A model id an agent names for its inference (2.2.2): short, no spaces or slashes.
+_MODEL_ID = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
+
+
+def captured_by_model(actor: Actor, *, inferred: bool, model: str | None) -> str:
+    """`record.provenance.capturedBy` for an agent's write (2.2.2).
+
+    For a model-inferred entry the spec says capturedBy SHOULD name the model
+    that made the inference, down to its version, not just the application: a
+    confidence means nothing without knowing what produced it. So an agent that
+    names its `model` is recorded as `agent:<slug>/model:<model>`. A person's
+    write, a declared entry, or no model leaves the actor's own id."""
+    model = (model or "").strip()
+    if not model or not inferred or actor.is_person:
+        return actor.id
+    if not _MODEL_ID.match(model):
+        raise malformed("model is a model id like claude-opus-5-5 (letters, digits, . _ : -; ≤100)")
+    return f"{actor.id}/model:{model}"
+
+
 def user_actor(user) -> Actor:
     return Actor(f"user:{getattr(user, 'email', '') or user.pk}", PersonAuditEvent.USER)
 
@@ -485,7 +505,7 @@ def _check_confidence(basis: str, confidence: str | None) -> str:
 @transaction.atomic
 def update_entry(fact: PersonFact, *, statement: str, reason: str, actor: Actor,
                  category: str | None = None, dimension: str | None = None,
-                 by_user=None, source_turn=None) -> PersonFact:
+                 by_user=None, source_turn=None, model: str | None = None) -> PersonFact:
     """updatePreference (3.2.3 / 3.3.3): a NEW VERSION of the same entry.
 
     * the person updating an inference ACCEPTS it (2.6.3): it becomes
@@ -509,6 +529,7 @@ def update_entry(fact: PersonFact, *, statement: str, reason: str, actor: Actor,
     basis, confidence = fact.basis, fact.confidence
     if actor.is_person and fact.basis == PersonFact.INFERRED:
         basis, confidence = PersonFact.DECLARED, ""     # the person has now declared it
+    captured = captured_by_model(actor, inferred=basis == PersonFact.INFERRED, model=model)
     try:
         new = people.record_fact(
             person=fact.person, workspace=fact.workspace, kind=fact.kind, statement=statement,
@@ -518,7 +539,7 @@ def update_entry(fact: PersonFact, *, statement: str, reason: str, actor: Actor,
             dimension=new_dimension, confidence=confidence,
             provenance_source=fact.provenance_source, expires_at=fact.expires_at,
             relationship=fact.relationship, metadata=fact.metadata,
-            user_verified=fact.user_verified or actor.is_person, captured_by=actor.id,
+            user_verified=fact.user_verified or actor.is_person, captured_by=captured,
             reason=reason, actor=actor, status=PersonFact.ACTIVE, audit_event="preference.updated",
             audit_detail=(f"category {fact.category} -> {new_category}; " if new_category != fact.category
                           else "") + (reason or ""),
