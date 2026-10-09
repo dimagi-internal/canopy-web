@@ -1,5 +1,9 @@
+# Base images come from ECR Public's mirror of the Docker Official Images, not
+# Docker Hub: the deploy runner pulls anonymously, and on 2026-10-09 Docker Hub
+# failed three deploys in a row (429 rate limit, then 504 on auth.docker.io).
+# Same images, same tags.
 # ─── Stage 1: build the React SPA ────────────────────────────────────
-FROM node:22-slim AS frontend-build
+FROM public.ecr.aws/docker/library/node:22-slim AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 # The npm WORKSPACES must exist before `npm ci`, or it cannot link them and any
@@ -28,7 +32,7 @@ RUN VITE_BASE_PATH="$VITE_BASE_PATH" \
 # Static HTML served at / to signed-out visitors (config/public_site.py). Its own
 # stage and lockfile: it shares nothing with the SPA, which is what lets it move
 # to its own host later.
-FROM node:22-slim AS site-build
+FROM public.ecr.aws/docker/library/node:22-slim AS site-build
 WORKDIR /app/site
 COPY site/package*.json ./
 RUN npm ci
@@ -37,7 +41,7 @@ RUN npm run build
 
 
 # ─── Stage 2: Python runtime ─────────────────────────────────────────
-FROM python:3.12-slim
+FROM public.ecr.aws/docker/library/python:3.12-slim
 
 # No Node or Claude Code CLI here: canopy-web makes no model calls of its own
 # (agents run on runners), and the in-process `claude -p` backend they served
