@@ -74,6 +74,8 @@ class FakeSlack:
         self.rotations = 0
         # email -> Slack user id, for users.lookupByEmail.
         self.lookup: dict[str, str] = {}
+        # Timestamps chat.postMessage hands out, in order, before falling back to one fixed ts.
+        self.ts_seq: list[str] = []
 
     def __call__(self, url, headers=None, json=None, data=None, timeout=None):
         method = url.rsplit("/", 1)[-1]
@@ -88,7 +90,8 @@ class FakeSlack:
         elif method == "agents.sessions.setStatus":
             body = {"ok": True}
         elif method == "chat.postMessage":
-            body = {"ok": True, "ts": "1700000999.000100", "channel": payload.get("channel")}
+            ts = self.ts_seq.pop(0) if self.ts_seq else "1700000999.000100"
+            body = {"ok": True, "ts": ts, "channel": payload.get("channel")}
         elif method == "users.lookupByEmail":
             uid = self.lookup.get(payload.get("email", ""))
             body = {"ok": True, "user": {"id": uid}} if uid else {"ok": False, "error": "users_not_found"}
@@ -2350,3 +2353,81 @@ def test_a_contact_starting_their_own_thread_is_not_forked(slack, installation, 
     mention("hal who owns the budget?", user=BOB)
     mention("hal and the timeline?", user=BOB, ts="1700000060.000100", thread_ts="1700000000.000100")
     assert Session.objects.count() == 1
+
+
+# ---- `@canopy branch <ask>` splits a thread's conversation into a new thread ---------------
+
+def _say(session, role, text, idx):
+    from apps.canopy_sessions.models import Message
+
+    return Message.objects.create(session=session, turn_index=idx, role=role, plaintext=text)
+
+
+def test_branch_starts_a_new_thread_seeded_with_the_conversation(slack, linked, hal, alice):
+    from apps.canopy_sessions.models import Message
+    from apps.slack import branch
+
+    mention("hal build the KMC bot", ts="1700000000.000100")
+    parent = Session.objects.get()
+    _say(parent, Message.ASSISTANT, "Drafted the registry measures.", 10)
+    before = len(slack.said("chat.postMessage"))
+
+    mention("branch try the discharge-criteria version", ts="1700000080.000100",
+            thread_ts="1700000000.000100")
+
+    child = Session.objects.exclude(pk=parent.pk).get()
+    assert child.parent_session_id == parent.pk and child.created_by == alice
+    assert child.metadata[services.SLACK_THREAD_KEY] == f"slack:{TEAM}:C1:{ROOT}"
+    assert child.metadata[branch.BRANCHED_FROM_KEY] == parent.metadata[services.SLACK_THREAD_KEY]
+    turn = Turn.objects.get(chat_session=child)
+    assert "Drafted the registry measures." in turn.prompt
+    assert turn.prompt.rstrip().endswith("try the discharge-criteria version")
+    assert turn.capability == ""                                     # the starter's own branch, full
+    posts = slack.said("chat.postMessage")[before:]
+    root = next(p for p in posts if "thread_ts" not in p)
+    assert "branched a conversation with `hal`" in root["text"]
+    pointer = next(p for p in posts if p.get("thread_ts") == "1700000000.000100")
+    assert "branched this conversation into" in pointer["text"]
+    # The parent got no turn from it.
+    assert Turn.objects.filter(chat_session=parent).count() == 1
+
+
+def test_branching_twice_makes_two_siblings(slack, linked, hal):
+    slack.ts_seq = [f"17000010{i:02d}.000100" for i in range(20)]
+    mention("hal build it", ts="1700000000.000100")
+    mention("branch way one", ts="1700000080.000100", thread_ts="1700000000.000100")
+    mention("branch way two", ts="1700000090.000100", thread_ts="1700000000.000100")
+    parent = Session.objects.get(parent_session__isnull=True)
+    assert Session.objects.filter(parent_session=parent).count() == 2
+
+
+def test_only_the_starter_or_an_agent_admin_may_branch(slack, linked, hal, installation, ws):
+    bob = a_user("bob@dimagi.com")
+    wsvc.ensure_member(ws, bob, WorkspaceMembership.EDITOR)
+    SlackUserLink.objects.create(installation=installation, slack_user_id=BOB, user=bob)
+    mention("hal build it", ts="1700000000.000100")
+    mention("branch my way", user=BOB, ts="1700000080.000100", thread_ts="1700000000.000100")
+    assert Session.objects.count() == 1
+    (note,) = slack.said("chat.postEphemeral")
+    assert "Only the person who started this conversation" in note["text"]
+
+
+def test_branch_outside_a_thread_says_how_it_works(slack, linked, hal):
+    mention("branch something")
+    assert not Turn.objects.exists()
+    assert "works inside a thread" in slack.said("chat.postEphemeral")[-1]["text"]
+
+
+def test_branch_seed_keeps_the_first_ask_and_the_end_when_long(hal, ws):
+    from apps.canopy_sessions import exports
+    from apps.canopy_sessions.models import Message
+
+    s = Session.objects.create(workspace=ws, agent=hal, title="t")
+    _say(s, Message.USER, "THE ORIGINAL ASK", 0)
+    for i in range(1, 60):
+        _say(s, Message.ASSISTANT, f"step {i} " + "x" * 200, i)
+    Message.objects.create(session=s, turn_index=99, role=Message.TOOL_RESULT, plaintext="SECRET OUTPUT")
+    seed, omitted = exports.build_branch_seed(s, max_chars=2000)
+    assert seed.startswith("## You\n\nTHE ORIGINAL ASK") and "step 59" in seed
+    assert omitted > 0 and "left out to fit" in seed and len(seed) < 2300
+    assert "SECRET OUTPUT" not in seed                               # tool output never seeds
