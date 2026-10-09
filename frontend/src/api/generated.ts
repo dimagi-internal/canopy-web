@@ -1074,7 +1074,8 @@ export interface paths {
          * My conversations on this site
          * @description The same host filters a user's list takes, over the contact's OWN
          *     conversations only — a filter narrows, it never widens what `contact_session_q`
-         *     already allows.
+         *     already allows. `state` is `active` (not archived), `archived`, or `all`
+         *     (the default).
          */
         readonly get: operations["tokens_contact_list_sessions"];
         readonly put?: never;
@@ -1104,6 +1105,28 @@ export interface paths {
         readonly get: operations["tokens_contact_get_session"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/sessions/{session_id}/archive": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Put one of my conversations away
+         * @description Takes it off `state=active`, so a list that asks for active
+         *     conversations stops offering it. Idempotent, and nothing is deleted: the
+         *     conversation and its record are untouched.
+         */
+        readonly post: operations["contact_archive_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -19066,6 +19089,7 @@ export interface operations {
                 readonly opp_run_id?: string;
                 readonly resource?: string;
                 readonly page_path?: string;
+                readonly state?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -19109,6 +19133,28 @@ export interface operations {
         };
     };
     readonly tokens_contact_get_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContactSessionOut"];
+                };
+            };
+        };
+    };
+    readonly contact_archive_session: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

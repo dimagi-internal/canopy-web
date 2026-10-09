@@ -485,14 +485,24 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
                     summary="My conversations on this site")
 def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
                   opp_slug: str = "", opp_run_id: str = "", resource: str = "",
-                  page_path: str = "") -> list[ContactSessionOut]:
+                  page_path: str = "", state: str = "all") -> list[ContactSessionOut]:
     """The same host filters a user's list takes, over the contact's OWN
     conversations only — a filter narrows, it never widens what `contact_session_q`
-    already allows."""
+    already allows. `state` is `active` (not archived), `archived`, or `all`
+    (the default)."""
     from apps.canopy_sessions.access import contact_session_q
     from apps.canopy_sessions.models import Session
 
+    # `all` stays the default so a host that never passed `state` sees the list
+    # it always saw; the widget asks for `active` so a chat its visitor closed
+    # stays closed.
+    if state not in ("active", "archived", "all"):
+        raise HttpError(422, "state must be one of: active, archived, all")
     rows = Session.objects.select_related("agent").filter(contact_session_q(request.contact))
+    if state == "active":
+        rows = rows.filter(status=Session.ACTIVE)
+    elif state == "archived":
+        rows = rows.filter(status=Session.ARCHIVED)
     for field, value in (("metadata__source", source), ("metadata__origin_key", origin_key),
                          ("metadata__opp_slug", opp_slug), ("metadata__opp_run_id", opp_run_id),
                          ("page_state__resource", resource), ("page_state__path", page_path)):
@@ -507,6 +517,21 @@ def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
                     summary="One of my conversations")
 def get_session(request: HttpRequest, session_id: str) -> ContactSessionOut:
     return _session_out(_session_or_404(request, session_id))
+
+
+@contact_router.post("/sessions/{session_id}/archive", response=ContactSessionOut,
+                     summary="Put one of my conversations away")
+def contact_archive_session(request: HttpRequest, session_id: str) -> ContactSessionOut:
+    """Takes it off `state=active`, so a list that asks for active
+    conversations stops offering it. Idempotent, and nothing is deleted: the
+    conversation and its record are untouched."""
+    from apps.canopy_sessions.models import Session
+
+    session = _session_or_404(request, session_id)
+    if session.status != Session.ARCHIVED:
+        session.status = Session.ARCHIVED
+        session.save(update_fields=["status", "updated_at"])
+    return _session_out(session)
 
 
 @contact_router.post("/sessions/{session_id}/send", response=dict,
