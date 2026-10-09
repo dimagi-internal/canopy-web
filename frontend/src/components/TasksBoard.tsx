@@ -357,11 +357,13 @@ const BTN =
 const BTN_QUIET =
   'min-h-11 sm:min-h-0 rounded-md px-3 py-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50'
 
-/** The reply box's hint says what sending does: an editor's reply starts the
- *  agent now, a viewer's waits for the agent's next turn. With Approve or
- *  Decline on the card, the text also rides along with either as its note. */
+/** The reply box's hint says what sending does: an answer to a question, or
+ *  an editor's reply, starts the agent now; a viewer's note waits for the
+ *  agent's next turn. With Approve or Decline on the card, the text also rides
+ *  along with either as its note. */
 function replyPlaceholder(task: TaskOut, canEdit: boolean, isQuestion: boolean): string {
-  if (isQuestion) return 'Type an answer…'
+  // An answer runs the card's `on_approve` targets when it has them, else its own agent.
+  if (isQuestion) return `Answer — ${startsOnApprove(task)} picks it up now…`
   const name = agentDisplayName(task.agent_slug)
   return canEdit ? `Reply — ${name} picks it up now…` : `Leave ${name} a note for its next turn…`
 }

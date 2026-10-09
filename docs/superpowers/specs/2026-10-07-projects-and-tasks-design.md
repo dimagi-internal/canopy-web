@@ -55,7 +55,7 @@ action.
 |---|---|---|---|---|
 | `approve` | status → in progress, and the agent **starts now**: runs the task's `on_approve` turns, or — with none — one turn written from the card (title, next action, plan + the approver's comment) | yes | the turn (row applied) | viewer |
 | `decline` | status → declined; comment kept as the reason | yes | none | viewer |
-| `reply` | On an open **question** it is the answer: closes the ask and runs `on_approve` if set (else pending, as before). On anything else a note: an **editor's** starts a turn carrying it; a viewer's stays pending for the agent's next turn | on a question | turn (editor note, or `on_approve`) · else pending | viewer |
+| `reply` | On an open **question** it is the answer: closes the ask and runs `on_approve` if set — with none, one turn written from the card carrying the answer (`ANSWERED BY …`), whoever answers, except the agent answering itself. On anything else a note: an **editor's** starts a turn carrying it; a viewer's stays pending for the agent's next turn | on a question | turn (an answer, an editor's note, or `on_approve`) · else pending | viewer |
 | `nudge` | `in_progress` tasks only: start a turn on the task now, status unchanged | no | the turn (row applied) | editor |
 | `done` | status → done | yes | none | editor |
 
@@ -72,7 +72,11 @@ rewritten to `nudge`); approve always starts the work; `nudge` is the editor's "
 this again now" on a task already under way; an editor's reply wakes the agent with the
 note. A board turn reuses a not-yet-started turn of the same task rather than stacking a
 duplicate, and approving a plain task already in progress is refused (409) — otherwise
-any viewer could nudge.
+any viewer could nudge. Answering a question with no `on_approve` likewise starts one
+turn carrying the answer, for anyone allowed to answer (viewer included): unlike a
+note, an answer is the response the agent explicitly asked for, so it is never news the
+agent should hear only on its next scheduled turn. The agent answering its own question
+never wakes itself.
 
 Every action is recorded as an **`AgentTaskAction`** row (renamed from
 `AgentTaskCommand`): `task`, `action`, `comment`, `by` (user + display string),

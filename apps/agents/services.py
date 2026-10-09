@@ -739,10 +739,11 @@ def list_tasks(agent: Agent) -> list[AgentTask]:
 #
 # An action that hands the agent work STARTS a turn rather than leaving a row
 # for whenever the agent next runs (Jonathan, 2026-10-08): approve always does,
-# nudge always does, a reply does when an editor writes it. The task's own
-# `on_approve` specs run when it has them; otherwise canopy-web writes the one
-# turn from the card (`apps.harness.dispatch.enqueue_task_turn`). A row whose
-# turn was enqueued is `applied` — the turn IS the follow-up.
+# nudge always does, answering an open question does (whoever answers), and any
+# other reply does when an editor writes it. The task's own `on_approve` specs
+# run when it has them; otherwise canopy-web writes the one turn from the card
+# (`apps.harness.dispatch.enqueue_task_turn`). A row whose turn was enqueued is
+# `applied` — the turn IS the follow-up.
 
 
 class ClosedAskError(Exception):
@@ -764,6 +765,7 @@ _EFFECT = {
 @transaction.atomic
 def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=None,
         actor_workspace_ids: set, may_start_turns: bool = False,
+        by_agent_itself: bool = False,
         ) -> tuple[AgentTask, AgentTaskAction, list[Turn]]:
     """Do one of the five actions to `task`; returns (task, action row, turns).
 
@@ -772,6 +774,12 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     wakes the agent: an approve is the decision a viewer exists to make, and it
     starts the work whoever makes it (as `on_approve` always has); a nudge is
     editor-gated at the route.
+
+    `by_agent_itself` is the task's own agent acting on its own card. It decides
+    whether ANSWERING a question wakes the agent: an answer is the response the
+    agent explicitly asked for, so anyone allowed to answer (the viewer tier)
+    starts the turn that carries it — except the agent answering itself, whose
+    turn would only wake itself.
 
     Atomic, and that is the whole ballgame: `dispatch()` raises on a bad
     `on_approve` spec, and committing the action first would leave the ask
@@ -823,21 +831,24 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
         by_user=by_user if getattr(by_user, "is_authenticated", False) else None,
     )
     turns: list[Turn] = []
-    # Answering a question keeps its old behaviour: it runs `on_approve` when the
-    # card has one, and is otherwise the agent's pending answer to drain.
+    # Answering a question runs `on_approve` when the card has one; without one,
+    # the card's own turn carries the answer (below) — the agent asked for it.
     runs_on_approve = action == AgentTaskAction.APPROVE or (action == AgentTaskAction.REPLY and closes)
     if runs_on_approve and task.on_approve:
         turns = dispatch(task, action=row, actor_workspace_ids=actor_workspace_ids)
         task.dispatched_at = timezone.now()
         follow_up = False  # the dispatched turn IS the follow-up
     elif (action in (AgentTaskAction.APPROVE, AgentTaskAction.NUDGE)
+          or (action == AgentTaskAction.REPLY and closes and not by_agent_itself)
           or (action == AgentTaskAction.REPLY and not closes and may_start_turns)):
         # No spec of its own: the card's own turn. The row is saved first because
         # its pk keys the turn (one enqueue per click; a replay is the same turn).
+        # An answer to a question is its own kind of board turn ("ANSWERED BY").
         row.status = AgentTaskAction.APPLIED
         row.applied_at = timezone.now()
         row.save()
-        turn, _created = enqueue_task_turn(task, action=row)
+        answers = action == AgentTaskAction.REPLY and closes
+        turn, _created = enqueue_task_turn(task, action=row, kind="answer" if answers else None)
         turns = [turn]
         task.dispatched_at = timezone.now()
         follow_up = False

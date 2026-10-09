@@ -167,6 +167,11 @@ describe('TaskCard', () => {
     expect(screen.getByTestId('task-reply-T2').getAttribute('placeholder')).toBe('Reply — Eva picks it up now…')
   })
 
+  it('an answer box says the agent picks it up now — for a viewer too', () => {
+    render(<TaskCard task={task({ ask_kind: 'question' })} canEdit={false} />)
+    expect(screen.getByTestId('task-reply-T2').getAttribute('placeholder')).toBe('Answer — Eva picks it up now…')
+  })
+
   it('a finished task offers nothing', () => {
     render(<TaskCard task={task({ status: 'done', ask_open: false })} canEdit />)
     expect(buttons()).toEqual([])

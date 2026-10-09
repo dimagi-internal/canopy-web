@@ -2545,12 +2545,14 @@ export interface paths {
          * @description approve → in progress, and the agent starts now: its `on_approve` turns,
          *     or one turn written from the card when it has none. decline → declined (the
          *     comment is the reason). reply → on an open question, the answer (closes the
-         *     ask, runs `on_approve`); on anything else a note — an editor's note starts a
-         *     turn carrying it, a viewer's waits for the agent's next turn. nudge (editor,
-         *     in-progress tasks) → start a turn on it now, status unchanged. done → done
-         *     (editor). 409 when the task is not in a state the action applies to (an
-         *     ask already closed, a finished task, nudging one that is not in progress);
-         *     `turn_ids` names the turns the action started.
+         *     ask; runs `on_approve`, or with none starts one turn carrying the answer —
+         *     whoever answers, unless it is the agent itself); on anything else a note —
+         *     an editor's note starts a turn carrying it, a viewer's waits for the
+         *     agent's next turn. nudge (editor, in-progress tasks) → start a turn on it
+         *     now, status unchanged. done → done (editor). 409 when the task is not in a
+         *     state the action applies to (an ask already closed, a finished task,
+         *     nudging one that is not in progress); `turn_ids` names the turns the action
+         *     started.
          */
         readonly post: operations["act_on_task"];
         readonly delete?: never;

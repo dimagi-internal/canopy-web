@@ -489,3 +489,37 @@ def test_the_agent_replying_on_its_own_card_does_not_wake_itself(c):
                       content_type="application/json")
     assert r.status_code == 200 and r.json()["turn_ids"] == []
     assert r.json()["action"]["status"] == "pending"
+
+
+def test_the_agent_answering_its_own_question_does_not_wake_itself(c):
+    """Same rule for an answer: anyone allowed to answer wakes the agent, except
+    the agent itself — its answer to its own question would only wake itself."""
+    _client, agent, _u = c
+    bot = User.objects.create_user("eva-bot", "eva@dimagi-ai.com", "pw")
+    WorkspaceMembership.objects.create(user=bot, workspace=agent.workspace,
+                                       role=WorkspaceMembership.EDITOR)
+    agent.user = bot
+    agent.save(update_fields=["user"])
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="q", ask_kind="question")
+    as_agent = Client()
+    as_agent.force_login(bot)
+    r = as_agent.post("/api/agents/eva/tasks/T1/actions", {"action": "reply", "comment": "found it"},
+                      content_type="application/json")
+    assert r.status_code == 200 and r.json()["turn_ids"] == []
+    assert r.json()["action"]["status"] == "pending"
+
+
+def test_a_viewer_answering_a_question_wakes_the_agent(c):
+    """An answer is the response the agent explicitly asked for, so the viewer
+    tier that may answer also starts the turn carrying it."""
+    _client, agent, _u = c
+    viewer = User.objects.create_user("vi", "vi@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=viewer, workspace=agent.workspace,
+                                       role=WorkspaceMembership.VIEWER)
+    AgentTask.objects.create(agent=agent, ext_id="T1", title="q", ask_kind="question")
+    as_viewer = Client()
+    as_viewer.force_login(viewer)
+    r = as_viewer.post("/api/agents/eva/tasks/T1/actions", {"action": "reply", "comment": "Tuesday"},
+                       content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert len(r.json()["turn_ids"]) == 1 and r.json()["action"]["status"] == "applied"
