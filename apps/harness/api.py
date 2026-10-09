@@ -63,6 +63,8 @@ from .schemas import (
     RunnerMintResultIn,
     RunnerMintStartIn,
     RunnerMintUrlIn,
+    SignInRequestIn,
+    SignInRequestOut,
     RunnerDrillOut,
     RunnerGitHubReadinessOut,
     TurnGitHubTokenOut,
@@ -771,6 +773,30 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
         raise HttpError(409, "no sign-in is in progress for this runner")
     return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail)
 
+
+@router.post("/runners/{runner_id}/sign-in-request", response=SignInRequestOut,
+             summary="Ask the runner's owner to approve a cloud sign-in from their phone")
+def post_sign_in_request(request: HttpRequest, runner_id: uuid.UUID, payload: SignInRequestIn):
+    """The box started a device-code sign-in (`aws sso login --use-device-code`)
+    and needs a person to approve it. This pushes the approval link to the
+    runner's owner, and tapping it opens the AWS page with the code filled in.
+    The CLI on the box finishes on its own once the person approves.
+
+    `sent` is how many devices the notification reached. 0 means nobody saw
+    it, so the caller falls back to another channel. canopy-web stores nothing.
+    See `apps/harness/sign_in_requests.py` for why the push goes only to the
+    owner and only to AWS hosts.
+    """
+    from . import sign_in_requests
+
+    runner = _runner_or_404(request, runner_id)
+    try:
+        sent = sign_in_requests.push_sign_in_request(
+            runner, provider=payload.provider, url=payload.url,
+            label=payload.label, requested_by=payload.requested_by)
+    except sign_in_requests.SignInRequestError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return {"sent": sent}
 
 def _admin_row(a) -> dict:
     return {"user_id": a.user_id, "email": a.user.email,

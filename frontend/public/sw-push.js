@@ -59,6 +59,10 @@ self.addEventListener('notificationclick', (event) => {
   const scope = self.registration.scope
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cls) => {
+      // A target off this app (an AWS sign-in approval page) gets its own
+      // window. Navigating the person's open canopy tab away to it would lose
+      // whatever they had open there.
+      if (!target.startsWith(scope)) return self.clients.openWindow(target)
       // Focus an existing tab of this app rather than stacking another
       // window. Match by scope (not exact URL) since a tab may sit on any
       // in-app route (?query params, /agents/echo, etc.) — then navigate it

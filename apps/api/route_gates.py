@@ -183,6 +183,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "post_runner_mint_url": ("runner",),
     "post_runner_mint_code": ("runner-admin",),
     "post_runner_mint_result": ("runner",),
+    "post_sign_in_request": ("runner",),  # pushes only to the runner's owner
     "list_runner_admins": ("runner-admin",),
     "grant_runner_admin": ("runner",),  # owner only (not RunnerAdmins)
     "revoke_runner_admin": ("runner",),
