@@ -175,6 +175,11 @@ def annotate(session, messages) -> None:
                         .values_list("content", flat=True)):
             uses[content.get("id")] = content
     for m, call_id in zip(results, wanted):
+        # A call the host refused gets no View: there is nothing to show or act on, and
+        # an empty card beside the agent's corrected retry is noise (2026-10-09: the agent
+        # named the action by its type, Labs refused, and a second, failed card appeared).
+        if (getattr(m, "content", None) or {}).get("is_error"):
+            continue
         use = uses.get(call_id)
         ref = app_ref(app, use) if use else None
         if ref:
@@ -186,7 +191,7 @@ def app_for_result_block(session, block: dict) -> dict | None:
     from apps.canopy_sessions.models import Message
 
     call_id = str((block or {}).get("tool_use_id") or "")
-    if not call_id:
+    if not call_id or (block or {}).get("is_error"):
         return None
     app = site_app(session)
     if app is None or not (app.mcp_apps_index or {}).get("tools"):
