@@ -186,6 +186,18 @@ def test_the_widget_snapshot_keeps_only_the_view_row_stripped(w):
 # --- §4-5 the View's requests, as the VIEWER -------------------------------------------------
 
 
+def test_a_runner_rows_result_text_reaches_the_view(w, labs):
+    """The runner's transcript keeps a result's text in `plaintext`, with only
+    {is_error, tool_use_id} in `content`. A View must still get that text: Labs'
+    coaching card reads the caller's arguments from it (2026-10-09)."""
+    text = '{"arguments": {"workers": [{"key": "10::a", "picture": {"params": {"topics": ["X1"]}}}]}}'
+    Message.objects.filter(session=w["session"], role=Message.TOOL_RESULT).update(
+        plaintext=text, content={"is_error": False, "tool_use_id": CALL_ID})
+    r = through(labs, lambda: client_for(w["editor"]).get(base(w) + "/resource"))
+    assert r.status_code == 200, r.content
+    assert r.json()["tool_result"]["content"][0]["text"] == text
+
+
 def test_the_resource_is_read_as_the_viewer_and_carries_the_call(w, labs):
     r = through(labs, lambda: client_for(w["editor"]).get(base(w) + "/resource"))
     assert r.status_code == 200, r.content
