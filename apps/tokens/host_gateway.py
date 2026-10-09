@@ -316,7 +316,19 @@ def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = Non
     transport = StreamableHttpTransport(
         ctx.resource, headers={ACTOR_HEADER: ctx.agent_slug}, auth=_auth(ctx, mode),
         httpx_client_factory=factory)
-    return Client(transport)
+    # MCP Apps (SEP-1865): canopy renders a host's Views, so it says so in
+    # `initialize` (§Client<>Server Capability Negotiation). A host that does not
+    # declare the extension is unaffected; one that does may attach `_meta.ui`
+    # to its tools and, for Labs, withhold a commit token from the model.
+    return Client(transport, extensions=[_UI_ADVERTISEMENT()])
+
+
+def _UI_ADVERTISEMENT():
+    from mcp.client.extension import advertise
+
+    from .mcp_apps import RESOURCE_MIME, UI_EXTENSION
+
+    return advertise(UI_EXTENSION, {"mimeTypes": [RESOURCE_MIME]})
 
 
 async def _check_target(ctx: SiteContext) -> None:
@@ -332,13 +344,37 @@ async def _check_target(ctx: SiteContext) -> None:
         raise GatewayRefusal("bad_resource", str(exc)) from exc
 
 
+async def _listing(ctx: SiteContext, client) -> list:
+    """The host's raw `tools/list` for this grant, with every tool's `_meta`
+    folded into the site's MCP Apps index on the way past."""
+    from asgiref.sync import sync_to_async
+
+    from . import mcp_apps
+
+    tools = await client.list_tools()
+    if ctx.app_id is not None:
+        try:
+            await sync_to_async(mcp_apps.record_tools, thread_sensitive=True)(
+                ctx.app_id, [(t.name, getattr(t, "meta", None) or {}) for t in tools])
+        except Exception:  # noqa: BLE001 - a cache write must never fail the call
+            import logging
+
+            logging.getLogger(__name__).exception("mcp_apps index write failed")
+    return tools
+
+
 async def list_tools(ctx: SiteContext) -> list[dict]:
     """The host's tools this turn may use: what the host lists for the
-    visitor's grant, narrowed by the owner's ceiling if there is one."""
+    visitor's grant, narrowed by the owner's ceiling if there is one, and never
+    a tool the host marked app-only (MCP Apps §Visibility: "Host MUST NOT include
+    tools in the agent's tool list when their visibility does not include
+    "model""). Those exist for the host's own View, as the person looking at it."""
+    from . import mcp_apps
+
     await _check_target(ctx)
     try:
         async with _client(ctx) as client:
-            tools = await client.list_tools()
+            tools = await _listing(ctx, client)
     except GatewayRefusal:
         raise
     except Exception as exc:  # noqa: BLE001 - the type only; never the token
@@ -346,7 +382,39 @@ async def list_tools(ctx: SiteContext) -> list[dict]:
                              f"{ctx.site} did not answer ({type(exc).__name__})") from None
     return [{"name": t.name, "description": t.description or "",
              "input_schema": getattr(t, "input_schema", None) or t.inputSchema or {}}
-            for t in tools if ctx.allows(t.name)]
+            for t in tools
+            if ctx.allows(t.name) and mcp_apps.model_visible(getattr(t, "meta", None) or {})]
+
+
+#: How fresh the site's MCP Apps index must be for `call_tool` to trust it
+#: about visibility instead of re-listing. A listing is a full `tools/list`
+#: (Labs' is hundreds of tools), so every agent call paying one would double the
+#: gateway's traffic for a check that changes when a host deploys.
+INDEX_FRESH = timedelta(minutes=10)
+
+
+async def _model_may_call(ctx: SiteContext, name: str, client) -> bool:
+    """Whether the AGENT may call `name`: anything but an app-only tool.
+
+    Visibility is not a security boundary against a direct client — the host
+    still authorises every call as the visitor — but a hidden tool must not be
+    callable by name either, or hiding it means nothing (spec 2026-10-08 §2).
+    """
+    from asgiref.sync import sync_to_async
+
+    from . import mcp_apps
+    from .models import AppCredential
+
+    app = (await sync_to_async(AppCredential.objects.filter(pk=ctx.app_id).first,
+                               thread_sensitive=True)()) if ctx.app_id else None
+    age = mcp_apps.index_age(app) if app is not None else None
+    if age is not None and age < INDEX_FRESH:
+        entry = mcp_apps.indexed_tool(app, name)
+        return entry is None or mcp_apps.MODEL in (entry.get("visibility") or [])
+    for tool in await _listing(ctx, client):
+        if tool.name == name:
+            return mcp_apps.model_visible(getattr(tool, "meta", None) or {})
+    return True  # not listed: the host refuses it itself, as it always has
 
 
 async def call_tool(ctx: SiteContext, tool: str, arguments: dict) -> dict:
@@ -358,7 +426,13 @@ async def call_tool(ctx: SiteContext, tool: str, arguments: dict) -> dict:
     name = host_tool_name(tool)
     try:
         async with _client(ctx) as client:
+            if not await _model_may_call(ctx, name, client):
+                raise GatewayRefusal(
+                    "not_allowed",
+                    f"{tool} on {ctx.site} is only for the page's own view, not something I call")
             result = await client.call_tool(name, arguments or {}, raise_on_error=False)
+    except GatewayRefusal:
+        raise
     except Exception as exc:  # noqa: BLE001 - the type only; never the token
         raise GatewayRefusal("host_unreachable",
                              f"{ctx.site} did not answer ({type(exc).__name__})") from None

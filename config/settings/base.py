@@ -124,6 +124,10 @@ MIDDLEWARE = [
     # Before anything that builds a URL: a request on the OLD address
     # (labs.connect.dimagi.com/canopy) is redirected or gets its prefix back.
     "apps.common.legacy_prefix.LegacyPrefixMiddleware",
+    # MCP Apps sandbox proxy (apps/tokens/views_mcp_apps.py): answered here,
+    # before sessions/auth/CSRF, so a page that frames untrusted HTML can never
+    # carry a Set-Cookie (SESSION_SAVE_EVERY_REQUEST would re-issue one).
+    "apps.tokens.views_mcp_apps.McpAppsSandboxMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "config.static_middleware.CanopyWhiteNoiseMiddleware",  # WhiteNoise, minus `/` (see module)
@@ -560,6 +564,18 @@ CANOPY_IDENTITY_BASE_URL = env("CANOPY_IDENTITY_BASE_URL", default="")
 # Base URLs this deployment was served at before (connectlabs.py). Read by the
 # Slack sync to recognise what it registered there.
 CANOPY_FORMER_BASE_URLS: list[str] = []
+
+# MCP Apps (SEP-1865; apps/tokens/mcp_apps.py, spec 2026-10-08): where canopy's
+# chat frames the SANDBOX PROXY that hosts a Connected site's View. A canopy
+# sub-path by default (owner decision 1: no new DNS) — isolated by framing it
+# `sandbox="allow-scripts"` with no `allow-same-origin`, so its origin is opaque.
+# A setting so a dedicated origin later is config only: set an absolute URL and
+# MCP_APPS_HOST_ORIGINS to the canopy origins that frame it.
+MCP_APPS_SANDBOX_URL = env("MCP_APPS_SANDBOX_URL", default="/mcp-apps/sandbox/")
+# The canopy page origins the proxy accepts messages from (and that may frame it,
+# with every live Connected site's frame origins for the embed panel). Empty =
+# derived: CANOPY_PUBLIC_BASE_URL, CANOPY_FORMER_BASE_URLS and the request's own.
+MCP_APPS_HOST_ORIGINS = env.list("MCP_APPS_HOST_ORIGINS", default=[])
 
 # The `provider` of every A2A Agent Card this deployment serves (apps/agents/agent_card.py).
 CANOPY_A2A_PROVIDER_ORGANIZATION = env("CANOPY_A2A_PROVIDER_ORGANIZATION", default="Dimagi")

@@ -421,6 +421,12 @@ class AppCredential(models.Model):
     #: host is asking for without reading a token. Informational: each TOKEN
     #: carries its own copy, and that copy is what reaches a session.
     last_runner_requirements = models.JSONField(default=list, blank=True)
+    #: MCP Apps (`apps/tokens/mcp_apps.py`): which of the site's tools carry a
+    #: View (`ui://` resource) and their visibility, plus the Views canopy has
+    #: fetched (sha256, effective CSP, a cached copy for read-only rendering).
+    #: A CACHE refreshed whenever canopy lists the site's tools as somebody —
+    #: never an authority; every View call re-lists as the viewer.
+    mcp_apps_index = models.JSONField(default=dict, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
