@@ -72,7 +72,7 @@ the reason), **n/a**, or **SHOULD-gap**. Evidence is a code path, or a test in
 | Criterion | Status | Evidence |
 |---|---|---|
 | Category-scoped, revocable grants exposed per 4.1.5 | pass | `PersonGrant`, `hcp.grant_dict` |
-| Authorization distinct from authentication (4.1.6), no silent scope expansion | pass | OAuth: consent acts 1 + 2. canopy's agents: the session's allow act, after the disclosure; a feature the agent's grant lacks needs a new act (`test_widening_is_its_own_act…`) |
+| Authorization distinct from authentication (4.1.6), no silent scope expansion | pass | Contacts: arriving through a trusted site authorizes nothing; opting in is their act in canopy's frame, after the disclosure (`test_the_site_holding_the_token_can_do_none_of_it`). OAuth: consent acts 1 + 2. canopy's agents: the session's allow act, after the disclosure; a feature the agent's grant lacks needs a new act (`test_widening_is_its_own_act…`) |
 | Grants SHOULD use OAuth 2.0; else declared per 5.2.1 | pass | `authorization_profile: oauth2` |
 | Grant objects; the person can enumerate and revoke | pass | `GET` / `DELETE /v1/grants`; `/people/me` |
 | A grant never disclosed to another client | pass | `GET /v1/grants` with a client token returns its own; `test_a_token_opens_hcp_v1_only…` |
@@ -104,7 +104,8 @@ the reason), **n/a**, or **SHOULD-gap**. Evidence is a code path, or a test in
 | Enumerate all stored entries, including conflicted | pass | `/people/me` (live, including conflicted); export (including soft-deleted) |
 | Correct or delete any entry | pass | `/people/me` Correct / Retract; REST PUT / DELETE |
 | Enumerate and revoke all active grants | pass | `/people/me` "Who can read it" |
-| Temporary-by-default authorization; separate persistence act | pass for OAuth | consent acts 1 + 2 |
+| Temporary-by-default authorization; separate persistence act | pass | OAuth: consent acts 1 + 2. canopy's agents: allow-for-this-session, then a separate keep |
+| The same, for contacts on a trusted site (no canopy login while internal) | pass, except correct | `/api/contact/hcp/` in the widget: list + revoke grants, list + delete entries, export with audit, opt out; every call needs canopy's frame proof (`tests/test_hcp_trusted_contacts.py`). Correcting an entry's wording is not offered there (remove it instead) |
 | Bounded durability window disclosed | n/a | none declared |
 
 ## HTTP transport (3.4) and discovery (Appendix C)

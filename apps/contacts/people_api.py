@@ -226,6 +226,10 @@ def grant_my_session_agent(request: HttpRequest, session_id: str, payload: Agent
     agent = getattr(session, "agent", None)
     if agent is None:
         raise _bad("this session has no agent to grant")
+    if payload.surface not in ("chat", "widget"):
+        # `embed-trusted` names a contact's act in a site's frame; a signed-in
+        # person never performs that one here.
+        raise _bad("surface is chat or widget")
     try:
         hcp.issue_agent_grant(person, agent=agent, features=payload.features,
                               duration=payload.duration, actor=hcp.user_actor(request.user),

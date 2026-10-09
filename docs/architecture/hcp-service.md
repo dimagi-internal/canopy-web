@@ -246,6 +246,83 @@ migration `0022` revokes every active `canopy-control-plane` grant and logs a
 (record available and on by default, use not available) is offered "record" by
 the next agent he talks to in a session.
 
+## Contacts, from a site canopy trusts for email
+
+Jonathan, 2026-10-09: "allow contacts to start building up HCP interactions if they
+opt in from a trusted system like labs where we do trust their e-mail identity."
+Code: `apps/tokens/contact_hcp_api.py` (`/api/contact/hcp/…`), the widget's
+`frontend/src/embed/ContactMemory.tsx`; tests `tests/test_hcp_trusted_contacts.py`.
+
+**Who.** A contact (a widget visitor with no canopy account) on a connected site
+with `AppCredential.asserts_verified_email` set, whose arrival assertion signed
+`email_verified: true`. The address is recorded on that contact token
+(`ContactToken.verified_email`) at the exchange. Nothing else changes: an untrusted
+site's address stays recorded-but-not-an-identity (`record_embed_visitor`), and an
+anonymous or unverified visitor sees nothing.
+
+**What labs sends.** connect-labs already signs `email` + `email_verified: true` when
+the address came from Connect's OAuth identity (`connect_labs/labs/canopy.py`), so
+no connect-labs change was needed. Migration `tokens/0031` trusts the live
+`connect-labs` registration whose JWKS is served from `https://labs.connect.dimagi.com/`
+(matched on both, so a tenant that merely named a site "connect-labs" is not trusted).
+
+**Judgment calls.**
+
+- **Superusers decide trust, not workspace owners.** The person a trusted address
+  keys is canopy-wide (`Person` keyed on email), not the tenant's. A tenant owner
+  trusting their own site could have it claim any address — and read what another
+  site's visitors built up under it. Set with `PATCH …/connected-apps/{id}`
+  `{asserts_verified_email}` (403 for anyone but a superuser); shown read-only on
+  the connected-sites page. **Changing the site's keys clears it**: trust is in the
+  signer, and new keys are a new signer.
+- **Identity / join rule.** Opting in re-points the contact at the email-keyed
+  `Person` (creating it if needed). If the address belongs to a canopy ACCOUNT —
+  `user_for_verified_email`, or any `EmailAddress`/`User.email` match at all — the
+  contact is refused ("sign in to canopy to manage this"), and a person already
+  joined to an account (`Person.user`) is refused too. A contact must never act on,
+  or merge into, an account's settings; that person has `/people/me`. Conversely,
+  when someone later signs into canopy with that address, `_person_for_user` joins
+  the account to the correspondent row for its verified address, so everything the
+  contact built up is there.
+- **The act is the contact's, in canopy's frame — the frame proof.** The site minted
+  the contact token, so the token alone cannot tell the visitor's act from the
+  site's call. Every `/api/contact/hcp/` route (except minting one) spends a
+  single-use proof (`HcpFrameProof`, 5 minutes, hashed at rest) that is minted only
+  to a request that (1) carries canopy's frame cookie `canopy_hcp_frame` — set on the
+  embed shell document, `HttpOnly; Secure; SameSite=None; Partitioned`, path-scoped
+  to `/api/contact/hcp/` — and (2) the browser marks `Sec-Fetch-Site: same-origin`
+  (plus `Origin` = canopy's own on writes). The proof is bound to that cookie and
+  that contact. The host page's scripts get none of it: they cannot read an HttpOnly
+  cookie, their calls are cross-site and carry no canopy cookie (CORS never allows
+  credentials, `tokens/cors.py`), and they cannot read the frame. canopy served on
+  the framing site's own origin (the retired `/canopy` prefix on labs) is refused,
+  because there the host's scripts would BE the frame's origin.
+  **Boundary:** a host's own SERVER can forge headers and fetch the shell to get a
+  cookie, i.e. impersonate its visitor's click. A server that does that can already
+  sign anything about its visitor — which is why trust is a superuser decision per
+  site. The proof stops the realistic failure (a page script, an XSS, a careless
+  integration calling routes), not a site that sets out to lie.
+- **The flow.** "Remember me?" in the widget header opens one screen: what canopy
+  would keep (categories), from what (this conversation with this agent), under which
+  address and confirmed by which site, for how long (this conversation, ≤ 24 h),
+  that keeping it longer is separate, and that they can see, download and take it
+  back here. "Also let agents use what they've learned" is unticked. Allowing sets
+  their policy (record available + on by default; use available only if ticked) and
+  issues the per-agent SESSION grant (#1389), `grant.issued` modality
+  `canopy-embed-trusted-email` with `site=<name>` in the detail; actor
+  `contact:<pk>` (type `user` — the person's own act). Then the chat page's own
+  toggles and grant/keep prompts work for them through the contact routes;
+  "keep allowing" is the same separate act as for members.
+- **Their own controls, in the panel** (they cannot sign into canopy while
+  `HCP_SERVICE_AUDIENCE=internal`): "What canopy knows" lists their grants (take
+  back), their entries (remove — a soft delete), downloads everything (entries +
+  audit log), and "Stop remembering me" turns both features off without deleting.
+- **The old site-keyed person** the contact pointed at before opting in is left in
+  place: no contact could hold a grant before this, so it holds nothing HCP.
+- **Not done:** correcting an entry's wording from the panel (remove + tell the agent
+  again does it); a superuser toggle in the UI (API only — the frontend has no
+  superuser signal to gate it on).
+
 ## Internal only — the one gate
 
 `HCP_SERVICE_AUDIENCE` (env, default `internal`) is read in exactly one place,

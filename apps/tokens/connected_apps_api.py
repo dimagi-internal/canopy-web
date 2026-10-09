@@ -105,6 +105,9 @@ class ConnectedAppOut(Schema):
     # signed claim is the authority.
     runner_requirements: list[str]
     shows_on_canopy_pages: bool
+    #: canopy trusts this site's signed `email_verified: true` as a contact's HCP
+    #: identity. Only a canopy superuser sets it; changing the site's keys clears it.
+    asserts_verified_email: bool = False
     created_at: str
     last_used_at: str | None
     revoked: bool
@@ -131,6 +134,9 @@ class UpdateIn(Schema):
     host_issuer: str | None = None
     host_mcp_resource: str | None = None
     show_on_canopy_pages: bool | None = None
+    #: Superusers only (403 otherwise): trust this site's verified email as a
+    #: contact's HCP identity. See `AppCredential.asserts_verified_email`.
+    asserts_verified_email: bool | None = None
 
 
 def _iso(value) -> str | None:
@@ -175,6 +181,7 @@ def _out(app: AppCredential) -> ConnectedAppOut:
             for link in app.allowed_agents.all()
         ],
         shows_on_canopy_pages=app.show_on_canopy_pages,
+        asserts_verified_email=app.asserts_verified_email,
         created_at=app.created_at.isoformat(),
         last_used_at=app.last_used_at.isoformat() if app.last_used_at else None,
         revoked=app.revoked_at is not None,
@@ -246,6 +253,11 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
 def update_connected_app(request: HttpRequest, slug: str, app_id: int,
                          payload: UpdateIn) -> ConnectedAppOut:
     app = _app_or_404(request, slug, app_id)
+    if payload.asserts_verified_email is not None and not request.user.is_superuser:
+        # The email-keyed person a trusted site's contacts join is canopy-wide, so
+        # trusting a site is canopy's decision, not this tenant's.
+        raise HttpError(403, "only a canopy superuser decides which sites canopy trusts for email")
+    keys_before = (app.jwks_url, list(app.public_keys or []))
     try:
         embed_apps.update(
             user=request.user, app=app, workspace_slug=slug, origins=payload.origins,
@@ -262,11 +274,21 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
               ok=False, reason=exc.code)
         raise _refuse(exc)
     app.refresh_from_db()
+    trust = payload.asserts_verified_email
+    if trust is None and app.asserts_verified_email and \
+            (app.jwks_url, list(app.public_keys or [])) != keys_before:
+        # Trust was in the KEYS that sign: new keys are a new signer, and whoever
+        # holds them could claim any address. A superuser re-trusts deliberately.
+        trust = False
+    if trust is not None and trust != app.asserts_verified_email:
+        type(app).objects.filter(pk=app.pk).update(asserts_verified_email=trust)
+        app.asserts_verified_email = trust
     # What it is NOW, not what was asked for: a partial payload leaves the rest
     # untouched, and the trail has to say what the app can actually do.
     audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
           detail=f"origins={app.frame_origins()} "
-                 f"agents={[l.agent.slug for l in app.allowed_agents.all()]}")
+                 f"agents={[l.agent.slug for l in app.allowed_agents.all()]} "
+                 f"trusted_email={app.asserts_verified_email}")
     return _out(app)
 
 

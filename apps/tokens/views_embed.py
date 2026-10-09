@@ -27,7 +27,9 @@ over `postMessage` (see the v2 spec §3), never in this URL.
 
 from __future__ import annotations
 
+import http.cookies
 import json
+import secrets
 from functools import lru_cache
 from pathlib import Path
 
@@ -153,6 +155,34 @@ def _theme_mode(request: HttpRequest) -> str:
     return mode if mode in THEME_MODES else DEFAULT_THEME_MODE
 
 
+#: canopy's frame cookie (`contact_hcp_api`): set on the shell document, so only a
+#: browser that LOADED canopy's frame holds it. HttpOnly, so no script reads it —
+#: not the host's, not even canopy's; scoped to the HCP routes that ask for it.
+FRAME_COOKIE = "canopy_hcp_frame"
+FRAME_COOKIE_MAX_AGE = 12 * 3600
+
+
+class _PartitionedMorsel(http.cookies.Morsel):
+    """`Partitioned` (CHIPS), which `http.cookies` only learns in Python 3.14: a
+    cookie set in a frame is keyed to the top-level site that framed it, so a site
+    that frames canopy can neither see nor reuse another site's frame cookie, and
+    browsers that block unpartitioned third-party cookies still accept it."""
+
+    def OutputString(self, attrs=None):  # noqa: N802 - the stdlib's name
+        return super().OutputString(attrs) + "; Partitioned"
+
+
+def set_frame_cookie(response: HttpResponse, prefix: str) -> None:
+    response.set_cookie(FRAME_COOKIE, secrets.token_urlsafe(32), max_age=FRAME_COOKIE_MAX_AGE,
+                        path=f"{prefix}/api/contact/hcp/", secure=True, httponly=True,
+                        samesite="None")
+    plain = response.cookies[FRAME_COOKIE]
+    morsel = _PartitionedMorsel()
+    morsel.set(plain.key, plain.value, plain.coded_value)
+    morsel.update(dict(plain))
+    dict.__setitem__(response.cookies, FRAME_COOKIE, morsel)
+
+
 @require_GET
 @xframe_options_exempt
 def embed_chat(request: HttpRequest) -> HttpResponse:
@@ -217,6 +247,7 @@ def embed_chat(request: HttpRequest) -> HttpResponse:
         )
 
     response = HttpResponse(body, content_type="text/html; charset=utf-8")
+    set_frame_cookie(response, prefix)
     response["Content-Security-Policy"] = "frame-ancestors " + " ".join(origins)
     # Matches config/static_cache.py's rule for anything without a
     # content-hashed name: an unhashed document is never cached, so a changed

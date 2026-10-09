@@ -354,6 +354,18 @@ GATES: dict[str, tuple[str, ...]] = {
     "contact_app_view_context": ("contact",),
     "contact_app_view_message": ("contact",),
     "contact_ws_ticket": ("contact",),  # a one-time socket ticket standing for the caller's own contact token
+    # --- apps/tokens/contact_hcp_api.py  (/api/contact/hcp/: a contact's own HCP, trusted sites only)
+    # Every route but `proof` also spends a single-use frame proof — the contact's act in
+    # canopy's own frame, which the site holding the token cannot produce.
+    "contact_hcp_proof": ("contact",),  # canopy's frame cookie + Sec-Fetch-Site same-origin
+    "contact_hcp_state": ("contact",),
+    "contact_hcp_opt_in": ("contact",),
+    "contact_hcp_grant": ("contact",),
+    "contact_hcp_session_memory": ("contact",),
+    "contact_hcp_policy": ("contact",),
+    "contact_hcp_revoke": ("contact",),
+    "contact_hcp_export": ("contact",),
+    "contact_hcp_delete_entry": ("contact",),
     "start_session": ("contact",),
     "tokens_contact_list_sessions": ("contact",),
     "tokens_contact_get_session": ("contact",),
