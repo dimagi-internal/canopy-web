@@ -88,21 +88,6 @@ class SlackEnabledOut(StrictModel):
     command_detail: str = ""
 
 
-class PeopleDigestEnabledIn(StrictModel):
-    """Whether this agent's conversations with people feed the fleet brain (a
-    people-digest turn after each one). Its own endpoint, like Slack: the
-    agent-repo upsert must not be able to change it."""
-
-    people_digest_enabled: bool
-
-
-class PeopleDigestEnabledOut(StrictModel):
-    people_digest_enabled: bool
-    #: The fleet-wide kill switch (`PEOPLE_DIGEST_ENABLED`). When False no agent
-    #: runs digest turns, whatever its own switch says.
-    globally_enabled: bool
-
-
 class AgentRunnerOut(StrictModel):
     """One row of an agent's ordered runner list (the routing-matrix UI's read
     model). `online`/`ready` are computed per row from `Runner.live_status` /
@@ -325,9 +310,6 @@ class AgentOut(StrictModel):
     # operational state rather than repo config, so the self-publish upsert
     # cannot turn it on.
     slack_enabled: bool = False
-    # Whether a human's finished turn with the agent starts a people-digest turn
-    # (fleet brain v1.1). Agent-admin flipped, via PATCH /people-digest.
-    people_digest_enabled: bool = True
 
 
 class AgentDefinitionOut(StrictModel):

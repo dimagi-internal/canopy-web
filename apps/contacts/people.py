@@ -8,8 +8,9 @@ Jonathan 2026-10-07 with these calls:
   before; `conversations()` below is the one new read of turn content, and it is
   limited to the turns ONE agent had with the person, for that agent alone.
 * Q2 — v1 serves facts only inside the workspace they were written in.
-* Q3 — extraction is an agent turn on the runner fleet (`harness.people_digest`);
-  canopy-web makes no model calls.
+* Q3 — facts are recorded IN the session that learned them, by the agent (HCP
+  `addPreference`); canopy-web makes no model calls. (A separate people-digest
+  turn did this until 2026-10-09; it was removed.)
 * Q5 — members AND contacts, keyed on `Person` (`services.person_for`).
 
 Every rule a caller could get subtly wrong lives here as a function, so the
@@ -25,7 +26,7 @@ from django.db import transaction
 from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 
-from .models import Contact, Person, PersonAccess, PersonDigest, PersonFact
+from .models import Contact, Person, PersonAccess, PersonFact
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ def known_in(person: Person, workspace_slug: str) -> bool:
     The gate under every per-person read: a member of workspace A must not be
     able to learn, by guessing ids or addresses, that canopy knows someone only
     workspace B deals with. Known = a member there, a contact there, someone a
-    turn there was initiated by, or already the subject of a fact or digest there.
+    turn there was initiated by, or already the subject of a fact there.
     """
     from apps.harness.models import Turn
     from apps.workspaces import services as wsvc
@@ -134,8 +135,7 @@ def known_in(person: Person, workspace_slug: str) -> bool:
         return True
     if Contact.objects.filter(person=person, workspace_id=workspace_slug).exists():
         return True
-    if (PersonFact.objects.filter(person=person, workspace_id=workspace_slug).exists()
-            or PersonDigest.objects.filter(person=person, workspace_id=workspace_slug).exists()):
+    if PersonFact.objects.filter(person=person, workspace_id=workspace_slug).exists():
         return True
     return Turn.objects.filter(_initiated_by(person)).filter(
         Q(agent__workspace_id=workspace_slug) | Q(chat_session__workspace_id=workspace_slug)
@@ -332,29 +332,6 @@ def retract(fact: PersonFact, *, by, actor=None, reason: str = "") -> PersonFact
     return fact
 
 
-# --- the digest -------------------------------------------------------------------
-
-
-def put_digest(*, person: Person, workspace, text: str, source_turn_ids=(),
-               by_user=None, by_agent=None) -> PersonDigest:
-    text = (text or "").strip()
-    if len(text) > PersonDigest.TEXT_MAX:
-        raise FactError(f"a digest is at most {PersonDigest.TEXT_MAX} characters")
-    ids = [str(i) for i in (source_turn_ids or [])][:200]
-    digest, _ = PersonDigest.objects.update_or_create(
-        person=person, workspace=workspace,
-        defaults={"text": text, "source_turn_ids": ids, "updated_by_agent": by_agent,
-                  "updated_by_user": None if by_agent is not None else by_user},
-    )
-    return digest
-
-
-def digest_for(person: Person, workspace_slug: str | None) -> PersonDigest | None:
-    if not workspace_slug:
-        return None
-    return PersonDigest.objects.filter(person=person, workspace_id=workspace_slug).first()
-
-
 # --- reads, logged -----------------------------------------------------------------
 
 
@@ -391,8 +368,7 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
     under the grant for this client (agent, channel, host), with the turn's own
     message as the query — so the agent starts with the few entries relevant to
     what was asked (at most `ENVELOPE_FACTS`, never padded) and recalls more
-    mid-turn with the `hcp_searchPreferences` tool. The digest is not served
-    here: a whole-profile summary is the bulk read HCP rules out (3.1).
+    mid-turn with the `hcp_searchPreferences` tool.
     """
     from . import hcp
 
@@ -423,8 +399,6 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         # The workspace these facts are from, and where `canopy people remember
         # --workspace <slug>` writes (contract addendum, canopy side).
         "workspace": workspace_slug,
-        "digest": "",
-        "digest_updated_at": None,
         "facts": [fact_dict(f) for f in facts],
         # HCP: the grant this turn read under (None = the person revoked this
         # client, so nothing about them is served), and how to recall more.

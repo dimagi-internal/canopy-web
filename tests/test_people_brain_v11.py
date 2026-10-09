@@ -1,5 +1,6 @@
-"""Fleet brain v1.1 (canopy#804): project participants, the coverage metric, the
-per-agent digest opt-out, and Contact.notes mirrored into a fact.
+"""Fleet brain v1.1 (canopy#804): project participants, the coverage metric, and
+Contact.notes mirrored into a fact. (The per-agent digest opt-out went with the
+digest turn, 2026-10-09.)
 
 Privacy rules pinned here, beside v1's in `test_people_brain.py`:
 
@@ -7,7 +8,6 @@ Privacy rules pinned here, beside v1's in `test_people_brain.py`:
   workspace's projects (another workspace's are never listed);
 * coverage is counts only, members of the workspace (an agent admin who is not
   a member sees only their own agents), and a stranger gets 404;
-* an agent switched off starts no digest turn, and only its admins may switch it;
 * mirroring notes is idempotent — the migration and the command can re-run.
 """
 from __future__ import annotations
@@ -24,18 +24,17 @@ from django.utils import timezone
 
 from apps.agents import participants
 from apps.agents import services as agent_services
-from apps.agents.models import AgentAdmin, AgentProject, ProjectParticipant
+from apps.agents.models import AgentProject, ProjectParticipant
 from apps.contacts import coverage, people
 from apps.contacts import services as contacts
 from apps.contacts.models import Contact, PersonAccess, PersonFact
-from apps.harness import caller_context, people_digest, services
+from apps.harness import caller_context, services
 from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.test_people_brain import (
     _agent,
     _client,
-    _digest_turns,
     _fact,
     _finish,
     _human_turn,
@@ -43,13 +42,6 @@ from tests.test_people_brain import (
 )
 
 pytestmark = pytest.mark.django_db
-
-
-@pytest.fixture(autouse=True)
-def _digest_on(settings):
-    # The fleet-wide switch is OFF in production since 2026-10-07; these tests
-    # pin what the brain does with it ON (and switch it off where they say so).
-    settings.PEOPLE_DIGEST_ENABLED = True
 
 
 @pytest.fixture()
@@ -225,32 +217,34 @@ def _row(report, slug):
     return next(r for r in report["agents"] if r["agent"] == slug)
 
 
-def test_coverage_counts_human_turns_context_digests_and_facts(world):
+def test_coverage_counts_human_turns_context_and_in_session_facts(world):
     ws, ace, lili = world["ws"], world["ace"], world["lili"]
     person = contacts.person_for(user=lili)
     # No context yet: the envelope is built empty and recorded as such.
     t1 = _human_turn(ace, lili, "t1")
     caller_context.build(t1)
-    _finish(t1)  # → one digest turn (queued)
+    _finish(t1)
     # Now the brain knows something: the next envelope has context.
     people.record_fact(person=person, workspace=ws, kind="role", statement="Lead.", by_agent=ace,
                        source_turn=t1)
-    people.put_digest(person=person, workspace=ws, text="Lili leads KC.", by_agent=ace)
     t2 = _human_turn(ace, lili, "t2")
     caller_context.build(t2)
     # Not human: canopy, and another agent's login.
-    services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="s",
-                          initiator=who.system(via="schedule"))
+    sched, _ = services.enqueue_turn(agent=ace, origin=Turn.ORIGIN_API, idempotency_key="s",
+                                     initiator=who.system(via="schedule"))
+    # Written from a turn no human started: recorded, but not counted as in-session.
+    people.record_fact(person=person, workspace=ws, kind="project", statement="KC.", by_agent=ace,
+                       source_turn=sched)
     _human_turn(ace, world["hal"].user, "from-hal")
 
     row = _row(_report(), "ace")
     assert row["human_turns"] == 2
     assert row["human_turns_with_context"] == 1
     assert row["context_rate"] == 0.5
-    assert row["digest_turns"] == {"queued": 1, "done": 0, "failed": 0, "cancelled": 0}
     assert row["facts_written"] == 1
-    assert (row["people"], row["people_with_digest"]) == (1, 1)
-    assert row["median_digest_age_hours"] is not None and row["median_digest_age_hours"] < 1
+    assert row["people"] == 1
+    assert set(row) == {"agent", "human_turns", "human_turns_with_context", "context_rate",
+                        "facts_written", "people", "healthy", "reasons"}
     assert row["healthy"] is True
     # Envelope reads record whether there was context; API reads never claim it.
     assert list(PersonAccess.objects.filter(via="envelope").order_by("created_at", "pk")
@@ -264,36 +258,7 @@ def test_a_dead_brain_is_loud_ten_human_turns_and_no_facts(world):
     report = _report()
     row = _row(report, "ace")
     assert row["healthy"] is False
-    assert "no facts written" in row["reasons"][0]
-    assert report["healthy"] is False
-
-
-def test_a_high_digest_failure_rate_is_unhealthy(world):
-    ace, lili = world["ace"], world["lili"]
-    _finish(_human_turn(ace, lili, "t1"))
-    d = _digest_turns().get()
-    Turn.objects.filter(pk=d.pk).update(status=Turn.FAILED)
-    row = _row(_report(), "ace")
-    assert row["digest_turns"]["failed"] == 1
-    assert row["digest_failure_rate"] == 1.0
-    assert row["healthy"] is False
-
-
-def test_an_opted_out_agent_is_not_judged_on_facts(world):
-    ace, lili = world["ace"], world["lili"]
-    ace.people_digest_enabled = False
-    ace.save()
-    for i in range(coverage.MIN_TURNS_FOR_FACTS):
-        _human_turn(ace, lili, f"t{i}")
-    row = _row(_report(), "ace")
-    assert (row["digest_enabled"], row["healthy"]) == (False, True)
-    assert "switched off for this agent" in row["reasons"][0]
-
-
-def test_the_global_switch_makes_the_workspace_unhealthy(world, settings):
-    settings.PEOPLE_DIGEST_ENABLED = False
-    report = _report()
-    assert report["digest_enabled_globally"] is False
+    assert "no facts recorded in-session" in row["reasons"][0]
     assert report["healthy"] is False
 
 
@@ -347,52 +312,6 @@ def test_people_coverage_command_prints_and_fails_loud(world):
         call_command("people_coverage", "--workspace", "connect", "--json", stdout=out)
     assert exc.value.code == 1
     assert '"healthy": false' in out.getvalue()
-
-
-# --- 3. per-agent opt-out ---------------------------------------------------------------
-
-
-def test_an_opted_out_agent_starts_no_digest_turn(world):
-    ace, hal, lili = world["ace"], world["hal"], world["lili"]
-    ace.people_digest_enabled = False
-    ace.save()
-    assert people_digest.on_turn_finished(_finish(_human_turn(ace, lili, "t1"))) is None
-    _finish(_human_turn(ace, lili, "t1b"))
-    assert not _digest_turns().filter(agent=ace).exists()
-    _finish(_human_turn(hal, lili, "t2"))                       # the others are unaffected
-    assert _digest_turns().filter(agent=hal).count() == 1
-
-
-def test_the_switch_is_for_agent_admins_and_is_on_the_agent(world):
-    ws, ace = world["ws"], world["ace"]
-    url = "/api/agents/ace/people-digest"
-    editor = _member(ws, "ed")
-    resp = _client(editor).patch(url, {"people_digest_enabled": False}, content_type="application/json")
-    assert resp.status_code == 403
-    ace.refresh_from_db()
-    assert ace.people_digest_enabled is True
-
-    AgentAdmin.objects.create(agent=ace, user=editor, granted_by=world["owner"])
-    resp = _client(editor).patch(url, {"people_digest_enabled": False}, content_type="application/json")
-    assert resp.status_code == 200
-    assert resp.json() == {"people_digest_enabled": False, "globally_enabled": True}
-    ace.refresh_from_db()
-    assert ace.people_digest_enabled is False
-    assert _client(world["owner"]).get("/api/agents/ace/").json()["people_digest_enabled"] is False
-    stranger = User.objects.create_user("x", "x@else.org", "pw")
-    assert _client(stranger).patch(url, {"people_digest_enabled": True},
-                                   content_type="application/json").status_code == 404
-
-
-def test_the_upsert_cannot_switch_it(world):
-    ace = world["ace"]
-    ace.people_digest_enabled = False
-    ace.save()
-    resp = _client(world["owner"]).post("/api/agents/", {"slug": "ace", "name": "Ace",
-                                                         "people_digest_enabled": True},
-                                        content_type="application/json")
-    ace.refresh_from_db()
-    assert ace.people_digest_enabled is False, resp.content
 
 
 # --- 4. Contact.notes → a fact ----------------------------------------------------------

@@ -75,11 +75,8 @@ export function PeopleMePage() {
   if (me === null) return <div className="p-6 text-muted-foreground">Loading…</div>
 
   const allFacts = me.facts ?? []
-  const digests = me.digests ?? []
 
-  const workspaces = Array.from(
-    new Set([...allFacts.map((f) => f.workspace), ...digests.map((d) => d.workspace)]),
-  ).sort()
+  const workspaces = Array.from(new Set(allFacts.map((f) => f.workspace))).sort()
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 space-y-6">
@@ -101,22 +98,11 @@ export function PeopleMePage() {
 
       {workspaces.map((ws) => {
         const facts = allFacts.filter((f) => f.workspace === ws)
-        const digest = digests.find((d) => d.workspace === ws)
         return (
           <section key={ws} className="rounded-lg border border-border">
             <h2 className="border-b border-border px-4 py-2 text-sm font-semibold text-foreground">
               {ws}
             </h2>
-            {digest && digest.text && (
-              <div className="border-b border-border px-4 py-3 text-sm">
-                <div className="text-xs uppercase tracking-wider text-muted-foreground">Digest</div>
-                <p className="mt-1 whitespace-pre-wrap text-foreground">{digest.text}</p>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {digest.updated_by ? `by ${digest.updated_by} · ` : ''}
-                  {digest.updated_at ? new Date(digest.updated_at).toLocaleString() : ''}
-                </div>
-              </div>
-            )}
             {facts.length === 0 ? (
               <p className="px-4 py-3 text-sm text-muted-foreground">No facts.</p>
             ) : (

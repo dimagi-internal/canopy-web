@@ -39,7 +39,7 @@ from . import initiator as who
 #: `normalize_profile`), since an envelope written by an older canopy-web may
 #: still sit on a box.
 #: 3 (2026-10-07, fleet brain v1, canopy#804): adds `person` — what canopy knows
-#: about the human asking (facts + digest, this agent's workspace only) — and
+#: about the human asking (facts, this agent's workspace only) — and
 #: `trigger.kind`. Purely additive: every v2 field keeps its meaning, so a v2
 #: reader (runner, canopy hook) ignores the new keys and works unchanged. The
 #: runner gate (`routing.ENVELOPE_VERSION`) stays 2 for that reason.
@@ -320,7 +320,7 @@ def build(turn, *, reader_user=None) -> dict:
         "relationship": rel,
         "contact": _contact(turn.initiator_contact) if turn.initiator_contact_id else None,
         # WHAT CANOPY KNOWS ABOUT THE HUMAN ASKING (v3, fleet brain): live facts
-        # and the digest from the agent's workspace, corrections first. null only
+        # from the agent's workspace, corrections first. null only
         # when the asker is not a human (canopy itself, another agent, unknown).
         # The person can see all of it, and every read of it, at `see_all` — so
         # it is safe to quote back to them. See apps/contacts/people.py.
@@ -446,8 +446,8 @@ def _trigger(turn, ref: dict) -> dict:
     runner = turn.claimed_by if turn.claimed_by_id else None
     return {
         "origin": turn.origin,
-        # What canopy-initiated work this turn IS, when it is one (v3):
-        # "people_digest" for a digest turn (apps/harness/people_digest.py).
+        # What canopy-initiated work this turn IS, when it is one (v3), from
+        # `origin_ref.trigger` (e.g. auto-debug).
         "kind": str(ref.get("trigger") or "") or None,
         "discovered_by": ref.get("discovered_by"),
         "from": ref.get("from"),

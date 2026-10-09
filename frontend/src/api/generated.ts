@@ -2152,30 +2152,6 @@ export interface paths {
         readonly patch: operations["set_slack_enabled"];
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/people-digest": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        /**
-         * Turn an agent's people digest on or off
-         * @description Whether a person's finished conversation with this agent starts a
-         *     people-digest turn — the turn that records durable work-context facts
-         *     about them and refreshes their digest. Agent admins only. Off stops new
-         *     digest turns for this agent; facts already recorded, and the caller
-         *     envelope's `person` block, are unaffected.
-         */
-        readonly patch: operations["set_people_digest_enabled"];
-        readonly trace?: never;
-    };
     readonly "/api/agents/{slug}/runtime": {
         readonly parameters: {
             readonly query?: never;
@@ -6761,7 +6737,7 @@ export interface paths {
         /**
          * What agents know about me
          * @description Everything canopy holds about YOU: every live fact in every workspace
-         *     (corrections first), every digest, and the last 50 times an agent or a
+         *     (corrections first) and the last 50 times an agent or a
          *     person read it. Any signed-in user; only ever your own.
          */
         readonly get: operations["people_me"];
@@ -6784,8 +6760,7 @@ export interface paths {
          * Is the people brain working? Per-agent coverage
          * @description Per agent of the workspace, over the last `days` (1–90, default 7): the
          *     turns humans started with it, how many of those were handed what canopy
-         *     knows about the person, its people-digest turns by outcome, the facts it
-         *     wrote, and how stale the digests of the people it talked to are — with an
+         *     knows about the person, and the facts it recorded in-session — with an
          *     explicit `healthy` verdict and the rule behind it.
          *
          *     Counts only: no person is named. Members of the workspace see every agent;
@@ -6831,7 +6806,7 @@ export interface paths {
         };
         /**
          * A person, as one workspace knows them
-         * @description Live facts (corrections first) and the digest for `?workspace=`. Members
+         * @description Live facts (corrections first) for `?workspace=`. Members
          *     of that workspace only, and the read is logged where the person can see it.
          */
         readonly get: operations["get_person"];
@@ -6903,28 +6878,6 @@ export interface paths {
          *     it (the user, or the asserting agent's login). Anyone else: 404.
          */
         readonly post: operations["retract_person_fact"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/people/{person_id}/digest/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        /**
-         * Replace a person's digest
-         * @description The short brief agents read about this person in this workspace — a cache,
-         *     written by the `people_digest` turn. Members of the workspace (in practice an
-         *     agent's login).
-         */
-        readonly put: operations["put_person_digest"];
-        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -10387,11 +10340,6 @@ export interface components {
              * @default false
              */
             readonly slack_enabled: boolean;
-            /**
-             * People Digest Enabled
-             * @default true
-             */
-            readonly people_digest_enabled: boolean;
         };
         /** Page[AgentOut] */
         readonly Page_AgentOut_: {
@@ -10525,11 +10473,6 @@ export interface components {
              * @default false
              */
             readonly slack_enabled: boolean;
-            /**
-             * People Digest Enabled
-             * @default true
-             */
-            readonly people_digest_enabled: boolean;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             readonly owner?: components["schemas"]["AgentOwnerOut"] | null;
             readonly canopy_user?: components["schemas"]["AgentOwnerOut"] | null;
@@ -10762,23 +10705,6 @@ export interface components {
         readonly SlackEnabledIn: {
             /** Slack Enabled */
             readonly slack_enabled: boolean;
-        };
-        /** PeopleDigestEnabledOut */
-        readonly PeopleDigestEnabledOut: {
-            /** People Digest Enabled */
-            readonly people_digest_enabled: boolean;
-            /** Globally Enabled */
-            readonly globally_enabled: boolean;
-        };
-        /**
-         * PeopleDigestEnabledIn
-         * @description Whether this agent's conversations with people feed the fleet brain (a
-         *     people-digest turn after each one). Its own endpoint, like Slack: the
-         *     agent-repo upsert must not be able to change it.
-         */
-        readonly PeopleDigestEnabledIn: {
-            /** People Digest Enabled */
-            readonly people_digest_enabled: boolean;
         };
         /**
          * AgentRuntimeOut
@@ -17130,20 +17056,6 @@ export interface components {
             /** Turn Id */
             readonly turn_id?: string | null;
         };
-        /** PersonDigestOut */
-        readonly PersonDigestOut: {
-            /** Workspace */
-            readonly workspace: string;
-            /** Text */
-            readonly text: string;
-            /** Updated At */
-            readonly updated_at?: string | null;
-            /**
-             * Updated By
-             * @default
-             */
-            readonly updated_by: string;
-        };
         /**
          * PersonFactDetailOut
          * @description A fact as its subject sees it on their own page: where and who.
@@ -17214,7 +17126,7 @@ export interface components {
         /**
          * PersonMeOut
          * @description Everything canopy holds about the caller: live facts in every workspace,
-         *     every digest, and the last 50 reads.
+         *     and the last 50 reads.
          */
         readonly PersonMeOut: {
             /** Id */
@@ -17228,8 +17140,6 @@ export interface components {
             readonly email: string;
             /** Facts */
             readonly facts?: readonly components["schemas"]["PersonFactDetailOut"][];
-            /** Digests */
-            readonly digests?: readonly components["schemas"]["PersonDigestOut"][];
             /** Accesses */
             readonly accesses?: readonly components["schemas"]["PersonAccessOut"][];
         };
@@ -17257,31 +17167,20 @@ export interface components {
             /** Agent */
             readonly agent: string;
             /**
-             * Digest Enabled
-             * @description This agent's switch AND the fleet-wide one.
-             */
-            readonly digest_enabled: boolean;
-            /**
              * Human Turns
              * @description Turns with the agent a human started (not canopy, not another agent).
              */
             readonly human_turns: number;
             /**
              * Human Turns With Context
-             * @description Of those, how many were handed a person block with at least one fact or a digest, as recorded when the envelope was built.
+             * @description Of those, how many were handed a person block with at least one fact, as recorded when the envelope was built.
              */
             readonly human_turns_with_context: number;
             /** Context Rate */
             readonly context_rate?: number | null;
-            readonly digest_turns: components["schemas"]["DigestTurnCountsOut"];
-            /**
-             * Digest Failure Rate
-             * @description failed / (done + failed); null with none finished.
-             */
-            readonly digest_failure_rate?: number | null;
             /**
              * Facts Written
-             * @description Facts the agent asserted in this workspace.
+             * @description Facts the agent recorded in-session: asserted by it, sourced from one of these human turns.
              */
             readonly facts_written: number;
             /**
@@ -17289,13 +17188,6 @@ export interface components {
              * @description Distinct people who started a turn with the agent.
              */
             readonly people: number;
-            /** People With Digest */
-            readonly people_with_digest: number;
-            /**
-             * Median Digest Age Hours
-             * @description Median age of those people's digests now; null when none has one.
-             */
-            readonly median_digest_age_hours?: number | null;
             /** Healthy */
             readonly healthy: boolean;
             /**
@@ -17303,23 +17195,6 @@ export interface components {
              * @description Why it is unhealthy, then anything worth saying.
              */
             readonly reasons?: readonly string[];
-        };
-        /** DigestTurnCountsOut */
-        readonly DigestTurnCountsOut: {
-            /**
-             * Queued
-             * @description Not finished yet (queued, claimed, running, needs human).
-             */
-            readonly queued: number;
-            /** Done */
-            readonly done: number;
-            /**
-             * Failed
-             * @description Failed, lost or missed.
-             */
-            readonly failed: number;
-            /** Cancelled */
-            readonly cancelled: number;
         };
         /**
          * PeopleCoverageOut
@@ -17334,8 +17209,6 @@ export interface components {
             readonly since: string;
             /** Generated At */
             readonly generated_at: string;
-            /** Digest Enabled Globally */
-            readonly digest_enabled_globally: boolean;
             /**
              * Rule
              * @description The rule `healthy` applies, in words.
@@ -17417,7 +17290,7 @@ export interface components {
         };
         /**
          * PersonOut
-         * @description A person, as one workspace knows them: live facts (corrections first) and the digest.
+         * @description A person, as one workspace knows them: live facts (corrections first).
          */
         readonly PersonOut: {
             /** Id */
@@ -17431,13 +17304,6 @@ export interface components {
             readonly email: string;
             /** Workspace */
             readonly workspace: string;
-            /**
-             * Digest
-             * @default
-             */
-            readonly digest: string;
-            /** Digest Updated At */
-            readonly digest_updated_at?: string | null;
             /** Facts */
             readonly facts?: readonly components["schemas"]["PersonFactOut"][];
             /**
@@ -17601,15 +17467,6 @@ export interface components {
              * @description A live fact about the same person in the same workspace that this one replaces.
              */
             readonly supersedes_id?: number | null;
-        };
-        /** PersonDigestIn */
-        readonly PersonDigestIn: {
-            /** Workspace */
-            readonly workspace?: string | null;
-            /** Text */
-            readonly text: string;
-            /** Source Turn Ids */
-            readonly source_turn_ids?: readonly string[];
         };
         /**
          * PersonConversationOut
@@ -20945,32 +20802,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SlackEnabledOut"];
-                };
-            };
-        };
-    };
-    readonly set_people_digest_enabled: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["PeopleDigestEnabledIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["PeopleDigestEnabledOut"];
                 };
             };
         };
@@ -27100,32 +26931,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PersonFactCreatedOut"];
-                };
-            };
-        };
-    };
-    readonly put_person_digest: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly person_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["PersonDigestIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["PersonDigestOut"];
                 };
             };
         };

@@ -46,20 +46,11 @@ class PersonRefOut(StrictModel):
 
 
 class PersonOut(PersonRefOut):
-    """A person, as one workspace knows them: live facts (corrections first) and the digest."""
+    """A person, as one workspace knows them: live facts (corrections first)."""
 
     workspace: str
-    digest: str = ""
-    digest_updated_at: str | None = None
     facts: list[PersonFactOut] = Field(default_factory=list)
     see_all: str = "/people/me/"
-
-
-class PersonDigestOut(StrictModel):
-    workspace: str
-    text: str
-    updated_at: str | None = None
-    updated_by: str = ""
 
 
 class PersonAccessOut(StrictModel):
@@ -75,10 +66,9 @@ class PersonAccessOut(StrictModel):
 
 class PersonMeOut(PersonRefOut):
     """Everything canopy holds about the caller: live facts in every workspace,
-    every digest, and the last 50 reads."""
+    and the last 50 reads."""
 
     facts: list[PersonFactDetailOut] = Field(default_factory=list)
-    digests: list[PersonDigestOut] = Field(default_factory=list)
     accesses: list[PersonAccessOut] = Field(default_factory=list)
 
 
@@ -100,12 +90,6 @@ class PersonFactIn(StrictModel):
 
 class PersonFactCreatedOut(PersonFactOut):
     supersedes_id: int | None = None
-
-
-class PersonDigestIn(StrictModel):
-    workspace: str | None = None
-    text: str = Field(max_length=2000)
-    source_turn_ids: list[str] = Field(default_factory=list)
 
 
 class PersonConversationOut(StrictModel):
@@ -148,30 +132,17 @@ class PersonProjectsOut(StrictModel):
     projects: list[PersonProjectOut]
 
 
-class DigestTurnCountsOut(StrictModel):
-    queued: int = Field(description="Not finished yet (queued, claimed, running, needs human).")
-    done: int
-    failed: int = Field(description="Failed, lost or missed.")
-    cancelled: int
-
-
 class AgentCoverageOut(StrictModel):
     """How well the people brain served one agent over the window."""
 
     agent: str
-    digest_enabled: bool = Field(description="This agent's switch AND the fleet-wide one.")
     human_turns: int = Field(description="Turns with the agent a human started (not canopy, not another agent).")
     human_turns_with_context: int = Field(
-        description="Of those, how many were handed a person block with at least one fact or a digest, "
+        description="Of those, how many were handed a person block with at least one fact, "
                     "as recorded when the envelope was built.")
     context_rate: float | None = None
-    digest_turns: DigestTurnCountsOut
-    digest_failure_rate: float | None = Field(default=None, description="failed / (done + failed); null with none finished.")
-    facts_written: int = Field(description="Facts the agent asserted in this workspace.")
+    facts_written: int = Field(description="Facts the agent recorded in-session: asserted by it, sourced from one of these human turns.")
     people: int = Field(description="Distinct people who started a turn with the agent.")
-    people_with_digest: int
-    median_digest_age_hours: float | None = Field(
-        default=None, description="Median age of those people's digests now; null when none has one.")
     healthy: bool
     reasons: list[str] = Field(default_factory=list, description="Why it is unhealthy, then anything worth saying.")
 
@@ -183,7 +154,6 @@ class PeopleCoverageOut(StrictModel):
     days: int
     since: str
     generated_at: str
-    digest_enabled_globally: bool
     rule: str = Field(description="The rule `healthy` applies, in words.")
     healthy: bool
     agents: list[AgentCoverageOut]

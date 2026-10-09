@@ -15,7 +15,7 @@ import datetime as dt
 from dataclasses import dataclass
 
 from django.db import IntegrityError, transaction
-from django.db.models import Case, IntegerField, Q, Value, When
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.harness import actors
@@ -23,7 +23,6 @@ from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
 
 from .ledger import append_events
-from .people_digest import KEY_PREFIX as PEOPLE_DIGEST_KEY_PREFIX
 from .models import (
     FleetHold,
     Runner,
@@ -585,13 +584,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # check reads chat_session.agent_id + chat_session.runner_binding.
         .select_related("agent", "chat_session", "chat_session__runner_binding",
                         "chat_session__agent")
-        # Background bookkeeping YIELDS to people: a people-digest turn
-        # (apps/harness/people_digest.py) is enqueued the moment a person's turn
-        # finishes, so FIFO would put it ahead of that person's next message.
-        .annotate(_background=Case(
-            When(idempotency_key__startswith=PEOPLE_DIGEST_KEY_PREFIX, then=Value(1)),
-            default=Value(0), output_field=IntegerField()))
-        .order_by("_background", "created_at")
+        .order_by("created_at")
     )
     # Two-pass: materialize candidates above, then batch-load every candidate
     # agent's ranked assignment list in one query rather than per-turn. Includes

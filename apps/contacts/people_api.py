@@ -3,12 +3,12 @@
 The fleet brain v1 (canopy#804; design: hal `docs/proposals/2026-10-07-caller-
 context-brain.md`). The rules, all applied in `apps/contacts/people.py`:
 
-* **Per workspace.** A fact or digest is read and written inside the workspace it
+* **Per workspace.** A fact is read and written inside the workspace it
   belongs to, by a member of it (an agent's login is a member). A person a
   workspace does not deal with (`people.known_in`) is "not found" there, so a
   guessed id or address confirms nothing across tenants.
 * **The subject sees everything.** `GET /me/` returns every live fact about the
-  caller in every workspace, every digest, and the last 50 reads of them.
+  caller in every workspace, and the last 50 reads of them.
 * **Every read is logged** (`PersonAccess`) — the envelope's and this API's.
 * **Conversations are the one new read of turn content**, and only for the agent
   that had them: its own login, or its admins. Nothing else widens.
@@ -28,12 +28,10 @@ from apps.workspaces import services as wsvc
 
 from . import hcp, people
 from . import services as contact_services
-from .models import Person, PersonAccess, PersonDigest, PersonFact
+from .models import Person, PersonAccess, PersonFact
 from .people_schemas import (
     PeopleCoverageOut,
     PersonConversationsOut,
-    PersonDigestIn,
-    PersonDigestOut,
     PersonFactCreatedOut,
     PersonFactIn,
     PersonMeOut,
@@ -90,7 +88,7 @@ def _ref(person: Person) -> dict:
 @router.get("/me/", response=PersonMeOut, summary="What agents know about me")
 def people_me(request: HttpRequest) -> dict:
     """Everything canopy holds about YOU: every live fact in every workspace
-    (corrections first), every digest, and the last 50 times an agent or a
+    (corrections first) and the last 50 times an agent or a
     person read it. Any signed-in user; only ever your own."""
     person = contact_services.person_for(user=request.user)
     if person is None:
@@ -103,13 +101,6 @@ def people_me(request: HttpRequest) -> dict:
                             else (f.asserted_by_user.email if f.asserted_by_user_id else ""))
         d["source_turn_id"] = str(f.source_turn_id) if f.source_turn_id else None
         facts.append(d)
-    digests = [
-        {"workspace": d.workspace_id, "text": d.text, "updated_at": _iso(d.updated_at),
-         "updated_by": d.updated_by_agent.slug if d.updated_by_agent_id else
-         (d.updated_by_user.email if d.updated_by_user_id else "")}
-        for d in PersonDigest.objects.filter(person=person)
-        .select_related("updated_by_agent", "updated_by_user").order_by("workspace_id")
-    ]
     accesses = [
         {"created_at": a.created_at.isoformat(), "via": a.via, "workspace": a.workspace_id,
          "reader_agent": a.reader_agent.slug if a.reader_agent_id else None,
@@ -118,7 +109,7 @@ def people_me(request: HttpRequest) -> dict:
         for a in PersonAccess.objects.filter(person=person)
         .select_related("reader_agent", "reader_user").order_by("-created_at", "-pk")[:ME_ACCESSES]
     ]
-    return {**_ref(person), "facts": facts, "digests": digests, "accesses": accesses}
+    return {**_ref(person), "facts": facts, "accesses": accesses}
 
 
 @router.get("/coverage/", response=PeopleCoverageOut,
@@ -126,8 +117,7 @@ def people_me(request: HttpRequest) -> dict:
 def people_coverage(request: HttpRequest, workspace: str | None = None, days: int = 7) -> dict:
     """Per agent of the workspace, over the last `days` (1–90, default 7): the
     turns humans started with it, how many of those were handed what canopy
-    knows about the person, its people-digest turns by outcome, the facts it
-    wrote, and how stale the digests of the people it talked to are — with an
+    knows about the person, and the facts it recorded in-session — with an
     explicit `healthy` verdict and the rule behind it.
 
     Counts only: no person is named. Members of the workspace see every agent;
@@ -174,7 +164,7 @@ def lookup_person(request: HttpRequest, email: str, workspace: str | None = None
 
 @router.get("/{person_id}/", response=PersonOut, summary="A person, as one workspace knows them")
 def get_person(request: HttpRequest, person_id: int, workspace: str | None = None) -> dict:
-    """Live facts (corrections first) and the digest for `?workspace=`. Members
+    """Live facts (corrections first) for `?workspace=`. Members
     of that workspace only, and the read is logged where the person can see it."""
     ws = _workspace(request, workspace)
     if people.agent_of_login(request.user) is not None:
@@ -184,13 +174,10 @@ def get_person(request: HttpRequest, person_id: int, workspace: str | None = Non
         raise ProblemError(403, "Agents recall through HCP", type_=TYPE_FORBIDDEN,
                            detail="use hcp_searchPreferences with the turn you are serving")
     person = _person_in(person_id, ws)
-    digest = people.digest_for(person, ws.pk)
     people.log_access(person, via=PersonAccess.VIA_API, workspace_slug=ws.pk,
                       reader_user=request.user, reader_agent=None)
     return {
         **_ref(person), "workspace": ws.pk,
-        "digest": digest.text if digest else "",
-        "digest_updated_at": _iso(digest.updated_at) if digest else None,
         "facts": [people.fact_dict(f) for f in people.live_facts(person, ws.pk)],
         "see_all": people.SEE_ALL,
     }
@@ -277,24 +264,6 @@ def retract_person_fact(request: HttpRequest, person_id: int, fact_id: int) -> d
         raise _not_found("Fact not found")
     people.retract(fact, by=request.user)
     return {**people.fact_dict(fact), "supersedes_id": fact.supersedes_id}
-
-
-@router.put("/{person_id}/digest/", response=PersonDigestOut, summary="Replace a person's digest")
-def put_person_digest(request: HttpRequest, person_id: int, payload: PersonDigestIn) -> dict:
-    """The short brief agents read about this person in this workspace — a cache,
-    written by the `people_digest` turn. Members of the workspace (in practice an
-    agent's login)."""
-    ws = _workspace(request, payload.workspace)
-    person = _person_in(person_id, ws)
-    agent = people.agent_of_login(request.user)
-    try:
-        d = people.put_digest(person=person, workspace=ws, text=payload.text,
-                              source_turn_ids=payload.source_turn_ids,
-                              by_user=request.user, by_agent=agent)
-    except people.FactError as exc:
-        raise _bad(str(exc)) from None
-    return {"workspace": ws.pk, "text": d.text, "updated_at": _iso(d.updated_at),
-            "updated_by": agent.slug if agent is not None else request.user.email}
 
 
 @router.get("/{person_id}/conversations/", response=PersonConversationsOut,

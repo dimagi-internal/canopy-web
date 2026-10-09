@@ -1,6 +1,6 @@
 """The fleet hold — stop EVERY runner from starting anything, and see what tries.
 
-Asked for on 2026-10-07 when sessions nobody could account for (people-digest turns)
+Asked for on 2026-10-07 when sessions nobody could account for (people-digest turns, since removed)
 kept appearing on a laptop: hold the whole fleet, let turns pile up QUEUED with their
 triggers, trace them, release. The rules these tests hold:
 
