@@ -298,6 +298,15 @@ SOCIALACCOUNT_PROVIDERS = {
 # Restrict Google login to this email domain (empty = allow all)
 AUTH_ALLOWED_EMAIL_DOMAIN = env("AUTH_ALLOWED_EMAIL_DOMAIN", default="dimagi.com")
 
+# --- The HCP service (apps/contacts/hcp_oauth.py, docs/architecture/hcp-service.md) ---
+# Who the Human Context Protocol service serves, in ONE place. "internal" (the
+# default, Jonathan 2026-10-09: "for now we're only going to let it be used
+# internally"): only a person whose address is on AUTH_ALLOWED_EMAIL_DOMAIN may
+# authorize a client, and the discovery document says client registration is
+# closed. "public": anyone who can sign in may. Flipping it is the only code change
+# needed later; hcp-service.md lists what must be true operationally first.
+HCP_SERVICE_AUDIENCE = env("HCP_SERVICE_AUDIENCE", default="internal")
+
 # Whether LoginRequiredMiddleware enforces auth. Default on; toggle off during rollout.
 REQUIRE_AUTH = env.bool("REQUIRE_AUTH", default=True)
 

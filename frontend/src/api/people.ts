@@ -161,3 +161,54 @@ export async function exportMine(): Promise<Blob> {
   if (error) throw new Error('Failed to export')
   return new Blob([JSON.stringify(data, null, 2)], { type: 'application/ld+json' })
 }
+
+// --- the HCP service's client registry (apps/contacts/hcp_clients_api.py) ---------
+// Superusers only. Apps canopy does not operate that may ask people for access.
+
+export interface HcpClientRow {
+  client_id: string
+  name: string
+  operator: string
+  description: string
+  redirect_uris: string[]
+  allowed_scopes: string[]
+  first_party: boolean
+  webhook_url: string
+  created_at: string
+  disabled_at: string | null
+  active_grants: number
+  webhook_secret?: string | null
+}
+
+export type HcpClientInput = components['schemas']['HcpClientIn']
+export type HcpClientPatch = components['schemas']['HcpClientPatch']
+
+function registryError(error: unknown, what: string): Error {
+  const e = error as { status?: number; detail?: string; title?: string } | undefined
+  if (e?.status === 403) return new Error('Only canopy administrators manage HCP clients.')
+  return new Error(`${what}${e?.detail ? `: ${e.detail}` : ''}`)
+}
+
+export async function listHcpClients(): Promise<HcpClientRow[]> {
+  const { data, error } = await apiV2.GET('/api/hcp-admin/clients')
+  if (error) throw registryError(error, 'Failed to load clients')
+  return data as unknown as HcpClientRow[]
+}
+
+export async function registerHcpClient(body: HcpClientInput): Promise<HcpClientRow> {
+  const { data, error } = await apiV2.POST('/api/hcp-admin/clients', { body })
+  if (error) throw registryError(error, 'Failed to register the client')
+  return data as unknown as HcpClientRow
+}
+
+export async function updateHcpClient(
+  clientId: string,
+  body: HcpClientPatch,
+): Promise<HcpClientRow> {
+  const { data, error } = await apiV2.PATCH('/api/hcp-admin/clients/{client_id}', {
+    params: { path: { client_id: clientId } },
+    body,
+  })
+  if (error) throw registryError(error, 'Failed to update the client')
+  return data as unknown as HcpClientRow
+}

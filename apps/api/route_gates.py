@@ -68,7 +68,10 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``hcp-grant`` — the Human Context Protocol subject rule
   (``apps/contacts/hcp_api.py::_principal``): an agent reaches ONLY the person
   who started the turn it names, and only under that client's (agent, channel,
-  host) grant, which the person can revoke.
+  host) grant, which the person can revoke. An OAuth client of the HCP service
+  (``apps/contacts/hcp_oauth.py``) is held the same way: its ``hcpat_`` access
+  token reaches ONLY the person whose grant it was issued under, within that
+  grant's scopes and sources, and opens ``/api/hcp/v1/`` and nothing else.
 """
 from __future__ import annotations
 
@@ -451,6 +454,10 @@ GATES: dict[str, tuple[str, ...]] = {
     "hcp_listGrants": ("self", "hcp-grant"),  # an agent sees only the grant it reads under
     "hcp_revokeGrant": ("self",),
     "hcp_export": ("self",),
+    # --- apps/contacts/hcp_clients_api.py  (the HCP service's client registry)
+    "hcp_listClients": ("superuser",),
+    "hcp_registerClient": ("superuser",),  # puts its name before every person it asks
+    "hcp_updateClient": ("superuser",),
     "lookup_person": ("member",),  # 404 unless known in one of the caller's workspaces
     "get_person": ("member",),  # read logged as PersonAccess(via=api)
     "list_person_projects": ("member",),  # same gate as get_person (known_in); read logged

@@ -7282,6 +7282,53 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/hcp-admin/clients": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * HCP service: registered clients
+         * @description Every application registered to ask people for HCP access. Superusers only.
+         */
+        readonly get: operations["hcp_listClients"];
+        readonly put?: never;
+        /**
+         * HCP service: register a client
+         * @description Register an application. Returns its client_id, and its webhook secret
+         *     once if a webhook URL is given. Superusers only.
+         */
+        readonly post: operations["hcp_registerClient"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/hcp-admin/clients/{client_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * HCP service: change or disable a client
+         * @description Change a client's registration, disable or re-enable it, or rotate its
+         *     webhook secret (returned once). Narrowing allowed_scopes does not change grants
+         *     people already gave; disabling stops every token at once. Superusers only.
+         */
+        readonly patch: operations["hcp_updateClient"];
+        readonly trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -17992,6 +18039,138 @@ export interface components {
              */
             readonly model?: string | null;
         };
+        /** HcpClientOut */
+        readonly HcpClientOut: {
+            /** Client Id */
+            readonly client_id: string;
+            /** Name */
+            readonly name: string;
+            /** Operator */
+            readonly operator: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Redirect Uris */
+            readonly redirect_uris: readonly string[];
+            /** Allowed Scopes */
+            readonly allowed_scopes: readonly string[];
+            /** First Party */
+            readonly first_party: boolean;
+            /**
+             * Webhook Url
+             * @default
+             */
+            readonly webhook_url: string;
+            /** Created At */
+            readonly created_at: string;
+            /** Disabled At */
+            readonly disabled_at?: string | null;
+            /**
+             * Active Grants
+             * @description Grants people have given it that are still active.
+             */
+            readonly active_grants: number;
+        };
+        /** HcpClientCreatedOut */
+        readonly HcpClientCreatedOut: {
+            /** Client Id */
+            readonly client_id: string;
+            /** Name */
+            readonly name: string;
+            /** Operator */
+            readonly operator: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Redirect Uris */
+            readonly redirect_uris: readonly string[];
+            /** Allowed Scopes */
+            readonly allowed_scopes: readonly string[];
+            /** First Party */
+            readonly first_party: boolean;
+            /**
+             * Webhook Url
+             * @default
+             */
+            readonly webhook_url: string;
+            /** Created At */
+            readonly created_at: string;
+            /** Disabled At */
+            readonly disabled_at?: string | null;
+            /**
+             * Active Grants
+             * @description Grants people have given it that are still active.
+             */
+            readonly active_grants: number;
+            /**
+             * Webhook Secret
+             * @description The HMAC key for revocation notifications (HCP 4.2.3). Shown once; store it with the client.
+             */
+            readonly webhook_secret?: string | null;
+        };
+        /** HcpClientIn */
+        readonly HcpClientIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Operator
+             * @description Who runs it, as people should read it.
+             */
+            readonly operator: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Redirect Uris */
+            readonly redirect_uris: readonly string[];
+            /**
+             * Allowed Scopes
+             * @description hcp:{category}:{read|write}, each named.
+             */
+            readonly allowed_scopes: readonly string[];
+            /**
+             * First Party
+             * @default false
+             */
+            readonly first_party: boolean;
+            /**
+             * Webhook Url
+             * @default
+             */
+            readonly webhook_url: string;
+        };
+        /** HcpClientPatch */
+        readonly HcpClientPatch: {
+            /** Name */
+            readonly name?: string | null;
+            /** Operator */
+            readonly operator?: string | null;
+            /** Description */
+            readonly description?: string | null;
+            /** Redirect Uris */
+            readonly redirect_uris?: readonly string[] | null;
+            /** Allowed Scopes */
+            readonly allowed_scopes?: readonly string[] | null;
+            /** First Party */
+            readonly first_party?: boolean | null;
+            /** Webhook Url */
+            readonly webhook_url?: string | null;
+            /**
+             * Disabled
+             * @description true stops every token it holds at once.
+             */
+            readonly disabled?: boolean | null;
+            /**
+             * Rotate Webhook Secret
+             * @default false
+             */
+            readonly rotate_webhook_secret: boolean;
+        };
     };
     responses: never;
     parameters: never;
@@ -27747,6 +27926,76 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly hcp_listClients: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["HcpClientOut"][];
+                };
+            };
+        };
+    };
+    readonly hcp_registerClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HcpClientIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HcpClientCreatedOut"];
+                };
+            };
+        };
+    };
+    readonly hcp_updateClient: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly client_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HcpClientPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HcpClientCreatedOut"];
+                };
             };
         };
     };

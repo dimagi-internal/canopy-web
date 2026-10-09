@@ -85,6 +85,12 @@ const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
     label: 'Requests for access to Canopy',
     match: (p) => p === '/beta-requests' || p.startsWith('/beta-requests/'),
   },
+  {
+    // The HCP service's client registry: apps outside canopy that may ask people
+    // for their context. In no menu: canopy administrators open it by address.
+    label: 'The HCP service (administrators)',
+    match: (p) => p === '/hcp-clients',
+  },
 ]
 
 export function guideGroups(surfaces: SurfaceDescriptor[] = SURFACES): GuideGroup[] {

@@ -719,6 +719,11 @@ class PersonGrant(models.Model):
                                   null=True, blank=True, related_name="person_grants")
     agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True, blank=True,
                               related_name="person_grants")
+    #: The OAuth client this grant was issued to over the HCP service's
+    #: authorization-code flow (docs/architecture/hcp-service.md). NULL for a
+    #: first-party agent grant (the `agent`/`channel`/`host` key above).
+    hcp_client = models.ForeignKey("contacts.HcpClient", on_delete=models.CASCADE, null=True,
+                                   blank=True, related_name="grants")
     #: slack | email | chat | web | mcp | api | widget | sdk | … ("" = any).
     channel = models.CharField(max_length=40, blank=True, default="")
     #: The embedding host (a connected site) when the channel is an SDK/widget.
@@ -837,8 +842,11 @@ class HcpIdempotencyKey(models.Model):
     response and does not run (or audit) twice. Kept ≥24h."""
 
     key = models.CharField(max_length=200)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
-                             related_name="hcp_idempotency_keys")
+    #: Who replayed it: a canopy account, or (HCP service) an OAuth client.
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True,
+                             blank=True, related_name="hcp_idempotency_keys")
+    client = models.ForeignKey("contacts.HcpClient", on_delete=models.CASCADE, null=True,
+                               blank=True, related_name="idempotency_keys")
     method = models.CharField(max_length=8)
     path = models.CharField(max_length=300)
     body_hash = models.CharField(max_length=64)
@@ -848,5 +856,119 @@ class HcpIdempotencyKey(models.Model):
 
     class Meta:
         db_table = "contact_hcp_idempotency_keys"
-        constraints = [models.UniqueConstraint(fields=["user", "key"],
-                                               name="hcp_idempotency_key_per_user")]
+        constraints = [
+            models.UniqueConstraint(fields=["user", "key"], condition=models.Q(user__isnull=False),
+                                    name="hcp_idempotency_key_per_user"),
+            models.UniqueConstraint(fields=["client", "key"], condition=models.Q(client__isnull=False),
+                                    name="hcp_idempotency_key_per_client"),
+        ]
+
+
+# --- the HCP service: OAuth clients outside canopy (docs/architecture/hcp-service.md) ---
+
+
+class HcpClient(models.Model):
+    """An application canopy does not operate that may ask a person for access to
+    their HCP instance (HCP 5.2.1: the reason the service is `oauth2`).
+
+    Registered by a canopy admin (superuser) only — there is no dynamic
+    registration. A public client: it holds no secret and proves possession of
+    each authorization code with PKCE S256. Disabling a client stops every token
+    it holds at once; the grants stay on the person's list, inert, until they
+    revoke them."""
+
+    client_id = models.CharField(max_length=64, unique=True)
+    name = models.CharField(max_length=120)
+    #: Who runs it — shown to the person on the consent screen next to the name.
+    operator = models.CharField(max_length=120)
+    description = models.CharField(max_length=500, blank=True, default="")
+    #: Exact-match redirect URIs (no prefix or wildcard matching).
+    redirect_uris = models.JSONField(default=list)
+    #: The most it may ever ask for: `hcp:{category}:{read|write}` scopes.
+    allowed_scopes = models.JSONField(default=list)
+    #: Operated by Dimagi (canopy's own tooling) rather than a third party. Only
+    #: shown to the person; it grants nothing extra.
+    first_party = models.BooleanField(default=False)
+    #: HCP 4.2.3 revocation notifications: where to POST, and the HMAC key
+    #: (encrypted at rest with apps.common.encryption; shown to the admin once).
+    webhook_url = models.URLField(max_length=500, blank=True, default="")
+    webhook_secret_encrypted = models.TextField(blank=True, default="")
+    registered_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                      null=True, blank=True, related_name="hcp_clients_registered")
+    created_at = models.DateTimeField(auto_now_add=True)
+    disabled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "contact_hcp_clients"
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.client_id})"
+
+    @property
+    def is_active(self) -> bool:
+        return self.disabled_at is None
+
+
+class HcpAuthorizationCode(models.Model):
+    """An authorization code (RFC 6749 4.1.2): single use, ten minutes, bound to
+    the client, the redirect URI and the PKCE challenge, and to the grant the
+    person just created."""
+
+    code_hash = models.CharField(max_length=64, unique=True)
+    client = models.ForeignKey(HcpClient, on_delete=models.CASCADE, related_name="codes")
+    grant = models.ForeignKey(PersonGrant, on_delete=models.CASCADE, related_name="hcp_codes")
+    redirect_uri = models.CharField(max_length=500)
+    code_challenge = models.CharField(max_length=128)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_hcp_codes"
+
+
+class HcpToken(models.Model):
+    """An access or refresh token issued to an OAuth client under one grant.
+    Stored as a sha256 of the raw value. Revoking the grant revokes every token
+    (HCP 4.2.2); refresh tokens rotate, and a rotated one presented again revokes
+    the grant (OAuth 2.1 reuse detection)."""
+
+    ACCESS, REFRESH = "access", "refresh"
+
+    token_hash = models.CharField(max_length=64, unique=True)
+    kind = models.CharField(max_length=8)
+    client = models.ForeignKey(HcpClient, on_delete=models.CASCADE, related_name="tokens")
+    grant = models.ForeignKey(PersonGrant, on_delete=models.CASCADE, related_name="hcp_tokens")
+    scopes = models.JSONField(default=list)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    #: A refresh token's single use (rotation); set when it is exchanged.
+    used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "contact_hcp_tokens"
+        indexes = [models.Index(fields=["grant", "kind"])]
+        constraints = [models.CheckConstraint(condition=models.Q(kind__in=["access", "refresh"]),
+                                              name="hcp_token_kind_known")]
+
+
+class HcpRevocationDelivery(models.Model):
+    """One revocation notification owed to a client's webhook (HCP 4.2.3):
+    retried with backoff for at least 5 attempts over at least an hour, every
+    attempt the same payload under a fresh HCP-Delivery-Id. Revocation itself
+    never waits for it."""
+
+    grant = models.ForeignKey(PersonGrant, on_delete=models.CASCADE, related_name="revocation_deliveries")
+    client = models.ForeignKey(HcpClient, on_delete=models.CASCADE, related_name="revocation_deliveries")
+    payload = models.JSONField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(db_index=True)
+    last_status = models.CharField(max_length=200, blank=True, default="")
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    abandoned_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_hcp_revocation_deliveries"

@@ -782,6 +782,11 @@ def heartbeat(
     from apps.retention import services as retention_services
 
     retention_services.maybe_sweep(now)
+    # And the HCP service's revocation notifications still owed to a client's
+    # webhook (HCP 4.2.3: retried with backoff). At most once a minute; never raises.
+    from apps.contacts import hcp_oauth
+
+    hcp_oauth.maybe_deliver(now)
     return runner
 
 
