@@ -5,13 +5,15 @@ import { AgentApiError, getProject, patchProject, type ProjectDetailOut, type Ta
 import { relativeTime } from '@/components/activity/turnLog'
 import { nestTasks, TaskCard } from '@/components/TasksBoard'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
+import { ProjectIdeasSection } from '@/pages/agents/ProjectIdeasSection'
 import { ProjectStatusOptions, StatusChip } from '@/pages/agents/projectParts'
 import { Section } from '@/pages/agents/sectionLayout'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
-// ONE PROJECT — always the same four sections in the same order (Header, Tasks,
-// Activity, Links), so a person learns one page rather than one per project.
+// ONE PROJECT — always the same sections in the same order (Header, People,
+// Ideas, Tasks, Activity, Links), so a person learns one page rather than one
+// per project. People and Ideas are the shared-building lens (hal T69).
 
 /** Live tasks first; otherwise the server's order (position) stands. */
 function liveFirst(tasks: readonly TaskOut[]): TaskOut[] {
@@ -149,6 +151,8 @@ export function AgentProjectPage(): JSX.Element {
         </div>
         {statusError && <p className="mt-2 text-[12px] text-destructive">{statusError}</p>}
       </header>
+
+      <ProjectIdeasSection slug={agent.slug} projectRef={detail.ext_id} />
 
       <Section id="project-tasks" title="Tasks" description="This project's tasks, open first.">
         {tasks.length === 0 ? (

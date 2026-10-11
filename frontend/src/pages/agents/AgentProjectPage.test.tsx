@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 //
-// A project page is always the same four sections in the same order — Header,
-// Tasks, Activity, Links — so a person learns one page, not one per project.
+// A project page is always the same sections in the same order — Header,
+// People, Ideas, Tasks, Activity, Links — so a person learns one page, not one
+// per project.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
-const { getProject, patchProject, ctx } = vi.hoisted(() => ({
+const { getProject, patchProject, getProjectIdeas, ctx } = vi.hoisted(() => ({
   getProject: vi.fn<(slug: string, ref: string) => Promise<unknown>>(),
   patchProject: vi.fn(async () => ({})),
+  getProjectIdeas: vi.fn(async () => ideasBoard()),
   ctx: { canEdit: true, waiting: 0, refreshWaiting: () => {} },
 }))
 
@@ -16,11 +18,34 @@ vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
   getProject,
   patchProject,
+  getProjectIdeas,
 }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useOutletContext: () => ({ agent: { slug: 'eva', name: 'Eva' }, ...ctx }),
 }))
+
+function ideasBoard() {
+  return {
+    agent: 'eva', project: 'P1', name: 'Connect Enterprise',
+    stages: { proposed: 0, started: 1, shipped: 1, declined: 0 },
+    ideas: [
+      { ext_id: 'T1', title: 'Live one', status: 'in_progress', stage: 'started', next_action: '',
+        updated_at: '2026-10-05T00:00:00Z', links: [], their_words: null,
+        came_from: [{ person_id: 7, name: 'Sophie', via: 'contributor_page',
+                      quote: 'the normal case is someone just ignores us',
+                      source_url: 'https://canopy.test/chat/1', said_at: '2026-09-27T00:00:00Z' }] },
+      { ext_id: 'T9', title: 'Finished one', status: 'done', stage: 'shipped', next_action: '',
+        updated_at: '2026-10-05T00:00:00Z', links: [], their_words: null, came_from: [] },
+    ],
+    contributors: [
+      { id: 7, display_name: 'Sophie', role: '', source: 'summary', since: '2026-10-01T00:00:00Z',
+        has_page: true, page_withheld: false, goal: 'Run a real RUTF procurement in Supply.',
+        written_at: '2026-10-11T00:00:00Z',
+        ideas: { proposed: 0, started: 1, shipped: 0, declined: 0 } },
+    ],
+  }
+}
 
 const { AgentProjectPage } = await import('./AgentProjectPage')
 
@@ -74,6 +99,22 @@ afterEach(() => {
 })
 
 describe('AgentProjectPage', () => {
+  it('shows who is building it and every idea with its stage and whose words', async () => {
+    getProject.mockResolvedValue(detail())
+    show()
+    const person = await screen.findByTestId('contributor-7')
+    expect(person.textContent).toContain('Sophie')
+    expect(person.textContent).toContain('Run a real RUTF procurement')
+    expect(person.getAttribute('href')).toBe('/w/connect/agents/eva/projects/P1/people/7')
+    const idea = await screen.findByTestId('idea-T1')
+    expect(within(idea).getByLabelText('Stage: Started')).toBeTruthy()
+    expect(idea.textContent).toContain('the normal case is someone just ignores us')
+    expect(within(idea).getByRole('link', { name: 'Sophie' }).getAttribute('href')).toBe(
+      '/w/connect/agents/eva/projects/P1/people/7',
+    )
+    expect(screen.getByTestId('idea-counts').textContent).toBe('1 started · 0 proposed · 1 shipped')
+  })
+
   it('re-reads the project when canopy says a task moved', async () => {
     const { resourceChanged } = await import('@/widget/pageInvalidation')
     getProject.mockResolvedValue(detail())
@@ -84,15 +125,15 @@ describe('AgentProjectPage', () => {
     await waitFor(() => expect(getProject).toHaveBeenCalledTimes(2))
   })
 
-  it('renders the header then Tasks, Activity, Links — in that order', async () => {
+  it('renders the header then People, Ideas, Tasks, Activity, Links — in that order', async () => {
     getProject.mockResolvedValue(detail())
     show()
     await screen.findByRole('heading', { name: 'Connect Enterprise' })
     expect(getProject).toHaveBeenCalledWith('eva', 'P1')
 
-    const headings = screen.getAllByRole('heading').map((h) => h.textContent)
-    expect(headings[0]).toBe('Connect Enterprise')
-    expect(headings.slice(1)).toEqual(['Tasks', 'Activity', 'Links'])
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Connect Enterprise')
+    const sections = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+    expect(sections).toEqual(['People', 'Ideas', 'Tasks', 'Activity', 'Links'])
 
     expect(screen.getByRole('link', { name: '← Projects' }).getAttribute('href'))
       .toBe('/w/connect/agents/eva/projects')

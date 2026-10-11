@@ -3643,6 +3643,86 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/projects/{ref}/contributors/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A project's ideas (where each stands, whose it was) and its contributors
+         * @description Every task of the project is an idea. `stage` reads its status in a
+         *     contributor's words: suggested → proposed, in_progress → started,
+         *     done → shipped (declined stays declined). `came_from` lists who it came from,
+         *     strongest evidence first: the task's human-why, the human whose turn raised
+         *     it, then contributor pages that claim it. Contributors with a page lead.
+         *
+         *     An agent sees contributor-page content (goals, quotes, the attributions that
+         *     rest on a page) only for people who let agents use what they learned.
+         */
+        readonly get: operations["project_ideas"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/contributors/{person}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One contributor's page: their goal in their own words, and their ideas
+         * @description What they are trying to achieve, quoted with links to where they said it,
+         *     and their ideas on this project as shipped / started / proposed, plus what
+         *     they want that no task covers yet. Read it before building on — or against —
+         *     their idea. `person` is an id or an email address.
+         */
+        readonly get: operations["contributor_page"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/contributors/{person}/summary/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Write a contributor's page (an agent, with their permission)
+         * @description Replace the person's page on this project with the agent's reading of
+         *     their own words. Every quote is verbatim and carries a `source_url`; each
+         *     `ideas[].task` must be a task of this project; `open` holds wants no task
+         *     covers yet. Allowed for an agent while the person lets agents learn about
+         *     them and has granted it, or for the person themself — anyone else is 403.
+         *     Makes them a participant (source `summary`) if they were not one.
+         */
+        readonly put: operations["put_contributor_summary"];
+        readonly post?: never;
+        /**
+         * Delete a contributor's page
+         * @description The person themself, the agent's admins, or the agent that wrote it.
+         *     Leaves them a participant; their ideas stay on the board.
+         */
+        readonly delete: operations["delete_contributor_summary"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/tasks/": {
         readonly parameters: {
             readonly query?: never;
@@ -13035,10 +13115,10 @@ export interface components {
             readonly role: string;
             /**
              * Source
-             * @description How canopy first learned it: a fact filed against the project, a conversation that raised one of its tasks, or a person adding them.
+             * @description How canopy first learned it: a fact filed against the project, a conversation that raised one of its tasks, a person adding them, or an agent writing their contributor page.
              * @enum {string}
              */
-            readonly source: "fact" | "turn" | "manual";
+            readonly source: "fact" | "turn" | "manual" | "summary";
             /**
              * Since
              * Format: date-time
@@ -14816,6 +14896,351 @@ export interface components {
             readonly always_run?: boolean | null;
             /** Notify */
             readonly notify?: readonly string[] | null;
+        };
+        /** ContributorBriefOut */
+        readonly ContributorBriefOut: {
+            /** Id */
+            readonly id: number;
+            /** Display Name */
+            readonly display_name: string;
+            /**
+             * Role
+             * @default
+             */
+            readonly role: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            readonly source: "fact" | "turn" | "manual" | "summary";
+            /**
+             * Since
+             * Format: date-time
+             */
+            readonly since: string;
+            /** Has Page */
+            readonly has_page: boolean;
+            /**
+             * Page Withheld
+             * @description A page exists but the reader (an agent) may not use it.
+             */
+            readonly page_withheld: boolean;
+            /**
+             * Goal
+             * @default
+             */
+            readonly goal: string;
+            /** Written At */
+            readonly written_at?: string | null;
+            readonly ideas: components["schemas"]["StageCountsOut"];
+        };
+        /** IdeaOut */
+        readonly IdeaOut: {
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            readonly stage: "proposed" | "started" | "shipped" | "declined";
+            /**
+             * Next Action
+             * @default
+             */
+            readonly next_action: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /** Links */
+            readonly links: readonly components["schemas"]["AgentTaskLink"][];
+            /** Came From */
+            readonly came_from: readonly components["schemas"]["IdeaSourceOut"][];
+            /** @description On a contributor page: this person's words about it. */
+            readonly their_words?: components["schemas"]["IdeaSourceOut"] | null;
+        };
+        /**
+         * IdeaSourceOut
+         * @description One person an idea came from, and the evidence for it.
+         */
+        readonly IdeaSourceOut: {
+            /**
+             * Person Id
+             * @description Null when the task names someone canopy cannot resolve.
+             */
+            readonly person_id: number | null;
+            /** Name */
+            readonly name: string;
+            /**
+             * Via
+             * @description human_why: the task's own record of what they said; raised_by: their turn raised it; contributor_page: an agent's reading of their sessions.
+             * @enum {string}
+             */
+            readonly via: "human_why" | "raised_by" | "contributor_page";
+            /**
+             * Quote
+             * @default
+             */
+            readonly quote: string;
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Said At */
+            readonly said_at?: string | null;
+        };
+        /** ProjectIdeasOut */
+        readonly ProjectIdeasOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Project */
+            readonly project: string;
+            /** Name */
+            readonly name: string;
+            readonly stages: components["schemas"]["StageCountsOut"];
+            /** Ideas */
+            readonly ideas: readonly components["schemas"]["IdeaOut"][];
+            /** Contributors */
+            readonly contributors: readonly components["schemas"]["ContributorBriefOut"][];
+        };
+        /** StageCountsOut */
+        readonly StageCountsOut: {
+            /**
+             * Proposed
+             * @default 0
+             */
+            readonly proposed: number;
+            /**
+             * Started
+             * @default 0
+             */
+            readonly started: number;
+            /**
+             * Shipped
+             * @default 0
+             */
+            readonly shipped: number;
+            /**
+             * Declined
+             * @default 0
+             */
+            readonly declined: number;
+        };
+        /** ContributorOpenOut */
+        readonly ContributorOpenOut: {
+            /** Text */
+            readonly text: string;
+            /**
+             * Quote
+             * @default
+             */
+            readonly quote: string;
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Said At */
+            readonly said_at?: string | null;
+        };
+        /** ContributorPageOut */
+        readonly ContributorPageOut: {
+            readonly person: components["schemas"]["ContributorPersonOut"];
+            /** Agent */
+            readonly agent: string;
+            /** Project */
+            readonly project: string;
+            /** Project Name */
+            readonly project_name: string;
+            /**
+             * Role
+             * @default
+             */
+            readonly role: string;
+            /** Participant Since */
+            readonly participant_since?: string | null;
+            /**
+             * Summary State
+             * @enum {string}
+             */
+            readonly summary_state: "written" | "not_written" | "withheld";
+            readonly summary?: components["schemas"]["ContributorSummaryOut"] | null;
+            /** Ideas */
+            readonly ideas: readonly components["schemas"]["IdeaOut"][];
+            readonly stages: components["schemas"]["StageCountsOut"];
+            /**
+             * May Write
+             * @description May the caller write this page (an agent with the person's permission, or the person themself)?
+             */
+            readonly may_write: boolean;
+            /**
+             * Why Not
+             * @default
+             */
+            readonly why_not: string;
+        };
+        /** ContributorPersonOut */
+        readonly ContributorPersonOut: {
+            /** Id */
+            readonly id: number;
+            /** Display Name */
+            readonly display_name: string;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+        };
+        /** ContributorQuoteOut */
+        readonly ContributorQuoteOut: {
+            /** Quote */
+            readonly quote: string;
+            /** Source Url */
+            readonly source_url: string;
+            /** Said At */
+            readonly said_at?: string | null;
+            /**
+             * Where
+             * @default
+             */
+            readonly where: string;
+        };
+        /** ContributorSummaryOut */
+        readonly ContributorSummaryOut: {
+            /** Goal */
+            readonly goal: string;
+            /** Quotes */
+            readonly quotes: readonly components["schemas"]["ContributorQuoteOut"][];
+            /** Open */
+            readonly open: readonly components["schemas"]["ContributorOpenOut"][];
+            /** Sources */
+            readonly sources: readonly components["schemas"]["AgentTaskLink"][];
+            /**
+             * Basis
+             * @default
+             */
+            readonly basis: string;
+            /** Written At */
+            readonly written_at?: string | null;
+            /**
+             * Written By
+             * @default
+             */
+            readonly written_by: string;
+        };
+        /**
+         * ContributorIdeaIn
+         * @description One of the project's tasks that is this person's idea, with their words about it.
+         */
+        readonly ContributorIdeaIn: {
+            /**
+             * Task
+             * @description The task's ext_id on this project (T71).
+             */
+            readonly task: string;
+            /**
+             * Quote
+             * @default
+             */
+            readonly quote: string;
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Said At */
+            readonly said_at?: string | null;
+        };
+        /**
+         * ContributorOpenIn
+         * @description Something they want that no task covers yet.
+         */
+        readonly ContributorOpenIn: {
+            /**
+             * Text
+             * @description A short plain statement of the want.
+             */
+            readonly text: string;
+            /**
+             * Quote
+             * @default
+             */
+            readonly quote: string;
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Said At */
+            readonly said_at?: string | null;
+        };
+        /**
+         * ContributorQuoteIn
+         * @description Something the person said, verbatim, and where they said it.
+         */
+        readonly ContributorQuoteIn: {
+            /**
+             * Quote
+             * @description Their words, verbatim. Trim, never rephrase.
+             */
+            readonly quote: string;
+            /**
+             * Source Url
+             * @description Where they said it: a canopy session, a doc comment, an email thread.
+             */
+            readonly source_url: string;
+            /** Said At */
+            readonly said_at?: string | null;
+            /**
+             * Where
+             * @description A short label for the link, e.g. 'Supply session, Sep 10'.
+             * @default
+             */
+            readonly where: string;
+        };
+        /** ContributorSourceIn */
+        readonly ContributorSourceIn: {
+            /** Label */
+            readonly label: string;
+            /** Url */
+            readonly url: string;
+        };
+        /**
+         * ContributorSummaryIn
+         * @description A contributor page, as the agent that read the person's sessions writes it.
+         *
+         *     `goal` is the one place the agent's own words appear — keep it short and
+         *     built from theirs; everything else is their words with a link.
+         */
+        readonly ContributorSummaryIn: {
+            /**
+             * Goal
+             * @description What they are trying to achieve on this project, in a few sentences, built from their own words.
+             */
+            readonly goal: string;
+            /** Quotes */
+            readonly quotes: readonly components["schemas"]["ContributorQuoteIn"][];
+            /** Ideas */
+            readonly ideas?: readonly components["schemas"]["ContributorIdeaIn"][];
+            /** Open */
+            readonly open?: readonly components["schemas"]["ContributorOpenIn"][];
+            /**
+             * Sources
+             * @description What the agent read to write this.
+             */
+            readonly sources?: readonly components["schemas"]["ContributorSourceIn"][];
+            /**
+             * Basis
+             * @description How much it rests on, e.g. '458 prompts across 22 sessions, Sep 10 to Oct 9'.
+             * @default
+             */
+            readonly basis: string;
         };
         /** WorkspaceOut */
         readonly WorkspaceOut: {
@@ -25186,6 +25611,103 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["ScheduleOut"];
                 };
+            };
+        };
+    };
+    readonly project_ideas: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectIdeasOut"];
+                };
+            };
+        };
+    };
+    readonly contributor_page: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly person: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContributorPageOut"];
+                };
+            };
+        };
+    };
+    readonly put_contributor_summary: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly person: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ContributorSummaryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ContributorPageOut"];
+                };
+            };
+        };
+    };
+    readonly delete_contributor_summary: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+                readonly person: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

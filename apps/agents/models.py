@@ -695,11 +695,12 @@ class ProjectParticipant(models.Model):
     side of it).
     """
 
-    FACT, TURN, MANUAL = "fact", "turn", "manual"
+    FACT, TURN, MANUAL, SUMMARY = "fact", "turn", "manual", "summary"
     SOURCE_CHOICES = [
         (FACT, "A fact about them was filed against the project"),
         (TURN, "A conversation with them raised one of its tasks"),
         (MANUAL, "Added by a person"),
+        (SUMMARY, "An agent wrote their contributor page from their own words"),
     ]
     ROLE_MAX = 80
 
@@ -713,13 +714,30 @@ class ProjectParticipant(models.Model):
     source = models.CharField(max_length=8, choices=SOURCE_CHOICES)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    #: Their CONTRIBUTOR PAGE (hal T69): what they are trying to achieve on this
+    #: project, in their own words, with a link to where they said each thing,
+    #: and which of the project's tasks are theirs. It is JUDGMENT — which of
+    #: someone's 400 prompts say what they want — so an agent writes it
+    #: (`contributors.write_summary`, `PUT …/contributors/{person}/summary/`) and
+    #: the page only renders it. Per project because what someone wants from
+    #: Supply says nothing about what they want from anything else.
+    #:
+    #: It is something an agent LEARNED about a person, so it follows the
+    #: person's own switches: written only while they let agents learn about
+    #: them (record) and this agent holds their grant; read by an agent only
+    #: while they let agents use it (use). Empty dict = never written.
+    summary = models.JSONField(default=dict, blank=True)
+    summary_written_at = models.DateTimeField(null=True, blank=True)
+    summary_by_agent = models.ForeignKey("agents.Agent", on_delete=models.SET_NULL, null=True,
+                                         blank=True, related_name="contributor_summaries")
+
     class Meta:
         db_table = "agents_project_participant"
         ordering = ["-created_at", "-pk"]
         constraints = [
             models.UniqueConstraint(fields=["project", "person"], name="one_participant_row_per_person"),
-            models.CheckConstraint(condition=models.Q(source__in=["fact", "turn", "manual"]),
-                                   name="project_participant_source_known"),
+            models.CheckConstraint(condition=models.Q(source__in=["fact", "turn", "manual", "summary"]),
+                                   name="project_participant_source_known_v2"),
         ]
 
     def __str__(self) -> str:  # pragma: no cover

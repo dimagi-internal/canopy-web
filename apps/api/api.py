@@ -185,6 +185,7 @@ from apps.session_sharing.api import router as sessions_router  # noqa: E402
 from apps.session_sharing.api import share_router as session_share_router  # noqa: E402
 from apps.agents.a2a_api import router as a2a_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
+from apps.agents.contributors_api import router as contributors_router  # noqa: E402
 from apps.agents.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.oauth_api import router as agent_google_router  # noqa: E402
 from apps.agent_runs.api import router as agent_runs_router  # noqa: E402
@@ -254,6 +255,7 @@ api.add_router("/agents", agent_google_router)  # start the Google mailbox mint
 # new agent — the barrier this feature exists to remove.
 api.add_router("/oauth", google_oauth_router)
 api.add_router("/agents", schedules_router)  # recurring turns, under the agents namespace
+api.add_router("/agents", contributors_router)  # ideas + contributor pages on a project (hal T69)
 # Fleet-wide task and project lists (/api/tasks/, /api/projects/) — the
 # per-agent filters across every agent the caller can see.
 api.add_router("", fleet_tasks_router)

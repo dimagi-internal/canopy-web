@@ -70,6 +70,9 @@ const AgentProjectsSection = lazySection(() =>
 const AgentProjectPage = lazySection(() =>
   import('./pages/agents/AgentProjectPage').then((m) => ({ default: m.AgentProjectPage })),
 )
+const ContributorPage = lazySection(() =>
+  import('./pages/agents/ContributorPage').then((m) => ({ default: m.ContributorPage })),
+)
 const AgentTasksSection = lazySection(() =>
   import('./pages/agents/AgentTasksSection').then((m) => ({ default: m.AgentTasksSection })),
 )
@@ -317,6 +320,8 @@ export const routeTable: RouteObject[] = [
           { index: true, element: <Navigate to="projects" replace /> },
           { path: 'projects', element: <LazySection><AgentProjectsSection /></LazySection> },
           { path: 'projects/:ref', element: <LazySection><AgentProjectPage /></LazySection> },
+          // One contributor's page on a project: their words, their ideas (hal T69).
+          { path: 'projects/:ref/people/:person', element: <LazySection><ContributorPage /></LazySection> },
           { path: 'tasks', element: <LazySection><AgentTasksSection /></LazySection> },
           // Old addresses for the same things — bookmarks and links in old emails.
           // Those that took a query keep it (an old `/items?batch=` link).

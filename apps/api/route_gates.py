@@ -131,6 +131,12 @@ GATES: dict[str, tuple[str, ...]] = {
     "create_project": ("agent.work",),
     "get_project": ("member",),
     "patch_project": ("agent.work",),
+    # --- apps/agents/contributors_api.py (hal T69): ideas + contributor pages
+    "project_ideas": ("member",),  # page content withheld from an agent without the person's `use`
+    "contributor_page": ("member",),  # the person must be known_in the workspace; read logged
+    # An agent's login (a member) under the PERSON's record switch + its grant, or the person.
+    "put_contributor_summary": ("member", "self"),
+    "delete_contributor_summary": ("self", "agent-admin"),  # or the agent that wrote it
     "list_tasks": ("member",),
     "create_tasks": ("agent.work",),  # or the agent's own login
     "get_task": ("member",),
@@ -607,6 +613,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "record_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "preview_cron": "POST but read-only: computes next fire times, writes nothing",
     "create_session": "starting a chat with an agent is the interaction tier a viewer holds",
+    "put_contributor_summary": "an agent's login is a member, and that is who writes a contributor page — only while the person lets agents learn about them and has granted that agent; otherwise only the person themself",
     "add_person_fact": "an agent's login is a member, and that is who writes facts (contract canopy#804); a fact is append-only, attributed, visible to its subject and retractable by them",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
 }
