@@ -1683,6 +1683,19 @@ def replace_reported_sessions(
     # an unchanged menu would re-render the buttons under a thumb.
     menu_changes: list[tuple] = []
     new_asks: list[tuple] = []
+    # Where a NEW agent-less session is filed: the runner owner's default session
+    # workspace while it still applies, else the runner's own (`workspace`).
+    # Resolved lazily and at most once — the steady-state report creates nothing,
+    # and this runs from every box every ~10s. Never consulted for an EXISTING
+    # session, which is what keeps a session someone moved where they put it.
+    filed_in: list = []
+
+    def _filing_workspace():
+        if not filed_in:
+            from apps.canopy_sessions.filing import filing_workspace
+
+            filed_in.append(filing_workspace(runner, workspace))
+        return filed_in[0]
 
     # The loop takes select_for_update locks, which Django REJECTS outside a
     # transaction — "select_for_update cannot be used outside of a transaction".
@@ -1755,7 +1768,9 @@ def replace_reported_sessions(
                     # why RunnerBinding.emdash_project, the key the 10s report
                     # loop reuses on, does not move.
                     project=("" if owner else project),
-                    workspace=(owner.workspace if owner else workspace),
+                    # An agent's project follows the agent; anything else is
+                    # filed per the runner owner's default (canopy_sessions.filing).
+                    workspace=(owner.workspace if owner else _filing_workspace()),
                     origin=Session.ORIGIN_RUNNER,
                     title=s.emdash_task,
                 )

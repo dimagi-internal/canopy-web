@@ -241,6 +241,20 @@ export function detachSessionFromSlack(id: string): Promise<SlackDetachResult> {
   });
 }
 
+/**
+ * File this session in another workspace you can edit in. Only the person whose
+ * session it is (its creator, or the owner of the runner it was found on) may;
+ * an agent's session refuses with a 422. Members of the old workspace who are
+ * not in the new one lose it.
+ */
+export function moveSession(id: string, workspace: string): Promise<ChatSession> {
+  return request<ChatSession>(`/api/canopy-sessions/${encodeURIComponent(id)}/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace }),
+  });
+}
+
 export type TransferResult = components["schemas"]["TransferOut"];
 
 /**

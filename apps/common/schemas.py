@@ -78,6 +78,38 @@ class PresencePreferenceIn(StrictModel):
     show_presence: bool
 
 
+class SessionWorkspaceChoice(StrictModel):
+    slug: str
+    display_name: str
+
+
+class SessionWorkspacePreferenceOut(StrictModel):
+    """Response for GET/PATCH /api/me/session-workspace/."""
+
+    workspace: str | None = Field(
+        default=None,
+        description="The workspace you chose for your own emdash sessions, or null if unset.",
+    )
+    effective: str | None = Field(
+        default=None,
+        description=(
+            "The workspace your new sessions are filed in right now: `workspace` while "
+            "you can still edit there, else null (each runner's own workspace is used)."
+        ),
+    )
+    choices: list[SessionWorkspaceChoice] = Field(
+        default_factory=list,
+        description="Workspaces you may file sessions in, or move one to (editor or better).",
+    )
+
+
+class SessionWorkspacePreferenceIn(StrictModel):
+    """Request body for PATCH /api/me/session-workspace/. A blank or null
+    `workspace` clears the default."""
+
+    workspace: str | None = None
+
+
 # --- Health ------------------------------------------------------------
 
 

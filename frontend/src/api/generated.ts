@@ -95,6 +95,35 @@ export interface paths {
         readonly patch: operations["set_presence_preference"];
         readonly trace?: never;
     };
+    readonly "/api/me/session-workspace/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get the workspace your own emdash sessions are filed in
+         * @description Your default for NEW sessions a runner you own discovers in emdash, when the
+         *     emdash project is not an agent's (an agent's project follows the agent's
+         *     workspace). Unset, or no longer one you can edit in: the runner's workspace.
+         */
+        readonly get: operations["get_session_workspace_preference"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Set the workspace your own emdash sessions are filed in
+         * @description Set (or clear, with a null/blank `workspace`) your default. Must be a workspace
+         *     you are an editor or better in. Applies to sessions discovered from now on;
+         *     existing sessions stay where they are (move one with
+         *     `POST /api/canopy-sessions/{id}/move`).
+         */
+        readonly patch: operations["set_session_workspace_preference"];
+        readonly trace?: never;
+    };
     readonly "/api/health/": {
         readonly parameters: {
             readonly query?: never;
@@ -5312,9 +5341,10 @@ export interface paths {
         /**
          * Report Sessions
          * @description The runner reports the open emdash sessions it can see. Wholesale per runner.
-         *     Owner-gated via _runner_or_404 (404, not 403). Sessions are tenant-owned; they
-         *     default to the runner's workspace (dimagi in practice), which the owner is a
-         *     member of by construction.
+         *     Owner-gated via _runner_or_404 (404, not 403). Sessions are tenant-owned: a NEW
+         *     session follows its project's agent when the project names one, else the
+         *     runner owner's default session workspace (`/api/me/session-workspace/`), else
+         *     the runner's workspace. An existing session is never re-filed.
          */
         readonly post: operations["report_sessions"];
         readonly delete?: never;
@@ -6526,6 +6556,36 @@ export interface paths {
          */
         readonly put: operations["set_session_notify"];
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/move": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Move a session to another workspace
+         * @description File this session in another workspace you belong to.
+         *
+         *     Only the person whose session it is may move it: its creator for a web chat,
+         *     or the owner of the runner it was discovered on for an emdash session. The
+         *     target must be a workspace you are an editor (or better) in. An agent's
+         *     session cannot be moved (422) — it belongs to the agent's workspace.
+         *
+         *     Tenant-first: afterwards only members of the target can see it. Participants
+         *     who are not members of the target are removed from the chat. Your runner
+         *     re-reporting the session never moves it back. Moving to the workspace it is
+         *     already in is a no-op.
+         */
+        readonly post: operations["move_session"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -7986,6 +8046,43 @@ export interface components {
         readonly PresencePreferenceIn: {
             /** Show Presence */
             readonly show_presence: boolean;
+        };
+        /** SessionWorkspaceChoice */
+        readonly SessionWorkspaceChoice: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+        };
+        /**
+         * SessionWorkspacePreferenceOut
+         * @description Response for GET/PATCH /api/me/session-workspace/.
+         */
+        readonly SessionWorkspacePreferenceOut: {
+            /**
+             * Workspace
+             * @description The workspace you chose for your own emdash sessions, or null if unset.
+             */
+            readonly workspace?: string | null;
+            /**
+             * Effective
+             * @description The workspace your new sessions are filed in right now: `workspace` while you can still edit there, else null (each runner's own workspace is used).
+             */
+            readonly effective?: string | null;
+            /**
+             * Choices
+             * @description Workspaces you may file sessions in, or move one to (editor or better).
+             */
+            readonly choices?: readonly components["schemas"]["SessionWorkspaceChoice"][];
+        };
+        /**
+         * SessionWorkspacePreferenceIn
+         * @description Request body for PATCH /api/me/session-workspace/. A blank or null
+         *     `workspace` clears the default.
+         */
+        readonly SessionWorkspacePreferenceIn: {
+            /** Workspace */
+            readonly workspace?: string | null;
         };
         /** HealthOut */
         readonly HealthOut: {
@@ -11382,6 +11479,11 @@ export interface components {
             } | null;
             /** My Role */
             readonly my_role?: string | null;
+            /**
+             * Can Move
+             * @default false
+             */
+            readonly can_move: boolean;
             /**
              * Has More Before
              * @default false
@@ -18242,6 +18344,11 @@ export interface components {
             /** Every Completion */
             readonly every_completion: boolean;
         };
+        /** SessionMoveIn */
+        readonly SessionMoveIn: {
+            /** Workspace */
+            readonly workspace: string;
+        };
         /**
          * ParticipantOut
          * @description Someone explicitly given this chat. The creator is its owner.
@@ -19842,6 +19949,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PresencePreferenceOut"];
+                };
+            };
+        };
+    };
+    readonly get_session_workspace_preference: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionWorkspacePreferenceOut"];
+                };
+            };
+        };
+    };
+    readonly set_session_workspace_preference: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionWorkspacePreferenceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionWorkspacePreferenceOut"];
                 };
             };
         };
@@ -28413,6 +28564,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["SessionNotifyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    readonly move_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionMoveIn"];
             };
         };
         readonly responses: {

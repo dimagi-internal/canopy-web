@@ -1383,9 +1383,10 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
 @router.post("/runners/{runner_id}/sessions", response=SessionReportOut)
 def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportSessionsIn):
     """The runner reports the open emdash sessions it can see. Wholesale per runner.
-    Owner-gated via _runner_or_404 (404, not 403). Sessions are tenant-owned; they
-    default to the runner's workspace (dimagi in practice), which the owner is a
-    member of by construction."""
+    Owner-gated via _runner_or_404 (404, not 403). Sessions are tenant-owned: a NEW
+    session follows its project's agent when the project names one, else the
+    runner owner's default session workspace (`/api/me/session-workspace/`), else
+    the runner's workspace. An existing session is never re-filed."""
     runner = _runner_or_404(request, runner_id)
     ws = runner.workspace
     if ws is None:

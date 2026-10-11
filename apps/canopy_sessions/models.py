@@ -790,3 +790,37 @@ class TransferRequest(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"transfer-request:{str(self.session_id)[:8]}->{self.to_runner_id}:{self.status}"
+
+
+class SessionWorkspacePreference(models.Model):
+    """Where a person's own emdash sessions are FILED when nothing else decides.
+
+    A runner reports every open emdash task on its box; a task whose project
+    names an agent follows that agent's workspace, and every other one used to
+    land in `runner.workspace` — which says where the box was paired, not whose
+    work it is. A person in two tenants (a work org and a family workspace) had
+    no say. This is their say: the workspace a NEW agent-less session reported
+    by a runner they own is filed in (`filing.filing_workspace`).
+
+    Read at filing time against CURRENT membership: a preference for a workspace
+    the person has since left (or been demoted to viewer in) is ignored, and the
+    session falls back to the runner's workspace. `SET_NULL` so deleting the
+    workspace leaves an unset preference rather than a dangling one. Only the
+    person sets it (`PATCH /api/me/session-workspace/`).
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name="session_workspace_preference",
+    )
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "session_workspace_preferences"
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"session-workspace-pref:{self.user_id}->{self.workspace_id}"

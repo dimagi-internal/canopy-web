@@ -271,6 +271,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "reset_session": ("session-acl",),  # write
     "unarchive_session": ("session-acl",),  # write
     "set_session_notify": ("session-acl",),  # write
+    # filing.move: read gate, then the session's own person (creator / runner owner),
+    # then content.write in the TARGET workspace; an agent's session is a 422.
+    "move_session": ("session-acl", "content.write"),
     "list_transfer_requests": ("self", "runner-admin"),  # ones you asked for, or for boxes you administer
     "approve_transfer_request": ("runner-admin",),  # the target box's admins, re-checked at decision
     "decline_transfer_request": ("runner-admin",),
@@ -497,6 +500,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "me": ("authenticated",),
     "get_presence_preference": ("self",),
     "set_presence_preference": ("self",),
+    "get_session_workspace_preference": ("self",),
+    "set_session_workspace_preference": ("self",),  # target needs content.write (filing.set_default)
     # --- apps/events/api.py
     "record_events": ("events.write",),  # in the pinned or default workspace
     "list_mcp_calls": ("logs.read", "self"),  # the workspace's calls for admins; your own always

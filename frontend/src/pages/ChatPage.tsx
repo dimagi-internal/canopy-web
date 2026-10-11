@@ -21,6 +21,7 @@ import {
   detachSessionFromSlack,
   sendMessage,
   setSessionNotify,
+  moveSession,
   placeTurn,
   answerMenu,
   ChatApiError,
@@ -41,6 +42,8 @@ import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import { getAgent } from '@/api/agents'
+import { getSessionWorkspacePreference } from '@/api/sessionWorkspace'
+import type { MoveTarget } from '@/components/chat/MoveWorkspaceForm'
 import {
   findBoundRunner,
   isBoundRunnerOffline,
@@ -741,6 +744,33 @@ export function ChatPage() {
     }
   }
 
+  // Where this session could be moved to — fetched only for a session that is
+  // yours to move (`can_move`), since the menu item is the only reader.
+  const [moveTargets, setMoveTargets] = useState<MoveTarget[] | undefined>(undefined)
+  const canMove = Boolean(meta?.can_move)
+  useEffect(() => {
+    if (!canMove) return
+    let live = true
+    getSessionWorkspacePreference()
+      .then((pref) => {
+        if (live) setMoveTargets(pref.choices)
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [canMove])
+
+  const moveToWorkspace = async (workspace: string) => {
+    if (!id) return
+    const moved = await moveSession(id, workspace)
+    setMeta((prev) => (prev ? { ...prev, workspace: moved.workspace } : prev))
+    // The URL names the workspace; keep it true so a reload lands here.
+    navigate(`/w/${encodeURIComponent(moved.workspace)}/chat/${encodeURIComponent(id)}`, {
+      replace: true,
+    })
+  }
+
   const toggleNotify = async () => {
     if (!id || !meta) return
     const next = !meta.notify_every_completion
@@ -847,6 +877,9 @@ export function ChatPage() {
               onTypingVisibilityChange={
                 canEditTypingVisibility ? socket.setTypingVisibility : undefined
               }
+              workspace={meta?.workspace}
+              moveTargets={canMove ? moveTargets : undefined}
+              onMove={canMove ? moveToWorkspace : undefined}
             />
           )}
         </div>
