@@ -12,7 +12,9 @@ from __future__ import annotations
 import datetime as dt
 
 from django.apps import apps
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q, Subquery, Value
+from django.db.models.functions import Coalesce
+from django.db.models.lookups import Exact
 from django.utils import timezone
 
 # How long a runner-discovered session survives with no runner sighting before it
@@ -48,6 +50,31 @@ SESSION_LIVE_WINDOW = dt.timedelta(minutes=3)
 # runner is retired (the box is gone; nothing can continue it there). The list shows
 # each session's turn mode, which is how an auto session that just ran and a manual
 # one waiting on you are told apart.
+#
+# Except a session that RAN ON ITS OWN (`feed.ran_on_its_own`: started in auto mode,
+# not from a person's chat): nobody is waiting on it by definition, so once nothing
+# on it is in flight it is done. Left open, these were 56 of Jonathan's 62 "active"
+# sessions on 2026-10-11 — finished huddle rounds, thread messages and scheduled
+# turns, burying the six that needed a person (#1396). Manual and chat-started
+# sessions keep the open-until-closed rule above, and a session with a dialog up
+# (`pending_question`) is never retired whatever its mode.
+
+
+def driving_turns():
+    """The turns that drove a session, for use under a Session queryset: a chat
+    send carries the session itself (`chat_session`), an agent turn the runner
+    opened a session for carries its key (`Turn.session_key`, the binding's).
+    Defined once for `services.with_driving_turn` (the mode badge and the feed)
+    and `unseen_q` (the auto-retire leg), so the two cannot disagree about which
+    turn started a session."""
+    Turn = apps.get_model("harness", "Turn")
+    return Turn.objects.filter(
+        Q(chat_session=OuterRef("pk"))
+        | (
+            Q(agent=OuterRef("agent"), session_key=OuterRef("runner_binding__session_key"))
+            & ~Q(session_key="")
+        )
+    )
 
 
 def stale_cutoff(now=None):
@@ -101,8 +128,29 @@ def unseen_q() -> Q:
     )
     Runner = apps.get_model("harness", "Runner")
     cloud_gone = Q(runner_binding__runner__status=Runner.RETIRED)
+    # A cloud-held session that ran on its own is done once nothing on it is in
+    # flight (the module note above `driving_turns`). Its mode is the FIRST claimed
+    # turn's — the same turn `with_driving_turn` badges — and a later turn still
+    # queued or running keeps it open. A dialog up keeps it open too.
+    Turn = apps.get_model("harness", "Turn")
+    driving = driving_turns().exclude(turn_mode="").order_by("created_at")
+    # Coalesced: a session with no claimed turn yet must compare FALSE, not NULL —
+    # `state=active` EXCLUDES this predicate, and NOT(NULL) would drop the row.
+    def first(field):
+        return Coalesce(Subquery(driving.values(field)[:1]), Value(""))
+
+    ran_on_its_own = Q(Exact(first("turn_mode"), "auto")) & ~Q(
+        Exact(first("origin"), Turn.ORIGIN_CANOPY_WEB_CHAT)
+    )
+    in_flight = Exists(driving_turns().filter(status__in=Turn.NON_TERMINAL))
+    no_dialog = Q(runner_binding__pending_question__isnull=True) | Q(
+        runner_binding__pending_question={}
+    )
+    cloud_finished = ran_on_its_own & ~Q(in_flight) & no_dialog
+    cloud_done = cloud_gone | cloud_finished
+
     runner_unseen = Q(origin="runner") & (
-        (~unobserved & quiet) | (unobserved & cloud_gone)
+        (~unobserved & quiet) | (unobserved & cloud_done)
     )
 
     # NEW, and gated on an OBSERVER existing. A sent web chat is held and reported
@@ -121,7 +169,7 @@ def unseen_q() -> Q:
         & Q(runner_binding__isnull=False)
         & (
             (Q(runner_binding__runner__sessions_reported_at__isnull=False) & quiet)
-            | (unobserved & cloud_gone)
+            | (unobserved & cloud_done)
         )
     )
 
