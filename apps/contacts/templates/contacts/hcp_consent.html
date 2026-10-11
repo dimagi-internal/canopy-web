@@ -8,8 +8,8 @@
 </head>
 <body>
   <div class="container">
-    <h1>Allow {{ client.name }} to see what canopy knows about you?</h1>
-    <p><strong>{{ client.name }}</strong>, run by <strong>{{ client.operator }}</strong>{% if client.first_party %} (operated by Dimagi){% endif %}, is asking for access to parts of your context. You are signed in as {{ request.user.email }}; it will send you back to {{ redirect_host }}.</p>
+    <h1>Allow {{ client.name }} to see your memory?</h1>
+    <p><strong>{{ client.name }}</strong>, run by <strong>{{ client.operator }}</strong>{% if client.first_party %} (operated by Dimagi){% endif %}, is asking for access to parts of your memory. You are signed in as {{ request.user.email }}; it will send you back to {{ redirect_host }}.</p>
     <table>
       <thead><tr><th>About you</th><th>Read</th><th>Save or change</th></tr></thead>
       <tbody>
@@ -46,7 +46,7 @@
         <button class="btn btn-primary" type="submit" name="step" value="allow">Allow</button>
       </div>
     </form>
-    <p class="muted" style="margin-top:1rem">You can see and revoke this at any time on “What agents know about me”. Every read is on your audit log.</p>
+    <p class="muted" style="margin-top:1rem">You can see and revoke this at any time on “Your memory”. Every read is on your audit log.</p>
   </div>
 </body>
 </html>

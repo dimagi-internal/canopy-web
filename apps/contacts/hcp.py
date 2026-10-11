@@ -168,14 +168,14 @@ def require(person: Person, need: str, turn=None) -> None:
 
 
 _DETAILS = {
-    "agentRecord.enabled": "agents may now be allowed to record what they learn about you",
-    "agentRecord.disabled": "agents may no longer record anything about you; nothing was deleted",
-    "agentUse.enabled": "agents may now be allowed to use what has been learned about you",
-    "agentUse.disabled": "agents are no longer told anything learned about you; nothing was deleted",
-    "agentRecord.defaultOn": "new sessions let agents record what they learn about you",
-    "agentRecord.defaultOff": "new sessions do not let agents record unless you turn it on",
-    "agentUse.defaultOn": "new sessions let agents use what has been learned about you",
-    "agentUse.defaultOff": "new sessions do not let agents use it unless you turn it on",
+    "agentRecord.enabled": "Learn from me is available: agents you allow can add to your memory",
+    "agentRecord.disabled": "Learn from me is off: no agent adds to your memory; nothing was deleted",
+    "agentUse.enabled": "Use my memory is available: agents you allow can read your memory",
+    "agentUse.disabled": "Use my memory is off: no agent reads your memory; nothing was deleted",
+    "agentRecord.defaultOn": "Learn from me is on in new conversations",
+    "agentRecord.defaultOff": "Learn from me is off in new conversations unless you turn it on",
+    "agentUse.defaultOn": "Use my memory is on in new conversations",
+    "agentUse.defaultOff": "Use my memory is off in new conversations unless you turn it on",
 }
 
 

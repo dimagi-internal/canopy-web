@@ -76,8 +76,8 @@ class AgentMemoryOut(StrictModel):
     available and whether it is on by default in a new session. Turning one off
     deletes nothing."""
 
-    record: MemoryFeatureOut = Field(description="Agents may learn about me (write).")
-    use: MemoryFeatureOut = Field(description="Agents may use what they've learned (read).")
+    record: MemoryFeatureOut = Field(description="Learn from me: agents may add to your memory (write).")
+    use: MemoryFeatureOut = Field(description="Use my memory: agents may read your memory (read).")
 
 
 class SessionGrantOut(StrictModel):
@@ -143,9 +143,9 @@ class MemoryFeatureIn(StrictModel):
 
 class AgentMemoryIn(StrictModel):
     record: MemoryFeatureIn | None = Field(
-        default=None, description="Agents may learn about me. Omit to leave it unchanged.")
+        default=None, description="Learn from me. Omit to leave it unchanged.")
     use: MemoryFeatureIn | None = Field(
-        default=None, description="Agents may use what they've learned. Omit to leave it unchanged.")
+        default=None, description="Use my memory. Omit to leave it unchanged.")
 
 
 class SessionMemoryIn(StrictModel):

@@ -12,8 +12,8 @@ import { contactMemorySource, type ContactHcp, type ContactHcpState } from './se
  * - Not opted in: one quiet button, and on click one screen that says what it is
  *   before anything happens (HCP 4.1.6) — what canopy would learn, from whom, for
  *   how long, and how to see and take it back.
- * - Opted in: the chat page's own toggles and grant prompts, plus "What canopy
- *   knows", where they list and revoke grants, download everything, or opt out.
+ * - Opted in: the chat page's own toggles and grant prompts, plus
+ *   "Your memory", where they list and revoke grants, download everything, or opt out.
  */
 const pretty = (c: string) => c.replace(/_/g, ' ')
 const PANEL = 'mt-1 max-w-md rounded-md border border-border bg-background p-2 text-[12px]'
@@ -72,7 +72,7 @@ export function ContactMemory({
       const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
       const a = document.createElement('a')
       a.href = url
-      a.download = 'what-canopy-knows-about-me.json'
+      a.download = 'my-memory.json'
       a.click()
       URL.revokeObjectURL(url)
     } catch {
@@ -86,26 +86,27 @@ export function ContactMemory({
     if (view !== 'optin') {
       return (
         <button type="button" onClick={() => setView('optin')} className={QUIET}
-                title="Let canopy remember things about your work across conversations">
-          Remember me?
+                title="Agents add what they learn to your memory, which you can see, remove or download">
+          Let canopy learn from you?
         </button>
       )
     }
     return (
-      <div role="dialog" aria-label="Let canopy learn about you" className={PANEL}>
+      <div role="dialog" aria-label="Let canopy learn from you" className={PANEL}>
         <p className="text-foreground">
-          Let <strong>{agentName}</strong> learn about your work in this conversation?
+          Let <strong>{agentName}</strong> learn from you in this conversation?
         </p>
         <p className="mt-0.5 text-muted-foreground">
-          canopy would keep short facts about your work — {state.categories.map(pretty).join(', ')} —
-          from what you say to {agentName}, under {state.email} (confirmed by {state.site}). For
-          this conversation only, until it ends or for {state.session_grant_hours} hours; keeping
-          it longer is a separate choice. You can see, download and take back everything here,
-          any time. Only this conversation with {agentName} is used.
+          canopy would start a memory for you: short facts about your work —{' '}
+          {state.categories.map(pretty).join(', ')} — from what you say to {agentName}, under{' '}
+          {state.email} (confirmed by {state.site}). For this conversation only, until it ends or
+          for {state.session_grant_hours} hours; keeping it longer is a separate choice. You can
+          see, remove or download your memory here, any time. Only this conversation with{' '}
+          {agentName} is used.
         </p>
         <label className="mt-1 flex items-center gap-1 text-muted-foreground">
           <input type="checkbox" checked={use} onChange={(e) => setUse(e.target.checked)} />
-          Also let agents use what they've learned when you talk to them
+          Also let agents use my memory when I talk to them
         </label>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           <button type="button" disabled={busy} className={PRIMARY}
@@ -127,20 +128,21 @@ export function ContactMemory({
         <SessionMemoryToggles key={epoch} sessionId={sessionId} source={source} />
         <button type="button" className={QUIET}
                 onClick={() => setView(view === 'knows' ? 'none' : 'knows')}>
-          What canopy knows
+          Your memory
         </button>
       </span>
       {view === 'knows' && (
-        <div role="dialog" aria-label="What canopy knows about you" className={PANEL}>
-          <p className="text-foreground">Held for {state.email}</p>
+        <div role="dialog" aria-label="Your memory" className={PANEL}>
+          <p className="text-foreground">Your memory, held for {state.email}</p>
+          <p className="text-muted-foreground">See, remove or download it.</p>
           {state.grants.length === 0 ? (
-            <p className="mt-0.5 text-muted-foreground">No agent can learn about you right now.</p>
+            <p className="mt-0.5 text-muted-foreground">No agent can learn from you or use your memory right now.</p>
           ) : (
             <ul className="mt-0.5">
               {state.grants.map((g) => (
                 <li key={g.grant_id} className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground">
-                    {g.agent}: {g.features.map((f) => (f === 'record' ? 'learn' : 'use')).join(' + ')}
+                    {g.agent}: {g.features.map((f) => (f === 'record' ? 'learn from me' : 'use my memory')).join(' + ')}
                     {g.type === 'temporary' ? ' · this conversation' : ' · always'}
                   </span>
                   <button type="button" disabled={busy} className={QUIET}
@@ -173,12 +175,12 @@ export function ContactMemory({
                       record: { available: false, default: false },
                       use: { available: false, default: false },
                     }))}>
-              Stop remembering me
+              Stop my memory
             </button>
           </div>
           <p className="mt-1 text-muted-foreground">
-            Stopping keeps what is already held — download it first if you want it — and no agent
-            can learn or use it until you allow it again.
+            Stopping keeps your memory as it is — download it first if you want it — and no agent
+            can add to it or use it until you allow it again.
           </p>
           {failed && <p className="mt-1 text-destructive">Not saved — try again.</p>}
         </div>

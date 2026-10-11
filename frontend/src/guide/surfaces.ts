@@ -48,11 +48,11 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/people/me',
-    title: 'What agents know about me',
+    title: 'Your memory',
     audience: 'Anyone who talks to an agent',
-    what: 'Your Human Context Protocol instance: everything canopy holds about you — what agents recorded in each workspace, and personal entries you wrote yourself (you need no workspace for those) — whether agents may learn about you and use it, which agents and apps may read it, and your audit log of every read and change. Apps outside canopy reach it only through a grant you approve on a consent screen (the HCP service, Dimagi accounts only for now).',
+    what: 'Your memory (your Human Context Protocol instance): everything canopy holds about you — what agents recorded in each workspace, and personal entries you wrote yourself (you need no workspace for those) — whether agents may learn from you and use your memory, which agents and apps may read it, and your audit log of every read and change. Apps outside canopy reach it only through a grant you approve on a consent screen (the HCP service, Dimagi accounts only for now).',
     needsFirst: 'Nothing: you can add something about yourself here first.',
-    actions: ['Read, correct or retract anything held about you', 'Add something about yourself', 'Turn agent learning and use on or off', 'See and revoke which agents and apps may read it', 'Download everything, with your audit log'],
+    actions: ['Read, correct or retract anything held about you', 'Add something about yourself', 'Turn Learn from me and Use my memory on or off', 'See and revoke which agents and apps may read it', 'Download everything, with your audit log'],
   },
   {
     path: '/hcp-clients',

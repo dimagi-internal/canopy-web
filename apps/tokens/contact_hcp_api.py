@@ -178,7 +178,7 @@ def _person(request: HttpRequest, *, create: bool):
 _REASONS = {
     "untrusted_site": "this site is not trusted for your identity in canopy",
     "unverified_email": "this site did not confirm your email address",
-    "has_account": "this address has a canopy account — sign in to canopy to manage this",
+    "has_account": "this address has a canopy account — sign in to canopy to manage your memory",
 }
 
 

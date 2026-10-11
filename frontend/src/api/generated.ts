@@ -7128,7 +7128,7 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * What agents know about me
+         * Your memory
          * @description Everything canopy holds about YOU: every live fact in every workspace
          *     (corrections first) and the last 50 times an agent or a
          *     person read it. Any signed-in user; only ever your own.
@@ -18099,9 +18099,9 @@ export interface components {
          *     deletes nothing.
          */
         readonly AgentMemoryOut: {
-            /** @description Agents may learn about me (write). */
+            /** @description Learn from me: agents may add to your memory (write). */
             readonly record: components["schemas"]["MemoryFeatureOut"];
-            /** @description Agents may use what they've learned (read). */
+            /** @description Use my memory: agents may read your memory (read). */
             readonly use: components["schemas"]["MemoryFeatureOut"];
         };
         /** MemoryFeatureOut */
@@ -18249,9 +18249,9 @@ export interface components {
         };
         /** AgentMemoryIn */
         readonly AgentMemoryIn: {
-            /** @description Agents may learn about me. Omit to leave it unchanged. */
+            /** @description Learn from me. Omit to leave it unchanged. */
             readonly record?: components["schemas"]["MemoryFeatureIn"] | null;
-            /** @description Agents may use what they've learned. Omit to leave it unchanged. */
+            /** @description Use my memory. Omit to leave it unchanged. */
             readonly use?: components["schemas"]["MemoryFeatureIn"] | null;
         };
         /** MemoryFeatureIn */

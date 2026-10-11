@@ -53,7 +53,7 @@ export function SettingsPage() {
         </p>
         <p className="mt-1 text-xs">
           <Link to="/people/me/" className="text-primary underline-offset-2 hover:underline">
-            What agents know about me
+            Your memory
           </Link>
         </p>
       </div>
