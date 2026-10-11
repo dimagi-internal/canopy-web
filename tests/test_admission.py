@@ -1,0 +1,320 @@
+"""Admission rules: turns that can never complete are rejected before they run.
+
+The incident (canopy-web#1400, turn 506cbfed, 2026-10-10): a DMARC-verified
+contact emailed hal; hal's `ask` lists `contact@dimagi.com:verified`, so the
+turn was confined; it resolved manual; a cloud runner claimed it; the ask
+procedure drafted a reply and waited for a human yes nobody could give. 32s of
+LLM, no reply, no notice. The seeded workspace rule now rejects that
+combination at the claim: CANCELLED, never claimed, a sender notice and an
+owner notice recorded, and no debugger turn.
+"""
+from __future__ import annotations
+
+from unittest import mock
+
+import pytest
+from django.contrib.auth import get_user_model
+from django.core import mail
+from django.test import Client
+from django.utils import timezone
+
+from apps.admission import defaults, gmail
+from apps.admission.models import AdmissionNotice, AdmissionRule
+from apps.agents.interface import parse
+from apps.agents.models import Agent
+from apps.harness import services
+from apps.harness.claim import claim_next_turn
+from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.harness.routing import ENVELOPE_VERSION, PROFILES_VERSION
+from apps.workspaces.models import Workspace, WorkspaceMembership
+
+pytestmark = pytest.mark.django_db
+M = WorkspaceMembership
+
+VIKRAM = "vkumar@dimagi.com"
+PASS_ALL = ("mx.google.com; dkim=pass header.i=@dimagi.com; spf=pass "
+            "smtp.mailfrom=dimagi.com; dmarc=pass header.from=dimagi.com")
+VERIFIED = [{"name": "Authentication-Results", "value": PASS_ALL}]
+CONFINING = {"capabilities": {"ask": {"callers": ["contact@dimagi.com:verified"]}}}
+CAPS = {"sessions": True, "profiles": PROFILES_VERSION, "envelope": ENVELOPE_VERSION}
+
+
+def _runner(name, kind, owner):
+    return Runner.objects.create(name=name, kind=kind, owner=owner, status=Runner.ONLINE,
+                                 last_heartbeat_at=timezone.now(), capabilities=CAPS)
+
+
+@pytest.fixture
+def fleet():
+    User = get_user_model()
+    jj = User.objects.create_user(username="jj", email="jj@dimagi.com", first_name="Jonathan",
+                                  last_name="Jackson")
+    ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
+    M.objects.create(workspace=ws, user=jj, role=M.OWNER)
+    hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj,
+                               turn_mode=Agent.MANUAL, interface=parse(CONFINING))
+    cloud = _runner("cloud-ec2-2", Runner.CLOUD, jj)
+    laptop = _runner("jj-mbp", Runner.EMDASH, jj)
+    return {"jj": jj, "ws": ws, "hal": hal, "cloud": cloud, "laptop": laptop}
+
+
+def _route(agent, runner):
+    RunnerAssignment.objects.filter(agent=agent).delete()
+    RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
+
+
+def _mail(agent, *, sender=VIKRAM, thread="t-1", count=1, headers=VERIFIED):
+    turn, _ = services.enqueue_turn(
+        agent=agent, origin=Turn.ORIGIN_EMAIL, idempotency_key=f"email-{agent.slug}-{thread}-{count}",
+        origin_ref={"from": sender, "subject": "Can Hal help?", "thread_id": thread,
+                    "message_id": f"m-{count}", "headers": headers},
+    )
+    return turn
+
+
+def _claim(runner, capture):
+    with capture(execute=True):
+        return claim_next_turn(runner)
+
+
+def _seeded(ws, key="email-confined-manual-cloud"):
+    return AdmissionRule.objects.get(workspace=ws, seed_key=key)
+
+
+# --- the regression ----------------------------------------------------------------
+
+def test_a_confined_manual_email_on_a_cloud_runner_is_rejected_not_run(
+        fleet, django_capture_on_commit_callbacks):
+    hal, cloud = fleet["hal"], fleet["cloud"]
+    _route(hal, cloud)
+    turn = _mail(hal)
+    assert turn.status == Turn.QUEUED and turn.capability == "ask"  # confined, waits for the claim
+
+    with mock.patch("apps.harness.auto_debug.on_turn_failed") as debug:
+        assert _claim(cloud, django_capture_on_commit_callbacks) is None
+    debug.assert_not_called()
+
+    turn.refresh_from_db()
+    rule = _seeded(fleet["ws"])
+    assert turn.status == Turn.CANCELLED
+    assert turn.result_note.startswith(f"rejected: admission rule {rule.pk} ")
+    assert rule.reason in turn.result_note
+    assert turn.claimed_by_id is None and not turn.session_key  # no session ever started
+    assert turn.events.filter(kind="status", payload__admission_rule=rule.pk).exists()
+
+    rule.refresh_from_db()
+    assert rule.fired_count == 1 and rule.last_fired_at is not None
+    sender = AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.SENDER)
+    owner = AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.OWNER)
+    # The sender's reply is recorded but held: automatic replies ship OFF.
+    assert (sender.status, sender.recipient, sender.thread_id) == (AdmissionNotice.HELD, VIKRAM, "t-1")
+    assert (owner.status, owner.recipient) == (AdmissionNotice.SENT, "jj@dimagi.com")
+    # The owner's email is off-thread and owner-only, and carries the fix links.
+    assert len(mail.outbox) == 1 and mail.outbox[0].to == ["jj@dimagi.com"]
+    body = mail.outbox[0].body
+    assert VIKRAM in body and f"/w/connect/settings/admission-rules?rule={rule.pk}" in body
+    assert "/w/connect/agents/hal/settings#running" in body
+    # ...and lands on their Waiting on you.
+    task = hal.tasks.get(idempotency_key=f"admission:{turn.pk}")
+    assert task.ask_kind == "review" and task.waiting_on_user == fleet["jj"]
+
+
+def test_the_same_turn_on_a_laptop_still_runs_because_the_laptop_rule_ships_off(
+        fleet, django_capture_on_commit_callbacks):
+    hal, laptop = fleet["hal"], fleet["laptop"]
+    assert _seeded(fleet["ws"], "email-confined-manual-laptop").enabled is False
+    _route(hal, laptop)
+    turn = _mail(hal)
+    claimed = _claim(laptop, django_capture_on_commit_callbacks)
+    assert claimed is not None and claimed.pk == turn.pk and claimed.status == Turn.CLAIMED
+    assert not AdmissionNotice.objects.exists()
+
+
+def test_a_full_profile_or_auto_turn_is_not_touched(fleet, django_capture_on_commit_callbacks):
+    hal, cloud = fleet["hal"], fleet["cloud"]
+    _route(hal, cloud)
+    Agent.objects.filter(pk=hal.pk).update(turn_mode=Agent.AUTO)
+    turn = _mail(Agent.objects.get(pk=hal.pk))
+    assert _claim(cloud, django_capture_on_commit_callbacks).pk == turn.pk
+
+
+# --- the workspace controls it -----------------------------------------------------
+
+def _admin_client(fleet):
+    c = Client()
+    c.force_login(fleet["jj"])
+    return c
+
+
+def test_disabling_the_seeded_rule_through_the_api_lets_cloud_run_it(
+        fleet, django_capture_on_commit_callbacks):
+    hal, cloud = fleet["hal"], fleet["cloud"]
+    rule = _seeded(fleet["ws"])
+    res = _admin_client(fleet).patch(f"/api/workspaces/connect/admission-rules/{rule.pk}",
+                                     {"enabled": False}, content_type="application/json")
+    assert res.status_code == 200 and res.json()["enabled"] is False
+    _route(hal, cloud)
+    turn = _mail(hal)
+    assert _claim(cloud, django_capture_on_commit_callbacks).pk == turn.pk
+
+
+def test_a_disabled_agent_copy_does_not_override_but_an_allow_rule_does(
+        fleet, django_capture_on_commit_callbacks):
+    hal, cloud, ws = fleet["hal"], fleet["cloud"], fleet["ws"]
+    _route(hal, cloud)
+    base = dict(origin="email", access="confined", turn_mode="manual", runner_kind="cloud",
+                reason="copy")
+    AdmissionRule.objects.create(workspace=ws, agent=hal, enabled=False, **base)
+    first = _mail(hal, thread="t-1")
+    _claim(cloud, django_capture_on_commit_callbacks)
+    first.refresh_from_db()
+    assert first.status == Turn.CANCELLED  # the workspace-wide rule still fired
+
+    AdmissionRule.objects.create(workspace=ws, agent=hal, action=AdmissionRule.ALLOW, **base)
+    second = _mail(hal, thread="t-2")
+    assert _claim(cloud, django_capture_on_commit_callbacks).pk == second.pk
+
+
+def test_a_rule_with_no_runner_condition_rejects_at_enqueue(fleet, django_capture_on_commit_callbacks):
+    hal = fleet["hal"]
+    AdmissionRule.objects.create(workspace=fleet["ws"], origin="email", principal="contact",
+                                 reason="contacts may not email hal", notify_sender=False)
+    with django_capture_on_commit_callbacks(execute=True):
+        turn = _mail(hal)
+    assert turn.status == Turn.CANCELLED and "contacts may not email hal" in turn.result_note
+    assert list(AdmissionNotice.objects.values_list("kind", flat=True)) == [AdmissionNotice.OWNER]
+
+
+def test_another_workspaces_rule_never_applies(fleet, django_capture_on_commit_callbacks):
+    other = Workspace.objects.create(slug="elsewhere", display_name="E", created_by=fleet["jj"])
+    AdmissionRule.objects.filter(workspace=fleet["ws"]).update(enabled=False)
+    assert AdmissionRule.objects.filter(workspace=other, enabled=True).exists()
+    _route(fleet["hal"], fleet["cloud"])
+    turn = _mail(fleet["hal"])
+    assert _claim(fleet["cloud"], django_capture_on_commit_callbacks).pk == turn.pk
+
+
+# --- seeding -------------------------------------------------------------------------
+
+def test_a_new_workspace_is_seeded_and_seeding_is_idempotent(fleet):
+    ws = Workspace.objects.create(slug="fresh", display_name="Fresh", created_by=fleet["jj"])
+    keys = {r.seed_key: r.enabled for r in AdmissionRule.objects.filter(workspace=ws)}
+    assert keys == {"email-confined-manual-cloud": True, "email-confined-manual-laptop": False}
+    assert defaults.seed(ws.pk) == 0
+
+
+def test_the_data_migration_seeds_every_existing_workspace(fleet):
+    import importlib
+
+    from django.apps import apps as registry
+
+    AdmissionRule.objects.all().delete()
+    seed = importlib.import_module("apps.admission.migrations.0002_seed_default_rules").seed
+    seed(registry, None)
+    assert AdmissionRule.objects.filter(workspace=fleet["ws"]).count() == len(defaults.DEFAULTS)
+
+
+def test_origin_choices_track_the_turn_vocabulary():
+    assert dict(AdmissionRule.ORIGIN_CHOICES).keys() == dict(Turn.ORIGIN_CHOICES).keys()
+
+
+# --- sender-notice safety ------------------------------------------------------------
+
+def _reject_on_cloud(fleet, capture, **kw):
+    _route(fleet["hal"], fleet["cloud"])
+    turn = _mail(fleet["hal"], **kw)
+    _claim(fleet["cloud"], capture)
+    turn.refresh_from_db()
+    assert turn.status == Turn.CANCELLED
+    return AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.SENDER)
+
+
+def test_a_noreply_sender_gets_no_notice(fleet, django_capture_on_commit_callbacks):
+    # A no-reply address cannot be a verified dimagi.com contact in the ask
+    # list, so give it a rule of its own.
+    hal = fleet["hal"]
+    hal.interface = parse({"capabilities": {"ask": {"callers": ["contact"]}}})
+    hal.save(update_fields=["interface"])
+    notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks,
+                              sender="no-reply@example.org", headers=[])
+    assert notice.status == AdmissionNotice.SKIPPED and "no-reply" in notice.detail
+
+
+@pytest.fixture
+def sending(settings):
+    settings.CANOPY_ADMISSION_SENDER_NOTICES = True
+    with mock.patch.object(gmail, "send_reply", return_value="g-1") as send:
+        yield send
+
+
+def test_with_replies_on_the_sender_is_answered_once_per_thread(
+        fleet, sending, django_capture_on_commit_callbacks):
+    first = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-9", count=1)
+    assert first.status == AdmissionNotice.SENT
+    kwargs = sending.call_args.kwargs
+    assert kwargs["to"] == VIKRAM and kwargs["thread_id"] == "t-9" and kwargs["message_id"] == "m-1"
+    assert "automatic reply" in kwargs["body"] and "Jonathan Jackson" in kwargs["body"]
+
+    # The same poll again: the same idempotency key, so no new turn and no notice.
+    assert _mail(fleet["hal"], thread="t-9", count=1).pk == first.turn_id
+    # A new message on the thread inside 24h: rejected again, but not re-answered.
+    second = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-9", count=2)
+    assert second.status == AdmissionNotice.SKIPPED and "24 hours" in second.detail
+    assert sending.call_count == 1
+
+
+def test_an_automated_message_is_never_answered(fleet, sending, django_capture_on_commit_callbacks):
+    sending.side_effect = gmail.Automated("the message carries automation headers")
+    notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)
+    assert notice.status == AdmissionNotice.SKIPPED and "automation" in notice.detail
+
+
+def test_gmail_refuses_an_auto_submitted_message():
+    assert gmail._is_automated({"auto-submitted": "auto-replied"})
+    assert gmail._is_automated({"precedence": "bulk"})
+    assert gmail._is_automated({"list-id": "<x.list>"})
+    assert not gmail._is_automated({"auto-submitted": "no"})
+
+
+def test_a_mailbox_canopy_cannot_send_from_is_recorded_as_not_sent(
+        fleet, settings, django_capture_on_commit_callbacks):
+    settings.CANOPY_ADMISSION_SENDER_NOTICES = True
+    notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)  # no gog-token stored
+    assert notice.status == AdmissionNotice.FAILED and "gog-token" in notice.detail
+
+
+# --- the settings API ------------------------------------------------------------------
+
+def _member(fleet, role, email):
+    u = get_user_model().objects.create_user(username=email, email=email)
+    M.objects.create(workspace=fleet["ws"], user=u, role=role)
+    c = Client()
+    c.force_login(u)
+    return c
+
+
+def test_any_member_reads_the_rules_and_only_an_admin_changes_them(fleet):
+    viewer = _member(fleet, M.VIEWER, "v@dimagi.com")
+    admin = _member(fleet, M.ADMIN, "a@dimagi.com")
+    body = viewer.get("/api/workspaces/connect/admission-rules").json()
+    assert body["can_manage"] is False and body["sender_notices_enabled"] is False
+    assert {r["summary"] for r in body["rules"]} >= {
+        "Email, confined, manual, on a Cloud runner"}
+    new = {"origin": "slack", "principal": "contact", "reason": "no Slack guests"}
+    url = "/api/workspaces/connect/admission-rules"
+    assert viewer.post(url, new, content_type="application/json").status_code == 403
+    res = admin.post(url, new, content_type="application/json")
+    assert res.status_code == 201 and res.json()["created_by"] == "a@dimagi.com"
+    rid = res.json()["id"]
+    assert admin.get(url).json()["can_manage"] is True
+    assert admin.delete(f"{url}/{rid}").status_code == 204
+    assert admin.post(url, {"reason": "everything"}, content_type="application/json").status_code == 422
+
+
+def test_a_rule_cannot_name_another_workspaces_agent(fleet):
+    other = Workspace.objects.create(slug="elsewhere", display_name="E", created_by=fleet["jj"])
+    Agent.objects.create(slug="zed", name="Zed", workspace=other)
+    res = _admin_client(fleet).post("/api/workspaces/connect/admission-rules",
+                                    {"agent": "zed", "origin": "email", "reason": "x"},
+                                    content_type="application/json")
+    assert res.status_code == 422

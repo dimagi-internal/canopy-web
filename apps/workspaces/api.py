@@ -14,6 +14,12 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.admission.schemas import (
+    AdmissionRuleIn,
+    AdmissionRuleOut,
+    AdmissionRulePatch,
+    AdmissionRulesOut,
+)
 from apps.retention.schemas import (
     RetentionOut,
     RetentionPreviewOut,
@@ -961,6 +967,76 @@ def delete_retention_rule(request: HttpRequest, slug: str, rule_id: int):
     from apps.retention import rules
 
     m = _require(request.user, slug, perms.RETENTION_MANAGE)
+    try:
+        rules.delete_rule(m.workspace, rule_id, user=request.user)
+    except LookupError as exc:
+        raise HttpError(404, "no such rule in this workspace") from exc
+    return Status(204, None)
+
+
+# --- Admission rules (apps/admission) -----------------------------------------
+# Beside retention for the same reason: workspace settings share `_require`;
+# the rules, their evaluation and their notices are apps/admission's.
+
+
+@router.get("/{slug}/admission-rules", response=AdmissionRulesOut,
+            summary="Which turns this workspace refuses before they run")
+def list_admission_rules(request: HttpRequest, slug: str) -> AdmissionRulesOut:
+    """This workspace's admission rules: each one's conditions, action, notices,
+    whether it is on, and how often it has fired. Any member may read them;
+    changing them needs the admin role."""
+    from django.conf import settings
+
+    from apps.admission import rules
+
+    m = _require(request.user, slug, perms.READ)
+    return AdmissionRulesOut(
+        **rules.policy_for(m.workspace, can_manage=perms.role_allows(m.role, perms.ADMISSION_MANAGE)),
+        sender_notices_enabled=bool(getattr(settings, "CANOPY_ADMISSION_SENDER_NOTICES", False)),
+    )
+
+
+@router.post("/{slug}/admission-rules", response={201: AdmissionRuleOut},
+             summary="Add an admission rule")
+def create_admission_rule(request: HttpRequest, slug: str, payload: AdmissionRuleIn):
+    """Blank conditions match anything, and at least one must be set. An
+    `allow` rule exempts the turns it matches from every `reject` rule. 422 for
+    an agent outside this workspace."""
+    from apps.admission import rules
+
+    m = _require(request.user, slug, perms.ADMISSION_MANAGE)
+    try:
+        rule = rules.create_rule(m.workspace, payload.model_dump(), user=request.user)
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201, AdmissionRuleOut(**rules.rule_out(rule)))
+
+
+@router.patch("/{slug}/admission-rules/{rule_id}", response=AdmissionRuleOut,
+              summary="Change an admission rule, or switch it on or off")
+def update_admission_rule(request: HttpRequest, slug: str, rule_id: int,
+                          payload: AdmissionRulePatch) -> AdmissionRuleOut:
+    """Only the fields sent change."""
+    from apps.admission import rules
+
+    m = _require(request.user, slug, perms.ADMISSION_MANAGE)
+    try:
+        rule = rules.update_rule(m.workspace, rule_id, payload.model_dump(exclude_none=True),
+                                 user=request.user)
+    except LookupError as exc:
+        raise HttpError(404, "no such rule in this workspace") from exc
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return AdmissionRuleOut(**rules.rule_out(rule))
+
+
+@router.delete("/{slug}/admission-rules/{rule_id}", response={204: None},
+               summary="Remove an admission rule")
+def delete_admission_rule(request: HttpRequest, slug: str, rule_id: int):
+    """A removed default is not re-seeded. Disabling it keeps it one toggle away."""
+    from apps.admission import rules
+
+    m = _require(request.user, slug, perms.ADMISSION_MANAGE)
     try:
         rules.delete_rule(m.workspace, rule_id, user=request.user)
     except LookupError as exc:

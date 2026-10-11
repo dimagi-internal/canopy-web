@@ -19,6 +19,11 @@ from django.db import migrations
 class Migration(migrations.Migration):
     dependencies = [
         ("harness", "0049_turn_mode_rules"),
+        # agents/0030 READS `Item` to move it onto tasks, so it must run first.
+        # Nothing said so: the graph happened to order it that way until a new
+        # app (admission) sorted ahead of `agents` and the drop ran first.
+        # Safe on an existing database: both are applied there.
+        ("agents", "0030_items_become_tasks"),
     ]
 
     operations = [

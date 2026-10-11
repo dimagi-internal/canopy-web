@@ -28,6 +28,7 @@ export type Capability =
   | 'integrations'
   | 'runners.route'
   | 'retention.manage'
+  | 'admission.manage'
   | 'own'
 
 export const MINIMUM_ROLE: Record<Capability, WorkspaceRole> = {
@@ -41,6 +42,7 @@ export const MINIMUM_ROLE: Record<Capability, WorkspaceRole> = {
   integrations: 'admin',
   'runners.route': 'admin',
   'retention.manage': 'admin',
+  'admission.manage': 'admin',
   own: 'owner',
 }
 

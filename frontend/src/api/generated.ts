@@ -4306,6 +4306,58 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/admission-rules": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which turns this workspace refuses before they run
+         * @description This workspace's admission rules: each one's conditions, action, notices,
+         *     whether it is on, and how often it has fired. Any member may read them;
+         *     changing them needs the admin role.
+         */
+        readonly get: operations["list_admission_rules"];
+        readonly put?: never;
+        /**
+         * Add an admission rule
+         * @description Blank conditions match anything, and at least one must be set. An
+         *     `allow` rule exempts the turns it matches from every `reject` rule. 422 for
+         *     an agent outside this workspace.
+         */
+        readonly post: operations["create_admission_rule"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/admission-rules/{rule_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove an admission rule
+         * @description A removed default is not re-seeded. Disabling it keeps it one toggle away.
+         */
+        readonly delete: operations["delete_admission_rule"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change an admission rule, or switch it on or off
+         * @description Only the fields sent change.
+         */
+        readonly patch: operations["update_admission_rule"];
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/connected-apps": {
         readonly parameters: {
             readonly query?: never;
@@ -15374,6 +15426,187 @@ export interface components {
              */
             readonly note: string;
         };
+        /** AdmissionChoice */
+        readonly AdmissionChoice: {
+            /** Value */
+            readonly value: string;
+            /** Label */
+            readonly label: string;
+        };
+        /** AdmissionChoices */
+        readonly AdmissionChoices: {
+            /** Origins */
+            readonly origins: readonly components["schemas"]["AdmissionChoice"][];
+            /** Principals */
+            readonly principals: readonly components["schemas"]["AdmissionChoice"][];
+            /** Access */
+            readonly access: readonly components["schemas"]["AdmissionChoice"][];
+            /** Turn Modes */
+            readonly turn_modes: readonly components["schemas"]["AdmissionChoice"][];
+            /** Runner Kinds */
+            readonly runner_kinds: readonly components["schemas"]["AdmissionChoice"][];
+            /** Actions */
+            readonly actions: readonly components["schemas"]["AdmissionChoice"][];
+        };
+        /** AdmissionRuleOut */
+        readonly AdmissionRuleOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace */
+            readonly workspace: string;
+            /** Agent */
+            readonly agent: string;
+            /** Origin */
+            readonly origin: string;
+            /** Principal */
+            readonly principal: string;
+            /** Access */
+            readonly access: string;
+            /** Capability */
+            readonly capability: string;
+            /** Turn Mode */
+            readonly turn_mode: string;
+            /** Runner Kind */
+            readonly runner_kind: string;
+            /** Action */
+            readonly action: string;
+            /** Reason */
+            readonly reason: string;
+            /** Notify Sender */
+            readonly notify_sender: boolean;
+            /** Notify Owner */
+            readonly notify_owner: boolean;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Summary */
+            readonly summary: string;
+            /** Seeded */
+            readonly seeded: boolean;
+            /** Fired Count */
+            readonly fired_count: number;
+            /** Last Fired At */
+            readonly last_fired_at: string | null;
+            /** Created By */
+            readonly created_by: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** AdmissionRulesOut */
+        readonly AdmissionRulesOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Can Manage */
+            readonly can_manage: boolean;
+            /** Sender Notices Enabled */
+            readonly sender_notices_enabled: boolean;
+            /** Rules */
+            readonly rules: readonly components["schemas"]["AdmissionRuleOut"][];
+            readonly choices: components["schemas"]["AdmissionChoices"];
+        };
+        /**
+         * AdmissionRuleIn
+         * @description Blank conditions mean "any"; a rule needs at least one. `allow` exempts
+         *     matching turns from every `reject` rule in the workspace.
+         */
+        readonly AdmissionRuleIn: {
+            /**
+             * Agent
+             * @description An agent slug in this workspace, or blank for every agent.
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Origin
+             * @default
+             * @enum {string}
+             */
+            readonly origin: "" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack";
+            /**
+             * Principal
+             * @default
+             * @enum {string}
+             */
+            readonly principal: "" | "member" | "contact" | "agent" | "system";
+            /**
+             * Access
+             * @default
+             * @enum {string}
+             */
+            readonly access: "" | "confined" | "full";
+            /**
+             * Capability
+             * @default
+             */
+            readonly capability: string;
+            /**
+             * Turn Mode
+             * @default
+             * @enum {string}
+             */
+            readonly turn_mode: "" | "manual" | "auto";
+            /**
+             * Runner Kind
+             * @default
+             * @enum {string}
+             */
+            readonly runner_kind: "" | "emdash" | "cloud" | "remote";
+            /**
+             * Action
+             * @default reject
+             * @enum {string}
+             */
+            readonly action: "reject" | "allow";
+            /** Reason */
+            readonly reason: string;
+            /**
+             * Notify Sender
+             * @default false
+             */
+            readonly notify_sender: boolean;
+            /**
+             * Notify Owner
+             * @default true
+             */
+            readonly notify_owner: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+        };
+        /**
+         * AdmissionRulePatch
+         * @description Only the fields sent change — so the enabled switch is `{"enabled": false}`.
+         */
+        readonly AdmissionRulePatch: {
+            /** Agent */
+            readonly agent?: string | null;
+            /** Origin */
+            readonly origin?: ("" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack") | null;
+            /** Principal */
+            readonly principal?: ("" | "member" | "contact" | "agent" | "system") | null;
+            /** Access */
+            readonly access?: ("" | "confined" | "full") | null;
+            /** Capability */
+            readonly capability?: string | null;
+            /** Turn Mode */
+            readonly turn_mode?: ("" | "manual" | "auto") | null;
+            /** Runner Kind */
+            readonly runner_kind?: ("" | "emdash" | "cloud" | "remote") | null;
+            /** Action */
+            readonly action?: ("reject" | "allow") | null;
+            /** Reason */
+            readonly reason?: string | null;
+            /** Notify Sender */
+            readonly notify_sender?: boolean | null;
+            /** Notify Owner */
+            readonly notify_owner?: boolean | null;
+            /** Enabled */
+            readonly enabled?: boolean | null;
+        };
         /** ConnectedAgentOut */
         readonly ConnectedAgentOut: {
             /** Slug */
@@ -25686,6 +25919,102 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly list_admission_rules: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AdmissionRulesOut"];
+                };
+            };
+        };
+    };
+    readonly create_admission_rule: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AdmissionRuleIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AdmissionRuleOut"];
+                };
+            };
+        };
+    };
+    readonly delete_admission_rule: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly rule_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_admission_rule: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly rule_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AdmissionRulePatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AdmissionRuleOut"];
+                };
             };
         };
     };

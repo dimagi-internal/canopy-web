@@ -233,6 +233,62 @@ an actor routing rule (an `auto` naming a person needs a verified message) → a
 source routing rule → the agent's own switch (`Agent.turn_mode`). Setting `auto`
 on any rung is for the agent's admins.
 
+## Admission rules
+
+Some combinations of the above can never complete, and canopy refuses them
+before any session starts instead of spending one (`apps/admission`,
+canopy-web#1400). The worked example: an email from a **confined** caller, in
+**manual** mode, claimed by a **cloud** runner. The ask procedure drafts a reply
+and waits for a human yes, and a cloud session that ends cannot receive one.
+
+* **What a rule is.** A row on a workspace (`AdmissionRule`), edited by its
+  admins (`admission.manage`) at `/w/:workspace/settings/admission-rules`. Its
+  conditions are any subset of: agent, origin (the `Turn.origin` vocabulary),
+  principal (`member`/`contact`/`agent`/`system`, from who asked), access
+  (`confined`/`full`), capability, turn mode, and runner kind
+  (`emdash`/`cloud`/`remote`). A blank condition means any. A rule needs at
+  least one. Its action is `reject` or `allow`. It also carries a reason and two
+  notice switches (sender, owner), and it can be enabled or disabled.
+* **Where it is evaluated.** At enqueue, beside `_apply_capability`, for rules
+  that need no runner (no turn-mode or runner-kind condition). And in
+  `claim_next_turn` right after `turn_mode.for_turn`, the one point where the
+  runner's kind and the resolved mode are both known; both claim channels pass
+  through it. Rules apply to agent turns (an agent's own, or its chat's), and
+  only the agent's own workspace's rules apply.
+* **Precedence.** An enabled `allow` that matches exempts the turn from every
+  `reject`. That is how one agent opts out of a workspace-wide rule. A disabled
+  rule matches nothing, so a disabled agent-narrowed copy of a reject does NOT
+  exempt anyone. At enqueue, a condition not known yet counts as matching for an
+  `allow` and as not matching for a `reject`, so the claim decides. Among
+  matching rejects, the most specific wins, then the oldest.
+* **What a rejection does.** The turn closes **CANCELLED**, not FAILED, so no
+  debugger turn starts. `result_note` reads `rejected: admission rule <id>
+  (<conditions>) — <reason>`, the ledger's status event carries the rule id, the
+  workspace event log gets `admission.rejected`, and the rule's fired count and
+  last-fired time move. No runner ever holds the turn.
+* **The notices** (`AdmissionNotice`, one row per notice, sent or not). They
+  are fixed text and never model-written:
+  * The **sender** gets an automatic reply on their email thread, from the
+    agent's own mailbox. canopy-web sends it with the agent's `gog-token`
+    credential when that token was minted on canopy-web's own Google client;
+    the thread is then marked read. There is no reply to a machine
+    (Auto-Submitted, Precedence bulk/list, list mail), a no-reply address, the
+    agent's own mailbox, a system sender, or canopy/another agent. At most one
+    reply goes per thread per 24 hours. This is **off** until
+    `CANOPY_ADMISSION_SENDER_NOTICES` is set; while it is off, the notice is
+    recorded as `held`.
+  * The **owner** gets, off the thread: an email (SES), plus a review ask on
+    the agent's board parked on them (Waiting on you). Both name who wrote, the
+    subject and thread, the rule and its reason, and links to fix it: the rule
+    on the settings page (`?rule=<id>`, highlighted), the agent's turn mode and
+    runners, its interface callers, and its turns.
+* **Defaults.** Every workspace is seeded with two rows: by migration
+  `admission/0002` for the workspaces that existed then, and at creation for
+  every new one. The first rejects email + confined + manual + cloud, with both
+  notices, and is **on**. The second is the same on a laptop (`emdash`) runner
+  and is **off**. From then on they are ordinary rows. Disable one, narrow it
+  with an `allow`, or delete it (a deleted default is not re-seeded).
+
 ## The caller envelope
 
 What the runner hands the agent beside each turn (`apps/harness/caller_context.py`,
