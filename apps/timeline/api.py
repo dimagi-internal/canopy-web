@@ -67,8 +67,9 @@ def list_timeline(
     # `/api/w/{ws}/` prefix pins one workspace (membership-gated upstream), a flat
     # `/api/` call spans every workspace the user belongs to. Sources opt into the
     # scope (see sources._call_source); framework never imports product models.
-    ws = getattr(request, "workspace_slug", None)
-    workspace_slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
+    # A caller whose workspaces sit in more than one tenant tree must pin one
+    # (422 otherwise): an activity feed must not interleave organisations.
+    workspace_slugs = wsvc.request_workspace_slugs(request)
     events = sources.gather(
         subsystem=sub,
         limit=limit,

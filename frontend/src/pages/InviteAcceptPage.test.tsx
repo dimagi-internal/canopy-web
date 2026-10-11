@@ -90,6 +90,7 @@ describe('InviteAcceptPage', () => {
       role: 'editor',
       created_at: new Date().toISOString(),
       parent: null,
+      root: 'connect',
       inherited: false,
     })
 

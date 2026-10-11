@@ -14786,6 +14786,11 @@ export interface components {
             /** Parent */
             readonly parent?: string | null;
             /**
+             * Root
+             * @default
+             */
+            readonly root: string;
+            /**
              * Inherited
              * @default false
              */

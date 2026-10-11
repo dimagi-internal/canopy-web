@@ -35,9 +35,12 @@ def _workspace_slugs(request: HttpRequest) -> set[str]:
     """The caller's in-scope workspace slugs, mirroring the agents surface: a
     ``/api/w/{ws}/`` prefix pins one workspace (already membership-gated by
     ``WorkspaceResolveMiddleware``); a flat ``/api/`` call spans every workspace
-    the user belongs to."""
-    ws = getattr(request, "workspace_slug", None)
-    return {ws} if ws else wsvc.user_workspace_slugs(request.user)
+    the user belongs to — when those sit in ONE tenant tree. A narrative slug or
+    run id is a NAME that groups rows across workspaces, not a row id, so every
+    read here takes the read rule (`wsvc.read_scope`): a caller in more than one
+    tree who pins none gets a 422 rather than two organisations' rows merged
+    under one name."""
+    return wsvc.request_workspace_slugs(request)
 
 
 def _editor_slugs(request: HttpRequest) -> set[str]:

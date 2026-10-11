@@ -161,7 +161,40 @@ agent_registry() {  # -> "slug<TAB>repo_url" per agent, or nothing
   [[ -n "$base" && -n "$tok" ]] || return 0
   local list
   list="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
-          "${base%/}/api/agents/?limit=200" 2>/dev/null)" || return 0
+          "${base%/}/api/agents/?limit=200" 2>/dev/null)" || list=""
+  if [[ -z "$list" ]]; then
+    # A token whose workspaces span more than one tenant tree gets a 422 on the
+    # flat list (canopy-web's read rule, 2026-10-11): name each workspace instead.
+    local _wss _ws
+    _wss="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+            "${base%/}/api/workspaces/" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    print("\n".join(w["slug"] for w in json.load(sys.stdin)))
+except Exception:
+    pass
+' 2>/dev/null)" || _wss=""
+    list="$(while IFS= read -r _ws; do
+        [[ -n "$_ws" ]] || continue
+        curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+          "${base%/}/api/w/${_ws}/agents/?limit=200" 2>/dev/null || true
+        echo
+      done <<<"$_wss" | python3 -c '
+import json, sys
+seen = {}
+for line in sys.stdin:
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    for a in (d.get("items") if isinstance(d, dict) else d) or []:
+        if (a or {}).get("slug"):
+            seen.setdefault(a["slug"], a)
+if seen:
+    print(json.dumps({"items": list(seen.values())}))
+' 2>/dev/null)" || list=""
+  fi
+  [[ -n "$list" ]] || return 0
   local slugs
   slugs="$(printf '%s' "$list" | python3 -c '
 import json, sys
@@ -216,8 +249,42 @@ agent_mailbox() {  # slug -> mailbox, or empty
     _MAILBOXES_CACHE=""
     local base="${CANOPY_BASE_URL:-}" tok="${CANOPY_TOKEN:-}"
     if [[ -n "$base" && -n "$tok" ]]; then
-      _MAILBOXES_CACHE="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
-          "${base%/}/api/agents/?limit=200" 2>/dev/null | python3 -c '
+      local list
+      list="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+          "${base%/}/api/agents/?limit=200" 2>/dev/null)" || list=""
+      if [[ -z "$list" ]]; then
+        # A token whose workspaces span more than one tenant tree gets a 422 on the
+        # flat list (canopy-web's read rule, 2026-10-11): name each workspace instead.
+        local _wss _ws
+        _wss="$(curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+                "${base%/}/api/workspaces/" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    print("\n".join(w["slug"] for w in json.load(sys.stdin)))
+except Exception:
+    pass
+' 2>/dev/null)" || _wss=""
+        list="$(while IFS= read -r _ws; do
+            [[ -n "$_ws" ]] || continue
+            curl -fsSL --max-time 20 -H "Authorization: Bearer $tok" \
+              "${base%/}/api/w/${_ws}/agents/?limit=200" 2>/dev/null || true
+            echo
+          done <<<"$_wss" | python3 -c '
+import json, sys
+seen = {}
+for line in sys.stdin:
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    for a in (d.get("items") if isinstance(d, dict) else d) or []:
+        if (a or {}).get("slug"):
+            seen.setdefault(a["slug"], a)
+if seen:
+    print(json.dumps({"items": list(seen.values())}))
+' 2>/dev/null)" || list=""
+      fi
+      _MAILBOXES_CACHE="$(printf '%s' "$list" | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)

@@ -167,7 +167,10 @@ def test_list_includes_link_shared_sessions_from_others(auth_client, owner, othe
     _upload(other_client, _transcript("theirs-link"), title="Agent share")
     _upload(other_client, _transcript("theirs-private"), visibility="private")
 
-    rows = auth_client.get("/api/sessions/").json()
+    # The owner also owns the org default (the first upload bootstrapped it), so
+    # their workspaces span two tenant trees and a list must name one.
+    assert auth_client.get("/api/sessions/").status_code == 422
+    rows = auth_client.get("/api/w/share-team/sessions/").json()
     by_title = {r["title"]: r for r in rows}
     assert len(rows) == 2
     theirs = by_title["Agent share"]

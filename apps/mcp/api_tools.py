@@ -436,6 +436,17 @@ def _annotations(method: str) -> ToolAnnotations:
     )
 
 
+#: What the added `workspace` argument says. The read rule
+#: (`apps.workspaces.services.read_scope`) refuses an unpinned list or search by
+#: a caller whose workspaces span more than one tenant tree.
+WORKSPACE_ARG_DESCRIPTION = (
+    "Workspace slug to act in. Omitting it works only when all your workspaces "
+    "are in one tenant tree (e.g. dimagi + connect): a list or search then spans "
+    "them, as the flat route does. If they span more than one organisation, a "
+    "list or search without `workspace` is refused (422) — name one."
+)
+
+
 class CanopyAPIProvider(OpenAPIProvider):
     """`OpenAPIProvider` over canopy's own schema, building `CanopyAPITool`s."""
 
@@ -448,9 +459,7 @@ class CanopyAPIProvider(OpenAPIProvider):
         if adds_workspace:
             props[WORKSPACE_ARG] = {
                 "type": "string",
-                "description": (
-                    "Workspace slug to act in. Omit to act across your workspaces, as the flat route does."
-                ),
+                "description": WORKSPACE_ARG_DESCRIPTION,
             }
             params["properties"] = props
         output_schema = generic.output_schema

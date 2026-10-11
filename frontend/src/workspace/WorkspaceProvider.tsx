@@ -5,6 +5,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { listWorkspaces, type WorkspaceOut } from '../api/workspaces'
 import { resolveActiveWorkspace } from './resolveActiveWorkspace'
+import { setDefaultWorkspace } from '../api/workspaceRetry'
 
 interface WorkspaceCtx {
   workspaces: WorkspaceOut[]
@@ -53,6 +54,11 @@ export function WorkspaceProvider({
   }, [])
 
   const active = resolveActiveWorkspace(workspaces, urlSlug)
+  // Where a flat list refused for spanning two organisations is retried
+  // (../api/workspaceRetry): the workspace the caller is looking at.
+  useEffect(() => {
+    setDefaultWorkspace(active)
+  }, [active])
   return <Ctx.Provider value={{ workspaces, active, loading, refresh }}>{children}</Ctx.Provider>
 }
 

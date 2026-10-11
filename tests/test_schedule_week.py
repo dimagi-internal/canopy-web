@@ -26,6 +26,10 @@ def setup():
     owner = User.objects.create_user("jj", "jj@dimagi.com", "pw")
     a = _ws("alpha", owner)
     b = _ws("beta", owner)
+    # One organisation: beta is a division of alpha. A flat read spans one
+    # tenant tree only (`wsvc.read_scope`) — see the two-tree test below.
+    b.parent = a
+    b.save()
     # A third workspace the owner is NOT a member of.
     stranger = User.objects.create_user("s", "s@x.com", "pw")
     c = Workspace.objects.create(slug="gamma", display_name="g", created_by=stranger, access_request_domains=[])
@@ -52,6 +56,17 @@ def test_personal_flat_spans_all_my_workspaces(setup):
     assert resp.status_code == 200, resp.content
     names = {i["schedule"]["name"] for i in resp.json()["items"]}
     assert names == {"A", "B"}  # alpha + beta; NOT ghost's C (gamma, not a member)
+
+
+def test_personal_flat_is_refused_across_two_tenant_trees(setup):
+    """A caller whose workspaces sit in two organisations must name one: the
+    union would put one org's schedules beside another's (2026-10-11)."""
+    Workspace.objects.filter(slug="beta").update(parent=None)
+    resp = setup.get(f"/api/agents/schedules/week?start={START}")
+    assert resp.status_code == 422, resp.content
+    assert "alpha" in resp.json()["detail"] and "beta" in resp.json()["detail"]
+    pinned = setup.get(f"/api/w/beta/agents/schedules/week?start={START}")
+    assert {i["schedule"]["name"] for i in pinned.json()["items"]} == {"B"}
 
 
 def test_tenant_pinned_returns_one_workspace(setup):

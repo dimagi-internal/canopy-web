@@ -219,9 +219,14 @@ def _slack_binding(session: Session) -> dict | None:
     return binding_of(session)
 
 
-def _visible_slugs(request: HttpRequest) -> set[str]:
-    pinned = getattr(request, "workspace_slug", None)
-    return {pinned} if pinned else set(wsvc.user_workspace_slugs(request.user))
+def _visible_slugs(request: HttpRequest, *, listing: bool = False) -> set[str]:
+    """The tenants a session read may reach. A by-id read (the default) takes
+    every membership, or the pin; a LIST, search or bulk reset (`listing=True`)
+    takes the read rule — a caller whose workspaces sit in more than one tenant
+    tree must pin one, or gets a 422 rather than two organisations' sessions."""
+    if listing:
+        return wsvc.request_workspace_slugs(request)
+    return wsvc.request_member_slugs(request)
 
 
 def _site_scoped(request: HttpRequest, qs):
@@ -356,7 +361,7 @@ def _filtered_sessions(
     if state not in ("active", "archived", "all"):
         raise HttpError(422, "state must be one of: active, archived, all")
 
-    slugs = _visible_slugs(request)
+    slugs = _visible_slugs(request, listing=True)
     rows = (
         # The same authority every other session surface reads — see
         # apps/canopy_sessions/access.py — narrowed to the acting site's agents.
@@ -593,7 +598,7 @@ def reset_sessions(request: HttpRequest, payload: ResetIn):
     # Only sessions you may act in. Scoping by workspace alone let a co-tenant
     # reset — and with `prune_ghosts`, delete — conversations they cannot read.
     readable = _site_scoped(
-        request, access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request)))
+        request, access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request, listing=True)))
     rows = [
         s for s in readable.select_related("created_by", "runner_binding", "runner_binding__runner")
         .order_by("created_at")

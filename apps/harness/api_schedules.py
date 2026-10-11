@@ -83,10 +83,9 @@ def _visible_workspace_ids(request: HttpRequest) -> set[str]:
     anti-pattern `_visible_agent_workspace_ids` was fixed for in PR #421.
     `Agent.workspace` is NOT NULL as of agents/0013, so the set is now purely
     membership and there is no NULL to admit."""
-    ws = getattr(request, "workspace_slug", None)
-    if ws:
-        return {ws}
-    return set(wsvc.user_workspace_slugs(request.user))
+    # The week view is a LIST: the read rule, so a caller whose workspaces sit
+    # in more than one tenant tree must pin one (422 otherwise).
+    return wsvc.request_workspace_slugs(request)
 
 
 # Route-ordering invariant: this literal "/schedules/week" route must stay

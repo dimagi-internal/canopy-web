@@ -2059,7 +2059,7 @@ class SessionView:
     runner_name: str
 
 
-def list_visible_sessions(user) -> list[SessionView]:
+def list_visible_sessions(user, ws_slugs: set[str] | None = None) -> list[SessionView]:
     """Open sessions in the caller's workspaces whose runner is LIVE. Newest-first.
 
     Three conditions, all polled or explicit — none of them "the FK went null":
@@ -2074,11 +2074,17 @@ def list_visible_sessions(user) -> list[SessionView]:
     invite, or an approved access request) has no WorkspaceMembership row, so
     `user_workspace_slugs(user)` returns empty and their workspace's sessions
     are correctly invisible to them — no more silent auto-join here either.
+
+    `ws_slugs` narrows to a request's read scope (`GET /api/harness/sessions`
+    passes `wsvc.request_workspace_slugs`, so a caller in two tenant trees must
+    pin one). Omitted — the realtime push to the runner owner's own socket —
+    it is every membership.
     """
     from apps.canopy_sessions import access as session_access
     from apps.canopy_sessions.models import RunnerBinding, Session
 
-    ws_slugs = wsvc.user_workspace_slugs(user)
+    if ws_slugs is None:
+        ws_slugs = wsvc.user_workspace_slugs(user)
     bindings = (
         RunnerBinding.objects.filter(
             runner__isnull=False,

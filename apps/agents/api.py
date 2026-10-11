@@ -91,8 +91,11 @@ router = Router(auth=session_auth, tags=["agents"])
 def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
     """The single definition of 'agent workspaces this caller can see'. A
     workspace_id is visible if the caller is pinned to it, or — unpinned —
-    the caller is a member of it. _get_agent_or_404, list_agents, and the
-    fleet items query MUST build from this: they used to hand-copy this
+    the caller is a member of it. _get_agent_or_404 builds from this, and
+    list_agents and the fleet items query from `_listed_agent_workspace_ids`,
+    which is this plus the read rule (a list never spans two tenant trees
+    unpinned) — so a row a list shows is always one the by-slug gate admits.
+    They used to hand-copy this
     predicate three times, which is exactly the failure apps/harness/api.py's
     _runner_visibility_q docstring describes (a runner the list showed but
     every action 404'd on) — see that docstring for the full story.
@@ -115,10 +118,16 @@ def _visible_agent_workspace_ids(request: HttpRequest) -> set[str]:
     API, not universally visible. Since agents/0013 made `Agent.workspace` NOT
     NULL the case is unrepresentable rather than merely unpopulated, so this
     reads as a plain membership check with nothing to special-case."""
-    ws = getattr(request, "workspace_slug", None)
-    if ws:
-        return {ws}
-    return set(wsvc.user_workspace_slugs(request.user))
+    return wsvc.request_member_slugs(request)
+
+
+def _listed_agent_workspace_ids(request: HttpRequest) -> set[str]:
+    """The agent workspaces a LIST spans (`list_agents`, the fleet task and
+    project lists): `_visible_agent_workspace_ids` under the read rule — a
+    caller whose workspaces sit in more than one tenant tree and who pins none
+    gets a 422 rather than every organisation's agents in one list
+    (`wsvc.read_scope`). By-slug gates keep `_visible_agent_workspace_ids`."""
+    return wsvc.request_workspace_slugs(request)
 
 
 def _get_agent_or_404(request: HttpRequest, slug: str):
@@ -273,7 +282,7 @@ def _agent_for_admin(request: HttpRequest, slug: str):
 @router.get("/", response=Page[AgentOut], summary="List agents",)
 def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
     limit = clamp_limit(limit)
-    visible = _visible_agent_workspace_ids(request)
+    visible = _listed_agent_workspace_ids(request)
     items = [
         AgentOut.model_validate(a)
         for a in services.list_agents()

@@ -288,12 +288,15 @@ def upload_session(
 # ---------------------------------------------------------------------------
 
 
-def _teammate_ids(user) -> set[int]:
-    """Everyone who shares a workspace with `user`, themselves included."""
+def _teammate_ids(request) -> set[int]:
+    """Everyone who shares a workspace with the caller, themselves included —
+    within ONE tenant tree (`wsvc.request_tree_slugs`): a pinned list uses the
+    pin's tree, and an unpinned list by a caller in two trees is refused (422)
+    rather than listing two organisations' shares together."""
     from apps.workspaces import services as wsvc
 
-    ids: set[int] = {user.pk}
-    for slug in wsvc.user_workspace_slugs(user):
+    ids: set[int] = {request.user.pk}
+    for slug in wsvc.request_tree_slugs(request):
         ids |= set(wsvc.member_user_ids(slug))
     return ids
 
@@ -307,7 +310,7 @@ def list_sessions(
         .filter(
             models.Q(owner=request.user)
             | (models.Q(visibility=Session.VISIBILITY_LINK)
-               & models.Q(owner_id__in=_teammate_ids(request.user)))
+               & models.Q(owner_id__in=_teammate_ids(request)))
         )
         .prefetch_related("share_tokens")
     )
@@ -450,7 +453,7 @@ def list_arcs(request: HttpRequest, project: str = "") -> list[ArcListItemOut]:
         .filter(
             models.Q(owner=request.user)
             | (models.Q(visibility=SessionArc.VISIBILITY_LINK)
-               & models.Q(owner_id__in=_teammate_ids(request.user)))
+               & models.Q(owner_id__in=_teammate_ids(request)))
         )
         .prefetch_related("share_tokens", "items")
     )

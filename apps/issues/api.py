@@ -29,12 +29,15 @@ def _unslug(repo_slug: str) -> str:
     return repo_slug.replace("__", "/")
 
 
-def _visible(qs, request: HttpRequest):
-    """Scope to the caller's workspaces (the hard tenant boundary)."""
+def _visible(qs, request: HttpRequest, *, listing: bool = False):
+    """Scope to the caller's workspaces (the hard tenant boundary). A LIST takes
+    the read rule (a caller in two tenant trees must pin one); a lookup of one
+    record by repo + number takes every membership."""
     # A null-workspace row is in nobody's scope. It used to be in everybody's —
     # the NULL-means-allow leg — and `issues/0003` homed the rows it was keeping
     # visible, so dropping it hides nothing anyone legitimately reads.
-    return qs.filter(workspace_id__in=wsvc.request_workspace_slugs(request))
+    scope = wsvc.request_workspace_slugs(request) if listing else wsvc.request_member_slugs(request)
+    return qs.filter(workspace_id__in=scope)
 
 
 def _require_editor(request: HttpRequest, workspace_id: str, verb: str) -> None:
@@ -64,7 +67,7 @@ def _assign_workspace(request: HttpRequest, agent_slug: str):
     caller is ALREADY in — so nobody files a record into a workspace they're not
     in, and filing one is not itself a way to join a workspace. The fallback
     used to `ensure_member`; see wsvc.creation_workspace."""
-    slugs = wsvc.request_workspace_slugs(request)
+    slugs = wsvc.request_member_slugs(request)
     agent = Agent.objects.filter(slug=agent_slug).first()
     if agent and agent.workspace_id in slugs:
         return agent.workspace
@@ -83,7 +86,7 @@ def upsert_issue(request: HttpRequest, payload: OriginIssueIn) -> Status:
     # with NO workspace is one nobody can see, so it 404s too rather than being
     # the one row anybody may overwrite.
     existing = OriginIssue.objects.filter(repo=repo, number=number).first()
-    if existing and existing.workspace_id not in wsvc.request_workspace_slugs(request):
+    if existing and existing.workspace_id not in wsvc.request_member_slugs(request):
         raise ProblemError(
             404, "Issue record not found", type_=TYPE_NOT_FOUND,
             detail=f"No canopy.origin record for {repo}#{number}.",
@@ -118,7 +121,7 @@ def list_issues(
     limit: int = 100,
 ) -> Page[OriginIssueOut]:
     offset, limit = clamp_offset(offset), clamp_limit(limit)
-    qs = _visible(OriginIssue.objects.all(), request)
+    qs = _visible(OriginIssue.objects.all(), request, listing=True)
     if initiative:
         qs = qs.filter(initiative=initiative)
     if repo:

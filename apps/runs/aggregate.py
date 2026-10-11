@@ -418,7 +418,7 @@ def _is_member(w: Walkthrough, request) -> bool:
     # A null-workspace walkthrough has no members (see Walkthrough.readable_by).
     if w.workspace_id is None:
         return False
-    return w.workspace_id in wsvc.request_workspace_slugs(request)
+    return w.workspace_id in wsvc.request_member_slugs(request)
 
 
 def _humanize_slug(slug: str) -> str:

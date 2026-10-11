@@ -295,6 +295,8 @@ def _cross_ws_huddle(owner, agents, ws):
     """Anchor + eva in `connect` (ws A); ace's round turn, reply and task in `dimagi` (B)."""
     b = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=b, role=WorkspaceMembership.OWNER)
+    ws.parent = b  # connect is a division of dimagi: one organisation, one tree
+    ws.save()
     ace = Agent.objects.create(slug="ace", name="Ace", workspace=b)
     anchor, _ = _huddle(agents)
     Turn.objects.create(
@@ -315,6 +317,20 @@ def test_scoped_detail_spans_callers_workspaces(owner, ws, agents):
     assert set(cells) == {"eva", "ace"}
     assert cells["ace"]["block"]["worked_on"] == ["z"]
     assert [(o["ext_id"], o["url"]) for o in d["outputs"]] == [("T9", "/w/dimagi/agents/ace/tasks")]
+    assert c.get("/api/w/connect/huddles/").json()[0]["outcome_count"] == 1
+
+
+def test_a_huddle_by_id_needs_no_pin_and_stays_in_its_own_tree(owner, ws, agents):
+    """A caller in a second organisation (a family root) still opens a huddle by
+    id unpinned — by id mixes nothing — and sees only the huddle's own tree.
+    The LIST is what must name a workspace (2026-10-11)."""
+    _cross_ws_huddle(owner, agents, ws)
+    family = Workspace.objects.create(slug="family", display_name="Family", created_by=owner)
+    WorkspaceMembership.objects.create(user=owner, workspace=family, role=WorkspaceMembership.OWNER)
+    c = _client(owner)
+    d = c.get("/api/huddles/h1").json()
+    assert {x["member"] for x in d["cells"]} == {"eva", "ace"}
+    assert c.get("/api/huddles/").status_code == 422
     assert c.get("/api/w/connect/huddles/").json()[0]["outcome_count"] == 1
 
 

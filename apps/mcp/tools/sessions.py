@@ -20,6 +20,7 @@ Every tool:
 from __future__ import annotations
 
 from asgiref.sync import sync_to_async
+from fastmcp.exceptions import ToolError
 
 from apps.canopy_sessions import maintenance
 from apps.mcp.audit import current_user_id, write_audit
@@ -41,10 +42,30 @@ async def _user(user_id):
     return user or AnonymousUser()
 
 
+async def _scope(user_id, *, workspace: str | None, session_id: str | None) -> set[str]:
+    """The workspaces this call may touch. One session named by id is a by-id
+    act (every membership); otherwise it is a sweep across sessions, which
+    takes the read rule — a caller whose workspaces sit in more than one tenant
+    tree must name `workspace` (`wsvc.read_scope`)."""
+    def resolve():
+        if session_id and not workspace:
+            from django.contrib.auth import get_user_model
+
+            user = get_user_model().objects.filter(pk=user_id).first() if user_id else None
+            return wsvc.member_scope(user)
+        return wsvc.workspace_slugs_for_user_id(user_id, workspace)
+
+    try:
+        return await sync_to_async(resolve, thread_sensitive=True)()
+    except wsvc.WorkspaceRequired as exc:
+        raise ToolError(str(exc)) from exc
+
+
 @mcp.tool
 async def audit_session_noise(
     session_id: str | None = None,
     sample: int = 5,
+    workspace: str | None = None,
 ) -> dict:
     """Report harness output stored as USER messages in your sessions.
 
@@ -56,13 +77,15 @@ async def audit_session_noise(
     Args:
       - session_id: restrict to one session (UUID). Omit for all your sessions.
       - sample: example rows to include (clamped to 50; default 5).
+      - workspace: the workspace to sweep. Omit only when all your workspaces
+        are in one tenant tree (e.g. dimagi + connect); otherwise it is required.
 
     Returns {"matched", "sessions", "sample": [{session_id, workspace,
     turn_index, text}]}. Read-only — see `purge_session_noise` to delete.
     """
     user_id = current_user_id()
     summary = f"session_id={session_id} sample={sample}"
-    slugs = await sync_to_async(wsvc.workspace_slugs_for_user_id, thread_sensitive=True)(user_id)
+    slugs = await _scope(user_id, workspace=workspace, session_id=session_id)
     try:
         report = await sync_to_async(maintenance.audit_noise, thread_sensitive=True)(
             workspace_slugs=slugs, session_id=session_id, sample=sample,
@@ -86,6 +109,7 @@ async def purge_session_noise(
     session_id: str | None = None,
     apply: bool = False,
     sample: int = 5,
+    workspace: str | None = None,
 ) -> dict:
     """Delete harness output stored as USER messages in your sessions.
 
@@ -98,6 +122,8 @@ async def purge_session_noise(
       - session_id: restrict to one session (UUID). Omit for all your sessions.
       - apply: actually delete. Default False.
       - sample: example rows to include (clamped to 50; default 5).
+      - workspace: the workspace to sweep. Omit only when all your workspaces
+        are in one tenant tree (e.g. dimagi + connect); otherwise it is required.
 
     Returns the audit report plus {"applied", "deleted"}. Scoped to your
     workspaces; rate-limited per user.
@@ -118,7 +144,7 @@ async def purge_session_noise(
             )
             raise
 
-    slugs = await sync_to_async(wsvc.workspace_slugs_for_user_id, thread_sensitive=True)(user_id)
+    slugs = await _scope(user_id, workspace=workspace, session_id=session_id)
     try:
         report = await sync_to_async(maintenance.purge_noise, thread_sensitive=True)(
             workspace_slugs=slugs, session_id=session_id, sample=sample, apply=apply,

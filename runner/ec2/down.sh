@@ -76,6 +76,34 @@ api() {  # METHOD PATH -> body on stdout
   curl -sS -X "$1" "${BASE_URL}$2" -H "Authorization: Bearer ${CANOPY_TOKEN}"
 }
 
+# Every agent the token can see, as {"items": [...]}. The flat list first; a
+# token whose workspaces span more than one tenant tree gets a 422 there
+# (canopy-web's read rule, 2026-10-11), so then ask each workspace by name.
+agents_json() {
+  local flat
+  flat="$(api GET "/api/agents/?limit=200")"
+  if printf '%s' "$flat" | python3 -c 'import json,sys; sys.exit(0 if isinstance(json.load(sys.stdin).get("items"), list) else 1)' 2>/dev/null; then
+    printf '%s\n' "$flat"
+    return 0
+  fi
+  local ws
+  for ws in $(api GET "/api/workspaces/" | python3 -c 'import json,sys; print(" ".join(w["slug"] for w in json.load(sys.stdin)))'); do
+    api GET "/api/w/${ws}/agents/?limit=200"
+    echo
+  done | python3 -c '
+import json, sys
+seen = {}
+for line in sys.stdin:
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    for a in d.get("items") or []:
+        seen.setdefault(a["slug"], a)
+print(json.dumps({"items": list(seen.values())}))
+'
+}
+
 # Purge guard FIRST, before anything is deleted: the secrets are shared, and the
 # live box re-reads canopy-pat / claude-oauth-token on every service start.
 if [[ "$PURGE" == "1" ]]; then
@@ -161,7 +189,7 @@ for x in d:
     done < "$TMP/retire.txt"
 
     # Verify rather than trust: no agent's list or rules may still name it.
-    api GET "/api/agents/?limit=200" > "$TMP/agents.json"
+    agents_json > "$TMP/agents.json"
     LEFT=0
     for slug in $(python3 -c "import json;print(' '.join(a['slug'] for a in json.load(open('$TMP/agents.json')).get('items', [])))"); do
       api GET "/api/agents/${slug}/runners" > "$TMP/v-rows.json"
