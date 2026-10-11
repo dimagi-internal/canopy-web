@@ -75,6 +75,7 @@ from .routing import (
     repo_order_for,  # noqa: F401
     ridable_sessions,  # noqa: F401
     runner_target_q,  # noqa: F401
+    covered_slugs,  # noqa: F401
     enrolled_slugs,  # noqa: F401
     runner_tenant_slugs,  # noqa: F401
     seed_assignments_from_capabilities,  # noqa: F401

@@ -557,8 +557,8 @@ def runner_tenant_slugs(runner: Runner) -> set[str]:
     serves nothing there — before 2026-10-02 a viewer could pair a session-
     capable box and receive the workspace's unbound chat sends.
 
-    And only the workspaces the box is ENROLLED in (`RunnerEnrollment`,
-    2026-10-11): the owner's memberships say where a box MAY work, enrollment
+    And only the workspaces the box is ENROLLED in, or that sit below one it is
+    enrolled in (`RunnerEnrollment`, `covered_slugs`, 2026-10-11): the owner's memberships say where a box MAY work, enrollment
     says where it DOES. Without it a box served every workspace its owner could
     work in, so becoming owner of a separate tree (a family workspace) put every
     Dimagi box on that tree's repo turns and unbound chats, and back. The two
@@ -569,10 +569,25 @@ def runner_tenant_slugs(runner: Runner) -> set[str]:
         return set()
     from apps.workspaces import permissions as perms
 
+    covered = covered_slugs(runner)
+    if not covered:
+        return set()
+    return perms.slugs_with(runner.owner, perms.AGENT_WORK, within=covered)
+
+
+def covered_slugs(runner: Runner) -> set[str]:
+    """The workspaces this runner's enrollments REACH: each enrolled workspace
+    and every workspace below it in the tree (2026-10-11, owner decision). So a
+    division created under `dimagi` after the box enrolled there is served with
+    no re-enrolling — while a separate ROOT (`marshellis`) is never below
+    anything the Dimagi boxes are enrolled in, and stays unserved. Coverage is
+    still intersected with the owner's `agent.work` in `runner_tenant_slugs`,
+    workspace by workspace: reaching a division does not make its owner an
+    editor there."""
     enrolled = enrolled_slugs(runner)
     if not enrolled:
         return set()
-    return perms.slugs_with(runner.owner, perms.AGENT_WORK, within=enrolled)
+    return enrolled | wsvc.descendant_slugs(enrolled)
 
 
 def enrolled_slugs(runner: Runner) -> set[str]:

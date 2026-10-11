@@ -855,9 +855,11 @@ def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int
     return Status(204, None)
 
 
-def _enrollment_row(e, serving: set[str]) -> dict:
+def _enrollment_row(request: HttpRequest, runner: Runner, e, serving: set[str]) -> dict:
+    below = wsvc.descendant_slugs({e.workspace_id}) & serving
     return {"workspace": e.workspace_id, "display_name": e.workspace.display_name,
             "serving": e.workspace_id in serving,
+            "covers": sorted(s for s in below if _sees_enrollment(request, runner, s)),
             "enrolled_by_email": e.enrolled_by.email if e.enrolled_by else "",
             "created_at": e.created_at}
 
@@ -874,11 +876,12 @@ def _sees_enrollment(request: HttpRequest, runner: Runner, slug: str) -> bool:
 def list_runner_workspaces(request: HttpRequest, runner_id: uuid.UUID):
     """A runner serves a workspace only when it is ENROLLED there and its owner
     may run work there (editor and above) — `serving` says whether both hold.
-    Pairing enrolls a box only in the workspace it paired into; joining another
+    An enrollment covers the workspaces below it too, including ones created
+    later (`covers` lists those it serves). Pairing enrolls a box only in the workspace it paired into; joining another
     workspace does not enroll your existing boxes."""
     runner = _runner_admin_or_404(request, runner_id)
     serving = services.runner_tenant_slugs(runner)
-    return [_enrollment_row(e, serving) for e in services.list_runner_enrollments(runner)
+    return [_enrollment_row(request, runner, e, serving) for e in services.list_runner_enrollments(runner)
             if _sees_enrollment(request, runner, e.workspace_id)]
 
 
@@ -887,7 +890,8 @@ def list_runner_workspaces(request: HttpRequest, runner_id: uuid.UUID):
 def enroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID,
                             payload: RunnerEnrollmentIn):
     """Opt the box in to a workspace's turns — its agents' (as routing assigns
-    them), its repo turns and its unbound chats. Idempotent.
+    them), its repo turns and its unbound chats — and those of every workspace
+    below it, now or later, wherever its owner is an editor. Idempotent.
 
     The owner or a runner administrator may ask; the box's OWNER must be an
     editor or above there (422 otherwise), because a box works with its owner's
@@ -904,13 +908,14 @@ def enroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID,
         row = services.enroll_runner(runner, slug, by=request.user)
     except services.EnrollmentRefused as exc:
         raise HttpError(422, str(exc))
-    return _enrollment_row(row, services.runner_tenant_slugs(runner))
+    return _enrollment_row(request, runner, row, services.runner_tenant_slugs(runner))
 
 
 @router.delete("/runners/{runner_id}/workspaces/{workspace}", response={204: None},
                summary="Stop this runner serving a workspace")
 def unenroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID, workspace: str):
-    """The box claims nothing more there from its next poll; a turn it already
+    """The box claims nothing more there from its next poll — unless a
+    workspace above it is still enrolled, which covers it; a turn it already
     holds runs to completion. Owner or a runner administrator."""
     runner = _runner_admin_or_404(request, runner_id)
     if not _sees_enrollment(request, runner, workspace) or not services.unenroll_runner(

@@ -602,7 +602,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "delete_agent_github": "withdraws only the caller's OWN GitHub delegation",
     "check_agent_salesforce": "re-probes the lender's credential against Salesforce and records the result; grants and changes nothing",
     "delete_agent_salesforce": "withdraws only the caller's OWN Salesforce delegation",
-    "pair_runner": "pairing grants nothing by itself: a box serves only workspaces it is enrolled in AND where its owner holds agent.work (runner_tenant_slugs); pairing enrolls it in the pairing workspace only",
+    "pair_runner": "pairing grants nothing by itself: a box serves only workspaces it is enrolled in (or below one) AND where its owner holds agent.work (runner_tenant_slugs); pairing enrolls it in the pairing workspace only",
     "resolve_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "record_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "preview_cron": "POST but read-only: computes next fire times, writes nothing",
