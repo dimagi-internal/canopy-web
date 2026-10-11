@@ -1218,11 +1218,16 @@ class RunnerEnrollmentOut(Schema):
     `serving` is the live answer: enrolled AND the runner's owner may still run
     work there (editor and above). An enrollment whose owner was demoted reads
     `serving: false` — kept, so a re-promotion needs no re-enrolling, but it
-    routes nothing meanwhile."""
+    routes nothing meanwhile.
+
+    An enrollment also covers every workspace BELOW it in the tree, including
+    ones created later. `covers` names those the box serves through this row
+    (the owner is an editor or above there) and the reader may see."""
 
     workspace: str
     display_name: str = ""
     serving: bool
+    covers: list[str] = []
     enrolled_by_email: str = ""
     created_at: dt.datetime
 

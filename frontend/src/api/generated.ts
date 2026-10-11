@@ -5025,7 +5025,8 @@ export interface paths {
          * The workspaces this runner serves (its enrollments)
          * @description A runner serves a workspace only when it is ENROLLED there and its owner
          *     may run work there (editor and above) — `serving` says whether both hold.
-         *     Pairing enrolls a box only in the workspace it paired into; joining another
+         *     An enrollment covers the workspaces below it too, including ones created
+         *     later (`covers` lists those it serves). Pairing enrolls a box only in the workspace it paired into; joining another
          *     workspace does not enroll your existing boxes.
          */
         readonly get: operations["list_runner_workspaces"];
@@ -5033,7 +5034,8 @@ export interface paths {
         /**
          * Enroll this runner in a workspace so it serves its work
          * @description Opt the box in to a workspace's turns — its agents' (as routing assigns
-         *     them), its repo turns and its unbound chats. Idempotent.
+         *     them), its repo turns and its unbound chats — and those of every workspace
+         *     below it, now or later, wherever its owner is an editor. Idempotent.
          *
          *     The owner or a runner administrator may ask; the box's OWNER must be an
          *     editor or above there (422 otherwise), because a box works with its owner's
@@ -5059,7 +5061,8 @@ export interface paths {
         readonly post?: never;
         /**
          * Stop this runner serving a workspace
-         * @description The box claims nothing more there from its next poll; a turn it already
+         * @description The box claims nothing more there from its next poll — unless a
+         *     workspace above it is still enrolled, which covers it; a turn it already
          *     holds runs to completion. Owner or a runner administrator.
          */
         readonly delete: operations["unenroll_runner_workspace"];
@@ -16999,6 +17002,10 @@ export interface components {
          *     work there (editor and above). An enrollment whose owner was demoted reads
          *     `serving: false` — kept, so a re-promotion needs no re-enrolling, but it
          *     routes nothing meanwhile.
+         *
+         *     An enrollment also covers every workspace BELOW it in the tree, including
+         *     ones created later. `covers` names those the box serves through this row
+         *     (the owner is an editor or above there) and the reader may see.
          */
         readonly RunnerEnrollmentOut: {
             /** Workspace */
@@ -17010,6 +17017,11 @@ export interface components {
             readonly display_name: string;
             /** Serving */
             readonly serving: boolean;
+            /**
+             * Covers
+             * @default []
+             */
+            readonly covers: readonly string[];
             /**
              * Enrolled By Email
              * @default

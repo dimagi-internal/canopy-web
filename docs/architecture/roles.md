@@ -213,8 +213,9 @@ GitHub token through `/credentials/resolve`; an assignment row was the whole tru
 and the editor tier wrote it. A teammate whose own laptop runs an agent's work therefore needs
 an admin grant on that agent.
 
-**A box serves only the workspaces it is enrolled in** (`RunnerEnrollment`, 2026-10-11) — and
-only while its owner holds `agent.work` (editor and above) in each: the two intersect in
+**A box serves only the workspaces it is enrolled in, and every workspace below one of them**
+(`RunnerEnrollment`, 2026-10-11; a division created later is covered too, separate roots never
+are) — and only while its owner holds `agent.work` (editor and above) in each: the two intersect in
 `harness.routing.runner_tenant_slugs`, so enrollment narrows what membership allows and never
 widens it. Pairing enrolls a box in its pairing workspace only; a new membership enrolls
 nothing; leaving a workspace drops the enrollment. The owner or a runner administrator manages

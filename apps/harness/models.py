@@ -1268,7 +1268,8 @@ class RunnerEnrollment(models.Model):
     """A runner OPTS IN to serving a workspace — the box half of the tenant rule.
 
     A runner serves a workspace only when BOTH hold (`routing.runner_tenant_slugs`):
-    it is enrolled there (a row here), AND its owner may still run work there
+    it is enrolled there or in a workspace ABOVE it (a row here — enrollment
+    covers the subtree, `routing.covered_slugs`), AND its owner may still run work there
     (`agent.work`, editor and above). Enrollment never grants more than membership
     does; it only narrows it. Before this table the membership half was the whole
     rule, so a box served every workspace its owner could work in — the day
@@ -1281,6 +1282,9 @@ class RunnerEnrollment(models.Model):
     removes the rest (`/runners/{id}/workspaces`). Joining a new workspace does
     NOT enroll your existing boxes — a box starts serving a tenant because
     someone said so, never as a side effect of a membership.
+    Enrolling in a workspace covers every workspace below it, including ones
+    created later; separate roots stay separate (`marshellis` is a root, so no
+    enrollment in `dimagi` reaches it).
     Migration 0071 enrolled every runner that existed then in every workspace
     its owner could work in, except `marshellis`, so nothing changed for the fleet.
     """

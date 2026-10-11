@@ -254,7 +254,8 @@ export async function revokeRunnerAdmin(runnerId: string, userId: number): Promi
 }
 
 // Which workspaces a box SERVES. A runner takes a workspace's work only when it is
-// enrolled there AND its owner is an editor or above there (`serving`). Pairing
+// enrolled there (or in a workspace above it — `covers` lists the divisions a row
+// reaches) AND its owner is an editor or above there (`serving`). Pairing
 // enrolls a box only where it paired; joining another workspace never enrolls your
 // existing boxes. Owner or administrator; an administrator sees and names only the
 // workspaces they are a member of themselves.
@@ -264,7 +265,8 @@ export async function listRunnerWorkspaces(runnerId: string): Promise<RunnerEnro
   const res = await apiV2.GET('/api/harness/runners/{runner_id}/workspaces', {
     params: { path: { runner_id: runnerId } },
   })
-  return Array.from(unwrap(res, 'listRunnerWorkspaces'))
+  // `covers` is an array, so the row hits the Readable<T> degradation (see toRunner).
+  return Array.from(unwrap(res, 'listRunnerWorkspaces')) as unknown as RunnerEnrollment[]
 }
 
 export async function enrollRunnerWorkspace(runnerId: string, workspace: string): Promise<RunnerEnrollment> {
@@ -272,7 +274,7 @@ export async function enrollRunnerWorkspace(runnerId: string, workspace: string)
     params: { path: { runner_id: runnerId } },
     body: { workspace },
   })
-  return unwrap(res, 'enrollRunnerWorkspace')
+  return unwrap(res, 'enrollRunnerWorkspace') as unknown as RunnerEnrollment
 }
 
 export async function unenrollRunnerWorkspace(runnerId: string, workspace: string): Promise<void> {

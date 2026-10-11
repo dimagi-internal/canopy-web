@@ -289,3 +289,58 @@ def test_a_workspace_runner_order_refuses_an_unenrolled_box(family):
                            {"runners": [{"runner_id": str(box.pk)}]},
                            content_type="application/json")
     assert resp.status_code == 422 and "enrolled" in resp.json()["detail"]
+
+
+# --- enrollment covers the subtree ------------------------------------------------
+def test_a_division_created_after_enrolling_is_served(family):
+    jj, dimagi = family["jj"], family["dimagi"]
+    box = _box(jj, dimagi)
+    later = _ws("dimagi-later", jj, parent=dimagi)  # jj owns it by inheritance
+    t = _repo_turn(later, "later-repo")
+
+    assert "dimagi-later" in services.runner_tenant_slugs(box)
+    assert services.enrolled_slugs(box) == {"dimagi"}  # no row was added
+    assert services.claim_next_turn(box).pk == t.pk
+
+
+def test_a_sibling_root_is_never_covered(family):
+    jj, dimagi, marshellis = family["jj"], family["dimagi"], family["marshellis"]
+    box = _box(jj, dimagi)
+    _ws("marshellis-kids", jj, parent=marshellis)
+    _repo_turn(marshellis, "family-repo")
+    _chat_turn(marshellis, jj, "family-chat")
+
+    assert services.runner_tenant_slugs(box) == {"dimagi"}
+    assert services.claim_next_turn(box) is None
+
+
+def test_coverage_still_needs_the_owner_to_be_an_editor_in_the_division():
+    boss, jj = _user("boss"), _user("jj")
+    org = _ws("org", boss)
+    _member(org, boss, OWNER)
+    _member(org, jj, EDITOR)  # an editor's role does not flow down the tree
+    box = _box(jj, org)
+    division = _ws("division", boss, parent=org)
+    _repo_turn(division, "division-repo")
+    assert services.claim_next_turn(box) is None
+
+    _member(division, jj, EDITOR)
+    assert services.claim_next_turn(box) is not None
+
+
+def test_removing_a_divisions_row_does_not_stop_coverage_from_above(family):
+    jj, dimagi = family["jj"], family["dimagi"]
+    box = _box(jj, dimagi)
+    child = _ws("dimagi-child", jj, parent=dimagi)
+    services.enroll_runner(box, child.slug)
+    services.unenroll_runner(box, child.slug)
+    assert "dimagi-child" in services.runner_tenant_slugs(box)
+
+
+def test_the_listing_says_what_each_enrollment_covers(family):
+    jj, dimagi = family["jj"], family["dimagi"]
+    box = _box(jj, dimagi)
+    _ws("dimagi-a", jj, parent=dimagi)
+    _ws("dimagi-b", jj, parent=dimagi)
+    rows = _client(jj).get(f"/api/harness/runners/{box.pk}/workspaces").json()
+    assert [(r["workspace"], r["covers"]) for r in rows] == [("dimagi", ["dimagi-a", "dimagi-b"])]

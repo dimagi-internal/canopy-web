@@ -17,7 +17,7 @@ function reason(err: unknown): string {
 
 // Which workspaces this box SERVES. A runner takes a workspace's work — its
 // agents' turns, its repo turns, its unbound chats — only when it is enrolled
-// there AND its owner is an editor or above there. Pairing enrolls a box only in
+// there or in a workspace above it, AND its owner is an editor or above there. Pairing enrolls a box only in
 // the workspace it paired into, and joining a workspace never enrolls the boxes
 // you already have: a family workspace must not quietly get the Dimagi laptop.
 //
@@ -72,6 +72,12 @@ export function RunnerWorkspaces({ runnerId }: { runnerId: string }): JSX.Elemen
                 data-testid={`runner-workspace-${r.workspace}`}>
               <span>
                 {r.display_name || r.workspace}
+                {Array.from(r.covers ?? []).length > 0 && (
+                  <span className="ml-2 text-[11px] text-muted-foreground"
+                        data-testid={`runner-workspace-${r.workspace}-covers`}>
+                    and below it: {Array.from(r.covers ?? []).join(', ')}
+                  </span>
+                )}
                 {!r.serving && (
                   <span className="ml-2 text-[11px] text-muted-foreground">
                     not serving — the owner is no longer an editor there
@@ -105,8 +111,9 @@ export function RunnerWorkspaces({ runnerId }: { runnerId: string }): JSX.Elemen
       )}
       {err && <p className="text-[12px] text-destructive" data-testid="runner-workspaces-error">{err}</p>}
       <p className="text-[11px] text-foreground-subtle">
-        A box works only in the workspaces listed here, and only while its owner is an editor or
-        above in each. Joining a workspace does not add your boxes to it.
+        A box works only in the workspaces listed here and every workspace below them (including
+        ones created later), and only while its owner is an editor or above in each. Joining a
+        workspace does not add your boxes to it.
       </p>
     </div>
   )
