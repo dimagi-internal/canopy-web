@@ -572,6 +572,12 @@ def enqueue_turn(
                     else None),
             )
             _apply_capability(turn, capability)
+            # A combination that can never complete is refused here, before any
+            # runner can see it — or, when the rule needs the runner or the
+            # resolved mode, at the claim (apps/admission/evaluate.py).
+            from apps.admission import evaluate as admission
+
+            admission.at_enqueue(turn)
     except IntegrityError:
         # Only possible race: same idempotency key inserted concurrently.
         replay = Turn.objects.filter(idempotency_key=idempotency_key).first()

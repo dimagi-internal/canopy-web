@@ -189,6 +189,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Add, edit or remove a retention rule', 'Preview what the rules would delete', 'See the rules inherited from above'],
   },
   {
+    path: '/w/:workspace/settings/admission-rules',
+    title: 'Admission rules',
+    audience: 'Workspace admin deciding which turns are refused before they run',
+    what: "Which turns this workspace refuses before any session starts, because they can never complete — e.g. an email from a confined caller, in manual mode, on a cloud runner, where nobody can approve the reply. Each rule matches on agent, channel, who asked, access, capability, turn mode and runner kind, and either rejects or exempts (allow). A rejected turn is closed cancelled; the sender can get a fixed automatic reply on their thread and the owner a separate notice with links back here. Each rule shows how often it fired and when. Any member can read the rules; admins change them.",
+    actions: ['Add, edit or remove a rule', 'Switch a rule on or off', "See which rules are firing", 'Exempt one agent with an allow rule'],
+  },
+  {
     path: '/w/:workspace/settings/inbound',
     title: 'Inbound push',
     audience: 'Workspace owner setting up email-triggered agents',

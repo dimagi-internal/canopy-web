@@ -80,6 +80,11 @@ RUNNERS_ROUTE = "runners.route"
 #: content. Every change is written to the event log.
 RETENTION_MANAGE = "retention.manage"
 
+#: Which turns this workspace refuses before they run (apps/admission): add,
+#: change, disable and delete admission rules. Admin, beside retention: it is
+#: running the workspace, and every change is written to the event log.
+ADMISSION_MANAGE = "admission.manage"
+
 # --- owner: the keys --------------------------------------------------------------
 
 #: Delete the workspace, nest or detach it, the shared vault, the Slack app
@@ -100,6 +105,7 @@ MINIMUM_ROLE: dict[str, str] = {
     INTEGRATIONS: _M.ADMIN,
     RUNNERS_ROUTE: _M.ADMIN,
     RETENTION_MANAGE: _M.ADMIN,
+    ADMISSION_MANAGE: _M.ADMIN,
     OWN: _M.OWNER,
 }
 

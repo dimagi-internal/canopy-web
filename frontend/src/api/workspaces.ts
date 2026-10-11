@@ -20,6 +20,10 @@ export type RetentionOut = components['schemas']['RetentionOut']
 export type RetentionRuleOut = components['schemas']['RetentionRuleOut']
 export type RetentionRuleIn = components['schemas']['RetentionRuleIn']
 export type RetentionPreviewOut = components['schemas']['RetentionPreviewOut']
+export type AdmissionRulesOut = components['schemas']['AdmissionRulesOut']
+export type AdmissionRuleOut = components['schemas']['AdmissionRuleOut']
+export type AdmissionRuleIn = components['schemas']['AdmissionRuleIn']
+export type AdmissionRulePatch = components['schemas']['AdmissionRulePatch']
 
 // Every call below needs the HTTP status (404 for non-member, 403 for an
 // invite-accept email mismatch, 410 for a dead invite) — not just a message —
@@ -377,6 +381,45 @@ export async function saveRetentionRule(
 
 export async function deleteRetentionRule(slug: string, ruleId: number): Promise<void> {
   const res = await apiV2.DELETE('/api/workspaces/{slug}/retention/rules/{rule_id}', {
+    params: { path: { slug, rule_id: ruleId } },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to delete the rule'))
+  }
+}
+
+// --- Admission rules (Settings → Admission rules) ---
+
+export async function getAdmissionRules(slug: string): Promise<AdmissionRulesOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/admission-rules', { params: { path: { slug } } })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to load admission rules'))
+  }
+  return res.data as unknown as AdmissionRulesOut
+}
+
+export async function createAdmissionRule(slug: string, body: AdmissionRuleIn): Promise<AdmissionRuleOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/admission-rules', { params: { path: { slug } }, body })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to add the rule'))
+  }
+  return res.data as unknown as AdmissionRuleOut
+}
+
+export async function updateAdmissionRule(
+  slug: string, ruleId: number, body: AdmissionRulePatch,
+): Promise<AdmissionRuleOut> {
+  const res = await apiV2.PATCH('/api/workspaces/{slug}/admission-rules/{rule_id}', {
+    params: { path: { slug, rule_id: ruleId } }, body,
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status, problemMessage(res.error, 'Failed to save the rule'))
+  }
+  return res.data as unknown as AdmissionRuleOut
+}
+
+export async function deleteAdmissionRule(slug: string, ruleId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/workspaces/{slug}/admission-rules/{rule_id}', {
     params: { path: { slug, rule_id: ruleId } },
   })
   if (!res.response.ok) {

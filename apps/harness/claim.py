@@ -647,6 +647,13 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         from . import turn_mode as modes
 
         mode = modes.for_turn(turn, priorities, fresh=True)
+        # Admission rules (apps/admission): the one point where the runner's kind
+        # and the resolved mode are both known. A rejected turn is closed
+        # CANCELLED with its notices owed, and never reaches a session.
+        from apps.admission import evaluate as admission
+
+        if admission.at_claim(turn, runner, mode.mode if mode else ""):
+            continue
         rides = ridable.get(turn.chat_session_id) if turn.chat_session_id else None
         if rides is not None and (turn.capability or (turn.origin_ref or {}).get(MIDTURN_FAILED)):
             # A confined turn never rides into the owner's session; one whose
