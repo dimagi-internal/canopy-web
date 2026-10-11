@@ -7380,6 +7380,78 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/me/memory-collections/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Your memory collections
+         * @description The collections you made — named sets of contexts (an organisation you
+         *     belong to, your personal memory) you can point an agent at — which agents
+         *     use each, and the contexts you can choose from. Only you see these.
+         */
+        readonly get: operations["list_my_memory_collections"];
+        readonly put?: never;
+        /** Make a memory collection */
+        readonly post: operations["create_my_memory_collection"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/me/memory-collections/{collection_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Change a memory collection
+         * @description Rename it or change what it holds. Every agent using it follows at once.
+         *     Adding a context lets those agents reach more, so it is refused (409, naming
+         *     them in `confirm_widening`) until you send it again with `confirm_widening`
+         *     listing those grants. Removing one applies immediately.
+         */
+        readonly put: operations["update_my_memory_collection"];
+        readonly post?: never;
+        /**
+         * Remove a memory collection
+         * @description Refused (409) while an agent still uses it — point it elsewhere first.
+         */
+        readonly delete: operations["delete_my_memory_collection"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/me/grants/{grant_id}/collection/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Choose what an agent you allowed may reach
+         * @description Point the agent behind this grant at one of your collections, or back to
+         *     its default (`collection_id: null` — its own organisation). If that lets it
+         *     reach more, send `confirm_widening` listing the grants the 409 named.
+         */
+        readonly put: operations["set_my_grant_collection"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/hcp/.well-known/hcp-configuration": {
         readonly parameters: {
             readonly query?: never;
@@ -9215,6 +9287,18 @@ export interface components {
              */
             readonly categories?: readonly string[];
             /**
+             * Reach
+             * @description What a grant here would reach, in words — by default the agent's organisation, all divisions (HCP 4.1.5.1). Derived, never chosen here.
+             * @default
+             */
+            readonly reach: string;
+            /**
+             * Org
+             * @description The organisation the agent serves, e.g. 'Dimagi'.
+             * @default
+             */
+            readonly org: string;
+            /**
              * Session Grant Hours
              * @description A 'for this session' grant lasts at most this long, or until the session ends.
              * @default 24
@@ -9268,6 +9352,12 @@ export interface components {
             readonly type: string;
             /** Expires At */
             readonly expires_at?: string | null;
+            /**
+             * Reach
+             * @description The part of your memory it reaches, in words.
+             * @default
+             */
+            readonly reach: string;
         };
         /** ContactAgentOut */
         readonly ContactAgentOut: {
@@ -18209,6 +18299,19 @@ export interface components {
             readonly asserted_by: string;
             /** Source Turn Id */
             readonly source_turn_id?: string | null;
+            /**
+             * Learned By
+             * @description The agent's name, when an agent recorded it.
+             * @default
+             */
+            readonly learned_by: string;
+            /**
+             * Provenance Site
+             * @description The connected site the agent was reached through when it recorded this — {name, page?} — or {}.
+             */
+            readonly provenance_site?: {
+                readonly [key: string]: unknown;
+            };
         };
         /**
          * PersonMeOut
@@ -18285,6 +18388,18 @@ export interface components {
              * @description The categories a grant covers (shown before you grant).
              */
             readonly categories?: readonly string[];
+            /**
+             * Reach
+             * @description What a grant here would reach, in words — by default the agent's organisation, all divisions (HCP 4.1.5.1). Derived, never chosen here.
+             * @default
+             */
+            readonly reach: string;
+            /**
+             * Org
+             * @description The organisation the agent serves, e.g. 'Dimagi'.
+             * @default
+             */
+            readonly org: string;
             /**
              * Session Grant Hours
              * @description A 'for this session' grant lasts at most this long, or until the session ends.
@@ -18679,6 +18794,90 @@ export interface components {
             readonly agent: string;
             /** Conversations */
             readonly conversations: readonly components["schemas"]["PersonConversationOut"][];
+        };
+        /**
+         * MemoryCollectionOut
+         * @description A named set of contexts you can point an agent at.
+         */
+        readonly MemoryCollectionOut: {
+            /** Id */
+            readonly id: number;
+            /** Name */
+            readonly name: string;
+            /** Sources */
+            readonly sources: readonly string[];
+            /**
+             * Reach
+             * @description What it holds, in words.
+             */
+            readonly reach: string;
+            /** Used By */
+            readonly used_by?: readonly components["schemas"]["MemoryCollectionUserOut"][];
+            /** Updated At */
+            readonly updated_at?: string | null;
+        };
+        /** MemoryCollectionUserOut */
+        readonly MemoryCollectionUserOut: {
+            /** Grant Id */
+            readonly grant_id: string;
+            /** Agent */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
+            /** Type */
+            readonly type: string;
+        };
+        /** MemoryCollectionsOut */
+        readonly MemoryCollectionsOut: {
+            /** Collections */
+            readonly collections?: readonly components["schemas"]["MemoryCollectionOut"][];
+            /**
+             * Contexts
+             * @description What a collection of yours may hold.
+             */
+            readonly contexts?: readonly components["schemas"]["MemoryContextOut"][];
+        };
+        /** MemoryContextOut */
+        readonly MemoryContextOut: {
+            /**
+             * Source
+             * @description personal | tree:<organisation>
+             */
+            readonly source: string;
+            /** Label */
+            readonly label: string;
+        };
+        /** MemoryCollectionIn */
+        readonly MemoryCollectionIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Sources
+             * @description personal and/or tree:<organisation> (see contexts).
+             */
+            readonly sources: readonly string[];
+        };
+        /** MemoryCollectionUpdateIn */
+        readonly MemoryCollectionUpdateIn: {
+            /** Name */
+            readonly name?: string | null;
+            /** Sources */
+            readonly sources?: readonly string[] | null;
+            /**
+             * Confirm Widening
+             * @description Adding a context lets the agents using this reach more: list the grants the refusal named to confirm.
+             */
+            readonly confirm_widening?: readonly string[] | null;
+        };
+        /** GrantCollectionIn */
+        readonly GrantCollectionIn: {
+            /**
+             * Collection Id
+             * @description One of your collections; null = the agent's default (its own organisation).
+             */
+            readonly collection_id: number | null;
+            /** Confirm Widening */
+            readonly confirm_widening?: readonly string[] | null;
         };
         /** HcpSearchIn */
         readonly HcpSearchIn: {
@@ -28754,6 +28953,122 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PersonConversationsOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_memory_collections: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemoryCollectionsOut"];
+                };
+            };
+        };
+    };
+    readonly create_my_memory_collection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MemoryCollectionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemoryCollectionOut"];
+                };
+            };
+        };
+    };
+    readonly update_my_memory_collection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly collection_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MemoryCollectionUpdateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemoryCollectionOut"];
+                };
+            };
+        };
+    };
+    readonly delete_my_memory_collection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly collection_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly set_my_grant_collection: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GrantCollectionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemoryCollectionsOut"];
                 };
             };
         };

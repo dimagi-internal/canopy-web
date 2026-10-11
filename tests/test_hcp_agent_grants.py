@@ -280,3 +280,216 @@ def test_the_migration_retires_every_presumed_grant(w):
     ev = PersonAuditEvent.objects.get(person=w["person"], event_type="grant.revoked")
     assert ev.grant_id == presumed.grant_id and ev.actor_type == "system"
     assert "only ever given by you" in ev.detail
+
+
+@pytest.fixture()
+def org(w):
+    """Dimagi above two divisions — Connect (Lili's entry) and Strategy (Hal) —
+    and Acme, another organisation, with its own agent. Lili also has a personal
+    entry."""
+    dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=w["owner"])
+    Workspace.objects.filter(pk="connect").update(parent=dimagi)
+    strategy = Workspace.objects.create(slug="strategy", display_name="Strategy", parent=dimagi,
+                                        created_by=w["owner"])
+    acme = Workspace.objects.create(slug="acme", display_name="Acme", created_by=w["owner"])
+    people.record_fact(person=w["person"], workspace=None, kind="preference",
+                       statement="Likes KC metrics as tables.", basis="declared",
+                       category="work_context")
+    return {**w, "dimagi": dimagi, "strategy": strategy, "acme": acme,
+            "hal": _agent(strategy, "hal", w["owner"]), "zed": _agent(acme, "zed", w["owner"])}
+
+
+def _found(agent, turn) -> list[str]:
+    r = _search(agent, turn)
+    assert r.status_code == 200, r.content
+    return sorted(e["claim"]["subject"]["preference"] for e in r.json()["entries"])
+
+
+def _live(person, **kw) -> PersonGrant:
+    return PersonGrant.objects.get(person=person, status="active", **kw)
+
+
+def _collection(user, name, sources):
+    r = _json(_as(user), "post", "/api/people/me/memory-collections/",
+              {"name": name, "sources": sources})
+    assert r.status_code == 200, r.content
+    return r.json()
+
+
+def _point(user, grant, collection_id, confirm=None):
+    body = {"collection_id": collection_id}
+    if confirm is not None:
+        body["confirm_widening"] = confirm
+    return _json(_as(user), "put", f"/api/people/me/grants/{hcp.entry_urn(grant.grant_id)}/collection/",
+                 body)
+
+
+def test_an_agent_in_another_division_reads_org_wide_but_not_personal(org):
+    """Jonathan, 2026-10-11: an agent serving me in another division "should have
+    my Dimagi-wide context" — derived from the agent's organisation, never ticked."""
+    session = _session(org["lili"], org["hal"])
+    turn = _turn(org["hal"], org["lili"], session, "t1")
+    shown = _as(org["lili"]).get(f"/api/people/me/sessions/{session.pk}/agent-memory/").json()
+    assert shown["reach"] == "your Dimagi memory (all divisions)"   # shown before the act
+    assert shown["org"] == "Dimagi"
+    assert _grant(org["lili"], session, ["use"], "session").status_code == 200
+    g = _live(org["person"])
+    # 4.1.5.1 Rule 3: the object, the log and what is shown all name the reach.
+    assert g.restrictions == [{"scope": s, "narrowedTo": {"sources": ["tree:dimagi"]}}
+                              for s in g.scopes]
+    (issued,) = _issued(org["person"])
+    assert '"tree:dimagi"' in issued.detail
+    assert "reach=only your Dimagi memory (all divisions)" in issued.detail
+    assert hcp.grant_dict(g)["canopy"]["reach"] == "your Dimagi memory (all divisions)"
+    listed = _as(org["lili"]).get("/api/hcp/v1/grants").json()["grants"]
+    assert listed[0]["restrictions"] == g.restrictions
+    assert _found(org["hal"], turn) == ["KC metrics lead."]          # Connect's; not personal
+    block = caller_context.build(turn)["person"]
+    assert [f["statement"] for f in block["facts"]] == ["KC metrics lead."]
+    assert block["grant"]["reach"] == "your Dimagi memory (all divisions)"
+
+
+def test_the_person_cannot_pick_a_reach_in_the_prompt(org):
+    session = _session(org["lili"], org["hal"])
+    r = _json(_as(org["lili"]), "post", f"/api/people/me/sessions/{session.pk}/agent-grants/",
+              {"features": ["use"], "duration": "session", "reach": ["personal"]})
+    assert r.status_code == 422
+    assert not PersonGrant.objects.filter(person=org["person"]).exists()
+
+
+def test_personal_is_reached_only_through_a_collection_with_confirmation(org):
+    session = _session(org["lili"], org["hal"])
+    turn = _turn(org["hal"], org["lili"], session, "t1")
+    assert _grant(org["lili"], session, ["use"], "session").status_code == 200
+    assert _grant(org["lili"], session, ["use"], "always").status_code == 200
+    kept = _live(org["person"], grant_type="persistent")
+    listed = _as(org["lili"]).get("/api/people/me/memory-collections/").json()
+    assert {c["source"] for c in listed["contexts"]} == {"personal", "tree:dimagi"}
+    c = _collection(org["lili"], "Work and me", ["tree:dimagi", "personal"])
+    before = len(_issued(org["person"]))
+    r = _point(org["lili"], kept, c["id"])                         # a widening, unconfirmed
+    assert r.status_code == 409
+    body = r.json()["extras"]
+    assert body["agents"] == ["Hal"] and "your personal memory" in body["adds"]
+    assert len(body["confirm_widening"]) == 2                        # the kept grant and the session's
+    assert _found(org["hal"], turn) == ["KC metrics lead."]          # nothing changed
+    assert _point(org["lili"], kept, c["id"], body["confirm_widening"]).status_code == 200
+    kept.refresh_from_db()
+    assert kept.collection_id == c["id"]
+    assert hcp.named_sources(kept) == [f"collection:{c['id']}", "tree:dimagi", "personal"]
+    assert len(_issued(org["person"])) == before + 2                 # one grant.issued per grant
+    assert _found(org["hal"], turn) == ["KC metrics lead.", "Likes KC metrics as tables."]
+    # a later session grant to Hal carries the collection
+    s2 = _session(org["lili"], org["hal"])
+    assert _grant(org["lili"], s2, ["use"], "session").status_code == 200
+    temp = PersonGrant.objects.filter(person=org["person"], status="active",
+                                      grant_type="temporary").order_by("-pk").first()
+    assert temp.collection_id == c["id"]
+
+
+def test_editing_a_collection_needs_confirmation_to_widen_and_narrows_at_once(org):
+    session = _session(org["lili"], org["hal"])
+    turn = _turn(org["hal"], org["lili"], session, "t1")
+    assert _grant(org["lili"], session, ["use"], "session").status_code == 200
+    g = _live(org["person"])
+    c = _collection(org["lili"], "Just Dimagi", ["tree:dimagi"])
+    assert _point(org["lili"], g, c["id"]).status_code == 200        # same reach: no confirm
+    url = f"/api/people/me/memory-collections/{c['id']}/"
+    r = _json(_as(org["lili"]), "put", url, {"sources": ["tree:dimagi", "personal"]})
+    assert r.status_code == 409 and r.json()["extras"]["agents"] == ["Hal"]
+    assert "this will also let Hal use your personal memory" in r.json()["detail"]
+    assert _found(org["hal"], turn) == ["KC metrics lead."]
+    before = len(_issued(org["person"]))
+    r = _json(_as(org["lili"]), "put", url, {"sources": ["tree:dimagi", "personal"],
+                                             "confirm_widening": r.json()["extras"]["confirm_widening"]})
+    assert r.status_code == 200
+    assert len(_issued(org["person"])) == before + 1
+    assert _found(org["hal"], turn) == ["KC metrics lead.", "Likes KC metrics as tables."]
+    r = _json(_as(org["lili"]), "put", url, {"sources": ["personal"]})   # narrowing: at once
+    assert r.status_code == 200
+    assert PersonAuditEvent.objects.filter(person=org["person"], event_type="grant.narrowed").exists()
+    assert _found(org["hal"], turn) == ["Likes KC metrics as tables."]
+    assert _as(org["lili"]).delete(url).status_code == 409             # still used by Hal
+
+
+def test_a_collection_holds_only_the_persons_own_contexts(org):
+    r = _json(_as(org["lili"]), "post", "/api/people/me/memory-collections/",
+              {"name": "x", "sources": ["tree:acme"]})
+    assert r.status_code == 422
+    assert _json(_as(org["hal"].user), "post", "/api/people/me/memory-collections/",
+                 {"name": "x", "sources": ["personal"]}).status_code in (403, 404)
+
+
+def test_a_new_division_is_covered_without_a_new_grant(org):
+    session = _session(org["lili"], org["hal"])
+    assert _grant(org["lili"], session, ["use"], "session").status_code == 200
+    Workspace.objects.create(slug="labs", display_name="Labs", parent=org["dimagi"],
+                             created_by=org["owner"])
+    assert hcp.reach_of(_live(org["person"])) == {"dimagi", "connect", "strategy", "labs"}
+
+
+def test_another_organisations_agent_never_reaches_dimagis_memory(org):
+    session = _session(org["lili"], org["zed"])
+    turn = _turn(org["zed"], org["lili"], session, "t1")
+    shown = _as(org["lili"]).get(f"/api/people/me/sessions/{session.pk}/agent-memory/").json()
+    assert shown["reach"] == "your Acme memory (all divisions)"
+    assert _grant(org["lili"], session, ["use"], "session").status_code == 200
+    g = _live(org["person"])
+    assert hcp.named_sources(g) == ["tree:acme"]
+    assert _found(org["zed"], turn) == []
+    # Rule 1: even a row naming Dimagi's tree reaches nothing outside Acme's.
+    g.restrictions = hcp.restrictions_for(g.scopes, ["tree:dimagi", "workspace:connect"])
+    g.save(update_fields=["restrictions"])
+    assert hcp.reach_of(g) == set()
+    assert _found(org["zed"], turn) == []
+
+
+def test_an_entry_recorded_through_a_site_carries_the_site(org):
+    from apps.canopy_sessions.models import Session
+
+    session = Session.objects.create(agent=org["hal"], created_by=org["lili"],
+                                     workspace=org["strategy"],
+                                     metadata={"embed_app": "connect-labs"},
+                                     page_state={"path": "/opportunities/12"})
+    turn = _turn(org["hal"], org["lili"], session, "t1")
+    assert _grant(org["lili"], session, ["record"], "session").status_code == 200
+    r = _add(org["hal"], turn)
+    assert r.status_code == 201, r.content
+    assert "site" not in r.json()["entry"]["record"]["provenance"]   # redacted for the agent
+    me = _as(org["lili"]).get("/api/people/me/").json()
+    fact = next(f for f in me["facts"] if f["statement"] == "Works on KC.")
+    assert fact["provenance_site"] == {"name": "connect-labs", "page": "/opportunities/12"}
+    assert fact["learned_by"] == "Hal"
+    export = _as(org["lili"]).get("/api/hcp/v1/export").json()
+    entries = export.get("entries") or export.get("@graph") or []
+    mine = [e for e in entries if e["claim"]["subject"]["preference"] == "Works on KC."]
+    assert mine[0]["record"]["provenance"]["site"] == {"name": "connect-labs",
+                                                       "page": "/opportunities/12"}
+    # in canopy itself: no site
+    plain = _session(org["lili"], org["hal"])
+    t2 = _turn(org["hal"], org["lili"], plain, "t2")
+    assert _grant(org["lili"], plain, ["record"], "session").status_code == 200
+    _json(_as(org["hal"].user), "post", f"/api/hcp/v1/preferences/add?turn={t2.pk}",
+          {"category": "work_context", "preference": "Reviews on Fridays.",
+           "declarationType": "user-declared", "sourceContext": f"turn:{t2.pk}"})
+    from apps.contacts.models import PersonFact
+    assert PersonFact.objects.get(statement="Reviews on Fridays.").provenance_site == {}
+
+
+def test_the_migration_narrows_live_agent_grants_to_their_workspace(w):
+    live = PersonGrant.objects.create(
+        person=w["person"], workspace=w["ws"], agent=w["ada"], client_key="k1", client_name="Ada",
+        scopes=[hcp.scope("work_context", "read")], modality="canopy-chat")
+    gone = PersonGrant.objects.create(
+        person=w["person"], workspace=w["ws"], agent=w["eva"], client_key="k2", client_name="Eva",
+        scopes=[hcp.scope("work_context", "read")], modality="canopy-chat", status="revoked")
+    assert hcp.reach_of(live) == {"connect"}                     # the column bounds it already
+    mod = importlib.import_module("apps.contacts.migrations.0023_memory_reach")
+    mod.backfill(django_apps, None)
+    live.refresh_from_db()
+    gone.refresh_from_db()
+    assert live.restrictions == [{"scope": "hcp:work_context:read",
+                                  "narrowedTo": {"sources": ["workspace:connect"]}}]
+    assert gone.restrictions == []
+    assert hcp.reach_of(live) == {"connect"}                     # exactly its old reach
+    assert not _issued(w["person"])                              # nothing new was authorized

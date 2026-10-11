@@ -456,6 +456,13 @@ GATES: dict[str, tuple[str, ...]] = {
     "set_my_session_memory": ("self",),
     # The person granting their session's agent (HCP 4.1.6) — only the person, never an agent.
     "grant_my_session_agent": ("self",),
+    # The person's own memory collections, and which one an agent they allowed uses
+    # (HCP 4.1.5.1) — only the person; a widening also needs their explicit confirm.
+    "list_my_memory_collections": ("self",),
+    "create_my_memory_collection": ("self",),
+    "update_my_memory_collection": ("self",),
+    "delete_my_memory_collection": ("self",),
+    "set_my_grant_collection": ("self",),
     # --- apps/contacts/hcp_api.py  (HCP v1 over the people brain; apps/contacts/hcp.py)
     # `self` = the person's own instance; `hcp-grant` = an agent, for the person
     # who started its turn, under that client's grant. A missing entry is 403.

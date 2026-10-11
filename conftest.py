@@ -96,6 +96,7 @@ def grants_on_turn():
             actor = (hcp.user_actor(person.user) if person.user_id
                      else hcp.Actor(f"person:{person.pk}", "user"))
             hcp._record_grant(person, agent=agent, features=features,
+                              sources=hcp.agent_sources(agent),
                               gtype="persistent", actor=actor, surface="chat")
 
     post_save.connect(_grant, sender=Turn, dispatch_uid="test-grants-on-turn")

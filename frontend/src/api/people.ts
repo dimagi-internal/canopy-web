@@ -97,6 +97,10 @@ export interface HcpGrant {
     host: string
     workspace: string | null
     modality: string
+    /** An agent's grant: the part of your memory it reaches, in words (HCP 4.1.5.1). */
+    reach?: string
+    /** The memory collection it uses; null = the agent's default (its organisation). */
+    collection?: { id: number; name: string } | null
     /** The OAuth client the grant was issued to, when it was one (HCP service). */
     client?: { id: string; name: string; operator: string } | null
   }
@@ -126,6 +130,86 @@ export async function revokeMyGrant(grantId: string): Promise<void> {
     params: { path: { grant_id: grantId } },
   })
   if (error) throw new Error('Failed to revoke that access')
+}
+
+export type MemoryCollections = components['schemas']['MemoryCollectionsOut']
+export type MemoryCollection = components['schemas']['MemoryCollectionOut']
+
+/** A change that would let agents reach more: canopy refuses it until you confirm,
+ *  and says which agents and what they would newly reach. Resend with `grants`. */
+export class NeedsConfirm extends Error {
+  grants: string[]
+  agents: string[]
+  adds: string
+
+  constructor(grants: string[], agents: string[], adds: string) {
+    super(`This will also let ${agents.join(' and ')} use ${adds}.`)
+    this.grants = grants
+    this.agents = agents
+    this.adds = adds
+  }
+}
+
+function confirmOrThrow(error: unknown, fallback: string): never {
+  const extras = (error as { extras?: { confirm_widening?: string[]; agents?: string[]; adds?: string } })
+    ?.extras
+  if (extras?.confirm_widening) {
+    throw new NeedsConfirm(extras.confirm_widening, extras.agents ?? [], extras.adds ?? '')
+  }
+  throw new Error((error as { detail?: string })?.detail || fallback)
+}
+
+/** Your memory collections — named sets of contexts (an organisation you belong
+ *  to, your personal memory) you can point an agent at — and the contexts. */
+export async function listMyCollections(): Promise<MemoryCollections> {
+  const { data, error } = await apiV2.GET('/api/people/me/memory-collections/')
+  if (error) throw new Error('Failed to load your collections')
+  return data as MemoryCollections
+}
+
+export async function createMyCollection(name: string, sources: string[]): Promise<MemoryCollection> {
+  const { data, error } = await apiV2.POST('/api/people/me/memory-collections/', {
+    body: { name, sources },
+  })
+  if (error) confirmOrThrow(error, 'Failed to make that collection')
+  return data as MemoryCollection
+}
+
+/** Change what a collection holds. Adding a context throws `NeedsConfirm` until
+ *  you pass back the grants it named. */
+export async function updateMyCollection(
+  id: number,
+  change: { name?: string; sources?: string[] },
+  confirmWidening?: string[],
+): Promise<MemoryCollection> {
+  const { data, error } = await apiV2.PUT('/api/people/me/memory-collections/{collection_id}/', {
+    params: { path: { collection_id: id } },
+    body: { ...change, ...(confirmWidening ? { confirm_widening: confirmWidening } : {}) },
+  })
+  if (error) confirmOrThrow(error, 'Failed to change that collection')
+  return data as MemoryCollection
+}
+
+export async function deleteMyCollection(id: number): Promise<void> {
+  const { error } = await apiV2.DELETE('/api/people/me/memory-collections/{collection_id}/', {
+    params: { path: { collection_id: id } },
+  })
+  if (error) confirmOrThrow(error, 'Failed to remove that collection')
+}
+
+/** Which collection an agent you allowed uses (`null` = its default, its own
+ *  organisation). Throws `NeedsConfirm` when that lets it reach more. */
+export async function setMyGrantCollection(
+  grantId: string,
+  collectionId: number | null,
+  confirmWidening?: string[],
+): Promise<MemoryCollections> {
+  const { data, error } = await apiV2.PUT('/api/people/me/grants/{grant_id}/collection/', {
+    params: { path: { grant_id: grantId } },
+    body: { collection_id: collectionId, ...(confirmWidening ? { confirm_widening: confirmWidening } : {}) },
+  })
+  if (error) confirmOrThrow(error, 'Failed to change what that agent reaches')
+  return data as MemoryCollections
 }
 
 export async function listMyAudit(

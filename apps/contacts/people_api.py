@@ -28,9 +28,14 @@ from apps.workspaces import services as wsvc
 
 from . import hcp, people
 from . import services as contact_services
-from .models import Person, PersonAccess, PersonFact
+from .models import MemoryCollection, Person, PersonAccess, PersonFact, PersonGrant
 from .people_schemas import (
     AgentGrantIn,
+    GrantCollectionIn,
+    MemoryCollectionIn,
+    MemoryCollectionOut,
+    MemoryCollectionsOut,
+    MemoryCollectionUpdateIn,
     AgentMemoryIn,
     AgentMemoryOut,
     SessionMemoryIn,
@@ -105,6 +110,9 @@ def people_me(request: HttpRequest) -> dict:
         d["asserted_by"] = (f.asserted_by_agent.slug if f.asserted_by_agent_id
                             else (f.asserted_by_user.email if f.asserted_by_user_id else ""))
         d["source_turn_id"] = str(f.source_turn_id) if f.source_turn_id else None
+        d["learned_by"] = (f.asserted_by_agent.name or f.asserted_by_agent.slug
+                           if f.asserted_by_agent_id else "")
+        d["provenance_site"] = dict(f.provenance_site or {})
         facts.append(d)
     accesses = [
         {"created_at": a.created_at.isoformat(), "via": a.via, "workspace": a.workspace_id,
@@ -175,11 +183,18 @@ def session_memory_payload(person: Person, session) -> dict:
         g = next((g for g in grants if f in hcp.features_of(g)), None)
         state[f]["granted"] = g is not None
         state[f]["grant"] = ({"grant_id": hcp.entry_urn(g.grant_id), "type": g.grant_type,
-                              "expires_at": _iso(g.expires_at)} if g is not None else None)
+                              "expires_at": _iso(g.expires_at),
+                              "reach": hcp.reach_label(hcp.grant_sources(g))}
+                             if g is not None else None)
     return {"session_id": str(session.pk), **state,
             "agent": ({"slug": agent.slug, "name": agent.name or agent.slug}
                       if agent is not None else None),
             "categories": list(hcp.HELD_CATEGORIES),
+            # 4.1.5.1: what a grant here would reach (derived, never chosen in the prompt),
+            # and the organisation it serves, for the prompt's words.
+            "reach": (hcp.reach_label(hcp.default_reach(person, agent)[0])
+                      if agent is not None else ""),
+            "org": (hcp.org_name(agent) if agent is not None else ""),
             "session_grant_hours": int(hcp.SESSION_GRANT_CAP.total_seconds() // 3600)}
 
 
@@ -440,3 +455,124 @@ def list_person_conversations(request: HttpRequest, person_id: int, agent: str,
                       reader_user=request.user, reader_agent=target if own_login else None)
     return {"person": person.pk, "agent": target.slug,
             "conversations": [people.conversation_dict(t) for t in rows]}
+
+
+# --- memory collections ("More settings" on /people/me) ----------------------------
+
+
+def _collection_error(exc: Exception) -> ProblemError:
+    from . import hcp_collections
+
+    if isinstance(exc, hcp_collections.NeedsConfirm):
+        return ProblemError(409, "Confirm the widening", type_=TYPE_VALIDATION, detail=str(exc),
+                            extras={"confirm_widening": [hcp.entry_urn(g.grant_id) for g in exc.grants],
+                                   "agents": sorted({g.client_name for g in exc.grants}),
+                                   "adds": hcp.reach_label(exc.added)})
+    if isinstance(exc, hcp_collections.InUse):
+        return ProblemError(409, "Still in use", type_=TYPE_VALIDATION, detail=str(exc))
+    if isinstance(exc, hcp.HcpError):
+        return ProblemError(exc.status, "Not changed",
+                            type_=TYPE_VALIDATION if exc.status == 422 else TYPE_FORBIDDEN,
+                            detail=exc.detail)
+    raise exc
+
+
+def _my_collection(person: Person, collection_id: int) -> MemoryCollection:
+    c = MemoryCollection.objects.filter(pk=collection_id, person=person).first()
+    if c is None:
+        raise _not_found("Collection not found")
+    return c
+
+
+def _collections(person: Person) -> dict:
+    from . import hcp_collections
+
+    return {"collections": [hcp_collections.collection_dict(c)
+                            for c in MemoryCollection.objects.filter(person=person)],
+            "contexts": [{"source": s, "label": hcp.source_label(s)}
+                         for s in hcp_collections.contexts(person)]}
+
+
+@router.get("/me/memory-collections/", response=MemoryCollectionsOut,
+            summary="Your memory collections")
+def list_my_memory_collections(request: HttpRequest) -> dict:
+    """The collections you made — named sets of contexts (an organisation you
+    belong to, your personal memory) you can point an agent at — which agents
+    use each, and the contexts you can choose from. Only you see these."""
+    return _collections(_the_person_themself(request))
+
+
+@router.post("/me/memory-collections/", response=MemoryCollectionOut,
+             summary="Make a memory collection")
+def create_my_memory_collection(request: HttpRequest, payload: MemoryCollectionIn) -> dict:
+    from . import hcp_collections
+
+    person = _the_person_themself(request)
+    try:
+        c = hcp_collections.create(person, name=payload.name, sources=payload.sources,
+                                   actor=hcp.user_actor(request.user))
+    except hcp.HcpError as exc:
+        raise _collection_error(exc) from None
+    return hcp_collections.collection_dict(c)
+
+
+@router.put("/me/memory-collections/{collection_id}/", response=MemoryCollectionOut,
+            summary="Change a memory collection")
+def update_my_memory_collection(request: HttpRequest, collection_id: int,
+                                payload: MemoryCollectionUpdateIn) -> dict:
+    """Rename it or change what it holds. Every agent using it follows at once.
+    Adding a context lets those agents reach more, so it is refused (409, naming
+    them in `confirm_widening`) until you send it again with `confirm_widening`
+    listing those grants. Removing one applies immediately."""
+    from . import hcp_collections
+
+    person = _the_person_themself(request)
+    c = _my_collection(person, collection_id)
+    try:
+        c = hcp_collections.update(person, c, actor=hcp.user_actor(request.user),
+                                   name=payload.name, sources=payload.sources,
+                                   confirm_widening=payload.confirm_widening)
+    except (hcp.HcpError, hcp_collections.NeedsConfirm) as exc:
+        raise _collection_error(exc) from None
+    return hcp_collections.collection_dict(c)
+
+
+@router.delete("/me/memory-collections/{collection_id}/", response={204: None},
+               summary="Remove a memory collection")
+def delete_my_memory_collection(request: HttpRequest, collection_id: int):
+    """Refused (409) while an agent still uses it — point it elsewhere first."""
+    from . import hcp_collections
+
+    person = _the_person_themself(request)
+    c = _my_collection(person, collection_id)
+    try:
+        hcp_collections.delete(person, c, actor=hcp.user_actor(request.user))
+    except hcp_collections.InUse as exc:
+        raise _collection_error(exc) from None
+    return 204, None
+
+
+@router.put("/me/grants/{grant_id}/collection/", response=MemoryCollectionsOut,
+            summary="Choose what an agent you allowed may reach")
+def set_my_grant_collection(request: HttpRequest, grant_id: str, payload: GrantCollectionIn) -> dict:
+    """Point the agent behind this grant at one of your collections, or back to
+    its default (`collection_id: null` — its own organisation). If that lets it
+    reach more, send `confirm_widening` listing the grants the 409 named."""
+    from . import hcp_collections
+
+    person = _the_person_themself(request)
+    try:
+        gid = hcp.parse_entry_id(grant_id)
+    except (ValueError, hcp.HcpError):
+        raise _not_found("Grant not found") from None
+    grant = (PersonGrant.objects.select_related("agent", "collection")
+             .filter(grant_id=gid, person=person).first())
+    if grant is None:
+        raise _not_found("Grant not found")
+    c = _my_collection(person, payload.collection_id) if payload.collection_id is not None else None
+    try:
+        hcp_collections.use_for_grant(person, grant, c, actor=hcp.user_actor(request.user),
+                                      confirm_widening=payload.confirm_widening)
+    except (hcp.HcpError, hcp_collections.NeedsConfirm) as exc:
+        raise _collection_error(exc) from None
+    return _collections(person)
