@@ -5,7 +5,7 @@ import { isWorkspaceRequired, mergeLists, pinnedUrl, withWorkspaceRetry } from '
 const ORIGIN = 'https://canopy.example'
 
 function problem(type: string, status = 422, workspaces: string[] = ['dimagi', 'marshellis']): Response {
-  return new Response(JSON.stringify({ type, title: 't', status, workspaces }), {
+  return new Response(JSON.stringify({ type, title: 't', status, extras: { workspaces } }), {
     status,
     headers: { 'Content-Type': 'application/problem+json' },
   })
