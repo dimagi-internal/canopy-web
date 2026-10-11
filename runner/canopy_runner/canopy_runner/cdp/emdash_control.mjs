@@ -438,14 +438,35 @@ try {
     }, CE_SELECTOR);
     if (!focusedPrompt) fail('could not focus the New Task dialog prompt editor');
     await page.keyboard.insertText(prompt);   // atomic commit, not char-by-char
+    // The SUBMIT button, matched exactly. A loose /create/i match is what broke on
+    // emdash 1.2.8 (2026-10-11): the dialog grew a "Create new worktree" select and a
+    // "Create new branch" tab ahead of the submit, so the click opened a dropdown, the
+    // dialog sat there filled-in, and this reported "created" for a task that never
+    // existed. The submit carries aria-label="Create"; its text is "Create" plus the
+    // ⌘⏎ shortcut glyphs.
     const created = await page.evaluate(() => {
       const dlg = document.querySelector('[role=dialog],[class*=Dialog],[class*=modal]');
       if (!dlg) return false;
-      const btn = [...dlg.querySelectorAll('button')].find(b => /create/i.test(b.textContent || '') && !/close|cancel/i.test(b.textContent || ''));
-      if (!btn) return false; btn.click(); return true;
+      const btns = [...dlg.querySelectorAll('button')];
+      const btn = btns.find(b => b.getAttribute('aria-label') === 'Create')
+        || btns.find(b => (b.textContent || '').replace(/[^A-Za-z]/g, '') === 'Create');
+      if (!btn || btn.disabled) return false;
+      window.__canopyCreateDialog = dlg;
+      btn.click(); return true;
     });
     if (!created) fail('could not find the Create button in the New Task dialog');
-    await page.waitForTimeout(3000);
+    // A click is not a task. Confirm the dialog actually went away (emdash closes it
+    // only once the task exists); if it is still up, the click hit something else and
+    // the human is left looking at a filled-in dialog — fail loudly instead.
+    try {
+      await page.waitForFunction(() => {
+        const d = window.__canopyCreateDialog;
+        return !d || !d.isConnected || d.hasAttribute('data-closed') || d.getClientRects().length === 0;
+      }, null, { polling: 250, timeout: 15000 });
+    } catch {
+      fail('clicked Create but the New Task dialog is still open — the task was not created');
+    }
+    await page.waitForTimeout(2000);
     if (!finalName) {
       // Fallback: diff (best-effort; may be imprecise under virtualization).
       const after = await taskNames();
