@@ -6,7 +6,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("agents", "0046_task_parent_drive_folder"),
+        ("agents", "0047_task_human_why"),
         ("contacts", "0023_memory_reach"),
     ]
 

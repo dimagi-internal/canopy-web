@@ -18,7 +18,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents import services as agent_services
-from apps.agents.models import AgentProject, AgentTask, ProjectParticipant
+from apps.agents.models import AgentProject, AgentTaskHumanWhy, ProjectParticipant
 from apps.contacts import services as contacts
 from apps.contacts.models import Person, PersonAccess
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -99,27 +99,24 @@ def test_a_task_raised_by_a_humans_turn_came_from_them(world):
     assert brief["ideas"]["proposed"] == 1 and brief["has_page"] is False
 
 
-def test_a_human_why_from_someone_canopy_does_not_know_still_names_them(world, monkeypatch):
-    monkeypatch.setattr(AgentTask, "human_why", property(
-        lambda self: [{"quote": "fix it", "who": {"email": "", "name": "A Partner"},
-                       "source_url": "https://x.test/p", "said_at": None}]
-        if self.ext_id == "T2" else []), raising=False)
+def test_a_human_why_from_someone_canopy_does_not_know_still_names_them(world):
+    AgentTaskHumanWhy.objects.create(task=world["tasks"]["T2"], quote="fix it", who_name="A Partner",
+                                     source_url="https://x.test/p")
     out = _client(world["owner"]).get(f"/api/w/connect{BASE}").json()
     [idea] = [i for i in out["ideas"] if i["ext_id"] == "T2"]
     assert [(c["person_id"], c["name"], c["via"]) for c in idea["came_from"]] == [
         (None, "A Partner", "human_why")]
 
 
-def test_the_tasks_human_why_comes_first_when_it_exists(world, monkeypatch):
-    # T68 adds `human_why`; until it lands the field is read defensively.
-    task = world["tasks"]["T3"]
-    monkeypatch.setattr(AgentTask, "human_why", property(
-        lambda self: [{"quote": "pages should be dynamic", "who": {"email": "jj@dimagi.com", "name": "JJ"},
-                       "source_url": "https://x.test/q", "said_at": "2026-10-08T00:00:00Z"}]
-        if self.ext_id == "T3" else []), raising=False)
+def test_the_tasks_human_why_comes_first(world):
+    # T68: the task's own record of what a person said outranks a page's claim.
+    person = Person.objects.get(user=world["owner"])
+    AgentTaskHumanWhy.objects.create(task=world["tasks"]["T3"], quote="pages should be dynamic",
+                                     person=person, who_email="jj@dimagi.com", who_name="JJ",
+                                     source_url="https://x.test/q")
     _put(_hal(world), "jj@dimagi.com", _summary(ideas=[{"task": "T3", "quote": "page config"}]))
     out = _client(world["owner"]).get(f"/api/w/connect{BASE}").json()
-    [idea] = [i for i in out["ideas"] if i["ext_id"] == task.ext_id]
+    [idea] = [i for i in out["ideas"] if i["ext_id"] == "T3"]
     # One entry per person, and the strongest evidence wins.
     assert [(c["name"], c["via"], c["quote"]) for c in idea["came_from"]] == [
         ("Jonathan Jackson", "human_why", "pages should be dynamic")]
