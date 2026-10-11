@@ -58,6 +58,9 @@ export function ChatSessionMenu({
   closing,
   typingVisibility,
   onTypingVisibilityChange,
+  slackThread,
+  onDetachSlack,
+  detachingSlack,
 }: {
   sessionId: string;
   myRole: string | null;
@@ -82,6 +85,11 @@ export function ChatSessionMenu({
   /** Both undefined for a viewer (nothing to choose) — the section hides. */
   typingVisibility?: TypingVisibility;
   onTypingVisibilityChange?: (visibility: TypingVisibility) => void;
+  /** The Slack thread this session is connected to, or null/undefined when none. */
+  slackThread?: { channel: string; url?: string } | null;
+  /** Disconnect from that thread. Omitted for someone who can't act in the session. */
+  onDetachSlack?: () => void;
+  detachingSlack?: boolean;
 }) {
   const [panel, setPanel] = useState<"people" | "slack" | "secret" | null>(null);
   // Every item is inset to the checkbox item's gutter, so the list is one column.
@@ -131,6 +139,29 @@ export function ChatSessionMenu({
           >
             Share to Slack…
           </DropdownMenuItem>
+          {slackThread && (
+            <>
+              {slackThread.url && (
+                <DropdownMenuItem
+                  inset
+                  data-testid="slack-thread-link"
+                  onClick={() => window.open(slackThread.url, "_blank", "noopener,noreferrer")}
+                >
+                  Open Slack thread
+                </DropdownMenuItem>
+              )}
+              {onDetachSlack && (
+                <DropdownMenuItem
+                  inset
+                  data-testid="detach-slack"
+                  disabled={detachingSlack}
+                  onClick={onDetachSlack}
+                >
+                  {detachingSlack ? "Disconnecting…" : "Disconnect from Slack"}
+                </DropdownMenuItem>
+              )}
+            </>
+          )}
           <DropdownMenuItem
             inset
             data-testid="share-secret"

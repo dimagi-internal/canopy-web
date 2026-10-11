@@ -142,8 +142,39 @@ Through the real Slack fake in `tests/test_slack.py`:
 - the MCP tool resolves by `claude_session_id` and by emdash task, and cannot
   reach another workspace's session.
 
+## Detach (added 2026-10-11)
+
+`POST /api/canopy-sessions/slack/detach` (MCP tool `detach_session_from_slack`,
+generated from the route; the chat page's ⋯ menu "Disconnect from Slack"; the
+skill's `unbind` mode) undoes a bind — or disconnects a thread Slack itself
+started. `apps/slack/share.py::detach_session`:
+
+- **Soft unbind.** The `slack_*` binding keys (and the per-thread relay
+  bookkeeping: bound/elsewhere stamps, closed-notice markers) are removed from
+  `Session.metadata` and appended, with `detached_at`/`detached_by`, to
+  `metadata.slack_detached` (server-owned; retention still classes the session as
+  Slack). Removing the keys is the whole mechanism: every outbound path goes
+  through `relay.session_destination` and every inbound lookup filters on the
+  thread key or `slack_channel`, so both directions stop at once with no new
+  checks scattered through relay. Nothing posted in Slack is deleted.
+- **One last note** in the thread ("This thread is no longer connected to the
+  session"), best-effort: a Slack failure is logged and the detach stands.
+  Slack's own working indicator is cleared the same way.
+- **Inbound afterwards** is a no-op: a plain reply is dropped by the front door's
+  "is canopy in this thread?" gate, unread and unanswered (no error spam). An
+  explicit `@canopy` there is a new ask, as in any thread.
+- **Idempotent:** a session with no thread answers `status: not_bound`.
+- **Gate:** owner or editor of the session (`access.can_write`) — a viewer can see
+  the thread but not change where the session talks.
+- **Re-attach is a fresh bind**, not reactivation: the old thread has just been
+  told it is disconnected, and reviving it would need a second code path for a
+  state the bind already produces. Its open question posts (`SlackMenuPost`) are
+  dropped on detach so the next thread gets them.
+- Session payloads carry `slack: {channel, thread_ts, url, shared} | null`, which
+  is what the chat page reads to offer the action.
+
 ## Not in this change
 
-Channel autocomplete, a default channel, unbinding, and posting later updates as
+Channel autocomplete, a default channel, and posting later updates as
 anything other than the session's normal relayed output (broadcast again for a
 fresh top-level post).

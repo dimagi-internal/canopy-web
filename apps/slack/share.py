@@ -70,16 +70,18 @@ class ShareResult:
 
 
 def resolve_session(user, *, session_id: str = "", claude_session_id: str = "",
-                    emdash_task: str = "", emdash_project: str = "") -> Session | None:
+                    emdash_task: str = "", emdash_project: str = "", visible=None) -> Session | None:
     """The session the caller means, among the ones they can open — or None.
 
     Called from inside a Claude Code process, which knows its own identity
     (its Claude session id, its emdash task) but not canopy's. Every candidate
     is filtered through the session read rule (`access.readable_sessions`) first,
     so no identifier can reach a session the caller could not open anyway.
-    Raises `Ambiguous` when the identifiers match more than one.
+    Raises `Ambiguous` when the identifiers match more than one. `visible`
+    narrows the candidates further (a REST caller's pinned workspace, a
+    connected site's own agents); it is never wider than the read rule.
     """
-    visible = readable_sessions(user).select_related("agent")
+    visible = (visible if visible is not None else readable_sessions(user)).select_related("agent")
     if session_id:
         try:
             return visible.filter(pk=session_id).first()
@@ -206,7 +208,8 @@ def _text(byline: str, summary: str, session: Session | None, mode: str) -> str:
     return text
 
 
-def _record(installation, user, status: str, summary: str, payload: dict, *, ok: bool) -> None:
+def _record(installation, user, status: str, summary: str, payload: dict, *, ok: bool,
+            kind: str = "") -> None:
     from apps.events import services as events_services
     from apps.events.models import Event
     from apps.workspaces.models import Workspace
@@ -219,7 +222,7 @@ def _record(installation, user, status: str, summary: str, payload: dict, *, ok:
     try:
         events_services.record([{
             "source": "slack",
-            "kind": "slack.shared" if ok else "slack.share_refused",
+            "kind": kind or ("slack.shared" if ok else "slack.share_refused"),
             "level": Event.INFO if ok else Event.WARN,
             "key": f"share:{status}:{user.pk}:{payload.get('channel', '')}:{payload.get('ts', '')}",
             "summary": summary[:500],
@@ -360,6 +363,142 @@ def _post_update(user, session: Session, summary: str) -> ShareResult:
     _record(installation, user, UPDATED, message, {"channel": channel_id, "ts": ts, "mode": "update",
             "session": str(session.pk)}, ok=True)
     return ShareResult(UPDATED, message, session=session, channel_id=channel_id, ts=ts, permalink=link)
+
+
+# ---- detach --------------------------------------------------------------------
+
+DETACHED = "detached"
+#: Nothing to detach: the session holds no Slack thread (never bound, or already detached).
+NOT_BOUND = "not_bound"
+
+#: Where a detached binding is kept: a list, oldest first, of the threads this
+#: session was connected to and then disconnected from, with who did it and when.
+#: History only — nothing routes on it (`retention.policy` reads it to keep the
+#: session classed as a Slack conversation).
+DETACHED_KEY = "slack_detached"
+_DETACHED_HISTORY = 20
+
+#: The binding itself, plus the per-thread bookkeeping that would otherwise leak
+#: into the NEXT thread after a re-share: what `share_session` (bind) and the
+#: front door write, and what relay keeps about the thread it posts into.
+_BINDING_KEYS = (
+    services.SLACK_THREAD_KEY, "slack_team", "slack_channel", "slack_thread_ts", "slack_shared_by",
+    relay.BOUND_AT, relay.ELSEWHERE_AT, relay.CLOSED_NOTICE, "slack_closed_told",
+)
+
+DETACH_NOTE = (":heavy_minus_sign: This thread is no longer connected to the session — "
+               "replies here won't reach it.")
+
+
+@dataclass
+class DetachResult:
+    status: str
+    message: str
+    session: Session
+    channel_id: str = ""
+    thread_ts: str = ""
+    notice_posted: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.status in (DETACHED, NOT_BOUND)
+
+
+def binding_of(session: Session) -> dict | None:
+    """The Slack thread this session is connected to, for showing it — or None.
+
+    `url` opens the thread in Slack's web client (which hands off to the app);
+    it needs no API call, so it is cheap enough for every session row.
+    """
+    meta = session.metadata or {}
+    key = meta.get(services.SLACK_THREAD_KEY)
+    if not key:
+        return None
+    team = str(meta.get("slack_team") or "")
+    channel = str(meta.get("slack_channel") or "")
+    thread_ts = str(meta.get("slack_thread_ts") or "")
+    url = ""
+    if team and channel:
+        url = f"https://app.slack.com/client/{team}/{channel}"
+        if thread_ts and thread_ts != services.DM_ANCHOR:
+            url += f"/thread/{channel}-{thread_ts}"
+    return {"channel": channel, "thread_ts": thread_ts, "url": url,
+            "shared": bool(meta.get("slack_shared_by"))}
+
+
+def detach_session(user, session: Session) -> DetachResult:
+    """Disconnect `session` from its Slack thread. Idempotent.
+
+    Soft: the binding keys are removed — which is what every path keys on, out
+    (`relay.session_destination`: replies, status lines, menus, transcript
+    relay) and in (`services.has_thread_session`, `bound_repo_session`, the
+    agent lookup, button clicks matched on `slack_channel`) — and moved, with
+    who and when, onto `DETACHED_KEY`. Nothing posted in Slack is deleted. A
+    plain reply in the thread afterwards is dropped unread like any thread
+    canopy is not in; an explicit `@canopy` there is a NEW ask, as anywhere.
+
+    Re-attaching is an ordinary bind (`share_session(mode=BIND)`): it posts a
+    fresh thread rather than reviving this one, which has just been told it is
+    disconnected. Permission is the CALLER's (the route checks write access);
+    this does only the work.
+    """
+    with transaction.atomic():
+        locked = Session.objects.select_for_update().get(pk=session.pk)
+        meta = dict(locked.metadata or {})
+        key = meta.get(services.SLACK_THREAD_KEY)
+        if not key:
+            session.metadata = meta
+            return DetachResult(NOT_BOUND, "This session isn't connected to a Slack thread.", session=session)
+        dest = relay.session_destination(locked)
+        record = {
+            "thread": key,
+            "team": str(meta.get("slack_team") or ""),
+            "channel": str(meta.get("slack_channel") or ""),
+            "thread_ts": str(meta.get("slack_thread_ts") or ""),
+            "shared_by": meta.get("slack_shared_by"),
+            "bound_at": meta.get(relay.BOUND_AT),
+            "detached_at": time.time(),
+            "detached_by": user.pk,
+        }
+        for k in _BINDING_KEYS:
+            meta.pop(k, None)
+        meta[DETACHED_KEY] = (list(meta.get(DETACHED_KEY) or []) + [record])[-_DETACHED_HISTORY:]
+        locked.metadata = meta
+        locked.save(update_fields=["metadata", "updated_at"])
+    session.metadata = meta
+
+    from .models import SlackMenuPost
+
+    # Question posts are keyed per (session, question): left behind, an open
+    # question would never be posted to a thread this session binds to next.
+    # Their buttons already answer "no longer open" — a click is matched on the
+    # session's `slack_channel`, which is gone.
+    SlackMenuPost.objects.filter(session=session).delete()
+
+    posted = False
+    if dest is not None:
+        installation, channel_id, thread_ts = dest
+        try:
+            client.post_message(installation.bot_token, channel=channel_id, thread_ts=thread_ts,
+                                text=DETACH_NOTE,
+                                persona=relay.persona(session.agent if session.agent_id else None))
+            posted = True
+        except Exception:  # noqa: BLE001 — the detach has happened; the note is a courtesy
+            logger.exception("could not post the Slack detach note")
+        try:
+            # Clear Slack's own "working…" indicator: nothing will update it now.
+            client.set_session_status(installation.bot_token, channel=channel_id,
+                                      thread_ts=thread_ts, status=client.ACTIVE)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not clear the Slack agent-session status")
+        message = f"Disconnected from <#{channel_id}>. Replies in that thread no longer reach this session."
+        _record(installation, user, DETACHED, message,
+                {"channel": channel_id, "ts": thread_ts, "mode": "detach", "session": str(session.pk)},
+                ok=True, kind="slack.detached")
+    else:
+        message = "Disconnected from Slack. Replies in that thread no longer reach this session."
+    return DetachResult(DETACHED, message, session=session, channel_id=record["channel"],
+                        thread_ts=record["thread_ts"], notice_posted=posted)
 
 
 def bound_repo_session(installation: SlackInstallation, key: str) -> Session | None:

@@ -40,6 +40,8 @@ def test_the_list_names_every_key_its_owner_writes():
     assert {EMBED_APP_KEY, EMAIL_THREAD_KEY, SLACK_THREAD_KEY, services.TRANSCRIPT_SOURCED,
             RUNNER_REQUIREMENTS_KEY} <= owned
     assert {"slack_team", "slack_channel", "slack_thread_ts", "requested_runner_id"} <= owned
+    from apps.slack.share import DETACHED_KEY
+    assert DETACHED_KEY in owned
 
 
 @pytest.fixture()

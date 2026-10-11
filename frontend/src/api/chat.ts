@@ -224,6 +224,23 @@ export function setSessionNotify(id: string, everyCompletion: boolean): Promise<
   });
 }
 
+export type SlackDetachResult = components["schemas"]["SlackDetachOut"];
+
+/**
+ * Disconnect this session from its Slack thread: its replies stop posting there
+ * and replies in the thread stop reaching it. The thread is told once; nothing
+ * already posted is deleted. Idempotent — `status: "not_bound"` when there was
+ * no thread. Share it with "Keep the thread connected" again to re-attach (a
+ * fresh thread).
+ */
+export function detachSessionFromSlack(id: string): Promise<SlackDetachResult> {
+  return request<SlackDetachResult>(`/api/canopy-sessions/slack/detach`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: id }),
+  });
+}
+
 export type TransferResult = components["schemas"]["TransferOut"];
 
 /**

@@ -358,3 +358,149 @@ def test_a_bound_session_relays_laptop_replies_but_not_its_life_before_the_bind(
     assert relay.relay_after_turn(repo_session, [(4, "Tidied.")]) == 1
     (post,) = slack.said("chat.postMessage")[posts:]
     assert post["text"] == "Tidied." and post["thread_ts"] == POSTED_TS
+
+
+# ---- detach ------------------------------------------------------------------
+
+def _thread_reply(text, *, ts="1700001000.000100", thread_ts=POSTED_TS):
+    from tests.test_slack import event
+
+    return event({"type": "message", "channel_type": "channel", "user": ALICE, "text": text,
+                  "ts": ts, "thread_ts": thread_ts, "channel": "C1"})
+
+
+def _detach(user, **body):
+    from django.test import Client
+
+    c = Client()
+    c.force_login(user)
+    return c.post("/api/canopy-sessions/slack/detach", body, content_type="application/json")
+
+
+def test_detach_stops_both_directions_and_says_so_once(slack, linked, alice, repo_session):
+    from apps.harness.models import TurnEvent
+    from apps.slack import relay
+
+    _share(alice, session=repo_session, mode=share.BIND)
+    mention("start", ts="1700000999.500000", thread_ts=POSTED_TS)
+    turn = Turn.objects.get()
+
+    result = share.detach_session(alice, repo_session)
+    assert result.status == share.DETACHED and result.notice_posted
+    note = slack.said("chat.postMessage")[-1]
+    assert note["thread_ts"] == POSTED_TS and "no longer connected" in note["text"]
+
+    # Outbound: nothing the session says reaches the thread any more.
+    repo_session.refresh_from_db()
+    posts = len(slack.said("chat.postMessage"))
+    row = TurnEvent.objects.create(turn=turn, seq=1, kind="assistant", payload={"text": "Done."})
+    turn.refresh_from_db()
+    assert relay.relay(turn, [row]) == 0
+    assert relay.session_destination(repo_session) is None
+    assert len(slack.said("chat.postMessage")) == posts
+
+    # Inbound: a plain reply is dropped unread, with nothing said back.
+    calls = len(slack.calls)
+    _thread_reply("are you still there?")
+    assert Turn.objects.count() == 1
+    assert len(slack.calls) == calls
+
+
+def test_detach_keeps_the_record_and_the_slack_history(slack, linked, alice, repo_session):
+    _share(alice, session=repo_session, mode=share.BIND)
+    share.detach_session(alice, repo_session)
+    repo_session.refresh_from_db()
+    meta = repo_session.metadata
+    assert not {"slack_thread", "slack_channel", "slack_thread_ts", "slack_bound_at"} & set(meta)
+    (record,) = meta[share.DETACHED_KEY]
+    assert record["thread"] == f"slack:{TEAM}:C1:{POSTED_TS}"
+    assert record["detached_by"] == alice.pk and record["detached_at"]
+    assert not slack.said("chat.delete")
+    assert Event.objects.filter(kind="slack.detached").exists()
+
+
+def test_detach_is_idempotent(slack, linked, alice, repo_session):
+    _share(alice, session=repo_session, mode=share.BIND)
+    assert share.detach_session(alice, repo_session).status == share.DETACHED
+    posts = len(slack.said("chat.postMessage"))
+    again = share.detach_session(alice, repo_session)
+    assert again.status == share.NOT_BOUND and again.ok
+    assert len(slack.said("chat.postMessage")) == posts      # no second note
+    repo_session.refresh_from_db()
+    assert len(repo_session.metadata[share.DETACHED_KEY]) == 1
+
+
+def test_a_failed_note_does_not_undo_the_detach(slack, linked, alice, repo_session):
+    _share(alice, session=repo_session, mode=share.BIND)
+    slack.fail["chat.postMessage"] = "not_in_channel"
+    result = share.detach_session(alice, repo_session)
+    assert result.status == share.DETACHED and not result.notice_posted
+    repo_session.refresh_from_db()
+    assert "slack_thread" not in repo_session.metadata
+
+
+def test_rebinding_after_detach_starts_a_fresh_thread(slack, linked, alice, repo_session):
+    _share(alice, session=repo_session, mode=share.BIND)
+    share.detach_session(alice, repo_session)
+    result = _share(alice, session=repo_session, mode=share.BIND, channel="C2")
+    assert result.status == share.SHARED                       # a new bind, not an "update"
+    repo_session.refresh_from_db()
+    assert repo_session.metadata["slack_channel"] == "C2"
+    assert len(repo_session.metadata[share.DETACHED_KEY]) == 1  # the old thread stays history
+
+
+def test_a_slack_born_agent_thread_can_be_detached(slack, linked, alice, hal):
+    from tests.test_slack import thread_reply
+
+    mention("hal first")
+    session = Session.objects.get()
+    assert share.detach_session(alice, session).status == share.DETACHED
+    thread_reply("and what about next week?")
+    assert Turn.objects.count() == 1
+
+
+def test_the_route_detaches_by_claude_session_id(slack, linked, alice, repo_session):
+    _share(alice, session=repo_session, mode=share.BIND)
+    r = _detach(alice, claude_session_id="claude-abc")
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert body["status"] == "detached" and body["session_id"] == str(repo_session.id)
+    assert body["channel"] == "C1" and body["notice_posted"] is True
+    assert _detach(alice, session_id=str(repo_session.id)).json()["status"] == "not_bound"
+
+
+def test_the_session_payload_shows_its_thread(slack, linked, alice, repo_session):
+    from django.test import Client
+
+    c = Client()
+    c.force_login(alice)
+    url = f"/api/canopy-sessions/{repo_session.id}"
+    assert c.get(url).json()["slack"] is None
+    _share(alice, session=repo_session, mode=share.BIND)
+    slack_out = c.get(url).json()["slack"]
+    assert slack_out["channel"] == "C1" and slack_out["shared"] is True
+    assert slack_out["url"].endswith(f"/C1/thread/C1-{POSTED_TS}")
+    _detach(alice, session_id=str(repo_session.id))
+    assert c.get(url).json()["slack"] is None
+
+
+def test_a_viewer_cannot_detach(slack, linked, alice, ws, repo_session):
+    _share(alice, session=repo_session, mode=share.BIND)
+    viewer = a_user("vic@dimagi.com")
+    wsvc.ensure_member(ws, viewer, WorkspaceMembership.VIEWER)
+    assert _detach(viewer, session_id=str(repo_session.id)).status_code == 403
+    repo_session.refresh_from_db()
+    assert "slack_thread" in repo_session.metadata
+
+
+def test_someone_who_cannot_open_the_session_gets_404(slack, linked, alice, ws):
+    bob = a_user("bob@dimagi.com")
+    wsvc.ensure_member(ws, bob, WorkspaceMembership.EDITOR)
+    private = Session.objects.create(workspace=ws, project="x", created_by=bob, title="bob's")
+    assert _detach(alice, session_id=str(private.id)).status_code == 404
+
+
+def test_the_detach_route_is_an_mcp_tool():
+    from apps.mcp.server import mcp
+
+    assert "detach_session_from_slack" in {t.name for t in asyncio.run(mcp._list_tools())}

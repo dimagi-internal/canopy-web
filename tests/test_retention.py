@@ -138,11 +138,13 @@ def test_rule_validation(world):
 def test_vocabularies_match_their_definitions():
     from apps.harness.services import EMAIL_THREAD_KEY
     from apps.slack.services import SLACK_THREAD_KEY
+    from apps.slack.share import DETACHED_KEY
 
     origins = {value for value, _ in Turn.ORIGIN_CHOICES}
     sources = {value for value, _ in RetentionRule.SOURCE_CHOICES}
     assert sources == origins | {RetentionRule.EMDASH}
     assert policy.SLACK_THREAD_KEY == SLACK_THREAD_KEY
+    assert policy.SLACK_DETACHED_KEY == DETACHED_KEY
     assert policy.EMAIL_THREAD_KEY == EMAIL_THREAD_KEY
 
 
@@ -150,6 +152,7 @@ def test_how_a_chat_is_described():
     assert policy.chat_source(metadata={"source": "ace-web"}, origin="web") == "ace_web"
     assert policy.chat_source(metadata={"source": "email"}, origin="runner") == "email"
     assert policy.chat_source(metadata={"slack_thread": "T:C:1"}, origin="web") == "slack"
+    assert policy.chat_source(metadata={"slack_detached": [{}]}, origin="runner") == "slack"
     assert policy.chat_source(metadata={}, origin="runner") == "emdash"
     assert policy.chat_source(metadata={}, origin="web") == "canopy_web_chat"
     assert policy.chat_principal(contact_id=3, created_by_id=None) == "contact"

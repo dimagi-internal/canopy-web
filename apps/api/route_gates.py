@@ -283,6 +283,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "export_session": ("session-acl", "self"),  # visible AND you started it
     "answer_menu": ("session-acl",),  # write
     "close_session": ("session-acl",),  # write
+    "detach_session_from_slack": ("session-acl",),  # write
     "stop_session_turn": ("session-acl",),  # write
     "attach_session": ("session-acl",),  # READ gate on a POST (viewer signal)
     "detach_session": ("session-acl",),  # READ gate on a POST

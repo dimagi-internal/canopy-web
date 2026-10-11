@@ -74,6 +74,8 @@ from .schemas import (
     SessionSearchPageOut,
     SessionSecretIn,
     SessionSecretOut,
+    SlackDetachIn,
+    SlackDetachOut,
     StreamStateOut,
     TransferDecisionIn,
     TransferRequestOut,
@@ -204,7 +206,15 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "parent_task": session.parent_task,
         "parent_claude_session": session.parent_claude_session,
         "activity": session_activity.public(session.activity),
+        "slack": _slack_binding(session),
     }
+
+
+def _slack_binding(session: Session) -> dict | None:
+    # Read from metadata only — no Slack call — so it is cheap on every list row.
+    from apps.slack.share import binding_of
+
+    return binding_of(session)
 
 
 def _visible_slugs(request: HttpRequest) -> set[str]:
@@ -590,6 +600,48 @@ def reset_sessions(request: HttpRequest, payload: ResetIn):
     return services.reset_sessions(
         rows, prune_ghosts=payload.prune_ghosts, dry_run=payload.dry_run
     )
+
+
+@router.post("/slack/detach", response=SlackDetachOut,
+             summary="Disconnect a session from its Slack thread")
+def detach_session_from_slack(request: HttpRequest, payload: SlackDetachIn):
+    """Disconnect a session from the Slack thread it is bound to — the undo of
+    sharing it with `bind` (`share_session_to_slack`), and works as well on a
+    session Slack itself started.
+
+    From then on the session's replies are no longer posted into the thread, and
+    replies in the thread no longer reach the session (they are ignored). The
+    thread gets one last note saying it is no longer connected (best-effort; a
+    Slack failure does not undo the detach). Nothing already posted is deleted,
+    and the binding is kept on the session as history.
+
+    Name the session with `session_id`, else `claude_session_id`
+    ($CLAUDE_CODE_SESSION_ID), else `emdash_task` + `emdash_project`. Needs
+    owner or editor access to the session. Idempotent: a session with no thread
+    answers `status: not_bound`. To connect it again, share it with `bind`,
+    which starts a fresh thread.
+    """
+    from apps.slack import share
+
+    visible = _site_scoped(request, access.readable_sessions(request.user,
+                                                             workspace_slugs=_visible_slugs(request)))
+    if not (payload.session_id or payload.claude_session_id or payload.emdash_task):
+        raise HttpError(422, "name the session: session_id, claude_session_id or emdash_task")
+    try:
+        session = share.resolve_session(
+            request.user, session_id=payload.session_id, claude_session_id=payload.claude_session_id,
+            emdash_task=payload.emdash_task, emdash_project=payload.emdash_project, visible=visible)
+    except share.Ambiguous:
+        raise HttpError(409, "more than one session matches that emdash task; pass "
+                             "claude_session_id or session_id") from None
+    if session is None:
+        raise HttpError(404, "no session you can open matches that")
+    if not access.can_write(request.user, session):
+        raise HttpError(403, "you can read this session but not act in it")
+    result = share.detach_session(request.user, session)
+    return {"status": result.status, "message": result.message, "session_id": session.pk,
+            "channel": result.channel_id, "thread_ts": result.thread_ts,
+            "notice_posted": result.notice_posted}
 
 
 # ---- transfer requests: a move onto someone else's runner, awaiting their yes ----
