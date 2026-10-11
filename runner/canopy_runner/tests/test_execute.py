@@ -288,6 +288,49 @@ def test_create_failure_fails_the_turn(monkeypatch):
     assert client.failed and "emdash create failed" in client.failed[0][1]
 
 
+def _projects_after_create(monkeypatch, before, after):
+    """task_projects answers `before` until create_task runs, `after` once it has."""
+    state = {"created": False}
+    monkeypatch.setattr(emdash, "task_projects",
+                        lambda db, name: after if state["created"] else before)
+
+    def create(project, prompt, task_name="", port=9222):
+        state["created"] = True
+        return {"task": "fresh"}
+    monkeypatch.setattr(cdp_control, "create_task", create)
+
+
+def test_create_filed_under_another_project_is_deleted_and_fails(monkeypatch):
+    """2026-10-11: after an emdash upgrade an ada turn landed under `hal` — ada's
+    prompt ran in hal's repo, and the next turn on the thread hit TASK_NOT_FOUND."""
+    _projects_after_create(monkeypatch, before=[], after=["hal"])
+    closed = []
+    monkeypatch.setattr(cdp_control, "close_task",
+                        lambda task, port=9222, project="": closed.append((task, project)))
+    client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
+    result = execute.execute_turn(_cfg(), client, "r-1", _turn(agent_slug="ada"))
+    assert result == "failed:t-1"
+    assert closed == [("fresh", "hal")]
+    assert client.failed and "instead of 'ada'" in client.failed[0][1]
+    assert client.recorded == []                 # never linked to the thread
+
+
+def test_create_never_deletes_a_same_named_task_that_already_existed(monkeypatch):
+    """eva already had a live "fresh"; ada's create seeing it is not a misfile."""
+    _projects_after_create(monkeypatch, before=["eva"], after=["ada", "eva"])
+    monkeypatch.setattr(cdp_control, "close_task",
+                        lambda *a, **k: pytest.fail("deleted another agent's session"))
+    client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
+    assert execute.execute_turn(_cfg(), client, "r-1", _turn(agent_slug="ada")) \
+        == "created:t-1:fresh"
+
+
+def test_create_proceeds_when_emdash_cannot_say_where_it_filed(monkeypatch):
+    _projects_after_create(monkeypatch, before=None, after=None)
+    client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
+    assert execute.execute_turn(_cfg(), client, "r-1", _turn()) == "created:t-1:fresh"
+
+
 def test_keyless_turn_gets_a_fresh_per_turn_key(monkeypatch):
     """A turn with no explicit thread_key/thread_id is a self-contained unit of work (a
     cron fire, a board turn). It must NOT collapse onto a shared '{agent}:main' sink —

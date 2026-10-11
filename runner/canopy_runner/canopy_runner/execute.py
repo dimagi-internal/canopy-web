@@ -497,6 +497,37 @@ def _repoint(asked: str, got: str, turn: dict, envelope) -> None:
     caller.clear_pending(asked)
 
 
+def _misfiled(cfg, project: str, task: str, before: list[str] | None) -> str:
+    """The create clicked "New task for <project>", but did emdash FILE it there?
+
+    Returns "" when it did (or when emdash cannot say — None/[] from the DB is "could
+    not look", never "wrong"). Otherwise deletes the task from the project(s) it
+    wrongly landed in and returns a note naming them, for the caller to fail with.
+
+    Proven 2026-10-11 after an emdash upgrade: an ada email turn was filed under
+    `hal`, so ada's prompt ran in hal's repo, and every later turn on the thread hit
+    TASK_NOT_FOUND looking for it under `ada` and failed for retry — the runner went
+    not-ready and the work drained to the cloud. A wrong project must be caught at
+    create, where it is legible, not one turn later as a missing task.
+
+    Only projects where the name is NEW since `before` are touched: a same-named
+    session another agent already had is never ours to delete.
+    """
+    after = emdash.task_projects(cfg.emdash_db or "", task)
+    if not after or project in after:
+        return ""
+    wrong = [p for p in after if p not in set(before or [])]
+    if not wrong:
+        return ""
+    for p in wrong:
+        try:
+            cdp_control.close_task(task, port=cfg.cdp_port, project=p)
+        except cdp_control.CDPError as exc:
+            logger.error("could not delete misfiled task '%s' from project '%s': %s", task, p, exc)
+    return (f"emdash filed new task '{task}' under {', '.join(wrong)} instead of '{project}' "
+            f"(the New Task dialog's project did not follow the clicked control) — deleted it")
+
+
 def _resolve_transcript_path(target: str, task: str, *, emdash_db: str | None = None):
     home = Path.home()
     return transcript.resolve_transcript(
@@ -832,6 +863,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             return f"failed:{turn_id}"
         caller.write_pending(name, turn, envelope)
         chat_key.write(turn, task=name)
+        before = emdash.task_projects(cfg.emdash_db or "", name)
         try:
             res = cdp_control.create_task(
                 target, prompt, task_name=name, port=cfg.cdp_port
@@ -842,6 +874,12 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             client.fail_turn(turn_id, f"chat create failed: {str(exc)[:200]}")
             return f"failed:{turn_id}"
         task = res.get("task") or ""
+        misfiled = _misfiled(cfg, target, task or name, before)
+        if misfiled:
+            caller.clear_pending(name)
+            logger.error("chat create misfiled turn=%s agent=%s: %s", turn_id, target, misfiled)
+            client.fail_turn(turn_id, f"chat create failed: {misfiled}"[:300])
+            return f"failed:{turn_id}"
         if task and task != name:
             _repoint(name, task, turn, envelope)
             if not _confine(client, turn, task):
@@ -985,6 +1023,7 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     if not _confine(client, turn, name):
         return f"failed:{turn_id}"
     caller.write_pending(name, turn, envelope)
+    before = emdash.task_projects(cfg.emdash_db or "", name)
     try:
         res = cdp_control.create_task(agent, prompt, task_name=name, port=cfg.cdp_port)
     except cdp_control.CDPError as exc:
@@ -996,6 +1035,13 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         return f"failed:{turn_id}"
 
     task = res.get("task") or ""
+    misfiled = _misfiled(cfg, agent, task or name, before)
+    if misfiled:
+        caller.clear_pending(name)
+        logger.error("CREATE misfiled turn=%s agent=%s: %s", turn_id, agent, misfiled)
+        readiness.mark_failed(cfg, misfiled)
+        client.fail_turn(turn_id, misfiled)
+        return f"failed:{turn_id}"
     # emdash may name the task differently from what was asked; the guard keys on
     # the REAL name. Until this lands, a renamed caller session's tool calls find
     # no profile and are refused — closed, never open.
