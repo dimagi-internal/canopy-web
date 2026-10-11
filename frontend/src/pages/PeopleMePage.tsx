@@ -211,12 +211,32 @@ export function PeopleMePage() {
   if (me === null) return <div className="p-6 text-muted-foreground">Loading…</div>
 
   const allFacts = me.facts ?? []
+  // Memory is on only for the people settings.HCP_PEOPLE names, for now. Outside
+  // that: nothing here at all — unless canopy already holds some of yours, which
+  // stays yours to see, download and delete ("paused").
+  const enabled = me.memory_enabled !== false
+  if (!enabled && !me.memory_paused) {
+    return (
+      <div className="mx-auto max-w-4xl px-4 py-8">
+        <h1 className="text-2xl font-semibold text-foreground">Your memory</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Memory isn&apos;t available for you yet.</p>
+      </div>
+    )
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">Your memory</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <h1 className="text-2xl font-semibold text-foreground">
+          {enabled ? 'Your memory' : 'Your memory (paused)'}
+        </h1>
+        {!enabled && (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Memory isn&apos;t on for you yet, so no agent learns from you or uses any of this. What
+            canopy already holds is below: you can download it, remove anything, or take back access.
+          </p>
+        )}
+        <p className="mt-1 text-sm text-muted-foreground" hidden={!enabled}>
           {me.display_name}
           {me.email ? ` · ${me.email}` : ''}. When you talk to an agent you allowed, it is handed the
           few facts relevant to what you asked from its organisation&apos;s memory, and can look up
@@ -226,6 +246,7 @@ export function PeopleMePage() {
         </p>
       </div>
 
+      {enabled && (<>
       <section aria-label="Learn from me and use my memory" className="divide-y divide-border rounded-lg border border-border">
         {MEMORY_SWITCHES.map((sw) => {
           const { available, default: byDefault } = me.agent_memory[sw.key]
@@ -316,6 +337,7 @@ export function PeopleMePage() {
           </button>
         </div>
       </form>
+      </>)}
 
       {allFacts.length === 0 ? (
         <p className="text-muted-foreground">Nothing yet — nothing has been recorded about you.</p>
@@ -336,7 +358,7 @@ export function PeopleMePage() {
                   </div>
                 </div>
                 <div className="flex shrink-0 gap-3">
-                  {f.entry_id && (
+                  {enabled && f.entry_id && (
                     <button
                       className="text-primary hover:underline disabled:opacity-50"
                       disabled={busy === f.id}
@@ -409,7 +431,7 @@ export function PeopleMePage() {
         )}
       </section>
 
-      <MemorySettings grants={grants} onChanged={load} />
+      {enabled && <MemorySettings grants={grants} onChanged={load} />}
 
       <section>
         <div className="flex items-center justify-between">

@@ -108,6 +108,7 @@ def _apply(grant: PersonGrant, sources: list[str], collection, *, actor: hcp.Act
 
 @transaction.atomic
 def create(person: Person, *, name: str, sources, actor: hcp.Actor) -> MemoryCollection:
+    hcp.require_rollout(person)
     name = (name or "").strip()[:80]
     if not name:
         raise hcp.malformed("name the collection")
@@ -130,6 +131,8 @@ def update(person: Person, collection: MemoryCollection, *, actor: hcp.Actor,
     if sources is not None:
         new = _clean(person, sources)
         added = [s for s in new if s not in collection.sources]
+        if added:
+            hcp.require_rollout(person)  # removing is always allowed; adding is not
         grants = _live_grants(person, collection=collection)
         widened = [g for g in grants
                    if hcp.reached(new) - hcp.reached(hcp.grant_sources(g))] if added else []
@@ -169,6 +172,7 @@ def use_for_grant(person: Person, grant: PersonGrant, collection: MemoryCollecti
     `grant` and every other live grant the person gave that agent (a session's
     too, so it never shadows the choice). A widening needs `confirm_widening`
     naming each grant it widens."""
+    hcp.require_rollout(person)
     if (grant.person_id != person.pk or grant.status != PersonGrant.ACTIVE
             or grant.hcp_client_id or not grant.agent_id):
         raise hcp.denied("not one of your live agent grants")

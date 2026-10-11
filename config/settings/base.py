@@ -307,6 +307,17 @@ AUTH_ALLOWED_EMAIL_DOMAIN = env("AUTH_ALLOWED_EMAIL_DOMAIN", default="dimagi.com
 # needed later; hcp-service.md lists what must be true operationally first.
 HCP_SERVICE_AUDIENCE = env("HCP_SERVICE_AUDIENCE", default="internal")
 
+# --- Who has memory at all, for now (apps/contacts/hcp.py `rollout_allows`) ---
+# Jonathan, 2026-10-11: memory is on "for only me right now", and he is the only one
+# who sees its UI. HCP_PEOPLE lists the canopy addresses it is on for; EMPTY MEANS
+# NOBODY (fail closed) — "*" means everyone, and is only for tests and local dev.
+# HCP_CONTACT_OPT_IN decides whether a trusted site's visitors (contacts, no canopy
+# account) are offered memory at all. Outside the rollout everything reads as off
+# and every way to turn it on answers "memory isn't available for you yet"; nothing
+# already held is touched, and the person can still see, download and delete it.
+HCP_PEOPLE = [a.strip().lower() for a in env("HCP_PEOPLE", default="").split(",") if a.strip()]
+HCP_CONTACT_OPT_IN = env.bool("HCP_CONTACT_OPT_IN", default=False)
+
 # Whether LoginRequiredMiddleware enforces auth. Default on; toggle off during rollout.
 REQUIRE_AUTH = env.bool("REQUIRE_AUTH", default=True)
 

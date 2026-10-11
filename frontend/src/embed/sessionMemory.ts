@@ -85,6 +85,10 @@ export interface ContactHcpState {
   session: SessionMemory | null
   grants: { grant_id: string; agent: string; type: string; features: string[]; expires_at: string | null }[]
   entries?: { entry_id: string; category: string; statement: string; status: string }[]
+  /** Is memory offered to contacts at all yet (settings.HCP_CONTACT_OPT_IN)? */
+  memory_enabled?: boolean
+  /** Not offered, but canopy holds some of theirs: shown, to download or delete. */
+  memory_paused?: boolean
 }
 
 export function contactHcp(rest: MemoryRest) {

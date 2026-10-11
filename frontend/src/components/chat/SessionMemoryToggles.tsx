@@ -204,6 +204,8 @@ export function SessionMemoryToggles({
   // whole panel down with it (the widget mounts this inside its chat header).
   if (!loaded || !isMemory(loaded.state)) return null
   const { state, editable, manageUrl } = loaded
+  // Memory not on for this person yet (settings.HCP_PEOPLE): no chips, no prompts.
+  if (state.memory_enabled === false) return null
   const features = (['record', 'use'] as const).filter((f) => state[f].available)
   if (features.length === 0) return null
 

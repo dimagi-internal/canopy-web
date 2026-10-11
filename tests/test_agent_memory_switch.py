@@ -310,3 +310,72 @@ def test_the_migration_sets_record_yes_use_no_for_jonathan_only(w):
     assert sorted(PersonAuditEvent.objects.filter(person=jon_person)
                   .values_list("event_type", flat=True)) == ["agentRecord.defaultOn",
                                                              "agentUse.disabled"]
+
+
+# --- the rollout gate: memory is on only for the people settings.HCP_PEOPLE names --------
+
+
+def test_outside_the_rollout_nothing_runs_and_nothing_can_be_turned_on(w, settings):
+    lili, ace = w["lili"], w["ace"]
+    _set(lili, record=True, use=True)                  # made available before the gate
+    entry = _seed(w)
+    session = _session(lili, ace)
+    turn = _session_turn(ace, lili, session, "t1")
+    c = _as(ace.user)
+    assert _search(c, turn).status_code == 200
+
+    settings.HCP_PEOPLE = ["jj@dimagi.com"]            # lili is not in it
+    _denied(_search(c, turn), hcp.NOT_ROLLED_OUT)
+    _denied(_add(c, turn), hcp.NOT_ROLLED_OUT)
+    _denied(c.get(f"/api/hcp/v1/preferences/{entry.entry_id}?turn={turn.pk}&purpose=x"),
+            hcp.NOT_ROLLED_OUT)
+    block = caller_context.build(turn)["person"]
+    assert _eff(block) == {"record": False, "use": False}
+    assert block["hcp"]["available"] == {"record": False, "use": False}
+    assert block["facts"] == [] and block["recall"] is None and block["record"] is None
+
+    me = _as(lili).get("/api/people/me/").json()
+    assert me["memory_enabled"] is False and me["memory_paused"] is True
+    assert me["agent_memory"]["record"]["available"] is False
+    assert [f["statement"] for f in me["facts"]] == ["KC metrics lead."]   # still theirs to see
+    app_me = _as(lili).get("/api/me/").json()
+    assert app_me["memory_enabled"] is False and app_me["memory_paused"] is True
+
+    r = _set(lili, use=True)
+    assert r.status_code == 403 and hcp.NOT_ROLLED_OUT in r.json()["detail"]
+    assert _set_session(lili, session, use="on").status_code == 403
+    r = _json(_as(lili), "post", f"/api/people/me/sessions/{session.pk}/agent-grants/",
+              {"features": ["use"], "duration": "session", "surface": "chat"})
+    assert r.status_code == 403
+    r = _json(_as(lili), "post", "/api/people/me/memory-collections/",
+              {"name": "Everything", "sources": ["personal"]})
+    assert r.status_code == 403
+    r = _json(_as(lili), "post", "/api/hcp/v1/preferences/add",
+              {"category": "work_context", "preference": "Writes tests.",
+               "declarationType": "user-declared", "sourceContext": "user-input"})
+    assert r.status_code == 403
+    assert _as(lili).get("/api/hcp/v1/export").status_code == 200      # download: always
+    assert _set(lili, use=False).status_code == 200                     # off: always
+    assert _set_session(lili, session, record="off").status_code == 200
+    page = _as(lili).get("/api/hcp/oauth/authorize")
+    assert page.status_code == 403 and b"isn&#x27;t available for you yet" in page.content
+
+    settings.HCP_PEOPLE = ["jj@dimagi.com", "lili@dimagi.com"]          # in: what they had is back
+    w["person"].refresh_from_db()
+    assert hcp.memory_state(w["person"])["record"]["available"] is True
+    assert _as(lili).get("/api/people/me/").json()["memory_enabled"] is True
+
+
+def test_in_the_rollout_by_address_and_empty_means_nobody(w, settings):
+    owner = w["owner"]                                  # jj@dimagi.com
+    settings.HCP_PEOPLE = ["JJ@dimagi.com "]
+    assert _set(owner, record=True).status_code == 200
+    me = _as(owner).get("/api/people/me/").json()
+    assert me["memory_enabled"] is True and me["agent_memory"]["record"]["available"] is True
+    assert _as(owner).get("/api/me/").json()["memory_enabled"] is True
+    assert _as(w["lili"]).get("/api/me/").json() == {**_as(w["lili"]).get("/api/me/").json(),
+                                                      "memory_enabled": False,
+                                                      "memory_paused": False}
+    settings.HCP_PEOPLE = []                            # fail closed
+    assert hcp.rollout_allows(contacts.person_for(user=owner)) is False
+    assert _set(owner, use=True).status_code == 403

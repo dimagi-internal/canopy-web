@@ -126,8 +126,13 @@ def people_me(request: HttpRequest) -> dict:
 
 
 def _memory(person: Person) -> dict:
-    return {"agent_memory": {
-        f: {"available": bool(getattr(person, f"hcp_{f}_available")),
+    """Outside the rollout every switch reads off (what is stored is kept, and
+    comes back if memory is turned on for them)."""
+    enabled = hcp.rollout_allows(person)
+    return {"memory_enabled": enabled,
+            "memory_paused": not enabled and hcp.has_memory(person),
+            "agent_memory": {
+        f: {"available": enabled and bool(getattr(person, f"hcp_{f}_available")),
             "default": bool(getattr(person, f"hcp_{f}_default")),
             "changed_at": _iso(getattr(person, f"hcp_{f}_changed_at"))}
         for f in hcp.FEATURES}}
@@ -156,9 +161,14 @@ def set_my_agent_memory(request: HttpRequest, payload: AgentMemoryIn) -> dict:
     can turn either on or off for itself, but never turn on what is not
     available. Off deletes nothing. Only you can change these."""
     person = _the_person_themself(request)
-    hcp.set_agent_memory(person, actor=hcp.user_actor(request.user),
-                         record=payload.record.model_dump() if payload.record else None,
-                         use=payload.use.model_dump() if payload.use else None)
+    try:
+        hcp.set_agent_memory(person, actor=hcp.user_actor(request.user),
+                             record=payload.record.model_dump() if payload.record else None,
+                             use=payload.use.model_dump() if payload.use else None)
+    except hcp.HcpError as exc:
+        raise ProblemError(exc.status, "Not changed",
+                           type_=TYPE_VALIDATION if exc.status == 422 else TYPE_FORBIDDEN,
+                           detail=exc.detail) from None
     return _memory(person)["agent_memory"]
 
 
@@ -195,7 +205,8 @@ def session_memory_payload(person: Person, session) -> dict:
             "reach": (hcp.reach_label(hcp.default_reach(person, agent)[0])
                       if agent is not None else ""),
             "org": (hcp.org_name(agent) if agent is not None else ""),
-            "session_grant_hours": int(hcp.SESSION_GRANT_CAP.total_seconds() // 3600)}
+            "session_grant_hours": int(hcp.SESSION_GRANT_CAP.total_seconds() // 3600),
+            "memory_enabled": hcp.rollout_allows(person)}
 
 
 @router.get("/me/sessions/{session_id}/agent-memory/", response=SessionMemoryOut,

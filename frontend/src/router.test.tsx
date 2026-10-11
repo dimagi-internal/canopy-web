@@ -37,6 +37,8 @@ function renderWithEmptyWorkspaces(node: React.ReactElement) {
             email: 'jj@dimagi.com',
             avatar_url: '',
             can_create_workspace: true,
+            memory_enabled: false,
+            memory_paused: false,
           },
         }}
       >

@@ -28,6 +28,10 @@ PASSWORD_HASHERS = [
 # Auth-specific tests override this per-test via settings().
 REQUIRE_AUTH = False
 
+# Memory's rollout gate (base.py): open in tests; tests of the gate itself narrow it.
+HCP_PEOPLE = ["*"]
+HCP_CONTACT_OPT_IN = True
+
 # MCP Apps: no background index refresh threads in tests (a thread outlives the
 # test's transaction); tests that want it call `mcp_apps_views._refresh` directly.
 MCP_APPS_BACKGROUND_REFRESH = False

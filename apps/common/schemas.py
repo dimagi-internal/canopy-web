@@ -49,6 +49,21 @@ class MeOut(StrictModel):
             "screen reads this so it never offers a button that 403s."
         ),
     )
+    memory_enabled: bool = Field(
+        default=False,
+        description=(
+            "Is memory (HCP) on for you yet (settings.HCP_PEOPLE)? False hides "
+            "every memory surface: the Your memory page and its links, the "
+            "conversation switches and grant prompts."
+        ),
+    )
+    memory_paused: bool = Field(
+        default=False,
+        description=(
+            "Memory is not on for you, but canopy holds some of yours: the Your "
+            "memory page still shows it, to download or delete."
+        ),
+    )
 
 
 class PresencePreferenceOut(StrictModel):
