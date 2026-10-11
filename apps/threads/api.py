@@ -33,14 +33,21 @@ _PARENT_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*$")
 
 
 def _my_workspaces(request: HttpRequest) -> set[str]:
-    user = request.user
-    return wsvc.user_workspace_slugs(user) if user.is_authenticated else set()
+    """Every workspace the caller belongs to — the by-id gate (never refused)."""
+    return wsvc.member_scope(request.user)
+
+
+def _thread_visible_turns(request: HttpRequest, t: AgentThread):
+    """The turns a thread's messages may come from: the caller's memberships in
+    the thread's own tenant tree (its participants may live in several of that
+    org's workspaces), never another organisation's."""
+    return visible_turns_qs(request, slugs=wsvc.tree_scope(request.user, t.workspace_id))
 
 
 def _thread_or_404(request: HttpRequest, thread_id: str) -> AgentThread:
     """A thread in one of the caller's workspaces. Like huddles, a thread read spans
-    every workspace the caller belongs to (its participants may live in several),
-    never more; a non-member gets the same 404 as a missing thread."""
+    every workspace the caller belongs to in the thread's tree (its participants may
+    live in several), never more; a non-member gets the same 404 as a missing thread."""
     t = AgentThread.objects.filter(id=thread_id, workspace_id__in=_my_workspaces(request)).first()
     if t is None:
         raise HttpError(404, f"thread {thread_id!r} not found")
@@ -114,7 +121,9 @@ def list_threads(request: HttpRequest, parent_key: str | None = None, parent_val
     `parent_key` + `parent_value` keep threads hanging off one thing (e.g.
     `parent_key=huddle&parent_value=<huddle id>`); `agent` keeps those it takes part
     in; `status` one status."""
-    qs = AgentThread.objects.filter(workspace_id__in=_my_workspaces(request)).order_by("-created_at")
+    # A list: within one tenant tree (pinned → the pin's tree; unpinned by a
+    # caller in two trees → 422), never mixing organisations.
+    qs = AgentThread.objects.filter(workspace_id__in=wsvc.request_tree_slugs(request)).order_by("-created_at")
     if parent_key:
         if not _PARENT_KEY.match(parent_key):
             raise HttpError(422, f"bad parent_key {parent_key!r}")
@@ -139,7 +148,7 @@ def get_thread(request: HttpRequest, thread_id: str):
     you may read that turn's content, its prompt and the speaker's parsed reply
     block (from its close-out, else its transcript)."""
     t = _thread_or_404(request, thread_id)
-    msgs = services.messages(t, user=request.user, visible_qs=visible_turns_qs(request, all_memberships=True))
+    msgs = services.messages(t, user=request.user, visible_qs=_thread_visible_turns(request, t))
     return services.out(t, used=services.messages_used(t.id), msgs=msgs)
 
 
@@ -160,5 +169,5 @@ def close_thread(request: HttpRequest, thread_id: str, payload: ThreadCloseIn):
         t.outcome = payload.outcome or {}
         t.closed_at = timezone.now()
         t.save(update_fields=["status", "outcome", "closed_at"])
-    msgs = services.messages(t, user=request.user, visible_qs=visible_turns_qs(request, all_memberships=True))
+    msgs = services.messages(t, user=request.user, visible_qs=_thread_visible_turns(request, t))
     return services.out(t, used=services.messages_used(t.id), msgs=msgs)

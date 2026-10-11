@@ -110,6 +110,34 @@ api() {
   fi
 }
 
+# Every agent the token can see, as {"items": [...]}. The flat list first; a
+# token whose workspaces span more than one tenant tree gets a 422 there
+# (canopy-web's read rule, 2026-10-11), so then ask each workspace by name.
+agents_json() {
+  local flat
+  flat="$(api GET "/api/agents/?limit=200")"
+  if printf '%s' "$flat" | python3 -c 'import json,sys; sys.exit(0 if isinstance(json.load(sys.stdin).get("items"), list) else 1)' 2>/dev/null; then
+    printf '%s\n' "$flat"
+    return 0
+  fi
+  local ws
+  for ws in $(api GET "/api/workspaces/" | python3 -c 'import json,sys; print(" ".join(w["slug"] for w in json.load(sys.stdin)))'); do
+    api GET "/api/w/${ws}/agents/?limit=200"
+    echo
+  done | python3 -c '
+import json, sys
+seen = {}
+for line in sys.stdin:
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    for a in d.get("items") or []:
+        seen.setdefault(a["slug"], a)
+print(json.dumps({"items": list(seen.values())}))
+'
+}
+
 echo ">> $BASE_URL"
 
 # ── Preflight: what each named agent needs before a box can run it ──────────────
@@ -420,7 +448,7 @@ fi
 if [[ -n "$AGENTS" ]]; then
   IFS=',' read -ra AGENT_SLUGS <<<"$AGENTS"
 else
-  api GET "/api/agents/?limit=200" > "$TMP/agents.json"
+  agents_json > "$TMP/agents.json"
   # `mapfile`/`readarray` is bash4+ only — macOS ships bash 3.2 as /bin/bash and
   # this script runs on the OPERATOR's machine, not the (bash5) EC2 box — so
   # build the array the bash-3.2-compatible way via word-splitting (safe here:

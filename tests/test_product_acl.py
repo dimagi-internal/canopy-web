@@ -206,7 +206,12 @@ def test_an_editors_empty_clear_stays_in_their_editor_workspaces(acl):
     """An editor of one workspace who only VIEWS another clears the first. A bulk
     clear is scoped by the WRITE set (`request_slugs_with(CONTENT_WRITE)`), never
     the read set — with the read set, `{}` reached every workspace they could see.
-    (Pinned on the Insights feed's clear until that feed was retired, 2026-10.)"""
+    (Pinned on the Insights feed's clear until that feed was retired, 2026-10.)
+
+    Both workspaces sit in one tenant tree: across two trees an unpinned clear
+    is refused outright (the read rule, `services.read_scope`)."""
+    acl["other"].parent = acl["ws"]
+    acl["other"].save()
     _json(_c(acl["editor"]), "post", f"/api/w/{WS}/shareouts/", _shareout_body("mine"))
     a_member(acl["other"], email="pa-editor@dimagi.com", role=WorkspaceMembership.VIEWER)
     theirs = Shareout.objects.create(
@@ -442,6 +447,13 @@ def test_a_pinned_event_list_is_that_workspace_only(acl):
     admin = a_member(acl["ws"], email="pa-admin@dimagi.com", role=WorkspaceMembership.ADMIN)
     a_member(acl["other"], email="pa-admin@dimagi.com", role=WorkspaceMembership.ADMIN)
     viewer = _c(admin)
-    assert len(viewer.get("/api/events/").json()["items"]) == 2
+    # Two tenant trees: an unpinned list names the caller's workspaces and stops.
+    refused = viewer.get("/api/events/")
+    assert refused.status_code == 422
+    assert "pa-other" in refused.json()["detail"] and WS in refused.json()["detail"]
     pinned = viewer.get(f"/api/w/{WS}/events/").json()["items"]
     assert [e["workspace"] for e in pinned] == [WS]
+    # One tree (pa-other under pa-ws): the unpinned list is the union again.
+    acl["other"].parent = acl["ws"]
+    acl["other"].save()
+    assert len(viewer.get("/api/events/").json()["items"]) == 2

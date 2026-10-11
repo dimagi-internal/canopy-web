@@ -112,6 +112,7 @@ def _out(ws: Workspace, role: str, *, inherited: bool = False) -> WorkspaceOut:
         role=role,
         created_at=ws.created_at,
         parent=ws.parent_id,
+        root=services.tree_roots({ws.slug})[ws.slug],
         inherited=inherited,
     )
 

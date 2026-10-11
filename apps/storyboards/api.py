@@ -55,6 +55,16 @@ def _member_boards(request: HttpRequest):
     return Storyboard.objects.filter(workspace_id__in=wsvc.user_workspace_slugs(request.user))
 
 
+def _listed_boards(request: HttpRequest):
+    """Boards a LIST may show: the read rule (`wsvc.request_workspace_slugs`) —
+    pinned to one workspace, or every membership when they sit in one tenant
+    tree; a caller in two trees who names none gets a 422. The by-slug gates
+    above keep `_member_boards`: opening one board you belong to mixes nothing."""
+    if not request.user.is_authenticated:
+        return Storyboard.objects.none()
+    return Storyboard.objects.filter(workspace_id__in=wsvc.request_workspace_slugs(request))
+
+
 def _is_member(request: HttpRequest, board: Storyboard) -> bool:
     """One of the people who SENT the link, rather than one it was sent to."""
     return bool(
@@ -194,7 +204,7 @@ def list_storyboards(
 ) -> dict:
     """`session` / `turn` = the canopy session / turn a board was made from;
     `agent_project` = its board project (`hal/P5`, `hal:P5` or an id). T76."""
-    boards = _member_boards(request).select_related(
+    boards = _listed_boards(request).select_related(
         "agent_project__agent", "source_turn__agent"
     ).prefetch_related("acts__entries")
     for field, value in (("source_session_id", session), ("source_turn_id", turn)):

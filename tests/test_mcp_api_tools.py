@@ -145,8 +145,9 @@ def test_a_route_that_names_its_workspace_keeps_its_own_argument(db):
     """`/api/slack-config/{workspace}` already takes one; adding a second would
     shadow the path parameter."""
     tool = _tools()["get_config"]
-    assert tool.parameters["properties"]["workspace"].get("description") != (
-        "Workspace slug to act in. Omit to act across your workspaces, as the flat route does.")
+    from apps.mcp.api_tools import WORKSPACE_ARG_DESCRIPTION
+
+    assert tool.parameters["properties"]["workspace"].get("description") != WORKSPACE_ARG_DESCRIPTION
 
 
 # -- as the caller ---------------------------------------------------------

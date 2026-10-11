@@ -147,11 +147,20 @@ def slugs_with(user, capability: str, within: set[str] | None = None) -> set[str
 
 
 def request_slugs_with(request, capability: str) -> set[str]:
-    """`slugs_with`, scoped like every request: a pinned `/api/w/{ws}/` call
-    considers only that workspace."""
+    """`slugs_with`, scoped like every LIST or bulk write: a pinned
+    `/api/w/{ws}/` call considers only that workspace, and an unpinned one by a
+    caller in more than one tenant tree is refused (`services.read_scope`)."""
     from . import services
 
     return slugs_with(request.user, capability, within=services.request_workspace_slugs(request))
+
+
+def request_member_slugs_with(request, capability: str) -> set[str]:
+    """`request_slugs_with` for a BY-ID gate: never refused, because acting on
+    one object you are a member of mixes no tenants (`services.member_scope`)."""
+    from . import services
+
+    return slugs_with(request.user, capability, within=services.request_member_slugs(request))
 
 
 def is_owner(user, workspace) -> bool:

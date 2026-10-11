@@ -53,6 +53,11 @@ class WorkspaceOut(StrictModel):
     created_at: dt.datetime
     # The workspace directly above this one, or None for a root.
     parent: str | None = None
+    # The top of this workspace's tree — its organisation (itself for a root).
+    # A caller whose workspaces have more than one `root` must name a workspace
+    # on every list or search (the read rule, `services.read_scope`); the web
+    # client reads this to know when to pin.
+    root: str = ""
     # True when `role` comes from owning an ancestor rather than a membership
     # row here — the UI shows it so an org owner knows why they can see it.
     inherited: bool = False

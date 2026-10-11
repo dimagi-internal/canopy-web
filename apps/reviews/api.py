@@ -101,7 +101,7 @@ def _in_caller_workspaces(request: HttpRequest, review: ReviewRequest) -> bool:
     # that is a property of the review, not of its tenant.
     if review.workspace_id is None:
         return False
-    return review.workspace_id in wsvc.request_workspace_slugs(request)
+    return review.workspace_id in wsvc.request_member_slugs(request)
 
 
 def _can_read(request: HttpRequest, review: ReviewRequest) -> bool:
@@ -183,7 +183,7 @@ def _pinned_videos(request: HttpRequest, review: ReviewRequest) -> dict:
     if not rows:
         return {"version_video": None, "cut_videos": []}
     pv = pinned.resolve(rows, (review.request_json or {}).get("narration"))
-    slugs = wsvc.request_workspace_slugs(request)
+    slugs = wsvc.request_member_slugs(request)
     return {
         "version_video": _pinned_video(pv.hero, slugs) if pv.hero else None,
         "cut_videos": [_pinned_video(w, slugs) for w in pv.cuts],

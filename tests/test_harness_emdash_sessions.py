@@ -608,6 +608,8 @@ def test_the_reuse_key_the_report_loop_uses_does_not_move():
     jj = _user("jj")
     runner_ws = _ws("dimagi", jj)
     agent_ws = _ws("connect", jj)
+    agent_ws.parent = runner_ws  # one organisation, as in prod: a flat feed spans one tree
+    agent_ws.save()
     Agent.objects.create(slug="ace", name="ACE", workspace=agent_ws)
     runner = _runner(jj, runner_ws)
     c = Client()
@@ -645,6 +647,8 @@ def test_the_feed_names_the_agent_and_keeps_project_meaningful():
     jj = _user("jj")
     runner_ws = _ws("dimagi", jj)
     agent_ws = _ws("connect", jj)
+    agent_ws.parent = runner_ws  # one organisation, as in prod: a flat feed spans one tree
+    agent_ws.save()
     Agent.objects.create(slug="ace", name="ACE", workspace=agent_ws)
     runner = _runner(jj, runner_ws)
     c = Client()

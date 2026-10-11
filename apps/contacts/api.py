@@ -56,7 +56,9 @@ def _visible_workspace_ids(request: HttpRequest) -> set[str]:
 
     `wsvc.request_workspace_slugs` is the single place this repo answers that
     question — pinned to one workspace on `/api/w/{ws}/…`, all memberships on
-    the flat mount. Built from it rather than hand-rolled, because a
+    the flat mount (refused with a 422 when those span more than one tenant
+    tree — a LIST must not mix organisations). `_contact_or_404` gates by id on
+    `wsvc.request_member_slugs` instead, which never refuses. Built from it rather than hand-rolled, because a
     hand-rolled tenant predicate is how this codebase grew six independent
     copies that disagreed.
     """
@@ -68,7 +70,7 @@ def _contact_or_404(request: HttpRequest, contact_id: int) -> Contact:
     is a person's identity and this API must not confirm that a given address
     is known to a tenant the caller cannot see."""
     c = Contact.objects.select_related("user").filter(pk=contact_id).first()
-    if c is None or c.workspace_id not in _visible_workspace_ids(request):
+    if c is None or c.workspace_id not in wsvc.request_member_slugs(request):
         raise ProblemError(404, "Contact not found", type_=TYPE_NOT_FOUND)
     return c
 

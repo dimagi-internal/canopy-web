@@ -106,14 +106,14 @@ def resolve_feedback(request: HttpRequest, feedback_id: int, payload: FeedbackRe
     try:
         fb = services.resolve(
             feedback_id,
-            workspace_slugs=perms.request_slugs_with(request, perms.CONTENT_WRITE),
+            workspace_slugs=perms.request_member_slugs_with(request, perms.CONTENT_WRITE),
             state=payload.state,
             note=payload.note,
             resolved_in_version=payload.resolved_in_version,
         )
     except Feedback.DoesNotExist:
         visible = Feedback.objects.filter(
-            pk=feedback_id, workspace_id__in=wsvc.request_workspace_slugs(request)
+            pk=feedback_id, workspace_id__in=wsvc.request_member_slugs(request)
         ).exists()
         if visible:
             raise HttpError(403, "recording a disposition requires the editor role in its workspace")

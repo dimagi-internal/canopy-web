@@ -22,6 +22,8 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.api.errors import ProblemError
+
 from .models import (
     Workspace,
     WorkspaceAccessRequest,
@@ -252,25 +254,171 @@ def has_role_at_least(user, workspace, minimum: str) -> bool:
     return WorkspaceMembership.ROLE_RANK.get(role, -1) >= WorkspaceMembership.ROLE_RANK[minimum]
 
 
-def request_workspace_slugs(request) -> set[str]:
-    """The workspace slugs THIS request may act within — the single place a flat
-    (`/api/…`) handler gets its tenant scope, so scoping can't drift per endpoint.
+def tree_roots(slugs) -> dict[str, str]:
+    """`{slug: root}` — the top of each workspace's tree (its organisation).
 
-    A pinned `/api/w/{ws}/…` request was already membership-checked by
-    WorkspaceResolveMiddleware, so trust that one slug. Otherwise it's the UNION of
-    the authenticated user's memberships (so a human in dimagi+connect+family sees
-    all three), and the empty set for anonymous callers.
+    One query per tree level, bounded by `MAX_DEPTH` like `ancestor_slugs`, so
+    a corrupted cycle degrades to a truncated walk rather than a hang. A slug
+    with no row is its own root (fails toward "a separate tenant")."""
+    from .models import MAX_DEPTH
 
-    Filter list querysets by `workspace_id__in=request_workspace_slugs(request)`,
-    and gate a by-id read/mutation with `obj.workspace_id in` it. This is the hard
-    tenant boundary: data outside the caller's workspaces is unreachable."""
-    pinned = getattr(request, "workspace_slug", None)
+    slugs = set(slugs)
+    parent: dict[str, str | None] = {}
+    frontier = set(slugs)
+    for _ in range(MAX_DEPTH + 1):
+        frontier -= set(parent)
+        if not frontier:
+            break
+        rows = dict(Workspace.objects.filter(slug__in=frontier).values_list("slug", "parent_id"))
+        for slug in frontier:
+            parent[slug] = rows.get(slug)
+        frontier = {p for p in rows.values() if p}
+    out: dict[str, str] = {}
+    for slug in slugs:
+        cur, seen = slug, {slug}
+        while parent.get(cur) and parent[cur] not in seen:
+            cur = parent[cur]
+            seen.add(cur)
+        out[slug] = cur
+    return out
+
+
+class WorkspaceRequired(ProblemError):
+    """422: an UNPINNED read by a caller whose workspaces span more than one
+    tenant tree. The union of their memberships would mix organisations
+    (Dimagi's work with a family's), so the read must name one.
+
+    A `ProblemError`, so a Ninja handler renders it as problem+json with no
+    try/except; the MCP tools that call the services directly turn it into a
+    `ToolError` (`apps/mcp/tools/sessions.py`)."""
+
+    TYPE = "https://canopy-web.dimagi.com/problems/workspace-required"
+
+    def __init__(self, slugs) -> None:
+        roots = tree_roots(slugs)
+        trees: dict[str, list[str]] = {}
+        for slug, root in roots.items():
+            trees.setdefault(root, []).append(slug)
+        trees = {r: sorted(v) for r, v in sorted(trees.items())}
+        listed = "; ".join(f"{r}: {', '.join(v)}" for r, v in trees.items())
+        detail = (
+            f"your workspaces span {len(trees)} organisations ({listed}), and a read "
+            "that names no workspace would mix them. Name one: /api/w/<workspace>/… "
+            "(the MCP tools take `workspace`; the canopy CLI reads CANOPY_WEB_WORKSPACE)"
+        )
+        super().__init__(422, "Workspace required", type_=self.TYPE, detail=detail,
+                         extras={"workspaces": sorted(roots), "trees": trees})
+        self.detail = detail
+
+    def __str__(self) -> str:
+        return self.detail
+
+
+def read_scope(user, pinned: str | None = None) -> set[str]:
+    """The workspaces a LIST or SEARCH may span for `user` — the read rule
+    (owner decision, Jonathan, 2026-10-11: "workspaces should need to be
+    specified — workspace confusion shouldn't be possible").
+
+    * pinned → exactly that workspace (the caller already proved membership:
+      `WorkspaceResolveMiddleware`, or the MCP `workspace` argument);
+    * unpinned, and every membership sits in ONE tree (dimagi + connect) → the
+      union, as before: within one organisation it is that org's own data;
+    * unpinned, memberships in MORE THAN ONE tree (dimagi + marshellis) →
+      `WorkspaceRequired` (422). Fails closed: nothing is guessed.
+
+    By-id reads do NOT use this — see `member_scope`. Reading an object you are
+    a member of by its id mixes nothing; a list across organisations does."""
     if pinned:
         return {pinned}
-    user = getattr(request, "user", None)
-    if user is None or not user.is_authenticated:
+    if user is None or not getattr(user, "is_authenticated", False):
+        return set()
+    slugs = user_workspace_slugs(user)
+    if len(slugs) > 1 and len(set(tree_roots(slugs).values())) > 1:
+        raise WorkspaceRequired(slugs)
+    return slugs
+
+
+def tree_scope(user, pinned: str | None = None) -> set[str]:
+    """`read_scope` for a view whose subject spans workspaces (a huddle's or a
+    thread's members live in several): every membership in ONE tree.
+
+    Pinned → the caller's memberships in the pinned workspace's tree (not just
+    the pin — a dimagi huddle has connect members). Unpinned → `read_scope`,
+    so a caller in two trees must still name one."""
+    if not pinned:
+        return read_scope(user)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return set()
+    slugs = user_workspace_slugs(user) | {pinned}
+    roots = tree_roots(slugs)
+    return {s for s in slugs if roots[s] == roots[pinned]}
+
+
+def member_scope(user, pinned: str | None = None) -> set[str]:
+    """Every workspace `user` may act within, never refused — for a BY-ID gate
+    (`obj.workspace_id in member_scope(...)`) and for system paths that are not
+    a read of tenant data (routing, runners, the workspace switcher). Pinned →
+    that workspace."""
+    if pinned:
+        return {pinned}
+    if user is None or not getattr(user, "is_authenticated", False):
         return set()
     return user_workspace_slugs(user)
+
+
+def _read_pin(request) -> str | None:
+    """The workspace a request's LIST reads are pinned to: the `/api/w/{ws}/`
+    pin, else — for a connected site acting for its visitor (a delegated token)
+    — the site's own workspace, which is the only one it may act in
+    (`apps.tokens.delegation`). A site is one tenant's; its visitor being in
+    several must not make its chat feed refuse or mix them.
+
+    The URL pin was membership-checked by `WorkspaceResolveMiddleware`; the
+    site's workspace is checked by the callers below (`_site_outsider`)."""
+    pinned = getattr(request, "workspace_slug", None)
+    if pinned:
+        return pinned
+    return getattr(getattr(request, "delegated_app", None), "workspace_id", None) or None
+
+
+def _site_outsider(request, pin: str | None) -> bool:
+    """A site pinned the read to its workspace, and its visitor is not a member
+    of it: the read reaches nothing (fails closed)."""
+    if not pin or getattr(request, "workspace_slug", None):
+        return False
+    user = getattr(request, "user", None)
+    return user is None or not getattr(user, "is_authenticated", False) or not is_member(user, pin)
+
+
+def request_workspace_slugs(request) -> set[str]:
+    """The workspace slugs a LIST or SEARCH on THIS request may span — the
+    single place a flat (`/api/…`) handler gets its tenant scope, so scoping
+    can't drift per endpoint. `read_scope` is the rule: pinned → that one;
+    unpinned → the caller's memberships when they sit in one tenant tree, else
+    a 422 (`WorkspaceRequired`) naming them; empty for anonymous callers.
+
+    Filter list querysets by `workspace_id__in=request_workspace_slugs(request)`.
+    Gate a by-id read/mutation with `obj.workspace_id in request_member_slugs(request)`
+    instead: that never refuses. Either way this is the hard tenant boundary:
+    data outside the caller's workspaces is unreachable."""
+    pin = _read_pin(request)
+    if _site_outsider(request, pin):
+        return set()
+    return read_scope(getattr(request, "user", None), pin)
+
+
+def request_member_slugs(request) -> set[str]:
+    """The by-id twin of `request_workspace_slugs`: pinned → that workspace,
+    else every membership, never refused (`member_scope`)."""
+    return member_scope(getattr(request, "user", None), getattr(request, "workspace_slug", None))
+
+
+def request_tree_slugs(request) -> set[str]:
+    """`tree_scope` for a request — see there."""
+    pin = _read_pin(request)
+    if _site_outsider(request, pin):
+        return set()
+    return tree_scope(getattr(request, "user", None), pin)
 
 
 def request_workspace_slugs_at_least(request, minimum: str) -> set[str]:
@@ -282,7 +430,8 @@ def request_workspace_slugs_at_least(request, minimum: str) -> set[str]:
     that answer, or a viewer's empty-filter clear wipes the tenant. This is the
     same scope narrowed by role, read through `has_role_at_least` so the ladder
     lives in one place. A pinned `/api/w/{ws}/` request is narrowed too: the
-    middleware checked membership, not role."""
+    middleware checked membership, not role. Refused like a list is, for a
+    caller in more than one tree who names no workspace."""
     user = getattr(request, "user", None)
     if user is None or not user.is_authenticated:
         return set()
@@ -292,11 +441,13 @@ def request_workspace_slugs_at_least(request, minimum: str) -> set[str]:
     }
 
 
-def workspace_slugs_for_user_id(user_id) -> set[str]:
-    """The workspace slugs a user (by pk) may act within — the MCP-side counterpart
-    of `request_workspace_slugs`, for tools that carry a token subject rather than a
-    request. Empty set for an unresolvable user, so a scoped query fails CLOSED
-    (sees/clears nothing) instead of falling back to global."""
+def workspace_slugs_for_user_id(user_id, workspace: str | None = None) -> set[str]:
+    """The workspace slugs a user (by pk) may LIST within — the MCP-side
+    counterpart of `request_workspace_slugs`, for tools that carry a token
+    subject rather than a request. `workspace` pins one (it must be a
+    membership, else empty). Same rule: unpinned and in more than one tree →
+    `WorkspaceRequired`. Empty set for an unresolvable user, so a scoped query
+    fails CLOSED (sees/clears nothing) instead of falling back to global."""
     if user_id is None:
         return set()
     from django.contrib.auth import get_user_model
@@ -304,7 +455,9 @@ def workspace_slugs_for_user_id(user_id) -> set[str]:
     user = get_user_model().objects.filter(pk=user_id).first()
     if user is None:
         return set()
-    return user_workspace_slugs(user)
+    if workspace:
+        return {workspace} if is_member(user, workspace) else set()
+    return read_scope(user)
 
 
 def effective_memberships(ws) -> list[WorkspaceMembership]:

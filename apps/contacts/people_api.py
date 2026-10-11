@@ -311,7 +311,8 @@ def lookup_person(request: HttpRequest, email: str, workspace: str | None = None
     if workspace or getattr(request, "workspace_slug", None):
         slugs = {_workspace(request, workspace).pk}
     else:
-        slugs = wsvc.request_workspace_slugs(request)
+        # One person by address, not a list: membership anywhere answers it.
+        slugs = wsvc.request_member_slugs(request)
     if not any(people.known_in(person, s) for s in slugs):
         raise _not_found()
     return _ref(person)

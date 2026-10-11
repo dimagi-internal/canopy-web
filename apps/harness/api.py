@@ -1754,10 +1754,13 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
 def list_unclaimable_turns(request: HttpRequest):
     """A queued turn addressed to an agent/repo nothing declares sits forever with
     no signal (one sat 12h). Surfacing it turns a silent stall into a warning."""
+    # A list: the read rule (pinned, or every membership in ONE tenant tree;
+    # a caller in two trees who names none gets a 422).
+    ws_slugs = wsvc.request_workspace_slugs(request)
     site_q = _site_turn_q(request)
     if site_q is not None:
-        return services.unclaimable_queued_turns(request.user, turn_q=site_q)
-    return services.unclaimable_queued_turns(request.user)
+        return services.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs, turn_q=site_q)
+    return services.unclaimable_queued_turns(request.user, ws_slugs=ws_slugs)
 
 
 @router.post("/turns/", response={200: TurnOut, 201: TurnOut})
@@ -1969,19 +1972,28 @@ def _check_access(request, payload: TurnIn, agent, initiator) -> None:
         raise HttpError(403, d.reason or f"{agent.slug} does not take work from you")
 
 
-def visible_turns_qs(request: HttpRequest, *, all_memberships: bool = False):
+def visible_turns_qs(request: HttpRequest, *, all_memberships: bool = False,
+                     slugs: set[str] | None = None):
     """Every turn this caller may see LISTED — the exact tenant + site filter
     `list_turns` applies, newest first. Shared so a derived view over turns (the
     huddles API) can never show a turn `/api/harness/turns/` would not. Content
     is a separate gate: rows still go through `turn_access` before their prompt
     or transcript is read.
 
-    `all_memberships` ignores a `/api/w/{ws}/` pin and spans every workspace the
-    caller belongs to — for a view whose subject itself crosses workspaces (a
-    huddle's members can live in several). It never widens past the caller's own
-    memberships: that is exactly the unpinned `/api/harness/turns/` scope."""
-    ws = None if all_memberships else getattr(request, "workspace_slug", None)
-    slugs = {ws} if ws else wsvc.user_workspace_slugs(request.user)
+    `all_memberships` widens a `/api/w/{ws}/` pin to every workspace the caller
+    belongs to IN THAT WORKSPACE'S TREE — for a view whose subject itself
+    crosses workspaces (a huddle's members can live in dimagi and connect). It
+    never widens past the caller's own memberships, nor across tenant trees.
+
+    The read rule applies (`wsvc.read_scope`): unpinned, a caller whose
+    workspaces sit in more than one tree gets a 422 rather than a list mixing
+    organisations.
+
+    `slugs` overrides the scope outright, for a by-id view that has already
+    resolved its subject's tree (`huddles.get_huddle`, `threads.get_thread`)."""
+    if slugs is None:
+        slugs = (wsvc.request_tree_slugs(request) if all_memberships
+                 else wsvc.request_workspace_slugs(request))
     qs = Turn.objects.select_related(
         "agent", "claimed_by", "initiator_user", "initiator_contact",
         # TurnOut.initiator names a system account (initiator.describe).
@@ -2033,7 +2045,12 @@ def list_turns(
     huddle: str | None = None,
     parent_turn: uuid.UUID | None = None,
 ):
-    qs = visible_turns_qs(request)
+    # `?agent=` names one agent, so the list cannot mix organisations: read it
+    # within that agent's tenant tree and need no pin (fleet surveys — Ada's
+    # `conduct`, `canopy agent health` — ask this per agent, unpinned). Without
+    # it the read rule applies (`visible_turns_qs`).
+    pinned = getattr(request, "workspace_slug", None)
+    qs = None if (agent and not pinned) else visible_turns_qs(request)
     if agent:
         # Resolve the TARGET before filtering. The tenant filter below would
         # otherwise express a permission denial as an empty list — 200 [] — which
@@ -2050,6 +2067,9 @@ def list_turns(
         # 404 rather than 403, and the same 404 for a typo, so the endpoint cannot
         # be used to enumerate which tenants' agents exist (see _agent_or_404).
         target = _agent_or_404(request, agent)
+        if qs is None:
+            qs = visible_turns_qs(
+                request, slugs=wsvc.tree_scope(request.user, target.workspace_id))
         # An email or Slack thread targets a SESSION, not the agent (enqueue_turn
         # converts it — the XOR check constraint allows only one), so the agent
         # sits on `chat_session.agent`. Filtering on `agent` alone dropped every
@@ -2078,7 +2098,7 @@ def list_sessions(request: HttpRequest):
     from apps.agents.models import Agent
     from apps.tokens import delegation
 
-    rows = services.list_visible_sessions(request.user)
+    rows = services.list_visible_sessions(request.user, wsvc.request_workspace_slugs(request))
     offered = delegation.offered_for(request)
     if offered is None:
         return rows

@@ -121,6 +121,16 @@ class RunDocDetailOut(RunDocOut):
 
 
 def _visible_agents(request):
+    """Agents a BY-ID read may reach: pinned, or every membership (never refused)."""
+    from apps.agents.models import Agent
+    from apps.workspaces import services as wsvc
+
+    return Agent.objects.filter(workspace_id__in=wsvc.request_member_slugs(request))
+
+
+def _listed_agents(request):
+    """Agents a LIST spans: the read rule — a caller in more than one tenant
+    tree must pin a workspace (422 otherwise)."""
     from apps.agents.models import Agent
     from apps.workspaces import services as wsvc
 
@@ -257,7 +267,7 @@ def list_run_docs(
     still running — what a runner resumes. ``repo_slug`` filters by the run's
     project's repo."""
     qs = AgentRun.objects.select_related("agent", "project").filter(
-        agent__in=_visible_agents(request)
+        agent__in=_listed_agents(request)
     ).exclude(ext_id__isnull=True)
     if kind:
         qs = qs.filter(kind=kind)

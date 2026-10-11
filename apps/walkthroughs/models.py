@@ -168,6 +168,6 @@ class Walkthrough(models.Model):
 
         member = (
             self.workspace_id is not None
-            and self.workspace_id in wsvc.request_workspace_slugs(request)
+            and self.workspace_id in wsvc.request_member_slugs(request)
         )
         return member or self.token_matches(request.GET.get("t"))

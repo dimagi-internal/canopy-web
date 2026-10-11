@@ -8,6 +8,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.harness.api import visible_turns_qs
+from apps.realtime.groups import turn_workspace_slug
 from apps.workspaces import services as wsvc
 
 from . import services
@@ -20,10 +21,13 @@ def _scope(request: HttpRequest):
     """(visible turns, workspaces) for a huddle read. A huddle's members can live
     in several workspaces, so a `/api/w/{ws}/huddles` read spans EVERY workspace
     the caller belongs to rather than the pinned one — never more: each turn still
-    passes the same tenant/site filter, and each cell's content `turn_access`."""
-    user = request.user
-    workspaces = wsvc.user_workspace_slugs(user) if user.is_authenticated else set()
-    return visible_turns_qs(request, all_memberships=True), workspaces
+    passes the same tenant/site filter, and each cell's content `turn_access`.
+
+    Within ONE tenant tree (`wsvc.request_tree_slugs`): a pinned read spans the
+    caller's memberships in the pin's tree, and an unpinned read by a caller in
+    more than one tree is refused (422) rather than mixing organisations."""
+    workspaces = wsvc.request_tree_slugs(request)
+    return visible_turns_qs(request, slugs=workspaces), workspaces
 
 
 @router.get("/", response=list[HuddleSummaryOut], summary="List huddles")
@@ -58,8 +62,15 @@ def get_huddle(request: HttpRequest, huddle_id: str):
     you may read that turn's content, its prompt and the member's parsed reply block
     (from its close-out, else its transcript) — plus the board tasks it produced, with
     their live status. 404 when no anchor turn you can see names this huddle."""
-    vis, workspaces = _scope(request)
-    anchor = services.anchors(vis).filter(origin_ref__huddle=huddle_id).order_by("-created_at").first()
+    # By id, so no pin is needed: find the anchor across every membership, then
+    # read the huddle within ITS tenant tree — one organisation's huddle never
+    # pulls in another's turns or tasks, whoever is asking.
+    mine = wsvc.member_scope(request.user)
+    anchor = (services.anchors(visible_turns_qs(request, slugs=mine))
+              .filter(origin_ref__huddle=huddle_id).order_by("-created_at").first())
     if anchor is None:
         raise HttpError(404, f"huddle {huddle_id!r} not found")
+    home = turn_workspace_slug(anchor)
+    workspaces = wsvc.tree_scope(request.user, home) if home else set()
+    vis = visible_turns_qs(request, slugs=workspaces)
     return services.detail(anchor, user=request.user, visible_qs=vis, workspaces=workspaces)

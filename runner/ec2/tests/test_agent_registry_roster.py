@@ -44,11 +44,15 @@ def _extract_function(name: str) -> str:
     return "\n".join(lines[start:end + 1])
 
 
-def _fake_curl(tmp: pathlib.Path, *, slugs, repos, fail=False, garbage=False) -> pathlib.Path:
+def _fake_curl(tmp: pathlib.Path, *, slugs, repos, fail=False, garbage=False,
+               trees=None) -> pathlib.Path:
     state = tmp / "state"
     state.mkdir(exist_ok=True)
     (state / "list.json").write_text(json.dumps({"items": [{"slug": s} for s in slugs]}))
     (state / "repos.json").write_text(json.dumps(repos))
+    # `trees`: {workspace: [slugs]} — the token spans several tenant trees, so
+    # the flat list answers 422 and each workspace must be named.
+    (state / "trees.json").write_text(json.dumps(trees or {}))
     curl = tmp / "bin" / "curl"
     curl.parent.mkdir(exist_ok=True)
     curl.write_text(f'''#!/usr/bin/env python3
@@ -59,6 +63,14 @@ if {fail!r}:
 url = next(a for a in sys.argv[1:] if a.startswith("http"))
 if {garbage!r}:
     print("<html>not json</html>"); raise SystemExit
+TREES = json.loads((STATE / "trees.json").read_text())
+if TREES and "/api/agents/?limit=" in url:
+    sys.exit(22)                      # 422 workspace-required, under curl -f
+if TREES and url.endswith("/api/workspaces/"):
+    print(json.dumps([{{"slug": w}} for w in TREES])); raise SystemExit
+if TREES and "/api/w/" in url and "/agents/?limit=" in url:
+    ws = url.split("/api/w/")[1].split("/")[0]
+    print(json.dumps({{"items": [{{"slug": s}} for s in TREES[ws]]}})); raise SystemExit
 if url.endswith("/runtime"):
     slug = url.rstrip("/").split("/")[-2]
     repos = json.loads((STATE / "repos.json").read_text())
@@ -121,6 +133,17 @@ def test_a_NEW_agent_needs_no_stack_change(tmp_path):
                "scout": "https://github.com/dimagi-internal/scout"},
     )
     assert "scout\thttps://github.com/dimagi-internal/scout" in out.splitlines()
+
+
+def test_a_token_in_two_tenant_trees_names_each_workspace(tmp_path):
+    """canopy-web refuses a flat list (422) when the token's workspaces span more
+    than one tenant tree (2026-10-11); the roster then asks each workspace."""
+    out = _run(
+        tmp_path, "agent_registry", "agent_registry",
+        slugs=[], repos={"ace": "u1", "nanny": "u2"},
+        trees={"dimagi": ["ace"], "marshellis": ["nanny"]},
+    )
+    assert sorted(out.splitlines()) == ["ace\tu1", "nanny\tu2"]
 
 
 @pytest.mark.parametrize("kw,env", [

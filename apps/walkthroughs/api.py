@@ -221,7 +221,7 @@ def _get_for_write(request: HttpRequest, wid: UUID) -> Walkthrough:
     not leak — a share-token holder is a reader, not a member), 403 to a member
     who may see it but not change it."""
     w = _get_or_404(wid)
-    if w.workspace_id is None or w.workspace_id not in wsvc.request_workspace_slugs(request):
+    if w.workspace_id is None or w.workspace_id not in wsvc.request_member_slugs(request):
         raise ProblemError(404, "Walkthrough not found", type_=TYPE_NOT_FOUND)
     if not _may_write(request, w):
         raise ProblemError(

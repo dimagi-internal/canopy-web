@@ -30,9 +30,12 @@ from .schemas import FailureInvestigationOut, InvestigationStatus, ResolveInvest
 router = Router(auth=session_auth, tags=["harness"])
 
 
-def _visible_slugs(request: HttpRequest) -> set[str]:
-    return {s for s in wsvc.request_workspace_slugs(request)
-            if auto_debug.can_handle(request.user, s)}
+def _visible_slugs(request: HttpRequest, *, listing: bool = False) -> set[str]:
+    """Where the caller may handle investigations. A LIST takes the read rule
+    (`wsvc.request_workspace_slugs`: a caller in two tenant trees must pin
+    one); a by-id gate takes every membership."""
+    scope = wsvc.request_workspace_slugs(request) if listing else wsvc.request_member_slugs(request)
+    return {s for s in scope if auto_debug.can_handle(request.user, s)}
 
 
 def _investigation_or_404(request: HttpRequest, investigation_id: int) -> FailureInvestigation:
@@ -50,7 +53,7 @@ def list_failure_investigations(request: HttpRequest, status: InvestigationStatu
     agent, newest first. `status`: open (a debug turn has it), held (the rate cap
     stopped its turn; it rides along in the next one), debugger_failed (its debug
     turn failed), resolved, escalated (it came back after a fix)."""
-    qs = FailureInvestigation.objects.filter(workspace_id__in=_visible_slugs(request))
+    qs = FailureInvestigation.objects.filter(workspace_id__in=_visible_slugs(request, listing=True))
     if status:
         qs = qs.filter(status=status)
     return paginate(qs.order_by("-last_seen", "-id"), offset=max(0, offset), limit=clamp_limit(limit))

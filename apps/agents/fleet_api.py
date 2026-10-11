@@ -13,7 +13,7 @@ from apps.api.auth import session_auth
 from apps.api.pagination import DEFAULT_LIMIT_CAP, clamp_limit
 
 from . import services
-from .api import _visible_agent_workspace_ids
+from .api import _listed_agent_workspace_ids
 from .models import AgentProject, AgentTask
 from .schemas import AgentProjectOut, AgentTaskOut
 
@@ -37,7 +37,7 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
     # Scope FIRST: `filter_tasks(waiting="me")` adds unrouted open asks from
     # whatever queryset it is handed, so an unscoped one would leak other
     # tenants' asks into the inbox.
-    qs = AgentTask.objects.filter(agent__workspace_id__in=_visible_agent_workspace_ids(request))
+    qs = AgentTask.objects.filter(agent__workspace_id__in=_listed_agent_workspace_ids(request))
     if agent:
         qs = qs.filter(agent__slug=agent)
     qs = services.filter_tasks(qs.select_related("agent", "project", "waiting_on_user", "parent")
@@ -53,7 +53,7 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
 def list_fleet_projects(request: HttpRequest, status: str = "active",
                         repo_slug: str = "") -> list[AgentProjectOut]:
     """Active by default; `status=` (empty for all) and `repo_slug=` narrow it."""
-    qs = AgentProject.objects.filter(agent__workspace_id__in=_visible_agent_workspace_ids(request))
+    qs = AgentProject.objects.filter(agent__workspace_id__in=_listed_agent_workspace_ids(request))
     if status:
         qs = qs.filter(status=status)
     if repo_slug:

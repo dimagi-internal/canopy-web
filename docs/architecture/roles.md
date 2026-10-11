@@ -61,6 +61,49 @@ agents, which is precisely what a division workspace exists to prevent.
   and its new parent. Cycles are refused on save (422 over the API).
 - A workspace with children cannot be deleted (409, naming them).
 
+## A read that names no workspace stays inside one organisation
+
+Owner decision (Jonathan, 2026-10-11): *"Workspaces should need to be specified — workspace
+confusion shouldn't be possible."* A second ROOT workspace (`marshellis`, a family) now sits
+beside the `dimagi` tree, and a caller in both — ada@, Jonathan — used to get the **union** of
+every membership from any flat `/api/…` list or MCP tool called without `workspace`, so family
+rows landed in Dimagi work. Writes were fixed on 2026-10-08 (canopy-web#1289,
+`creation_workspace`); reads follow the same principle.
+
+**The rule** (`services.read_scope`, reached through `request_workspace_slugs`):
+
+| Request | Scope of a list / search |
+|---|---|
+| pinned — `/api/w/<ws>/…`, or the MCP `workspace` argument | that workspace (unchanged) |
+| unpinned, every membership in ONE tree (`dimagi` + `connect`) | the union, as before — one org's own data |
+| unpinned, memberships in MORE THAN ONE tree (`dimagi` + `marshellis`) | **422** `workspace-required`, naming the caller's workspaces grouped by tree |
+| unpinned, a connected site acting for its visitor (delegated token) | the site's own workspace — a site is one tenant's |
+
+A tree is a root and everything under it (`services.tree_roots`; `WorkspaceOut.root` carries
+it to clients). The rule fails closed: nothing is guessed.
+
+**What it does not touch:**
+
+- **By-id reads.** Opening one object you belong to mixes nothing, so gates of the form
+  `obj.workspace_id in …` read `request_member_slugs` / `member_scope` (every membership,
+  never refused). A huddle or thread opened by id reads within *its own* tree
+  (`tree_scope(user, <its workspace>)`).
+- **Who you are and where you are** — `/api/me/`, `GET /api/workspaces/` (the switcher),
+  invites and access requests, "my memory" (`people/me`, `hcp_collections.contexts`).
+- **The fleet's plumbing** — runner heartbeat, claim, schedule sync, mailbox probe
+  (`runner_tenant_slugs`, `inbound.runner_mailboxes`), the runner list (`_runner_read_q`),
+  routing, the per-user MCP agent-tool registry, and the realtime supervisor socket.
+
+Lists that span one org's workspaces on purpose (huddles, threads, the shared-sessions feed)
+use `tree_scope`: pinned, they span the caller's memberships in the pin's tree; unpinned, they
+take the rule above.
+
+The web client mirrors it: when the caller's workspaces have more than one `root`, every flat
+call is pinned to the active workspace (the URL's `/w/<ws>/`, else the default one).
+
+A stricter rule — *every* unpinned list refused, even inside one tree — is a possible
+follow-up; it would break every flat-route client in the Dimagi fleet today.
+
 ## The first tier has no account at all
 
 The genuinely read-only role is **not** a membership role — it is having a link and no

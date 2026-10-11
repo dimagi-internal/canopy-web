@@ -102,6 +102,10 @@ function isPublicLinkRoute(): boolean {
 export const apiV2 = createClient<paths>({
   baseUrl: API_BASE,
   credentials: "same-origin",
+  // Late-bound: openapi-fetch would otherwise capture `globalThis.fetch` at
+  // import time, before main.tsx installs the workspace retry
+  // (./workspaceRetry) on it.
+  fetch: (request: Request) => globalThis.fetch(request),
 });
 
 // Workspace-scoped apps: when the browser is under a tenant route (/w/:ws/…),
