@@ -206,6 +206,7 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
                 dimension: str | None = None, confidence: str | None = None,
                 provenance_source: str = "", expires_at=None, relationship: str = "",
                 metadata: dict | None = None, user_verified: bool = False,
+                provenance_site: dict | None = None,
                 captured_by: str = "", reason: str = "", actor=None,
                 status: str = PersonFact.ACTIVE, audit_event: str | None = None,
                 audit_detail: str = "", check_conflicts: bool = True) -> PersonFact:
@@ -278,6 +279,12 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
         entry_id=entry_id, version=version, category=category,
         dimension=hcp.normalize_dimension(dimension), confidence=confidence, status=status,
         provenance_source=(provenance_source or "")[:200], expires_at=expires_at,
+        # The site an agent was reached through when it recorded this (canopy's
+        # provenance extension); a version written outside a turn keeps its own.
+        provenance_site=(provenance_site if provenance_site is not None
+                         else hcp.site_of(source_turn) if source_turn is not None
+                         else dict(supersedes.provenance_site or {}) if supersedes is not None
+                         else {}),
         relationship=(relationship or "")[:80], metadata=dict(metadata or {}),
         user_verified=bool(user_verified), captured_by=(captured_by or actor.id)[:200],
         reason=(reason or "")[:300],
@@ -402,11 +409,18 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         if record:
             write_grant = hcp.grant_for(person, agent=agent, session=session, action="write")
         if read_grant is not None:
-            facts, _, _ = hcp.search(person, workspace_slug=workspace_slug,
-                                     query=turn.prompt or "",
-                                     categories=hcp.categories_for(read_grant, "read"),
-                                     purpose=ENVELOPE_PURPOSE, max_entries=ENVELOPE_FACTS,
-                                     grant=read_grant, actor=hcp.agent_actor(agent), turn=turn)
+            # Everywhere the person let this agent reach (4.1.5.1): its own
+            # workspace first, then the rest of its organisation, then personal.
+            for slug in sorted(hcp.reach_of(read_grant),
+                               key=lambda s: (s != workspace_slug, s is None, s or "")):
+                if len(facts) >= ENVELOPE_FACTS:
+                    break
+                found, _, _ = hcp.search(person, workspace_slug=slug, query=turn.prompt or "",
+                                         categories=hcp.categories_for(read_grant, "read"),
+                                         purpose=ENVELOPE_PURPOSE,
+                                         max_entries=ENVELOPE_FACTS - len(facts),
+                                         grant=read_grant, actor=hcp.agent_actor(agent), turn=turn)
+                facts.extend(found)
     if read_grant is not None:
         # "Did the brain have anything to say", recorded NOW, for the coverage
         # metric (`apps/contacts/coverage.py`). Only a read is logged: without use
@@ -431,7 +445,10 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         # for what is on), how to recall more (only with use granted), and how to
         # record (only with record granted).
         "grant": ({"id": f"urn:uuid:{grant.grant_id}", "client": grant.client_name,
-                   "scopes": list(grant.scopes or [])} if grant is not None else None),
+                   "scopes": list(grant.scopes or []),
+                   "restrictions": list(grant.restrictions or []),
+                   "reach": hcp.reach_label(hcp.grant_sources(grant))}
+                  if grant is not None else None),
         "recall": ({"tool": "hcp_searchPreferences", "turn": str(turn.pk),
                     "categories": hcp.categories_for(read_grant, "read"),
                     "hint": "Only the entries relevant to the message are above. To recall "

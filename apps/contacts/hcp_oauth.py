@@ -74,7 +74,7 @@ PENDING_TTL = dt.timedelta(minutes=15)
 ACCESS_PREFIX, REFRESH_PREFIX, CODE_PREFIX = "hcpat_", "hcprt_", "hcpac_"
 MODALITY = "oauth2-authorization-code (canopy consent page: allow, then a separate keep-access question)"
 #: The source a grant restriction names for the person's personal entries.
-PERSONAL = "personal"
+PERSONAL = hcp.PERSONAL_SOURCE
 #: 4.2.3: at least 5 attempts over at least an hour. The waits between attempts;
 #: after the last wait's attempt fails, the delivery is abandoned — 6 attempts
 #: spanning about 1 h 51 min.
@@ -462,18 +462,10 @@ def authenticate_access(raw: str) -> HcpToken | None:
 
 def sources_of(grant: PersonGrant) -> set | None:
     """The workspaces (None = personal) an OAuth grant reaches; None for a
-    first-party grant (which reaches its own workspace, as before)."""
+    first-party grant (`hcp.reach_of` answers for both kinds)."""
     if not grant.hcp_client_id:
         return None
-    reach: set | None = None
-    for r in grant.restrictions or []:
-        named = (r.get("narrowedTo") or {}).get("sources")
-        if named is None:
-            continue
-        these = {None if n == PERSONAL else n.split(":", 1)[1]
-                 for n in named if n == PERSONAL or str(n).startswith("workspace:")}
-        reach = these if reach is None else reach & these
-    return reach if reach is not None else {None}
+    return hcp.reach_of(grant)
 
 
 #: HCP 3.4.5: an OAuth client's calls to /api/hcp/v1/, per client, per minute. A 429

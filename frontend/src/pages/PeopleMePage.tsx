@@ -13,6 +13,7 @@ import {
   setMyAgentMemory,
 } from '../api/people'
 import type { HcpAuditEvent, HcpGrant, PersonFactDetail, PersonMe } from '../api/people'
+import { MemorySettings } from './MemorySettings'
 
 /** The person's two agent-memory features, each with a canopy-level "available"
  *  and "on by default in new sessions". These are POLICY: they grant no agent
@@ -36,6 +37,8 @@ const MEMORY_SWITCHES = [
 /** 4.1.5.1 Rule 3: show a narrowed grant as narrowed — which of your entries an
  *  app's grant reaches (your personal ones, plus any workspace you ticked). */
 function reachOf(g: HcpGrant): string {
+  // An agent's grant: canopy names its reach in words (e.g. "your Dimagi memory (all divisions)").
+  if (g.canopy.reach) return g.canopy.reach
   const sources = new Set<string>()
   for (const r of g.restrictions as { narrowedTo?: { sources?: string[] } }[]) {
     for (const src of r.narrowedTo?.sources ?? []) sources.add(src)
@@ -46,8 +49,18 @@ function reachOf(g: HcpGrant): string {
     .join(' and ')
 }
 
-/** "What agents know about me" — every live fact canopy holds about you, by
- *  workspace; which clients (an agent, over a channel, on a host) may read it,
+/** Where an entry came from, in a person's words: "learned by Hal on connect-labs ·
+ *  Oct 9" (the site is canopy's provenance extension, `record.provenance.site`). */
+function learnedLine(f: PersonFactDetail): string {
+  const when = f.created_at ? new Date(f.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''
+  const site = (f.provenance_site as { name?: string } | undefined)?.name
+  if (f.learned_by) return `learned by ${f.learned_by}${site ? ` on ${site}` : ''}${when ? ` · ${when}` : ''}`
+  if (!f.workspace) return `added by you${when ? ` · ${when}` : ''}`
+  return `${f.asserted_by ? `by ${f.asserted_by}` : f.basis}${when ? ` · ${when}` : ''}`
+}
+
+/** "What agents know about me" — every live fact canopy holds about you, in one
+ *  list; which clients (an agent, over a channel, on a host) may read it,
  *  each revocable; and your audit log of every read and change. You can
  *  retract any fact. Fleet brain v1 (canopy#804), on HCP v1 (hcp_api.py). */
 export function PeopleMePage() {
@@ -199,20 +212,15 @@ export function PeopleMePage() {
 
   const allFacts = me.facts ?? []
 
-  // A personal entry (no workspace) is grouped first, under "Personal".
-  const PERSONAL = ''
-  const keyOf = (f: PersonFactDetail) => f.workspace ?? PERSONAL
-  const workspaces = Array.from(new Set(allFacts.map(keyOf))).sort()
-
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Your memory</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {me.display_name}
-          {me.email ? ` · ${me.email}` : ''}. When you talk to an agent, it is handed the few facts
-          relevant to what you asked — only within the workspace they were written in — and can
-          look up more while it works. Retract anything that is wrong. A fact marked{' '}
+          {me.email ? ` · ${me.email}` : ''}. When you talk to an agent you allowed, it is handed the
+          few facts relevant to what you asked from its organisation&apos;s memory, and can look up
+          more while it works. Retract anything that is wrong. A fact marked{' '}
           <em>conflicted</em> is something an agent guessed that contradicts what you said; agents
           are not told it until you correct or retract it.
         </p>
@@ -275,8 +283,8 @@ export function PeopleMePage() {
       <form onSubmit={onAdd} aria-label="Add something about yourself" className="rounded-lg border border-border px-4 py-3">
         <div className="text-sm font-semibold text-foreground">Add something about yourself</div>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Saved as a personal entry: yours, in no workspace. Agents in your workspaces are not told it;
-          you, and any app you allow below, are.
+          Saved to your personal memory. Agents are not told it unless you let them use your personal
+          memory (More settings); you, and any app you allow below, are.
         </p>
         <div className="mt-2 flex flex-col gap-2 sm:flex-row">
           <select
@@ -309,67 +317,47 @@ export function PeopleMePage() {
         </div>
       </form>
 
-      {workspaces.length === 0 && (
+      {allFacts.length === 0 ? (
         <p className="text-muted-foreground">Nothing yet — nothing has been recorded about you.</p>
+      ) : (
+        <section aria-label="Your memory" className="rounded-lg border border-border">
+          <ul className="divide-y divide-border">
+            {allFacts.map((f) => (
+              <li key={f.id} className="flex items-start gap-3 px-4 py-3 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="text-foreground">{f.statement}</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {f.status && f.status !== 'active' ? (
+                      <span className="mr-1 rounded bg-destructive/10 px-1 text-destructive">{f.status}</span>
+                    ) : null}
+                    {learnedLine(f)}
+                    {f.confidence ? ` · ${f.confidence} confidence` : ''}
+                    {f.project ? ` · ${f.project.title}` : ''}
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-3">
+                  {f.entry_id && (
+                    <button
+                      className="text-primary hover:underline disabled:opacity-50"
+                      disabled={busy === f.id}
+                      onClick={() => onCorrect(f)}
+                    >
+                      Correct
+                    </button>
+                  )}
+                  <button
+                    className="text-destructive hover:text-destructive/80 disabled:opacity-50"
+                    disabled={busy === f.id}
+                    onClick={() => onRetract(f)}
+                  >
+                    Retract
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
-
-      {workspaces.map((ws) => {
-        const facts = allFacts.filter((f) => keyOf(f) === ws)
-        return (
-          <section key={ws} className="rounded-lg border border-border">
-            <h2 className="border-b border-border px-4 py-2 text-sm font-semibold text-foreground">
-              {ws === PERSONAL ? 'Personal — yours, in no workspace' : ws}
-            </h2>
-            {facts.length === 0 ? (
-              <p className="px-4 py-3 text-sm text-muted-foreground">No facts.</p>
-            ) : (
-              <ul className="divide-y divide-border">
-                {facts.map((f) => (
-                  <li key={f.id} className="flex items-start gap-3 px-4 py-3 text-sm">
-                    <span className="mt-0.5 shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      {f.kind}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-foreground">{f.statement}</div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">
-                        {f.status && f.status !== 'active' ? (
-                          <span className="mr-1 rounded bg-destructive/10 px-1 text-destructive">
-                            {f.status}
-                          </span>
-                        ) : null}
-                        {f.basis}
-                        {f.confidence ? ` (${f.confidence} confidence)` : ''}
-                        {f.asserted_by ? ` · by ${f.asserted_by}` : ''}
-                        {f.project ? ` · ${f.project.title}` : ''}
-                        {f.instance_ref ? ` · ${f.instance_ref}` : ''}
-                        {f.created_at ? ` · ${new Date(f.created_at).toLocaleDateString()}` : ''}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 gap-3">
-                      {f.entry_id && (
-                        <button
-                          className="text-primary hover:underline disabled:opacity-50"
-                          disabled={busy === f.id}
-                          onClick={() => onCorrect(f)}
-                        >
-                          Correct
-                        </button>
-                      )}
-                      <button
-                        className="text-destructive hover:text-destructive/80 disabled:opacity-50"
-                        disabled={busy === f.id}
-                        onClick={() => onRetract(f)}
-                      >
-                        Retract
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )
-      })}
 
       <section>
         <h2 className="text-sm font-semibold text-foreground">Who can read it</h2>
@@ -420,6 +408,8 @@ export function PeopleMePage() {
           </ul>
         )}
       </section>
+
+      <MemorySettings grants={grants} onChanged={load} />
 
       <section>
         <div className="flex items-center justify-between">

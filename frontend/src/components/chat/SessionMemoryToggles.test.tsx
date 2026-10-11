@@ -114,12 +114,13 @@ describe('SessionMemoryToggles', () => {
 
   it('asks the person — agent, categories, actions, duration — before anything is granted', async () => {
     getSessionMemory.mockResolvedValue({
-      session_id: 's1', agent: ADA, categories: CATS, session_grant_hours: 24,
+      session_id: 's1', agent: ADA, categories: CATS, session_grant_hours: 24, org: 'Dimagi',
       record: feature(true, true, null, false), use: feature(false, false),
     })
     render(<SessionMemoryToggles sessionId="s1" />)
     const dialog = await screen.findByRole('dialog', { name: 'Grant Ada access' })
-    expect(dialog.textContent).toContain('add what it learns to your memory')
+    expect(dialog.textContent).toContain('Ada would like to learn from you')
+    expect(dialog.textContent).toContain("What it learns helps Dimagi's agents help you next time.")
     expect(dialog.textContent).toContain('work context, general preferences · write · for this conversation only')
     expect(screen.getByText('Learn from me: on, not granted')).toBeTruthy()
     expect(grantSessionAgent).not.toHaveBeenCalled() // nothing preselected or sent

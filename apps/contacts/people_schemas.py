@@ -38,6 +38,10 @@ class PersonFactDetailOut(PersonFactOut):
                                                             "null for a personal entry.")
     asserted_by: str = Field(default="", description="The agent slug or the person's email that asserted it.")
     source_turn_id: str | None = None
+    learned_by: str = Field(default="", description="The agent's name, when an agent recorded it.")
+    provenance_site: dict = Field(default_factory=dict,
+                                  description="The connected site the agent was reached through "
+                                              "when it recorded this — {name, page?} — or {}.")
 
 
 class PersonRefOut(StrictModel):
@@ -86,6 +90,7 @@ class SessionGrantOut(StrictModel):
     grant_id: str
     type: str = Field(description="temporary (this session) | persistent (always, until revoked).")
     expires_at: str | None = None
+    reach: str = Field(default="", description="The part of your memory it reaches, in words.")
 
 
 class SessionFeatureOut(StrictModel):
@@ -114,6 +119,10 @@ class SessionMemoryOut(StrictModel):
     agent: SessionAgentOut | None = Field(default=None, description="The agent a grant here goes to.")
     categories: list[str] = Field(default_factory=list,
                                   description="The categories a grant covers (shown before you grant).")
+    reach: str = Field(default="", description="What a grant here would reach, in words — by "
+                                               "default the agent's organisation, all divisions "
+                                               "(HCP 4.1.5.1). Derived, never chosen here.")
+    org: str = Field(default="", description="The organisation the agent serves, e.g. 'Dimagi'.")
     session_grant_hours: int = Field(default=24, description="A 'for this session' grant lasts at "
                                                              "most this long, or until the session ends.")
 
@@ -123,6 +132,54 @@ class AgentGrantIn(StrictModel):
     duration: str = Field(description="session (temporary, this session only) | always (this "
                                       "agent, until you revoke it).")
     surface: str = Field(default="chat", description="chat | widget — where you gave it.")
+
+
+class MemoryContextOut(StrictModel):
+    source: str = Field(description="personal | tree:<organisation>")
+    label: str
+
+
+class MemoryCollectionUserOut(StrictModel):
+    grant_id: str
+    agent: str
+    name: str
+    type: str
+
+
+class MemoryCollectionOut(StrictModel):
+    """A named set of contexts you can point an agent at."""
+
+    id: int
+    name: str
+    sources: list[str]
+    reach: str = Field(description="What it holds, in words.")
+    used_by: list[MemoryCollectionUserOut] = Field(default_factory=list)
+    updated_at: str | None = None
+
+
+class MemoryCollectionsOut(StrictModel):
+    collections: list[MemoryCollectionOut] = Field(default_factory=list)
+    contexts: list[MemoryContextOut] = Field(default_factory=list,
+                                             description="What a collection of yours may hold.")
+
+
+class MemoryCollectionIn(StrictModel):
+    name: str
+    sources: list[str] = Field(description="personal and/or tree:<organisation> (see contexts).")
+
+
+class MemoryCollectionUpdateIn(StrictModel):
+    name: str | None = None
+    sources: list[str] | None = None
+    confirm_widening: list[str] | None = Field(
+        default=None, description="Adding a context lets the agents using this reach more: list "
+                                  "the grants the refusal named to confirm.")
+
+
+class GrantCollectionIn(StrictModel):
+    collection_id: int | None = Field(description="One of your collections; null = the agent's "
+                                                  "default (its own organisation).")
+    confirm_widening: list[str] | None = None
 
 
 class PersonMeOut(PersonRefOut):

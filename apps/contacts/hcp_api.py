@@ -310,13 +310,11 @@ def _workspace_for_write(p: Principal, explicit: str | None):
 
 
 def _search_workspace(p: Principal, explicit: str | None) -> list[str | None]:
-    """Where a search looks: an agent, its workspace; the person, the one they
-    name, else everywhere they have entries (None = their personal entries)."""
-    if p.client is not None:
-        from . import hcp_oauth
-
-        reach = hcp_oauth.sources_of(p.grant) or {None}
-        return sorted(reach, key=lambda s: (s is not None, s or ""))
+    """Where a search looks: an agent or app, everywhere its grant reaches
+    (`hcp.reach_of`); the person, the one they name, else everywhere they have
+    entries (None = their personal entries)."""
+    if p.grant is not None and not p.actor.is_person:
+        return sorted(hcp.reach_of(p.grant), key=lambda s: (s is not None, s or ""))
     if not p.actor.is_person:
         return [p.workspace_slug]
     if explicit:

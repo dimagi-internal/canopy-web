@@ -33,8 +33,18 @@ function personSource(sessionId: string): SessionMemorySource {
 
 /** What a grant lets the agent do, in plain words — shown BEFORE the person acts. */
 const ASKS: Record<MemoryFeature, string> = {
-  record: 'add what it learns to your memory',
-  use: 'read your memory to help you',
+  record: 'learn from you',
+  use: 'use your memory',
+}
+
+/** Why it matters, naming the organisation the agent serves — its reach is that
+ *  organisation's memory, derived, never chosen here (HCP 4.1.5.1). */
+function because(features: MemoryFeature[], org: string): string {
+  const agents = org ? `${org}'s agents` : 'agents'
+  if (features.includes('record') && features.includes('use'))
+    return `It can use what ${agents} have learned, and what it learns helps them help you next time.`
+  if (features.includes('record')) return `What it learns helps ${agents} help you next time.`
+  return `It can use what ${agents} have learned about you.`
 }
 const ACTIONS: Record<MemoryFeature, string> = { record: 'write', use: 'read' }
 
@@ -80,8 +90,9 @@ function GrantPrompt({
   return (
     <div role="dialog" aria-label={`Grant ${name} access`} className={PROMPT}>
       <p className="text-foreground">
-        Let <strong>{name}</strong> {asks}?
+        <strong>{name}</strong> would like to {asks}
       </p>
+      <p className="mt-0.5 text-foreground">{because(features, state.org ?? '')}</p>
       <p className="mt-0.5 text-muted-foreground">
         {(state.categories ?? []).map(pretty).join(', ')} · {actions} · for this conversation only,
         until {until(hours)} or when it ends. Only {name} — other agents ask separately.

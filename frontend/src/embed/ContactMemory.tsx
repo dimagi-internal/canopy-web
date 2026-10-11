@@ -94,8 +94,9 @@ export function ContactMemory({
     return (
       <div role="dialog" aria-label="Let canopy learn from you" className={PANEL}>
         <p className="text-foreground">
-          Let <strong>{agentName}</strong> learn from you in this conversation?
+          <strong>{agentName}</strong> would like to learn from you
         </p>
+        <p className="mt-0.5 text-foreground">What it learns helps {agentName} help you next time.</p>
         <p className="mt-0.5 text-muted-foreground">
           canopy would start a memory for you: short facts about your work —{' '}
           {state.categories.map(pretty).join(', ')} — from what you say to {agentName}, under{' '}

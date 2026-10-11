@@ -590,6 +590,10 @@ class PersonFact(models.Model):
     provenance_source = models.CharField(max_length=200, blank=True, default="")
     #: `record.provenance.capturedBy` — the agent, and for an inference the model.
     captured_by = models.CharField(max_length=200, blank=True, default="")
+    #: `record.provenance.site` (canopy's extension; never affects scope): the
+    #: connected site the agent was reached through when it recorded this —
+    #: `{"name": <site>, "page": <path>}` — or {} when it was not (canopy itself).
+    provenance_site = models.JSONField(default=dict, blank=True)
     #: `claim.expirationDate`; past it the entry is not served.
     expires_at = models.DateTimeField(null=True, blank=True)
     #: `claim.subject.relationship` — reserved; confers nothing (HCP 2.2).
@@ -734,6 +738,11 @@ class PersonGrant(models.Model):
     client_name = models.CharField(max_length=200)
     scopes = models.JSONField(default=list)
     restrictions = models.JSONField(default=list, blank=True)
+    #: The person's memory collection this grant's reach comes from (named in its
+    #: restriction as `collection:<id>` beside the resolved sources). NULL = the
+    #: agent's default reach, its own organisation.
+    collection = models.ForeignKey("contacts.MemoryCollection", on_delete=models.PROTECT,
+                                   null=True, blank=True, related_name="grants")
     grant_type = models.CharField(max_length=12, default=PERSISTENT)
     #: Who authorized it when not the person (HCP 4.1.5 `grantor`); "" = the person.
     grantor = models.CharField(max_length=200, blank=True, default="")
@@ -779,6 +788,11 @@ class PersonAuditEvent(models.Model):
         "agentUse.defaultOn", "agentUse.defaultOff",
         "sessionRecord.on", "sessionRecord.off", "sessionRecord.inherit",
         "sessionUse.on", "sessionUse.off", "sessionUse.inherit",
+        # A memory collection (`MemoryCollection`) made, changed or removed by the
+        # person; `grant.narrowed` = a grant's reach shrank in place because they
+        # took a source out of the collection it uses (or moved it to a smaller
+        # one). A widening is always a `grant.issued`.
+        "collection.created", "collection.updated", "collection.deleted", "grant.narrowed",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 
@@ -835,6 +849,26 @@ class SessionAgentMemory(models.Model):
         db_table = "contact_session_agent_memory"
         constraints = [models.UniqueConstraint(fields=["session", "person"],
                                                name="session_agent_memory_once")]
+
+
+class MemoryCollection(models.Model):
+    """A named reach the person builds out of CONTEXTS — organisations they belong
+    to (`tree:<root>`) and `personal` — and points agents at, to let them reach
+    more (or less) than their default, their own organisation. Only the person
+    edits it (`/api/people/me/memory-collections/`). Editing one re-resolves every
+    live grant using it: adding a source is a widening and needs their explicit
+    confirmation naming the grants affected; removing one applies at once
+    (`hcp_collections`). Prompts never mention collections."""
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="memory_collections")
+    name = models.CharField(max_length=80)
+    sources = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "contact_memory_collections"
+        ordering = ["name", "pk"]
 
 
 class HcpIdempotencyKey(models.Model):

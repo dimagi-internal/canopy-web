@@ -25,6 +25,7 @@ the turn envelope apply the same one.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import re
 import uuid
@@ -485,13 +486,30 @@ def subject_id(person: Person) -> str:
     return f"did:hcp:user:canopy-person-{person.pk}"
 
 
+def site_of(turn) -> dict:
+    """The connected site a turn's session came through — its server-owned
+    `embed_app` (from the token that created it, never the page) and the page it
+    was on — or {} for a conversation in canopy itself."""
+    session = session_of(turn) if turn is not None else None
+    name = ((session.metadata or {}).get("embed_app") or "") if session is not None else ""
+    if not name:
+        return {}
+    page = str((session.page_state or {}).get("path") or "")[:300]
+    return {"name": str(name)[:100], **({"page": page} if page else {})}
+
+
 def to_entry(fact: PersonFact, *, redact: bool) -> dict:
-    """The grouped Common Envelope (2.2). `redact` drops the 4.4.4 fields."""
+    """The grouped Common Envelope (2.2). `redact` drops the 4.4.4 fields.
+    `provenance.site` is canopy's extension (the site an agent was reached
+    through); it never affects scope, and is redacted with the 4.4.4 fields."""
     provenance = {"source": provenance_source(fact), "capturedAt": _iso(fact.created_at),
                   "capturedBy": captured_by(fact), "userVerified": bool(fact.user_verified)}
+    if fact.provenance_site:
+        provenance["site"] = dict(fact.provenance_site)
     if redact:
         provenance.pop("source")
         provenance.pop("capturedBy")
+        provenance.pop("site", None)
     record = {
         "category": fact.category,
         "dimension": fact.dimension or None,
@@ -894,19 +912,192 @@ def granted(person: Person, agent, session=None) -> dict:
     return {f: f in have for f in FEATURES}
 
 
-def _disclosure(agent, features, duration: str, expires_at) -> str:
+#: 4.1.5.1 `narrowedTo.sources` values: the person's personal entries, one
+#: workspace's, or every workspace in an organisation's tree (its root and all its
+#: divisions, as they are when the grant is used — a new division is covered
+#: without a new grant).
+#:
+#: Reach is DERIVED from the relationship, never ticked in a prompt (Jonathan,
+#: 2026-10-11: an agent serving me in another division "should have my Dimagi-wide
+#: context and even personal context if I give it"). The building blocks are
+#: CONTEXTS — an organisation (`tree:<root>`) and `personal` (what the person adds
+#: themselves); a site is not one. A first-party agent's grant reaches its own
+#: organisation's whole tree by default. To reach more (personal, say) the person
+#: points that agent at one of their memory collections (`hcp_collections`), and
+#: the grant then names `collection:<id>` plus the collection's sources.
+PERSONAL_SOURCE = "personal"
+COLLECTION_PREFIX = "collection:"
+
+
+def workspace_source(slug: str) -> str:
+    return f"workspace:{slug}"
+
+
+def tree_source(root: str) -> str:
+    return f"tree:{root}"
+
+
+def root_of(slug: str | None) -> str | None:
+    """The top of `slug`'s workspace tree (the organisation)."""
+    if slug is None:
+        return None
+    from apps.workspaces.models import Workspace
+
+    ws = Workspace.objects.filter(pk=slug).first()
+    if ws is None:
+        return slug
+    ancestors = ws.ancestor_slugs()
+    return ancestors[-1] if ancestors else ws.slug
+
+
+def tree_slugs(root: str) -> set[str]:
+    from apps.workspaces.services import descendant_slugs
+
+    return {root} | descendant_slugs({root})
+
+
+def agent_sources(agent) -> list[str]:
+    """The default reach of a grant to `agent`: its OWN organisation's tree —
+    every division, never another organisation's, never personal."""
+    return [tree_source(root_of(agent.workspace_id))]
+
+
+def org_name(agent) -> str:
+    """The display name of the organisation an agent serves ("Dimagi")."""
+    return _display_name(root_of(agent.workspace_id))
+
+
+def collection_sources(collection) -> list[str]:
+    """What a grant using `collection` names: the collection, then what it holds
+    as resolved now (4.1.5.1 Rule 3 — the object says what it reaches)."""
+    return [f"{COLLECTION_PREFIX}{collection.pk}", *collection.sources]
+
+
+def default_reach(person: Person, agent) -> tuple[list[str], object]:
+    """(sources, collection) a new grant to `agent` carries: the collection the
+    person pointed this agent at (on its kept grant), else the default."""
+    kept = _live(person, agent, key=_agent_key(agent), grant_type=PersonGrant.PERSISTENT)
+    if kept is not None and kept.collection_id and kept.collection is not None:
+        return collection_sources(kept.collection), kept.collection
+    return agent_sources(agent), None
+
+
+def restrictions_for(scopes: list[str], sources: list[str]) -> list[dict]:
+    """4.1.5.1 Rule 3: every scope narrowed to the sources, so the grant object
+    never reads as more than it reaches."""
+    return [{"scope": s, "narrowedTo": {"sources": list(sources)}} for s in scopes]
+
+
+def named_sources(grant: PersonGrant) -> list[str] | None:
+    """The sources a grant's restrictions name (the first that names any; every
+    scope of a grant canopy issues names the same ones), or None for none."""
+    for r in grant.restrictions or []:
+        named = (r.get("narrowedTo") or {}).get("sources")
+        if named is not None:
+            return [str(n) for n in named]
+    return None
+
+
+def _expand(sources) -> set:
+    out: set = set()
+    for n in sources:
+        n = str(n)
+        if n == PERSONAL_SOURCE:
+            out.add(None)
+        elif n.startswith("workspace:"):
+            out.add(n.split(":", 1)[1])
+        elif n.startswith("tree:"):
+            out |= tree_slugs(n.split(":", 1)[1])
+        # `collection:<id>` names where the sources came from; it reaches nothing itself.
+    return out
+
+
+def reached(sources) -> set:
+    """The workspaces (None = personal) a list of sources reaches."""
+    return _expand(sources)
+
+
+def reach_of(grant: PersonGrant) -> set:
+    """The sources (None = personal, else a workspace slug) a grant reaches —
+    the one answer every read path asks. Read from its restrictions (Rule 1:
+    several only intersect). A first-party agent's grant not using a collection
+    is also bounded by its own organisation's tree, whatever it names; a row
+    written before restrictions carried the reach is bounded by its workspace
+    column."""
+    reach: set | None = None
+    for r in grant.restrictions or []:
+        named = (r.get("narrowedTo") or {}).get("sources")
+        if named is None:
+            continue
+        these = _expand(named)
+        reach = these if reach is None else reach & these
+    if grant.hcp_client_id:
+        return reach if reach is not None else {None}
+    if reach is None:
+        return {grant.workspace_id}
+    if grant.collection_id:
+        return reach                       # the person chose it, through a collection
+    return reach & tree_slugs(root_of(grant.workspace_id))
+
+
+def _display_name(slug: str) -> str:
+    from apps.workspaces.models import Workspace
+
+    return Workspace.objects.filter(pk=slug).values_list("display_name", flat=True).first() or slug
+
+
+def source_label(source: str) -> str:
+    """How a person reads one source: "your personal memory", "your Connect
+    memory", "your Dimagi memory (all divisions)"."""
+    if source == PERSONAL_SOURCE:
+        return "your personal memory"
+    kind, _, slug = source.partition(":")
+    if kind == "tree":
+        return f"your {_display_name(slug)} memory (all divisions)"
+    return f"your {_display_name(slug)} memory"
+
+
+def reach_label(sources) -> str:
+    return " and ".join(source_label(s) for s in sources
+                        if not str(s).startswith(COLLECTION_PREFIX)) or "nothing"
+
+
+def _merge_sources(have: list[str], more: list[str]) -> list[str]:
+    """The union, dropping a single workspace a named tree already covers. A
+    collection named in `more` replaces one named in `have`."""
+    if any(str(n).startswith(COLLECTION_PREFIX) for n in more):
+        have = [n for n in have if not str(n).startswith(COLLECTION_PREFIX)]
+    out = list(dict.fromkeys([*have, *more]))
+    trees = {n.split(":", 1)[1] for n in out if n.startswith("tree:")}
+    return [n for n in out
+            if not (n.startswith("workspace:") and root_of(n.split(":", 1)[1]) in trees)]
+
+
+def grant_sources(grant: PersonGrant | None) -> list[str]:
+    """The sources a grant names; a pre-restriction agent row, its workspace."""
+    if grant is None:
+        return []
+    named = named_sources(grant)
+    if named is not None:
+        return named
+    return [workspace_source(grant.workspace_id)] if grant.workspace_id else []
+
+
+def _disclosure(agent, features, sources, duration: str, expires_at) -> str:
     cats = ", ".join(HELD_CATEGORIES)
     acts = " and ".join(sorted(_ACTION_OF[f] for f in features))
     how = ("for this session, until " + _iso(expires_at) if duration == TEMPORARY_FOR_SESSION
            else f"always for {agent.name or agent.slug}, until you revoke it")
-    return f"shown: agent={agent.slug}; categories={cats}; actions={acts}; {how}"
+    return (f"shown: agent={agent.slug}; categories={cats}; actions={acts}; "
+            f"reach=only {reach_label(sources)}; {how}")
 
 
-def _record_grant(person: Person, *, agent, features, gtype: str, actor: Actor, surface: str,
-                  session=None, why: str = "") -> PersonGrant:
+def _record_grant(person: Person, *, agent, features, sources, gtype: str, actor: Actor,
+                  surface: str, session=None, why: str = "", collection=None) -> PersonGrant:
     """Write the grant the person's act produced: replace a live grant of the same
-    key with one carrying the union (a widening is its own act and its own
-    `grant.issued`); asking for what is already held changes nothing."""
+    key with one carrying the union of features AND reach (a widening is its own
+    act and its own `grant.issued`); asking for what is already held changes
+    nothing."""
     if gtype == PersonGrant.TEMPORARY:
         key, expires_at = _agent_key(agent, session), timezone.now() + SESSION_GRANT_CAP
         current = _live(person, agent, key=key, grant_type=gtype, session=session)
@@ -916,9 +1107,11 @@ def _record_grant(person: Person, *, agent, features, gtype: str, actor: Actor, 
         current = _live(person, agent, key=key, grant_type=gtype)
         duration = PERSISTENT_FOR_AGENT
     have = features_of(current)
-    if current is not None and set(features) <= have:
+    held = grant_sources(current)
+    if current is not None and set(features) <= have and reached(sources) <= reached(held):
         return current
     want = sorted(have | set(features))
+    reach = _merge_sources(held, sources)
     if current is not None:
         PersonGrant.objects.filter(pk=current.pk).update(status=PersonGrant.REVOKED,
                                                          revoked_at=timezone.now())
@@ -929,13 +1122,16 @@ def _record_grant(person: Person, *, agent, features, gtype: str, actor: Actor, 
         person=person, workspace_id=agent.workspace_id, agent=agent,
         attributes={"session": str(session.pk)} if gtype == PersonGrant.TEMPORARY else {},
         client_key=key, client_name=client_name(agent, "", ""),
-        scopes=feature_scopes(want), grant_type=gtype, modality=SURFACES[surface],
-        expires_at=expires_at)
+        scopes=feature_scopes(want),
+        restrictions=restrictions_for(feature_scopes(want), reach),
+        grant_type=gtype, modality=SURFACES[surface], expires_at=expires_at,
+        collection=collection or (current.collection if current is not None else None))
     audit(person, "grant.issued", actor=actor, grant=grant, workspace_slug=agent.workspace_id,
           detail=(f"client={grant.client_name}; key={key}; type={gtype}; "
                   f"modality={grant.modality} (the person's act){why}; "
                   f"expires={_iso(expires_at) or 'never'}; scopes={' '.join(grant.scopes)}; "
-                  f"restrictions=[]; {_disclosure(agent, want, duration, expires_at)}"))
+                  f"restrictions={json.dumps(grant.restrictions)}; "
+                  f"{_disclosure(agent, want, reach, duration, expires_at)}"))
     return grant
 
 
@@ -949,7 +1145,11 @@ def issue_agent_grant(person: Person, *, agent, features, duration: str, actor: 
     grant for this session, at most `SESSION_GRANT_CAP`); `duration=always` only
     ELECTS persistence for what this session's temporary grant already carries —
     asked for without one, it is refused. Bounded by policy: a feature not
-    available is refused."""
+    available is refused.
+
+    The reach is derived, not chosen in the prompt (`default_reach`), and named
+    on the grant (4.1.5.1); keeping it always keeps the reach this session's
+    grant carries."""
     features = [f for f in FEATURES if f in set(features or [])]
     if not features:
         raise malformed("name record and/or use")
@@ -963,7 +1163,9 @@ def issue_agent_grant(person: Person, *, agent, features, duration: str, actor: 
         if not getattr(person, f"hcp_{f}_available"):
             raise denied(f"{f} is not available for you; make it available first")
     if duration == TEMPORARY_FOR_SESSION:
-        grant = _record_grant(person, agent=agent, features=features, gtype=PersonGrant.TEMPORARY,
+        sources, collection = default_reach(person, agent)
+        grant = _record_grant(person, agent=agent, features=features, sources=sources,
+                              gtype=PersonGrant.TEMPORARY, collection=collection,
                               actor=actor, surface=surface, session=session,
                               why=f", {note}" if note else "")
         # Allowing it in a session is also turning the feature on there, when the
@@ -977,7 +1179,9 @@ def issue_agent_grant(person: Person, *, agent, features, duration: str, actor: 
                  session=session)
     if not set(features) <= features_of(temp):
         raise malformed("allow it for this session first; keeping it always is a separate choice")
-    return _record_grant(person, agent=agent, features=features, gtype=PersonGrant.PERSISTENT,
+    sources = grant_sources(temp)
+    return _record_grant(person, agent=agent, features=features, sources=sources,
+                         gtype=PersonGrant.PERSISTENT, collection=temp.collection,
                          actor=actor, surface=surface,
                          why=f", electing persistence after allowing it for this session "
                              f"(grant {entry_urn(temp.grant_id)})" + (f", {note}" if note else ""))
@@ -1016,12 +1220,7 @@ def within_grant(fact: PersonFact, grant: PersonGrant | None, action: str) -> bo
     restriction names (the person's personal entries, plus workspaces they chose)."""
     if grant is None:
         return False
-    if grant.hcp_client_id:
-        from . import hcp_oauth
-
-        if fact.workspace_id not in (hcp_oauth.sources_of(grant) or {None}):
-            return False
-    elif fact.workspace_id != grant.workspace_id:
+    if fact.workspace_id not in reach_of(grant):
         return False
     if not allows(grant, fact.category, action):
         return False
@@ -1064,6 +1263,11 @@ def grant_dict(grant: PersonGrant) -> dict:
         "canopy": {"agent": grant.agent.slug if grant.agent_id else None,
                    "channel": grant.channel, "host": grant.host,
                    "workspace": grant.workspace_id, "modality": grant.modality,
+                   # 4.1.5.1 Rule 3: the reach, in the words a person reads.
+                   "reach": reach_label(grant_sources(grant)) if not grant.hcp_client_id else "",
+                   # The person's memory collection it uses (None = the agent's default).
+                   "collection": ({"id": grant.collection_id, "name": grant.collection.name}
+                                  if grant.collection_id else None),
                    "client": ({"id": client.client_id, "name": client.name,
                                "operator": client.operator} if client is not None else None)},
     }
