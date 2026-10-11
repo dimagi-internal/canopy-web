@@ -14,6 +14,8 @@ import { contactMemorySource, type ContactHcp, type ContactHcpState } from './se
  *   how long, and how to see and take it back.
  * - Opted in: the chat page's own toggles and grant prompts, plus
  *   "Your memory", where they list and revoke grants, download everything, or opt out.
+ * - Memory not offered to contacts yet (settings.HCP_CONTACT_OPT_IN): nothing — unless
+ *   canopy already holds some of theirs, which stays theirs to see, download and delete.
  */
 const pretty = (c: string) => c.replace(/_/g, ' ')
 const PANEL = 'mt-1 max-w-md rounded-md border border-border bg-background p-2 text-[12px]'
@@ -50,6 +52,8 @@ export function ContactMemory({
   const source = useMemo(() => contactMemorySource(hcp, sessionId), [hcp, sessionId])
 
   if (!state || !state.eligible) return null
+  const enabled = state.memory_enabled !== false
+  if (!enabled && !state.memory_paused) return null
 
   const act = async (fn: () => Promise<ContactHcpState>, after: typeof view = 'none') => {
     setBusy(true)
@@ -82,7 +86,7 @@ export function ContactMemory({
     }
   }
 
-  if (!state.opted_in) {
+  if (enabled && !state.opted_in) {
     if (view !== 'optin') {
       return (
         <button type="button" onClick={() => setView('optin')} className={QUIET}
@@ -126,7 +130,7 @@ export function ContactMemory({
   return (
     <div className="flex flex-col items-start">
       <span className="flex items-center gap-1">
-        <SessionMemoryToggles key={epoch} sessionId={sessionId} source={source} />
+        {enabled && <SessionMemoryToggles key={epoch} sessionId={sessionId} source={source} />}
         <button type="button" className={QUIET}
                 onClick={() => setView(view === 'knows' ? 'none' : 'knows')}>
           Your memory
@@ -134,8 +138,14 @@ export function ContactMemory({
       </span>
       {view === 'knows' && (
         <div role="dialog" aria-label="Your memory" className={PANEL}>
-          <p className="text-foreground">Your memory, held for {state.email}</p>
-          <p className="text-muted-foreground">See, remove or download it.</p>
+          <p className="text-foreground">
+            Your memory{enabled ? '' : ' (paused)'}, held for {state.email}
+          </p>
+          <p className="text-muted-foreground">
+            {enabled
+              ? 'See, remove or download it.'
+              : 'Memory is paused here: no agent learns from you or uses it. You can still see, remove or download it.'}
+          </p>
           {state.grants.length === 0 ? (
             <p className="mt-0.5 text-muted-foreground">No agent can learn from you or use your memory right now.</p>
           ) : (
@@ -171,18 +181,20 @@ export function ContactMemory({
             <button type="button" disabled={busy} className={PRIMARY} onClick={() => void download()}>
               Download everything
             </button>
-            <button type="button" disabled={busy} className={QUIET}
+            {enabled && <button type="button" disabled={busy} className={QUIET}
                     onClick={() => void act(() => hcp.policy({
                       record: { available: false, default: false },
                       use: { available: false, default: false },
                     }))}>
               Stop my memory
-            </button>
+            </button>}
           </div>
-          <p className="mt-1 text-muted-foreground">
-            Stopping keeps your memory as it is — download it first if you want it — and no agent
-            can add to it or use it until you allow it again.
-          </p>
+          {enabled && (
+            <p className="mt-1 text-muted-foreground">
+              Stopping keeps your memory as it is — download it first if you want it — and no agent
+              can add to it or use it until you allow it again.
+            </p>
+          )}
           {failed && <p className="mt-1 text-destructive">Not saved — try again.</p>}
         </div>
       )}

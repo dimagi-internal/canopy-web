@@ -42,11 +42,19 @@ def me(request: HttpRequest) -> MeOut:
     )
     if social:
         avatar_url = social.extra_data.get("picture", "") or ""
+    from apps.contacts import hcp
+    from apps.contacts.models import Person
+
+    memory_enabled = hcp.rollout_allows_address(user.email)
+    memory_paused = (not memory_enabled
+                     and hcp.has_memory(Person.objects.filter(user=user).first()))
     return MeOut(
         email=user.email,
         name=(user.get_full_name() or user.username or user.email),
         avatar_url=avatar_url,
         can_create_workspace=can_create_workspace(user),
+        memory_enabled=memory_enabled,
+        memory_paused=memory_paused,
     )
 
 

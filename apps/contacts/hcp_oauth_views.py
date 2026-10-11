@@ -76,6 +76,11 @@ def authorize(request: HttpRequest) -> HttpResponse:
     person = contact_services.person_for(user=request.user)
     if person is None:
         return _error(request, "canopy could not find your record.", status=403)
+    if not hcp.rollout_allows(person):
+        # Memory is not on for this person yet (settings.HCP_PEOPLE): no app may be
+        # granted any of it, on either step.
+        return _error(request, "Your memory isn't available for you yet, so no app can be "
+                               "given access to it.", status=403)
 
     if request.method == "POST" and request.POST.get("step") == "keep":
         pending = hcp_oauth.take_pending(request.POST.get("nonce") or "", request.user)

@@ -323,6 +323,34 @@ no connect-labs change was needed. Migration `tokens/0031` trusts the live
   again does it); a superuser toggle in the UI (API only — the frontend has no
   superuser signal to gate it on).
 
+## Who has memory at all — the rollout gate
+
+Narrower than the audience below, and checked first: memory is on only for the
+people `HCP_PEOPLE` names (Jonathan, 2026-10-11: "only for me right now").
+`HCP_PEOPLE` is a comma-separated list of canopy addresses; **empty means nobody**,
+and `*` (everyone) is for tests and local dev only. `HCP_CONTACT_OPT_IN` decides
+whether a trusted site's visitors are offered memory at all (production: false).
+One helper, `hcp.rollout_allows(person)`, answers it.
+
+Outside the rollout:
+
+- **Every switch reads off** (`hcp.memory_state`), so no agent reads, records or
+  recalls, and the caller-context block says so.
+- **Every way to turn something on is refused** with 403 "memory isn't available
+  for you yet". That covers the canopy-level switches, a session's "on", granting
+  an agent, adding to a collection or pointing an agent at one, a contact's
+  opt-in (refused before any person is created), the person's own new entries,
+  and the OAuth consent screen.
+- **Turning off, revoking, removing an entry and downloading always work.** The
+  person can always see, export and delete their own data (spec 3.1, 3.3.5).
+- **The UI shows nothing**, driven by `memory_enabled` on `/api/me/`, the session
+  payloads and the contact state: no "Your memory" links, guide entry, chips,
+  prompts or "Let canopy learn from you?". If canopy already holds some of their
+  memory (`memory_paused`), "Your memory (paused)" stays reachable with only see,
+  remove, revoke and download.
+- **Nothing held is touched.** Adding a person to `HCP_PEOPLE` brings back exactly
+  the switches, grants and entries they had.
+
 ## Internal only — the one gate
 
 `HCP_SERVICE_AUDIENCE` (env, default `internal`) is read in exactly one place,

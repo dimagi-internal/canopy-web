@@ -154,6 +154,10 @@ def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -
         person = contact_services.person_for(user=user)
         if person is None:
             raise hcp.denied("no HCP instance for this account")
+        if need == hcp.RECORD:
+            # Outside the rollout the person still reads, downloads and deletes
+            # what is held; nothing new is written.
+            hcp.require_rollout(person)
         return Principal(person=person, actor=hcp.user_actor(user), grant=None, workspace_slug=None)
     # An agent (its own login, or a confined session acting for its caller):
     # the subject is the human who started the turn, and nobody else.

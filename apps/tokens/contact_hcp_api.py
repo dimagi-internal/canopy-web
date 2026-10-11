@@ -37,6 +37,7 @@ import hashlib
 import secrets
 import uuid
 
+from django.conf import settings
 from django.db import transaction
 from django.http import HttpRequest
 from django.utils import timezone
@@ -201,6 +202,17 @@ def _hcp_error(exc) -> HttpError:
     return HttpError(exc.status, exc.detail)
 
 
+def _offered(email: str, person=None) -> bool:
+    """Is memory offered to this contact at all (settings.HCP_CONTACT_OPT_IN, or
+    their address named in HCP_PEOPLE)? Off: no opt-in, grant or switch-on — but
+    whatever they already hold stays theirs to see, download and delete."""
+    from apps.contacts import hcp
+
+    if person is not None:
+        return hcp.rollout_allows(person)
+    return hcp.rollout_allows_address(email) or bool(getattr(settings, "HCP_CONTACT_OPT_IN", False))
+
+
 # --- what the panel shows ---------------------------------------------------------------
 
 
@@ -232,6 +244,10 @@ class ContactHcpOut(Schema):
     grants: list[HcpGrantOut] = []
     #: Every live entry held about them (not soft-deleted), newest first.
     entries: list[HcpEntryOut] = []
+    #: Is memory offered to them at all yet? False = show no opt-in and no switches.
+    memory_enabled: bool = True
+    #: Not offered, but canopy holds some of theirs: show it, to download or delete.
+    memory_paused: bool = False
 
 
 def _state(request: HttpRequest, session=None, person=None) -> ContactHcpOut:
@@ -245,12 +261,16 @@ def _state(request: HttpRequest, session=None, person=None) -> ContactHcpOut:
                         categories=list(hcp.HELD_CATEGORIES),
                         session_grant_hours=int(hcp.SESSION_GRANT_CAP.total_seconds() // 3600))
     if not email:
+        out.memory_enabled = False
         return out
     person = person or _person(request, create=False)
+    out.memory_enabled = _offered(email, person)
     if person is None:
         return out
-    out.opted_in = any(getattr(person, f"hcp_{f}_available") for f in hcp.FEATURES)
-    out.policy = {f: {"available": bool(getattr(person, f"hcp_{f}_available")),
+    out.memory_paused = not out.memory_enabled and hcp.has_memory(person)
+    out.opted_in = out.memory_enabled and any(getattr(person, f"hcp_{f}_available")
+                                              for f in hcp.FEATURES)
+    out.policy = {f: {"available": out.memory_enabled and bool(getattr(person, f"hcp_{f}_available")),
                       "default": bool(getattr(person, f"hcp_{f}_default"))} for f in hcp.FEATURES}
     if session is not None:
         out.session = session_memory_payload(person, session)
@@ -305,6 +325,10 @@ def contact_hcp_opt_in(request: HttpRequest, payload: OptInIn) -> ContactHcpOut:
     session = _session(request, payload.session_id)
     actor = hcp.contact_actor(request.contact)
     site = request.contact_token.app.name
+    email, _ = _eligibility(request)
+    if email and not _offered(email):
+        # Checked before anything is created: no person, no re-keyed contact.
+        raise HttpError(403, hcp.NOT_ROLLED_OUT)
     with transaction.atomic():
         person = _person(request, create=True)
         hcp.set_agent_memory(person, actor=actor,
@@ -396,9 +420,12 @@ def contact_hcp_policy(request: HttpRequest, payload: PolicyIn) -> ContactHcpOut
     person = _person(request, create=False)
     if person is None:
         raise HttpError(403, "opt in first")
-    hcp.set_agent_memory(person, actor=hcp.contact_actor(request.contact),
-                         record=payload.record.model_dump() if payload.record else None,
-                         use=payload.use.model_dump() if payload.use else None)
+    try:
+        hcp.set_agent_memory(person, actor=hcp.contact_actor(request.contact),
+                             record=payload.record.model_dump() if payload.record else None,
+                             use=payload.use.model_dump() if payload.use else None)
+    except hcp.HcpError as exc:
+        raise _hcp_error(exc) from None
     return _state(request, None, person)
 
 

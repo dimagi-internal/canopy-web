@@ -438,3 +438,48 @@ def test_a_contact_lists_and_removes_an_entry_from_the_panel(world):
     assert r.json()["entries"] == []
     fact.refresh_from_db()
     assert fact.status == "deleted"
+
+
+# --- the rollout gate (settings.HCP_CONTACT_OPT_IN) ------------------------------------
+
+
+def test_contacts_are_not_offered_memory_while_the_rollout_excludes_them(world, settings):
+    settings.HCP_PEOPLE = ["jjackson@dimagi.com"]
+    settings.HCP_CONTACT_OPT_IN = False
+    f = Frame(_token(world["priv"]))
+    sid = f.session()
+    state = f.call("get", f"/api/contact/hcp/state?session_id={sid}")
+    assert state.status_code == 200
+    assert state.json()["memory_enabled"] is False and state.json()["memory_paused"] is False
+    r = f.call("post", "/api/contact/hcp/opt-in", {"session_id": sid})
+    assert r.status_code == 403 and hcp.NOT_ROLLED_OUT in r.json()["detail"]
+    assert _email_person() is None, "refused before any person is made"
+    assert not PersonGrant.objects.exists()
+
+
+def test_a_contact_who_opted_in_before_the_gate_keeps_their_data_but_nothing_runs(world, settings):
+    f = Frame(_token(world["priv"]))
+    sid = f.session()
+    f.call("post", "/api/contact/hcp/opt-in", {"session_id": sid})
+    person = _email_person()
+    hcp.add_entry(person=person, workspace=world["ws"], category="work_context",
+                  statement="Runs the Kano pilot.", declaration="user-declared",
+                  actor=hcp.SYSTEM)
+    settings.HCP_PEOPLE = ["jjackson@dimagi.com"]
+    settings.HCP_CONTACT_OPT_IN = False
+    body = f.call("get", f"/api/contact/hcp/state?session_id={sid}").json()
+    assert body["memory_enabled"] is False and body["memory_paused"] is True
+    assert body["opted_in"] is False
+    assert [e["statement"] for e in body["entries"]] == ["Runs the Kano pilot."]
+    assert hcp.effective(person) == {"record": False, "use": False}
+    r = f.call("post", f"/api/contact/hcp/sessions/{sid}/agent-grants",
+               {"features": ["use"], "duration": "session"})
+    assert r.status_code == 403
+    assert f.call("put", f"/api/contact/hcp/sessions/{sid}/memory", {"record": "on"}).status_code == 403
+    assert f.call("put", "/api/contact/hcp/policy", {"use": {"available": True}}).status_code == 403
+    assert f.call("get", "/api/contact/hcp/export").status_code == 200    # still theirs
+    off = f.call("put", "/api/contact/hcp/policy", {"record": {"available": False}})
+    assert off.status_code == 200                                          # off is always allowed
+    assert person.facts.exists()
+    settings.HCP_CONTACT_OPT_IN = True                     # back on: what they had is there
+    assert f.call("get", f"/api/contact/hcp/state?session_id={sid}").json()["memory_enabled"] is True

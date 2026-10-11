@@ -141,6 +141,8 @@ describe('NoteComposer', () => {
             email: 'jj@dimagi.com',
             avatar_url: '',
             can_create_workspace: false,
+            memory_enabled: false,
+            memory_paused: false,
           },
         }}
       >

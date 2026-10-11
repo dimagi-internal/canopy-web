@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { guideGroups } from '@/guide/grouping'
 import { USER_ROLES } from '@/guide/paths'
+import { useMemoryVisible } from '@/auth/memoryRollout'
 
 /**
  * The in-app guide: what every surface is, generated from guide/surfaces.ts and
@@ -11,6 +12,12 @@ import { USER_ROLES } from '@/guide/paths'
  */
 export function GuidePage() {
   const { hash } = useLocation()
+  // Memory is not on for everyone yet (auth/memoryRollout.ts): its page is not
+  // offered to someone who cannot use it.
+  const memoryVisible = useMemoryVisible()
+  const groups = guideGroups()
+    .map((g) => ({ ...g, surfaces: g.surfaces.filter((s) => memoryVisible || s.path !== '/people/me') }))
+    .filter((g) => g.surfaces.length > 0)
 
   // React Router navigates with pushState, which does NOT trigger the browser's
   // native fragment scrolling — so a /guide#<route-path> link from an empty state
@@ -59,7 +66,7 @@ export function GuidePage() {
         </ul>
       </section>
 
-      {guideGroups().map((group) => (
+      {groups.map((group) => (
         <section key={group.label} className="mt-8">
           <h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             {group.label}

@@ -7865,6 +7865,18 @@ export interface components {
              * @default false
              */
             readonly can_create_workspace: boolean;
+            /**
+             * Memory Enabled
+             * @description Is memory (HCP) on for you yet (settings.HCP_PEOPLE)? False hides every memory surface: the Your memory page and its links, the conversation switches and grant prompts.
+             * @default false
+             */
+            readonly memory_enabled: boolean;
+            /**
+             * Memory Paused
+             * @description Memory is not on for you, but canopy holds some of yours: the Your memory page still shows it, to download or delete.
+             * @default false
+             */
+            readonly memory_paused: boolean;
         };
         /**
          * PresencePreferenceOut
@@ -9304,6 +9316,12 @@ export interface components {
              * @default 24
              */
             readonly session_grant_hours: number;
+            /**
+             * Memory Enabled
+             * @description Is memory on for you at all yet? False = outside the rollout: nothing is offered, every switch reads off, and nothing can be turned on or granted (settings.HCP_PEOPLE).
+             * @default true
+             */
+            readonly memory_enabled: boolean;
             /** Manage Path */
             readonly manage_path: string;
         };
@@ -9849,6 +9867,16 @@ export interface components {
              * @default []
              */
             readonly entries: readonly components["schemas"]["HcpEntryOut"][];
+            /**
+             * Memory Enabled
+             * @default true
+             */
+            readonly memory_enabled: boolean;
+            /**
+             * Memory Paused
+             * @default false
+             */
+            readonly memory_paused: boolean;
         };
         /** HcpEntryOut */
         readonly HcpEntryOut: {
@@ -18329,6 +18357,18 @@ export interface components {
              */
             readonly email: string;
             readonly agent_memory: components["schemas"]["AgentMemoryOut"];
+            /**
+             * Memory Enabled
+             * @description Is memory on for you at all yet? False = outside the rollout: nothing is offered, every switch reads off, and nothing can be turned on or granted (settings.HCP_PEOPLE).
+             * @default true
+             */
+            readonly memory_enabled: boolean;
+            /**
+             * Memory Paused
+             * @description Memory is not on for you, but canopy still holds some of yours: you can see, download and delete it.
+             * @default false
+             */
+            readonly memory_paused: boolean;
             /** Facts */
             readonly facts?: readonly components["schemas"]["PersonFactDetailOut"][];
             /** Accesses */
@@ -18406,6 +18446,12 @@ export interface components {
              * @default 24
              */
             readonly session_grant_hours: number;
+            /**
+             * Memory Enabled
+             * @description Is memory on for you at all yet? False = outside the rollout: nothing is offered, every switch reads off, and nothing can be turned on or granted (settings.HCP_PEOPLE).
+             * @default true
+             */
+            readonly memory_enabled: boolean;
         };
         /** SessionMemoryIn */
         readonly SessionMemoryIn: {

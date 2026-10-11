@@ -108,6 +108,64 @@ RECORD, USE, ANY = "record", "use", "any"
 
 
 FEATURES = ("record", "use")
+
+
+# --- who has memory at all, for now: the rollout gate ---------------------------------
+#
+# Jonathan, 2026-10-11: memory is on "for only me right now", and he is the only one who
+# sees its UI. `settings.HCP_PEOPLE` lists the canopy addresses it is on for (empty =
+# nobody; "*" = everyone, for tests and local dev); `settings.HCP_CONTACT_OPT_IN` decides
+# whether a trusted site's visitors are offered it. Outside the rollout every switch
+# reads as off (`memory_state`), so no agent reads or records, and every way to turn
+# anything on or grant anything is refused with NOT_ROLLED_OUT. Nothing held is touched:
+# the person can still see, download and delete it (spec 3.3.5, 3.1), and putting them
+# in the rollout later brings back exactly what they had.
+
+NOT_ROLLED_OUT = "memory isn't available for you yet"
+
+
+def _rollout_people() -> list[str]:
+    from django.conf import settings
+
+    return [a.strip().lower() for a in (getattr(settings, "HCP_PEOPLE", None) or []) if a.strip()]
+
+
+def rollout_allows_address(address: str | None) -> bool:
+    people = _rollout_people()
+    return "*" in people or bool(address and address.strip().lower() in people)
+
+
+def rollout_allows(person: Person | None) -> bool:
+    """Is memory on at all for this person? A canopy account counts by its own
+    address; a person with no canopy account (a site's visitor, a correspondent)
+    counts by name in HCP_PEOPLE, or when contacts are let in at all."""
+    from django.conf import settings
+
+    if person is None:
+        return False
+    if person.user_id:
+        return rollout_allows_address(person.user.email)
+    if person.email and rollout_allows_address(person.email):
+        return True
+    return bool(getattr(settings, "HCP_CONTACT_OPT_IN", False))
+
+
+def require_rollout(person: Person | None) -> None:
+    """Refuse any act that would turn memory on, widen it, or grant access, for a
+    person outside the rollout. Turning things off, revoking, deleting and
+    downloading never call this."""
+    if not rollout_allows(person):
+        raise denied(NOT_ROLLED_OUT)
+
+
+def has_memory(person: Person | None) -> bool:
+    """Does canopy hold anything of this person's memory — an entry or a grant?
+    A person outside the rollout who does still sees it (paused), to download or
+    delete."""
+    if person is None or person.pk is None:
+        return False
+    return (PersonFact.objects.filter(person=person).exists()
+            or PersonGrant.objects.filter(person=person).exists())
 #: The audit event types for each setting change, by feature.
 _EVENTS = {"record": "agentRecord", "use": "agentUse"}
 _SESSION_EVENTS = {"record": "sessionRecord", "use": "sessionUse"}
@@ -131,11 +189,13 @@ def _override(person: Person, session):
 
 def memory_state(person: Person, session=None) -> dict:
     """Per feature: `available`, `default`, this session's `override` (None =
-    inherit) and the `effective` value — available AND (override, else default)."""
+    inherit) and the `effective` value — available AND (override, else default).
+    Outside the rollout nothing is available, so nothing is effective."""
     row = _override(person, session)
+    rolled_out = rollout_allows(person)
     out = {}
     for f in FEATURES:
-        available = bool(getattr(person, f"hcp_{f}_available"))
+        available = rolled_out and bool(getattr(person, f"hcp_{f}_available"))
         default = bool(getattr(person, f"hcp_{f}_default"))
         override = getattr(row, f) if row is not None else None
         out[f] = {"available": available, "default": default, "override": override,
@@ -159,6 +219,7 @@ def may_use(person: Person, turn=None) -> bool:
 
 def require(person: Person, need: str, turn=None) -> None:
     """Raise `scope-denied` unless what `need` requires is on for this turn."""
+    require_rollout(person)
     eff = effective(person, turn)
     if need == RECORD and not eff["record"]:
         raise denied(RECORD_OFF)
@@ -184,7 +245,11 @@ def set_agent_memory(person: Person, *, actor: Actor, record: dict | None = None
                      use: dict | None = None) -> list[str]:
     """Change the person's canopy-level settings, as the person. Each of `record` /
     `use` is `{available?, default?}`; a missing key leaves it alone. Returns the
-    audit event types written — one per setting that actually changed."""
+    audit event types written — one per setting that actually changed. Outside the
+    rollout only turning something OFF is accepted."""
+    if any(bool((change or {}).get(key)) for change in (record, use)
+           for key in ("available", "default")):
+        require_rollout(person)
     now, fields, events = timezone.now(), [], []
     for f, change in (("record", record), ("use", use)):
         for key, (on, off) in (("available", ("enabled", "disabled")),
@@ -221,6 +286,8 @@ def set_session_memory(person: Person, session, *, actor: Actor, record: str | N
     from .models import SessionAgentMemory
 
     changes = {"record": record, "use": use}
+    if ON in changes.values():
+        require_rollout(person)
     for f, value in changes.items():
         if value not in (None, ON, OFF, INHERIT):
             raise malformed(f"{f} is on, off or inherit")
@@ -1149,7 +1216,8 @@ def issue_agent_grant(person: Person, *, agent, features, duration: str, actor: 
 
     The reach is derived, not chosen in the prompt (`default_reach`), and named
     on the grant (4.1.5.1); keeping it always keeps the reach this session's
-    grant carries."""
+    grant carries. Outside the rollout nothing is granted (`require_rollout`)."""
+    require_rollout(person)
     features = [f for f in FEATURES if f in set(features or [])]
     if not features:
         raise malformed("name record and/or use")

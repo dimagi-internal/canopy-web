@@ -6,8 +6,10 @@ import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
+import { useMemoryVisible } from '@/auth/memoryRollout'
 
 export function SettingsPage() {
+  const memoryVisible = useMemoryVisible()
   // Presence visibility. Defaults to visible (matches the backend default
   // when no preference row exists yet) so the checkbox never flashes
   // unchecked before the fetch resolves.
@@ -51,11 +53,13 @@ export function SettingsPage() {
         <p className="mt-0.5 text-xs text-muted-foreground">
           Your account: the runners you administer, presence, GitHub, connected apps and access tokens.
         </p>
-        <p className="mt-1 text-xs">
-          <Link to="/people/me/" className="text-primary underline-offset-2 hover:underline">
-            Your memory
-          </Link>
-        </p>
+        {memoryVisible && (
+          <p className="mt-1 text-xs">
+            <Link to="/people/me/" className="text-primary underline-offset-2 hover:underline">
+              Your memory
+            </Link>
+          </p>
+        )}
       </div>
 
       <RunnersPanel />

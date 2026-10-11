@@ -125,6 +125,7 @@ class SessionMemoryOut(StrictModel):
     org: str = Field(default="", description="The organisation the agent serves, e.g. 'Dimagi'.")
     session_grant_hours: int = Field(default=24, description="A 'for this session' grant lasts at "
                                                              "most this long, or until the session ends.")
+    memory_enabled: bool = Field(default=True, description="Is memory on for you at all yet? False = outside the rollout: nothing is offered, every switch reads off, and nothing can be turned on or granted (settings.HCP_PEOPLE).")
 
 
 class AgentGrantIn(StrictModel):
@@ -187,6 +188,9 @@ class PersonMeOut(PersonRefOut):
     and the last 50 reads."""
 
     agent_memory: AgentMemoryOut
+    memory_enabled: bool = Field(default=True, description="Is memory on for you at all yet? False = outside the rollout: nothing is offered, every switch reads off, and nothing can be turned on or granted (settings.HCP_PEOPLE).")
+    memory_paused: bool = Field(default=False, description="Memory is not on for you, but canopy "
+                                "still holds some of yours: you can see, download and delete it.")
     facts: list[PersonFactDetailOut] = Field(default_factory=list)
     accesses: list[PersonAccessOut] = Field(default_factory=list)
 

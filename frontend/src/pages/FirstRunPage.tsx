@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { useAuth } from '@/auth/AuthProvider'
+import { useMemoryVisible } from '@/auth/memoryRollout'
 import {
   createWorkspace,
   listRequestableWorkspaces,
@@ -22,6 +23,7 @@ import { firstRunState, shouldOfferCreateForm } from './firstRun'
 export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: boolean }) {
   const { workspaces, loading, refresh } = useWorkspace()
   const { user } = useAuth()
+  const memoryVisible = useMemoryVisible()
   const navigate = useNavigate()
   const [slug, setSlug] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -147,7 +149,7 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
           </>
         )}
       </p>
-      {!alreadyAMember && (
+      {!alreadyAMember && memoryVisible && (
         <p className="mt-3 text-[13px] leading-relaxed text-foreground-secondary">
           You don&apos;t need one to keep your own context: on{' '}
           <Link to="/people/me" className="font-medium text-primary hover:underline">

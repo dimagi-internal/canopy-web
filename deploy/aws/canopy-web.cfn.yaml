@@ -427,6 +427,11 @@ Resources:
             # base.py default of just `dimagi.com`, locking out dimagi-associate.com
             # / dimagi-ai.com logins.
             - { Name: AUTH_ALLOWED_EMAIL_DOMAIN, Value: "dimagi.com,dimagi-ai.com,dimagi-associate.com" }
+            # Memory (HCP) is on for these canopy addresses only; empty = nobody
+            # (Jonathan, 2026-10-11: "only for me right now"). Contacts on trusted
+            # sites are not offered it until HCP_CONTACT_OPT_IN is true.
+            - { Name: HCP_PEOPLE, Value: "jjackson@dimagi.com" }
+            - { Name: HCP_CONTACT_OPT_IN, Value: "false" }
             - { Name: AWS_REGION, Value: !Ref "AWS::Region" }
             - { Name: PORT, Value: !Ref ContainerPort }
             # Google Drive root folder for walkthrough storage. Not a secret

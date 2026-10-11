@@ -45,6 +45,16 @@ describe('SessionMemoryToggles', () => {
     expect(screen.queryByText(/Use my memory:/)).toBeNull()
   })
 
+  it('renders nothing when memory is not on for this person (rollout gate)', async () => {
+    getSessionMemory.mockResolvedValue({
+      session_id: 's1', record: feature(true, true), use: feature(true, true), memory_enabled: false,
+    })
+    const { container } = render(<SessionMemoryToggles sessionId="s1" />)
+    await waitFor(() => expect(getSessionMemory).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 0))
+    expect(container.textContent).toBe('')
+  })
+
   it('turning on what is off by default sets an override; turning it back inherits', async () => {
     getSessionMemory.mockResolvedValue({ session_id: 's1', record: feature(true, false), use: feature(true, false) })
     setSessionMemory.mockResolvedValueOnce({ session_id: 's1', record: feature(true, false), use: feature(true, false, true) })

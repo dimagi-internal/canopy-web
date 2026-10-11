@@ -57,7 +57,7 @@ describe('AppLayout — switching workspace', () => {
         <AuthContext.Provider
           value={{
             status: 'authenticated',
-            user: { name: 'J', email: 'jj@dimagi.com', avatar_url: '', can_create_workspace: true },
+            user: { name: 'J', email: 'jj@dimagi.com', avatar_url: '', can_create_workspace: true, memory_enabled: false, memory_paused: false },
           }}
         >
           <RouterProvider router={router} />

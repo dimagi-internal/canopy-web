@@ -92,4 +92,26 @@ describe('ContactMemory', () => {
       })),
     )
   })
+
+  it('offers nothing while memory is not offered to contacts (rollout gate)', async () => {
+    const hcp = contactHcp(rest({ ...base, memory_enabled: false, memory_paused: false }))
+    const { container } = render(<ContactMemory hcp={hcp} sessionId="s1" agentName="Echo" />)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(container.textContent).toBe('')
+  })
+
+  it('a paused contact can still see, remove and download, but is offered nothing new', async () => {
+    const paused = {
+      ...base, memory_enabled: false, memory_paused: true,
+      entries: [{ entry_id: 'urn:uuid:e1', category: 'work_context', statement: 'Runs the Kano pilot.', status: 'active' }],
+    }
+    render(<ContactMemory hcp={contactHcp(rest(paused))} sessionId="s1" agentName="Echo" />)
+    fireEvent.click(await screen.findByText('Your memory'))
+    expect(screen.queryByText('Let canopy learn from you?')).toBeNull()
+    expect(screen.getByText(/Your memory \(paused\)/)).toBeTruthy()
+    expect(screen.getByText('Runs the Kano pilot.')).toBeTruthy()
+    expect(screen.getByText('Remove')).toBeTruthy()
+    expect(screen.getByText('Download everything')).toBeTruthy()
+    expect(screen.queryByText('Stop my memory')).toBeNull()
+  })
 })
