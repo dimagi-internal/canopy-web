@@ -497,6 +497,29 @@ def _repoint(asked: str, got: str, turn: dict, envelope) -> None:
     caller.clear_pending(asked)
 
 
+def _not_created(cfg, task: str, *, timeout: float = 10.0, poll: float = 0.5) -> str:
+    """Did emdash actually create `task`? "" if yes (or if its DB cannot say), else a
+    note for the caller to fail the turn with.
+
+    The sidecar's create is UI automation: it reports the task it ASKED for, and a
+    click that lands on the wrong control still returns. On 2026-10-11 (emdash 1.2.8)
+    every create clicked a "Create new worktree" dropdown instead of the submit, the
+    dialog sat filled-in on the owner's screen, and this logged CREATE … new session
+    for tasks that never existed — so turns "succeeded" and nothing ran. emdash's DB
+    is the source of truth; "unknown" (no/unreadable DB) proceeds as before, because
+    a read failure must never read as "not created".
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        state = emdash.task_state(cfg.emdash_db or "", task)
+        if state != "absent":
+            return ""
+        if time.monotonic() >= deadline:
+            return (f"emdash did not create task '{task}' — the create reported success "
+                    f"but no such task is in emdash's DB after {timeout:.0f}s")
+        time.sleep(poll)
+
+
 def _resolve_transcript_path(target: str, task: str, *, emdash_db: str | None = None):
     home = Path.home()
     return transcript.resolve_transcript(
@@ -842,6 +865,12 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             client.fail_turn(turn_id, f"chat create failed: {str(exc)[:200]}")
             return f"failed:{turn_id}"
         task = res.get("task") or ""
+        missing = _not_created(cfg, task or name)
+        if missing:
+            caller.clear_pending(name)
+            logger.error("chat create unconfirmed turn=%s agent=%s: %s", turn_id, target, missing)
+            client.fail_turn(turn_id, f"chat create failed: {missing}"[:300])
+            return f"failed:{turn_id}"
         if task and task != name:
             _repoint(name, task, turn, envelope)
             if not _confine(client, turn, task):
@@ -996,6 +1025,13 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         return f"failed:{turn_id}"
 
     task = res.get("task") or ""
+    missing = _not_created(cfg, task or name)
+    if missing:
+        caller.clear_pending(name)
+        logger.error("CREATE unconfirmed turn=%s agent=%s: %s", turn_id, agent, missing)
+        readiness.mark_failed(cfg, missing)
+        client.fail_turn(turn_id, missing)
+        return f"failed:{turn_id}"
     # emdash may name the task differently from what was asked; the guard keys on
     # the REAL name. Until this lands, a renamed caller session's tool calls find
     # no profile and are refused — closed, never open.

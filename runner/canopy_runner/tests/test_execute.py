@@ -98,7 +98,9 @@ def test_resolve_names_the_turn_and_a_busy_session_is_never_typed_into(monkeypat
 def test_db_says_gone_creates_fresh_without_asking_the_dom(monkeypatch, state):
     """sqlite is the truth for existence. A genuinely-gone task creates + rehydrates —
     and never pays for a CDP round trip to learn what one query already answered."""
-    monkeypatch.setattr(emdash, "task_state", lambda db, name: state)
+    # Only the OLD linked task is gone; the fresh one the create makes is live.
+    monkeypatch.setattr(emdash, "task_state",
+                        lambda db, name: state if name == "gone-one" else "live")
     monkeypatch.setattr(cdp_control, "open_and_send",
                         lambda *a, **k: pytest.fail("must not touch the DOM once sqlite says gone"))
     created = {}
@@ -286,6 +288,28 @@ def test_create_failure_fails_the_turn(monkeypatch):
     result = execute.execute_turn(_cfg(), client, "r-1", _turn())
     assert result == "failed:t-1"
     assert client.failed and "emdash create failed" in client.failed[0][1]
+
+
+def test_create_that_never_landed_in_emdash_fails_the_turn(monkeypatch):
+    """2026-10-11, emdash 1.2.8: the sidecar clicked a "Create new worktree" dropdown,
+    returned the asked-for name, and the turn was logged created for a task that never
+    existed. emdash's DB is the check."""
+    monkeypatch.setattr(cdp_control, "create_task", lambda *a, **k: {"task": "fresh"})
+    monkeypatch.setattr(emdash, "task_state", lambda db, name: "absent")
+    real = execute._not_created
+    monkeypatch.setattr(execute, "_not_created", lambda cfg, task: real(cfg, task, timeout=0))
+    client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
+    result = execute.execute_turn(_cfg(), client, "r-1", _turn())
+    assert result == "failed:t-1"
+    assert client.failed and "did not create task 'fresh'" in client.failed[0][1]
+    assert client.recorded == [] and client.finished == []
+
+
+def test_create_proceeds_when_emdash_db_cannot_say(monkeypatch):
+    monkeypatch.setattr(cdp_control, "create_task", lambda *a, **k: {"task": "fresh"})
+    monkeypatch.setattr(emdash, "task_state", lambda db, name: "unknown")
+    client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
+    assert execute.execute_turn(_cfg(), client, "r-1", _turn()) == "created:t-1:fresh"
 
 
 def test_keyless_turn_gets_a_fresh_per_turn_key(monkeypatch):
