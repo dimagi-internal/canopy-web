@@ -832,8 +832,8 @@ def get_runner_order(request: HttpRequest, slug: str) -> list[RunnerOrderRowOut]
 def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) -> list[RunnerOrderRowOut]:
     """Wholesale replace (index = rank). Workspace admins and owners
     (`runners.route`): the order routes agents in every workspace below this one
-    too. Every runner must be able to SERVE this workspace —
-    its owner a member (`runner_tenant_slugs`) — or the order would name a box the
+    too. Every runner must be able to SERVE this workspace — enrolled in it, its
+    owner an editor or above (`runner_tenant_slugs`) — or the order would name a box the
     claim path refuses anyway; such a runner is a 422, as is an unknown or retired
     one."""
     # Maintainer note: was `agent.work` while the order routed only this
@@ -857,7 +857,9 @@ def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) ->
     outside = sorted(r.name for r in runners.values() if slug not in runner_tenant_slugs(r))
     if outside:
         raise HttpError(422, f"runner(s) {', '.join(outside)} cannot serve '{slug}': "
-                             "a runner's owner must be a member of the workspace")
+                             "a runner must be enrolled in the workspace (POST "
+                             "/api/harness/runners/{id}/workspaces) and its owner an "
+                             "editor or above there")
     with transaction.atomic():
         WorkspaceRunnerOrder.objects.filter(workspace=m.workspace).delete()
         WorkspaceRunnerOrder.objects.bulk_create([

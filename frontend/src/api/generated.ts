@@ -4208,8 +4208,8 @@ export interface paths {
          * Replace the workspace's default runner order
          * @description Wholesale replace (index = rank). Workspace admins and owners
          *     (`runners.route`): the order routes agents in every workspace below this one
-         *     too. Every runner must be able to SERVE this workspace —
-         *     its owner a member (`runner_tenant_slugs`) — or the order would name a box the
+         *     too. Every runner must be able to SERVE this workspace — enrolled in it, its
+         *     owner an editor or above (`runner_tenant_slugs`) — or the order would name a box the
          *     claim path refuses anyway; such a runner is a 422, as is an unknown or retired
          *     one.
          */
@@ -4929,6 +4929,60 @@ export interface paths {
         readonly post?: never;
         /** Revoke administration (owner only) */
         readonly delete: operations["revoke_runner_admin"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/workspaces": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The workspaces this runner serves (its enrollments)
+         * @description A runner serves a workspace only when it is ENROLLED there and its owner
+         *     may run work there (editor and above) — `serving` says whether both hold.
+         *     Pairing enrolls a box only in the workspace it paired into; joining another
+         *     workspace does not enroll your existing boxes.
+         */
+        readonly get: operations["list_runner_workspaces"];
+        readonly put?: never;
+        /**
+         * Enroll this runner in a workspace so it serves its work
+         * @description Opt the box in to a workspace's turns — its agents' (as routing assigns
+         *     them), its repo turns and its unbound chats. Idempotent.
+         *
+         *     The owner or a runner administrator may ask; the box's OWNER must be an
+         *     editor or above there (422 otherwise), because a box works with its owner's
+         *     memberships and enrollment never widens them. A caller who is not a member
+         *     of the workspace gets the same 404 as a workspace that does not exist.
+         */
+        readonly post: operations["enroll_runner_workspace"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/workspaces/{workspace}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop this runner serving a workspace
+         * @description The box claims nothing more there from its next poll; a turn it already
+         *     holds runs to completion. Owner or a runner administrator.
+         */
+        readonly delete: operations["unenroll_runner_workspace"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -16512,6 +16566,41 @@ export interface components {
             /** Email */
             readonly email: string;
         };
+        /**
+         * RunnerEnrollmentOut
+         * @description One workspace this runner has opted in to serving (`RunnerEnrollment`).
+         *
+         *     `serving` is the live answer: enrolled AND the runner's owner may still run
+         *     work there (editor and above). An enrollment whose owner was demoted reads
+         *     `serving: false` — kept, so a re-promotion needs no re-enrolling, but it
+         *     routes nothing meanwhile.
+         */
+        readonly RunnerEnrollmentOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Display Name
+             * @default
+             */
+            readonly display_name: string;
+            /** Serving */
+            readonly serving: boolean;
+            /**
+             * Enrolled By Email
+             * @default
+             */
+            readonly enrolled_by_email: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** RunnerEnrollmentIn */
+        readonly RunnerEnrollmentIn: {
+            /** Workspace */
+            readonly workspace: string;
+        };
         /** RunnerFlagsIn */
         readonly RunnerFlagsIn: {
             /** Flags */
@@ -26814,6 +26903,75 @@ export interface operations {
             readonly path: {
                 readonly runner_id: string;
                 readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly list_runner_workspaces: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerEnrollmentOut"][];
+                };
+            };
+        };
+    };
+    readonly enroll_runner_workspace: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerEnrollmentIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerEnrollmentOut"];
+                };
+            };
+        };
+    };
+    readonly unenroll_runner_workspace: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly workspace: string;
             };
             readonly cookie?: never;
         };

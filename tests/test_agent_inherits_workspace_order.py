@@ -20,6 +20,7 @@ from apps.harness import initiator as _initiator
 from apps.harness import services
 from apps.harness.models import Runner, RunnerAssignment, Turn, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 
@@ -31,10 +32,10 @@ def _user(name):
 
 
 def _runner(owner, name, *, kind=Runner.EMDASH, projects=("hal", "ada", "jarvis")):
-    return Runner.objects.create(
+    return enrolled(Runner.objects.create(
         name=name, kind=kind, host=name, owner=owner, status=Runner.ONLINE,
         last_heartbeat_at=timezone.now(), capabilities={"projects": list(projects)},
-    )
+    ))
 
 
 def _order(ws, *runners):

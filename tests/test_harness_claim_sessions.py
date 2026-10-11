@@ -15,6 +15,7 @@ from apps.canopy_sessions.models import Session
 from apps.harness import services
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 
@@ -36,7 +37,7 @@ def _runner(runner_owner, **kw):
         capabilities={"projects": ["canopy-web"]},
     )
     defaults.update(kw)
-    return Runner.objects.create(**defaults)
+    return enrolled(Runner.objects.create(**defaults))
 
 
 def _session_runner(runner_owner, **kw):

@@ -75,6 +75,7 @@ from .routing import (
     repo_order_for,  # noqa: F401
     ridable_sessions,  # noqa: F401
     runner_target_q,  # noqa: F401
+    enrolled_slugs,  # noqa: F401
     runner_tenant_slugs,  # noqa: F401
     seed_assignments_from_capabilities,  # noqa: F401
 )
@@ -122,7 +123,12 @@ from .claim import (
 )
 from .runners import (
     _expire_if_stale,  # noqa: F401
+    backfill_runner_enrollments,  # noqa: F401
     can_administer_runner,  # noqa: F401
+    enroll_runner,  # noqa: F401
+    EnrollmentRefused,  # noqa: F401
+    list_runner_enrollments,  # noqa: F401
+    unenroll_runner,  # noqa: F401
     claim_runner_mint,  # noqa: F401
     current_runner_mint,  # noqa: F401
     finish_runner_mint,  # noqa: F401

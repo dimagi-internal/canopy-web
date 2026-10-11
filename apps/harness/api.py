@@ -54,6 +54,8 @@ from .schemas import (
     RetireOut,
     RunnerAdminIn,
     RunnerAdminOut,
+    RunnerEnrollmentIn,
+    RunnerEnrollmentOut,
     RunnerFlagsIn,
     RunnerEngineIn,
     RunnerCredentialStatusOut,
@@ -850,6 +852,70 @@ def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int
     user = User.objects.filter(pk=user_id).first()
     if user is None or not services.revoke_runner_admin(runner, user):
         raise HttpError(404, "no such grant on this runner")
+    return Status(204, None)
+
+
+def _enrollment_row(e, serving: set[str]) -> dict:
+    return {"workspace": e.workspace_id, "display_name": e.workspace.display_name,
+            "serving": e.workspace_id in serving,
+            "enrolled_by_email": e.enrolled_by.email if e.enrolled_by else "",
+            "created_at": e.created_at}
+
+
+def _sees_enrollment(request: HttpRequest, runner: Runner, slug: str) -> bool:
+    """The owner sees every workspace their box serves; an administrator sees
+    only those they are a member of themselves — administering a box is not a
+    reason to learn which other tenants its owner belongs to."""
+    return runner.owner_id == request.user.id or wsvc.is_member(request.user, slug)
+
+
+@router.get("/runners/{runner_id}/workspaces", response=list[RunnerEnrollmentOut],
+            summary="The workspaces this runner serves (its enrollments)")
+def list_runner_workspaces(request: HttpRequest, runner_id: uuid.UUID):
+    """A runner serves a workspace only when it is ENROLLED there and its owner
+    may run work there (editor and above) — `serving` says whether both hold.
+    Pairing enrolls a box only in the workspace it paired into; joining another
+    workspace does not enroll your existing boxes."""
+    runner = _runner_admin_or_404(request, runner_id)
+    serving = services.runner_tenant_slugs(runner)
+    return [_enrollment_row(e, serving) for e in services.list_runner_enrollments(runner)
+            if _sees_enrollment(request, runner, e.workspace_id)]
+
+
+@router.post("/runners/{runner_id}/workspaces", response=RunnerEnrollmentOut,
+             summary="Enroll this runner in a workspace so it serves its work")
+def enroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID,
+                            payload: RunnerEnrollmentIn):
+    """Opt the box in to a workspace's turns — its agents' (as routing assigns
+    them), its repo turns and its unbound chats. Idempotent.
+
+    The owner or a runner administrator may ask; the box's OWNER must be an
+    editor or above there (422 otherwise), because a box works with its owner's
+    memberships and enrollment never widens them. A caller who is not a member
+    of the workspace gets the same 404 as a workspace that does not exist.
+    """
+    runner = _runner_admin_or_404(request, runner_id)
+    slug = (payload.workspace or "").strip()
+    # The CALLER must be a member to name it — owner or administrator alike —
+    # so a missing workspace and someone else's read the same.
+    if not slug or not wsvc.is_member(request.user, slug):
+        raise HttpError(404, f"workspace '{slug}' not found")
+    try:
+        row = services.enroll_runner(runner, slug, by=request.user)
+    except services.EnrollmentRefused as exc:
+        raise HttpError(422, str(exc))
+    return _enrollment_row(row, services.runner_tenant_slugs(runner))
+
+
+@router.delete("/runners/{runner_id}/workspaces/{workspace}", response={204: None},
+               summary="Stop this runner serving a workspace")
+def unenroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID, workspace: str):
+    """The box claims nothing more there from its next poll; a turn it already
+    holds runs to completion. Owner or a runner administrator."""
+    runner = _runner_admin_or_404(request, runner_id)
+    if not _sees_enrollment(request, runner, workspace) or not services.unenroll_runner(
+            runner, workspace):
+        raise HttpError(404, "this runner is not enrolled in that workspace")
     return Status(204, None)
 
 

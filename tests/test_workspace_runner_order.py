@@ -19,6 +19,7 @@ from django.utils import timezone
 from apps.harness import services
 from apps.harness.models import Runner, Turn, WorkspaceRunnerOrder
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 
@@ -34,11 +35,11 @@ def _ws(slug, owner):
 
 
 def _runner(runner_owner, name, projects=("canopy-web",), **kw):
-    return Runner.objects.create(
+    return enrolled(Runner.objects.create(
         name=name, kind=Runner.EMDASH, host=name, owner=runner_owner,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
         capabilities={"projects": list(projects)}, **kw,
-    )
+    ))
 
 
 def _turn(ws, key="p1", project="canopy-web", age_seconds=0):

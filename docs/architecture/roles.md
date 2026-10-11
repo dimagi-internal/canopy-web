@@ -213,6 +213,14 @@ GitHub token through `/credentials/resolve`; an assignment row was the whole tru
 and the editor tier wrote it. A teammate whose own laptop runs an agent's work therefore needs
 an admin grant on that agent.
 
+**A box serves only the workspaces it is enrolled in** (`RunnerEnrollment`, 2026-10-11) — and
+only while its owner holds `agent.work` (editor and above) in each: the two intersect in
+`harness.routing.runner_tenant_slugs`, so enrollment narrows what membership allows and never
+widens it. Pairing enrolls a box in its pairing workspace only; a new membership enrolls
+nothing; leaving a workspace drops the enrollment. The owner or a runner administrator manages
+the list (`/api/harness/runners/{id}/workspaces`). This is what keeps a separate root (a family
+workspace) off the Dimagi boxes, and a family box off Dimagi's work, although one person owns both.
+
 **Only the box that claimed a turn reports on it** — start, finish, ledger events, transcript
 lines (`harness.api._reporting_turn_or_404`). An unclaimed turn takes the editor tier.
 

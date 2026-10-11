@@ -27,6 +27,7 @@ from apps.harness.claim import claim_next_turn
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.harness.routing import ENVELOPE_VERSION, PROFILES_VERSION
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
@@ -40,8 +41,8 @@ CAPS = {"sessions": True, "profiles": PROFILES_VERSION, "envelope": ENVELOPE_VER
 
 
 def _runner(name, kind, owner):
-    return Runner.objects.create(name=name, kind=kind, owner=owner, status=Runner.ONLINE,
-                                 last_heartbeat_at=timezone.now(), capabilities=CAPS)
+    return enrolled(Runner.objects.create(name=name, kind=kind, owner=owner, status=Runner.ONLINE,
+                                 last_heartbeat_at=timezone.now(), capabilities=CAPS))
 
 
 @pytest.fixture

@@ -1212,6 +1212,25 @@ class RunnerAdminIn(Schema):
     email: str
 
 
+class RunnerEnrollmentOut(Schema):
+    """One workspace this runner has opted in to serving (`RunnerEnrollment`).
+
+    `serving` is the live answer: enrolled AND the runner's owner may still run
+    work there (editor and above). An enrollment whose owner was demoted reads
+    `serving: false` — kept, so a re-promotion needs no re-enrolling, but it
+    routes nothing meanwhile."""
+
+    workspace: str
+    display_name: str = ""
+    serving: bool
+    enrolled_by_email: str = ""
+    created_at: dt.datetime
+
+
+class RunnerEnrollmentIn(Schema):
+    workspace: str
+
+
 class RunnerMintOut(Schema):
     """A browser-driven re-authentication, as an OPERATOR sees it.
 
