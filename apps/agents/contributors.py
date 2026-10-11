@@ -383,6 +383,23 @@ def board(project: AgentProject, reader: Reader) -> dict:
             "written_at": row.summary_written_at if visible else None,
             "ideas": per,
         })
+    # Someone an idea's own evidence names (the task's human why, or the turn that
+    # raised it) is a contributor too, page or not: their words are on the board.
+    listed = {c["id"] for c in contributors}
+    named: dict[int, list[dict]] = {}
+    for idea in ideas:
+        for src in idea["came_from"]:
+            pid = src["person_id"]
+            if pid is not None and pid not in listed and src["via"] != VIA_PAGE:
+                named.setdefault(pid, []).append(idea)
+    for pid, mine in named.items():
+        name = next(s["name"] for i in mine for s in i["came_from"] if s["person_id"] == pid)
+        contributors.append({
+            "id": pid, "display_name": name, "role": "", "source": "idea",
+            "since": min(i["updated_at"] for i in mine),
+            "has_page": False, "page_withheld": False, "goal": "", "written_at": None,
+            "ideas": {s: sum(i["stage"] == s for i in mine) for s in STAGES},
+        })
     # The people with pages lead: they are the engaged builders this is for.
     contributors.sort(key=lambda c: (not c["has_page"], -sum(c["ideas"].values())))
     return {"agent": project.agent.slug, "project": project.ext_id, "name": project.name,
