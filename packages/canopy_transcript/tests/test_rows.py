@@ -27,7 +27,7 @@ def test_conversational_messages_carry_the_composite_record_ordinal():
     matter how the transcript is filtered."""
     recs = [{"type": "summary"}, _user("q1"), _asst("a1"), _asst("a2")]
     assert conversational_messages(recs, -1) == [
-        {"index": _ix(1), "role": "user", "text": "q1", "content": {}},
+        {"index": _ix(1), "role": "user", "text": "q1", "content": {"record": {}}},
         {"index": _ix(2), "role": "assistant", "text": "a1", "content": {}},
         {"index": _ix(3), "role": "assistant", "text": "a2", "content": {}},
     ]
@@ -293,3 +293,54 @@ def test_pathological_nesting_is_still_cut():
     for _ in range(TOOL_INPUT_MAX_DEPTH + 5):
         deep = {"n": deep}
     assert "…" in str(_tool_input(deep))
+
+
+# --- provenance flags on user rows (record_flags) ---------------------------
+# Shapes copied from live transcripts (2026-10-11), trimmed to the fields that
+# matter: a typed prompt, a skill body, a ScheduleWakeup fire, a compaction
+# summary, and a subagent's own (sidechain) record.
+
+TYPED = {"type": "user", "isSidechain": False, "promptSource": "typed",
+         "turnOrigin": "human", "origin": {"kind": "human"},
+         "message": {"role": "user", "content": "okay do everything"}}
+SKILL_BODY = {"type": "user", "isMeta": True, "isSidechain": False,
+              "sourceToolUseID": "toolu_019YSB9iTAYw5QYH9FM1kNfd",
+              "message": {"role": "user", "content": [
+                  {"type": "text", "text": "# DDD — Demo-Driven Development v2\n\nOrchestrate..."}]}}
+WAKEUP = {"type": "user", "isMeta": True, "isSidechain": False, "promptSource": "system",
+          "turnOrigin": "scheduled", "scheduledTaskId": "ca126c93", "queuePriority": "later",
+          "message": {"role": "user", "content": "Continue the DDD run …: check `watchdog check`"}}
+COMPACT = {"type": "user", "isSidechain": False, "isCompactSummary": True,
+           "isVisibleInTranscriptOnly": True, "turnOrigin": "scheduled",
+           "message": {"role": "user", "content": "This session is being continued from a previous conversation…"}}
+SIDECHAIN = {"type": "user", "isSidechain": True,
+             "message": {"role": "user", "content": "Investigate the flaky test"}}
+
+
+def test_user_rows_carry_their_records_provenance():
+    rows = {name: ct.rows_for_record(rec)[0]["content"]["record"]
+            for name, rec in [("typed", TYPED), ("skill", SKILL_BODY), ("wakeup", WAKEUP),
+                              ("compact", COMPACT), ("side", SIDECHAIN)]}
+    assert rows["typed"] == {"prompt_source": "typed", "turn_origin": "human"}
+    assert rows["skill"] == {"meta": True, "source_tool_use_id": "toolu_019YSB9iTAYw5QYH9FM1kNfd"}
+    assert rows["wakeup"] == {"meta": True, "prompt_source": "system", "turn_origin": "scheduled"}
+    assert rows["compact"] == {"compact_summary": True, "turn_origin": "scheduled"}
+    assert rows["side"] == {"sidechain": True}
+
+
+def test_flags_ride_the_stored_payload_but_never_assistant_or_tool_rows():
+    """`row_payload` is what Message.content stores, so the flags reach the DB
+    through the existing wire with no server change to ingest."""
+    [row] = conversational_messages([TYPED], -1)
+    assert ct.row_payload(row) == {"record": {"prompt_source": "typed", "turn_origin": "human"},
+                                   "text": "okay do everything"}
+    result = {"type": "user", "isMeta": False, "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
+    assert "record" not in ct.rows_for_record(result)[0]["content"]
+    assert ct.rows_for_record(_asst("hi"))[0]["content"] == {}
+
+
+def test_an_older_claude_code_prompt_still_says_it_was_captured():
+    """No flags at all is `{}` — present, so a reader can tell "captured, and a
+    person typed it" from a row shipped before provenance existed."""
+    assert ct.rows_for_record(_user("hello"))[0]["content"] == {"record": {}}
