@@ -170,6 +170,39 @@ class HumanInputPageOut(Schema):
     source: Literal["transcript", "tail"] = "transcript"
 
 
+class SlackBindingOut(Schema):
+    """The Slack thread a session is connected to (apps/slack/share.py::binding_of)."""
+    channel: str
+    thread_ts: str = ""
+    #: Opens the thread in Slack's web client; "" when canopy can't build one.
+    url: str = ""
+    #: True when the session was SHARED into the thread (bind), False for a
+    #: thread Slack itself started.
+    shared: bool = False
+
+
+class SlackDetachIn(Schema):
+    """Which session to disconnect — the same identifiers `share_session_to_slack`
+    takes, tried in this order: canopy's `session_id`, the Claude Code session id
+    (`$CLAUDE_CODE_SESSION_ID`), the emdash task + project."""
+    session_id: str = ""
+    claude_session_id: str = ""
+    emdash_task: str = ""
+    emdash_project: str = ""
+
+
+class SlackDetachOut(Schema):
+    #: "detached", or "not_bound" when there was no thread to disconnect (also
+    #: what a second detach answers — the call is idempotent).
+    status: str
+    message: str
+    session_id: uuid.UUID
+    channel: str = ""
+    thread_ts: str = ""
+    #: Whether the "no longer connected" note reached the thread (best-effort).
+    notice_posted: bool = False
+
+
 class SessionOut(Schema):
     # A requested full-history ship is still outstanding (the runner has not sent
     # its final chunk). Lets "Load full session" wait on an exact signal rather
@@ -256,6 +289,9 @@ class SessionOut(Schema):
     # MCP tool counts. Shape and limits: apps/canopy_sessions/activity.py. The
     # list filters `?repo=`, `?branch=`, `?pr=` read it.
     activity: dict = {}
+    # The Slack thread this session talks to — replies there reach it and its
+    # replies post there — or null. Cleared by POST /slack/detach.
+    slack: SlackBindingOut | None = None
 
 
 class SessionSearchPageOut(Schema):

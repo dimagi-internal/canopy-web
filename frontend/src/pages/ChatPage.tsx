@@ -18,6 +18,7 @@ import {
   requestBackfill,
   resetSession,
   closeSession,
+  detachSessionFromSlack,
   sendMessage,
   setSessionNotify,
   placeTurn,
@@ -341,6 +342,7 @@ export function ChatPage() {
   // "Others see" moved from the composer into the ⋯ menu (canopy-web#1004) —
   // an owner/editor has a composer for it to describe; a viewer does not.
   const canEditTypingVisibility = meta?.my_role === 'owner' || meta?.my_role === 'editor'
+  const canDetachSlack = canEditTypingVisibility
   // <PlacementBanner>'s eligible-runner shape, mapped from the fleet-derived
   // (already online + session-capable) options above.
   const placementRunners: PlacementRunner[] = useMemo(
@@ -716,6 +718,29 @@ export function ChatPage() {
   const staleRunning = liveWorking === undefined && Boolean(meta?.running);
   const title = meta?.title?.trim() || 'Chat'
 
+  // "Disconnect from Slack": stop the session posting into its bound thread and
+  // the thread's replies reaching it. Confirmed first — re-attaching means a
+  // fresh share, which starts a new thread.
+  const [detachingSlack, setDetachingSlack] = useState(false)
+  const [slackNote, setSlackNote] = useState<string | null>(null)
+  const detachSlack = async () => {
+    if (!id || !meta?.slack) return
+    if (!window.confirm(
+      "Disconnect this session from its Slack thread? Replies there will no longer reach it, " +
+      "and its replies will stop posting there.")) return
+    setDetachingSlack(true)
+    setSlackNote(null)
+    try {
+      await detachSessionFromSlack(id)
+      setMeta((prev) => (prev ? { ...prev, slack: null } : prev))
+      setSlackNote('Disconnected from Slack')
+    } catch (err) {
+      setSlackNote(err instanceof Error ? err.message : 'Could not disconnect from Slack')
+    } finally {
+      setDetachingSlack(false)
+    }
+  }
+
   const toggleNotify = async () => {
     if (!id || !meta) return
     const next = !meta.notify_every_completion
@@ -782,6 +807,7 @@ export function ChatPage() {
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {closeNote && <span className="text-[12px] text-muted-foreground">{closeNote}</span>}
           {resetNote && <span className="text-[12px] text-muted-foreground">{resetNote}</span>}
+          {slackNote && <span className="text-[12px] text-muted-foreground">{slackNote}</span>}
           {id && <SessionMemoryToggles sessionId={id} />}
           {id && (
             <ChatSessionMenu
@@ -813,6 +839,10 @@ export function ChatPage() {
               // A viewer was given this chat to read, not to type into — the
               // control changes what a person's OWN composer shows others,
               // which a viewer has no composer for.
+              slackThread={meta?.slack ?? null}
+              // Same gate as the server's: an owner or editor of the session.
+              onDetachSlack={canDetachSlack ? () => void detachSlack() : undefined}
+              detachingSlack={detachingSlack}
               typingVisibility={canEditTypingVisibility ? socket.typingVisibility : undefined}
               onTypingVisibilityChange={
                 canEditTypingVisibility ? socket.setTypingVisibility : undefined

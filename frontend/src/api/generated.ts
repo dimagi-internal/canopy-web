@@ -6185,6 +6185,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/slack/detach": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Disconnect a session from its Slack thread
+         * @description Disconnect a session from the Slack thread it is bound to — the undo of
+         *     sharing it with `bind` (`share_session_to_slack`), and works as well on a
+         *     session Slack itself started.
+         *
+         *     From then on the session's replies are no longer posted into the thread, and
+         *     replies in the thread no longer reach the session (they are ignored). The
+         *     thread gets one last note saying it is no longer connected (best-effort; a
+         *     Slack failure does not undo the detach). Nothing already posted is deleted,
+         *     and the binding is kept on the session as history.
+         *
+         *     Name the session with `session_id`, else `claude_session_id`
+         *     ($CLAUDE_CODE_SESSION_ID), else `emdash_task` + `emdash_project`. Needs
+         *     owner or editor access to the session. Idempotent: a session with no thread
+         *     answers `status: not_bound`. To connect it again, share it with `bind`,
+         *     which starts a fresh thread.
+         */
+        readonly post: operations["detach_session_from_slack"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/transfer-requests": {
         readonly parameters: {
             readonly query?: never;
@@ -11283,6 +11317,7 @@ export interface components {
             readonly activity: {
                 readonly [key: string]: unknown;
             };
+            readonly slack?: components["schemas"]["SlackBindingOut"] | null;
             /** Messages */
             readonly messages: readonly components["schemas"]["MessageOut"][];
             /** Menu */
@@ -17632,6 +17667,30 @@ export interface components {
             readonly activity: {
                 readonly [key: string]: unknown;
             };
+            readonly slack?: components["schemas"]["SlackBindingOut"] | null;
+        };
+        /**
+         * SlackBindingOut
+         * @description The Slack thread a session is connected to (apps/slack/share.py::binding_of).
+         */
+        readonly SlackBindingOut: {
+            /** Channel */
+            readonly channel: string;
+            /**
+             * Thread Ts
+             * @default
+             */
+            readonly thread_ts: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
+            /**
+             * Shared
+             * @default false
+             */
+            readonly shared: boolean;
         };
         /** SessionCreateIn */
         readonly SessionCreateIn: {
@@ -17718,6 +17777,61 @@ export interface components {
              * @default false
              */
             readonly dry_run: boolean;
+        };
+        /** SlackDetachOut */
+        readonly SlackDetachOut: {
+            /** Status */
+            readonly status: string;
+            /** Message */
+            readonly message: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /**
+             * Channel
+             * @default
+             */
+            readonly channel: string;
+            /**
+             * Thread Ts
+             * @default
+             */
+            readonly thread_ts: string;
+            /**
+             * Notice Posted
+             * @default false
+             */
+            readonly notice_posted: boolean;
+        };
+        /**
+         * SlackDetachIn
+         * @description Which session to disconnect — the same identifiers `share_session_to_slack`
+         *     takes, tried in this order: canopy's `session_id`, the Claude Code session id
+         *     (`$CLAUDE_CODE_SESSION_ID`), the emdash task + project.
+         */
+        readonly SlackDetachIn: {
+            /**
+             * Session Id
+             * @default
+             */
+            readonly session_id: string;
+            /**
+             * Claude Session Id
+             * @default
+             */
+            readonly claude_session_id: string;
+            /**
+             * Emdash Task
+             * @default
+             */
+            readonly emdash_task: string;
+            /**
+             * Emdash Project
+             * @default
+             */
+            readonly emdash_project: string;
         };
         /** TransferOut */
         readonly TransferOut: {
@@ -27623,6 +27737,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ResetSummaryOut"];
+                };
+            };
+        };
+    };
+    readonly detach_session_from_slack: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SlackDetachIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlackDetachOut"];
                 };
             };
         };

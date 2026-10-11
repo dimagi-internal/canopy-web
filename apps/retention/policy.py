@@ -24,6 +24,9 @@ _SESSION_SOURCES = {"ace-web": "ace_web", "email": "email", "slack": "slack"}
 # rather than imported (slack.services pulls in the whole Slack client);
 # tests/test_retention.py pins them to their definitions.
 SLACK_THREAD_KEY = "slack_thread"
+# A session disconnected from its thread (apps/slack/share.py::detach_session)
+# was still a Slack conversation; detaching must not move it to another rule.
+SLACK_DETACHED_KEY = "slack_detached"
 EMAIL_THREAD_KEY = "email_thread_key"
 
 _PRINCIPAL_FOR_INITIATOR = {
@@ -62,7 +65,7 @@ def chat_source(*, metadata: dict | None, origin: str) -> str:
     marked = _SESSION_SOURCES.get(metadata.get("source") or "")
     if marked:
         return marked
-    if SLACK_THREAD_KEY in metadata:
+    if SLACK_THREAD_KEY in metadata or SLACK_DETACHED_KEY in metadata:
         return "slack"
     if EMAIL_THREAD_KEY in metadata:
         return "email"

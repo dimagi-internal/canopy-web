@@ -1314,6 +1314,8 @@ def detach_session(session) -> bool:
 SERVER_OWNED_METADATA = frozenset({
     "embed_app", "requested_runner_id", "transcript_sourced",
     "slack_thread", "slack_team", "slack_channel", "slack_thread_ts",
+    # History of detached threads (apps/slack/share.py); retention classes on it.
+    "slack_detached",
     "email_thread_key", "via", "capability",
     # A host's runner requirements (ZDR, apps/harness/runner_requirements.py),
     # copied from the token that started or sent into the session.

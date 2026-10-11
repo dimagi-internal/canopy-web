@@ -107,3 +107,30 @@ describe('ChatSessionMenu — Load earlier / Load full session', () => {
     expect(screen.getByTestId('menu-load-full')).toBeTruthy()
   })
 })
+
+describe('ChatSessionMenu — Slack thread', () => {
+  it('offers Disconnect from Slack on a connected session', async () => {
+    const onDetachSlack = vi.fn()
+    render(
+      <ChatSessionMenu
+        {...baseProps({ slackThread: { channel: 'C1', url: 'https://app.slack.com/x' }, onDetachSlack })}
+      />,
+    )
+    await openMenu()
+    fireEvent.click(screen.getByTestId('detach-slack'))
+    expect(onDetachSlack).toHaveBeenCalled()
+    expect(screen.queryByText('Open Slack thread')).toBeNull() // menu closed after the click
+  })
+
+  it('shows nothing about Slack when the session has no thread', async () => {
+    render(<ChatSessionMenu {...baseProps({ slackThread: null, onDetachSlack: vi.fn() })} />)
+    await openMenu()
+    expect(screen.queryByTestId('detach-slack')).toBeNull()
+  })
+
+  it('hides the action from someone who cannot act in the session', async () => {
+    render(<ChatSessionMenu {...baseProps({ slackThread: { channel: 'C1' } })} />)
+    await openMenu()
+    expect(screen.queryByTestId('detach-slack')).toBeNull()
+  })
+})
