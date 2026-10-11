@@ -10,7 +10,8 @@ The rule, whole:
 
 * **Tenant first.** You must be a member of the session's workspace. Always —
   a participant removed from the workspace loses the session with it, the
-  same as every other tenant surface in canopy.
+  same as every other tenant surface in canopy. Which workspace that is — the
+  filing rule for a new runner session, and moving one — is `filing.py`.
 * **Then one of four legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered emdash session (tenant-visible
   by design); or it is the own thread of an agent you run.

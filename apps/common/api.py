@@ -12,6 +12,9 @@ from .schemas import (
     MeOut,
     PresencePreferenceIn,
     PresencePreferenceOut,
+    SessionWorkspaceChoice,
+    SessionWorkspacePreferenceIn,
+    SessionWorkspacePreferenceOut,
 )
 
 common_router = Router(auth=session_auth, tags=["common"])
@@ -82,3 +85,60 @@ def set_presence_preference(
         user=request.user, defaults={"show_presence": payload.show_presence}
     )
     return PresencePreferenceOut(show_presence=payload.show_presence)
+
+
+# --- /me/session-workspace/ (auth) ------------------------------
+
+
+def _session_workspace_out(user) -> SessionWorkspacePreferenceOut:
+    from apps.canopy_sessions import filing
+    from apps.workspaces import permissions as perms
+    from apps.workspaces.models import Workspace
+
+    stored = filing.stored_default(user)
+    effective = filing.effective_default(user)
+    slugs = perms.slugs_with(user, perms.CONTENT_WRITE)
+    choices = [
+        SessionWorkspaceChoice(slug=ws.slug, display_name=ws.display_name or ws.slug)
+        for ws in Workspace.objects.filter(slug__in=slugs).order_by("slug")
+    ]
+    return SessionWorkspacePreferenceOut(
+        workspace=stored.slug if stored else None,
+        effective=effective.slug if effective else None,
+        choices=choices,
+    )
+
+
+@common_router.get(
+    "/me/session-workspace/",
+    response=SessionWorkspacePreferenceOut,
+    summary="Get the workspace your own emdash sessions are filed in",
+)
+def get_session_workspace_preference(request: HttpRequest) -> SessionWorkspacePreferenceOut:
+    """Your default for NEW sessions a runner you own discovers in emdash, when the
+    emdash project is not an agent's (an agent's project follows the agent's
+    workspace). Unset, or no longer one you can edit in: the runner's workspace."""
+    return _session_workspace_out(request.user)
+
+
+@common_router.patch(
+    "/me/session-workspace/",
+    response=SessionWorkspacePreferenceOut,
+    summary="Set the workspace your own emdash sessions are filed in",
+)
+def set_session_workspace_preference(
+    request: HttpRequest, payload: SessionWorkspacePreferenceIn
+) -> SessionWorkspacePreferenceOut:
+    """Set (or clear, with a null/blank `workspace`) your default. Must be a workspace
+    you are an editor or better in. Applies to sessions discovered from now on;
+    existing sessions stay where they are (move one with
+    `POST /api/canopy-sessions/{id}/move`)."""
+    from ninja.errors import HttpError
+
+    from apps.canopy_sessions import filing
+
+    try:
+        filing.set_default(request.user, payload.workspace)
+    except filing.FilingError as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    return _session_workspace_out(request.user)

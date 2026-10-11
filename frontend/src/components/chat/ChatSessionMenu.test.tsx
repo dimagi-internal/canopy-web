@@ -134,3 +134,43 @@ describe('ChatSessionMenu — Slack thread', () => {
     expect(screen.queryByTestId('detach-slack')).toBeNull()
   })
 })
+
+describe('ChatSessionMenu — Move to workspace', () => {
+  const targets = [
+    { slug: 'dimagi', display_name: 'Dimagi' },
+    { slug: 'marshellis', display_name: 'Marshellis' },
+  ]
+
+  it('is hidden when the session is not yours to move', async () => {
+    render(<ChatSessionMenu {...baseProps({ workspace: 'dimagi', moveTargets: targets })} />)
+    await openMenu()
+    expect(screen.queryByTestId('move-workspace')).toBeNull()
+  })
+
+  it('is hidden when there is nowhere else to put it', async () => {
+    render(
+      <ChatSessionMenu
+        {...baseProps({ workspace: 'dimagi', moveTargets: [targets[0]], onMove: vi.fn() })}
+      />,
+    )
+    await openMenu()
+    expect(screen.queryByTestId('move-workspace')).toBeNull()
+  })
+
+  it('moves to the picked workspace', async () => {
+    const onMove = vi.fn(async () => {})
+    render(
+      <ChatSessionMenu {...baseProps({ workspace: 'dimagi', moveTargets: targets, onMove })} />,
+    )
+    await openMenu()
+    fireEvent.click(screen.getByTestId('move-workspace'))
+    await waitFor(() => expect(screen.getByTestId('move-workspace-form')).toBeTruthy())
+    // The current workspace is not offered as a target.
+    const options = Array.from(
+      (screen.getByTestId('move-workspace-select') as HTMLSelectElement).options,
+    ).map((o) => o.value)
+    expect(options).toEqual(['marshellis'])
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }))
+    await waitFor(() => expect(onMove).toHaveBeenCalledWith('marshellis'))
+  })
+})

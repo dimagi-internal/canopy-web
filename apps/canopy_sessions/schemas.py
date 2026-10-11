@@ -319,6 +319,12 @@ class SessionDetailOut(SessionOut):
     # (canopy_sessions.access). The page reads it to decide whether to offer
     # sharing and the composer — the server enforces both regardless.
     my_role: str | None = None
+    # May YOU move this session to another workspace (`POST /{id}/move`)? The
+    # person whose session it is — its creator, or for a runner-discovered one
+    # the runner's owner — and never an agent's session (canopy_sessions.filing).
+    # The page offers "Move to workspace…" only when this is true and you can
+    # edit in more than one workspace; the server enforces it regardless.
+    can_move: bool = False
     # Tail-first cursor: the transcript ships the last N messages by default;
     # these tell the client whether earlier history exists and where the loaded
     # window starts, for scroll-back / "load full". See services.SESSION_TAIL_DEFAULT.
@@ -333,6 +339,11 @@ class SendOut(Schema):
 
 class SessionNotifyIn(Schema):
     every_completion: bool
+
+
+class SessionMoveIn(Schema):
+    #: The workspace slug to file this session in. You must be an editor there.
+    workspace: str
 
 
 class ParticipantOut(Schema):

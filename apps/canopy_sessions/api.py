@@ -33,6 +33,7 @@ from . import (
     access,
     attachment_storage,
     feed,
+    filing,
     page_actions,
     page_state,
     secrets,
@@ -67,6 +68,7 @@ from .schemas import (
     SendOut,
     SessionCreateIn,
     SessionDetailOut,
+    SessionMoveIn,
     ParticipantAddIn,
     ParticipantOut,
     SessionNotifyIn,
@@ -818,6 +820,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     data["menu"] = serializers.pending_menu(session)
     data["turn_status"] = status_feed.status_for_session(session)
     data["my_role"] = access.role_for(request.user, session)
+    data["can_move"] = filing.can_move(request.user, session)
     return data
 
 
@@ -941,6 +944,27 @@ def set_session_notify(request: HttpRequest, session_id: uuid.UUID, payload: Ses
     if session.notify_every_completion != payload.every_completion:
         session.notify_every_completion = payload.every_completion
         session.save(update_fields=["notify_every_completion", "updated_at"])
+    return _out(session)
+
+
+@router.post("/{session_id}/move", response=SessionOut, summary="Move a session to another workspace")
+def move_session(request: HttpRequest, session_id: uuid.UUID, payload: SessionMoveIn):
+    """File this session in another workspace you belong to.
+
+    Only the person whose session it is may move it: its creator for a web chat,
+    or the owner of the runner it was discovered on for an emdash session. The
+    target must be a workspace you are an editor (or better) in. An agent's
+    session cannot be moved (422) — it belongs to the agent's workspace.
+
+    Tenant-first: afterwards only members of the target can see it. Participants
+    who are not members of the target are removed from the chat. Your runner
+    re-reporting the session never moves it back. Moving to the workspace it is
+    already in is a no-op."""
+    session = _session_or_404(request, session_id)
+    try:
+        filing.move(session, payload.workspace, by=request.user)
+    except filing.FilingError as exc:
+        raise HttpError(exc.status, str(exc)) from exc
     return _out(session)
 
 

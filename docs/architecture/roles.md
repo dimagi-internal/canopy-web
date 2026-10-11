@@ -232,6 +232,41 @@ guard all include owners of a parent workspace (`services.effective_memberships`
 direct owner may step down while a parent's owner still owns the workspace. Only a direct
 owner may detach a workspace from its parent.
 
+### Which workspace a session lives in — and moving it
+
+A chat session carries its own tenant (`Session.workspace`), and the session ACL
+(`apps/canopy_sessions/access.py`) is **tenant-first**: you must be a member of that
+workspace before any other rule applies. Runner-discovered emdash sessions are then visible
+to every member of it. So *where a session is filed* decides who can see it.
+
+**Filing a new runner-discovered session** (`replace_reported_sessions` →
+`apps/canopy_sessions/filing.py`), first match wins:
+
+1. The emdash project names an agent → the **agent's** workspace (it is the agent's work).
+2. The runner owner's **default session workspace**, while they are still an editor (or
+   better) there — set at Settings → *Session workspace*, or
+   `PATCH /api/me/session-workspace/` (MCP `set_session_workspace_preference`,
+   `{"workspace": "<slug>"}`; null clears it). Membership is re-checked at filing time, so
+   leaving the workspace or being demoted to viewer silently falls back.
+3. The runner's own workspace (the behaviour before 2026-10-11).
+
+Only NEW sessions are filed. The ~10s report loop reuses a session's binding and never
+rewrites its workspace, so existing sessions are not re-filed when the default changes, and
+a session someone moved stays where they put it.
+
+**Moving a session** (`POST /api/canopy-sessions/{id}/move`, MCP `move_session`, or
+*Move to workspace…* in a chat's ⋯ menu): only the person whose session it is — its creator
+for a web chat, the owner of the runner it was discovered on for an emdash session — to a
+workspace where they are an editor or better. An **agent's** session (`agent` set) cannot be
+moved (422): it belongs to the agent's tenant. Moving is tenant-first: afterwards only
+members of the target see it, and explicit participants who are not members of the target
+lose their participant row (the departure sweep's rule — a kept row would wake up the day
+they joined the target; moving back does not restore it). Nothing else under a session
+carries its own tenant — messages, attachments, drafts, secrets, keys, transfer requests
+and the runner binding hang off the session, and session turns derive theirs from it.
+Storyboards, reviews and walkthroughs that merely *link* to a session keep their own
+workspace; the link grants nothing.
+
 **The harness** — schedules and turns — is gated too, and it had to be, because it is where
 the table's promises actually cash out. A schedule is prompt text a runner later executes *as
 the agent*, holding the agent's resolved credentials, and `run-now` means immediately; a turn
