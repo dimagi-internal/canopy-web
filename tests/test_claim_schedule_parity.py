@@ -37,6 +37,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 from apps.harness import initiator as _initiator
+from apps.workspaces.testing import enrolled
 
 # Queued by canopy itself: these tests are about the queue, not about who asked.
 _BY_CANOPY = _initiator.system(via="test")
@@ -72,10 +73,10 @@ def _schedule(agent):
 
 
 def _online_runner(runner_owner, name="mbp"):
-    return Runner.objects.create(
+    return enrolled(Runner.objects.create(
         name=name, kind=Runner.EMDASH, host=name, owner=runner_owner,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(), capabilities={},
-    )
+    ))
 
 
 def _claimable_agent_slugs(runner) -> set[str]:

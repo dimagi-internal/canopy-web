@@ -223,6 +223,10 @@ def test_runner_claims_for_agents_in_any_workspace_its_runner_owner_belongs_to(o
     consistent with `_runner_schedule_qs`, which already derives tenancy that way
     for the schedule-sync route. `owner` can already drive `ace` through the UI,
     so claiming for it is no escalation.
+
+    Since 2026-10-11 the box must also be ENROLLED in the sibling: pairing
+    enrolls it only where it paired, and membership alone no longer puts a box
+    on a workspace's work (a family workspace must not get the Dimagi boxes).
     """
     sibling = Workspace.objects.create(
         slug="connect", display_name="Connect", created_by=owner, access_request_domains=[]
@@ -257,6 +261,12 @@ def test_runner_claims_for_agents_in_any_workspace_its_runner_owner_belongs_to(o
     assert hb.status_code == 200  # sanity: ONLINE, or claim_next_turn bails before the scope check
 
     turn_id = _enqueue(owner_client, slug="ace", key="k-ace").json()["id"]
+
+    # Paired into `workspace`, so not (yet) serving the sibling.
+    assert owner_client.post(f"/api/harness/runners/{rid}/claim").status_code == 204
+    enroll = owner_client.post(f"/api/harness/runners/{rid}/workspaces",
+                               {"workspace": sibling.slug}, content_type="application/json")
+    assert enroll.status_code == 200 and enroll.json()["serving"] is True
 
     resp = owner_client.post(f"/api/harness/runners/{rid}/claim")
     assert resp.status_code == 200, "the cross-workspace turn must be claimable"

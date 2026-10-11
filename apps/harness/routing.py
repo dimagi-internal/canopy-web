@@ -556,12 +556,37 @@ def runner_tenant_slugs(runner: Runner) -> set[str]:
     editor and above): a box claims other people's prompts, so a VIEWER's box
     serves nothing there — before 2026-10-02 a viewer could pair a session-
     capable box and receive the workspace's unbound chat sends.
+
+    And only the workspaces the box is ENROLLED in (`RunnerEnrollment`,
+    2026-10-11): the owner's memberships say where a box MAY work, enrollment
+    says where it DOES. Without it a box served every workspace its owner could
+    work in, so becoming owner of a separate tree (a family workspace) put every
+    Dimagi box on that tree's repo turns and unbound chats, and back. The two
+    INTERSECT — enrollment never grants more than membership, and a demoted or
+    departed owner's box stops serving at once, enrolled or not.
     """
     if not runner.owner_id:
         return set()
     from apps.workspaces import permissions as perms
 
-    return perms.slugs_with(runner.owner, perms.AGENT_WORK)
+    enrolled = enrolled_slugs(runner)
+    if not enrolled:
+        return set()
+    return perms.slugs_with(runner.owner, perms.AGENT_WORK, within=enrolled)
+
+
+def enrolled_slugs(runner: Runner) -> set[str]:
+    """The workspaces this runner has opted in to serving (`RunnerEnrollment`),
+    regardless of whether its owner may still work there — `runner_tenant_slugs`
+    is the eligibility answer. Reads a `prefetch_related("enrollments")` when the
+    caller made one, so a fleet-wide listing costs one query, not one per box."""
+    cache = getattr(runner, "_prefetched_objects_cache", {})
+    if "enrollments" in cache:
+        return {e.workspace_id for e in cache["enrollments"]}
+    from .models import RunnerEnrollment
+
+    return set(RunnerEnrollment.objects.filter(runner_id=runner.pk)
+               .values_list("workspace_id", flat=True))
 
 
 def agent_tenant_q(ws_slugs, *, prefix: str = "agent") -> Q:

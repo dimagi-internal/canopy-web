@@ -219,7 +219,8 @@ class Runner(models.Model):
     # `_runner_visibility_q` requires owner to be the caller (or NULL, the
     # legacy-ungated path it keeps open on purpose), and BOTH `_runner_schedule_qs`
     # and `claim_next_turn` derive the tenant from it — a runner may sync/fire/claim
-    # for agents in any workspace its owner belongs to.
+    # in a workspace where its owner may run work AND that it is enrolled in
+    # (`RunnerEnrollment`, 2026-10-11; `routing.runner_tenant_slugs`).
     #
     # OPERATIONAL CONSEQUENCE — deleting a pairing user permanently bricks their
     # runners. SET_NULL orphans the row rather than removing it; `owner_id`
@@ -260,6 +261,17 @@ class Runner(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"runner:{self.name}:{self.kind}:{self.status}"
+
+    def save(self, *args, **kwargs):
+        """A NEW runner is enrolled in the workspace it was paired into, and in
+        nothing else (`RunnerEnrollment`). Here rather than in the pairing route
+        so every way a row comes into being gets the same single enrollment."""
+        creating = self._state.adding
+        super().save(*args, **kwargs)
+        if creating and self.workspace_id:
+            RunnerEnrollment.objects.get_or_create(
+                runner=self, workspace_id=self.workspace_id,
+                defaults={"enrolled_by_id": self.owner_id})
 
     def agent_slugs(self) -> list[str]:
         return list(self.capabilities.get("agents", []))
@@ -1249,6 +1261,45 @@ class WorkspaceRunnerOrder(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["workspace", "runner"],
                                     name="one_order_row_per_workspace_runner"),
+        ]
+
+
+class RunnerEnrollment(models.Model):
+    """A runner OPTS IN to serving a workspace — the box half of the tenant rule.
+
+    A runner serves a workspace only when BOTH hold (`routing.runner_tenant_slugs`):
+    it is enrolled there (a row here), AND its owner may still run work there
+    (`agent.work`, editor and above). Enrollment never grants more than membership
+    does; it only narrows it. Before this table the membership half was the whole
+    rule, so a box served every workspace its owner could work in — the day
+    Jonathan became owner of a family workspace (`marshellis`, 2026-10-11), his
+    Dimagi laptop and the cloud box would have started claiming its repo turns
+    and unbound chats, and a family box would have claimed Dimagi's.
+
+    Who adds rows: pairing enrolls the box in the workspace it paired into
+    (`Runner.workspace`) and nothing else; the owner or a runner admin adds and
+    removes the rest (`/runners/{id}/workspaces`). Joining a new workspace does
+    NOT enroll your existing boxes — a box starts serving a tenant because
+    someone said so, never as a side effect of a membership.
+    Migration 0071 enrolled every runner that existed then in every workspace
+    its owner could work in, except `marshellis`, so nothing changed for the fleet.
+    """
+
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="enrollments")
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.CASCADE, related_name="runner_enrollments"
+    )
+    enrolled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["runner_id", "workspace_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["runner", "workspace"],
+                                    name="one_enrollment_per_runner_workspace"),
         ]
 
 

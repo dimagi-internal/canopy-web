@@ -253,6 +253,35 @@ export async function revokeRunnerAdmin(runnerId: string, userId: number): Promi
   if (error) throw new Error(`revokeRunnerAdmin failed: ${JSON.stringify(error)}`)
 }
 
+// Which workspaces a box SERVES. A runner takes a workspace's work only when it is
+// enrolled there AND its owner is an editor or above there (`serving`). Pairing
+// enrolls a box only where it paired; joining another workspace never enrolls your
+// existing boxes. Owner or administrator; an administrator sees and names only the
+// workspaces they are a member of themselves.
+export type RunnerEnrollment = components['schemas']['RunnerEnrollmentOut']
+
+export async function listRunnerWorkspaces(runnerId: string): Promise<RunnerEnrollment[]> {
+  const res = await apiV2.GET('/api/harness/runners/{runner_id}/workspaces', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return Array.from(unwrap(res, 'listRunnerWorkspaces'))
+}
+
+export async function enrollRunnerWorkspace(runnerId: string, workspace: string): Promise<RunnerEnrollment> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/workspaces', {
+    params: { path: { runner_id: runnerId } },
+    body: { workspace },
+  })
+  return unwrap(res, 'enrollRunnerWorkspace')
+}
+
+export async function unenrollRunnerWorkspace(runnerId: string, workspace: string): Promise<void> {
+  const { error } = await apiV2.DELETE('/api/harness/runners/{runner_id}/workspaces/{workspace}', {
+    params: { path: { runner_id: runnerId, workspace } },
+  })
+  if (error) throw new Error(`unenrollRunnerWorkspace failed: ${JSON.stringify(error)}`)
+}
+
 // Whether a box takes SESSION work — Slack threads and web chat. Without it a runner
 // never appears in "start a session" and a Slack turn routed only to it reads as
 // unrouted. Owner-only (PATCH resolves through _runner_or_404). `projects` and

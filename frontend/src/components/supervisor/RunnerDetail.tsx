@@ -6,6 +6,7 @@ import { AgentRouting } from '@/components/agents/AgentRouting'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
 import { RunnerCredentials } from '@/components/supervisor/RunnerCredentials'
 import { RunnerAdmins } from '@/components/supervisor/RunnerAdmins'
+import { RunnerWorkspaces } from '@/components/supervisor/RunnerWorkspaces'
 import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
 import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
@@ -368,6 +369,10 @@ export function RunnerDetail({
           ownerEmail={runner.owner_email}
         />
       )}
+      {/* Which workspaces this box serves — owner or administrator, like the
+          admins panel (both tiers may enroll it; the server checks the owner
+          is an editor in the workspace named). */}
+      {(runner.can_administer || runner.can_manage) && <RunnerWorkspaces runnerId={runner.id} />}
       {runner.can_administer && onChanged && <RunnerFlags runner={runner} onChange={onChanged} />}
       {/* Readiness checks are runner-ADMIN (owner decision 2026-10-04): the
           owner, or anyone they granted administration. A non-owner admin drills

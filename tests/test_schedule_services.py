@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness.models import AgentSchedule, Runner, RunnerAssignment, Turn
-from apps.workspaces.testing import a_member, a_workspace
+from apps.workspaces.testing import a_member, a_workspace, enrolled
 
 pytestmark = pytest.mark.django_db
 
@@ -160,6 +160,7 @@ def test_release_all_unwedges_on_the_claim_tick(schedule, agent):
         capabilities={"agents": ["echo"]}, last_heartbeat_at=timezone.now(),
         owner=a_member(),  # a runner's tenant derives from its owner
     )
+    enrolled(runner)
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
 
     claimed = services.claim_next_turn(runner)

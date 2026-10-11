@@ -64,6 +64,11 @@ export function useWorkspaceRole(slug: string | null | undefined): string | null
   return ctx.workspaces.find((w) => w.slug === slug)?.role ?? null
 }
 
+/** The caller's workspaces, or [] outside a provider or while loading. */
+export function useWorkspaceList(): WorkspaceOut[] {
+  return useContext(Ctx)?.workspaces ?? []
+}
+
 export function useWorkspace(): WorkspaceCtx {
   const ctx = useContext(Ctx)
   if (!ctx) throw new Error('useWorkspace must be used within WorkspaceProvider')

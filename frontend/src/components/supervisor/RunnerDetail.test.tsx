@@ -28,6 +28,9 @@ vi.mock('@/api/harness', () => ({
   listRunnerAdmins: vi.fn().mockResolvedValue([]),
   grantRunnerAdmin: vi.fn(),
   revokeRunnerAdmin: vi.fn(),
+  listRunnerWorkspaces: vi.fn().mockResolvedValue([]),
+  enrollRunnerWorkspace: vi.fn(),
+  unenrollRunnerWorkspace: vi.fn(),
 }))
 vi.mock('@/api/drills', () => ({
   startDrill: vi.fn(),

@@ -19,6 +19,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import a_workspace
 
 from apps.harness import initiator as _initiator
+from apps.workspaces.testing import enrolled
 
 # Queued by canopy itself: these tests are about the queue, not about who asked.
 _BY_CANOPY = _initiator.system(via="test")
@@ -58,7 +59,7 @@ def _runner(name, runner_owner, **kw):
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(), capabilities={},
     )
     defaults.update(kw)
-    return Runner.objects.create(**defaults)
+    return enrolled(Runner.objects.create(**defaults))
 
 
 # Alias used by the assignment-cascade tests below (Task 4) — same shape as

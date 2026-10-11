@@ -193,6 +193,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_runner_admins": ("runner-admin",),
     "grant_runner_admin": ("runner",),  # owner only (not RunnerAdmins)
     "revoke_runner_admin": ("runner",),
+    "list_runner_workspaces": ("runner-admin",),  # an admin sees only workspaces it is a member of
+    "enroll_runner_workspace": ("runner-admin",),  # + the runner's OWNER holds agent.work there (422)
+    "unenroll_runner_workspace": ("runner-admin",),
     "set_runner_flags": ("runner-admin",),
     "set_runner_engine": ("runner-admin",),
     "list_runners": ("member",),  # _runner_read_q: the tenant's fleet
@@ -594,7 +597,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "delete_agent_github": "withdraws only the caller's OWN GitHub delegation",
     "check_agent_salesforce": "re-probes the lender's credential against Salesforce and records the result; grants and changes nothing",
     "delete_agent_salesforce": "withdraws only the caller's OWN Salesforce delegation",
-    "pair_runner": "pairing grants nothing by itself: a box serves only workspaces where its owner holds agent.work (runner_tenant_slugs)",
+    "pair_runner": "pairing grants nothing by itself: a box serves only workspaces it is enrolled in AND where its owner holds agent.work (runner_tenant_slugs); pairing enrolls it in the pairing workspace only",
     "resolve_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "record_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "preview_cron": "POST but read-only: computes next fire times, writes nothing",

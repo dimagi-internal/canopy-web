@@ -8,6 +8,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
@@ -34,7 +35,9 @@ def tree():
     WorkspaceMembership.objects.create(workspace=dimagi, user=staff, role=EDITOR)
     WorkspaceMembership.objects.create(workspace=other, user=outsider, role=OWNER)
 
-    laptop = Runner.objects.create(name="laptop", kind=Runner.EMDASH, workspace=dimagi, owner=ceo)
+    # Enrolled in the division too: pairing enrolls a box only where it paired.
+    laptop = enrolled(Runner.objects.create(name="laptop", kind=Runner.EMDASH, workspace=dimagi,
+                                            owner=ceo), dimagi, connect)
     # Homed outside the tree, owned by someone with no membership in it: it
     # can be assigned, and can never claim.
     stray = Runner.objects.create(name="stray", kind=Runner.CLOUD, workspace=other, owner=outsider)

@@ -188,6 +188,110 @@ def list_runner_admins(runner):
     )
 
 
+# ---- Workspace enrollment (which tenants a box serves) ---------------------
+class EnrollmentRefused(ValueError):
+    """The owner may not run work in that workspace, so the box may not serve it."""
+
+
+def enroll_runner(runner, workspace_slug: str, *, by=None):
+    """Opt `runner` in to serving `workspace_slug`. Idempotent.
+
+    Refused unless the box's OWNER holds `agent.work` (editor and above) there:
+    a box runs with its owner's memberships, so enrollment can narrow what the
+    owner's box serves but never widen it past what the owner may do. Checked
+    here as well as at claim time so a useless row is a clear refusal now, not
+    a silent no-op later. Who may ASK is the route's business (owner or a
+    runner admin); this is the property of the box itself.
+    """
+    from apps.workspaces import permissions as perms
+
+    from .models import RunnerEnrollment
+
+    if not runner.owner_id or not perms.can(runner.owner, workspace_slug, perms.AGENT_WORK):
+        raise EnrollmentRefused(
+            f"this runner's owner is not an editor (or above) in '{workspace_slug}', "
+            "so the runner cannot serve it")
+    row, _ = RunnerEnrollment.objects.get_or_create(
+        runner=runner, workspace_id=workspace_slug, defaults={"enrolled_by": by})
+    return row
+
+
+def unenroll_runner(runner, workspace_slug: str) -> bool:
+    """True when an enrollment was actually removed. The box stops serving that
+    workspace at its next claim; a turn it already holds runs to completion."""
+    from .models import RunnerEnrollment
+
+    deleted, _ = RunnerEnrollment.objects.filter(
+        runner=runner, workspace_id=workspace_slug).delete()
+    return bool(deleted)
+
+
+def list_runner_enrollments(runner):
+    from .models import RunnerEnrollment
+
+    return list(
+        RunnerEnrollment.objects.filter(runner=runner)
+        .select_related("workspace", "enrolled_by")
+        .order_by("workspace_id")
+    )
+
+
+def backfill_runner_enrollments(runner_model, enrollment_model, membership_model,
+                                workspace_model, *, exclude=("marshellis",)) -> int:
+    """Enroll every existing runner in every workspace its owner may run work in
+    (editor and above, counting ownership inherited down the tree — the same
+    answer `permissions.slugs_with(owner, AGENT_WORK)` gave before enrollment
+    existed), except the `exclude` workspaces and everything below them.
+
+    So introducing enrollment changes nothing for the fleet that existed, with
+    one deliberate exception: `marshellis`, a separate root created on
+    2026-10-11 that no existing box should serve. A missing excluded slug is
+    simply nothing to exclude. Idempotent: existing rows are kept.
+
+    Takes the model classes so the migration passes its HISTORICAL models and a
+    test passes the live ones (the `seed_assignments_from_capabilities` pattern).
+    """
+    from apps.workspaces.models import MAX_DEPTH
+
+    owner_role, editor_roles = "owner", {"owner", "admin", "editor"}
+    parents = dict(workspace_model.objects.values_list("slug", "parent_id"))
+    children: dict[str, set[str]] = {}
+    for slug, parent in parents.items():
+        if parent:
+            children.setdefault(parent, set()).add(slug)
+
+    def below(roots: set[str]) -> set[str]:
+        out: set[str] = set()
+        frontier = set(roots)
+        for _ in range(MAX_DEPTH):
+            frontier = {c for f in frontier for c in children.get(f, ())} - out - set(roots)
+            if not frontier:
+                break
+            out |= frontier
+        return out
+
+    excluded = {s for s in exclude if s in parents}
+    excluded |= below(excluded)
+
+    roles: dict[int, dict[str, str]] = {}
+    for user_id, slug, role in membership_model.objects.values_list(
+            "user_id", "workspace_id", "role"):
+        roles.setdefault(user_id, {})[slug] = role
+    existing = set(enrollment_model.objects.values_list("runner_id", "workspace_id"))
+    rows = []
+    for runner_id, owner_id in runner_model.objects.filter(
+            owner__isnull=False).values_list("pk", "owner_id"):
+        mine = dict(roles.get(owner_id, {}))
+        for slug in below({s for s, r in mine.items() if r == owner_role}):
+            mine[slug] = owner_role
+        for slug, role in sorted(mine.items()):
+            if (role in editor_roles and slug in parents and slug not in excluded
+                    and (runner_id, slug) not in existing):
+                rows.append(enrollment_model(runner_id=runner_id, workspace_id=slug))
+    enrollment_model.objects.bulk_create(rows, ignore_conflicts=True)
+    return len(rows)
+
+
 # ---- Browser-driven re-authentication (RunnerMint) ------------------------
 #: How long a sign-in may sit unfinished before it is treated as dead.
 #:

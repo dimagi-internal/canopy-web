@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.harness import services
 from apps.harness.models import Runner, RunnerAssignment, Turn
-from apps.workspaces.testing import a_member, a_workspace
+from apps.workspaces.testing import a_member, a_workspace, enrolled
 
 from apps.harness import initiator as _initiator
 
@@ -38,7 +38,7 @@ def _runner(agent=None, **kw):
         owner=a_member(),
     )
     defaults.update(kw)
-    r = Runner.objects.create(**defaults)
+    r = enrolled(Runner.objects.create(**defaults))
     services.heartbeat(r, active_turn_ids=[])
     if agent is not None:
         RunnerAssignment.objects.create(agent=agent, runner=r, rank=0)
