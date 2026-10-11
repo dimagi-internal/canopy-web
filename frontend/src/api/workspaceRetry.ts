@@ -56,9 +56,13 @@ export async function isWorkspaceRequired(res: Response): Promise<boolean> {
 async function refusedWorkspaces(res: Response): Promise<string[] | null> {
   if (res.status !== 422) return null
   try {
-    const body = (await res.clone().json()) as { type?: unknown; workspaces?: unknown }
+    const body = (await res.clone().json()) as { type?: unknown; extras?: { workspaces?: unknown } }
     if (typeof body?.type !== 'string' || !body.type.endsWith(WORKSPACE_REQUIRED_TYPE_SUFFIX)) return null
-    return Array.isArray(body.workspaces) ? body.workspaces.filter((s): s is string => typeof s === 'string') : []
+    // The problem body carries its fields under `extras` (apps/api's RFC 7807
+    // handler), not at the top level — reading `body.workspaces` found nothing,
+    // so a root page looped over zero workspaces and showed the raw refusal.
+    const named = body.extras?.workspaces
+    return Array.isArray(named) ? named.filter((s): s is string => typeof s === 'string') : []
   } catch {
     return null
   }
