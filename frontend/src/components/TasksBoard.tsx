@@ -253,6 +253,105 @@ function ProjectPill({ task, workspace }: { task: TaskOut; workspace?: string })
   )
 }
 
+// The task's own Drive folder (T72) — where `canopy gdoc publish --task` files
+// its docs. Shown whenever the task has one, so the files are one click away.
+function FolderChip({ task }: { task: TaskOut }): JSX.Element | null {
+  const url = (task.drive_folder_url || '').trim()
+  if (!url) return null
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 rounded border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+      title="This task's Drive folder"
+      data-testid={`task-folder-${task.ext_id}`}
+    >
+      <span aria-hidden>📁</span> folder <span className="text-primary/70">↗</span>
+    </a>
+  )
+}
+
+/** Split a task list into the cards to lay out and the subtasks to nest.
+ *  A task whose parent is IN the list nests under it; one whose parent is
+ *  not (a filtered view, another status column) stays a card of its own and
+ *  says whose subtask it is. Order within each parent follows the list. */
+// eslint-disable-next-line react-refresh/only-export-components -- tested pure helper beside its only callers
+export function nestTasks(tasks: TaskOut[]): { roots: TaskOut[]; childrenOf: Map<string, TaskOut[]> } {
+  const present = new Set(tasks.map((t) => t.ext_id))
+  const childrenOf = new Map<string, TaskOut[]>()
+  const roots: TaskOut[] = []
+  for (const t of tasks) {
+    const parent = (t.parent_ext_id || '').trim()
+    if (parent && parent !== t.ext_id && present.has(parent)) {
+      childrenOf.set(parent, [...(childrenOf.get(parent) ?? []), t])
+    } else {
+      roots.push(t)
+    }
+  }
+  return { roots, childrenOf }
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  suggested: 'suggested',
+  in_progress: 'in progress',
+  done: 'done',
+  declined: 'declined',
+}
+
+// The nested subtasks under a parent card. Each is a full TaskCard (actions
+// and all — an ask on a subtask must still be decidable in place), indented
+// on a rule so the tree reads at a glance. Collapsible, open by default.
+function Subtasks({
+  task,
+  childrenOf,
+  onChanged,
+  canEdit,
+  lastByTask,
+}: {
+  task: TaskOut
+  childrenOf: Map<string, TaskOut[]>
+  onChanged?: () => void
+  canEdit: boolean
+  lastByTask?: Map<string, TaskActionOut>
+}): JSX.Element | null {
+  const [open, setOpen] = useState(true)
+  const kids = childrenOf.get(task.ext_id) ?? []
+  if (kids.length === 0) return null
+  const finished = kids.filter((k) => k.status === 'done' || k.status === 'declined').length
+  return (
+    <div className="mt-2.5" data-testid={`subtasks-${task.ext_id}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <span aria-hidden className="text-muted-foreground/70">{open ? '▾' : '▸'}</span>
+        {kids.length} subtask{kids.length === 1 ? '' : 's'}
+        <span className="font-normal text-muted-foreground/70">· {finished} closed</span>
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1.5 border-l-2 border-primary/20 pl-2.5">
+          {kids.map((k) => (
+            <TaskCard
+              key={k.ext_id}
+              task={k}
+              onChanged={onChanged}
+              canEdit={canEdit}
+              showProject={false}
+              nested
+              childrenOf={childrenOf}
+              lastApplied={lastByTask?.get(k.ext_id)}
+              lastByTask={lastByTask}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // A "source ↗" chip linking the originating thread/doc.
 function SourceChip({ url }: { url: string }): JSX.Element | null {
   if (!url || !url.trim()) return null
@@ -514,6 +613,9 @@ export function TaskCard({
   showProject = true,
   workspace,
   lastApplied,
+  nested = false,
+  childrenOf,
+  lastByTask,
 }: {
   task: TaskOut
   onChanged?: () => void
@@ -528,6 +630,13 @@ export function TaskCard({
   workspace?: string
   /** The latest applied action on this task, when the caller has it. */
   lastApplied?: TaskActionOut
+  /** Rendered inside its parent's card: the parent is right there, so no
+   *  "subtask of" chip. */
+  nested?: boolean
+  /** `nestTasks(...).childrenOf` — this card's subtasks render under it. */
+  childrenOf?: Map<string, TaskOut[]>
+  /** Latest applied action per task, for the nested subtask cards. */
+  lastByTask?: Map<string, TaskActionOut>
 }): JSX.Element {
   const { workspace: routeWorkspace } = useParams()
   const head = headline(task)
@@ -542,21 +651,36 @@ export function TaskCard({
   const meta = [showAgent ? task.agent_slug : '', askOpen ? onApproveHint(task) : '']
     .filter(Boolean)
     .join(' · ')
+  const parentRef = (task.parent_ext_id || '').trim()
 
   return (
     <div data-testid={`task-${task.ext_id}`} data-status={task.status}
-         className="rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary/40">
+         className={`rounded-lg border border-border p-3 transition-colors hover:border-primary/40 ${
+           nested ? 'bg-background/60' : 'bg-card'}`}>
       <div className="flex items-start gap-2">
         {isSuggested && <ConfidenceDot confidence={task.confidence} />}
         <p className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-foreground">
           {head}
         </p>
+        <span className="shrink-0 text-[10px] text-muted-foreground/70" title={`Task ${task.ext_id}`}>
+          {task.ext_id}
+          {nested && <> · {STATUS_LABEL[task.status] ?? task.status}</>}
+        </span>
       </div>
 
       {/* Age is never conditional — an undecided card with no date on it cannot be
           triaged (Jonathan, 2026-08-12). */}
       <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] leading-snug text-muted-foreground">
         {showProject && <ProjectPill task={task} workspace={workspace ?? routeWorkspace} />}
+        {parentRef && !nested && (
+          <span
+            className={`${PILL} border-border bg-muted text-muted-foreground`}
+            title={`A subtask of ${parentRef}`}
+            data-testid={`task-parent-${task.ext_id}`}
+          >
+            ↳ subtask of {parentRef}
+          </span>
+        )}
         <TaskAge createdAt={task.created_at} closedAt={task.ask_closed_at} />
         {meta && <span>· {meta}</span>}
       </p>
@@ -596,11 +720,13 @@ export function TaskCard({
 
       {(task.owner ||
         task.due ||
+        task.drive_folder_url ||
         (!hasRationale && task.source_url) ||
         (task.links && task.links.length > 0)) && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <OwnerTag owner={task.owner} />
           {task.due && <DueChip due={task.due} done={isDone} />}
+          <FolderChip task={task} />
           {/* Source rides the rationale line when there is one; otherwise show a chip. */}
           {!hasRationale && <SourceChip url={task.source_url} />}
           {task.links?.map((l, i) => (
@@ -619,6 +745,16 @@ export function TaskCard({
       )}
 
       <TaskActions task={task} canEdit={canEdit} onChanged={onChanged} />
+
+      {childrenOf && (
+        <Subtasks
+          task={task}
+          childrenOf={childrenOf}
+          onChanged={onChanged}
+          canEdit={canEdit}
+          lastByTask={lastByTask}
+        />
+      )}
     </div>
   )
 }
@@ -660,14 +796,16 @@ function CardGrid({
   onChanged,
   canEdit,
   lastByTask,
+  childrenOf,
 }: {
   tasks: TaskOut[]
   onChanged?: () => void
   canEdit: boolean
   lastByTask?: Map<string, TaskActionOut>
+  childrenOf?: Map<string, TaskOut[]>
 }): JSX.Element {
   return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+    <div className="grid grid-cols-1 items-start gap-2 sm:grid-cols-2">
       {tasks.map((t) => (
         <TaskCard
           key={t.ext_id}
@@ -675,6 +813,8 @@ function CardGrid({
           onChanged={onChanged}
           canEdit={canEdit}
           lastApplied={lastByTask?.get(t.ext_id)}
+          childrenOf={childrenOf}
+          lastByTask={lastByTask}
         />
       ))}
     </div>
@@ -788,12 +928,15 @@ export function TasksBoard({
   onChanged?: () => void
   canEdit: boolean
 }): JSX.Element {
-  const suggested = tasks.filter((t) => t.status === 'suggested').sort(byPosition)
-  const inProgress = tasks.filter((t) => t.status === 'in_progress')
+  // Subtasks ride inside their parent's card (whatever their own status), so
+  // the columns are built from the top of each tree only.
+  const { roots, childrenOf } = nestTasks(tasks)
+  const suggested = roots.filter((t) => t.status === 'suggested').sort(byPosition)
+  const inProgress = roots.filter((t) => t.status === 'in_progress')
   const waitingHuman = inProgress.filter((t) => !isAgent(t)).sort(byPosition)
   const echoWorking = inProgress.filter((t) => isAgent(t)).sort(byPosition)
-  const done = tasks.filter((t) => t.status === 'done').sort(byPosition)
-  const declined = tasks.filter((t) => t.status === 'declined').sort(byPosition)
+  const done = roots.filter((t) => t.status === 'done').sort(byPosition)
+  const declined = roots.filter((t) => t.status === 'declined').sort(byPosition)
 
   const pending = useMemo(() => actions.filter((a) => a.status === 'pending'), [actions])
   // Latest applied action per task — `actions` arrives newest-first, so the
@@ -815,7 +958,13 @@ export function TasksBoard({
   }
 
   const grid = (list: TaskOut[]) => (
-    <CardGrid tasks={list} onChanged={onChanged} canEdit={canEdit} lastByTask={lastByTask} />
+    <CardGrid
+      tasks={list}
+      onChanged={onChanged}
+      canEdit={canEdit}
+      lastByTask={lastByTask}
+      childrenOf={childrenOf}
+    />
   )
 
   return (

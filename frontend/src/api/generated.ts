@@ -2816,7 +2816,8 @@ export interface paths {
          * List the agent's tasks
          * @description Filters: `project` (an ext_id, or `none` for one-offs), `status`
          *     (comma-separated), `waiting=me` (open asks nobody owns plus tasks parked on
-         *     you), `ask=open|closed`, `batch` (a batch_key).
+         *     you), `ask=open|closed`, `batch` (a batch_key), `parent` (an ext_id for
+         *     that task's direct subtasks, or `none` for top-level tasks only).
          */
         readonly get: operations["list_tasks"];
         readonly put?: never;
@@ -12606,6 +12607,18 @@ export interface components {
             readonly project_ext_id?: string | null;
             /** Project Name */
             readonly project_name?: string | null;
+            /** Parent Ext Id */
+            readonly parent_ext_id?: string | null;
+            /**
+             * Drive Folder Id
+             * @default
+             */
+            readonly drive_folder_id: string;
+            /**
+             * Drive Folder Url
+             * @default
+             */
+            readonly drive_folder_url: string;
             /** Title */
             readonly title: string;
             /** Next Action */
@@ -12787,6 +12800,21 @@ export interface components {
              * @default
              */
             readonly project: string;
+            /**
+             * Parent
+             * @default
+             */
+            readonly parent: string;
+            /**
+             * Drive Folder Id
+             * @default
+             */
+            readonly drive_folder_id: string;
+            /**
+             * Drive Folder Url
+             * @default
+             */
+            readonly drive_folder_url: string;
             /** Title */
             readonly title: string;
             /**
@@ -12967,6 +12995,18 @@ export interface components {
             readonly project_ext_id?: string | null;
             /** Project Name */
             readonly project_name?: string | null;
+            /** Parent Ext Id */
+            readonly parent_ext_id?: string | null;
+            /**
+             * Drive Folder Id
+             * @default
+             */
+            readonly drive_folder_id: string;
+            /**
+             * Drive Folder Url
+             * @default
+             */
+            readonly drive_folder_url: string;
             /** Title */
             readonly title: string;
             /** Next Action */
@@ -13060,6 +13100,12 @@ export interface components {
         readonly AgentTaskPatch: {
             /** Project */
             readonly project?: string | null;
+            /** Parent */
+            readonly parent?: string | null;
+            /** Drive Folder Id */
+            readonly drive_folder_id?: string | null;
+            /** Drive Folder Url */
+            readonly drive_folder_url?: string | null;
             /** Waiting On Email */
             readonly waiting_on_email?: string | null;
             /** Title */
@@ -23233,6 +23279,7 @@ export interface operations {
                 readonly waiting?: string;
                 readonly ask?: string;
                 readonly batch?: string;
+                readonly parent?: string;
             };
             readonly header?: never;
             readonly path: {
@@ -24434,6 +24481,7 @@ export interface operations {
                 readonly waiting?: string;
                 readonly ask?: string;
                 readonly batch?: string;
+                readonly parent?: string;
                 readonly limit?: number;
             };
             readonly header?: never;

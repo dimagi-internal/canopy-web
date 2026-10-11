@@ -754,6 +754,22 @@ class AgentTask(models.Model):
         "agents.AgentProject", null=True, blank=True, on_delete=models.SET_NULL,
         related_name="tasks",
     )
+    #: The task this one is a step of. Subtasks, not subprojects (T72,
+    #: Jonathan 2026-10-09): a product area is ONE project board, and a big
+    #: piece of work inside it breaks down into child tasks rather than a new
+    #: project per piece. Same agent and same project as the parent, no cycles,
+    #: at most `MAX_TASK_DEPTH` levels — all enforced in `services.set_parent`,
+    #: the one writer. SET_NULL: deleting a parent promotes its children to
+    #: top-level tasks instead of deleting work.
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="subtasks",
+    )
+    #: The task's own Drive folder, inside its project's — what
+    #: `canopy gdoc publish --task` files under. The id is what `gog drive`
+    #: needs; the url is what a human clicks. Blank until something is filed.
+    drive_folder_id = models.CharField(max_length=128, blank=True, default="")
+    drive_folder_url = models.URLField(max_length=500, blank=True, default="")
     # A task can mean "execute this run" — the run-lifecycle backing for the
     # board (spec §5). String FK ref ("agent_runs.AgentRun") so this framework
     # app doesn't import apps.agent_runs at module load (both are framework and
@@ -867,8 +883,17 @@ class AgentTask(models.Model):
         return self.project.name if self.project_id else None
 
     @property
+    def parent_ext_id(self) -> str | None:
+        return self.parent.ext_id if self.parent_id else None
+
+    @property
     def agent_slug(self) -> str:
         return self.agent.slug
+
+
+#: How deep subtasks nest: a task, its subtasks, and theirs. Deeper than that
+#: is a project's worth of structure hiding inside one card — split it out.
+MAX_TASK_DEPTH = 3
 
 
 class AgentTaskAction(models.Model):

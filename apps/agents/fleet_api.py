@@ -29,7 +29,7 @@ _ASK_RANK = Case(When(ask_kind=AgentTask.ASK_REVIEW, then=0),
 @router.get("/tasks/", response=list[AgentTaskOut],
             summary="Tasks across every agent you can see (the per-agent filters, plus agent)")
 def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", status: str = "",
-                     waiting: str = "", ask: str = "", batch: str = "",
+                     waiting: str = "", ask: str = "", batch: str = "", parent: str = "",
                      limit: int = DEFAULT_LIMIT_CAP) -> list[AgentTaskOut]:
     """Reviews first, then questions, then the rest; oldest first within each.
     `waiting=me` is the caller's inbox: open asks nobody owns plus tasks parked
@@ -40,9 +40,9 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
     qs = AgentTask.objects.filter(agent__workspace_id__in=_visible_agent_workspace_ids(request))
     if agent:
         qs = qs.filter(agent__slug=agent)
-    qs = services.filter_tasks(qs.select_related("agent", "project", "waiting_on_user"),
+    qs = services.filter_tasks(qs.select_related("agent", "project", "waiting_on_user", "parent"),
                                user=request.user, project=project, status=status,
-                               waiting=waiting, ask=ask, batch=batch)
+                               waiting=waiting, ask=ask, batch=batch, parent=parent)
     qs = qs.order_by(_ASK_RANK, "created_at", "id")[:clamp_limit(limit)]
     return [AgentTaskOut.model_validate(t) for t in qs]
 

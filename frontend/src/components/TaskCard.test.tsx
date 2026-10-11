@@ -9,7 +9,7 @@ vi.mock('@/api/agents', async (orig) => ({
   actOnTask: (...a: unknown[]) => actOnTask(...a),
 }))
 
-const { availableActions, projectHref, TaskCard, TasksBoard } = await import('./TasksBoard')
+const { availableActions, nestTasks, projectHref, TaskCard, TasksBoard } = await import('./TasksBoard')
 const { AgentApiError } = await import('@/api/agents')
 
 afterEach(() => {
@@ -317,5 +317,47 @@ describe('TasksBoard sections', () => {
     const waiting = screen.getByText('Waiting on a human').closest('section')!
     expect(waiting.textContent).toContain('Waiting on Jonathan')
     expect(waiting.querySelector('[data-testid="task-T5"]')).toBeNull()
+  })
+})
+
+// T72: tasks get subtasks and a Drive folder, instead of subprojects.
+describe('subtasks and the task folder', () => {
+  const sub = (ext_id: string, parent: string | null, o: object = {}) =>
+    task({ ext_id, parent_ext_id: parent, ask_kind: '', ask_open: false, title: `Task ${ext_id}`, ...o })
+
+  it('nestTasks nests a child under a listed parent and keeps an orphan as a root', () => {
+    const { roots, childrenOf } = nestTasks([sub('T66', null), sub('T73', 'T66'), sub('T74', 'T66'), sub('T9', 'T1')])
+    expect(roots.map((r) => (r as { ext_id: string }).ext_id)).toEqual(['T66', 'T9'])
+    expect((childrenOf.get('T66') ?? []).map((r) => (r as { ext_id: string }).ext_id)).toEqual(['T73', 'T74'])
+  })
+
+  it('the board renders subtasks inside the parent card, whatever their status', () => {
+    render(
+      <TasksBoard
+        tasks={[sub('T66', null), sub('T73', 'T66', { status: 'done' }), sub('T74', 'T66', { status: 'suggested' })]}
+        canEdit={false}
+      />,
+    )
+    const parent = screen.getByTestId('task-T66')
+    const nested = screen.getByTestId('subtasks-T66')
+    expect(parent.contains(nested)).toBe(true)
+    expect(nested.querySelector('[data-testid="task-T73"]')).toBeTruthy()
+    expect(nested.querySelector('[data-testid="task-T74"]')).toBeTruthy()
+    expect(nested.textContent).toContain('2 subtasks')
+    // The done child is not ALSO a card in the Done column.
+    expect(screen.queryByText('Done')).toBeNull()
+  })
+
+  it('a subtask whose parent is not on screen says whose subtask it is', () => {
+    render(<TaskCard task={sub('T73', 'T66')} canEdit={false} />)
+    expect(screen.getByTestId('task-parent-T73').textContent).toContain('subtask of T66')
+  })
+
+  it('shows the folder link when the task has one, and nothing when it does not', () => {
+    render(<TaskCard task={sub('T71', null, { drive_folder_url: 'https://drive.google.com/x' })} canEdit={false} />)
+    expect(screen.getByTestId('task-folder-T71').getAttribute('href')).toBe('https://drive.google.com/x')
+    cleanup()
+    render(<TaskCard task={sub('T72', null)} canEdit={false} />)
+    expect(screen.queryByTestId('task-folder-T72')).toBeNull()
   })
 })
