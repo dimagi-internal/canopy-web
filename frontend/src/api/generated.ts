@@ -14913,9 +14913,10 @@ export interface components {
             readonly role: string;
             /**
              * Source
+             * @description How they joined (a participant row's source), or `idea`: not a participant, but an idea's own evidence (its human why, or the turn that raised it) names them.
              * @enum {string}
              */
-            readonly source: "fact" | "turn" | "manual" | "summary";
+            readonly source: "fact" | "turn" | "manual" | "summary" | "idea";
             /**
              * Since
              * Format: date-time

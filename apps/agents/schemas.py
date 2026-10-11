@@ -1406,7 +1406,9 @@ class ContributorBriefOut(StrictModel):
     id: int
     display_name: str
     role: str = ""
-    source: Literal["fact", "turn", "manual", "summary"]
+    source: Literal["fact", "turn", "manual", "summary", "idea"] = Field(
+        description="How they joined (a participant row's source), or `idea`: not a participant, "
+                    "but an idea's own evidence (its human why, or the turn that raised it) names them.")
     since: dt.datetime
     has_page: bool
     page_withheld: bool = Field(description="A page exists but the reader (an agent) may not use it.")

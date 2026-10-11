@@ -106,6 +106,18 @@ def test_a_human_why_from_someone_canopy_does_not_know_still_names_them(world):
     [idea] = [i for i in out["ideas"] if i["ext_id"] == "T2"]
     assert [(c["person_id"], c["name"], c["via"]) for c in idea["came_from"]] == [
         (None, "A Partner", "human_why")]
+    # Nobody canopy can link to, so not a contributor row.
+    assert out["contributors"] == []
+
+
+def test_someone_a_human_why_names_is_a_contributor_without_a_page(world):
+    person = Person.objects.get(user=world["owner"])
+    AgentTaskHumanWhy.objects.create(task=world["tasks"]["T1"], quote="track reality", person=person,
+                                     who_email="jj@dimagi.com", source_url="https://x.test/q")
+    out = _client(world["sophie"]).get(f"/api/w/connect{BASE}").json()
+    [jj] = out["contributors"]
+    assert (jj["id"], jj["source"], jj["has_page"]) == (person.pk, "idea", False)
+    assert jj["ideas"]["shipped"] == 1
 
 
 def test_the_tasks_human_why_comes_first(world):
