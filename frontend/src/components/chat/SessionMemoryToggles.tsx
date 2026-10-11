@@ -33,8 +33,8 @@ function personSource(sessionId: string): SessionMemorySource {
 
 /** What a grant lets the agent do, in plain words — shown BEFORE the person acts. */
 const ASKS: Record<MemoryFeature, string> = {
-  record: 'save what it learns about you',
-  use: 'be told what has been learned about you',
+  record: 'add what it learns to your memory',
+  use: 'read your memory to help you',
 }
 const ACTIONS: Record<MemoryFeature, string> = { record: 'write', use: 'read' }
 
@@ -83,12 +83,12 @@ function GrantPrompt({
         Let <strong>{name}</strong> {asks}?
       </p>
       <p className="mt-0.5 text-muted-foreground">
-        {(state.categories ?? []).map(pretty).join(', ')} · {actions} · for this session only,
+        {(state.categories ?? []).map(pretty).join(', ')} · {actions} · for this conversation only,
         until {until(hours)} or when it ends. Only {name} — other agents ask separately.
       </p>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         <button type="button" disabled={busy} onClick={onAllow} className={PRIMARY}>
-          Allow for this session
+          Allow for this conversation
         </button>
         <button type="button" disabled={busy} onClick={onDismiss} className={QUIET}>
           Not now
@@ -113,17 +113,17 @@ function KeepPrompt({
 }) {
   return (
     <div role="dialog" aria-label={`Keep allowing ${name}`} className={PROMPT}>
-      <p className="text-foreground">Keep allowing {name} after this session?</p>
+      <p className="text-foreground">Keep allowing {name} after this conversation?</p>
       <p className="mt-0.5 text-muted-foreground">
-        It would carry over to every session with {name} and stay in effect until you revoke it
-        on your people page.
+        It would carry over to every conversation with {name} and stay in effect until you turn
+        it off in Your memory.
       </p>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         <button type="button" disabled={busy} onClick={onKeep} className={PRIMARY}>
-          Keep allowing {name}
+          Keep allowing until I turn it off
         </button>
         <button type="button" disabled={busy} onClick={onDismiss} className={QUIET}>
-          Just this session
+          Just this conversation
         </button>
       </div>
     </div>
@@ -132,14 +132,14 @@ function KeepPrompt({
 
 const LABELS: Record<MemoryFeature, { name: string; on: string; off: string }> = {
   record: {
-    name: 'Learn',
-    on: 'Agents in this session may record what they learn about you.',
-    off: 'Agents in this session do not record anything about you.',
+    name: 'Learn from me',
+    on: 'Agents can add what they learn to your memory in this conversation.',
+    off: 'Agents add nothing to your memory in this conversation.',
   },
   use: {
-    name: 'Use',
-    on: 'Agents in this session are told what has been learned about you.',
-    off: 'Agents in this session are not told anything learned about you.',
+    name: 'Use my memory',
+    on: 'Agents can read your memory to help you in this conversation.',
+    off: 'Agents do not read your memory in this conversation.',
   },
 }
 
@@ -233,7 +233,7 @@ export function SessionMemoryToggles({
 
   return (
     <div className="flex flex-col items-start">
-      <div className="flex items-center gap-1" aria-label="Agent memory in this session">
+      <div className="flex items-center gap-1" aria-label="Your memory in this conversation">
         {features.map((f) => {
           const on = state[f].effective
           const shown = on ? (state[f].granted ? 'on' : 'on, not granted') : 'off'
@@ -246,7 +246,7 @@ export function SessionMemoryToggles({
               <span
                 key={f}
                 title={`${on ? LABELS[f].on : LABELS[f].off} Change it in canopy.`}
-                aria-label={`${LABELS[f].name} about me in this session: ${on ? 'on' : 'off'}`}
+                aria-label={`${LABELS[f].name} in this conversation: ${on ? 'on' : 'off'}`}
                 className={`rounded-md px-2 py-0.5 text-[12px] ${look}`}
               >
                 {text}
@@ -260,7 +260,7 @@ export function SessionMemoryToggles({
               role="switch"
               aria-checked={on}
               title={`${on ? LABELS[f].on : LABELS[f].off} Click to turn ${on ? 'off' : 'on'} here.`}
-              aria-label={`${LABELS[f].name} about me in this session`}
+              aria-label={`${LABELS[f].name} in this conversation`}
               disabled={busy !== null}
               onClick={() => void flip(f)}
               className={`rounded-md px-2 py-0.5 text-[12px] disabled:opacity-50 ${look} ${

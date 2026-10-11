@@ -21,15 +21,15 @@ import type { HcpAuditEvent, HcpGrant, PersonFactDetail, PersonMe } from '../api
 const MEMORY_SWITCHES = [
   {
     key: 'record' as const,
-    label: 'Agents may learn about me',
-    on: 'Available: an agent you allow may record what it learns about your work.',
-    off: 'Not available: no agent records anything new about you, in any session.',
+    label: 'Learn from me',
+    on: 'Available: agents you allow can add what they learn to your memory.',
+    off: 'Not available: no agent adds anything to your memory, in any conversation.',
   },
   {
     key: 'use' as const,
-    label: "Agents may use what they've learned",
-    on: 'Available: an agent you allow may be told what is relevant about you.',
-    off: 'Not available: no agent is told anything about you, in any session. Nothing below is deleted.',
+    label: 'Use my memory',
+    on: 'Available: agents you allow can read your memory to help you.',
+    off: 'Not available: no agent reads your memory, in any conversation. Nothing below is deleted.',
   },
 ]
 
@@ -109,8 +109,8 @@ export function PeopleMePage() {
     const next = !me.agent_memory[which].available
     const offWarning =
       which === 'record'
-        ? 'Stop agents learning about you, in every session? Nothing already recorded is deleted.'
-        : 'Stop agents using what they have learned, in every session? Nothing is deleted.'
+        ? 'Stop agents learning from you, in every conversation? Nothing already in your memory is deleted.'
+        : 'Stop agents using your memory, in every conversation? Nothing is deleted.'
     if (!next && !confirm(offWarning)) return
     setBusyMemory(`${which}:available`)
     try {
@@ -186,7 +186,7 @@ export function PeopleMePage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'what-canopy-knows-about-me.jsonld'
+      a.download = 'my-memory.jsonld'
       a.click()
       URL.revokeObjectURL(url)
     } catch (e) {
@@ -207,7 +207,7 @@ export function PeopleMePage() {
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">What agents know about me</h1>
+        <h1 className="text-2xl font-semibold text-foreground">Your memory</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {me.display_name}
           {me.email ? ` · ${me.email}` : ''}. When you talk to an agent, it is handed the few facts
@@ -218,7 +218,7 @@ export function PeopleMePage() {
         </p>
       </div>
 
-      <section aria-label="Agent memory" className="divide-y divide-border rounded-lg border border-border">
+      <section aria-label="Learn from me and use my memory" className="divide-y divide-border rounded-lg border border-border">
         {MEMORY_SWITCHES.map((sw) => {
           const { available, default: byDefault } = me.agent_memory[sw.key]
           return (
@@ -232,8 +232,8 @@ export function PeopleMePage() {
                   {available ? sw.on : sw.off}
                   {available
                     ? byDefault
-                      ? ' On in new sessions: each agent asks you once, in the session, before it starts.'
-                      : ' Off in new sessions; turn it on in a session and that agent asks you there.'
+                      ? ' On in new conversations: each agent asks you once, in the conversation, before it starts.'
+                      : ' Off in new conversations; turn it on in a conversation and that agent asks you there.'
                     : ''}
                 </p>
               </div>
@@ -292,7 +292,7 @@ export function PeopleMePage() {
             ))}
           </select>
           <input
-            aria-label="What to remember"
+            aria-label="What to add to your memory"
             value={newText}
             onChange={(e) => setNewText(e.target.value)}
             maxLength={500}
@@ -398,7 +398,7 @@ export function PeopleMePage() {
                       ? ' · kept until you revoke it'
                       : g.canopy.client
                         ? ' · temporary'
-                        : ` · this session only${g.expiresAt ? `, until ${new Date(g.expiresAt).toLocaleString()}` : ''}`}
+                        : ` · this conversation only${g.expiresAt ? `, until ${new Date(g.expiresAt).toLocaleString()}` : ''}`}
                     {g.canopy.workspace ? ` · ${g.canopy.workspace}` : ''}
                     {reachOf(g) ? ` · reaches ${reachOf(g)}` : ''}
                     {` · since ${new Date(g.issuedAt).toLocaleDateString()}`}
@@ -429,7 +429,7 @@ export function PeopleMePage() {
           </button>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          Every read and change of what canopy holds about you, newest first. Only you can see it.
+          Every read and change of your memory, newest first. Only you can see it.
         </p>
         {audit.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">Nothing yet.</p>

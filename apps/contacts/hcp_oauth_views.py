@@ -46,12 +46,12 @@ def _settings_note(person) -> list[str]:
     state = hcp.memory_state(person)
     rec, use = state["record"], state["use"]
     notes = []
-    notes.append("It can read what you allow below only while “Agents may use what they've "
-                 "learned” is available and on by default for you — "
+    notes.append("It can read what you allow below only while “Use my memory” "
+                 "is available and on by default for you — "
                  + ("which it is now." if use["available"] and use["default"]
                     else "which it is NOT now, so any read will be refused until you change that "
-                         "on your “What agents know about me” page."))
-    notes.append("It can save or change things only while “Agents may learn about me” is available "
+                         "on your “Your memory” page."))
+    notes.append("It can save or change things only while “Learn from me” is available "
                  "and on by default — "
                  + ("which it is now." if rec["available"] and rec["default"]
                     else "which it is NOT now, so any write will be refused."))

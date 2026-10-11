@@ -61,8 +61,8 @@ describe('ContactMemory', () => {
   it('says what it is before the contact opts in, and use is unticked', async () => {
     const r = rest(base)
     render(<ContactMemory hcp={contactHcp(r)} sessionId="s1" agentName="Echo" />)
-    fireEvent.click(await screen.findByText('Remember me?'))
-    const dialog = screen.getByRole('dialog', { name: 'Let canopy learn about you' })
+    fireEvent.click(await screen.findByText('Let canopy learn from you?'))
+    const dialog = screen.getByRole('dialog', { name: 'Let canopy learn from you' })
     expect(dialog.textContent).toContain('v@partner.org')
     expect(dialog.textContent).toContain('confirmed by connect-labs')
     expect(dialog.textContent).toContain('work context')
@@ -83,8 +83,8 @@ describe('ContactMemory', () => {
     }
     const r = rest(opted)
     render(<ContactMemory hcp={contactHcp(r)} sessionId="s1" agentName="Echo" />)
-    fireEvent.click(await screen.findByText('What canopy knows'))
-    expect(screen.getByText(/Echo: learn · this conversation/)).toBeTruthy()
+    fireEvent.click(await screen.findByText('Your memory'))
+    expect(screen.getByText(/Echo: learn from me · this conversation/)).toBeTruthy()
     fireEvent.click(screen.getByText('Take back'))
     await waitFor(() =>
       expect(r.json).toHaveBeenCalledWith('/api/contact/hcp/grants/urn%3Ahcp%3Ag1', expect.objectContaining({

@@ -151,7 +151,7 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
         <p className="mt-3 text-[13px] leading-relaxed text-foreground-secondary">
           You don&apos;t need one to keep your own context: on{' '}
           <Link to="/people/me" className="font-medium text-primary hover:underline">
-            What agents know about me
+            Your memory
           </Link>{' '}
           you can write down how you like to work, see who may read it, and download it all.
         </p>

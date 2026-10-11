@@ -90,7 +90,7 @@ def _ref(person: Person) -> dict:
             "email": people.email_of(person)}
 
 
-@router.get("/me/", response=PersonMeOut, summary="What agents know about me")
+@router.get("/me/", response=PersonMeOut, summary="Your memory")
 def people_me(request: HttpRequest) -> dict:
     """Everything canopy holds about YOU: every live fact in every workspace
     (corrections first) and the last 50 times an agent or a
