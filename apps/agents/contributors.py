@@ -215,10 +215,32 @@ def person_by_email(address: str):
 
 
 def _human_why(task: AgentTask) -> list[dict]:
-    """T68's structured human-why on a task — `[{quote, who, source_url, said_at}]`
-    — when the field exists. Read defensively: until T68 lands there is none."""
+    """T68's human-why on a task: what a person said, verbatim, with who and where —
+    `[{quote, who: {person_id, email, name}, source_url, said_at}]`.
+
+    Read defensively, because T68 ships beside this: as `HumanWhy` rows
+    (`task.human_whys`, each with `as_dict()`) when that model exists, else a
+    `human_why` list on the task, else nothing."""
+    rows = getattr(task, "human_whys", None)
+    if rows is not None and hasattr(rows, "all"):
+        try:
+            return [r.as_dict() for r in rows.all()]
+        except Exception:  # noqa: BLE001 — attribution is never worth a failed page
+            logger.exception("contributors: could not read task %s's human why", task.pk)
+            return []
     value = getattr(task, "human_why", None) or []
     return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+def _who(raw) -> tuple[int | None, str, str]:
+    """(person_id, email, name) from a human-why `who` — an object, or a bare
+    email/name string."""
+    if isinstance(raw, dict):
+        pid = raw.get("person_id")
+        return (pid if isinstance(pid, int) else None, str(raw.get("email") or "").strip(),
+                str(raw.get("name") or "").strip())
+    text = str(raw or "").strip()
+    return (None, text, "") if "@" in text else (None, "", text)
 
 
 class _People:
@@ -228,6 +250,18 @@ class _People:
         self.ws = workspace_slug
         self._by_email: dict[str, object] = {}
         self._names: dict[int, str] = {}
+
+    def by_id(self, person_id: int):
+        from apps.contacts import people
+        from apps.contacts.models import Person
+
+        key = f"#{person_id}"
+        if key not in self._by_email:
+            person = Person.objects.select_related("user").filter(pk=person_id).first()
+            if person is not None and not people.known_in(person, self.ws):
+                person = None
+            self._by_email[key] = person
+        return self._by_email[key]
 
     def by_email(self, address: str):
         from apps.contacts import people
@@ -269,9 +303,12 @@ def came_from(task: AgentTask, *, page_claims: list[dict], resolver: _People) ->
                     "said_at": _iso(said_at)})
 
     for why in _human_why(task):
-        who = str(why.get("who") or "").strip()
-        person = resolver.by_email(who) if who else None
-        add(person, resolver.name(person) if person is not None else who, VIA_HUMAN_WHY,
+        pid, email, name = _who(why.get("who"))
+        person = resolver.by_id(pid) if pid is not None else None
+        if person is None and email:
+            person = resolver.by_email(email)
+        label = resolver.name(person) if person is not None else (name or email)
+        add(person, label, VIA_HUMAN_WHY,
             str(why.get("quote") or ""), str(why.get("source_url") or ""), why.get("said_at"))
     if task.raised_by_id:
         person = people.initiator_person(task.raised_by)
@@ -283,6 +320,14 @@ def came_from(task: AgentTask, *, page_claims: list[dict], resolver: _People) ->
         add(person, resolver.name(person), VIA_PAGE, claim.get("quote", ""),
             claim.get("source_url", ""), claim.get("said_at"))
     return out
+
+
+def _tasks(project: AgentProject) -> list[AgentTask]:
+    qs = project.tasks.select_related("raised_by", "raised_by__initiator_user",
+                                      "raised_by__initiator_contact")
+    if hasattr(AgentTask, "human_whys"):  # T68's rows, once that model exists
+        qs = qs.prefetch_related("human_whys")
+    return list(qs.order_by("-updated_at", "id"))
 
 
 def _idea_dict(task: AgentTask, sources: list[dict]) -> dict:
@@ -319,9 +364,7 @@ def board(project: AgentProject, reader: Reader) -> dict:
     resolver = _People(project.agent.workspace_id)
     rows = _visible_rows(project, reader)
     claims = _claims(rows)
-    tasks = list(project.tasks.select_related("raised_by", "raised_by__initiator_user",
-                                              "raised_by__initiator_contact")
-                 .order_by("-updated_at", "id"))
+    tasks = _tasks(project)
     ideas = [_idea_dict(t, came_from(t, page_claims=claims.get(t.ext_id.lower(), []),
                                      resolver=resolver)) for t in tasks]
     counts = {s: 0 for s in STAGES}
@@ -353,9 +396,7 @@ def page(project: AgentProject, person, reader: Reader) -> dict:
     claims = _claims(rows)
     row = next((r for r, _ in rows if r.person_id == person.pk), None)
     visible = next((v for r, v in rows if r.person_id == person.pk), False)
-    tasks = list(project.tasks.select_related("raised_by", "raised_by__initiator_user",
-                                              "raised_by__initiator_contact")
-                 .order_by("-updated_at", "id"))
+    tasks = _tasks(project)
     ideas = []
     for t in tasks:
         sources = came_from(t, page_claims=claims.get(t.ext_id.lower(), []), resolver=resolver)
