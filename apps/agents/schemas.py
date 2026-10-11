@@ -911,9 +911,10 @@ class ProjectParticipantOut(StrictModel):
     display_name: str
     email: str = ""
     role: str = Field(default="", description="Free text: the part they play. Blank when canopy linked them itself.")
-    source: Literal["fact", "turn", "manual"] = Field(
+    source: Literal["fact", "turn", "manual", "summary"] = Field(
         description="How canopy first learned it: a fact filed against the project, a conversation "
-                    "that raised one of its tasks, or a person adding them.")
+                    "that raised one of its tasks, a person adding them, or an agent writing their "
+                    "contributor page.")
     since: dt.datetime
 
 
@@ -1296,3 +1297,174 @@ class A2AAgentCardOut(_A2AModel):
     default_output_modes: list[str]
     skills: list[A2AAgentSkill]
     icon_url: str | None = None
+
+
+# ---- ideas + contributor pages (hal T69) ----
+
+
+def _http_url(value: str) -> str:
+    value = (value or "").strip()
+    if value and not value.startswith(("https://", "http://")):
+        raise ValueError("must be an http(s) URL")
+    return value
+
+
+class ContributorQuoteIn(StrictModel):
+    """Something the person said, verbatim, and where they said it."""
+
+    quote: str = Field(min_length=1, max_length=600, description="Their words, verbatim. Trim, never rephrase.")
+    source_url: str = Field(min_length=1, max_length=500,
+                            description="Where they said it: a canopy session, a doc comment, an email thread.")
+    said_at: dt.datetime | None = None
+    where: str = Field(default="", max_length=120,
+                       description="A short label for the link, e.g. 'Supply session, Sep 10'.")
+
+    _url = field_validator("source_url")(_http_url)
+
+
+class ContributorIdeaIn(StrictModel):
+    """One of the project's tasks that is this person's idea, with their words about it."""
+
+    task: str = Field(min_length=1, max_length=64, description="The task's ext_id on this project (T71).")
+    quote: str = Field(default="", max_length=600)
+    source_url: str = Field(default="", max_length=500)
+    said_at: dt.datetime | None = None
+
+    _url = field_validator("source_url")(_http_url)
+
+
+class ContributorOpenIn(StrictModel):
+    """Something they want that no task covers yet."""
+
+    text: str = Field(min_length=1, max_length=300, description="A short plain statement of the want.")
+    quote: str = Field(default="", max_length=600)
+    source_url: str = Field(default="", max_length=500)
+    said_at: dt.datetime | None = None
+
+    _url = field_validator("source_url")(_http_url)
+
+
+class ContributorSourceIn(StrictModel):
+    label: str = Field(min_length=1, max_length=200)
+    url: str = Field(min_length=1, max_length=500)
+
+    _url = field_validator("url")(_http_url)
+
+
+class ContributorSummaryIn(StrictModel):
+    """A contributor page, as the agent that read the person's sessions writes it.
+
+    `goal` is the one place the agent's own words appear — keep it short and
+    built from theirs; everything else is their words with a link."""
+
+    goal: str = Field(min_length=1, max_length=800,
+                      description="What they are trying to achieve on this project, in a few sentences, "
+                                  "built from their own words.")
+    quotes: list[ContributorQuoteIn] = Field(min_length=1, max_length=12)
+    ideas: list[ContributorIdeaIn] = Field(default_factory=list, max_length=60)
+    open: list[ContributorOpenIn] = Field(default_factory=list, max_length=20)
+    sources: list[ContributorSourceIn] = Field(default_factory=list, max_length=10,
+                                               description="What the agent read to write this.")
+    basis: str = Field(default="", max_length=300,
+                       description="How much it rests on, e.g. '458 prompts across 22 sessions, Sep 10 to Oct 9'.")
+
+
+class IdeaSourceOut(StrictModel):
+    """One person an idea came from, and the evidence for it."""
+
+    person_id: int | None = Field(description="Null when the task names someone canopy cannot resolve.")
+    name: str
+    via: Literal["human_why", "raised_by", "contributor_page"] = Field(
+        description="human_why: the task's own record of what they said; raised_by: their turn "
+                    "raised it; contributor_page: an agent's reading of their sessions.")
+    quote: str = ""
+    source_url: str = ""
+    said_at: dt.datetime | None = None
+
+
+class IdeaOut(StrictModel):
+    ext_id: str
+    title: str
+    status: str
+    stage: Literal["proposed", "started", "shipped", "declined"]
+    next_action: str = ""
+    updated_at: dt.datetime
+    links: list[AgentTaskLink]
+    came_from: list[IdeaSourceOut]
+    their_words: IdeaSourceOut | None = Field(default=None,
+                                              description="On a contributor page: this person's words about it.")
+
+
+class StageCountsOut(StrictModel):
+    proposed: int = 0
+    started: int = 0
+    shipped: int = 0
+    declined: int = 0
+
+
+class ContributorBriefOut(StrictModel):
+    id: int
+    display_name: str
+    role: str = ""
+    source: Literal["fact", "turn", "manual", "summary"]
+    since: dt.datetime
+    has_page: bool
+    page_withheld: bool = Field(description="A page exists but the reader (an agent) may not use it.")
+    goal: str = ""
+    written_at: dt.datetime | None = None
+    ideas: StageCountsOut
+
+
+class ProjectIdeasOut(StrictModel):
+    agent: str
+    project: str
+    name: str
+    stages: StageCountsOut
+    ideas: list[IdeaOut]
+    contributors: list[ContributorBriefOut]
+
+
+class ContributorQuoteOut(StrictModel):
+    quote: str
+    source_url: str
+    said_at: dt.datetime | None = None
+    where: str = ""
+
+
+class ContributorOpenOut(StrictModel):
+    text: str
+    quote: str = ""
+    source_url: str = ""
+    said_at: dt.datetime | None = None
+
+
+class ContributorSummaryOut(StrictModel):
+    goal: str
+    quotes: list[ContributorQuoteOut]
+    open: list[ContributorOpenOut]
+    sources: list[AgentTaskLink]
+    basis: str = ""
+    written_at: dt.datetime | None = None
+    written_by: str = ""
+
+
+class ContributorPersonOut(StrictModel):
+    id: int
+    display_name: str
+    email: str = ""
+
+
+class ContributorPageOut(StrictModel):
+    person: ContributorPersonOut
+    agent: str
+    project: str
+    project_name: str
+    role: str = ""
+    participant_since: dt.datetime | None = None
+    summary_state: Literal["written", "not_written", "withheld"]
+    summary: ContributorSummaryOut | None = None
+    ideas: list[IdeaOut]
+    stages: StageCountsOut
+    may_write: bool = Field(description="May the caller write this page (an agent with the person's "
+                                        "permission, or the person themself)?")
+    why_not: str = ""

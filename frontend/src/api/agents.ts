@@ -20,6 +20,11 @@ export type TaskAction = Schemas['AgentTaskActionIn']['action']
 export type TaskStatus = TaskOut['status']
 export type ProjectOut = Schemas['AgentProjectOut']
 export type ProjectDetailOut = Schemas['AgentProjectDetailOut']
+export type ProjectIdeasOut = Schemas['ProjectIdeasOut']
+export type IdeaOut = Schemas['IdeaOut']
+export type IdeaSourceOut = Schemas['IdeaSourceOut']
+export type ContributorBriefOut = Schemas['ContributorBriefOut']
+export type ContributorPageOut = Schemas['ContributorPageOut']
 export type AgentRunnerOut = Schemas['AgentRunnerOut']
 export type AgentRunnerRuleOut = Schemas['AgentRunnerRuleOut']
 // The routable source union, straight off the generated request schema — the
@@ -269,6 +274,34 @@ export async function getProject(slug: string, ref: string): Promise<ProjectDeta
     params: { path: { slug, ref } },
   })
   return unwrap(res, 'getProject') as ProjectDetailOut
+}
+
+/** A project's ideas (every task, with its stage and who it came from) and its contributors. */
+export async function getProjectIdeas(slug: string, ref: string): Promise<ProjectIdeasOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/projects/{ref}/contributors/', {
+    params: { path: { slug, ref } },
+  })
+  return unwrap(res, 'getProjectIdeas') as ProjectIdeasOut
+}
+
+/** One contributor's page on a project. `person` is an id or an email address. */
+export async function getContributorPage(
+  slug: string,
+  ref: string,
+  person: string,
+): Promise<ContributorPageOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/projects/{ref}/contributors/{person}/', {
+    params: { path: { slug, ref, person } },
+  })
+  return unwrap(res, 'getContributorPage') as ContributorPageOut
+}
+
+/** Delete a contributor's page (the person, the agent's admins, or its writer). */
+export async function deleteContributorPage(slug: string, ref: string, person: string): Promise<void> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/projects/{ref}/contributors/{person}/summary/', {
+    params: { path: { slug, ref, person } },
+  })
+  if (res.error !== undefined) unwrap(res, 'deleteContributorPage')
 }
 
 export async function createProject(
