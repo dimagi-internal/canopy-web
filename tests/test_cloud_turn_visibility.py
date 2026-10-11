@@ -235,3 +235,107 @@ def test_a_web_chat_the_cloud_ran_stays_open_until_its_runner_is_retired():
     assert "idle web chat" in _active(user, state="archived")
     idle.refresh_from_db()
     assert idle.status == "active"  # derived, never written
+
+
+# --- #1396: a cloud session that RAN ON ITS OWN closes when its turn is done ------
+#
+# 2026-10-11: 56 of Jonathan's 62 "active" sessions were finished auto turns on the
+# cloud (huddle rounds, thread messages, scheduled turns), 0 waiting on him. Nobody
+# waits on an auto turn, so once nothing on it is in flight it is done. Manual and
+# chat-started sessions keep the open-until-closed rule (#1162 / #1277).
+
+
+def _driven(runner, agent, key, status, *, mode, origin=Turn.ORIGIN_CANOPY_SCHEDULER,
+            created_ago=dt.timedelta(minutes=5)):
+    """A turn the cloud claimed for the session keyed `key`, its mode stamped at claim."""
+    t = Turn.objects.create(
+        agent=agent, origin=origin, idempotency_key=f"{key}-{status}-{mode}-{created_ago}",
+        status=status, session_key=key, turn_mode=mode,
+        claimed_by=runner if status != Turn.QUEUED else None,
+    )
+    Turn.objects.filter(pk=t.pk).update(created_at=timezone.now() - created_ago)
+    return t
+
+
+def _cloud(ws, user):
+    return _runner(ws, user, "cloud-ec2-1", reports=False, kind=Runner.CLOUD)
+
+
+def test_a_finished_auto_cloud_session_leaves_the_active_list():
+    from apps.canopy_sessions.models import Session
+
+    user, ws, agent = _ctx()
+    cloud = _cloud(ws, user)
+    session = _recorded(agent, cloud, "h1", started_ago=dt.timedelta(hours=2),
+                        said="Round 2: proposing X.", said_ago=dt.timedelta(hours=2))
+    _driven(cloud, agent, "h1", Turn.DONE, mode="auto")
+    assert "turn h1" not in _active(user)
+    assert "turn h1" in _active(user, state="archived")
+    session.refresh_from_db()
+    assert session.status == Session.ACTIVE  # derived on read, never written
+
+
+def test_an_auto_cloud_session_is_listed_while_its_turn_runs():
+    user, ws, agent = _ctx()
+    cloud = _cloud(ws, user)
+    _recorded(agent, cloud, "h2", started_ago=dt.timedelta(minutes=10))
+    _driven(cloud, agent, "h2", Turn.RUNNING, mode="auto")
+    assert "turn h2" in _active(user)
+
+
+def test_an_auto_cloud_session_with_a_later_turn_in_flight_stays_listed():
+    user, ws, agent = _ctx()
+    cloud = _cloud(ws, user)
+    _recorded(agent, cloud, "h3", started_ago=dt.timedelta(hours=1))
+    _driven(cloud, agent, "h3", Turn.DONE, mode="auto", created_ago=dt.timedelta(hours=1))
+    _driven(cloud, agent, "h3", Turn.QUEUED, mode="", created_ago=dt.timedelta(minutes=1))
+    assert "turn h3" in _active(user)
+
+
+def test_a_manual_cloud_turn_that_ends_asking_for_approval_stays_active():
+    """The #1162 regression, pinned: a manual turn ends by asking, and its session
+    is exactly the one you need to find."""
+    user, ws, agent = _ctx()
+    cloud = _cloud(ws, user)
+    _recorded(agent, cloud, "m1", started_ago=dt.timedelta(days=2),
+              said="Draft reply to Ali. Approve to send?", said_ago=dt.timedelta(days=2))
+    _driven(cloud, agent, "m1", Turn.DONE, mode="manual", origin=Turn.ORIGIN_EMAIL)
+    rows = _active(user, reply="true")
+    assert "turn m1" in rows
+    assert rows["turn m1"]["turn_mode"] == "manual"
+    assert rows["turn m1"]["last_reply"].startswith("Draft reply to Ali")
+
+
+def test_an_auto_chat_started_session_keeps_the_open_until_closed_rule():
+    """`canopy_web_chat` is a person's chat: auto mode alone does not mean nobody
+    is waiting."""
+    user, ws, agent = _ctx()
+    cloud = _cloud(ws, user)
+    _recorded(agent, cloud, "c2", started_ago=dt.timedelta(days=1))
+    _driven(cloud, agent, "c2", Turn.DONE, mode="auto", origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
+    assert "turn c2" in _active(user)
+
+
+def test_an_auto_cloud_session_with_a_dialog_up_is_never_retired():
+    user, ws, agent = _ctx()
+    cloud = _cloud(ws, user)
+    session = _recorded(agent, cloud, "q1", started_ago=dt.timedelta(hours=1))
+    _driven(cloud, agent, "q1", Turn.DONE, mode="auto")
+    RunnerBinding.objects.filter(session=session).update(
+        pending_question={"question": "Proceed?", "options": [{"label": "Yes"}]},
+    )
+    rows = _active(user)
+    assert "turn q1" in rows
+    assert rows["turn q1"]["waiting_on_you"] is True
+
+
+def test_a_finished_auto_web_chat_the_cloud_ran_closes_too():
+    """The web-origin leg gets the same rule: an app-started session whose first
+    turn was an auto dispatch (not a chat send)."""
+    user, ws, agent = _ctx()
+    cloud = _cloud(ws, user)
+    session = _web_chat_on(cloud, user, agent, "dispatch", seen_ago=dt.timedelta(hours=1))
+    Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_API,
+                        idempotency_key="d1", status=Turn.DONE, turn_mode="auto",
+                        claimed_by=cloud)
+    assert "dispatch" not in _active(user)

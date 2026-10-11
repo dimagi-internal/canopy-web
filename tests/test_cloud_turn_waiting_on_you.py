@@ -11,7 +11,7 @@ of #1165's "done when" on the real email-turn path:
 * a manual cloud email turn that finished with a draft is on the owner's feed,
   and the owner is the one pushed when it finishes;
 * it leaves the feed once someone replies;
-* an AUTO cloud turn is never on it.
+* an AUTO cloud turn is never on it, and once done it leaves the active list (#1396).
 """
 from __future__ import annotations
 
@@ -75,10 +75,10 @@ def _email_turn_finished(agent, cloud, *, mode, said="Draft reply to Ali. Approv
     return session, turn
 
 
-def _row(user, session):
+def _row(user, session, state="active"):
     c = Client()
     c.force_login(user)
-    rows = c.get("/api/canopy-sessions/?reply=true").json()
+    rows = c.get(f"/api/canopy-sessions/?reply=true&state={state}").json()
     return next((r for r in rows if r["id"] == str(session.id)), None)
 
 
@@ -105,5 +105,7 @@ def test_it_leaves_the_feed_once_someone_replies(world):
 def test_an_auto_cloud_turn_is_never_on_the_feed(world):
     jj, agent, cloud = world
     session, turn = _email_turn_finished(agent, cloud, mode="auto", said="Replied to Ali.")
-    assert _row(jj, session)["feed_status"] == feed.AUTO
+    # Done and nobody waiting, so it is off the active list too (#1396).
+    assert _row(jj, session) is None
+    assert _row(jj, session, state="archived")["feed_status"] == feed.AUTO
     assert push_services._finish_audience(turn) is None

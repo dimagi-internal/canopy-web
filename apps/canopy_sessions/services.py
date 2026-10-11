@@ -254,19 +254,7 @@ def with_driving_turn(sessions):
     which is how a scheduled or email turn's session is found, since it was never
     a chat. Unclaimed turns have no mode yet ("" until claim), so they say nothing.
     """
-    from django.db.models import Q
-
-    driving = (
-        Turn.objects.filter(
-            Q(chat_session=OuterRef("pk"))
-            | (
-                Q(agent=OuterRef("agent"), session_key=OuterRef("runner_binding__session_key"))
-                & ~Q(session_key="")
-            )
-        )
-        .exclude(turn_mode="")
-        .order_by("created_at")
-    )
+    driving = driving_turns().exclude(turn_mode="").order_by("created_at")
     return sessions.annotate(
         _turn_mode=Subquery(driving.values("turn_mode")[:1]),
         _turn_origin=Subquery(driving.values("origin")[:1]),
@@ -329,7 +317,7 @@ WORKING_STATUSES = frozenset({"working"})
 
 # Re-exported so callers keep one import surface; DEFINED in staleness.py, which the
 # backfill migration also imports (see the module docstring there).
-from .staleness import SESSION_LIVE_WINDOW, stale_cutoff, unseen_q  # noqa: E402,F401
+from .staleness import SESSION_LIVE_WINDOW, driving_turns, stale_cutoff, unseen_q  # noqa: E402,F401
 
 
 def is_session_running(binding) -> bool:
