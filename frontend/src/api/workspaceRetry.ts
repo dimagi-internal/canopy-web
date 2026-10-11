@@ -6,44 +6,30 @@
 // `/api/harness/turns/`, …): the union would mix organisations. Most pages here
 // read flat routes — only a few app prefixes are rewritten onto /api/w/:ws/ on a
 // tenant page (client.v2's WS_SCOPED_API_PREFIXES), and pages off a tenant route
-// (/supervisor, /sessions) are never rewritten at all.
+// (/supervisor, /sessions, /activity, /schedules) are never rewritten at all.
 //
-// Rather than pin every call up front — which would also narrow by-id reads
-// (opening a chat in another of your workspaces) and change what single-tree
-// users see — a GET refused with exactly that problem type is retried once,
-// pinned to the active workspace: the URL's /w/:ws/, else the caller's default
-// (the first entry of GET /api/workspaces/, the same default `/` lands on). Only
-// requests that would otherwise fail are touched.
-import { API_BASE, apiUrl } from './base'
+// A GET refused with exactly that problem type is answered from pinned reads:
+//
+// * on a tenant page (/w/:ws/…) — retried once, pinned to that workspace;
+// * on a root page — the fleet views, which span every workspace you belong to
+//   by design — LOOPED over each workspace the refusal names, one pinned read
+//   per workspace, and the lists merged. Every read is still pinned, so the
+//   server never answers a cross-organisation query; the page just asks each
+//   workspace in turn (owner decision, Jonathan, 2026-10-11: "everything is
+//   properly tied to workspaces, we just loop over them").
+//
+// It used to retry a root page pinned to ONE guessed default (the first
+// membership), which quietly hid every other workspace's agents on /supervisor.
+// Merging is a concatenation in workspace order: a root page that shows a
+// time-ordered list sorts it itself. Only requests that would otherwise fail are
+// touched, so single-tree callers see exactly what they did before.
+import { API_BASE } from './base'
 
 export const WORKSPACE_REQUIRED_TYPE_SUFFIX = '/workspace-required'
-
-let defaultWorkspace: string | null = null
-let defaultLookup: Promise<string | null> | null = null
-
-/** WorkspaceProvider reports the active workspace here once it knows it. */
-export function setDefaultWorkspace(slug: string | null): void {
-  defaultWorkspace = slug
-}
 
 function workspaceFromPath(pathname: string): string | null {
   const m = pathname.slice(API_BASE.length).match(/^\/w\/([^/]+)(?:\/|$)/)
   return m ? m[1] : null
-}
-
-async function lookupDefault(base: typeof fetch): Promise<string | null> {
-  if (defaultWorkspace) return defaultWorkspace
-  defaultLookup ??= base(apiUrl('/api/workspaces/'), { credentials: 'same-origin' })
-    .then(async (r) => {
-      if (!r.ok) return null
-      const rows = (await r.json()) as Array<{ slug?: string }>
-      return rows[0]?.slug ?? null
-    })
-    .catch(() => null)
-    .finally(() => {
-      defaultLookup = null
-    })
-  return defaultLookup
 }
 
 /**
@@ -62,16 +48,60 @@ export function pinnedUrl(url: string, ws: string, origin: string, apiBase = API
 
 /** Is this response the server's "name a workspace" refusal? */
 export async function isWorkspaceRequired(res: Response): Promise<boolean> {
-  if (res.status !== 422) return false
+  return (await refusedWorkspaces(res)) !== null
+}
+
+/** The workspaces a `workspace-required` refusal names (the caller's own), or
+ *  null when the response is not that refusal. */
+async function refusedWorkspaces(res: Response): Promise<string[] | null> {
+  if (res.status !== 422) return null
   try {
-    const body = (await res.clone().json()) as { type?: unknown }
-    return typeof body?.type === 'string' && body.type.endsWith(WORKSPACE_REQUIRED_TYPE_SUFFIX)
+    const body = (await res.clone().json()) as { type?: unknown; workspaces?: unknown }
+    if (typeof body?.type !== 'string' || !body.type.endsWith(WORKSPACE_REQUIRED_TYPE_SUFFIX)) return null
+    return Array.isArray(body.workspaces) ? body.workspaces.filter((s): s is string => typeof s === 'string') : []
   } catch {
-    return false
+    return null
   }
 }
 
-/** Wrap a fetch so a refused flat GET is retried once, pinned. */
+type Page = { items: unknown[]; count?: unknown } & Record<string, unknown>
+
+function isPage(v: unknown): v is Page {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && Array.isArray((v as Page).items)
+}
+
+function dedupe(rows: unknown[]): unknown[] {
+  const seen = new Set<unknown>()
+  return rows.filter((r) => {
+    const id = typeof r === 'object' && r !== null ? (r as { id?: unknown }).id : undefined
+    if (id === undefined || id === null) return true
+    if (seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+}
+
+/**
+ * One list from several workspaces' answers to the same pinned read, or null
+ * when they are not lists this can merge: JSON arrays concatenate; Ninja pages
+ * (`{items, count}`) concatenate their items and add their counts. Rows are
+ * de-duplicated by `id`. Pure, so it is unit-testable.
+ */
+export function mergeLists(bodies: unknown[]): unknown | null {
+  if (bodies.length === 0) return null
+  if (bodies.every(Array.isArray)) return dedupe((bodies as unknown[][]).flat())
+  if (bodies.every(isPage)) {
+    const pages = bodies as Page[]
+    const items = dedupe(pages.flatMap((p) => p.items))
+    const counts = pages.map((p) => p.count)
+    const merged: Page = { ...pages[0], items }
+    if (counts.every((c) => typeof c === 'number')) merged.count = (counts as number[]).reduce((a, b) => a + b, 0)
+    return merged
+  }
+  return null
+}
+
+/** Wrap a fetch so a refused flat GET is answered from pinned reads. */
 export function withWorkspaceRetry(base: typeof fetch): typeof fetch {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const res = await base(input, init)
@@ -81,15 +111,43 @@ export function withWorkspaceRetry(base: typeof fetch): typeof fetch {
     const isReq = typeof Request !== 'undefined' && input instanceof Request
     const method = (init?.method ?? (isReq ? (input as Request).method : 'GET')).toUpperCase()
     if (method !== 'GET' && method !== 'HEAD') return res
-    if (!(await isWorkspaceRequired(res))) return res
-    const ws = workspaceFromPath(window.location.pathname) ?? (await lookupDefault(base))
-    if (!ws) return res
+    const named = await refusedWorkspaces(res)
+    if (named === null) return res
     const url = isReq ? (input as Request).url : input instanceof URL ? input.toString() : String(input)
-    const target = pinnedUrl(url, ws, window.location.origin)
-    if (!target) return res
     // A GET carries no body, so re-using the original's settings is safe (see
     // client.v2's rewriteForWorkspace for why a body would not be).
-    return isReq ? base(new Request(target, input as Request)) : base(target, init)
+    const send = (target: string) => (isReq ? base(new Request(target, input as Request)) : base(target, init))
+
+    const here = workspaceFromPath(window.location.pathname)
+    if (here) {
+      const target = pinnedUrl(url, here, window.location.origin)
+      return target ? send(target) : res
+    }
+
+    const targets = named
+      .map((ws) => pinnedUrl(url, ws, window.location.origin))
+      .filter((t): t is string => t !== null)
+    if (targets.length === 0) return res
+    const answers = await Promise.all(targets.map(send))
+    // A workspace that refuses you this list (403/404: a role gate) holds
+    // nothing you may see there; any other failure is the page's to show.
+    const failed = answers.find((r) => !r.ok && r.status !== 403 && r.status !== 404)
+    if (failed) return failed
+    const ok = answers.filter((r) => r.ok)
+    if (ok.length === 0) return answers[0]
+    let merged: unknown | null
+    try {
+      merged = mergeLists(await Promise.all(ok.map((r) => r.json())))
+    } catch {
+      merged = null
+    }
+    // Not a list (nothing by-id is refused, so this should not happen): show
+    // the refusal rather than one workspace's answer passed off as all of them.
+    if (merged === null) return res
+    return new Response(JSON.stringify(merged), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 }
 

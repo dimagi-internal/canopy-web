@@ -1,11 +1,12 @@
 // Workspace (tenant) context. The active workspace is driven by the URL's
 // :workspace segment (source of truth); this provider fetches the caller's
 // memberships so the header switcher can render and so a bare/legacy route can
-// redirect to a sensible default.
+// redirect to a sensible default. Off a tenant route, the workspace the caller
+// last had in the URL stays active (remembered per browser), so leaving a
+// tenant page for /supervisor or /sessions keeps the workspace they picked.
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { listWorkspaces, type WorkspaceOut } from '../api/workspaces'
 import { resolveActiveWorkspace } from './resolveActiveWorkspace'
-import { setDefaultWorkspace } from '../api/workspaceRetry'
 
 interface WorkspaceCtx {
   workspaces: WorkspaceOut[]
@@ -23,6 +24,26 @@ interface WorkspaceCtx {
 }
 
 const Ctx = createContext<WorkspaceCtx | null>(null)
+
+// Per-browser convenience, so storage failing (private mode, blocked site data)
+// only costs the memory, never the page.
+const REMEMBERED_KEY = 'canopy:lastWorkspace'
+
+function readRemembered(): string | null {
+  try {
+    return localStorage.getItem(REMEMBERED_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeRemembered(slug: string): void {
+  try {
+    localStorage.setItem(REMEMBERED_KEY, slug)
+  } catch {
+    /* storage unavailable — the URL still drives tenant pages */
+  }
+}
 
 export function WorkspaceProvider({
   urlSlug,
@@ -53,12 +74,12 @@ export function WorkspaceProvider({
     }
   }, [])
 
-  const active = resolveActiveWorkspace(workspaces, urlSlug)
-  // Where a flat list refused for spanning two organisations is retried
-  // (../api/workspaceRetry): the workspace the caller is looking at.
+  const active = resolveActiveWorkspace(workspaces, urlSlug, readRemembered())
+  // Remember a workspace only once it is confirmed a membership — a bad slug in
+  // a pasted URL must not become the default for every root page after it.
   useEffect(() => {
-    setDefaultWorkspace(active)
-  }, [active])
+    if (urlSlug && workspaces.some((w) => w.slug === urlSlug)) writeRemembered(urlSlug)
+  }, [urlSlug, workspaces])
   return <Ctx.Provider value={{ workspaces, active, loading, refresh }}>{children}</Ctx.Provider>
 }
 
