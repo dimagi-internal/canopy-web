@@ -3,7 +3,7 @@ import { Link, useOutletContext, useParams } from 'react-router-dom'
 
 import { AgentApiError, getProject, patchProject, type ProjectDetailOut, type TaskOut } from '@/api/agents'
 import { relativeTime } from '@/components/activity/turnLog'
-import { TaskCard } from '@/components/TasksBoard'
+import { nestTasks, TaskCard } from '@/components/TasksBoard'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { ProjectStatusOptions, StatusChip } from '@/pages/agents/projectParts'
 import { Section } from '@/pages/agents/sectionLayout'
@@ -90,6 +90,7 @@ export function AgentProjectPage(): JSX.Element {
   }
 
   const tasks = liveFirst(detail.tasks ?? [])
+  const nested = nestTasks(tasks)
   const turns = detail.recent_turns ?? []
   const links = detail.links ?? []
   const owner = detail.owner_email || detail.owner_note
@@ -154,7 +155,7 @@ export function AgentProjectPage(): JSX.Element {
           <p className="text-[13px] text-muted-foreground">No tasks in this project yet.</p>
         ) : (
           <div className="space-y-2">
-            {tasks.map((t) => (
+            {nested.roots.map((t) => (
               <TaskCard
                 key={t.ext_id}
                 task={t}
@@ -165,6 +166,8 @@ export function AgentProjectPage(): JSX.Element {
                 canEdit={canEdit}
                 // Every card on this page is in this project.
                 showProject={false}
+                // A product area is one board: its big pieces nest their subtasks.
+                childrenOf={nested.childrenOf}
               />
             ))}
           </div>

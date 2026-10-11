@@ -17,6 +17,7 @@ from .models import (
     AgentSync,
     AgentTask,
     AgentTaskAction,
+    MAX_TASK_DEPTH,
 )
 
 _VALID_TASK_STATUS = {AgentTask.SUGGESTED, AgentTask.IN_PROGRESS, AgentTask.DONE, AgentTask.DECLINED}
@@ -563,7 +564,84 @@ def _norm_status(s: str) -> str:
 
 
 _TASK_FIELDS = ("title", "next_action", "status", "owner", "assigned", "confidence",
-                "score", "review", "rationale", "source_url", "plan", "due", "notes", "position")
+                "score", "review", "rationale", "source_url", "plan", "due", "notes", "position",
+                "drive_folder_id", "drive_folder_url")
+
+
+class TaskTreeError(ValueError):
+    """A parent that would break the task tree: another agent's task, another
+    project's, the task itself or one of its own subtasks (a cycle), or a
+    chain deeper than `MAX_TASK_DEPTH`. A ValueError, so every route that
+    already maps those to 422 refuses it the same way."""
+
+
+def _depth_above(task: AgentTask) -> int:
+    """How many levels sit above `task` (0 for a top-level task)."""
+    depth, node, seen = 0, task, set()
+    while node.parent_id is not None and node.pk not in seen:
+        seen.add(node.pk)
+        node = node.parent
+        depth += 1
+    return depth
+
+
+def _height_below(task: AgentTask) -> int:
+    """How many levels of subtasks hang under `task` (0 for a leaf). One
+    query per level, and the tree is at most `MAX_TASK_DEPTH` deep."""
+    if task.pk is None:
+        return 0
+    height, level = 0, [task.pk]
+    while level:
+        level = list(AgentTask.objects.filter(parent_id__in=level).values_list("pk", flat=True))
+        if level:
+            height += 1
+        if height > MAX_TASK_DEPTH:  # a corrupt tree; refuse rather than spin
+            break
+    return height
+
+
+def resolve_parent(task: AgentTask, ref: str) -> AgentTask | None:
+    """The task `ref` names as `task`'s parent, checked — or None to clear.
+
+    Refused (TaskTreeError) when the parent is unknown, is the task itself or
+    one of its descendants, sits in a different project, or would make the
+    chain deeper than MAX_TASK_DEPTH. `task` is the CHILD as it will be saved:
+    its `project` must already be the one it will have.
+    """
+    ref = (ref or "").strip()
+    if not ref:
+        return None
+    parent = get_task(task.agent, ref)
+    if parent is None:
+        raise TaskTreeError(f"parent {ref} is not a task of {task.agent.slug}")
+    if task.pk is not None:
+        node, seen = parent, set()
+        while node is not None and node.pk not in seen:
+            if node.pk == task.pk:
+                raise TaskTreeError(f"{parent.ext_id} is {task.ext_id} or one of its subtasks "
+                                    f"— a task cannot be its own ancestor")
+            seen.add(node.pk)
+            node = node.parent
+    if parent.project_id != task.project_id:
+        where = parent.project.ext_id if parent.project_id else "no project"
+        raise TaskTreeError(f"parent {parent.ext_id} is in {where}; a subtask lives in its "
+                            f"parent's project")
+    levels = _depth_above(parent) + 1 + 1 + _height_below(task)
+    if levels > MAX_TASK_DEPTH:
+        raise TaskTreeError(f"making {parent.ext_id} the parent would nest tasks {levels} deep "
+                            f"(at most {MAX_TASK_DEPTH}) — file the deeper work as its own task")
+    return parent
+
+
+def _descendants(task: AgentTask) -> list[AgentTask]:
+    out, level = [], [task.pk]
+    for _ in range(MAX_TASK_DEPTH):
+        rows = list(AgentTask.objects.filter(parent_id__in=level))
+        if not rows:
+            break
+        out.extend(rows)
+        level = [r.pk for r in rows]
+    return out
 
 #: What a create may carry beyond `_TASK_FIELDS`, copied straight onto the row.
 _TASK_CREATE_EXTRAS = ("ask_body", "on_approve", "batch_key", "origin", "origin_ref", "source")
@@ -612,13 +690,24 @@ def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
         raised_by = p.get("raised_by") or None
         if raised_by and not Turn.objects.filter(pk=raised_by, agent=agent).exists():
             raise ValueError(f"raised_by {raised_by} is not a turn of {agent.slug}")
+        project = get_project(agent, ref) if ref else None
+        parent_ref = str(p.get("parent") or "").strip()
+        parent = None
+        if parent_ref:
+            # A subtask lives in its parent's project: one named with no project
+            # inherits it, so `{"parent": "T66"}` alone files it correctly.
+            if not ref:
+                found = get_task(agent, parent_ref)
+                project = found.project if found is not None else None
+            parent = resolve_parent(AgentTask(agent=agent, project=project), parent_ref)
         ext_id = _claim_ext_id(agent, (p.get("ext_id") or "").strip())
         try:
             with transaction.atomic():  # savepoint
                 task = AgentTask.objects.create(
                     agent=agent,
                     ext_id=ext_id,
-                    project=get_project(agent, ref) if ref else None,
+                    project=project,
+                    parent=parent,
                     ask_kind=ask_kind,
                     idempotency_key=key or None,
                     raised_by_id=raised_by,
@@ -710,12 +799,28 @@ def patch_task(task: AgentTask, data) -> AgentTask:
         task.links = data["links"]
     if "waiting_on_email" in data:
         task.waiting_on_user = resolve_waiting_on(task.agent, data["waiting_on_email"])
+    moved = False
     if "project" in data:
         # Present-and-empty means "take it out of its project"; absent means
         # "leave it where it is" (the schema keeps the two apart).
         ref = (data["project"] or "").strip()
-        task.project = get_project(task.agent, ref) if ref else None
+        new_project = get_project(task.agent, ref) if ref else None
+        moved = (new_project.pk if new_project else None) != task.project_id
+        task.project = new_project
+    if "parent" in data:
+        task.parent = resolve_parent(task, data["parent"] or "")
+    elif moved and task.parent_id is not None:
+        # Moving a subtask out of its parent's project, without naming a new
+        # parent, would leave a child filed somewhere its parent is not.
+        raise TaskTreeError(f"{task.ext_id} is a subtask of {task.parent.ext_id}; move the parent, "
+                            f"or send \"parent\": \"\" to detach it first")
     task.save()
+    if moved:
+        # A subtree moves as one: a parent's subtasks follow it to its new project.
+        for child in _descendants(task):
+            child.project = task.project
+            child.save(update_fields=["project", "updated_at"])
+            _link_participants(child)
     if "project" in data:
         _link_participants(task)
     return task
@@ -922,7 +1027,7 @@ def waiting_q(prefix: str = ""):
 
 
 def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting: str = "",
-                 ask: str = "", batch: str = ""):
+                 ask: str = "", batch: str = "", parent: str = ""):
     """The task list's filters, shared by the per-agent and fleet routes.
 
     `waiting=me` is what lands in a person's inbox: tasks parked on them, plus
@@ -947,6 +1052,10 @@ def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting:
         qs = qs.exclude(ask_kind="").filter(ask_closed_at__isnull=False)
     if batch:
         qs = qs.filter(batch_key=batch)
+    if parent == "none":
+        qs = qs.filter(parent__isnull=True)
+    elif parent:
+        qs = qs.filter(parent__ext_id__iexact=parent)
     return qs
 
 

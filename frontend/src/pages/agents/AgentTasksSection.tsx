@@ -10,7 +10,7 @@ import {
   type TaskFilters,
   type TaskOut,
 } from '@/api/agents'
-import { TaskCard, TasksBoard } from '@/components/TasksBoard'
+import { nestTasks, TaskCard, TasksBoard } from '@/components/TasksBoard'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { ProjectGroupHeader } from '@/pages/agents/projectParts'
 import { QuickTurn } from '@/pages/agents/QuickTurn'
@@ -282,21 +282,28 @@ function ByProject({
     return m
   }, [actions])
 
-  const cards = (list: TaskOut[]) => (
-    <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-      {list.map((t) => (
-        <TaskCard
-          key={t.ext_id}
-          task={t}
-          onChanged={onChanged}
-          canEdit={canEdit}
-          lastApplied={lastByTask.get(t.ext_id)}
-          // The group header already names (and links) the project.
-          showProject={false}
-        />
-      ))}
-    </div>
-  )
+  // A subtask lives in its parent's project, so nesting within a group is
+  // exact: every subtask whose parent is listed sits inside that card.
+  const cards = (list: TaskOut[]) => {
+    const { roots, childrenOf } = nestTasks(list)
+    return (
+      <div className="mt-2 grid grid-cols-1 items-start gap-1.5 sm:grid-cols-2">
+        {roots.map((t) => (
+          <TaskCard
+            key={t.ext_id}
+            task={t}
+            onChanged={onChanged}
+            canEdit={canEdit}
+            lastApplied={lastByTask.get(t.ext_id)}
+            lastByTask={lastByTask}
+            childrenOf={childrenOf}
+            // The group header already names (and links) the project.
+            showProject={false}
+          />
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

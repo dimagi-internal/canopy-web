@@ -672,6 +672,13 @@ class AgentTaskIn(StrictModel):
     #: The project this task belongs to, by its `ext_id` ("P3") or numeric id.
     #: Empty means a one-off, which plenty of work legitimately is.
     project: str = Field(default="", max_length=64)
+    #: The task this is a subtask of, by `ext_id` ("T66") — same agent, same
+    #: project (inherited when `project` is omitted), no cycles, at most three
+    #: levels deep. A parent created earlier in the same batch may be named.
+    parent: str = Field(default="", max_length=64)
+    #: The task's own Drive folder (inside its project's), when it has one.
+    drive_folder_id: str = Field(default="", max_length=128)
+    drive_folder_url: str = Field(default="", max_length=500)
     title: str = Field(min_length=1, max_length=300)
     next_action: str = Field(default="", max_length=300)
     status: str = "suggested"  # normalized server-side
@@ -723,6 +730,10 @@ class AgentTaskOut(StrictModel):
     ext_id: str
     project_ext_id: str | None = None
     project_name: str | None = None
+    #: The task this is a subtask of; null for a top-level task.
+    parent_ext_id: str | None = None
+    drive_folder_id: str = ""
+    drive_folder_url: str = ""
     title: str
     next_action: str
     status: Literal["suggested", "in_progress", "done", "declined"]
@@ -768,6 +779,11 @@ class AgentTaskPatch(StrictModel):
     #: `""` takes the task OUT of its project; omitting it leaves the task where
     #: it is. The two must differ, or patching a title would silently unfile it.
     project: str | None = Field(default=None, max_length=64)
+    #: The parent task's `ext_id`; `""` makes it top-level again. Moving a
+    #: parent's project moves its subtasks with it.
+    parent: str | None = Field(default=None, max_length=64)
+    drive_folder_id: str | None = Field(default=None, max_length=128)
+    drive_folder_url: str | None = Field(default=None, max_length=500)
     #: Who the next step waits on, by email. `""` clears it. A person canopy
     #: does not know is refused rather than silently dropped — the free-text
     #: `assigned` is where an unknown counterpart belongs, and a wait that
