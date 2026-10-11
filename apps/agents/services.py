@@ -17,6 +17,7 @@ from .models import (
     AgentSync,
     AgentTask,
     AgentTaskAction,
+    AgentTaskHumanWhy,
     MAX_TASK_DEPTH,
 )
 
@@ -633,6 +634,54 @@ def resolve_parent(task: AgentTask, ref: str) -> AgentTask | None:
     return parent
 
 
+def _resolve_who(agent: Agent, who: dict):
+    """(person, email, name) for one quote's speaker.
+
+    A Person is linked only when canopy knows them in the agent's workspace
+    (`people.known_in`) — the same gate as every per-person read, so a quote
+    cannot be used to learn that canopy knows someone another tenant deals
+    with. An email canopy does not know is kept as text: the quote still says
+    who. A `person_id` that is not known here is refused — it was explicit."""
+    from apps.contacts import people
+    from apps.contacts.models import Person
+
+    pid = who.get("person_id")
+    email = (who.get("email") or "").strip().lower()
+    name = (who.get("name") or "").strip()
+    person = None
+    if pid is not None:
+        person = Person.objects.filter(pk=pid).first()
+        if person is None or not people.known_in(person, agent.workspace_id):
+            raise ValueError(f"person {pid} is not someone {agent.workspace_id} knows")
+    elif email:
+        found = people.by_email(email)
+        if found is not None and people.known_in(found, agent.workspace_id):
+            person = found
+    if person is not None:
+        email = email or people.email_of(person)
+        name = name or people.display_name(person)
+    return person, email, name
+
+
+def set_human_why(task: AgentTask, items: list[dict]) -> None:
+    """Replace the task's human-why quotes with `items` (T68), in order."""
+    rows = []
+    for i, item in enumerate(items or []):
+        quote = (item.get("quote") or "").strip()
+        if not quote:
+            raise ValueError("a human_why entry needs the person's quote")
+        person, email, name = _resolve_who(task.agent, item.get("who") or {})
+        rows.append(AgentTaskHumanWhy(
+            task=task, position=i, quote=quote, person=person, who_email=email,
+            who_name=name, source_url=(item.get("source_url") or "").strip(),
+            said_at=_aware(item.get("said_at")),
+        ))
+    task.human_whys.all().delete()
+    AgentTaskHumanWhy.objects.bulk_create(rows)
+    if hasattr(task, "_prefetched_objects_cache"):
+        task._prefetched_objects_cache.pop("human_whys", None)
+
+
 def _descendants(task: AgentTask) -> list[AgentTask]:
     out, level = [], [task.pk]
     for _ in range(MAX_TASK_DEPTH):
@@ -714,6 +763,8 @@ def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
                     waiting_on_user=waiting_on,
                     **fields,
                 )
+                if p.get("human_why"):
+                    set_human_why(task, p["human_why"])
             out.append(task)
             _link_participants(task)
         except IntegrityError:
@@ -790,8 +841,10 @@ def resolve_waiting_on(agent: Agent, email: str):
     return user
 
 
+@transaction.atomic
 def patch_task(task: AgentTask, data) -> AgentTask:
-    """Partial update — only fields present in `data` (a dict) are written."""
+    """Partial update — only fields present in `data` (a dict) are written.
+    Atomic: a refused quote or tree move leaves the task exactly as it was."""
     for f in _TASK_FIELDS:
         if f in data:
             setattr(task, f, _norm_status(data[f]) if f == "status" else data[f])
@@ -821,6 +874,8 @@ def patch_task(task: AgentTask, data) -> AgentTask:
             child.project = task.project
             child.save(update_fields=["project", "updated_at"])
             _link_participants(child)
+    if "human_why" in data:
+        set_human_why(task, data["human_why"] or [])
     if "project" in data:
         _link_participants(task)
     return task

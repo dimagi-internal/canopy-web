@@ -361,3 +361,40 @@ describe('subtasks and the task folder', () => {
     expect(screen.queryByTestId('task-folder-T72')).toBeNull()
   })
 })
+
+// T68: the person's own words, separate from (and above) the AI's rationale.
+describe('the human why', () => {
+  const why = {
+    quote: 'store in tasks what a human had an opinion on directly',
+    who: { person_id: 7, email: 'jj@dimagi.com', name: 'Jonathan Jackson' },
+    source_url: 'https://docs.google.com/document/d/X/edit',
+    said_at: '2026-10-09T13:20:00Z',
+  }
+
+  it('quotes the person, names them and links where they said it', () => {
+    render(<TaskCard task={task({ ask_kind: '', ask_open: false, human_why: [why] })} canEdit={false} />)
+    const block = screen.getByTestId('human-why-T2')
+    expect(block.textContent).toContain('“store in tasks what a human had an opinion on directly”')
+    expect(block.textContent).toContain('Jonathan Jackson')
+    expect(block.querySelector('a')?.getAttribute('href')).toBe(why.source_url)
+  })
+
+  it('sits above the agent rationale, which is then labelled as the agent’s read', () => {
+    render(
+      <TaskCard
+        task={task({ ask_kind: '', ask_open: false, human_why: [why], rationale: 'Hal inferred this' })}
+        canEdit={false}
+      />,
+    )
+    const card = screen.getByTestId('task-T2')
+    const text = card.textContent ?? ''
+    expect(text.indexOf('store in tasks')).toBeLessThan(text.indexOf('Hal inferred this'))
+    expect(text).toContain("Eva's read: Hal inferred this")
+  })
+
+  it('renders nothing extra, and keeps the plain "Why:" label, when nobody was quoted', () => {
+    render(<TaskCard task={task({ ask_kind: '', ask_open: false, rationale: 'because' })} canEdit={false} />)
+    expect(screen.queryByTestId('human-why-T2')).toBeNull()
+    expect(screen.getByTestId('task-T2').textContent).toContain('Why: because')
+  })
+})

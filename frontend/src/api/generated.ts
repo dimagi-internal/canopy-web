@@ -12649,6 +12649,8 @@ export interface components {
             readonly drive_folder_url: string;
             /** Title */
             readonly title: string;
+            /** Human Why */
+            readonly human_why?: readonly components["schemas"]["HumanWhyOut"][];
             /** Next Action */
             readonly next_action: string;
             /**
@@ -12730,6 +12732,34 @@ export interface components {
              * Format: date-time
              */
             readonly updated_at: string;
+        };
+        /** HumanWhoOut */
+        readonly HumanWhoOut: {
+            /** Person Id */
+            readonly person_id?: number | null;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+        };
+        /** HumanWhyOut */
+        readonly HumanWhyOut: {
+            /** Quote */
+            readonly quote: string;
+            readonly who: components["schemas"]["HumanWhoOut"];
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Said At */
+            readonly said_at?: string | null;
         };
         /**
          * ProjectParticipantOut
@@ -12845,6 +12875,8 @@ export interface components {
             readonly drive_folder_url: string;
             /** Title */
             readonly title: string;
+            /** Human Why */
+            readonly human_why?: readonly components["schemas"]["HumanWhyIn"][];
             /**
              * Next Action
              * @default
@@ -12955,6 +12987,43 @@ export interface components {
             readonly source: string;
         };
         /**
+         * HumanWho
+         * @description Who said it. Give `email` (and `name`): canopy links the Person it names
+         *     when it knows them in this agent's workspace. `person_id` names one
+         *     directly. At least one of the three.
+         */
+        readonly HumanWho: {
+            /** Person Id */
+            readonly person_id?: number | null;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+        };
+        /**
+         * HumanWhyIn
+         * @description What a person actually said that this task answers (T68): their words,
+         *     verbatim — never a paraphrase — who said them, and where.
+         */
+        readonly HumanWhyIn: {
+            /** Quote */
+            readonly quote: string;
+            readonly who: components["schemas"]["HumanWho"];
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /** Said At */
+            readonly said_at?: string | null;
+        };
+        /**
          * TurnSpecIn
          * @description One deferred Turn enqueue. `target_agent=""` means the task's own agent —
          *     self-dispatch is the default; Ada's fan-out is this field set.
@@ -13037,6 +13106,8 @@ export interface components {
             readonly drive_folder_url: string;
             /** Title */
             readonly title: string;
+            /** Human Why */
+            readonly human_why?: readonly components["schemas"]["HumanWhyOut"][];
             /** Next Action */
             readonly next_action: string;
             /**
@@ -13138,6 +13209,8 @@ export interface components {
             readonly waiting_on_email?: string | null;
             /** Title */
             readonly title?: string | null;
+            /** Human Why */
+            readonly human_why?: readonly components["schemas"]["HumanWhyIn"][] | null;
             /** Next Action */
             readonly next_action?: string | null;
             /** Status */

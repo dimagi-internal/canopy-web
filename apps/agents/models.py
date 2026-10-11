@@ -891,9 +891,74 @@ class AgentTask(models.Model):
         return self.agent.slug
 
 
+    @property
+    def human_why(self) -> list[dict]:
+        """The people's own words behind this task, oldest first (`AgentTaskHumanWhy`).
+
+        Reads the prefetch cache when the caller prefetched `human_whys`, so a list
+        route costs one extra query rather than one per task."""
+        return [w.as_dict() for w in self.human_whys.all()]
+
+
 #: How deep subtasks nest: a task, its subtasks, and theirs. Deeper than that
 #: is a project's worth of structure hiding inside one card — split it out.
 MAX_TASK_DEPTH = 3
+
+
+class AgentTaskHumanWhy(models.Model):
+    """What a PERSON actually said that this task answers — quoted, attributed,
+    linked — kept apart from the agent's `rationale` (T68).
+
+    `rationale` is the agent's inference, and it never traced back to whoever
+    wanted the work: "Canopy tasks do a decent job of explaining why the AI
+    thinks a task matters, but they don't trace back to the person who
+    originally wanted it" (the Supply brief, Part 3). A person's words weigh
+    more than the agent's reading of them, so the board shows these first.
+
+    **A row per quote, not a JSON list on the task**, for two reasons that are
+    both about `who`:
+      * `person` is a real foreign key, so the link survives (SET_NULL keeps the
+        quote and its name/email if the Person goes) and cannot point at a row
+        that never existed — a JSON id would.
+      * "everything this person asked for, across every task" is the question
+        contributor pages ask (T69). With rows it is one indexed query on
+        `person`; with JSON it is a scan of every task's blob.
+    The cost is one prefetch on the list routes. The list is still written
+    wholesale (create, or a PATCH that sends `human_why`), like `links`.
+
+    **Verbatim or nothing.** `quote` is the person's own words, never a
+    paraphrase — an agent with no quote leaves the list empty.
+    """
+
+    task = models.ForeignKey(AgentTask, on_delete=models.CASCADE, related_name="human_whys")
+    position = models.PositiveSmallIntegerField(default=0)
+    quote = models.TextField(help_text="The person's own words, verbatim.")
+    #: The canopy Person who said it, when canopy knows them in the agent's
+    #: workspace. Resolved from `who_email` (or given directly) at write time.
+    person = models.ForeignKey("contacts.Person", null=True, blank=True,
+                               on_delete=models.SET_NULL, related_name="task_quotes")
+    #: Kept beside `person` so a quote from someone canopy has never seen still
+    #: says who, and a deleted Person does not orphan the attribution.
+    who_email = models.EmailField(blank=True, default="")
+    who_name = models.CharField(max_length=200, blank=True, default="")
+    #: Where they said it: the thread, the doc comment, the session.
+    source_url = models.URLField(max_length=500, blank=True, default="")
+    said_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.task_id}: {self.who_name or self.who_email}: {self.quote[:40]}"
+
+    def as_dict(self) -> dict:
+        return {
+            "quote": self.quote,
+            "who": {"person_id": self.person_id, "email": self.who_email, "name": self.who_name},
+            "source_url": self.source_url,
+            "said_at": self.said_at,
+        }
 
 
 class AgentTaskAction(models.Model):

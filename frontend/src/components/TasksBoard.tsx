@@ -368,15 +368,59 @@ function SourceChip({ url }: { url: string }): JSX.Element | null {
   )
 }
 
+// THE PERSON'S WHY (T68): what someone actually said that this task answers —
+// their words verbatim, who, when, and a link to where. It sits ABOVE the
+// agent's rationale and is drawn heavier, because a person's view outweighs
+// the agent's reading of it. Quote marks + a solid rule in the foreground
+// colour, against the rationale's muted single line.
+function HumanWhy({ task }: { task: TaskOut }): JSX.Element | null {
+  const quotes = (task.human_why ?? []).filter((w) => (w.quote || '').trim())
+  if (quotes.length === 0) return null
+  return (
+    <div className="mt-2 space-y-1.5" data-testid={`human-why-${task.ext_id}`}>
+      {quotes.map((w, i) => {
+        const who = (w.who?.name || w.who?.email || 'Someone').trim()
+        const when = w.said_at ? formatDue(w.said_at) : ''
+        const source = (w.source_url || '').trim()
+        return (
+          <figure key={i} className="border-l-2 border-foreground/70 pl-2.5">
+            <blockquote className="text-[12px] font-medium leading-snug text-foreground">
+              “{w.quote.trim()}”
+            </blockquote>
+            <figcaption className="mt-0.5 text-[10px] text-muted-foreground">
+              — <span className="font-medium text-foreground-secondary">{who}</span>
+              {when && <> · {when}</>}
+              {source && (
+                <a
+                  href={source}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-1.5 whitespace-nowrap font-medium text-primary/80 hover:text-primary"
+                  title={source}
+                >
+                  where <span className="text-primary/70">↗</span>
+                </a>
+              )}
+            </figcaption>
+          </figure>
+        )
+      })}
+    </div>
+  )
+}
+
 // A muted "Why: …" rationale line — expandable when long. Lets a human validate
 // a suggested task before acting on it. When `sourceUrl` is set, the grounded
 // source the agent read is linked inline right after the rationale — the trust signal.
 function RationaleLine({
   rationale,
   sourceUrl,
+  label = 'Why: ',
 }: {
   rationale: string
   sourceUrl?: string
+  /** Under a person's quote, the rationale is named for what it is: the agent's read. */
+  label?: string
 }): JSX.Element | null {
   const text = (rationale || '').trim()
   const source = (sourceUrl || '').trim()
@@ -385,7 +429,7 @@ function RationaleLine({
   const long = text.length > 120
   return (
     <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground/90">
-      <span className="text-muted-foreground/70">Why: </span>
+      <span className="text-muted-foreground/70">{label}</span>
       {long && !expanded ? `${text.slice(0, 120).trimEnd()}…` : text}
       {long && (
         <button
@@ -646,6 +690,7 @@ export function TaskCard({
   const isSuggested = task.status === 'suggested'
   const isDone = task.status === 'done'
   const hasRationale = Boolean((task.rationale || '').trim())
+  const hasHumanWhy = (task.human_why ?? []).some((w) => (w.quote || '').trim())
   const askKind = (task.ask_kind || '').trim()
   const askOpen = Boolean(askKind) && task.ask_open
   const meta = [showAgent ? task.agent_slug : '', askOpen ? onApproveHint(task) : '']
@@ -713,7 +758,12 @@ export function TaskCard({
 
       {/* Context: why this is here (esp. for validating suggested tasks). The
           grounded source links inline with the rationale when both are present. */}
-      <RationaleLine rationale={task.rationale} sourceUrl={task.source_url} />
+      <HumanWhy task={task} />
+      <RationaleLine
+        rationale={task.rationale}
+        sourceUrl={task.source_url}
+        label={hasHumanWhy ? `${agentDisplayName(task.agent_slug)}'s read: ` : 'Why: '}
+      />
 
       {/* What the agent last did on this task — the stored action outcome. */}
       {lastApplied && <LastActivityLine action={lastApplied} />}

@@ -40,7 +40,8 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
     qs = AgentTask.objects.filter(agent__workspace_id__in=_visible_agent_workspace_ids(request))
     if agent:
         qs = qs.filter(agent__slug=agent)
-    qs = services.filter_tasks(qs.select_related("agent", "project", "waiting_on_user", "parent"),
+    qs = services.filter_tasks(qs.select_related("agent", "project", "waiting_on_user", "parent")
+                               .prefetch_related("human_whys"),
                                user=request.user, project=project, status=status,
                                waiting=waiting, ask=ask, batch=batch, parent=parent)
     qs = qs.order_by(_ASK_RANK, "created_at", "id")[:clamp_limit(limit)]
