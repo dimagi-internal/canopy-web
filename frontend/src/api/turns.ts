@@ -12,7 +12,12 @@ export async function listTurns(limit = 20): Promise<Turn[]> {
     params: { query: { limit } },
   });
   if (error) throw new Error(problemMessage(error, "Failed to load activity"));
-  return data as Turn[];
+  // Newest first, and only `limit` of them. The server already orders it that
+  // way, but a caller in several organisations is answered one workspace at a
+  // time on a root page (../api/workspaceRetry), and that merge concatenates.
+  return [...(data as Turn[])]
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .slice(0, limit);
 }
 
 /** The append-only event ledger for one turn (drill-down). */

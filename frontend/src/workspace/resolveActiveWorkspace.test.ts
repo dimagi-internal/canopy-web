@@ -16,6 +16,15 @@ describe('resolveActiveWorkspace', () => {
     expect(resolveActiveWorkspace(wss, 'ghost')).toBe('dimagi')
   })
 
+  it('off a tenant route, keeps the workspace last chosen', () => {
+    expect(resolveActiveWorkspace(wss, null, 'acme')).toBe('acme')
+  })
+
+  it('the URL beats the remembered workspace, and a stale memory is ignored', () => {
+    expect(resolveActiveWorkspace(wss, 'dimagi', 'acme')).toBe('dimagi')
+    expect(resolveActiveWorkspace(wss, null, 'left-it')).toBe('dimagi')
+  })
+
   it('returns null with no memberships', () => {
     expect(resolveActiveWorkspace([], null)).toBeNull()
     expect(resolveActiveWorkspace([], 'anything')).toBeNull()

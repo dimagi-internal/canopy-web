@@ -98,8 +98,13 @@ Lists that span one org's workspaces on purpose (huddles, threads, the shared-se
 use `tree_scope`: pinned, they span the caller's memberships in the pin's tree; unpinned, they
 take the rule above.
 
-The web client mirrors it: when the caller's workspaces have more than one `root`, every flat
-call is pinned to the active workspace (the URL's `/w/<ws>/`, else the default one).
+The web client mirrors it (`frontend/src/api/workspaceRetry.ts`): a flat GET refused this way
+is answered from PINNED reads. On a tenant page it is retried pinned to the URL's `/w/<ws>/`. On
+a root page (`/supervisor`, `/sessions`, `/activity`, `/schedules` — the fleet views, which span
+every workspace you belong to) it is looped over each workspace the refusal names, one pinned read
+per workspace, and the lists merged — so the server never answers a cross-organisation query and
+the fleet view still shows everything. (It first retried a root page pinned to the first
+membership, which hid every other workspace's agents on `/supervisor`.)
 
 A stricter rule — *every* unpinned list refused, even inside one tree — is a possible
 follow-up; it would break every flat-route client in the Dimagi fleet today.
