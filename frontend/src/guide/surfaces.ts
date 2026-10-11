@@ -343,8 +343,16 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/agents/:slug/projects/:ref',
     title: 'Agent project',
     audience: 'Anyone in the workspace',
-    what: "One project, always in four sections: its header (outcome, status, owner, Drive folder, repo), its tasks on the same card as the Tasks page, the recent turns that touched those tasks, and the links the agent recorded as its deliverables.",
-    actions: ['Change the status, owner or outcome', 'Act on a task in place', 'Open a turn that touched the project', 'Follow a recorded link'],
+    what: "One project, always in the same sections: its header (outcome, status, owner, Drive folder, repo); People — who is building it and what each is after; Ideas — every task as an idea, proposed / started / shipped, with whose it was in their own words; its tasks on the same card as the Tasks page; the recent turns that touched those tasks; and the links the agent recorded as its deliverables.",
+    actions: ['Open a contributor\'s page', 'See where each idea stands and whose it was', 'Change the status, owner or outcome', 'Act on a task in place', 'Open a turn that touched the project', 'Follow a recorded link'],
+  },
+  {
+    path: '/w/:workspace/agents/:slug/projects/:ref/people/:person',
+    title: 'Contributor page',
+    audience: 'Anyone in the workspace',
+    what: "One person's page on one project: what they are trying to achieve, in their own words with a link to where they said each thing, and their ideas — built so far, in progress, proposed — plus wants no task covers yet. An agent writes it from their sessions, only while the person lets agents learn about them; read it before building on their idea, or against it.",
+    needsFirst: 'A contributor on the project: someone whose conversation raised one of its tasks, or whose page the agent has written.',
+    actions: ['Read their goal and quotes', 'Follow a quote to where they said it', 'See which of their ideas shipped', 'Open another contributor from an idea they share'],
   },
   {
     path: '/w/:workspace/agents/:slug/tasks',
