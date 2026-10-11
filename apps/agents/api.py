@@ -1446,6 +1446,7 @@ def get_project(request: HttpRequest, slug: str, ref: str) -> AgentProjectDetail
     live_first = Case(When(status__in=services.LIVE_STATUSES, then=0), default=1,
                       output_field=IntegerField())
     tasks = list(project.tasks.select_related("agent", "project", "waiting_on_user", "parent")
+                 .prefetch_related("human_whys")
                  .order_by(live_first, "position", "id"))
     project._task_count = len(tasks)
     project._open_task_count = sum(t.status in services.LIVE_STATUSES for t in tasks)
@@ -1501,7 +1502,8 @@ def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str =
     that task's direct subtasks, or `none` for top-level tasks only)."""
     agent = _get_agent_or_404(request, slug)
     qs = services.filter_tasks(
-        agent.tasks.select_related("agent", "project", "waiting_on_user", "parent"),
+        agent.tasks.select_related("agent", "project", "waiting_on_user", "parent")
+        .prefetch_related("human_whys"),
         user=request.user, project=project, status=status, waiting=waiting, ask=ask, batch=batch,
         parent=parent)
     return [AgentTaskOut.model_validate(t) for t in qs]
@@ -1549,7 +1551,8 @@ def patch_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskPatc
     data = payload.model_dump(exclude_unset=True)
     try:
         return AgentTaskOut.model_validate(services.patch_task(task, data))
-    except (services.UnknownPersonError, services.TaskTreeError) as exc:
+    except (services.UnknownPersonError, ValueError) as exc:
+        # TaskTreeError, and a quote whose person_id is not known here.
         raise HttpError(422, str(exc)) from exc
 
 

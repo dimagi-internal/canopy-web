@@ -200,8 +200,13 @@ def _task_context(task) -> str:
     if task.project_id:
         project = task.project
         lines.append(f"Project: {project.ext_id} · {project.name}")
+    # The person's own words come before the agent's inference, and outweigh it (T68).
+    for why in task.human_whys.all():
+        who = why.who_name or why.who_email or "someone"
+        where = f" ({why.source_url})" if why.source_url else ""
+        lines.append(f"{who} said{where}:\n> " + why.quote.strip().replace("\n", "\n> "))
     for label, value in (("Next action", task.next_action), ("Plan", task.plan),
-                         ("Why", task.rationale), ("Source", task.source_url)):
+                         ("Agent's why", task.rationale), ("Source", task.source_url)):
         value = (value or "").strip()
         if value:
             lines.append(f"{label}:\n{value}" if "\n" in value else f"{label}: {value}")

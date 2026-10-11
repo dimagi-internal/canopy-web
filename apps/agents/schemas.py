@@ -613,6 +613,46 @@ class AgentTaskLink(StrictModel):
     url: str = Field(min_length=1, max_length=500)
 
 
+class HumanWho(StrictModel):
+    """Who said it. Give `email` (and `name`): canopy links the Person it names
+    when it knows them in this agent's workspace. `person_id` names one
+    directly. At least one of the three."""
+
+    person_id: int | None = None
+    email: str = Field(default="", max_length=254)
+    name: str = Field(default="", max_length=200)
+
+    @model_validator(mode="after")
+    def _someone(self):
+        if self.person_id is None and not self.email.strip() and not self.name.strip():
+            raise ValueError("who needs an email, a name or a person_id")
+        return self
+
+
+class HumanWhyIn(StrictModel):
+    """What a person actually said that this task answers (T68): their words,
+    verbatim — never a paraphrase — who said them, and where."""
+
+    quote: str = Field(min_length=1, max_length=4000)
+    who: HumanWho
+    source_url: str = Field(default="", max_length=500)
+    said_at: dt.datetime | None = None
+
+
+class HumanWhoOut(StrictModel):
+    #: Set when canopy linked a Person (known in the agent's workspace).
+    person_id: int | None = None
+    email: str = ""
+    name: str = ""
+
+
+class HumanWhyOut(StrictModel):
+    quote: str
+    who: HumanWhoOut
+    source_url: str = ""
+    said_at: dt.datetime | None = None
+
+
 class AgentProjectIn(StrictModel):
     name: str = Field(min_length=1, max_length=200)
     ext_id: str = Field(default="", max_length=64)
@@ -680,6 +720,10 @@ class AgentTaskIn(StrictModel):
     drive_folder_id: str = Field(default="", max_length=128)
     drive_folder_url: str = Field(default="", max_length=500)
     title: str = Field(min_length=1, max_length=300)
+    #: The people's own words behind the task, verbatim, with who and where.
+    #: Separate from `rationale` (the agent's inference) and shown above it.
+    #: Leave it empty rather than paraphrase.
+    human_why: list[HumanWhyIn] = Field(default_factory=list, max_length=20)
     next_action: str = Field(default="", max_length=300)
     status: str = "suggested"  # normalized server-side
     owner: str = Field(default="", max_length=120)
@@ -735,6 +779,8 @@ class AgentTaskOut(StrictModel):
     drive_folder_id: str = ""
     drive_folder_url: str = ""
     title: str
+    #: What people actually said, verbatim, oldest first — above `rationale`.
+    human_why: list[HumanWhyOut] = Field(default_factory=list)
     next_action: str
     status: Literal["suggested", "in_progress", "done", "declined"]
     owner: str
@@ -790,6 +836,8 @@ class AgentTaskPatch(StrictModel):
     #: looks routed but reaches nobody is the failure this field exists to end.
     waiting_on_email: str | None = Field(default=None, max_length=254)
     title: str | None = Field(default=None, max_length=300)
+    #: REPLACES the list (send every quote you want kept); `[]` clears it.
+    human_why: list[HumanWhyIn] | None = Field(default=None, max_length=20)
     next_action: str | None = Field(default=None, max_length=300)
     status: str | None = None
     owner: str | None = Field(default=None, max_length=120)
