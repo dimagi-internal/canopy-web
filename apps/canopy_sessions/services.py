@@ -120,15 +120,145 @@ def program_prompts(session: Session) -> set[str]:
             if t.prompt and not authorship.is_chat_send(t)}
 
 
-def is_human_input(message, program: set[str]) -> bool:
-    """Is this row something a person typed? A USER row that is neither the
-    harness's own records (`is_system_noise` — re-applied on read, since rows
-    persisted before a prefix was added still carry it) nor a program's prompt.
-    A row attributed to a person (`author`) is theirs whatever it says."""
+#: A user record's `promptSource` when a PROGRAM put it there: an agent's own
+#: ScheduleWakeup/cron fire, a peer session's message, a task notification, the
+#: usage-limit auto-continue. "typed", "queued" (typed while a turn ran) and
+#: "sdk" are a person.
+_PROGRAM_PROMPT_SOURCES = frozenset({"system"})
+
+#: LAST-RESORT text shapes, used only for a row with no captured provenance (one
+#: shipped before runners kept `content["record"]`): what the harness writes on
+#: the human's side that no structural signal on the server can identify. Each
+#: was measured against the transcripts' own flags (2026-10-11, 840 sessions).
+#: A compaction summary may open with a preamble
+#: ("<artifact-content-authored-by-others/>"), so it is looked for in a window.
+_COMPACTION_SHAPE = "this session is being continued from a previous conversation"
+_SHAPE_WINDOW = 400
+_NOT_TYPED_PREFIXES = (
+    "another claude session sent a message:",
+    "your claude.ai usage limit has reset. continue the task",
+    "[usage limit reached;",
+    "[earlier usage-limit notes",
+    "[cross-session delivery notice]",
+    # Beside a person's attached image / around a local command: the person's
+    # own words are a separate row; these are Claude Code's annotations.
+    "[image: source: ",
+    "<local-command-caveat>",
+)
+_NOT_TYPED_EXACT = ("continue from where you left off.",)
+#: A tool-carried prompt shorter than this is not matched: "keep going" is as
+#: likely typed as scheduled, and dropping a person's words is the worse error.
+_DISPATCHED_MIN = 40
+_TRUNCATION_MARK = "\n… [truncated "
+
+
+def record_flags(message) -> dict | None:
+    """The provenance a runner captured from the transcript record behind this
+    row (`canopy_transcript.record_flags`), or None for a row shipped before
+    runners captured it — the cue to fall back to `InjectedPrompts`."""
+    content = getattr(message, "content", None)
+    flags = content.get("record") if isinstance(content, dict) else None
+    return flags if isinstance(flags, dict) else None
+
+
+def typed_by_flags(flags: dict) -> bool:
+    """Do the record's own flags say a person typed it? Not a slash command's
+    or skill's injected body (`meta`, `source_tool_use_id`), not a subagent's
+    record (`sidechain`), not a compaction summary, and not a prompt a program
+    put there (`prompt_source` "system")."""
+    return not (
+        flags.get("meta") or flags.get("sidechain") or flags.get("compact_summary")
+        or flags.get("source_tool_use_id")
+        or flags.get("prompt_source") in _PROGRAM_PROMPT_SOURCES
+    )
+
+
+class InjectedPrompts:
+    """For rows WITHOUT captured provenance: what the session's own stored rows
+    prove was injected rather than typed. Structural, from the server's copy of
+    the transcript, and loaded lazily — a session whose rows all carry flags
+    never pays for it.
+
+    - `exact`/`prefixes`: every prompt a tool call carried (`input.prompt`;
+      a prefix when the producer capped it). An
+      agent's `ScheduleWakeup`/`CronCreate` fire and an `Agent`/`Task`
+      dispatch arrive later as a user row with exactly that text.
+    - `expansion_records`: the record ordinal straight after a `Skill` call's
+      result, or after a `<command-name>` row — where Claude Code writes the
+      skill's or slash command's whole body as a user record. (The command
+      row itself is what the person typed and stays.)
+    """
+
+    def __init__(self, session: Session):
+        self.session = session
+        self._loaded = False
+
+    def _load(self):
+        if self._loaded:
+            return
+        rows = self.session.messages
+        self.exact: set[str] = set()
+        self.prefixes: list[str] = []
+        for prompt in rows.filter(role=Message.TOOL_USE, content__input__has_key="prompt") \
+                .values_list("content__input__prompt", flat=True):
+            if not isinstance(prompt, str) or not prompt.strip():
+                continue
+            if _TRUNCATION_MARK in prompt:   # capped at the producer (rows.TOOL_INPUT_STR_MAX)
+                self.prefixes.append(_squash(prompt.split(_TRUNCATION_MARK, 1)[0]))
+            else:
+                self.exact.add(_squash(prompt))
+        skill_ids = [i for i in rows.filter(role=Message.TOOL_USE, content__name="Skill")
+                     .values_list("content__id", flat=True) if i]
+        skill_parents = list(rows.filter(role=Message.TOOL_RESULT, content__tool_use_id__in=skill_ids)
+                             .values_list("turn_index", flat=True)) if skill_ids else []
+        parents = skill_parents + list(rows.filter(role=Message.USER, plaintext__regex=r"^\s*<command-(message|name)>")
+                        .values_list("turn_index", flat=True))
+        self.expansion_records = {i // BLOCK_STRIDE + 1 for i in parents}
+        # A skill RE-invoked in one session writes two records after its result:
+        # a "(Re-invocation of /x …)" note, then the body.
+        self.expansion_records |= {i // BLOCK_STRIDE + 2 for i in skill_parents}
+        self._loaded = True
+
+    def injected(self, message) -> bool:
+        self._load()
+        if message.turn_index // BLOCK_STRIDE in self.expansion_records:
+            return True
+        text = _squash(_normalized_prompt(message.plaintext))
+        if len(text) >= _DISPATCHED_MIN and (
+                text in self.exact or any(len(p) >= 150 and text.startswith(p) for p in self.prefixes)):
+            return True
+        # `_squash` is whitespace-BLIND (see its docstring), so the shapes are too.
+        head = text[:_SHAPE_WINDOW].lower()
+        return (_squash(_COMPACTION_SHAPE) in head
+                or any(head.startswith(_squash(p)) for p in _NOT_TYPED_PREFIXES)
+                or head in {_squash(e) for e in _NOT_TYPED_EXACT})
+
+
+def is_human_input(message, program: set[str], injected: InjectedPrompts | None = None) -> bool:
+    """Is this row something a person typed?
+
+    A USER row, not harness noise (`is_system_noise` — re-applied on read, since
+    rows persisted before a prefix was added still carry it), and then:
+
+    1. **Provenance, when captured** (`record_flags`): the transcript record's
+       own flags decide — they are the ground truth, see `typed_by_flags`.
+    2. **Otherwise the session's own rows** (`InjectedPrompts`): a prompt a
+       tool call carried, a skill/command body, and — last resort — the text
+       shapes of a compaction summary, peer message or auto-continue.
+
+    Either way a row attributed to a person (`author`) is theirs, and one whose
+    text is a program's prompt (a scheduled/email turn, an API caller) is not.
+    """
     if getattr(message, "role", None) != Message.USER:
         return False
     text = message.plaintext or ""
     if is_system_noise(text):
+        return False
+    flags = record_flags(message)
+    if flags is not None:
+        if not typed_by_flags(flags):
+            return False
+    elif injected is not None and injected.injected(message):
         return False
     if getattr(message, "author", None):
         return True
@@ -148,6 +278,7 @@ def human_inputs(session: Session, *, after: int | None = None, limit: int = SCR
     backfill) answers from the binding's rolling tail, source "tail", unpaged.
     """
     program = program_prompts(session)
+    injected = InjectedPrompts(session)
     users = session.messages.filter(role=Message.USER).order_by("turn_index")
     if after is None and not session.messages.exists():
         tail = [m for m in tail_as_messages(session, getattr(session, "runner_binding", None))
@@ -166,7 +297,7 @@ def human_inputs(session: Session, *, after: int | None = None, limit: int = SCR
             return out, None, "transcript"
         for m in batch:
             cursor = m.turn_index
-            if is_human_input(m, program):
+            if is_human_input(m, program, injected):
                 out.append(m)
                 if len(out) == limit:
                     break

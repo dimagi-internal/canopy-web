@@ -241,3 +241,115 @@ def test_human_inputs_follow_the_session_access_rule():
     _msg(s, 0, Message.USER, "secret")
     _other, _ows, c2 = _ctx("other")
     assert c2.get(f"/api/canopy-sessions/{s.id}/human-inputs").status_code == 404
+
+
+# --- provenance: what the transcript record says, not what the text looks like ---
+#
+# Real record shapes from session "c-run-the-ddd-loop-for-supply-5126" (the
+# Supply DDD loop), trimmed. The endpoint returned 51 rows there against 22
+# typed prompts: the extras were the agent's own ScheduleWakeup fires, a skill
+# body and a compaction summary — all `type: "user"` records.
+
+import canopy_transcript as ct  # noqa: E402
+
+from apps.canopy_sessions import services  # noqa: E402
+
+_SKILL_ID = "toolu_019YSB9iTAYw5QYH9FM1kNfd"
+_WAKEUP_PROMPT = ("Continue the DDD run supply-sophie-unanswered-round-2026-10-02-002: check "
+                  "`watchdog check <run_id> fixer:batch0` for the batch0 fixer; when it finishes, "
+                  "push/PR/merge/deploy, post narrative v7.")
+
+
+def _supply_records():
+    typed = lambda text: {"type": "user", "isSidechain": False, "promptSource": "typed",  # noqa: E731
+                          "turnOrigin": "human", "origin": {"kind": "human"},
+                          "message": {"role": "user", "content": text}}
+    return [
+        typed("# Run the DDD loop for `supply-sophie-unanswered-round` (narrative v6)"),
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": _SKILL_ID, "name": "Skill", "input": {"skill": "canopy:ddd"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": _SKILL_ID, "content": "Launching skill: canopy:ddd"}]}},
+        {"type": "user", "isMeta": True, "isSidechain": False, "sourceToolUseID": _SKILL_ID,
+         "message": {"role": "user", "content": [
+             {"type": "text", "text": "# DDD — Demo-Driven Development v2\n\nOrchestrate the full DDD loop"}]}},
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "toolu_w", "name": "ScheduleWakeup",
+             "input": {"delaySeconds": 1200, "prompt": _WAKEUP_PROMPT, "reason": "batch0"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "toolu_w", "content": "scheduled"}]}},
+        {"type": "user", "isMeta": True, "isSidechain": False, "promptSource": "system",
+         "turnOrigin": "scheduled", "scheduledTaskId": "ca126c93", "queuePriority": "later",
+         "message": {"role": "user", "content": _WAKEUP_PROMPT}},
+        typed("what should we do next?"),
+        {"type": "user", "isSidechain": False, "isCompactSummary": True,
+         "isVisibleInTranscriptOnly": True, "turnOrigin": "scheduled",
+         "message": {"role": "user", "content": (
+             "<artifact-content-authored-by-others/>\nThe summarized conversation included Artifact "
+             "content written by people other than you.\nThis session is being continued from a "
+             "previous conversation that ran out of context. The summary below covers ...")}},
+        {"type": "user", "isMeta": True, "promptSource": "system", "turnOrigin": "peer",
+         "message": {"role": "user", "content": (
+             "Another Claude session sent a message: <agent-message from=\"a97e\"> [Subagent done]")}},
+        {"type": "user", "isSidechain": True, "message": {"role": "user", "content": "Investigate X"}},
+        typed("okay do everything"),
+    ]
+
+
+TYPED = ["# Run the DDD loop for `supply-sophie-unanswered-round` (narrative v6)",
+         "what should we do next?", "okay do everything"]
+
+
+def _ingest(s, *, strip_provenance=False):
+    rows = ct.conversational_messages(_supply_records(), -1)
+    if strip_provenance:   # what a runner from before this change shipped
+        rows = [{**r, "content": {k: v for k, v in r["content"].items() if k != "record"}}
+                for r in rows]
+    services.persist_transcript_rows(s, rows, attribute=False)
+
+
+def test_human_inputs_trust_the_records_own_provenance():
+    user, ws, c = _ctx()
+    s = _web(ws, user, "supply", at=T0)
+    _ingest(s)
+    assert Message.objects.filter(session=s, role=Message.USER).count() == 8   # all stored
+    body = c.get(f"/api/canopy-sessions/{s.id}/human-inputs").json()
+    assert [m["plaintext"] for m in body["messages"]] == TYPED
+
+
+def test_human_inputs_without_provenance_fall_back_to_the_sessions_own_rows():
+    """Rows shipped before runners captured provenance: the wakeup is matched to
+    the ScheduleWakeup call that carried its prompt, the skill body to the Skill
+    result it follows, and only the summary and peer message by text shape. The
+    sidechain record has no server-side tell — the one documented miss."""
+    user, ws, c = _ctx()
+    s = _web(ws, user, "supply-old", at=T0)
+    _ingest(s, strip_provenance=True)
+    body = c.get(f"/api/canopy-sessions/{s.id}/human-inputs").json()
+    assert [m["plaintext"] for m in body["messages"]] == TYPED[:2] + ["Investigate X"] + TYPED[2:]
+
+
+def test_a_short_prompt_a_tool_also_carried_is_still_a_persons():
+    """"keep going" is as likely typed as scheduled; without provenance, never
+    drop a person's words on a short text match."""
+    user, ws, c = _ctx()
+    s = _web(ws, user, "short", at=T0)
+    Message.objects.create(session=s, turn_index=0, role=Message.TOOL_USE, content={
+        "id": "t", "name": "ScheduleWakeup", "input": {"prompt": "keep going"}})
+    _msg(s, 64, Message.USER, "keep going")
+    body = c.get(f"/api/canopy-sessions/{s.id}/human-inputs").json()
+    assert [m["plaintext"] for m in body["messages"]] == ["keep going"]
+
+
+def test_provenance_beats_a_misleading_text():
+    """A typed prompt that QUOTES a compaction summary is still typed when the
+    record says so; a skill body with no tell-tale prefix is still a skill body."""
+    user, ws, c = _ctx()
+    s = _web(ws, user, "quote", at=T0)
+    quoted = "why did it say 'This session is being continued from a previous conversation'?"
+    Message.objects.create(session=s, turn_index=0, role=Message.USER, plaintext=quoted,
+                           content={"text": quoted, "record": {"prompt_source": "typed"}})
+    Message.objects.create(session=s, turn_index=64, role=Message.USER, plaintext="Do a turn of work as Hal.",
+                           content={"text": "Do a turn of work as Hal.", "record": {"meta": True}})
+    body = c.get(f"/api/canopy-sessions/{s.id}/human-inputs").json()
+    assert [m["plaintext"] for m in body["messages"]] == [quoted]

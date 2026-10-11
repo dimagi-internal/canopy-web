@@ -6327,7 +6327,13 @@ export interface paths {
          *     results, the agent's output, system rows, harness records (task
          *     notifications, system reminders, local command output) and the prompts
          *     PROGRAMS delivered — a scheduled or email turn's `/agent:turn …`, an API
-         *     caller. A line attributed to a person (`author`) is always kept.
+         *     caller — and what Claude Code itself wrote as a user record: a skill's or
+         *     slash command's injected body, the agent's own ScheduleWakeup/cron fires,
+         *     a peer session's message, a compaction summary, a subagent's records. Those
+         *     are decided by the transcript record's own flags (`content.record`, captured
+         *     by the runner); a row shipped before runners captured them falls back to the
+         *     session's own rows (the tool call that carried the prompt, the Skill result
+         *     it follows) and, last, to text shape (`services.InjectedPrompts`).
          *
          *     A session with no durable transcript yet (a local runner session before its
          *     backfill) answers from the runner's recent tail, `source: "tail"`, unpaged.

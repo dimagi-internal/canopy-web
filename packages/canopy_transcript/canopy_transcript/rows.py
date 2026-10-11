@@ -163,16 +163,63 @@ def _tool_result_text(content) -> str:
     return _truncate("".join(parts).strip(), TOOL_TEXT_MAX)
 
 
+#: The structural fields Claude Code stamps on a `type: "user"` record that say
+#: whether a PERSON wrote it — kept, under these short names, so the server can
+#: tell a typed prompt from everything else that lands on the human's side of a
+#: transcript. Measured over 9,600 user text records on three accounts
+#: (2026-10-11): a slash command's or skill's injected body is `isMeta` (a skill
+#: body also carries `sourceToolUseID`, the Skill call that loaded it); an
+#: agent's own `ScheduleWakeup`/cron prompt, a peer session's message and the
+#: usage-limit auto-continue are `isMeta` + `promptSource: "system"`; a
+#: compaction summary is `isCompactSummary`; a subagent's own records are
+#: `isSidechain`. None of these is visible in the text with any reliability.
+_RECORD_FLAGS = (
+    ("isMeta", "meta"),
+    ("isSidechain", "sidechain"),
+    ("isCompactSummary", "compact_summary"),
+    ("sourceToolUseID", "source_tool_use_id"),
+    ("promptSource", "prompt_source"),
+    ("turnOrigin", "turn_origin"),
+)
+
+
+def record_flags(rec: dict) -> dict:
+    """The provenance fields of a user record, by their short names — only the
+    ones it carries, so an ordinary typed prompt from an older Claude Code is
+    `{}`. Stored on every user TEXT row as `content["record"]`; the key's mere
+    presence says "this row was shipped by a runner that captures provenance",
+    which is what lets a reader trust an empty dict as "typed" rather than
+    falling back to guessing."""
+    out: dict = {}
+    for raw, name in _RECORD_FLAGS:
+        value = rec.get(raw)
+        if value in (None, False, ""):
+            continue
+        out[name] = value if isinstance(value, (bool, str)) else str(value)
+    return out
+
+
 def rows_for_record(rec: dict) -> list[dict]:
     """The chat rows one transcript record contributes, as
     [{"block","role","text","content"}] in block order.
 
-    `content` is the row's STRUCTURED fields (empty for plain text) — the
-    tool-call identity the UI pairs and renders on. `text` is its plaintext.
+    `content` is the row's STRUCTURED fields (empty for plain assistant text) —
+    the tool-call identity the UI pairs and renders on, and for a user text row
+    the record's provenance (`record_flags`). `text` is its plaintext.
     """
     kind = rec.get("type")
     if kind not in ("user", "assistant"):
         return []
+    rows = _rows_for_record(kind, rec)
+    if kind == "user":
+        flags = record_flags(rec)
+        for row in rows:
+            if row["role"] == "user":
+                row["content"] = {**row["content"], "record": flags}
+    return rows
+
+
+def _rows_for_record(kind: str, rec: dict) -> list[dict]:
     msg = rec.get("message")
     content = msg.get("content", "") if isinstance(msg, dict) else ""
 

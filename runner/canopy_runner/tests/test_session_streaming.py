@@ -97,7 +97,7 @@ def test_first_attach_ships_the_whole_history(tmp_path, monkeypatch):
         f.write(_user("live q") + _asst("live a"))   # ordinals 3, 4
     streams.sync_session_streams(_Cfg(), c)
     assert _events(c)[-2:] == [
-        {"kind": "user", "seq": _ix(3), "index": _ix(3), "payload": {"text": "live q"}},
+        {"kind": "user", "seq": _ix(3), "index": _ix(3), "payload": {"record": {}, "text": "live q"}},
         {"kind": "assistant", "seq": _ix(4), "index": _ix(4), "payload": {"text": "live a"}},
     ]
 
@@ -124,7 +124,7 @@ def test_attach_catches_up_from_the_server_marker(tmp_path, monkeypatch):
     c = _Client([_desc(last_index=_ix(1))])
     streams.sync_session_streams(_Cfg(), c)
     assert _events(c) == [
-        {"kind": "user", "seq": _ix(2), "index": _ix(2), "payload": {"text": "q2"}},
+        {"kind": "user", "seq": _ix(2), "index": _ix(2), "payload": {"record": {}, "text": "q2"}},
         {"kind": "assistant", "seq": _ix(3), "index": _ix(3), "payload": {"text": "a2"}},
     ]
 
