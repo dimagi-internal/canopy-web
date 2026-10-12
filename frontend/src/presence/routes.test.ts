@@ -9,7 +9,7 @@ describe('canopyPresenceRules — which pages get presence at all', () => {
     expect(key('/w/dimagi/chat/abc-123')).not.toBeNull()
     expect(key('/w/dimagi/ddd/bednet')).not.toBeNull()
     expect(key('/w/dimagi/ddd/bednet/run-001')).not.toBeNull()
-    expect(key('/review/abc')).not.toBeNull()
+    expect(key('/w/dimagi/review/abc')).not.toBeNull()
   })
 
   it('leaves read surfaces with no roster, so the badge never reaches their header', () => {
@@ -31,6 +31,7 @@ describe('canopyPresenceRules — which pages get presence at all', () => {
       '/w/dimagi/shareouts/2026-07',
       '/w/dimagi/activity',
       '/walkthrough/abc',
+      '/review/abc',                     // the retired flat address is a 404, not a page
       '/supervisor',
       '/sessions',
       '/activity',
@@ -63,16 +64,15 @@ describe('canopyPresenceRules — keying', () => {
     expect(run1?.subLocation).toBe('Run')
   })
 
-  it('lands a global (non-tenant) page in the ~global sentinel namespace', () => {
-    // The `~` prefix is a security boundary, not cosmetics: the server's
-    // page-key parser only treats `~global` as "skip the membership gate",
-    // and no client-assertable workspace slug can contain a `~`. A bare
-    // `global` here would be a workspace name a user can create.
-    expect(key('/review/abc')?.pageKey).toBe('canopy:~global:review:abc')
+  it('keys a review by its workspace, so the server gates the roster on membership', () => {
+    expect(key('/w/dimagi/review/abc')?.pageKey).toBe('canopy:dimagi:review:abc')
+    expect(key('/w/dimagi/review/abc')?.subLocation).toBe('Review')
   })
 
-  it('never emits a bare "global" workspace segment from any global rule', () => {
-    expect(key('/review/abc')?.pageKey.startsWith('canopy:~global:')).toBe(true)
+  it('emits no ~global key: every page with presence is tenant-scoped', () => {
+    for (const path of ['/w/dimagi/chat/a', '/w/dimagi/ddd/n', '/w/dimagi/ddd/n/r', '/w/dimagi/review/x']) {
+      expect(key(path)?.pageKey.includes('~global'), path).toBe(false)
+    }
   })
 
   it('namespaces by app so two apps never collide on the same tenant route', () => {

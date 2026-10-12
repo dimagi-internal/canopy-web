@@ -188,8 +188,10 @@ an emdash task name alone is not an identity.
   exist only for co-editing surfaces: a chat session, a DDD narrative / run, a
   review. Adding a rule is adding presence to that page — don't add one for a read
   surface.
-- The `~global` sentinel in `routes.ts` stays in lockstep with
-  `apps/realtime/presence_keys.py::GLOBAL_SENTINEL` (and ace-web's).
+- Every rule is tenant-scoped (`/w/:workspace/…`), keyed by that workspace, so only
+  members join a roster. The server also accepts the `~global` sentinel
+  (`apps/realtime/presence_keys.py::GLOBAL_SENTINEL`, shared with ace-web) for a page
+  with no workspace; no canopy-web page uses it.
 
 ## Live end-to-end check: `scripts/e2e_session_chat.py`
 
