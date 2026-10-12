@@ -1,16 +1,15 @@
-"""Ideas and contributor pages on an agent's project (hal T69).
+"""Contributor pages on an agent's project (hal T69), and the board of ideas.
 
 The Connect team builds Supply together with one shared agent. Two questions
 have to have an answer on the page, not in someone's head:
 
-* **Where does each idea stand, and whose was it?** An idea IS a board task —
-  there is no second tracker. Its stage is the task's status read in the words a
-  contributor uses (`STAGE`), and "who it came from" is resolved from the
-  evidence canopy holds, strongest first (`came_from`).
+* **Where does each idea stand, and whose was it?** An idea is a task with
+  `kind="idea"` carrying the person's own words (`apps/agents/ideas.py`, hal
+  T82), its work as subtasks. Ideas used to be read off EVERY task, which made
+  the agent's own process work look like the product's ideas.
 * **What is this person trying to achieve?** Their CONTRIBUTOR PAGE: an agent's
   summary of their own words, each quote linked to where they said it, beside
-  what has been built and what is still open. Read it before building on (or
-  against) their idea.
+  their ideas. Read it before building on (or against) their idea.
 
 The summary is judgment — which of someone's hundreds of prompts say what they
 want — so an agent writes it and canopy only stores, validates and renders it.
@@ -22,8 +21,8 @@ govern facts (`apps/contacts/hcp.py`):
 * an agent WRITES it only while the person lets agents learn about them
   (record) and this agent holds their grant for it;
 * an agent READS it only while they let agents use it (use) and it holds that
-  grant — otherwise the summary, and every attribution that rests on it, is
-  withheld from the agent (the board itself stays readable);
+  grant — otherwise the summary is withheld from the agent (the ideas
+  themselves, which people put on the project, stay readable);
 * the person, and members of the workspace, see it; the person (or the agent's
   admins) may delete it, and turning a switch off deletes nothing.
 """
@@ -35,30 +34,11 @@ from dataclasses import dataclass
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from .models import AgentProject, AgentTask, ProjectParticipant
+from .models import AgentProject, ProjectParticipant
 
 logger = logging.getLogger(__name__)
 
 PROPOSED, STARTED, SHIPPED, DECLINED = "proposed", "started", "shipped", "declined"
-#: A task's status, in a contributor's words. `declined` is shown, not hidden:
-#: an idea that was turned down is still that person's idea, and seeing it is
-#: how they learn it was considered.
-STAGE = {
-    AgentTask.SUGGESTED: PROPOSED,
-    AgentTask.IN_PROGRESS: STARTED,
-    AgentTask.DONE: SHIPPED,
-    AgentTask.DECLINED: DECLINED,
-}
-STAGES = (PROPOSED, STARTED, SHIPPED, DECLINED)
-
-#: Where an attribution came from, strongest first. `human_why` is the task's own
-#: record of what a person said (T68); `raised_by` is the human whose turn raised
-#: it; `contributor_page` is an agent's reading of the person's sessions.
-VIA_HUMAN_WHY, VIA_RAISED_BY, VIA_PAGE = "human_why", "raised_by", "contributor_page"
-
-
-def stage_of(task: AgentTask) -> str:
-    return STAGE.get(task.status, PROPOSED)
 
 
 class SummaryError(ValueError):
@@ -160,12 +140,14 @@ def write_summary(project: AgentProject, person, payload: dict, *, by_agent=None
     # REQUIRED to name a turn (unlike a fact). But when the request does come from
     # a turn, a ZDR one writes nothing about a person.
     hcp.refuse_if_zdr()
-    task_ids = {t.lower(): t for t in project.tasks.values_list("ext_id", flat=True)}
+    # A page claims IDEAS — the project's kind=idea tasks — never the agent's work.
+    task_ids = {t.lower(): t for t in project.tasks.filter(kind="idea").values_list("ext_id", flat=True)}
     ideas = []
     for idea in payload.get("ideas") or []:
         real = task_ids.get(str(idea.get("task", "")).strip().lower())
         if real is None:
-            raise SummaryError(f"ideas: task {idea.get('task')!r} is not a task of {project.ext_id}")
+            raise SummaryError(f"ideas: {idea.get('task')!r} is not an idea (a kind=idea task) "
+                               f"of {project.ext_id}")
         ideas.append({**idea, "task": real})
     summary = {
         "goal": payload["goal"],
@@ -195,7 +177,7 @@ def clear_summary(row: ProjectParticipant) -> None:
     row.save(update_fields=["summary", "summary_written_at", "summary_by_agent"])
 
 
-# --- who an idea came from -------------------------------------------------------
+# --- the board and a page, read from the project's ideas -------------------------------
 
 
 def person_by_email(address: str):
@@ -213,245 +195,55 @@ def person_by_email(address: str):
             or Person.objects.select_related("user").filter(user__email__iexact=address).first())
 
 
-
-def _human_why(task: AgentTask) -> list[dict]:
-    """T68's human-why on a task: what a person said, verbatim, with who and where —
-    `[{quote, who: {person_id, email, name}, source_url, said_at}]`.
-
-    Read defensively, because T68 ships beside this: as `HumanWhy` rows
-    (`task.human_whys`, each with `as_dict()`) when that model exists, else a
-    `human_why` list on the task, else nothing."""
-    rows = getattr(task, "human_whys", None)
-    if rows is not None and hasattr(rows, "all"):
-        try:
-            return [r.as_dict() for r in rows.all()]
-        except Exception:  # noqa: BLE001 — attribution is never worth a failed page
-            logger.exception("contributors: could not read task %s's human why", task.pk)
-            return []
-    value = getattr(task, "human_why", None) or []
-    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
-
-
-def _who(raw) -> tuple[int | None, str, str]:
-    """(person_id, email, name) from a human-why `who` — an object, or a bare
-    email/name string."""
-    if isinstance(raw, dict):
-        pid = raw.get("person_id")
-        return (pid if isinstance(pid, int) else None, str(raw.get("email") or "").strip(),
-                str(raw.get("name") or "").strip())
-    text = str(raw or "").strip()
-    return (None, text, "") if "@" in text else (None, "", text)
-
-
-class _People:
-    """Resolve and name people once per request."""
-
-    def __init__(self, workspace_slug: str):
-        self.ws = workspace_slug
-        self._by_email: dict[str, object] = {}
-        self._names: dict[int, str] = {}
-
-    def by_id(self, person_id: int):
-        from apps.contacts import people
-        from apps.contacts.models import Person
-
-        key = f"#{person_id}"
-        if key not in self._by_email:
-            person = Person.objects.select_related("user").filter(pk=person_id).first()
-            if person is not None and not people.known_in(person, self.ws):
-                person = None
-            self._by_email[key] = person
-        return self._by_email[key]
-
-    def by_email(self, address: str):
-        from apps.contacts import people
-
-        key = (address or "").strip().lower()
-        if key not in self._by_email:
-            person = person_by_email(key)
-            if person is not None and not people.known_in(person, self.ws):
-                person = None
-            self._by_email[key] = person
-        return self._by_email[key]
-
-    def name(self, person) -> str:
-        from apps.contacts import people
-
-        if person.pk not in self._names:
-            self._names[person.pk] = people.display_name(person)
-        return self._names[person.pk]
-
-
-def came_from(task: AgentTask, *, page_claims: list[dict], resolver: _People) -> list[dict]:
-    """Who an idea came from, strongest evidence first, one entry per person.
-
-    `page_claims` are the contributor-page entries naming this task, already
-    filtered to what the reader may see.
-    """
-    from apps.contacts import people
-
-    out: list[dict] = []
-    seen: set = set()
-
-    def add(person, name: str, via: str, quote: str = "", source_url: str = "", said_at=None):
-        key = ("p", person.pk) if person is not None else ("n", name.strip().lower())
-        if not name.strip() or key in seen:
-            return
-        seen.add(key)
-        out.append({"person_id": person.pk if person is not None else None, "name": name,
-                    "via": via, "quote": quote or "", "source_url": source_url or "",
-                    "said_at": _iso(said_at)})
-
-    for why in _human_why(task):
-        pid, email, name = _who(why.get("who"))
-        person = resolver.by_id(pid) if pid is not None else None
-        if person is None and email:
-            person = resolver.by_email(email)
-        label = resolver.name(person) if person is not None else (name or email)
-        add(person, label, VIA_HUMAN_WHY,
-            str(why.get("quote") or ""), str(why.get("source_url") or ""), why.get("said_at"))
-    if task.raised_by_id:
-        person = people.initiator_person(task.raised_by)
-        if person is not None:
-            add(person, resolver.name(person), VIA_RAISED_BY,
-                source_url=task.source_url or "")
-    for claim in page_claims:
-        person = claim["person"]
-        add(person, resolver.name(person), VIA_PAGE, claim.get("quote", ""),
-            claim.get("source_url", ""), claim.get("said_at"))
-    return out
-
-
-def _tasks(project: AgentProject) -> list[AgentTask]:
-    qs = project.tasks.select_related("raised_by", "raised_by__initiator_user",
-                                      "raised_by__initiator_contact")
-    if hasattr(AgentTask, "human_whys"):  # T68's rows, once that model exists
-        qs = qs.prefetch_related("human_whys")
-    return list(qs.order_by("-updated_at", "id"))
-
-
-def _idea_dict(task: AgentTask, sources: list[dict]) -> dict:
-    return {
-        "ext_id": task.ext_id, "title": task.title, "status": task.status, "stage": stage_of(task),
-        "next_action": task.next_action, "updated_at": task.updated_at,
-        "links": [link for link in (task.links or []) if isinstance(link, dict)][:8],
-        "came_from": sources,
-    }
-
-
-def _visible_rows(project: AgentProject, reader: Reader) -> list[tuple[ProjectParticipant, bool]]:
-    """Every participant row with whether the reader may see its summary."""
-    rows = list(ProjectParticipant.objects.filter(project=project)
-                .select_related("person", "person__user", "summary_by_agent")
-                .order_by("-created_at", "-pk"))
-    return [(r, bool(r.summary) and may_see_summary(r.person, reader)) for r in rows]
-
-
-def _claims(rows) -> dict[str, list[dict]]:
-    """task ext_id (lowercased) → the visible contributor-page entries naming it."""
-    claims: dict[str, list[dict]] = {}
-    for row, visible in rows:
-        if not visible:
-            continue
-        for idea in row.summary.get("ideas") or []:
-            claims.setdefault(str(idea.get("task", "")).lower(), []).append({**idea, "person": row.person})
-    return claims
-
-
 def board(project: AgentProject, reader: Reader) -> dict:
-    """The project's ideas (every task) with their stage and who they came from,
-    and its contributors with how far their ideas have got."""
-    resolver = _People(project.agent.workspace_id)
-    rows = _visible_rows(project, reader)
-    claims = _claims(rows)
-    tasks = _tasks(project)
-    ideas = [_idea_dict(t, came_from(t, page_claims=claims.get(t.ext_id.lower(), []),
-                                     resolver=resolver)) for t in tasks]
-    counts = {s: 0 for s in STAGES}
-    for idea in ideas:
-        counts[idea["stage"]] += 1
-    contributors = []
-    for row, visible in rows:
-        mine = [i for i in ideas if any(c["person_id"] == row.person_id for c in i["came_from"])]
-        per = {s: sum(i["stage"] == s for i in mine) for s in STAGES}
-        contributors.append({
-            "id": row.person_id, "display_name": resolver.name(row.person), "role": row.role,
-            "source": row.source, "since": row.created_at,
-            "has_page": bool(row.summary) and visible,
-            "page_withheld": bool(row.summary) and not visible,
-            "goal": (row.summary.get("goal") or "") if visible else "",
-            "written_at": row.summary_written_at if visible else None,
-            "ideas": per,
-        })
-    # Someone an idea's own evidence names (the task's human why, or the turn that
-    # raised it) is a contributor too, page or not: their words are on the board.
-    listed = {c["id"] for c in contributors}
-    named: dict[int, list[dict]] = {}
-    for idea in ideas:
-        for src in idea["came_from"]:
-            pid = src["person_id"]
-            if pid is not None and pid not in listed and src["via"] != VIA_PAGE:
-                named.setdefault(pid, []).append(idea)
-    for pid, mine in named.items():
-        name = next(s["name"] for i in mine for s in i["came_from"] if s["person_id"] == pid)
-        contributors.append({
-            "id": pid, "display_name": name, "role": "", "source": "idea",
-            "since": min(i["updated_at"] for i in mine),
-            "has_page": False, "page_withheld": False, "goal": "", "written_at": None,
-            "ideas": {s: sum(i["stage"] == s for i in mine) for s in STAGES},
-        })
-    # The people with pages lead: they are the engaged builders this is for.
-    contributors.sort(key=lambda c: (not c["has_page"], -sum(c["ideas"].values())))
+    """The project's ideas (`ideas.of_project` — never its tasks) and its
+    contributors, every tally a count over that one list."""
+    from . import ideas as idea_svc
+
+    ideas = idea_svc.of_project(project)
     return {"agent": project.agent.slug, "project": project.ext_id, "name": project.name,
-            "stages": counts, "ideas": ideas, "contributors": contributors}
+            "stages": idea_svc.counts(ideas), "ideas": ideas,
+            "contributors": idea_svc.contributors(
+                project, ideas, page_visible=lambda row: may_see_summary(row.person, reader))}
 
 
 def page(project: AgentProject, person, reader: Reader) -> dict:
-    """One contributor's page on `project`."""
-    resolver = _People(project.agent.workspace_id)
-    rows = _visible_rows(project, reader)
-    claims = _claims(rows)
-    row = next((r for r, _ in rows if r.person_id == person.pk), None)
-    visible = next((v for r, v in rows if r.person_id == person.pk), False)
-    tasks = _tasks(project)
-    ideas = []
-    for t in tasks:
-        sources = came_from(t, page_claims=claims.get(t.ext_id.lower(), []), resolver=resolver)
-        mine = [c for c in sources if c["person_id"] == person.pk]
-        if mine:
-            idea = _idea_dict(t, sources)
-            # Their own words about THIS idea lead the card.
-            idea["their_words"] = mine[0]
-            ideas.append(idea)
+    """One contributor's page on `project`: their summary, and their ideas —
+    the same list the board counts, filtered to them."""
+    from apps.contacts import people
+
+    from . import ideas as idea_svc
+
+    row = (ProjectParticipant.objects.filter(project=project, person=person)
+           .select_related("summary_by_agent").first())
+    visible = row is not None and bool(row.summary) and may_see_summary(person, reader)
     order = {SHIPPED: 0, STARTED: 1, PROPOSED: 2, DECLINED: 3}
-    ideas.sort(key=lambda i: order[i["stage"]])
+    ideas = sorted(idea_svc.of_person(idea_svc.of_project(project), person.pk),
+                   key=lambda i: order[i["stage"]])
     summary = None
     state = "not_written"
     if row is not None and row.summary:
         if visible:
             s = row.summary
+            # A want the page lists as "still open" that is now an idea of theirs
+            # is shown once, as the idea.
+            said = {i["quote"].strip() for i in ideas}
+            open_ = [o for o in (s.get("open") or []) if (o.get("quote") or "").strip() not in said]
             summary = {"goal": s.get("goal", ""), "quotes": s.get("quotes") or [],
-                       "open": s.get("open") or [], "sources": s.get("sources") or [],
+                       "open": open_, "sources": s.get("sources") or [],
                        "basis": s.get("basis", ""), "written_at": row.summary_written_at,
                        "written_by": row.summary_by_agent.slug if row.summary_by_agent_id else ""}
             state = "written"
         else:
             state = "withheld"
     may_write, why_not = may_write_summary(person, reader)
-    counts = {s: sum(i["stage"] == s for i in ideas) for s in STAGES}
     return {
-        "person": {"id": person.pk, "display_name": resolver.name(person),
-                   "email": _email(person)},
+        "person": {"id": person.pk, "display_name": people.display_name(person),
+                   "email": people.email_of(person)},
         "agent": project.agent.slug, "project": project.ext_id, "project_name": project.name,
         "role": row.role if row is not None else "",
         "participant_since": row.created_at if row is not None else None,
         "summary_state": state, "summary": summary,
-        "ideas": ideas, "stages": counts,
+        "ideas": ideas, "stages": idea_svc.counts(ideas),
         "may_write": may_write, "why_not": why_not,
     }
-
-
-def _email(person) -> str:
-    from apps.contacts import people
-
-    return people.email_of(person)

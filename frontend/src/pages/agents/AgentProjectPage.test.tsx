@@ -30,13 +30,14 @@ function ideasBoard() {
     agent: 'eva', project: 'P1', name: 'Connect Enterprise',
     stages: { proposed: 0, started: 1, shipped: 1, declined: 0 },
     ideas: [
-      { ext_id: 'T1', title: 'Live one', status: 'in_progress', stage: 'started', next_action: '',
-        updated_at: '2026-10-05T00:00:00Z', links: [], their_words: null,
-        came_from: [{ person_id: 7, name: 'Sophie', via: 'contributor_page',
-                      quote: 'the normal case is someone just ignores us',
-                      source_url: 'https://canopy.test/chat/1', said_at: '2026-09-27T00:00:00Z' }] },
-      { ext_id: 'T9', title: 'Finished one', status: 'done', stage: 'shipped', next_action: '',
-        updated_at: '2026-10-05T00:00:00Z', links: [], their_words: null, came_from: [] },
+      { ext_id: 'T1', title: 'Live one', quote: 'the normal case is someone just ignores us',
+        who: { person_id: 7, name: 'Sophie' }, source_url: 'https://canopy.test/chat/1',
+        said_at: '2026-09-27T00:00:00Z', stage: 'started', status: 'in_progress', people: [7],
+        subtasks: [{ ext_id: 'T2', title: 'Review', status: 'done' }],
+        created_at: '2026-10-05T00:00:00Z', updated_at: '2026-10-05T00:00:00Z' },
+      { ext_id: 'T9', title: 'Finished one', quote: 'Finished one', who: { person_id: null, name: 'A Partner' },
+        source_url: '', said_at: null, stage: 'shipped', status: 'done', people: [],
+        subtasks: [], created_at: '2026-10-05T00:00:00Z', updated_at: '2026-10-05T00:00:00Z' },
     ],
     contributors: [
       { id: 7, display_name: 'Sophie', role: '', source: 'summary', since: '2026-10-01T00:00:00Z',
@@ -99,7 +100,7 @@ afterEach(() => {
 })
 
 describe('AgentProjectPage', () => {
-  it('shows who is building it and every idea with its stage and whose words', async () => {
+  it('shows who is building it and every idea with its stage, whose words and its tasks', async () => {
     getProject.mockResolvedValue(detail())
     show()
     const person = await screen.findByTestId('contributor-7')
@@ -109,10 +110,13 @@ describe('AgentProjectPage', () => {
     const idea = await screen.findByTestId('idea-T1')
     expect(within(idea).getByLabelText('Stage: Started')).toBeTruthy()
     expect(idea.textContent).toContain('the normal case is someone just ignores us')
+    // The work board names the subtasks working on it; the team view does not.
+    expect(idea.textContent).toContain('work: T2')
     expect(within(idea).getByRole('link', { name: 'Sophie' }).getAttribute('href')).toBe(
       '/w/connect/agents/eva/projects/P1/people/7',
     )
-    expect(screen.getByTestId('idea-counts').textContent).toBe('1 started · 0 proposed · 1 shipped')
+    expect(screen.getByTestId('idea-counts').textContent).toBe('1 shipped · 1 started · 0 proposed')
+    expect(screen.getByTestId('team-view-link').getAttribute('href')).toBe('/w/connect/projects/eva/P1')
   })
 
   it('re-reads the project when canopy says a task moved', async () => {
@@ -201,7 +205,9 @@ describe('AgentProjectPage', () => {
       { initialEntries: ['/w/x/agents/eva/projects/P1'] },
     )
     render(<RouterProvider router={router} />)
-    expect(await screen.findByRole('heading', { name: 'Connect Enterprise' })).toBeTruthy()
+    // The route is lazy: under a full parallel run the chunk import alone can
+    // outlast findBy's 1s default.
+    expect(await screen.findByRole('heading', { name: 'Connect Enterprise' }, { timeout: 5000 })).toBeTruthy()
     expect(getProject).toHaveBeenCalledWith('eva', 'P1')
   })
 })

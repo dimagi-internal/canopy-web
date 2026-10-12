@@ -1586,11 +1586,14 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
     state the action applies to (an ask already closed, a finished task,
     nudging one that is not in progress); `turn_ids` names the turns the action
     started."""
-    if payload.action in _EDITOR_ACTIONS:
-        agent = _agent_for_write(request, slug)
-    else:
-        agent = _get_agent_or_404(request, slug)
+    agent = _get_agent_or_404(request, slug)
     task = _get_task_or_404(agent, ref)
+    if payload.action in _EDITOR_ACTIONS:
+        from . import ideas
+
+        # The person whose idea it is may call it shipped, as its owner may (hal T82).
+        if not (payload.action == "done" and ideas.is_ideas_person(task, request.user)):
+            _agent_for_write(request, slug)
     try:
         task, row, turns = services.act(
             task, action=payload.action, comment=payload.comment,

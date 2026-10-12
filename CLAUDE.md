@@ -60,6 +60,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 **Tenant-scoped (`/w/:workspace/…`):**
 - (index) → `agents` — the workspace's agents
 - `agents/:slug` — agent workspace: Projects (landing), Project, Tasks, Turns, Schedules, Huddles, Skills (+ History), Settings
+- `projects/:agent/:ref` (+ `/people/:person`) — a project's TEAM VIEW for teammates (outside the agent console); an idea is a task with `kind: "idea"` (never inferred) carrying a person's words, its work as subtasks
 - `settings/<section>` — workspace settings: members, access-requests, slack, inbound, connected-apps, secrets, retention, admission-rules, topology (fleet map + runners/agents tables)
 - `chat`, `chat/:id` — your chat sessions; live multiplayer chat with an agent
 - `huddles` (+ `/:id`), `threads/:id` — agent huddles; a bounded agent-to-agent thread

@@ -2,8 +2,9 @@
 
 Pinned here:
 
-* every task of a project is an idea, its stage is its status in a contributor's
-  words, and "who it came from" is resolved strongest evidence first;
+* a task is an idea only with kind=idea (hal T82): a page lists the ideas that
+  carry the person's words, and the board's tallies are counts over the same list;
+* a page's claims must name idea tasks, never the agent's work;
 * a contributor page is written by an agent only under the person's record
   switch AND its grant, is read by an agent only under use AND its grant, and is
   always readable by a human member — withholding takes the page-based
@@ -18,7 +19,7 @@ import pytest
 from django.contrib.auth.models import User
 
 from apps.agents import services as agent_services
-from apps.agents.models import AgentProject, AgentTaskHumanWhy, ProjectParticipant
+from apps.agents.models import AgentProject, ProjectParticipant
 from apps.contacts import services as contacts
 from apps.contacts.models import Person, PersonAccess
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -58,9 +59,7 @@ def _summary(**kw):
         "quotes": [{"quote": "the normal case is someone just ignores us",
                     "source_url": "https://canopy.dimagi.com/w/connect/chat/abc",
                     "said_at": "2026-09-27T10:00:00Z", "where": "Supply session, Sep 27"}],
-        "ideas": [{"task": "t1", "quote": "track reality at all",
-                   "source_url": "https://canopy.dimagi.com/w/connect/chat/abc"},
-                  {"task": "T2", "quote": "more granular with days of stock"}],
+        "ideas": [],
         "open": [{"text": "Interviews with the rest of the team", "quote": "talk to the team"}],
         "sources": [{"label": "Two-pager", "url": "https://docs.google.com/document/d/x"}],
         "basis": "458 prompts across 22 sessions",
@@ -77,61 +76,38 @@ def _hal(world):
     return _client(world["hal"].user)
 
 
-# --- stages and attribution ------------------------------------------------------------
+# --- ideas on a page -------------------------------------------------------------------
 
 
-def test_every_task_is_an_idea_with_its_stage(world):
+def _idea(world, quote, *, who="jj@dimagi.com", status="suggested", ext_id=None):
+    n = 10 + len(world.setdefault("_ideas", []))
+    world["_ideas"].append(quote)
+    [t] = agent_services.create_tasks(world["hal"], [{
+        "ext_id": ext_id or f"T{n}", "title": quote[:40], "project": "P1", "kind": "idea",
+        "status": status,
+        "human_why": [{"quote": quote, "who": {"person_id": Person.objects.get(user__email=who).pk}}]}])
+    return t
+
+
+def test_a_task_is_not_an_idea(world):
+    # T69 read every task as an idea; the agent's own work is never one now.
     out = _client(world["sophie"]).get(f"/api/w/connect{BASE}").json()
-    stages = {i["ext_id"]: i["stage"] for i in out["ideas"]}
-    assert stages == {"T1": "shipped", "T2": "started", "T3": "proposed"}
-    assert out["stages"] == {"proposed": 1, "started": 1, "shipped": 1, "declined": 0}
+    assert out["ideas"] == [] and out["stages"] == {"proposed": 0, "started": 0, "shipped": 0,
+                                                    "declined": 0}
 
 
-def test_a_task_raised_by_a_humans_turn_came_from_them(world):
-    hal, sophie = world["hal"], world["sophie"]
-    turn = _human_turn(hal, sophie, "raise")
-    agent_services.create_tasks(hal, [{"ext_id": "T4", "title": "Sophie's idea", "project": "P1",
-                                       "raised_by": str(turn.pk), "source_url": "https://x.test/s"}])
-    out = _client(world["owner"]).get(f"/api/w/connect{BASE}").json()
-    [idea] = [i for i in out["ideas"] if i["ext_id"] == "T4"]
-    assert [(c["name"], c["via"]) for c in idea["came_from"]] == [("Sophie", "raised_by")]
-    [brief] = [c for c in out["contributors"] if c["display_name"] == "Sophie"]
-    assert brief["ideas"]["proposed"] == 1 and brief["has_page"] is False
-
-
-def test_a_human_why_from_someone_canopy_does_not_know_still_names_them(world):
-    AgentTaskHumanWhy.objects.create(task=world["tasks"]["T2"], quote="fix it", who_name="A Partner",
-                                     source_url="https://x.test/p")
-    out = _client(world["owner"]).get(f"/api/w/connect{BASE}").json()
-    [idea] = [i for i in out["ideas"] if i["ext_id"] == "T2"]
-    assert [(c["person_id"], c["name"], c["via"]) for c in idea["came_from"]] == [
-        (None, "A Partner", "human_why")]
-    # Nobody canopy can link to, so not a contributor row.
-    assert out["contributors"] == []
-
-
-def test_someone_a_human_why_names_is_a_contributor_without_a_page(world):
-    person = Person.objects.get(user=world["owner"])
-    AgentTaskHumanWhy.objects.create(task=world["tasks"]["T1"], quote="track reality", person=person,
-                                     who_email="jj@dimagi.com", source_url="https://x.test/q")
-    out = _client(world["sophie"]).get(f"/api/w/connect{BASE}").json()
-    [jj] = out["contributors"]
-    assert (jj["id"], jj["source"], jj["has_page"]) == (person.pk, "idea", False)
-    assert jj["ideas"]["shipped"] == 1
-
-
-def test_the_tasks_human_why_comes_first(world):
-    # T68: the task's own record of what a person said outranks a page's claim.
-    person = Person.objects.get(user=world["owner"])
-    AgentTaskHumanWhy.objects.create(task=world["tasks"]["T3"], quote="pages should be dynamic",
-                                     person=person, who_email="jj@dimagi.com", who_name="JJ",
-                                     source_url="https://x.test/q")
-    _put(_hal(world), "jj@dimagi.com", _summary(ideas=[{"task": "T3", "quote": "page config"}]))
-    out = _client(world["owner"]).get(f"/api/w/connect{BASE}").json()
-    [idea] = [i for i in out["ideas"] if i["ext_id"] == "T3"]
-    # One entry per person, and the strongest evidence wins.
-    assert [(c["name"], c["via"], c["quote"]) for c in idea["came_from"]] == [
-        ("Jonathan Jackson", "human_why", "pages should be dynamic")]
+def test_a_page_lists_the_persons_ideas_and_the_board_counts_the_same(world):
+    _idea(world, "track reality at all", status="done")
+    _idea(world, "more granular with days of stock", status="in_progress")
+    _idea(world, "a supplier portal", who="sophie@dimagi.com")
+    page = _client(world["sophie"]).get(f"/api/w/connect{BASE}jj@dimagi.com/").json()
+    assert [(i["quote"], i["stage"]) for i in page["ideas"]] == [
+        ("track reality at all", "shipped"), ("more granular with days of stock", "started")]
+    board = _client(world["sophie"]).get(f"/api/w/connect{BASE}").json()
+    [jj] = [c for c in board["contributors"] if c["display_name"] == "Jonathan Jackson"]
+    # The same figure, from the same list, on every view.
+    assert jj["ideas"] == page["stages"] == {"proposed": 0, "started": 1, "shipped": 1, "declined": 0}
+    assert board["stages"] == {"proposed": 1, "started": 1, "shipped": 1, "declined": 0}
 
 
 # --- writing a page ----------------------------------------------------------------------
@@ -144,23 +120,33 @@ def test_an_agent_writes_a_page_and_its_ideas_carry_their_words(world):
     assert page["summary_state"] == "written"
     assert page["summary"]["written_by"] == "hal"
     assert page["summary"]["quotes"][0]["quote"] == "the normal case is someone just ignores us"
-    # Ideas ordered shipped → started, each with their own words; `t1` resolved to T1.
-    assert [(i["ext_id"], i["stage"], i["their_words"]["quote"]) for i in page["ideas"]] == [
-        ("T1", "shipped", "track reality at all"), ("T2", "started", "more granular with days of stock")]
-    assert page["stages"]["shipped"] == 1 and page["summary"]["open"][0]["text"].startswith("Interviews")
+    # The page's claims are the agent's reading; its IDEAS carry their words.
+    assert page["ideas"] == []
+    assert page["summary"]["open"][0]["text"].startswith("Interviews")
     row = ProjectParticipant.objects.get(person__user=world["owner"])
     assert row.source == "summary" and row.summary_by_agent == world["hal"]
 
 
-def test_the_board_attributes_ideas_from_a_page(world):
+def test_the_board_shows_a_written_pages_goal(world):
     _put(_hal(world), "jj@dimagi.com", _summary())
     out = _client(world["sophie"]).get(f"/api/w/connect{BASE}").json()
-    [t1] = [i for i in out["ideas"] if i["ext_id"] == "T1"]
-    assert t1["came_from"][0]["via"] == "contributor_page"
-    assert t1["came_from"][0]["name"] == "Jonathan Jackson"
     [jj] = out["contributors"]
     assert jj["has_page"] and jj["goal"].startswith("Make what")
-    assert jj["ideas"] == {"proposed": 0, "started": 1, "shipped": 1, "declined": 0}
+
+
+def test_a_want_that_is_now_an_idea_is_not_also_listed_as_open(world):
+    _put(_hal(world), "jj@dimagi.com", _summary())
+    _idea(world, "talk to the team")
+    page = _client(world["sophie"]).get(f"/api/w/connect{BASE}jj@dimagi.com/").json()
+    assert page["summary"]["open"] == [] and [i["quote"] for i in page["ideas"]] == ["talk to the team"]
+
+
+def test_a_page_claims_ideas_never_the_agents_work(world):
+    # T1 is kind=work: a page may not call it someone's idea.
+    r = _put(_hal(world), "jj@dimagi.com", _summary(ideas=[{"task": "T1"}]))
+    assert r.status_code == 400 and "not an idea" in r.json()["detail"]
+    _idea(world, "track reality at all", ext_id="T20")
+    assert _put(_hal(world), "jj@dimagi.com", _summary(ideas=[{"task": "t20"}])).status_code == 200
 
 
 def test_a_page_cannot_claim_a_task_off_the_project(world):
@@ -205,10 +191,7 @@ def test_use_off_withholds_the_page_from_agents_but_not_from_people(world):
     Person.objects.filter(user=world["owner"]).update(hcp_use_available=False)
     as_agent = _hal(world).get(f"/api/w/connect{BASE}jj@dimagi.com/").json()
     assert as_agent["summary_state"] == "withheld" and as_agent["summary"] is None
-    # The attributions that rest on the page go with it...
-    assert as_agent["ideas"] == []
     board = _hal(world).get(f"/api/w/connect{BASE}").json()
-    assert all(not i["came_from"] for i in board["ideas"])
     assert board["contributors"][0]["page_withheld"] is True and board["contributors"][0]["goal"] == ""
     # ...while a human member still reads it.
     as_member = _client(world["sophie"]).get(f"/api/w/connect{BASE}jj@dimagi.com/").json()

@@ -49,6 +49,23 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/w/:workspace`** (and `/w/:workspace/projects`) → redirects to
   `/w/:workspace/agents`. An agent's projects and tasks (`AgentProject` /
   `AgentTask`) are canopy's one project system.
+- **`/projects/:agent/:ref`** (+ `/people/:person`) — a project's **team view**
+  (hal T82): the page to send a teammate, outside the agent console (no rail).
+  In order: what it is (outcome, links, owner); where it stands (ideas built /
+  in progress, and decisions waiting on people — one line each, from open
+  asks, tasks parked on a person, and task links with `kind: "decision"`); the
+  ideas with **Add your idea** (any member, in their own words; tells the agent
+  with one turn and emails the project's `owner_user`); and the people. No task
+  cards, task numbers, approve/decline/nudge, rationale or notes; editors get a
+  "Work board" link and the board links back. Read:
+  `GET /api/agents/{slug}/projects/{ref}/team/` (`apps/agents/ideas.py::team`).
+  **An idea is a task with `kind: "idea"`** — never inferred; `work` is the
+  default — and it must carry a person's own words (at least one `human_why`,
+  enforced on create and patch). The work toward it is its subtasks. Its stage
+  is its status (suggested → proposed, in progress → started, done → shipped);
+  subtasks finishing never ship it — its owner or its person marks it done (the
+  person may, on `act_on_task`). Every tally on every page is a count over
+  `ideas.of_project` (top-level idea tasks), so the views cannot disagree.
 - **`/agents`** — the workspace's agents.
 - **`/agents/:slug`** — the agent workspace: full-bleed rail + scrolling main
   on `canopy-ui`. Rail sections, in order:
@@ -56,9 +73,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
     active first, with outcome, owner, open and waiting-on-you counts;
     done/archived collapse below; "Add project" takes a name and its done
     outcome.
-  - **Project** (`projects/:ref`) — header, its tasks, recent turns that
-    touched them, recorded links. **Contributor** (`projects/:ref/people/:person`)
-    — one person's words and ideas on the project.
+  - **Project** (`projects/:ref`) — the work board: header, People, Ideas
+    (with the subtasks working on each), its tasks, recent turns that touched
+    them, recorded links; links to the team view. **Contributor**
+    (`projects/:ref/people/:person`) — one person's words and ideas on the project.
   - **Tasks** — the "who has the ball" board: `?waiting=me` (open asks nobody
     owns + tasks parked on you), Open, Done; project filter, group-by-project,
     `?batch=<key>` for one sitting. One card, `TaskCard`: a review offers

@@ -3643,6 +3643,55 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/projects/{ref}/team/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A project as a teammate sees it: what it is, where it stands, its ideas and people
+         * @description The team view's one read. What it is (outcome, links, owner); where it
+         *     stands — ideas shipped and in progress, and the decisions waiting on people,
+         *     one line each (open asks, tasks parked on a person, and task links marked
+         *     `kind: "decision"`); every idea with its status and whose it is; and the
+         *     people, each tallied over the same ideas. No task cards, numbers, rationale
+         *     or notes. `may_edit` says the caller may use the work board.
+         */
+        readonly get: operations["project_team"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/projects/{ref}/ideas/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add your own idea to a project, in your own words
+         * @description Any member of the workspace. It becomes a task with `kind: "idea"` on the
+         *     project, with your words as its human-why and you as its person; it tells
+         *     the agent (one turn) and the project's owner, and `notified` says who was
+         *     told. To record someone ELSE's words, create a task with `kind: "idea"` and
+         *     `human_why` (`POST /tasks/`, the editor/agent tier).
+         */
+        readonly post: operations["create_idea"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/projects/{ref}/contributors/": {
         readonly parameters: {
             readonly query?: never;
@@ -3651,15 +3700,15 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * A project's ideas (where each stands, whose it was) and its contributors
-         * @description Every task of the project is an idea. `stage` reads its status in a
-         *     contributor's words: suggested → proposed, in_progress → started,
-         *     done → shipped (declined stays declined). `came_from` lists who it came from,
-         *     strongest evidence first: the task's human-why, the human whose turn raised
-         *     it, then contributor pages that claim it. Contributors with a page lead.
+         * A project's ideas (where each stands, whose it is) and its contributors
+         * @description The project's ideas: its top-level tasks with `kind: "idea"` — a
+         *     person's want in their words, with the work toward it as subtasks. A task
+         *     of kind `work` is the agent's own and never shows here. `stage` is the
+         *     idea task's status in a contributor's words. Contributors are tallied over
+         *     the same ideas; those with a page lead.
          *
-         *     An agent sees contributor-page content (goals, quotes, the attributions that
-         *     rest on a page) only for people who let agents use what they learned.
+         *     An agent sees contributor-page content (goals, quotes) only for people who
+         *     let agents use what they learned.
          */
         readonly get: operations["project_ideas"];
         readonly put?: never;
@@ -3680,8 +3729,8 @@ export interface paths {
         /**
          * One contributor's page: their goal in their own words, and their ideas
          * @description What they are trying to achieve, quoted with links to where they said it,
-         *     and their ideas on this project as shipped / started / proposed, plus what
-         *     they want that no task covers yet. Read it before building on — or against —
+         *     and their ideas on this project as shipped / started / proposed (the
+         *     project's ideas whose person they are), plus wants not yet recorded as ideas. Read it before building on — or against —
          *     their idea. `person` is an id or an email address.
          */
         readonly get: operations["contributor_page"];
@@ -12889,6 +12938,17 @@ export interface components {
             readonly label: string;
             /** Url */
             readonly url: string;
+            /**
+             * Kind
+             * @default
+             * @enum {string}
+             */
+            readonly kind: "" | "decision";
+            /**
+             * Waiting On
+             * @default
+             */
+            readonly waiting_on: string;
         };
         /** AgentProjectIn */
         readonly AgentProjectIn: {
@@ -13025,6 +13085,12 @@ export interface components {
             readonly project_name?: string | null;
             /** Parent Ext Id */
             readonly parent_ext_id?: string | null;
+            /**
+             * Kind
+             * @default work
+             * @enum {string}
+             */
+            readonly kind: "work" | "idea";
             /**
              * Drive Folder Id
              * @default
@@ -13251,6 +13317,12 @@ export interface components {
              * @default
              */
             readonly parent: string;
+            /**
+             * Kind
+             * @default work
+             * @enum {string}
+             */
+            readonly kind: "work" | "idea";
             /**
              * Drive Folder Id
              * @default
@@ -13488,6 +13560,12 @@ export interface components {
             /** Parent Ext Id */
             readonly parent_ext_id?: string | null;
             /**
+             * Kind
+             * @default work
+             * @enum {string}
+             */
+            readonly kind: "work" | "idea";
+            /**
              * Drive Folder Id
              * @default
              */
@@ -13594,6 +13672,8 @@ export interface components {
             readonly project?: string | null;
             /** Parent */
             readonly parent?: string | null;
+            /** Kind */
+            readonly kind?: ("work" | "idea") | null;
             /** Drive Folder Id */
             readonly drive_folder_id?: string | null;
             /** Drive Folder Url */
@@ -14999,59 +15079,36 @@ export interface components {
             readonly written_at?: string | null;
             readonly ideas: components["schemas"]["StageCountsOut"];
         };
-        /** IdeaOut */
+        /**
+         * IdeaOut
+         * @description An idea: a task with `kind: "idea"` — a person's want about the product,
+         *     in their words, with the work toward it as its subtasks.
+         */
         readonly IdeaOut: {
-            /** Ext Id */
+            /**
+             * Ext Id
+             * @description The idea task's ext_id.
+             */
             readonly ext_id: string;
             /** Title */
             readonly title: string;
-            /** Status */
+            /**
+             * Status
+             * @description The idea task's status.
+             */
             readonly status: string;
             /**
              * Stage
+             * @description Its status in a contributor's words: suggested → proposed, in progress → started, done → shipped (marked done by its owner or its person), declined.
              * @enum {string}
              */
             readonly stage: "proposed" | "started" | "shipped" | "declined";
             /**
-             * Next Action
-             * @default
-             */
-            readonly next_action: string;
-            /**
-             * Updated At
-             * Format: date-time
-             */
-            readonly updated_at: string;
-            /** Links */
-            readonly links: readonly components["schemas"]["AgentTaskLink"][];
-            /** Came From */
-            readonly came_from: readonly components["schemas"]["IdeaSourceOut"][];
-            /** @description On a contributor page: this person's words about it. */
-            readonly their_words?: components["schemas"]["IdeaSourceOut"] | null;
-        };
-        /**
-         * IdeaSourceOut
-         * @description One person an idea came from, and the evidence for it.
-         */
-        readonly IdeaSourceOut: {
-            /**
-             * Person Id
-             * @description Null when the task names someone canopy cannot resolve.
-             */
-            readonly person_id: number | null;
-            /** Name */
-            readonly name: string;
-            /**
-             * Via
-             * @description human_why: the task's own record of what they said; raised_by: their turn raised it; contributor_page: an agent's reading of their sessions.
-             * @enum {string}
-             */
-            readonly via: "human_why" | "raised_by" | "contributor_page";
-            /**
              * Quote
-             * @default
+             * @description Their own words — the idea's first human-why.
              */
             readonly quote: string;
+            readonly who: components["schemas"]["IdeaWhoOut"];
             /**
              * Source Url
              * @default
@@ -15059,15 +15116,93 @@ export interface components {
             readonly source_url: string;
             /** Said At */
             readonly said_at?: string | null;
+            /**
+             * People
+             * @description Everyone whose words it carries (Person ids).
+             */
+            readonly people: readonly number[];
+            /**
+             * Subtasks
+             * @description The work toward it.
+             */
+            readonly subtasks: readonly components["schemas"]["IdeaTaskOut"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
         };
-        /** ProjectIdeasOut */
-        readonly ProjectIdeasOut: {
+        /** IdeaTaskOut */
+        readonly IdeaTaskOut: {
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: string;
+        };
+        /** IdeaWhoOut */
+        readonly IdeaWhoOut: {
+            /**
+             * Person Id
+             * @description Null when canopy does not know the person here.
+             */
+            readonly person_id: number | null;
+            /** Name */
+            readonly name: string;
+        };
+        /**
+         * ProjectTeamOut
+         * @description A project as a teammate sees it: what it is, where it stands, the ideas,
+         *     the people. None of the agent's process — no task cards or numbers.
+         */
+        readonly ProjectTeamOut: {
             /** Agent */
             readonly agent: string;
+            /** Agent Name */
+            readonly agent_name: string;
             /** Project */
             readonly project: string;
             /** Name */
             readonly name: string;
+            /** Outcome */
+            readonly outcome: string;
+            /** Status */
+            readonly status: string;
+            /** Owner Name */
+            readonly owner_name: string;
+            /** Links */
+            readonly links: readonly components["schemas"]["AgentTaskLink"][];
+            /**
+             * May Edit
+             * @description May the caller edit the project's work (the work board is theirs).
+             */
+            readonly may_edit: boolean;
+            /**
+             * My Person Id
+             * @description The caller as a Person: they may mark their own ideas shipped.
+             */
+            readonly my_person_id?: number | null;
+            /**
+             * Built
+             * @description Ideas marked shipped.
+             */
+            readonly built: readonly components["schemas"]["IdeaOut"][];
+            /**
+             * In Progress
+             * @description Ideas a task has started on.
+             */
+            readonly in_progress: readonly components["schemas"]["IdeaOut"][];
+            /**
+             * Waiting
+             * @description Open decisions waiting on people, one line each.
+             */
+            readonly waiting: readonly components["schemas"]["WaitingLineOut"][];
             readonly stages: components["schemas"]["StageCountsOut"];
             /** Ideas */
             readonly ideas: readonly components["schemas"]["IdeaOut"][];
@@ -15096,6 +15231,64 @@ export interface components {
              * @default 0
              */
             readonly declined: number;
+        };
+        /** WaitingLineOut */
+        readonly WaitingLineOut: {
+            /**
+             * Text
+             * @description One line.
+             */
+            readonly text: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
+            /**
+             * Waiting On
+             * @description Who it waits on, by name.
+             */
+            readonly waiting_on: string;
+        };
+        /** IdeaCreatedOut */
+        readonly IdeaCreatedOut: {
+            readonly idea: components["schemas"]["IdeaOut"];
+            /**
+             * Notified
+             * @description Who was told about it, by name.
+             */
+            readonly notified: readonly string[];
+        };
+        /**
+         * IdeaIn
+         * @description Your own idea, in your own words. Any member may. To record someone
+         *     else's words, create a task with `kind: "idea"` and `human_why`.
+         */
+        readonly IdeaIn: {
+            /**
+             * Quote
+             * @description Your words, verbatim.
+             */
+            readonly quote: string;
+            /**
+             * Title
+             * @default
+             */
+            readonly title: string;
+        };
+        /** ProjectIdeasOut */
+        readonly ProjectIdeasOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Project */
+            readonly project: string;
+            /** Name */
+            readonly name: string;
+            readonly stages: components["schemas"]["StageCountsOut"];
+            /** Ideas */
+            readonly ideas: readonly components["schemas"]["IdeaOut"][];
+            /** Contributors */
+            readonly contributors: readonly components["schemas"]["ContributorBriefOut"][];
         };
         /** ContributorOpenOut */
         readonly ContributorOpenOut: {
@@ -15201,12 +15394,14 @@ export interface components {
         };
         /**
          * ContributorIdeaIn
-         * @description One of the project's tasks that is this person's idea, with their words about it.
+         * @description One of the project's ideas (a `kind: "idea"` task) the agent read as this
+         *     person's, with their words. The page lists the ideas carrying the person's
+         *     own words (their human-why); this is the agent's reading beside it.
          */
         readonly ContributorIdeaIn: {
             /**
              * Task
-             * @description The task's ext_id on this project (T71).
+             * @description The idea task's ext_id on this project (T71).
              */
             readonly task: string;
             /**
@@ -25749,6 +25944,56 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+        };
+    };
+    readonly project_team: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectTeamOut"];
+                };
+            };
+        };
+    };
+    readonly create_idea: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly ref: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["IdeaIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["IdeaCreatedOut"];
                 };
             };
         };

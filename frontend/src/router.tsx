@@ -73,6 +73,12 @@ const AgentProjectPage = lazySection(() =>
 const ContributorPage = lazySection(() =>
   import('./pages/agents/ContributorPage').then((m) => ({ default: m.ContributorPage })),
 )
+const TeamContributorPage = lazySection(() =>
+  import('./pages/agents/ContributorPage').then((m) => ({ default: m.TeamContributorPage })),
+)
+const TeamProjectPage = lazySection(() =>
+  import('./pages/projects/TeamProjectPage').then((m) => ({ default: m.TeamProjectPage })),
+)
 const AgentTasksSection = lazySection(() =>
   import('./pages/agents/AgentTasksSection').then((m) => ({ default: m.AgentTasksSection })),
 )
@@ -290,6 +296,14 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/agents', element: <AgentsPage /> },
       // The retired workbench Projects page. Agent projects/tasks replaced it.
       { path: '/w/:workspace/projects', element: <WorkspaceIndex /> },
+      // A project's TEAM VIEW (hal T82): the page to send a teammate — what it
+      // is, where it stands, its ideas, its people — outside the agent console.
+      // The agent's work board stays at /w/:workspace/agents/:slug/projects/:ref.
+      { path: '/w/:workspace/projects/:agent/:ref', element: <LazySection><TeamProjectPage /></LazySection> },
+      {
+        path: '/w/:workspace/projects/:agent/:ref/people/:person',
+        element: <LazySection><TeamContributorPage /></LazySection>,
+      },
       { path: '/w/:workspace/schedules', element: <SchedulesPage /> },
       {
         path: '/w/:workspace/chat',

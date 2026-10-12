@@ -25,12 +25,9 @@ const said = 'https://canopy.test/w/connect/chat/abc'
 
 function idea(over: Record<string, unknown>) {
   return {
-    ext_id: 'T1', title: 'Idea', status: 'done', stage: 'shipped', next_action: '',
-    updated_at: '2026-10-05T00:00:00Z', links: [],
-    came_from: [{ person_id: 3, name: 'Jonathan', via: 'contributor_page', quote: 'q',
-                  source_url: said, said_at: null }],
-    their_words: { person_id: 3, name: 'Jonathan', via: 'contributor_page', quote: 'q',
-                   source_url: said, said_at: null },
+    ext_id: 'T1', title: 'Idea', quote: 'q', who: { person_id: 3, name: 'Jonathan' },
+    source_url: said, said_at: null, stage: 'shipped', status: 'done', people: [3],
+    subtasks: [], created_at: '2026-10-05T00:00:00Z', updated_at: '2026-10-05T00:00:00Z',
     ...over,
   }
 }
@@ -50,10 +47,10 @@ function page(over: Record<string, unknown> = {}) {
       basis: '458 prompts across 22 sessions', written_at: '2026-10-11T00:00:00Z', written_by: 'hal',
     },
     ideas: [
-      idea({ ext_id: 'T71', title: "Sophie's RUTF tender", status: 'in_progress', stage: 'started',
-             their_words: { person_id: 3, name: 'Jonathan', via: 'contributor_page',
-                            quote: 'something sophie can start using', source_url: said, said_at: null } }),
-      idea({ ext_id: 'T66', title: 'Project-history skill' }),
+      idea({ ext_id: 'T71', title: 'Sophie can run her real RUTF procurement', stage: 'started',
+             status: 'in_progress', quote: 'something sophie can start using',
+             subtasks: [{ ext_id: 'T59', title: 'Screen review', status: 'done' }] }),
+      idea({ ext_id: 'T90', title: 'Per-org pages' }),
     ],
     stages: { proposed: 0, started: 1, shipped: 1, declined: 0 },
     may_write: false, why_not: '',
@@ -99,15 +96,15 @@ describe('ContributorPage', () => {
     expect(screen.getByTestId('contributor-open').textContent).toContain('Per-org page config')
   })
 
-  it('says why there is no page when an agent may not write it', async () => {
+  it('says plainly that they have not shared what they are after, not why an agent cannot', async () => {
     getContributorPage.mockResolvedValue(
       page({ summary_state: 'not_written', summary: null, ideas: [],
              stages: { proposed: 0, started: 0, shipped: 0, declined: 0 },
              why_not: 'this person has not let agents learn about them' }),
     )
     show()
-    expect((await screen.findByTestId('contributor-unwritten')).textContent).toContain(
-      'not let agents learn about them',
-    )
+    const empty = (await screen.findByTestId('contributor-unwritten')).textContent ?? ''
+    expect(empty).toBe("Jonathan hasn't shared what they're after yet.")
+    expect(empty).not.toContain('agents')
   })
 })
