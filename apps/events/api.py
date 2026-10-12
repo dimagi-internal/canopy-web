@@ -20,7 +20,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.events import services
 from apps.events.models import Event
-from apps.events.schemas import EventBatchIn, EventListOut, EventRecordOut, McpCallListOut
+from apps.events.schemas import EventBatchIn, EventListOut, EventRecordOut, McpCallListOut, SettingChangeListOut
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -141,4 +141,56 @@ def list_mcp_calls(
         "args_summary": r.args_summary,
         "ok": r.ok,
         "error": r.error,
+    } for r in rows]}
+
+
+# The settings audit trail (`apps/events/audit.py`): one row per change to a
+# setting, whichever entry point made it — web UI, CLI, script or MCP tool.
+# Read on the same tier as the MCP call log: a workspace's admins see its
+# changes; anyone sees the changes they made themselves.
+@router.get("/setting-changes", response=SettingChangeListOut,
+            summary="Changes to settings in your workspaces (admins), and your own")
+def list_setting_changes(
+    request: HttpRequest,
+    operation: str | None = None,
+    target: str | None = None,
+    actor: str | None = None,
+    since_minutes: int | None = None,
+    limit: int = 100,
+) -> dict:
+    """Newest first: who changed which setting, through what (`via`: ui, mcp,
+    cli, api, runner), the request with secrets withheld, and the state before
+    and after where the route reports it. ``operation`` is a prefix match on the
+    route name (``set_agent`` covers every agent setting); ``target`` is a
+    substring match (an agent slug, a person's address); ``actor`` an exact
+    email."""
+    from apps.events import audit
+
+    qs = audit.visible_to(request).select_related("workspace")
+    if operation:
+        qs = qs.filter(operation__startswith=operation)
+    if target:
+        qs = qs.filter(target__icontains=target)
+    if actor:
+        qs = qs.filter(actor_email__iexact=actor)
+    if since_minutes:
+        qs = qs.filter(created_at__gte=dt.datetime.now(dt.UTC) - dt.timedelta(minutes=max(1, since_minutes)))
+    rows = qs.order_by("-created_at")[: max(1, min(limit, 500))]
+    return {"items": [{
+        "id": r.pk,
+        "created_at": r.created_at.isoformat(),
+        "workspace": r.workspace.slug if r.workspace else "",
+        "actor_email": r.actor_email,
+        "via": r.via,
+        "credential": r.credential or {},
+        "client": r.client,
+        "mcp_tool": r.mcp_tool,
+        "request_id": r.request_id,
+        "operation": r.operation,
+        "method": r.method,
+        "path": r.path,
+        "target": r.target,
+        "summary": r.summary,
+        "request": r.request or {},
+        "changes": r.changes or [],
     } for r in rows]}

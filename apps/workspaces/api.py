@@ -862,13 +862,20 @@ def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) ->
                              "a runner must be enrolled in the workspace (POST "
                              "/api/harness/runners/{id}/workspaces) and its owner an "
                              "editor or above there")
+    from apps.harness import routing_audit
+
     with transaction.atomic():
+        before = routing_audit.workspace_rows(m.workspace)
         WorkspaceRunnerOrder.objects.filter(workspace=m.workspace).delete()
         WorkspaceRunnerOrder.objects.bulk_create([
             WorkspaceRunnerOrder(workspace=m.workspace, runner=runners[row.runner_id],
                                  rank=i, enabled=row.enabled)
             for i, row in enumerate(payload.runners)
         ])
+        routing_audit.record_routing_change(
+            request, workspace=m.workspace,
+            target=f"workspace:{slug}", scope="default runner order",
+            before=before, after=routing_audit.workspace_rows(m.workspace))
     return get_runner_order(request, slug)
 
 

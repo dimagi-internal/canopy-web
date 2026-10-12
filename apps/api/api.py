@@ -80,6 +80,15 @@ api = CanopyNinjaAPI(
     openapi_url="/openapi.json",
 )
 
+# Every route is wrapped by the settings audit (`apps/events/audit.py`): a no-op
+# except on the routes `route_gates.SETTINGS` names, where the change and its
+# `SettingChange` row commit together. Registered here, before any router is
+# added, so it reaches every route — and so every entry point (web UI, CLI,
+# script, MCP tool) through the one place they all pass.
+from apps.events.audit import audited as _audited  # noqa: E402
+
+api.add_decorator(_audited)
+
 
 def _problem_response(request: HttpRequest, problem: Problem) -> HttpResponse:
     body = problem.model_dump(exclude_none=True)

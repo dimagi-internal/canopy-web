@@ -23,6 +23,7 @@ failing stream posts was invisible to the server.
 """
 from __future__ import annotations
 
+from django.conf import settings
 from django.db import models
 
 
@@ -90,3 +91,89 @@ class Event(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"event:{self.source}:{self.kind}:{self.pk}"
+
+
+class SettingChange(models.Model):
+    """One change to a setting — who made it, through what, and what changed.
+
+    Written by ONE plumbing, `apps/events/audit.py`, which wraps every REST route
+    `apps/api/route_gates.py::SETTINGS` names. The web UI, the `canopy` CLI, a
+    script and an MCP tool all reach a setting through those routes (every MCP
+    tool IS a route, called in-process), so no entry point can change a setting
+    without leaving a row. A new write route cannot ship until it is classified
+    as a setting or not (`tests/test_every_route_declares_its_gate.py`).
+
+    Origin, 2026-10-12: ACE carried a strict routing rule nobody could account
+    for. Routing rows carry no author, each save deletes and re-creates them, and
+    only MCP-originated writes left even a tool-call line (`MCPAuditLog`).
+
+    Append-only: there is no route that edits or deletes a row.
+    """
+
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="setting_changes",
+    )
+    """The tenant whose setting changed. NULL only for a PERSON's own settings
+    (their tokens, preferences, memory grants), which belong to no tenant. NULL
+    never widens visibility: a NULL row is readable by its actor and nobody
+    else (`audit.visible_to`). It is not the NULL-means-allow leg that `Event`
+    refuses — read predicates here never treat it as "any workspace"."""
+
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="setting_changes",
+    )
+    actor_email = models.CharField(max_length=254, blank=True, default="")
+    """Kept beside the FK so the row still names the person after the account
+    is gone."""
+
+    via = models.CharField(max_length=16)
+    """How the change arrived: ``ui`` (browser session), ``mcp`` (an MCP tool),
+    ``cli`` (the canopy CLI), ``api`` (any other token holder), ``runner`` (a
+    runner daemon). From the credential and the MCP flag — the credential is
+    verified; ``client``/``user_agent`` are only what the caller claimed."""
+
+    credential = models.JSONField(default=dict, blank=True)
+    """The credential's type, id and label (never its secret)."""
+
+    client = models.CharField(max_length=200, blank=True, default="")
+    user_agent = models.CharField(max_length=200, blank=True, default="")
+    mcp_tool = models.CharField(max_length=128, blank=True, default="")
+    request_id = models.CharField(max_length=128, blank=True, default="")
+
+    operation = models.CharField(max_length=128)
+    """The route's operationId (also its MCP tool name): ``set_agent_actor_route``."""
+    method = models.CharField(max_length=8)
+    path = models.CharField(max_length=500)
+    target = models.CharField(max_length=300, blank=True, default="")
+    """What was changed, in a person's words: ``ace``, ``ace / route for x@y``."""
+    summary = models.CharField(max_length=500)
+
+    request = models.JSONField(default=dict, blank=True)
+    """Path arguments and the request body, with secrets redacted
+    (`audit.redact`)."""
+
+    changes = models.JSONField(default=list, blank=True)
+    """Before/after, when the route's handler reported them
+    (`audit.note_change`): ``[{"scope", "before", "after"}]``. Empty when the
+    handler doesn't — the request body is then the record of what was set."""
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["workspace", "-created_at"]),
+            models.Index(fields=["actor", "-created_at"]),
+            models.Index(fields=["operation", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"setting-change:{self.operation}:{self.pk}"

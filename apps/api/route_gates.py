@@ -521,6 +521,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "record_events": ("events.write",),  # in the pinned or default workspace
     "list_mcp_calls": ("logs.read", "self"),  # the workspace's calls for admins; your own always
     "list_events": ("logs.read",),  # non-admin gets no rows, not 403
+    "list_setting_changes": ("logs.read", "self"),  # the workspace's changes for admins; your own always
     # --- apps/inbound/api.py
     "gmail_push": ("host",),  # auth=None; Pub/Sub push verified by verify_push (OIDC/audience), 404 otherwise
     "get_push_config": ("member",),
@@ -624,4 +625,156 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "put_contributor_summary": "an agent's login is a member, and that is who writes a contributor page — only while the person lets agents learn about them and has granted that agent; otherwise only the person themself",
     "add_person_fact": "an agent's login is a member, and that is who writes facts (contract canopy#804); a fact is append-only, attributed, visible to its subject and retractable by them",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
+}
+
+
+# ---- the settings audit (`apps/events/audit.py`) ----
+#
+# Every write route is one of two things, and says which here. A route in
+# SETTINGS changes how something is configured — who may do what, where work
+# runs, which credential or integration is used, what an agent or workspace is
+# set to do — and every call to it, from any entry point (web UI, CLI, script,
+# MCP tool), writes a `SettingChange` in the same transaction as the change.
+# Every other write is in NOT_SETTINGS with the kind of write it is instead.
+# `tests/test_every_route_declares_its_gate.py` fails a write route that is in
+# neither, or both: a new route cannot ship until someone decides whether it is
+# a setting. When unsure, it is a setting — an extra row costs nothing, a
+# missing one is the gap this exists to close.
+
+SETTINGS: frozenset[str] = frozenset({
+    # agents: identity, ownership, access, integrations, credentials
+    "upsert_agent", "delete_agent", "transfer_owner", "link_canopy_user",
+    "grant_admin", "revoke_admin",
+    "publish_interface", "unpublish_interface",
+    "set_credential_source", "set_agent_credentials", "delete_agent_credential", "set_agent_vault",
+    "set_agent_github", "delete_agent_github", "set_agent_salesforce", "delete_agent_salesforce",
+    "set_slack_enabled", "set_turn_mode", "set_sender_trust", "delete_sender_trust",
+    # agents: routing (handlers report before/after — apps/harness/routing_audit.py)
+    "set_runner_preference", "replace_agent_runners", "replace_agent_runner_rules",
+    "set_agent_runner_rule", "delete_agent_runner_rule",
+    "set_agent_actor_route", "delete_agent_actor_route",
+    # agents: schedules
+    "create_schedule", "update_schedule", "delete_schedule",
+    # runners
+    "pair_runner", "retire_runner", "unretire_runner", "pause_runner", "unpause_runner",
+    "grant_runner_admin", "revoke_runner_admin",
+    "set_runner_credential", "swap_runner_logins", "set_runner_engine", "set_runner_flags",
+    "enroll_runner_workspace", "unenroll_runner_workspace",
+    "hold_fleet", "release_fleet_hold",
+    # workspaces: membership, access, structure
+    "create_workspace", "delete_workspace", "set_workspace_parent", "set_access_settings",
+    "accept_invite", "create_invite", "reissue_invite", "revoke_invite",
+    "approve_access_request", "deny_access_request", "invite_beta_request",
+    "remove_member", "set_member_role",
+    "create_system_account", "update_system_account", "delete_system_account",
+    "add_system_sender", "remove_system_sender",
+    # workspaces: policy and routing
+    "create_admission_rule", "update_admission_rule", "delete_admission_rule",
+    "create_retention_rule", "update_retention_rule", "delete_retention_rule",
+    "set_runner_order", "set_shared_vault",
+    # workspaces: integrations
+    "connect_app", "update_connected_app", "tokens_connected_apps_disconnect_app",
+    "set_push_config", "create_mailbox", "update_mailbox", "delete_mailbox",
+    "set_config_token", "clear_config_token", "declare_agent", "set_history",
+    "hcp_registerClient", "hcp_updateClient",
+    # sharing and visibility
+    "set_narrative_visibility", "storyboards_rotate_token", "ensure_token",
+    "rotate_walkthrough_token", "rotate_arc_token", "session_sharing_rotate_token",
+    "add_participant", "remove_participant",
+    # a person's own settings: credentials, grants, preferences, memory
+    "create_token", "revoke_token", "tokens_disconnect_app", "github_disconnect",
+    "set_presence_preference", "set_session_workspace_preference", "set_preferences",
+    "set_my_agent_memory", "set_my_grant_collection",
+    "create_my_memory_collection", "update_my_memory_collection", "delete_my_memory_collection",
+    "grant_my_session_agent", "set_my_session_memory", "hcp_revokeGrant",
+    "contact_hcp_policy", "contact_hcp_revoke", "contact_hcp_grant", "contact_hcp_opt_in",
+    "contact_hcp_session_memory",
+})
+
+#: What a write that is NOT a setting is instead. Closed, like VOCABULARY.
+WRITE_KINDS: dict[str, str] = {
+    "content": "work product: docs, tasks, projects, reviews, narratives, runs, storyboards, issues",
+    "conversation": "a chat or session: messages, attachments, lifecycle, page state",
+    "turn": "dispatching or reporting a turn of work",
+    "runner-protocol": "a runner daemon reporting in (heartbeats, claims, streams, mint steps)",
+    "action": "a one-shot operation that changes no configuration (check, test, preview, run now, sync)",
+    "person-data": "facts and records about a person, kept and retractable under their own rules",
+    "telemetry": "events and reports recorded for later reading",
+    "request": "asking for something someone else decides (access, beta)",
+    "ephemeral-credential": "a short-lived ticket minted for one connection",
+}
+
+NOT_SETTINGS: dict[str, str] = {
+    # content
+    "create_run_doc": "content", "put_run_doc_state": "content", "mark_task_action_applied": "content",
+    "create_project": "content", "patch_project": "content",
+    "put_contributor_summary": "content", "delete_contributor_summary": "content",
+    "create_run": "content", "fork_run": "content", "record_gate": "content", "record_verdict": "content",
+    "create_sync": "content", "delete_sync": "content", "replace_skills": "content",
+    "sync_skill_history": "content", "create_tasks": "content", "patch_task": "content",
+    "act_on_task": "content", "patch_contact": "content",
+    "delete_narrative": "content", "move_narrative": "content", "delete_version": "content",
+    "delete_run": "content", "upsert_issue": "content", "delete_issue": "content",
+    "create_review": "content", "delete_review": "content", "submit_review": "content",
+    "suggest_review": "content", "create_arc": "content", "patch_arc": "content", "delete_arc": "content",
+    "upload_session": "content", "patch_session": "content", "delete_session": "content",
+    "create_shareouts": "content", "clear_shareouts": "content",
+    "create_storyboard": "content", "patch_storyboard": "content", "leave_feedback": "content",
+    "upload_walkthrough": "content", "patch_walkthrough": "content", "delete_walkthrough": "content",
+    "ingest_feedback": "content", "resolve_feedback": "content",
+    "open_thread": "content", "close_thread": "content",
+    "resolve_failure_investigation": "content",
+    # conversation
+    "create_session": "conversation", "delete_attachment": "conversation", "reset_sessions": "conversation",
+    "detach_session_from_slack": "conversation", "approve_transfer_request": "conversation",
+    "cancel_transfer_request": "conversation", "decline_transfer_request": "conversation",
+    "answer_menu": "conversation", "app_view_call": "conversation", "app_view_context": "conversation",
+    "app_view_message": "conversation", "app_view_read": "conversation", "archive_session": "conversation",
+    "attach_session": "conversation", "upload_attachment": "conversation", "request_backfill": "conversation",
+    "close_session": "conversation", "detach_session": "conversation", "move_session": "conversation",
+    "set_session_notify": "conversation", "canopy_sessions_declare_page_actions": "conversation",
+    "invoke_page_action": "conversation", "canopy_sessions_resolve_page_action": "conversation",
+    "canopy_sessions_declare_page_state": "conversation", "place": "conversation",
+    "reset_session": "conversation", "declare_run_input": "conversation", "share_secret": "conversation",
+    "delete_secret": "conversation", "canopy_sessions_send": "conversation",
+    "stop_session_turn": "conversation", "transfer": "conversation", "unarchive_session": "conversation",
+    "start_session": "conversation", "contact_app_view_call": "conversation",
+    "contact_app_view_context": "conversation", "contact_app_view_message": "conversation",
+    "contact_app_view_read": "conversation", "contact_archive_session": "conversation",
+    "attach": "conversation", "detach": "conversation", "tokens_contact_declare_page_actions": "conversation",
+    "tokens_contact_resolve_page_action": "conversation", "tokens_contact_declare_page_state": "conversation",
+    "tokens_contact_send": "conversation", "stop": "conversation",
+    # turn
+    "create_turn": "turn", "enqueue_turn": "turn", "cancel_turn": "turn", "append_turn_events": "turn",
+    "finish_turn": "turn", "start_turn": "turn", "append_turn_transcript": "turn",
+    "fire_schedule_route": "turn",
+    # runner-protocol
+    "post_bootstrap_report": "runner-protocol", "update_runner_capabilities": "runner-protocol",
+    "claim_admission_notices": "runner-protocol", "report_admission_notice": "runner-protocol",
+    "claim_turn": "runner-protocol", "runner_heartbeat": "runner-protocol",
+    "post_menu_answer_result": "runner-protocol", "post_runner_mint_result": "runner-protocol",
+    "post_runner_mint_url": "runner-protocol", "record_session": "runner-protocol",
+    "resolve_session": "runner-protocol", "post_session_backfill": "runner-protocol",
+    "post_session_stream": "runner-protocol", "report_sessions": "runner-protocol",
+    "post_sign_in_request": "runner-protocol", "turn_github_token": "runner-protocol",
+    "report_drill": "runner-protocol",
+    # action
+    "check_agent_github": "action", "check_agent_salesforce": "action", "preview_cron": "action",
+    "run_schedule_now": "action", "start_runner_drill": "action", "start_runner_mint": "action",
+    "post_runner_mint_code": "action", "refresh_runner": "action", "test_connected_app": "action",
+    "sync": "action", "hcp_searchPreferences": "action",
+    # person-data
+    "add_person_fact": "person-data", "retract_person_fact": "person-data",
+    "hcp_createEntry": "person-data", "hcp_addPreference": "person-data",
+    "hcp_updatePreference": "person-data", "hcp_deletePreference": "person-data",
+    "contact_hcp_delete_entry": "person-data", "contact_hcp_proof": "person-data",
+    "subscribe": "person-data", "unsubscribe": "person-data",
+    # telemetry
+    "record_events": "telemetry", "report_watch": "telemetry", "gmail_push": "telemetry",
+    # request
+    "submit_beta_request": "request", "decline_beta_request": "request",
+    "request_workspace_access": "request",
+    # ephemeral-credential
+    "contact_token": "ephemeral-credential", "embed_self_token": "ephemeral-credential",
+    "embed_ws_ticket": "ephemeral-credential", "contact_ws_ticket": "ephemeral-credential",
 }

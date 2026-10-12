@@ -449,6 +449,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/events/setting-changes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Changes to settings in your workspaces (admins), and your own
+         * @description Newest first: who changed which setting, through what (`via`: ui, mcp,
+         *     cli, api, runner), the request with secrets withheld, and the state before
+         *     and after where the route reports it. ``operation`` is a prefix match on the
+         *     route name (``set_agent`` covers every agent setting); ``target`` is a
+         *     substring match (an agent slug, a person's address); ``actor`` an exact
+         *     email.
+         */
+        readonly get: operations["list_setting_changes"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/inbound/gmail/{workspace}/": {
         readonly parameters: {
             readonly query?: never;
@@ -8950,6 +8975,52 @@ export interface components {
             readonly ok: boolean;
             /** Error */
             readonly error: string;
+        };
+        /** SettingChangeListOut */
+        readonly SettingChangeListOut: {
+            /** Items */
+            readonly items: readonly components["schemas"]["SettingChangeOut"][];
+        };
+        /** SettingChangeOut */
+        readonly SettingChangeOut: {
+            /** Id */
+            readonly id: number;
+            /** Created At */
+            readonly created_at: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Actor Email */
+            readonly actor_email: string;
+            /** Via */
+            readonly via: string;
+            /** Credential */
+            readonly credential: {
+                readonly [key: string]: unknown;
+            };
+            /** Client */
+            readonly client: string;
+            /** Mcp Tool */
+            readonly mcp_tool: string;
+            /** Request Id */
+            readonly request_id: string;
+            /** Operation */
+            readonly operation: string;
+            /** Method */
+            readonly method: string;
+            /** Path */
+            readonly path: string;
+            /** Target */
+            readonly target: string;
+            /** Summary */
+            readonly summary: string;
+            /** Request */
+            readonly request: {
+                readonly [key: string]: unknown;
+            };
+            /** Changes */
+            readonly changes: readonly {
+                readonly [key: string]: unknown;
+            }[];
         };
         /** PushResultOut */
         readonly PushResultOut: {
@@ -21439,6 +21510,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["McpCallListOut"];
+                };
+            };
+        };
+    };
+    readonly list_setting_changes: {
+        readonly parameters: {
+            readonly query?: {
+                readonly operation?: string | null;
+                readonly target?: string | null;
+                readonly actor?: string | null;
+                readonly since_minutes?: number | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SettingChangeListOut"];
                 };
             };
         };

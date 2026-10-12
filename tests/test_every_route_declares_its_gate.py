@@ -98,3 +98,23 @@ def test_viewer_level_writes_are_deliberate(operations):
     )
     blank = sorted(op for op, why in route_gates.VIEWER_MAY_MUTATE.items() if not why.strip())
     assert not blank, f"VIEWER_MAY_MUTATE entries need a reason: {blank}"
+
+
+def test_every_write_says_whether_it_is_a_setting(operations):
+    """The settings audit (`apps/events/audit.py`) records exactly the routes in
+    SETTINGS. A write in neither list would change something with no decision
+    on whether it is audited; a write in both is a contradiction."""
+    writes = {op for op, method in operations.items() if method in MUTATING}
+    settings, other = route_gates.SETTINGS, set(route_gates.NOT_SETTINGS)
+    unclassified = sorted(writes - settings - other)
+    assert not unclassified, (
+        "These write routes don't say whether they change a setting. Add each to "
+        "apps/api/route_gates.py::SETTINGS (audited: every call writes a SettingChange) "
+        f"or NOT_SETTINGS with its WRITE_KINDS kind. When unsure, it is a setting: {unclassified}"
+    )
+    both = sorted(settings & other)
+    assert not both, f"In both SETTINGS and NOT_SETTINGS: {both}"
+    stale = sorted((settings | other) - writes)
+    assert not stale, f"SETTINGS / NOT_SETTINGS name routes that are not live writes: {stale}"
+    bad = {op: k for op, k in route_gates.NOT_SETTINGS.items() if k not in route_gates.WRITE_KINDS}
+    assert not bad, f"NOT_SETTINGS kinds outside WRITE_KINDS: {bad}"

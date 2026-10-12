@@ -105,6 +105,7 @@ Each is enforced or load-bearing across the codebase; the pointer says where.
 - **One rule decides what a person may make an agent do: `apps/agents/access.decide`.** Ask it; never write a second predicate. No interface = default deny for viewers/contacts; editors get full but always `manual`. → `tests/test_access_matrix.py`, `docs/architecture/access.md`
 - **One chat-session ACL.** Every door (REST, socket, MCP, Slack, push…) asks `apps/canopy_sessions/access.py`; opening a chat is never a grant. → `tests/test_session_acl.py`
 - **MCP is the REST API.** A new route is a tool automatically; secure it in the route, never by excluding it from MCP. → `docs/architecture/mcp-surface.md`
+- **Every settings change is audited by one plumbing.** Each write route is classified in `apps/api/route_gates.py` as a setting (`SETTINGS`, recorded as a `SettingChange` in the same transaction, from every entry point) or not (`NOT_SETTINGS`); never write a per-route audit, report before/after with `audit.note_change`. → `tests/test_every_route_declares_its_gate.py`, `docs/architecture/settings-audit.md`
 
 **Runners**
 - **A runner serves its OWNER's workspaces, never `Runner.workspace`.** The tenant gate is `routing.runner_tenant_slugs` (owner's `agent.work` ∩ `RunnerEnrollment` coverage), shared by claim and schedules; a NULL owner fails closed → `tests/test_claim_schedule_parity.py`, `docs/architecture/runners.md`
@@ -128,6 +129,7 @@ Each is enforced or load-bearing across the codebase; the pointer says where.
 - Blocked-agent dialogs/menus (hook, transcript, screen parser, ACP permission requests, Notification markers), answering from a phone or Slack, `send-keys`, `pending-menus.json`, the composer lock → `docs/architecture/blocked-agent-menus.md`
 - MCP tools/auth → `docs/architecture/mcp-surface.md`. The embedded widget, canopy-ui/canopy-client/dimagi-canopy packaging, MCP Apps Views, the host-grant live probe, `scripts/e2e_embed_widget.py` → `docs/architecture/embedding-internals.md`. Host-facing embedding guide + page contract → `docs/architecture/embedding-a-canopy-agent.md`; host grant wire contract → `sdk/python/README.md`
 - Deploys, CI/merge queue, AWS/IAM, the old address, Postgres hosting → `docs/architecture/deploy.md`. Styling, themes, `canopy-ui`, the service worker/PWA, static caching → `docs/architecture/frontend.md`
+- Who changed which setting, through what (`SettingChange`, `route_gates.SETTINGS`, `audit.note_change`) → `docs/architecture/settings-audit.md`
 - Pages and what each does → `docs/architecture/pages.md`. Every API route → `docs/architecture/api-surface.md`. The plugin marketplace → `docs/architecture/plugin-marketplace.md`
 - Connecting a system (operator side) → `docs/runbooks/connecting-a-system.md`; Gmail push → `docs/runbooks/gmail-push-provisioning.md`; the mobile loop against real emdash → `docs/runbooks/mobile-loop-real-emdash.md`
 - Product design + glossary → `docs/designs/canopy-web-design.md`; deferred work → `TODOS.md`

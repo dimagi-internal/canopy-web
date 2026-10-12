@@ -1,7 +1,7 @@
 """Pydantic v2 schemas for /api/events."""
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from apps.common.schemas import StrictModel
 
@@ -60,3 +60,26 @@ class McpCallOut(StrictModel):
 
 class McpCallListOut(StrictModel):
     items: list[McpCallOut]
+
+
+class SettingChangeOut(StrictModel):
+    id: int
+    created_at: str
+    workspace: str
+    actor_email: str
+    via: str
+    credential: dict[str, Any]
+    client: str
+    mcp_tool: str
+    request_id: str
+    operation: str
+    method: str
+    path: str
+    target: str
+    summary: str
+    request: dict[str, Any]
+    changes: list[dict[str, Any]]
+
+
+class SettingChangeListOut(StrictModel):
+    items: list[SettingChangeOut]
