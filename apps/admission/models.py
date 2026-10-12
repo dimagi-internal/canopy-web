@@ -45,11 +45,16 @@ class AdmissionRule(models.Model):
         (SYSTEM, "System: a schedule, a drill, or nobody established"),
     ]
 
-    CONFINED, FULL = "confined", "full"
+    CONFINED, FULL, NONE = "confined", "full", "none"
     ACCESS_CHOICES = [
         (CONFINED, "Confined: a caller held to one capability"),
         (FULL, "Full: the agent's whole profile"),
+        (NONE, "None: offered nothing, so refused"),
     ]
+
+    #: The sender's standing with the workspace. Only `blocked` is a condition.
+    BLOCKED = "blocked"
+    SENDER_CHOICES = [(BLOCKED, "Blocked: a contact the workspace blocked")]
 
     MANUAL, AUTO = "manual", "auto"
     TURN_MODE_CHOICES = [(MANUAL, "Manual"), (AUTO, "Auto")]
@@ -71,6 +76,8 @@ class AdmissionRule(models.Model):
     #: A capability name from the agent's interface (`ask`), blank = any.
     capability = models.CharField(max_length=64, blank=True, default="")
     turn_mode = models.CharField(max_length=8, choices=TURN_MODE_CHOICES, blank=True, default="")
+    #: `blocked` matches a sender the workspace blocked (`Contact.is_blocked`).
+    sender = models.CharField(max_length=8, choices=SENDER_CHOICES, blank=True, default="")
     runner_kind = models.CharField(max_length=10, choices=RUNNER_KIND_CHOICES, blank=True, default="")
 
     action = models.CharField(max_length=8, choices=ACTION_CHOICES, default=REJECT)
@@ -103,9 +110,16 @@ class AdmissionRule(models.Model):
         return f"admission:{self.workspace_id}:{self.pk}:{self.action}"
 
     #: The conditions, in the order a summary reads them.
-    CONDITIONS = ("origin", "principal", "access", "capability", "turn_mode", "runner_kind")
+    CONDITIONS = ("origin", "principal", "sender", "access", "capability", "turn_mode", "runner_kind")
     #: Conditions only known once a runner claims the turn.
     CLAIM_TIME = ("turn_mode", "runner_kind")
+
+    @property
+    def is_refusal(self) -> bool:
+        """A rule about turns canopy refuses on its own — a blocked sender, or
+        a person the agent offers nothing. It cannot let them run: it decides
+        only what such a refusal records and who is told (`evaluate.at_refusal`)."""
+        return self.sender == self.BLOCKED or self.access == self.NONE
 
     @property
     def specificity(self) -> int:
@@ -114,6 +128,14 @@ class AdmissionRule(models.Model):
     def clean(self) -> None:
         if self.agent_id and self.workspace_id and self.agent.workspace_id != self.workspace_id:
             raise ValidationError({"agent": "that agent lives in another workspace"})
+        if self.is_refusal and self.action == self.ALLOW:
+            raise ValidationError(
+                "a blocked sender or a person offered nothing is always refused; "
+                "unblock the sender or change the agent's interface instead")
+        if self.is_refusal and (self.turn_mode or self.runner_kind):
+            raise ValidationError(
+                "a refusal happens before any runner or mode is chosen, so it cannot "
+                "be narrowed by turn mode or runner")
         if not self.specificity:
             # A rule with no conditions rejects (or exempts) every turn in the
             # workspace. Disabling the agent is the honest way to do that.

@@ -10,7 +10,8 @@ from apps.common.schemas import StrictModel
 
 Origin = Literal["", "api", "ace_web", "canopy_web_chat", "canopy_scheduler", "email", "slack"]
 Principal = Literal["", "member", "contact", "agent", "system"]
-Access = Literal["", "confined", "full"]
+Access = Literal["", "confined", "full", "none"]
+Sender = Literal["", "blocked"]
 TurnMode = Literal["", "manual", "auto"]
 RunnerKind = Literal["", "emdash", "cloud", "remote"]
 Action = Literal["reject", "allow"]
@@ -18,11 +19,14 @@ Action = Literal["reject", "allow"]
 
 class AdmissionRuleIn(StrictModel):
     """Blank conditions mean "any"; a rule needs at least one. `allow` exempts
-    matching turns from every `reject` rule in the workspace."""
+    matching turns from every `reject` rule in the workspace. A rule on a
+    blocked sender or `access: none` is about turns canopy always refuses: it
+    sets what the refusal records and who is told, and cannot be an `allow`."""
 
     agent: str = Field("", description="An agent slug in this workspace, or blank for every agent.")
     origin: Origin = ""
     principal: Principal = ""
+    sender: Sender = ""
     access: Access = ""
     capability: str = Field("", max_length=64)
     turn_mode: TurnMode = ""
@@ -40,6 +44,7 @@ class AdmissionRulePatch(StrictModel):
     agent: str | None = None
     origin: Origin | None = None
     principal: Principal | None = None
+    sender: Sender | None = None
     access: Access | None = None
     capability: str | None = Field(None, max_length=64)
     turn_mode: TurnMode | None = None
@@ -57,6 +62,7 @@ class AdmissionRuleOut(StrictModel):
     agent: str
     origin: str
     principal: str
+    sender: str
     access: str
     capability: str
     turn_mode: str
@@ -69,6 +75,9 @@ class AdmissionRuleOut(StrictModel):
     summary: str
     #: Started as one of canopy's defaults (and is an ordinary row since).
     seeded: bool
+    #: About turns canopy refuses on its own (a blocked sender, a person offered
+    #: nothing). It cannot let them run; it sets what is recorded and who is told.
+    refusal: bool
     fired_count: int
     last_fired_at: dt.datetime | None
     created_by: str
@@ -83,6 +92,7 @@ class AdmissionChoice(StrictModel):
 class AdmissionChoices(StrictModel):
     origins: list[AdmissionChoice]
     principals: list[AdmissionChoice]
+    senders: list[AdmissionChoice]
     access: list[AdmissionChoice]
     turn_modes: list[AdmissionChoice]
     runner_kinds: list[AdmissionChoice]

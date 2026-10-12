@@ -360,6 +360,11 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
             return replay, False
         raise
     logger.info("email turn %s refused: contact %s is blocked", turn.pk, contact.pk)
+    # Refused whatever the rules say; the workspace's `blocked-sender` rule
+    # decides what is recorded and who is told (canopy-web#1416).
+    from apps.admission import evaluate as admission
+
+    admission.at_refusal(turn, sender="blocked")
     return turn, True
 
 
@@ -392,6 +397,11 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
         turn.finished_at = timezone.now()
         turn.result_note = f"not run: {decision.reason or agent.slug + ' does not take work from you'}"
         turn.save(update_fields=["status", "finished_at", "result_note"])
+        # Refused whatever the rules say; the workspace's `offered-nothing` rule
+        # decides what is recorded and who is told (canopy-web#1416).
+        from apps.admission import evaluate as admission
+
+        admission.at_refusal(turn, access="none")
         return
     turn.capability = cap
     turn.save(update_fields=["capability"])

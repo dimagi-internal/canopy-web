@@ -310,6 +310,20 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   notices, and is **on**. The second is the same on a laptop (`emdash`) runner
   and is **off**. From then on they are ordinary rows. Disable one, narrow it
   with an `allow`, or delete it (a deleted default is not re-seeded).
+* **Refusals as rules** (canopy-web#1416, #1400 item 6). canopy refuses two
+  kinds of turn on its own, before any rule: mail from a contact the workspace
+  **blocked** (`_refused_email_turn`), and a person the agent's interface
+  **offers nothing** (`_apply_capability`, access `none`). Those are access
+  decisions, so they stand whatever the rules say: no `allow` can cover them,
+  and disabling their rule does not let them run. Each is reported through a
+  rule instead (`evaluate.at_refusal`): conditions `sender: blocked` or
+  `access: none`, which also takes origin, principal, capability and agent but
+  never a runner or a mode (a refusal comes before either). A matching enabled
+  rule records the ledger event and the fired count and sends its notices, while
+  the turn keeps the refusal's own `result_note`. Migration `admission/0005`,
+  and every new workspace, seed `blocked-sender` and `offered-nothing`, each
+  with **every notice off**, which is what these refusals did before. A blocked
+  sender still gets no reply unless an admin turns one on.
 
 ## The caller envelope
 

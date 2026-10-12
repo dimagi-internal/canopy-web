@@ -33,17 +33,18 @@ const pairs = (...values: string[]) => values.map((v) => ({ value: v, label: v }
 const choices = {
   origins: pairs('email', 'slack'),
   principals: pairs('member', 'contact'),
-  access: pairs('confined', 'full'),
+  senders: pairs('blocked'),
+  access: pairs('confined', 'full', 'none'),
   turn_modes: pairs('manual', 'auto'),
   runner_kinds: pairs('emdash', 'cloud'),
   actions: pairs('reject', 'allow'),
 }
 
 const cloud: AdmissionRuleOut = {
-  id: 3, workspace: 'connect', agent: '', origin: 'email', principal: '', access: 'confined',
+  id: 3, workspace: 'connect', agent: '', origin: 'email', principal: '', sender: '', access: 'confined',
   capability: '', turn_mode: 'manual', runner_kind: 'cloud', action: 'reject',
   reason: 'nobody can approve the reply', notify_sender: true, notify_owner: true, enabled: true,
-  summary: 'Email, confined, manual, on a Cloud runner', seeded: true, fired_count: 2,
+  summary: 'Email, confined, manual, on a Cloud runner', seeded: true, refusal: false, fired_count: 2,
   last_fired_at: '2026-10-10T23:46:00Z', created_by: '', updated_at: '2026-10-11T00:00:00Z',
 }
 const laptop: AdmissionRuleOut = {
@@ -123,6 +124,23 @@ describe('WorkspaceAdmissionRulesPage', () => {
     fireEvent.click(screen.getByTestId('admission-save'))
     await waitFor(() => expect(updateAdmissionRule).toHaveBeenCalledWith(
       'connect', 3, expect.objectContaining({ reason: 'changed', runner_kind: 'cloud' })))
+  })
+
+  it('marks a refusal rule as one that cannot let a turn run, and edits its sender', async () => {
+    const blocked: AdmissionRuleOut = {
+      ...cloud, id: 5, access: '', turn_mode: '', runner_kind: '', sender: 'blocked', refusal: true,
+      notify_sender: false, notify_owner: false, summary: 'Email from a blocked sender',
+    }
+    getAdmissionRules.mockResolvedValue(policy({ rules: [cloud, blocked] }))
+    updateAdmissionRule.mockResolvedValue(blocked)
+    show()
+    expect((await screen.findByTestId('admission-refusal-5')).textContent).toContain('always refused')
+    expect(screen.queryByTestId('admission-refusal-3')).toBeNull()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Edit' })[1])
+    expect((screen.getByLabelText('Sender') as HTMLSelectElement).value).toBe('blocked')
+    fireEvent.click(screen.getByTestId('admission-save'))
+    await waitFor(() => expect(updateAdmissionRule).toHaveBeenCalledWith(
+      'connect', 5, expect.objectContaining({ sender: 'blocked' })))
   })
 
   it('shows a reader the rules and no controls', async () => {
