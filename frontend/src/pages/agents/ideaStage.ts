@@ -1,7 +1,7 @@
 import type { IdeaOut } from '@/api/agents'
 
-// An idea's stage, in a contributor's words (hal T69): a task's status read as
-// proposed / started / shipped. The server does the mapping; this only names it.
+// An idea's stage (hal T82): proposed until a task works on it, then started;
+// shipped and not-pursued are a person's call. The server decides; this names it.
 
 export type Stage = IdeaOut['stage']
 
@@ -17,4 +17,15 @@ export function saidOn(iso: string | null | undefined): string {
   if (!iso) return ''
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+/** "1 shipped · 2 started · 1 proposed" — the same three words everywhere. */
+export function tally(c: { shipped: number; started: number; proposed: number }): string {
+  return `${c.shipped} shipped · ${c.started} started · ${c.proposed} proposed`
+}
+
+/** A person whose page is not written (or not shown to this reader). */
+export function unwritten(name: string): string {
+  const first = name.split(' ')[0] || name
+  return `${first} hasn't shared what they're after yet.`
 }

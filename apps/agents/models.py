@@ -790,6 +790,16 @@ class AgentTask(models.Model):
         "self", null=True, blank=True, on_delete=models.SET_NULL,
         related_name="subtasks",
     )
+    #: WHAT this task is (hal T82, Jonathan 2026-10-12). `work` — the agent's
+    #: own work, and every task that says nothing. `idea` — a PERSON's want
+    #: about the product, carrying their own words (at least one human-why
+    #: quote, enforced in `services`); the work toward it is its subtasks.
+    #: Explicit, never inferred: T69 read every task as an idea, and the agent's
+    #: process work (a docs round-up, a screen review) counted as the product's
+    #: shipped ideas.
+    WORK, IDEA = "work", "idea"
+    KIND_CHOICES = [(WORK, "Work"), (IDEA, "Idea")]
+    kind = models.CharField(max_length=8, choices=KIND_CHOICES, default=WORK)
     #: The task's own Drive folder, inside its project's — what
     #: `canopy gdoc publish --task` files under. The id is what `gog drive`
     #: needs; the url is what a human clicks. Blank until something is filed.

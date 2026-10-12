@@ -634,6 +634,20 @@ def resolve_parent(task: AgentTask, ref: str) -> AgentTask | None:
     return parent
 
 
+def _kind(value) -> str:
+    kind = (value or AgentTask.WORK).strip().lower()
+    if kind not in (AgentTask.WORK, AgentTask.IDEA):
+        raise ValueError(f"kind must be work|idea, got {value!r}")
+    return kind
+
+
+def _require_words(human_why) -> None:
+    """An idea is a PERSON's want: it carries their own words, or it is not one."""
+    if not any((w or {}).get("quote", "").strip() for w in (human_why or [])):
+        raise ValueError("an idea (kind=idea) carries a person's own words — give at least one "
+                         "human_why quote; the agent's own work is kind=work")
+
+
 def _resolve_who(agent: Agent, who: dict):
     """(person, email, name) for one quote's speaker.
 
@@ -749,6 +763,9 @@ def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
                 found = get_task(agent, parent_ref)
                 project = found.project if found is not None else None
             parent = resolve_parent(AgentTask(agent=agent, project=project), parent_ref)
+        kind = _kind(p.get("kind"))
+        if kind == AgentTask.IDEA:
+            _require_words(p.get("human_why"))
         ext_id = _claim_ext_id(agent, (p.get("ext_id") or "").strip())
         try:
             with transaction.atomic():  # savepoint
@@ -757,6 +774,7 @@ def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
                     ext_id=ext_id,
                     project=project,
                     parent=parent,
+                    kind=kind,
                     ask_kind=ask_kind,
                     idempotency_key=key or None,
                     raised_by_id=raised_by,
@@ -867,6 +885,8 @@ def patch_task(task: AgentTask, data) -> AgentTask:
         # parent, would leave a child filed somewhere its parent is not.
         raise TaskTreeError(f"{task.ext_id} is a subtask of {task.parent.ext_id}; move the parent, "
                             f"or send \"parent\": \"\" to detach it first")
+    if data.get("kind") is not None:
+        task.kind = _kind(data["kind"])
     task.save()
     if moved:
         # A subtree moves as one: a parent's subtasks follow it to its new project.
@@ -876,6 +896,10 @@ def patch_task(task: AgentTask, data) -> AgentTask:
             _link_participants(child)
     if "human_why" in data:
         set_human_why(task, data["human_why"] or [])
+    if task.kind == AgentTask.IDEA and not task.human_whys.exists():
+        # Atomic: refusing here leaves the task exactly as it was.
+        raise ValueError(f"{task.ext_id} is an idea, and an idea carries a person's own words — "
+                         f"give it at least one human_why quote")
     if "project" in data:
         _link_participants(task)
     return task

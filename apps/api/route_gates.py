@@ -133,6 +133,10 @@ GATES: dict[str, tuple[str, ...]] = {
     "patch_project": ("agent.work",),
     # --- apps/agents/contributors_api.py (hal T69): ideas + contributor pages
     "project_ideas": ("member",),  # page content withheld from an agent without the person's `use`
+    # hal T82: the team view, and adding your OWN idea (a kind=idea task with
+    # your words). Someone else's words go through create_tasks (agent.work).
+    "project_team": ("member",),
+    "create_idea": ("member",),
     "contributor_page": ("member",),  # the person must be known_in the workspace; read logged
     # An agent's login (a member) under the PERSON's record switch + its grant, or the person.
     "put_contributor_summary": ("member", "self"),
@@ -141,7 +145,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "create_tasks": ("agent.work",),  # or the agent's own login
     "get_task": ("member",),
     "patch_task": ("agent.work",),
-    "act_on_task": ("member", "agent.work"),  # approve/decline/reply = member; dispatch/done = editor
+    "act_on_task": ("member", "agent.work"),  # approve/decline/reply = member; dispatch/done = editor, or the idea's own person marking a kind=idea task done (shipped)
     "list_task_actions": ("member",),
     "mark_task_action_applied": ("agent.work",),  # or the agent's own login
     # --- apps/agents/fleet_api.py  (fleet-wide lists, scoped to visible agents)
@@ -605,7 +609,7 @@ GATES: dict[str, tuple[str, ...]] = {
 #: whose gate includes plain "member" must be here, with the reason a viewer may
 #: do it — or the route must be gated and its entry above changed.
 VIEWER_MAY_MUTATE: dict[str, str] = {
-    "act_on_task": "approve/decline/reply answer what is already on the board (interaction tier); dispatch/done require agent.work",
+    "act_on_task": "approve/decline/reply answer what is already on the board (interaction tier); dispatch/done require agent.work — except that the person whose words an idea task carries may mark it done (shipped): it is their idea",
     "check_agent_github": "re-probes the stored token against GitHub and records the result; grants and changes nothing",
     "delete_agent_github": "withdraws only the caller's OWN GitHub delegation",
     "check_agent_salesforce": "re-probes the lender's credential against Salesforce and records the result; grants and changes nothing",
@@ -615,6 +619,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "record_session": "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent",
     "preview_cron": "POST but read-only: computes next fire times, writes nothing",
     "create_session": "starting a chat with an agent is the interaction tier a viewer holds",
+    "create_idea": "any member may put their OWN want on a project, in their own words, as themself — a suggested kind=idea task carrying only their quote, with no on_approve; it names nobody else, and recording someone else's words is create_tasks (agent.work)",
     "put_contributor_summary": "an agent's login is a member, and that is who writes a contributor page — only while the person lets agents learn about them and has granted that agent; otherwise only the person themself",
     "add_person_fact": "an agent's login is a member, and that is who writes facts (contract canopy#804); a fact is append-only, attributed, visible to its subject and retractable by them",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",

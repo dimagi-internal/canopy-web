@@ -611,6 +611,13 @@ class AgentSkillOut(StrictModel):
 class AgentTaskLink(StrictModel):
     label: str = Field(min_length=1, max_length=200)
     url: str = Field(min_length=1, max_length=500)
+    #: `decision`: an open question this task is carrying for a person — the
+    #: project's team view lists each one as a line under "waiting on". Blank
+    #: for an ordinary link.
+    kind: Literal["", "decision"] = ""
+    #: On a decision: who it waits on, by name. Blank falls back to the task's
+    #: waiting-on person, then the project's owner.
+    waiting_on: str = Field(default="", max_length=120)
 
 
 class HumanWho(StrictModel):
@@ -719,6 +726,10 @@ class AgentTaskIn(StrictModel):
     #: project (inherited when `project` is omitted), no cycles, at most three
     #: levels deep. A parent created earlier in the same batch may be named.
     parent: str = Field(default="", max_length=64)
+    #: `work` (the default: the agent's own work) or `idea` — a person's want
+    #: about the product, which must carry their words in `human_why`. Never
+    #: inferred; the work toward an idea is its subtasks (`parent`).
+    kind: Literal["work", "idea"] = "work"
     #: The task's own Drive folder (inside its project's), when it has one.
     drive_folder_id: str = Field(default="", max_length=128)
     drive_folder_url: str = Field(default="", max_length=500)
@@ -781,6 +792,8 @@ class AgentTaskOut(StrictModel):
     project_name: str | None = None
     #: The task this is a subtask of; null for a top-level task.
     parent_ext_id: str | None = None
+    #: `idea` — a person's want, in their words (`human_why`); `work` otherwise.
+    kind: Literal["work", "idea"] = "work"
     drive_folder_id: str = ""
     drive_folder_url: str = ""
     title: str
@@ -833,6 +846,8 @@ class AgentTaskPatch(StrictModel):
     #: The parent task's `ext_id`; `""` makes it top-level again. Moving a
     #: parent's project moves its subtasks with it.
     parent: str | None = Field(default=None, max_length=64)
+    #: `idea` needs at least one `human_why` quote (sent here or already on it).
+    kind: Literal["work", "idea"] | None = None
     drive_folder_id: str | None = Field(default=None, max_length=128)
     drive_folder_url: str | None = Field(default=None, max_length=500)
     #: Who the next step waits on, by email. `""` clears it. A person canopy
@@ -1328,9 +1343,11 @@ class ContributorQuoteIn(StrictModel):
 
 
 class ContributorIdeaIn(StrictModel):
-    """One of the project's tasks that is this person's idea, with their words about it."""
+    """One of the project's ideas (a `kind: "idea"` task) the agent read as this
+    person's, with their words. The page lists the ideas carrying the person's
+    own words (their human-why); this is the agent's reading beside it."""
 
-    task: str = Field(min_length=1, max_length=64, description="The task's ext_id on this project (T71).")
+    task: str = Field(min_length=1, max_length=64, description="The idea task's ext_id on this project (T71).")
     quote: str = Field(default="", max_length=600)
     source_url: str = Field(default="", max_length=500)
     said_at: dt.datetime | None = None
@@ -1374,30 +1391,48 @@ class ContributorSummaryIn(StrictModel):
                        description="How much it rests on, e.g. '458 prompts across 22 sessions, Sep 10 to Oct 9'.")
 
 
-class IdeaSourceOut(StrictModel):
-    """One person an idea came from, and the evidence for it."""
-
-    person_id: int | None = Field(description="Null when the task names someone canopy cannot resolve.")
+class IdeaWhoOut(StrictModel):
+    person_id: int | None = Field(description="Null when canopy does not know the person here.")
     name: str
-    via: Literal["human_why", "raised_by", "contributor_page"] = Field(
-        description="human_why: the task's own record of what they said; raised_by: their turn "
-                    "raised it; contributor_page: an agent's reading of their sessions.")
-    quote: str = ""
-    source_url: str = ""
-    said_at: dt.datetime | None = None
 
 
-class IdeaOut(StrictModel):
+class IdeaTaskOut(StrictModel):
     ext_id: str
     title: str
     status: str
-    stage: Literal["proposed", "started", "shipped", "declined"]
-    next_action: str = ""
+
+
+class IdeaOut(StrictModel):
+    """An idea: a task with `kind: "idea"` — a person's want about the product,
+    in their words, with the work toward it as its subtasks."""
+
+    ext_id: str = Field(description="The idea task's ext_id.")
+    title: str
+    status: str = Field(description="The idea task's status.")
+    stage: Literal["proposed", "started", "shipped", "declined"] = Field(
+        description="Its status in a contributor's words: suggested → proposed, in progress → "
+                    "started, done → shipped (marked done by its owner or its person), declined.")
+    quote: str = Field(description="Their own words — the idea's first human-why.")
+    who: IdeaWhoOut
+    source_url: str = ""
+    said_at: dt.datetime | None = None
+    people: list[int] = Field(description="Everyone whose words it carries (Person ids).")
+    subtasks: list[IdeaTaskOut] = Field(description="The work toward it.")
+    created_at: dt.datetime
     updated_at: dt.datetime
-    links: list[AgentTaskLink]
-    came_from: list[IdeaSourceOut]
-    their_words: IdeaSourceOut | None = Field(default=None,
-                                              description="On a contributor page: this person's words about it.")
+
+
+class IdeaIn(StrictModel):
+    """Your own idea, in your own words. Any member may. To record someone
+    else's words, create a task with `kind: "idea"` and `human_why`."""
+
+    quote: str = Field(min_length=1, max_length=2000, description="Your words, verbatim.")
+    title: str = Field(default="", max_length=300)
+
+
+class IdeaCreatedOut(StrictModel):
+    idea: IdeaOut
+    notified: list[str] = Field(description="Who was told about it, by name.")
 
 
 class StageCountsOut(StrictModel):
@@ -1426,6 +1461,34 @@ class ProjectIdeasOut(StrictModel):
     agent: str
     project: str
     name: str
+    stages: StageCountsOut
+    ideas: list[IdeaOut]
+    contributors: list[ContributorBriefOut]
+
+
+class WaitingLineOut(StrictModel):
+    text: str = Field(description="One line.")
+    url: str = ""
+    waiting_on: str = Field(description="Who it waits on, by name.")
+
+
+class ProjectTeamOut(StrictModel):
+    """A project as a teammate sees it: what it is, where it stands, the ideas,
+    the people. None of the agent's process — no task cards or numbers."""
+
+    agent: str
+    agent_name: str
+    project: str
+    name: str
+    outcome: str
+    status: str
+    owner_name: str
+    links: list[AgentTaskLink]
+    may_edit: bool = Field(description="May the caller edit the project's work (the work board is theirs).")
+    my_person_id: int | None = Field(default=None, description="The caller as a Person: they may mark their own ideas shipped.")
+    built: list[IdeaOut] = Field(description="Ideas marked shipped.")
+    in_progress: list[IdeaOut] = Field(description="Ideas a task has started on.")
+    waiting: list[WaitingLineOut] = Field(description="Open decisions waiting on people, one line each.")
     stages: StageCountsOut
     ideas: list[IdeaOut]
     contributors: list[ContributorBriefOut]

@@ -1,10 +1,14 @@
-"""/api/agents/{slug}/projects/{ref}/contributors — ideas and contributor pages (hal T69).
+"""/api/agents/{slug}/projects/{ref}/… — a project's team view, its ideas, and
+its contributor pages (hal T69, T82).
 
-Mounted beside the agents router. The rules live in `contributors.py`; this file
-is the HTTP shape:
+Mounted beside the agents router. The rules live in `ideas.py` and
+`contributors.py`; this file is the HTTP shape:
 
-* `GET  …/contributors/` — every idea (task) with its stage and who it came from,
-  and the project's contributors. Members of the agent's workspace.
+* `GET  …/team/` — the project as a teammate sees it: what it is, where it
+  stands (built, in progress, decisions waiting on people), its ideas and its
+  people. Members of the agent's workspace.
+* `POST …/ideas/` — add your own idea (a `kind: "idea"` task). Any member.
+* `GET  …/contributors/` — the ideas and the project's contributors.
 * `GET  …/contributors/{person}/` — one contributor's page. `person` is an id or
   an email address. Members; the read is logged where the person can see it.
 * `PUT  …/contributors/{person}/summary/` — an agent writes (or rewrites) the
@@ -21,9 +25,17 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 
 from . import contributors as svc
-from .api import _get_agent_or_404, _get_project_or_404
+from . import ideas as idea_svc
+from .api import _get_agent_or_404, _get_project_or_404, _is_agent_itself
 from .models import ProjectParticipant
-from .schemas import ContributorPageOut, ContributorSummaryIn, ProjectIdeasOut
+from .schemas import (
+    ContributorPageOut,
+    ContributorSummaryIn,
+    IdeaCreatedOut,
+    IdeaIn,
+    ProjectIdeasOut,
+    ProjectTeamOut,
+)
 
 router = Router(auth=session_auth, tags=["agents"])
 
@@ -50,17 +62,53 @@ def _log_read(person, project, request: HttpRequest, reader: svc.Reader) -> None
                       reader_user=request.user, reader_agent=reader.agent)
 
 
-@router.get("/{slug}/projects/{ref}/contributors/", response=ProjectIdeasOut,
-            summary="A project's ideas (where each stands, whose it was) and its contributors")
-def project_ideas(request: HttpRequest, slug: str, ref: str) -> dict:
-    """Every task of the project is an idea. `stage` reads its status in a
-    contributor's words: suggested → proposed, in_progress → started,
-    done → shipped (declined stays declined). `came_from` lists who it came from,
-    strongest evidence first: the task's human-why, the human whose turn raised
-    it, then contributor pages that claim it. Contributors with a page lead.
+@router.get("/{slug}/projects/{ref}/team/", response=ProjectTeamOut,
+            summary="A project as a teammate sees it: what it is, where it stands, its ideas and people")
+def project_team(request: HttpRequest, slug: str, ref: str) -> dict:
+    """The team view's one read. What it is (outcome, links, owner); where it
+    stands — ideas shipped and in progress, and the decisions waiting on people,
+    one line each (open asks, tasks parked on a person, and task links marked
+    `kind: "decision"`); every idea with its status and whose it is; and the
+    people, each tallied over the same ideas. No task cards, numbers, rationale
+    or notes. `may_edit` says the caller may use the work board."""
+    agent = _get_agent_or_404(request, slug)
+    project = _get_project_or_404(agent, ref)
+    return idea_svc.team(project, request.user)
 
-    An agent sees contributor-page content (goals, quotes, the attributions that
-    rest on a page) only for people who let agents use what they learned."""
+
+@router.post("/{slug}/projects/{ref}/ideas/", response={201: IdeaCreatedOut},
+             summary="Add your own idea to a project, in your own words")
+def create_idea(request: HttpRequest, slug: str, ref: str, payload: IdeaIn) -> Status:
+    """Any member of the workspace. It becomes a task with `kind: "idea"` on the
+    project, with your words as its human-why and you as its person; it tells
+    the agent (one turn) and the project's owner, and `notified` says who was
+    told. To record someone ELSE's words, create a task with `kind: "idea"` and
+    `human_why` (`POST /tasks/`, the editor/agent tier)."""
+    agent = _get_agent_or_404(request, slug)
+    project = _get_project_or_404(agent, ref)
+    if _is_agent_itself(request, agent):
+        raise HttpError(422, "an agent has no ideas of its own: record a person's words as a task "
+                             "with kind=idea and human_why")
+    try:
+        task = idea_svc.add_own_idea(project, quote=payload.quote, title=payload.title, user=request.user)
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from None
+    told = idea_svc.notify(task, by_user=request.user)
+    [out] = [i for i in idea_svc.of_project(project) if i["ext_id"] == task.ext_id]
+    return Status(201, {"idea": out, "notified": told})
+
+
+@router.get("/{slug}/projects/{ref}/contributors/", response=ProjectIdeasOut,
+            summary="A project's ideas (where each stands, whose it is) and its contributors")
+def project_ideas(request: HttpRequest, slug: str, ref: str) -> dict:
+    """The project's ideas: its top-level tasks with `kind: "idea"` — a
+    person's want in their words, with the work toward it as subtasks. A task
+    of kind `work` is the agent's own and never shows here. `stage` is the
+    idea task's status in a contributor's words. Contributors are tallied over
+    the same ideas; those with a page lead.
+
+    An agent sees contributor-page content (goals, quotes) only for people who
+    let agents use what they learned."""
     agent = _get_agent_or_404(request, slug)
     project = _get_project_or_404(agent, ref)
     return svc.board(project, svc.reader_of(request.user))
@@ -70,8 +118,8 @@ def project_ideas(request: HttpRequest, slug: str, ref: str) -> dict:
             summary="One contributor's page: their goal in their own words, and their ideas")
 def contributor_page(request: HttpRequest, slug: str, ref: str, person: str) -> dict:
     """What they are trying to achieve, quoted with links to where they said it,
-    and their ideas on this project as shipped / started / proposed, plus what
-    they want that no task covers yet. Read it before building on — or against —
+    and their ideas on this project as shipped / started / proposed (the
+    project's ideas whose person they are), plus wants not yet recorded as ideas. Read it before building on — or against —
     their idea. `person` is an id or an email address."""
     agent = _get_agent_or_404(request, slug)
     project = _get_project_or_404(agent, ref)

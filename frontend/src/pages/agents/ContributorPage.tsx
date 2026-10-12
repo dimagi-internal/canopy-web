@@ -4,7 +4,7 @@ import { Link, useOutletContext, useParams } from 'react-router-dom'
 import { AgentApiError, getContributorPage, type ContributorPageOut, type IdeaOut } from '@/api/agents'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { IdeaRow } from '@/pages/agents/ideaParts'
-import { saidOn, STAGE_LABEL, type Stage } from '@/pages/agents/ideaStage'
+import { saidOn, tally, unwritten, type Stage } from '@/pages/agents/ideaStage'
 import { Section } from '@/pages/agents/sectionLayout'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
@@ -13,6 +13,8 @@ import { WorkbenchSkeleton } from 'canopy-ui'
 // their own words with links to where they said it, and their ideas — built so
 // far versus still open. An agent wrote the summary from their sessions; this
 // page only renders it. Read it before building on someone's idea, or against it.
+// Two doors, one page: inside the agent's console (`ContributorPage`) and from
+// the project's team view (`TeamContributorPage`, hal T82), which shows no ids.
 
 const GROUPS: { stage: Stage; title: string; empty?: string }[] = [
   { stage: 'shipped', title: 'Built so far' },
@@ -21,9 +23,45 @@ const GROUPS: { stage: Stage; title: string; empty?: string }[] = [
   { stage: 'declined', title: 'Considered, not pursued' },
 ]
 
+/** On the agent's work board. */
 export function ContributorPage(): JSX.Element {
   const { agent } = useOutletContext<AgentOutletContext>()
   const { workspace = '', ref = '', person = '' } = useParams<{ workspace: string; ref: string; person: string }>()
+  const base = `/w/${workspace}/agents/${agent.slug}/projects/${encodeURIComponent(ref)}`
+  return <ContributorPageView slug={agent.slug} projectRef={ref} person={person} base={base} showRefs />
+}
+
+/** From the project's team view: no agent console around it, and no ids. */
+export function TeamContributorPage(): JSX.Element {
+  const { workspace = '', agent = '', ref = '', person = '' } = useParams<{
+    workspace: string
+    agent: string
+    ref: string
+    person: string
+  }>()
+  const base = `/w/${workspace}/projects/${agent}/${encodeURIComponent(ref)}`
+  return (
+    <div className="mx-auto max-w-3xl pb-28">
+      <ContributorPageView slug={agent} projectRef={ref} person={person} base={base} showRefs={false} />
+    </div>
+  )
+}
+
+function ContributorPageView({
+  slug,
+  projectRef: ref,
+  person,
+  base,
+  showRefs,
+}: {
+  slug: string
+  projectRef: string
+  person: string
+  /** The project page this person page sits under; siblings are `${base}/people/<id>`. */
+  base: string
+  showRefs: boolean
+}): JSX.Element {
+  const agent = { slug }
   const key = `${agent.slug}/${ref}/${person}`
   const [state, setState] = useState<{ key: string; page: ContributorPageOut | null; error: string | null } | null>(
     null,
@@ -54,8 +92,8 @@ export function ContributorPage(): JSX.Element {
   })
 
   const back = (
-    <Link to="../.." relative="path" className="text-[12px] text-muted-foreground hover:text-foreground">
-      ← {ref}
+    <Link to={base} className="text-[12px] text-muted-foreground hover:text-foreground">
+      ← Back to the project
     </Link>
   )
   const fresh = state?.key === key ? state : null
@@ -78,15 +116,15 @@ export function ContributorPage(): JSX.Element {
   }
 
   // Sibling contributor pages, from inside this one.
-  const pageHref = (personId: number) =>
-    `/w/${workspace}/agents/${agent.slug}/projects/${encodeURIComponent(ref)}/people/${personId}`
+  const pageHref = (personId: number) => `${base}/people/${personId}`
   const summary = page.summary
   const total = page.stages.shipped + page.stages.started + page.stages.proposed
 
   return (
     <div className="max-w-4xl px-6 py-8">
-      <Link to="../.." relative="path" className="text-[12px] text-muted-foreground hover:text-foreground">
-        ← {page.project} {page.project_name}
+      <Link to={base} className="text-[12px] text-muted-foreground hover:text-foreground">
+        ← {showRefs ? `${page.project} ` : ''}
+        {page.project_name}
       </Link>
 
       <header className="mt-3 mb-8 border-b border-border pb-4">
@@ -97,11 +135,7 @@ export function ContributorPage(): JSX.Element {
         </div>
         {total > 0 && (
           <p className="mt-2 text-[13px] text-foreground-secondary" data-testid="contributor-tally">
-            <span className="font-medium text-success">{page.stages.shipped} shipped</span>
-            {' · '}
-            {page.stages.started} {STAGE_LABEL.started.toLowerCase()}
-            {' · '}
-            {page.stages.proposed} {STAGE_LABEL.proposed.toLowerCase()}
+            {tally(page.stages)}
           </p>
         )}
       </header>
@@ -139,19 +173,14 @@ export function ContributorPage(): JSX.Element {
           </p>
         ) : (
           <p className="text-[13px] text-muted-foreground" data-testid="contributor-unwritten">
-            No page yet.{' '}
-            {page.may_write
-              ? 'An agent can write it from their sessions.'
-              : page.why_not
-                ? `An agent cannot write it: ${page.why_not}.`
-                : 'An agent writes it from their sessions, with their permission.'}
+            {unwritten(page.person.display_name)}
           </p>
         )}
       </Section>
 
       <Section id="contributor-ideas" title="Their ideas" description="Built so far versus still open.">
         {page.ideas.length === 0 ? (
-          <p className="text-[13px] text-muted-foreground">No ideas on this project are attributed to them yet.</p>
+          <p className="text-[13px] text-muted-foreground">No ideas from them on this project yet.</p>
         ) : (
           <div className="space-y-4">
             {GROUPS.map(({ stage, title }) => {
@@ -168,9 +197,9 @@ export function ContributorPage(): JSX.Element {
                         key={idea.ext_id}
                         idea={idea}
                         pageHref={pageHref}
-                        words={idea.their_words}
-                        // Only worth saying when someone else shares the idea.
-                        showFrom={idea.came_from.length > 1}
+                        // It is their page: every idea here is theirs.
+                        showFrom={false}
+                        showRefs={showRefs}
                       />
                     ))}
                   </ul>
@@ -182,7 +211,7 @@ export function ContributorPage(): JSX.Element {
         {summary && summary.open.length > 0 && (
           <div className="mt-4">
             <h3 className="mb-1 text-[12px] font-medium text-muted-foreground">
-              Still open, not on the board yet ({summary.open.length})
+              Also wants, not yet added as ideas ({summary.open.length})
             </h3>
             <ul className="divide-y divide-border rounded-lg border border-border" data-testid="contributor-open">
               {summary.open.map((o) => (

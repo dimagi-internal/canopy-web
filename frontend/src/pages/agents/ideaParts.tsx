@@ -1,14 +1,13 @@
 import { type JSX } from 'react'
 import { Link } from 'react-router-dom'
 
-import type { IdeaOut, IdeaSourceOut } from '@/api/agents'
-import { saidOn, STAGE_LABEL, type Stage } from '@/pages/agents/ideaStage'
+import type { ContributorBriefOut, IdeaOut } from '@/api/agents'
+import { saidOn, STAGE_LABEL, tally, unwritten, type Stage } from '@/pages/agents/ideaStage'
 
-// IDEAS (hal T69). An idea is a board task; its stage is the task's status in
-// a contributor's words, and every idea says whose it was — with their words,
-// linked to where they said them. Shared by the project page's Ideas section
-// and the contributor page.
-
+// IDEAS (hal T82). An idea is a task with kind "idea": a person's want about
+// the product, in their words, with the work toward it as its subtasks. A task
+// of kind "work" — the agent's own — never shows here. Shared by the work
+// board's Ideas section, the team view and the contributor page.
 
 const STAGE_TONE: Record<Stage, string> = {
   proposed: 'bg-info/10 text-info border-info/30',
@@ -30,8 +29,14 @@ export function StagePill({ stage }: { stage: Stage }): JSX.Element {
 
 const TRACK: Stage[] = ['proposed', 'started', 'shipped']
 
-/** Proposed → Started → Shipped, with how far this idea has got. The point of
- *  the page is watching your idea move along it. */
+const STAGE_DOT: Record<Stage, string> = {
+  proposed: 'bg-info',
+  started: 'bg-warning',
+  shipped: 'bg-success',
+  declined: 'bg-muted-foreground',
+}
+
+/** Proposed → Started → Shipped, with how far this idea has got. */
 export function StageTrack({ stage }: { stage: Stage }): JSX.Element {
   if (stage === 'declined') return <StagePill stage={stage} />
   const reached = TRACK.indexOf(stage)
@@ -53,26 +58,18 @@ export function StageTrack({ stage }: { stage: Stage }): JSX.Element {
   )
 }
 
-const STAGE_DOT: Record<Stage, string> = {
-  proposed: 'bg-info',
-  started: 'bg-warning',
-  shipped: 'bg-success',
-  declined: 'bg-muted-foreground',
-}
-
-
 /** Their words, quoted, with a link to where they said them. */
-export function TheirWords({ source }: { source: IdeaSourceOut }): JSX.Element | null {
-  if (!source.quote) return null
-  const when = saidOn(source.said_at)
+export function TheirWords({ idea }: { idea: IdeaOut }): JSX.Element | null {
+  if (!idea.quote) return null
+  const when = saidOn(idea.said_at)
   return (
     <blockquote className="mt-1 border-l-2 border-primary/40 pl-2 text-[12px] italic text-foreground-secondary">
-      “{source.quote}”
-      {source.source_url && (
+      “{idea.quote}”
+      {idea.source_url && (
         <>
           {' '}
           <a
-            href={source.source_url}
+            href={idea.source_url}
             target="_blank"
             rel="noreferrer"
             className="not-italic text-[11px] text-primary hover:underline"
@@ -85,64 +82,97 @@ export function TheirWords({ source }: { source: IdeaSourceOut }): JSX.Element |
   )
 }
 
-/** "from Jonathan, Sophie" — each a link to that person's contributor page when
- *  canopy knows them. `pageHref` builds the link from a person id. */
-export function FromChips({
-  sources,
-  pageHref,
-}: {
-  sources: readonly IdeaSourceOut[]
-  pageHref: (personId: number) => string
-}): JSX.Element {
-  if (sources.length === 0) {
-    return <span className="text-[11px] text-foreground-subtle">from: not recorded</span>
-  }
-  return (
-    <span className="text-[11px] text-muted-foreground">
-      from{' '}
-      {sources.map((s, i) => (
-        <span key={`${s.person_id ?? s.name}`}>
-          {i > 0 && ', '}
-          {s.person_id != null ? (
-            <Link to={pageHref(s.person_id)} className="text-primary hover:underline">
-              {s.name}
-            </Link>
-          ) : (
-            <span className="text-foreground-secondary">{s.name}</span>
-          )}
-        </span>
-      ))}
-    </span>
-  )
-}
-
-/** One idea as a row: stage track, title, whose it is and their words. */
+/** One idea as a row: stage, the want, whose it is and their words. `showRefs`
+ *  adds the idea's task id and its subtasks — the work board's view; a
+ *  teammate sees neither. */
 export function IdeaRow({
   idea,
   pageHref,
   showFrom = true,
-  words,
+  showRefs = false,
+  control,
 }: {
   idea: IdeaOut
   pageHref: (personId: number) => string
   showFrom?: boolean
-  /** Whose words to show under the title; defaults to the first source's. */
-  words?: IdeaSourceOut | null
+  showRefs?: boolean
+  /** Rendered at the row's end — e.g. the team view's "Mark shipped". */
+  control?: JSX.Element
 }): JSX.Element {
-  const quote = words ?? idea.came_from.find((c) => c.quote) ?? null
+  const who = idea.who
   return (
     <li data-testid={`idea-${idea.ext_id}`} className="px-3 py-2">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="text-[11px] text-muted-foreground">{idea.ext_id}</span>
-        <span className="min-w-0 flex-1 text-[13px] text-foreground">{idea.title}</span>
+        {showRefs && <span className="text-[11px] text-muted-foreground">{idea.ext_id}</span>}
+        <span className="min-w-0 flex-1 text-[13px] text-foreground">
+          {idea.title || `“${idea.quote}”`}
+        </span>
         <StageTrack stage={idea.stage} />
+        {control}
       </div>
       {showFrom && (
-        <div className="mt-0.5">
-          <FromChips sources={idea.came_from} pageHref={pageHref} />
+        <div className="mt-0.5 text-[11px] text-muted-foreground">
+          from{' '}
+          {who.person_id != null ? (
+            <Link to={pageHref(who.person_id)} className="text-primary hover:underline">
+              {who.name}
+            </Link>
+          ) : (
+            <span className="text-foreground-secondary">{who.name}</span>
+          )}
+          {showRefs && idea.subtasks.length > 0 && (
+            <span> · work: {idea.subtasks.map((t) => t.ext_id).join(', ')}</span>
+          )}
         </div>
       )}
-      {quote && <TheirWords source={quote} />}
+      {idea.title !== idea.quote && <TheirWords idea={idea} />}
+      {idea.title === idea.quote && idea.source_url && (
+        <a
+          href={idea.source_url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-0.5 inline-block text-[11px] text-primary hover:underline"
+        >
+          {saidOn(idea.said_at) ? `said ${saidOn(idea.said_at)}` : 'where they said it'}
+        </a>
+      )}
     </li>
+  )
+}
+
+/** The project's people, each tallied over its ideas. */
+export function PeopleList({
+  people,
+  pageHref,
+}: {
+  people: readonly ContributorBriefOut[]
+  pageHref: (personId: number) => string
+}): JSX.Element {
+  if (people.length === 0) {
+    return (
+      <p className="text-[13px] text-muted-foreground">
+        Nobody yet. Someone appears here when they add an idea, or when their page is written.
+      </p>
+    )
+  }
+  return (
+    <ul className="divide-y divide-border rounded-lg border border-border">
+      {people.map((c) => (
+        <li key={c.id}>
+          <Link to={pageHref(c.id)} data-testid={`contributor-${c.id}`} className="block px-3 py-2 hover:bg-muted">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              <span className="text-[13px] font-medium text-foreground">{c.display_name}</span>
+              {c.role && <span className="text-[11px] text-muted-foreground">{c.role}</span>}
+              <span className="text-[11px] text-muted-foreground sm:ml-auto">{tally(c.ideas)}</span>
+            </div>
+            {c.goal ? (
+              <p className="mt-0.5 line-clamp-2 text-[12px] text-foreground-secondary">{c.goal}</p>
+            ) : (
+              <p className="mt-0.5 text-[12px] text-foreground-subtle">{unwritten(c.display_name)}</p>
+            )}
+          </Link>
+        </li>
+      ))}
+    </ul>
   )
 }

@@ -22,7 +22,10 @@ export type ProjectOut = Schemas['AgentProjectOut']
 export type ProjectDetailOut = Schemas['AgentProjectDetailOut']
 export type ProjectIdeasOut = Schemas['ProjectIdeasOut']
 export type IdeaOut = Schemas['IdeaOut']
-export type IdeaSourceOut = Schemas['IdeaSourceOut']
+export type IdeaWhoOut = Schemas['IdeaWhoOut']
+export type IdeaCreatedOut = Schemas['IdeaCreatedOut']
+export type ProjectTeamOut = Schemas['ProjectTeamOut']
+export type WaitingLineOut = Schemas['WaitingLineOut']
 export type ContributorBriefOut = Schemas['ContributorBriefOut']
 export type ContributorPageOut = Schemas['ContributorPageOut']
 export type AgentRunnerOut = Schemas['AgentRunnerOut']
@@ -276,12 +279,29 @@ export async function getProject(slug: string, ref: string): Promise<ProjectDeta
   return unwrap(res, 'getProject') as ProjectDetailOut
 }
 
-/** A project's ideas (every task, with its stage and who it came from) and its contributors. */
+/** A project's ideas (people's wants, not its tasks) and its contributors. */
 export async function getProjectIdeas(slug: string, ref: string): Promise<ProjectIdeasOut> {
   const res = await apiV2.GET('/api/agents/{slug}/projects/{ref}/contributors/', {
     params: { path: { slug, ref } },
   })
   return unwrap(res, 'getProjectIdeas') as ProjectIdeasOut
+}
+
+/** A project as a teammate sees it: what it is, where it stands, its ideas and people. */
+export async function getProjectTeam(slug: string, ref: string): Promise<ProjectTeamOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/projects/{ref}/team/', {
+    params: { path: { slug, ref } },
+  })
+  return unwrap(res, 'getProjectTeam') as ProjectTeamOut
+}
+
+/** Add your own idea to a project, in your own words. */
+export async function addIdea(slug: string, ref: string, body: { quote: string; title?: string }): Promise<IdeaCreatedOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/projects/{ref}/ideas/', {
+    params: { path: { slug, ref } },
+    body: { title: '', ...body },
+  })
+  return unwrap(res, 'addIdea') as IdeaCreatedOut
 }
 
 /** One contributor's page on a project. `person` is an id or an email address. */

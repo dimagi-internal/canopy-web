@@ -67,6 +67,12 @@ const CLUSTERS: Array<{ label: string; match: (path: string) => boolean }> = [
     match: (p) => p.startsWith('/w/:workspace/agents/:slug/'),
   },
   {
+    // A project as a teammate sees it, outside any agent's console (hal T82):
+    // reached from a link the project's owner sends, not from a menu.
+    label: 'Project team views',
+    match: (p) => p.startsWith('/w/:workspace/projects/:agent/'),
+  },
+  {
     // Pages someone reaches from a link you sent them, with no account of
     // their own on the surface itself. NOT all of these are actually
     // loginless: /invite/:token requires signing in with the invited

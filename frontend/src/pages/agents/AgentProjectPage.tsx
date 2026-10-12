@@ -11,9 +11,11 @@ import { Section } from '@/pages/agents/sectionLayout'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
-// ONE PROJECT — always the same sections in the same order (Header, People,
-// Ideas, Tasks, Activity, Links), so a person learns one page rather than one
-// per project. People and Ideas are the shared-building lens (hal T69).
+// ONE PROJECT'S WORK BOARD — always the same sections in the same order
+// (Header, People, Ideas, Tasks, Activity, Links), so a person learns one page
+// rather than one per project. It is the agent's and its editors' page; the
+// TEAM VIEW (`/w/:ws/projects/:agent/:ref`, hal T82) is the one for teammates,
+// and each links to the other.
 
 /** Live tasks first; otherwise the server's order (position) stands. */
 function liveFirst(tasks: readonly TaskOut[]): TaskOut[] {
@@ -27,7 +29,7 @@ export function AgentProjectPage(): JSX.Element {
   // `refreshWaiting` keeps the rail's "waiting on you" badge honest after a card
   // acts.
   const { agent, canEdit, refreshWaiting } = useOutletContext<AgentOutletContext>()
-  const { ref = '' } = useParams<{ ref: string }>()
+  const { ref = '', workspace = '' } = useParams<{ ref: string; workspace: string }>()
 
   const [data, setData] = useState<{
     key: string
@@ -97,9 +99,21 @@ export function AgentProjectPage(): JSX.Element {
   const links = detail.links ?? []
   const owner = detail.owner_email || detail.owner_note
 
+  const teamHref = `/w/${workspace}/projects/${agent.slug}/${encodeURIComponent(detail.ext_id)}`
+
   return (
-    <div className="max-w-4xl px-6 py-8">
+    // pb-28: room under the last section for the site-wide floating "Canopy AI" button.
+    <div className="max-w-4xl px-6 py-8 pb-28">
       {back}
+
+      {/* The team view is the page to send a teammate; this is the agent's work board. */}
+      <p className="mt-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] text-muted-foreground">
+        This is {agent.name || agent.slug}'s work board for {detail.name}.{' '}
+        <Link to={teamHref} className="font-medium text-primary hover:underline" data-testid="team-view-link">
+          Team view
+        </Link>{' '}
+        is the page to share with teammates.
+      </p>
 
       {/* Header */}
       <header className="mt-3 mb-8 border-b border-border pb-4">
