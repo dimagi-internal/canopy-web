@@ -16606,22 +16606,6 @@ export interface components {
             readonly sections: readonly components["schemas"]["SharedSectionOut"][];
         };
         /**
-         * DrillRollup
-         * @description Aggregated readiness-drill outcomes for one runner, across all its
-         *     (runner, agent) drill pairs — the supervisor's at-a-glance signal, without
-         *     a client-side fetch-and-reduce over /runners/{id}/drills.
-         */
-        readonly DrillRollup: {
-            /** Passed */
-            readonly passed: number;
-            /** Failed */
-            readonly failed: number;
-            /** Pending */
-            readonly pending: number;
-            /** Last Finished At */
-            readonly last_finished_at: string | null;
-        };
-        /**
          * HealthCheck
          * @description One feature a runner checked on itself. `warn` is "works, but a person
          *     should know" (one Claude credential, no fallback); `fail` is "this feature
@@ -16709,7 +16693,6 @@ export interface components {
              * @default true
              */
             readonly can_administer: boolean;
-            readonly drill_rollup?: components["schemas"]["DrillRollup"] | null;
             /** Health Checks */
             readonly health_checks?: {
                 readonly [key: string]: components["schemas"]["HealthCheck"];

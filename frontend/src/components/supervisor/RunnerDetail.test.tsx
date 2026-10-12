@@ -69,7 +69,6 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     can_administer: true,
     flags: [],
     known_flags: ['zdr'],
-    drill_rollup: null,
     ...overrides,
   } as RunnerOut
 }

@@ -91,17 +91,6 @@ class RunnerHealthIn(Schema):
     bootstrapped_at: float = 0
 
 
-class DrillRollup(Schema):
-    """Aggregated readiness-drill outcomes for one runner, across all its
-    (runner, agent) drill pairs — the supervisor's at-a-glance signal, without
-    a client-side fetch-and-reduce over /runners/{id}/drills."""
-
-    passed: int
-    failed: int
-    pending: int
-    last_finished_at: dt.datetime | None
-
-
 class RunnerFlagsIn(Schema):
     flags: list[str]
 
@@ -183,9 +172,6 @@ class RunnerOut(Schema):
     # because they gate different routes: reporting one for the other is how a
     # UI ends up rendering a control that 404s.
     can_administer: bool = True
-    # None when this runner has never been drilled (not "zero of zero pass") —
-    # resolved from RunnerDrill rows via `.drills`, see resolve_drill_rollup.
-    drill_rollup: DrillRollup | None = None
     # What the box reports about its own features (Runner.health), keyed by
     # check name. A map rather than a list on purpose: openapi-fetch's Readable<T>
     # degrades an array of OBJECTS inside a response into an ArrayLike the client
@@ -312,18 +298,6 @@ class RunnerOut(Schema):
         # ONLINE and nothing ever demotes it, so the raw status lies once a
         # runner goes quiet. See Runner.live_status.
         return obj.live_status
-
-    @staticmethod
-    def resolve_drill_rollup(obj) -> DrillRollup | None:
-        rows = list(obj.drills.all())
-        if not rows:
-            return None
-        return DrillRollup(
-            passed=sum(1 for d in rows if d.outcome == "pass"),
-            failed=sum(1 for d in rows if d.outcome == "fail"),
-            pending=sum(1 for d in rows if d.outcome == "pending"),
-            last_finished_at=max((d.finished_at for d in rows if d.finished_at), default=None),
-        )
 
 
 class FleetHoldIn(Schema):
