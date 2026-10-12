@@ -548,7 +548,7 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
 
 
 @router.delete("/{slug}/interface", response=AgentInterfaceOut,
-               summary="Unpublish the declared interface: every turn runs in the full profile again")
+               summary="Unpublish the declared interface: only the agent's admins and its workspace's editors can reach it")
 def unpublish_interface(request: HttpRequest, slug: str):
     agent = _agent_for_admin(request, slug)
     agent.interface = {}
