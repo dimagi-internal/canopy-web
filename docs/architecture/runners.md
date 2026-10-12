@@ -278,6 +278,18 @@ after the delegation) call `access_token_for(user)`; no route hands it to a runn
 Spec: `docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`
 (`tests/test_github_connect.py`).
 
+## The runner software
+
+A runner is an installed package, never a checkout, and updates itself to what is deployed.
+
+**Laptop install.** `runner/canopy_runner/scripts/install-runner.sh` installs and updates: it `git archive`s a ref, builds and `uv tool install`s three wheels, provisions the CDP sidecar's node deps, and renders + loads a generated launchd plist. The daemon runs from a tool venv no checkout can change. Re-running restarts the daemon (not mid-turn). `--ref <branch>` installs another ref; `--no-launchd` skips the daemon; `--workspace <ws>` pairs into a workspace. Spec: `docs/superpowers/specs/2026-07-28-runner-as-installed-package-design.md`.
+
+**Auto-update (both kinds).** A separate job — `com.canopy.runner.updater` (launchd, every 30 min; `--no-auto-update` to skip) on a laptop, `runner/ec2/update_runner.sh` (systemd timer) on a cloud box — installs the **deployed** `expected_code_sha` for that runner kind, never `origin/main`; defers while a turn is in flight (`~/.canopy/in-flight`); and is read-only against the control plane (`canopy-runner update-check` → `current|stale|busy|unknown`, never a heartbeat). A heartbeat reporting a differing sha gets a `runner.update_available` frame that kicks the updater, so the timer is only the fallback. Laptop log: `~/.canopy/updater.log`; bootout the updater before testing a branch on a box. The cloud box installs via `git show <sha>:runner/ec2/cloud_runner.py` from its on-box clone; Secrets Manager is a first-boot seed only; override with `canopy-runner-update --ref <ref>`. Spec: `docs/superpowers/specs/2026-07-30-cloud-runner-auto-update-design.md`.
+
+**Code provenance.** `code_sha` is the last commit touching that runner kind's own source (`runner/canopy_runner/…` or `runner/ec2/`), not repo HEAD. The server holds `RUNNER_CODE_SHA` / `RUNNER_CLOUD_CODE_SHA` (computed by the deploy workflow, `fetch-depth: 0`); `RunnerOut.expected_code_sha` serves the one matching the row's `kind`, and `/supervisor` alerts only when both sides are non-empty and differ (empty = unknown).
+
+**The cloud runner** (`runner/ec2/cloud_runner.py`) polls claim every 15s and drains the queue, executes via `claude -p` (or ACP with `RUNNER_EXECUTOR=acp`, default off), declares repos via `RUNNER_PROJECTS`, and runs the stream/backfill contract on a 3s clock. `bootstrap_agents.sh` provisions the agent fleet (clones each `dimagi-internal/<slug>` into `/opt/agents`, installs the canopy plugin, `op inject`s env, maps gog OAuth clients); it runs from `main()` after the credential is staged and is not `set -e`, so one agent's failure does not stop the rest. Spec: `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
+
 ## Runner readiness (the not-ready marker)
 
 A failed turn writes `~/.canopy/not-ready` (`runner/canopy_runner/canopy_runner/readiness.py`,
