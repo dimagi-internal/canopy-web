@@ -271,7 +271,17 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   * The **sender** gets an automatic reply on their email thread, from the
     agent's own mailbox. canopy-web sends it with the agent's `gog-token`
     credential when that token was minted on canopy-web's own Google client;
-    the thread is then marked read. There is no reply to a machine
+    the thread is then marked read. When it cannot — most agents' tokens are on
+    the desktop `canopy` client, which only a box with gog can refresh, or
+    Google refuses the refresh or the send — the notice is left `pending`, and
+    the runner that reads the agent's mailbox leases it on its next mailbox poll
+    (`POST /api/harness/runners/{id}/admission-notices`, only for agents it may
+    hold and only from the mailbox the sender wrote to), sends the same fixed
+    text through its own gog client with the same threading and
+    `Auto-Submitted: auto-replied`, and reports it (canopy-web#1416). A runner
+    failure leaves it pending for the next lease (15 minutes); one that no
+    runner manages within 24 hours ends `failed`, saying why. A send that may
+    have gone out (a timeout) is never retried. There is no reply to a machine
     (Auto-Submitted, Precedence bulk/list, list mail), a no-reply address, the
     agent's own mailbox, a system sender, or canopy/another agent. At most one
     reply goes per thread per 24 hours. This is **off** until

@@ -122,6 +122,8 @@ EXCLUDED: dict[str, str] = {
     "list_closes": _RUNNER,
     "list_menu_answers": _RUNNER,
     "post_menu_answer_result": _RUNNER,
+    "claim_admission_notices": _RUNNER,
+    "report_admission_notice": _RUNNER,
     "post_session_backfill": _RUNNER,
     "append_turn_events": _RUNNER,
     "append_turn_transcript": _RUNNER,

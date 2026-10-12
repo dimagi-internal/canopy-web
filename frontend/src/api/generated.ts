@@ -5654,6 +5654,47 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/admission-notices": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Claim Admission Notices
+         * @description Automatic replies to rejected senders that canopy-web could not send,
+         *     leased to this runner to send from the mailboxes it reads.
+         */
+        readonly post: operations["claim_admission_notices"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/admission-notices/{notice_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Report Admission Notice
+         * @description What this runner did with an automatic reply it was leased.
+         */
+        readonly post: operations["report_admission_notice"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/session-backfill": {
         readonly parameters: {
             readonly query?: never;
@@ -17663,6 +17704,67 @@ export interface components {
              */
             readonly outcome: string;
         };
+        /** AdmissionNoticeClaimOut */
+        readonly AdmissionNoticeClaimOut: {
+            /**
+             * Notices
+             * @default []
+             */
+            readonly notices: readonly components["schemas"]["AdmissionNoticeOut"][];
+        };
+        /** AdmissionNoticeOut */
+        readonly AdmissionNoticeOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent */
+            readonly agent: string;
+            /** Agent Name */
+            readonly agent_name: string;
+            /**
+             * Mailbox
+             * @default
+             */
+            readonly mailbox: string;
+            /** Thread Id */
+            readonly thread_id: string;
+            /**
+             * Message Id
+             * @default
+             */
+            readonly message_id: string;
+            /** To */
+            readonly to: string;
+            /**
+             * Subject
+             * @default
+             */
+            readonly subject: string;
+            /** Body */
+            readonly body: string;
+        };
+        /** AdmissionNoticeClaimIn */
+        readonly AdmissionNoticeClaimIn: {
+            /**
+             * Mailboxes
+             * @default {}
+             */
+            readonly mailboxes: {
+                readonly [key: string]: string;
+            };
+        };
+        /** AdmissionNoticeReportIn */
+        readonly AdmissionNoticeReportIn: {
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            readonly outcome: "sent" | "skipped" | "failed";
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+        };
         /** BackfillWriteOut */
         readonly BackfillWriteOut: {
             /** Written */
@@ -28038,6 +28140,59 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["MenuAnswerResultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MenuAnswerResultOut"];
+                };
+            };
+        };
+    };
+    readonly claim_admission_notices: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AdmissionNoticeClaimIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AdmissionNoticeClaimOut"];
+                };
+            };
+        };
+    };
+    readonly report_admission_notice: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly notice_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AdmissionNoticeReportIn"];
             };
         };
         readonly responses: {

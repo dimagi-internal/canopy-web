@@ -225,6 +225,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_closes": ("runner",),
     "list_menu_answers": ("runner",),
     "post_menu_answer_result": ("runner",),
+    "claim_admission_notices": ("runner",),  # + runner_may_hold_agent per notice
+    "report_admission_notice": ("runner",),  # only a notice this runner holds
     "post_session_backfill": ("runner",),  # session must be bound to this runner
     # --- apps/harness/api.py: turns
     "list_unclaimable_turns": ("member", "session-acl", "turn-content"),  # prompt blanked unless turn-content

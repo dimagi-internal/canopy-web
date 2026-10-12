@@ -1,18 +1,23 @@
 """Reply on a sender's Gmail thread AS the agent, from canopy-web.
 
-The transport for a rejected turn's sender notice (canopy-web#1400, option a).
-canopy-web already holds the agent's `gog-token` credential (`AgentCredential`)
-when the mailbox was connected from the browser, and that token is bound to
-canopy-web's own Google client (`google_oauth.MINTING_CLIENT`) — the one client
-this process has the secret for. So the server can refresh it and send with
-the `gmail.modify` scope it was granted. A token minted at a terminal on the
-fleet's desktop `canopy` client cannot be refreshed here; such an agent gets
-`Unavailable`, and the notice is recorded as not sent, saying why.
+The first transport for a rejected turn's sender notice (canopy-web#1400,
+option a). canopy-web holds the agent's `gog-token` credential
+(`AgentCredential`) when the mailbox was connected from the browser, and that
+token is bound to canopy-web's own Google client (`google_oauth.MINTING_CLIENT`)
+— the one client this process has the secret for. So the server can refresh it
+and send with the `gmail.modify` scope it was granted.
 
-The chosen design over a runner-sent notice (option b): the rejection happens
-on the server, before any runner holds the turn, so a durable "pending notice"
-would wait on the next mailbox poll of a box that may be the very cloud runner
-that cannot help. Off unless `CANOPY_ADMISSION_SENDER_NOTICES` is set.
+Most agents' mailboxes hold a token minted at a terminal on the fleet's desktop
+`canopy` client instead, which canopy-web cannot refresh. For those — and for a
+refresh Google refuses, or a send Gmail refuses — this raises `Unavailable`
+and the notice is left PENDING for the agent's runner, which reads the same
+mailbox with its own gog client and sends the same fixed text on its next poll
+(`runner_notices.py`, canopy-web#1416, option b). Off unless
+`CANOPY_ADMISSION_SENDER_NOTICES` is set.
+
+`Unavailable` is raised only when NOTHING was sent: a failure after Gmail
+accepted the message (marking the thread read) is swallowed, because a runner
+retrying it would answer the sender twice.
 
 Every message carries `Auto-Submitted: auto-replied` (RFC 3834), so a
 well-behaved auto-responder on the other end does not answer it.
@@ -22,9 +27,13 @@ from __future__ import annotations
 import base64
 import json
 import re
+import logging
+import urllib.error
 import urllib.parse
 import urllib.request
 from email.message import EmailMessage
+
+logger = logging.getLogger(__name__)
 
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
 TOKEN_REF = "gog-token"
@@ -34,7 +43,7 @@ _AUTOMATION_HEADERS = ("Auto-Submitted", "Precedence", "X-Autoreply", "List-Id",
 
 
 class Unavailable(Exception):
-    """The agent's mailbox cannot be sent from by canopy-web."""
+    """canopy-web cannot send from the agent's mailbox, and sent nothing."""
 
 
 class Automated(Exception):
@@ -73,7 +82,10 @@ def access_token(agent) -> tuple[str, str]:
         "client_id": client_id, "client_secret": client_secret,
         "refresh_token": token["refresh_token"], "grant_type": "refresh_token",
     }).encode()
-    res = _json(urllib.request.Request(google_oauth.TOKEN_ENDPOINT, data=data, method="POST"))
+    try:
+        res = _json(urllib.request.Request(google_oauth.TOKEN_ENDPOINT, data=data, method="POST"))
+    except (urllib.error.URLError, ValueError) as exc:
+        raise Unavailable(f"Google refused to refresh the gog-token ({_why(exc)})") from exc
     if not res.get("access_token"):
         raise Unavailable("Google refused to refresh the gog-token")
     return res["access_token"], token.get("email", "")
@@ -88,6 +100,11 @@ def _call(token: str, path: str, *, body: dict | None = None) -> dict:
     if body is not None:
         req.add_header("Content-Type", "application/json")
     return _json(req)
+
+
+def _why(exc: Exception) -> str:
+    code = getattr(exc, "code", None)
+    return f"HTTP {code}" if code else type(exc).__name__
 
 
 def _headers(message: dict) -> dict[str, str]:
@@ -109,18 +126,24 @@ def _is_automated(headers: dict[str, str]) -> bool:
 
 def send_reply(agent, *, thread_id: str, message_id: str, to: str, subject: str, body: str) -> str:
     """Reply on the thread, threaded by In-Reply-To/References, then mark the
-    thread read. Returns Gmail's id for the sent message. Raises Unavailable or
-    Automated (nothing was sent), or anything urllib raises."""
+    thread read. Returns Gmail's id for the sent message.
+
+    Raises Automated or Unavailable, and then nothing was sent. Anything else
+    escaping means the send call itself failed in a way that does not say
+    whether Gmail delivered (a timeout); the caller must not retry that."""
     token, mailbox = access_token(agent)
-    if not message_id:
-        thread = _call(token, f"/threads/{urllib.parse.quote(thread_id)}?format=minimal")
-        messages = thread.get("messages") or []
-        if not messages:
-            raise Unavailable("the thread has no messages")
-        message_id = messages[-1]["id"]
-    params = "&".join(f"metadataHeaders={h}" for h in ("Message-ID", "References", "Subject",
-                                                        *_AUTOMATION_HEADERS))
-    newest = _call(token, f"/messages/{urllib.parse.quote(message_id)}?format=metadata&{params}")
+    try:
+        if not message_id:
+            thread = _call(token, f"/threads/{urllib.parse.quote(thread_id)}?format=minimal")
+            messages = thread.get("messages") or []
+            if not messages:
+                raise Unavailable("the thread has no messages")
+            message_id = messages[-1]["id"]
+        params = "&".join(f"metadataHeaders={h}" for h in ("Message-ID", "References", "Subject",
+                                                            *_AUTOMATION_HEADERS))
+        newest = _call(token, f"/messages/{urllib.parse.quote(message_id)}?format=metadata&{params}")
+    except (urllib.error.URLError, ValueError, KeyError) as exc:
+        raise Unavailable(f"Gmail would not show the message to answer ({_why(exc)})") from exc
     headers = _headers(newest)
     if _is_automated(headers):
         raise Automated("the message carries automation headers")
@@ -137,6 +160,14 @@ def send_reply(agent, *, thread_id: str, message_id: str, to: str, subject: str,
     msg["Auto-Submitted"] = "auto-replied"
     msg.set_content(body)
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    sent = _call(token, "/messages/send", body={"raw": raw, "threadId": thread_id})
-    _call(token, f"/threads/{urllib.parse.quote(thread_id)}/modify", body={"removeLabelIds": ["UNREAD"]})
+    try:
+        sent = _call(token, "/messages/send", body={"raw": raw, "threadId": thread_id})
+    except urllib.error.HTTPError as exc:
+        # Gmail answered, and the answer was no: nothing went out.
+        raise Unavailable(f"Gmail refused the send ({_why(exc)})") from exc
+    try:
+        _call(token, f"/threads/{urllib.parse.quote(thread_id)}/modify",
+              body={"removeLabelIds": ["UNREAD"]})
+    except Exception:  # noqa: BLE001 — the reply went; an unread thread is not worth a second one
+        logger.warning("admission: replied on %s but could not mark it read", thread_id)
     return sent.get("id", "")

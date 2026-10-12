@@ -281,6 +281,19 @@ class Client:
             {"sessions": sessions, "archived": archived or [], "complete": complete},
         )
 
+    def claim_admission_notices(self, runner_id: str, mailboxes: dict[str, str]) -> list[dict]:
+        """Lease the automatic replies canopy-web could not send, for the agents
+        whose mailboxes this box reads ({slug: address}). See admission_notices.py."""
+        _, payload = self._call("POST", f"/runners/{runner_id}/admission-notices",
+                                {"mailboxes": mailboxes})
+        return (payload or {}).get("notices", [])
+
+    def report_admission_notice(self, runner_id: str, notice_id: int, outcome: str,
+                                detail: str = "") -> bool:
+        _, payload = self._call("POST", f"/runners/{runner_id}/admission-notices/{notice_id}",
+                                {"outcome": outcome, "detail": detail})
+        return bool((payload or {}).get("ok"))
+
     def sync_streams(self, runner_id: str) -> list[dict]:
         """The sessions a viewer is watching, which this runner should tail live."""
         _, payload = self._call("GET", f"/runners/{runner_id}/streams")
