@@ -92,6 +92,24 @@ describe('withWorkspaceRetry', () => {
     ])
   })
 
+  it('on a root page, loops over the covering pins when the refusal names them', async () => {
+    window.history.replaceState(null, '', '/supervisor')
+    const refusal = new Response(
+      JSON.stringify({
+        type: REFUSED, title: 't', status: 422,
+        extras: { workspaces: ['connect', 'dimagi', 'marshellis'], pins: ['dimagi', 'marshellis'] },
+      }),
+      { status: 422, headers: { 'Content-Type': 'application/problem+json' } },
+    )
+    const { base, calls } = recordingFetch((path, n) =>
+      n === 1 ? refusal : new Response(JSON.stringify([{ id: path }]), { status: 200 }),
+    )
+    const res = await withWorkspaceRetry(base)('/api/agents/')
+    expect(res.status).toBe(200)
+    // connect is covered by the dimagi read; it is not read a second time.
+    expect(calls.sort()).toEqual(['/api/agents/', '/api/w/dimagi/agents/', '/api/w/marshellis/agents/'])
+  })
+
   it('on a root page, skips a workspace that refuses you the list, and surfaces any other failure', async () => {
     window.history.replaceState(null, '', '/activity')
     const gated = recordingFetch((path, n) =>

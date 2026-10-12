@@ -61,6 +61,11 @@ class WorkspaceOut(StrictModel):
     # True when `role` comes from owning an ancestor rather than a membership
     # row here — the UI shows it so an org owner knows why they can see it.
     inherited: bool = False
+    # A capability flag for clients: a list or search pinned to this workspace
+    # also returns the caller's workspaces BELOW it (`services.pinned_read_scope`),
+    # so one read pinned to a tree's root covers the organisation. Clients that
+    # predate it fan a refused read out over each workspace instead.
+    pinned_read_covers_descendants: bool = True
 
 
 class WorkspaceParentIn(StrictModel):

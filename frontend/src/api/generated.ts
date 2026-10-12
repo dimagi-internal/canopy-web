@@ -12827,6 +12827,11 @@ export interface components {
             readonly id: number;
             /** Agent Slug */
             readonly agent_slug: string;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
             /** Ext Id */
             readonly ext_id: string;
             /** Name */
@@ -12938,6 +12943,11 @@ export interface components {
             readonly id: number;
             /** Agent Slug */
             readonly agent_slug: string;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
             /** Ext Id */
             readonly ext_id: string;
             /** Name */
@@ -13002,6 +13012,11 @@ export interface components {
         readonly AgentTaskOut: {
             /** Agent Slug */
             readonly agent_slug: string;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
             /** Ext Id */
             readonly ext_id: string;
             /** Project Ext Id */
@@ -13459,6 +13474,11 @@ export interface components {
         readonly AgentTaskDetailOut: {
             /** Agent Slug */
             readonly agent_slug: string;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
             /** Ext Id */
             readonly ext_id: string;
             /** Project Ext Id */
@@ -15319,6 +15339,11 @@ export interface components {
              * @default false
              */
             readonly inherited: boolean;
+            /**
+             * Pinned Read Covers Descendants
+             * @default true
+             */
+            readonly pinned_read_covers_descendants: boolean;
         };
         /** WorkspaceCreateIn */
         readonly WorkspaceCreateIn: {

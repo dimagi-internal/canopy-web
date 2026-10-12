@@ -92,6 +92,7 @@ describe('InviteAcceptPage', () => {
       parent: null,
       root: 'connect',
       inherited: false,
+      pinned_read_covers_descendants: true,
     })
 
     renderPage()

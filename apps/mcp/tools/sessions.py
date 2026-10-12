@@ -42,18 +42,21 @@ async def _user(user_id):
     return user or AnonymousUser()
 
 
-async def _scope(user_id, *, workspace: str | None, session_id: str | None) -> set[str]:
+async def _scope(user_id, *, workspace: str | None, session_id: str | None,
+                 write: bool = False) -> set[str]:
     """The workspaces this call may touch. One session named by id is a by-id
     act (every membership); otherwise it is a sweep across sessions, which
     takes the read rule — a caller whose workspaces sit in more than one tenant
-    tree must name `workspace` (`wsvc.read_scope`)."""
+    tree must name `workspace` (`wsvc.read_scope`). A named `workspace` covers
+    the caller's workspaces below it for a read, and exactly it for a sweep that
+    deletes (`write=True`, `wsvc.write_scope`)."""
     def resolve():
         if session_id and not workspace:
             from django.contrib.auth import get_user_model
 
             user = get_user_model().objects.filter(pk=user_id).first() if user_id else None
             return wsvc.member_scope(user)
-        return wsvc.workspace_slugs_for_user_id(user_id, workspace)
+        return wsvc.workspace_slugs_for_user_id(user_id, workspace, write=write)
 
     try:
         return await sync_to_async(resolve, thread_sensitive=True)()
@@ -144,7 +147,7 @@ async def purge_session_noise(
             )
             raise
 
-    slugs = await _scope(user_id, workspace=workspace, session_id=session_id)
+    slugs = await _scope(user_id, workspace=workspace, session_id=session_id, write=apply)
     try:
         report = await sync_to_async(maintenance.purge_noise, thread_sensitive=True)(
             workspace_slugs=slugs, session_id=session_id, sample=sample, apply=apply,

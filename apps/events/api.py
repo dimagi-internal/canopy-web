@@ -88,7 +88,7 @@ def list_events(
     # workspace; a non-admin simply sees no rows rather than a 403, so the same
     # call works for someone who is admin in one workspace and not another.
     qs = services.list_events(
-        workspace_slugs=perms.request_slugs_with(request, perms.LOGS_READ),
+        workspace_slugs=perms.request_read_slugs_with(request, perms.LOGS_READ),
         source=source,
         kind=kind,
         level=level,
@@ -121,7 +121,7 @@ def list_mcp_calls(
 
     # The workspace's calls on the logs tier; your own calls always, wherever
     # they were filed (a call attributed to no workspace is its caller's alone).
-    scope = Q(workspace_slug__in=perms.request_slugs_with(request, perms.LOGS_READ))
+    scope = Q(workspace_slug__in=perms.request_read_slugs_with(request, perms.LOGS_READ))
     pinned = getattr(request, "workspace_slug", None)
     mine = Q(user=request.user) & (Q(workspace_slug=pinned) if pinned else Q())
     qs = MCPAuditLog.objects.filter(scope | mine).select_related("user")

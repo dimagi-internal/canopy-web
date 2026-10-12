@@ -652,6 +652,13 @@ class AgentProject(models.Model):
         return self.agent.slug
 
     @property
+    def workspace(self) -> str:
+        """The workspace this row lives in — its agent's. A list pinned to a
+        parent workspace also carries its children's rows, and the UI badges
+        the ones from elsewhere."""
+        return self.agent.workspace_id
+
+    @property
     def owner_email(self) -> str | None:
         return self.owner_user.email if self.owner_user_id else None
 
@@ -907,6 +914,11 @@ class AgentTask(models.Model):
     @property
     def agent_slug(self) -> str:
         return self.agent.slug
+
+    @property
+    def workspace(self) -> str:
+        """The workspace this task lives in — its agent's (see `AgentProject.workspace`)."""
+        return self.agent.workspace_id
 
 
     @property

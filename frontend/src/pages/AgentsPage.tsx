@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { WorkspaceBadge } from '@/components/WorkspaceBadge'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { agentHref } from './agentHref'
 
@@ -39,9 +40,12 @@ function AgentCard({ agent }: { agent: AgentCardData }) {
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <h3 className="text-[15px] font-semibold text-foreground leading-snug group-hover:text-primary transition-colors truncate">
-            {agent.name}
-          </h3>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <h3 className="text-[15px] font-semibold text-foreground leading-snug group-hover:text-primary transition-colors truncate">
+              {agent.name}
+            </h3>
+            <WorkspaceBadge workspace={agent.workspace} />
+          </div>
           {agent.email && (
             <p className="text-[11px] text-muted-foreground truncate">{agent.email}</p>
           )}

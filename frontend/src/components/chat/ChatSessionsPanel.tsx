@@ -13,6 +13,7 @@ import { NewChatMenu } from './NewChatMenu'
 import { TurnModeBadge } from './TurnModeBadge'
 import { TransferSessionMenu } from './TransferSessionMenu'
 import type { TransferResult } from '@/api/chat'
+import { WorkspaceBadge } from '@/components/WorkspaceBadge'
 
 /** An independent on/off filter — deliberately shaped unlike the sort segments
  *  beside it, so the row does not read as four options where you pick one. */
@@ -357,8 +358,9 @@ export function ChatSessionsPanel({
                       >
                         {sessionDisplayTitle(s.title) || 'Untitled chat'}
                       </div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {label} · {s.workspace}
+                      <div className="flex min-w-0 items-center gap-1.5 truncate text-xs text-muted-foreground">
+                        <WorkspaceBadge workspace={s.workspace} />
+                        {label}
                         {s.origin === 'runner' ? ' · discovered' : ''}
                         {s.status !== 'active' ? ` · ${s.status}` : ''}
                       </div>

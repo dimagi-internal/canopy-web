@@ -219,11 +219,15 @@ def _slack_binding(session: Session) -> dict | None:
     return binding_of(session)
 
 
-def _visible_slugs(request: HttpRequest, *, listing: bool = False) -> set[str]:
+def _visible_slugs(request: HttpRequest, *, listing: bool = False, bulk_write: bool = False) -> set[str]:
     """The tenants a session read may reach. A by-id read (the default) takes
-    every membership, or the pin; a LIST, search or bulk reset (`listing=True`)
-    takes the read rule — a caller whose workspaces sit in more than one tenant
-    tree must pin one, or gets a 422 rather than two organisations' sessions."""
+    every membership, or the pin; a LIST or search (`listing=True`) takes the
+    read rule — a caller whose workspaces sit in more than one tenant tree must
+    pin one, or gets a 422 rather than two organisations' sessions; a pinned list
+    covers the caller's workspaces below the pin. A bulk reset (`bulk_write=True`)
+    takes the WRITE scope: pinned, exactly that workspace, never the ones below."""
+    if bulk_write:
+        return wsvc.request_write_slugs(request)
     if listing:
         return wsvc.request_workspace_slugs(request)
     return wsvc.request_member_slugs(request)
@@ -598,7 +602,7 @@ def reset_sessions(request: HttpRequest, payload: ResetIn):
     # Only sessions you may act in. Scoping by workspace alone let a co-tenant
     # reset — and with `prune_ghosts`, delete — conversations they cannot read.
     readable = _site_scoped(
-        request, access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request, listing=True)))
+        request, access.readable_sessions(request.user, workspace_slugs=_visible_slugs(request, bulk_write=True)))
     rows = [
         s for s in readable.select_related("created_by", "runner_binding", "runner_binding__runner")
         .order_by("created_at")

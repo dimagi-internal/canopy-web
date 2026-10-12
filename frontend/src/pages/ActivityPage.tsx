@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { WorkspaceBadge } from "@/components/WorkspaceBadge";
 import { listTurns } from "@/api/turns";
 import { EventLedger } from "@/components/activity/EventLedger";
 import { EventLogTable, McpCallsTable } from "@/components/activity/WorkspaceLogs";
@@ -148,7 +149,12 @@ function TurnRow({ turn, now, open, onToggle }: {
         <td className="px-3 py-2 text-foreground-secondary" title={new Date(turn.created_at).toLocaleString()}>
           {relativeTime(turn.created_at, now)}
         </td>
-        <td className="px-3 py-2 text-foreground">{agentLabel(turn)}</td>
+        <td className="px-3 py-2 text-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            {agentLabel(turn)}
+            <WorkspaceBadge workspace={turn.workspace_slug} />
+          </span>
+        </td>
         <td className="px-3 py-2 text-muted-foreground">{originLabel(turn)}</td>
         <td className="px-3 py-2 text-foreground-secondary">{turn.claimed_by_name ?? "—"}</td>
         <td className="px-3 py-2">

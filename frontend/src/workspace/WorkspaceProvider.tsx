@@ -91,6 +91,12 @@ export function useWorkspaceRole(slug: string | null | undefined): string | null
   return ctx.workspaces.find((w) => w.slug === slug)?.role ?? null
 }
 
+/** The active workspace (the URL's on a tenant page), or null outside a
+ *  provider. Display hints only — never a gate. */
+export function useActiveWorkspace(): string | null {
+  return useContext(Ctx)?.active ?? null
+}
+
 /** The caller's workspaces, or [] outside a provider or while loading. */
 export function useWorkspaceList(): WorkspaceOut[] {
   return useContext(Ctx)?.workspaces ?? []

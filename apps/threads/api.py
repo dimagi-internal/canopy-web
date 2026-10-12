@@ -121,9 +121,9 @@ def list_threads(request: HttpRequest, parent_key: str | None = None, parent_val
     `parent_key` + `parent_value` keep threads hanging off one thing (e.g.
     `parent_key=huddle&parent_value=<huddle id>`); `agent` keeps those it takes part
     in; `status` one status."""
-    # A list: within one tenant tree (pinned → the pin's tree; unpinned by a
-    # caller in two trees → 422), never mixing organisations.
-    qs = AgentThread.objects.filter(workspace_id__in=wsvc.request_tree_slugs(request)).order_by("-created_at")
+    # A list: the read rule (pinned → the pin and the caller's workspaces below
+    # it; unpinned by a caller in two trees → 422), never mixing organisations.
+    qs = AgentThread.objects.filter(workspace_id__in=wsvc.request_workspace_slugs(request)).order_by("-created_at")
     if parent_key:
         if not _PARENT_KEY.match(parent_key):
             raise HttpError(422, f"bad parent_key {parent_key!r}")

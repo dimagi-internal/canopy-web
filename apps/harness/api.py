@@ -2075,28 +2075,22 @@ def _check_access(request, payload: TurnIn, agent, initiator) -> None:
         raise HttpError(403, d.reason or f"{agent.slug} does not take work from you")
 
 
-def visible_turns_qs(request: HttpRequest, *, all_memberships: bool = False,
-                     slugs: set[str] | None = None):
+def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None):
     """Every turn this caller may see LISTED — the exact tenant + site filter
     `list_turns` applies, newest first. Shared so a derived view over turns (the
     huddles API) can never show a turn `/api/harness/turns/` would not. Content
     is a separate gate: rows still go through `turn_access` before their prompt
     or transcript is read.
 
-    `all_memberships` widens a `/api/w/{ws}/` pin to every workspace the caller
-    belongs to IN THAT WORKSPACE'S TREE — for a view whose subject itself
-    crosses workspaces (a huddle's members can live in dimagi and connect). It
-    never widens past the caller's own memberships, nor across tenant trees.
-
-    The read rule applies (`wsvc.read_scope`): unpinned, a caller whose
-    workspaces sit in more than one tree gets a 422 rather than a list mixing
-    organisations.
+    The read rule applies (`wsvc.read_scope`): pinned, the pin and the caller's
+    workspaces below it (a `/api/w/dimagi/` list includes connect's turns for a
+    member of both); unpinned, a caller whose workspaces sit in more than one
+    tree gets a 422 rather than a list mixing organisations.
 
     `slugs` overrides the scope outright, for a by-id view that has already
     resolved its subject's tree (`huddles.get_huddle`, `threads.get_thread`)."""
     if slugs is None:
-        slugs = (wsvc.request_tree_slugs(request) if all_memberships
-                 else wsvc.request_workspace_slugs(request))
+        slugs = wsvc.request_workspace_slugs(request)
     qs = Turn.objects.select_related(
         "agent", "claimed_by", "initiator_user", "initiator_contact",
         # TurnOut.initiator names a system account (initiator.describe).

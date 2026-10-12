@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type JSX } from 'react'
 import { Link, useInRouterContext, useParams } from 'react-router-dom'
+import { WorkspaceBadge } from '@/components/WorkspaceBadge'
 import {
   actOnTask,
   AgentApiError,
@@ -716,7 +717,10 @@ export function TaskCard({
       {/* Age is never conditional — an undecided card with no date on it cannot be
           triaged (Jonathan, 2026-08-12). */}
       <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] leading-snug text-muted-foreground">
-        {showProject && <ProjectPill task={task} workspace={workspace ?? routeWorkspace} />}
+        {/* A list pinned to a parent workspace carries its children's tasks:
+            link each to ITS workspace, and mark the ones from elsewhere. */}
+        <WorkspaceBadge workspace={task.workspace} />
+        {showProject && <ProjectPill task={task} workspace={task.workspace || workspace || routeWorkspace} />}
         {parentRef && !nested && (
           <span
             className={`${PILL} border-border bg-muted text-muted-foreground`}
