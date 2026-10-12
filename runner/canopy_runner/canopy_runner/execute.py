@@ -22,6 +22,7 @@ import logging
 import os
 import pathlib
 import time
+import types
 from pathlib import Path
 
 from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
@@ -605,6 +606,19 @@ def prompt_with_attachments(prompt: str, paths: list[pathlib.Path]) -> str:
         f"with the Read tool before replying:\n{lines}"
     )
 
+# How much of an unreadable frame a COMPOSER_NOT_VISIBLE failure records: the
+# bottom of the pane is where the composer (or whatever replaced it) is drawn.
+SCREEN_TAIL_ROWS = 25
+SCREEN_TAIL_CHARS = 4000
+
+
+def _screen_tail(screen: str) -> str:
+    """The last non-blank rows of a rendered terminal frame, bounded."""
+    rows = [r.rstrip() for r in (screen or "").replace("\u00a0", " ").splitlines()]
+    rows = [r for r in rows if r.strip()]
+    return "\n".join(rows[-SCREEN_TAIL_ROWS:])[-SCREEN_TAIL_CHARS:]
+
+
 def _blocking_dialog_note(cfg, client, runner_id: str, turn: dict, task: str, exc) -> str:
     """Why a reuse send failed, in terms the human can act on — and, when the
     answer is "a dialog is up", the dialog itself.
@@ -629,9 +643,13 @@ def _blocking_dialog_note(cfg, client, runner_id: str, turn: dict, task: str, ex
     if "COMPOSER_NOT_VISIBLE" not in str(exc):
         return plain
     try:
+        # ONE read of the screen serves both the menu parse and the evidence below,
+        # so the frame recorded is the frame that was judged.
+        screen = cdp_control.read_terminal(task, port=cfg.cdp_port, project=_target(turn))
         # The hook path's serializer, deliberately: a menu must reach the phone
         # in ONE shape whichever path found it, or the client grows two readers.
-        menu = hooks.read_hook_menu_from(cdp_control, task, cdp_port=cfg.cdp_port,
+        frozen = types.SimpleNamespace(read_terminal=lambda *a, **k: screen)
+        menu = hooks.read_hook_menu_from(frozen, task, cdp_port=cfg.cdp_port,
                                          project=_target(turn))
     except Exception:  # noqa: BLE001
         logger.debug("could not read the dialog on %s", task, exc_info=True)
@@ -639,6 +657,19 @@ def _blocking_dialog_note(cfg, client, runner_id: str, turn: dict, task: str, ex
     if menu is None:
         # Mid-redraw or a stale frame — the error's other causes. Saying "blocked"
         # here would report an agent as needing a human when it is merely busy.
+        #
+        # Record WHAT was drawn instead of the input line. Failure investigation #1
+        # (turn a225d132, ace on stewari-mbp-cdp, 2026-10-12): four claims over 80s
+        # all bounced COMPOSER_NOT_VISIBLE with no parsable dialog, into a session
+        # whose agent was mid-run in a subagent — and nothing anywhere said what was
+        # on screen, so "a menu the parser does not model", "a scrolled-up pane" and
+        # "a TUI view with no composer" could not be told apart.
+        try:
+            client.post_events(turn.get("id") or "", [{"kind": "status", "payload": {
+                "status": "composer_not_visible", "task": task,
+                "screen_tail": _screen_tail(screen)}}])
+        except Exception:  # noqa: BLE001 — observability may never cost a turn
+            logger.debug("could not record the frame for %s", task, exc_info=True)
         return plain
     session_id = (turn.get("origin_ref") or {}).get("chat_session_id") or ""
     try:

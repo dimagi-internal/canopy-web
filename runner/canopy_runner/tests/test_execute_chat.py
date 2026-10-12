@@ -214,6 +214,32 @@ def test_a_bounce_with_no_dialog_on_screen_stays_a_plain_failure(monkeypatch):
                 if e["kind"] == "activity:blocked"]
 
 
+def test_a_bounce_with_no_dialog_records_what_was_on_screen(monkeypatch):
+    """Failure investigation #1 (turn a225d132, 2026-10-12): four sends bounced
+    COMPOSER_NOT_VISIBLE with no dialog the parser knew, and nothing recorded what
+    WAS drawn where the input line should be — so the cause could not be decided.
+    The frame the decision was made on must reach the turn's events."""
+    screen = BUSY + "\n\u00a0\n" + "\n".join(f"row {i}" for i in range(40))
+    _res, client = _bounce_off_a_dialog(monkeypatch, screen)
+
+    frames = [e["payload"] for e in client.events
+              if e["kind"] == "status" and e["payload"].get("status") == "composer_not_visible"]
+    assert len(frames) == 1, "the unreadable frame was never recorded"
+    tail = frames[0]["screen_tail"]
+    assert frames[0]["task"] == "ada-chat-1435"
+    assert tail.splitlines()[-1] == "row 39"
+    assert len(tail.splitlines()) == execute.SCREEN_TAIL_ROWS
+    assert len(tail) <= execute.SCREEN_TAIL_CHARS
+
+
+def test_a_bounce_off_a_parsed_dialog_ships_the_menu_not_the_frame(monkeypatch):
+    """A dialog that parsed already says what is on screen; no frame dump."""
+    _res, client = _bounce_off_a_dialog(monkeypatch, PERMISSION)
+
+    assert not [e for e in client.events
+                if e["payload"].get("status") == "composer_not_visible"]
+
+
 def test_a_stop_before_delivery_sends_nothing_at_all(monkeypatch, tmp_path):
     """The cheapest cancel there is: the human pressed stop between the claim and the
     send, so the message must never reach the agent's session.
