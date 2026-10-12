@@ -1025,13 +1025,15 @@ def _refresh_agent_env(slug: str, op_token: str) -> None:
         env = {k: v for k, v in _child_safe_env().items()
                if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
         env["OP_SERVICE_ACCOUNT_TOKEN"] = op_token
+        try:
+            prior = json.loads(stamp.read_text())
+            prior = prior if isinstance(prior, dict) else {}
+        except (OSError, ValueError):
+            prior = {}
+        last = prior.get("fingerprint")
         err, injected = "", False
         try:
             fingerprint, err = _vault_fingerprint(tpl, env, op_token)
-            try:
-                last = json.loads(stamp.read_text()).get("fingerprint")
-            except (OSError, ValueError, AttributeError):
-                last = None
             if not err and (fingerprint != last or not out.is_file()):
                 out.parent.mkdir(parents=True, exist_ok=True)
                 res = subprocess.run(["op", "inject", "-i", str(tpl), "-o", str(tmp), "-f"],
@@ -1040,7 +1042,7 @@ def _refresh_agent_env(slug: str, op_token: str) -> None:
                 if res.returncode == 0 and tmp.is_file():
                     os.chmod(tmp, 0o600)
                     os.replace(tmp, out)  # readers see the old file or the new one, never half
-                    stamp.write_text(json.dumps({"fingerprint": fingerprint, "injected_at": now}))
+                    prior.update(fingerprint=fingerprint, injected_at=now)
                     injected = True
                 else:
                     err = _op_err(res, "op inject", op_token)
@@ -1050,6 +1052,14 @@ def _refresh_agent_env(slug: str, op_token: str) -> None:
             err = f"op could not run ({exc})"
         finally:
             tmp.unlink(missing_ok=True)
+        # Every check is stamped, success or not: the agent session's own SessionStart
+        # hook (`canopy cred sync`) reads `checked_at` and does not probe again.
+        try:
+            fd = os.open(stamp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(json.dumps({**prior, "checked_at": now}))
+        except OSError:
+            pass  # an unwritable stamp only costs a re-check
         if err:
             _log(f"warn: {slug}: could not refresh {out} from its vault — this turn uses the "
                  f"existing file, which may be stale: {err}")

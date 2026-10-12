@@ -163,3 +163,16 @@ def test_no_key_or_no_template_means_no_inject(cloud_runner, box, monkeypatch):
     cloud_runner._AGENT_OP.clear()
     cloud_runner._agent_env("eva")                    # no clone, so no .env.tpl
     assert box["calls"] == []
+
+
+def test_every_check_is_stamped_for_the_sessions_own_hook(cloud_runner, box):
+    # The agent session's SessionStart hook runs `canopy cred sync`, which skips when
+    # `checked_at` is fresh — so a cloud turn is probed once, by the runner.
+    cloud_runner._agent_env("ace")
+    stamp = json.loads((box["home"] / ".ace" / ".env.stamp").read_text())
+    assert stamp["fingerprint"] and stamp["checked_at"] == stamp["injected_at"]
+    cloud_runner._AGENT_ENV_AT["ace"] = 0.0
+    box["raise"] = subprocess.TimeoutExpired(["op"], 30)
+    cloud_runner._agent_env("ace")
+    after = json.loads((box["home"] / ".ace" / ".env.stamp").read_text())
+    assert after["fingerprint"] == stamp["fingerprint"] and after["checked_at"] >= stamp["checked_at"]
