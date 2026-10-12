@@ -1,9 +1,6 @@
 import type { JSX } from 'react'
 import type { RunnerOut } from '@/api/harness'
-import type { components } from '@/api/generated'
 import { relativeAge } from '@/lib/relativeAge'
-
-type DrillRollup = components['schemas']['DrillRollup']
 
 // Mirrors menubar.py's four derived states (_runner_state, menubar.py:224) so
 // the two surfaces read identically — until Phase 5, when the panel loads this
@@ -22,14 +19,6 @@ const DOT: Record<string, string> = {
 // Ladder lives in `relativeAge` (and is unit-tested there) so it cannot stop at
 // hours again — that is what produced "drilled 1087h ago" on this very row.
 const relative = (iso: string | null): string => relativeAge(iso)
-
-// Worst-signal-wins: a single failed drill outranks any number of pending
-// ones for the at-a-glance color, which in turn outranks an all-clear.
-function drillBadgeClass(rollup: DrillRollup): string {
-  if (rollup.failed > 0) return 'text-destructive'
-  if (rollup.pending > 0) return 'text-warning'
-  return 'text-success'
-}
 
 // Health problems the box reported about itself. A box can be online and ready
 // while a feature is off (2026-09-22: no transcripts, no inbox), so this is its
@@ -108,29 +97,17 @@ export function RunnerStatus({
           {r.host && (
             <span className="hidden min-w-0 truncate text-xs text-muted-foreground sm:inline">{r.host}</span>
           )}
-          {r.drill_rollup && (
-            <span
-              data-testid={`runner-drill-badge-${r.name}`}
-              className={`hidden shrink-0 text-xs sm:inline ${drillBadgeClass(r.drill_rollup)}`}
-            >
-              checked {relative(r.drill_rollup.last_finished_at)} —{' '}
-              {r.drill_rollup.passed}/{r.drill_rollup.passed + r.drill_rollup.failed + r.drill_rollup.pending}
-            </span>
-          )}
           <span className="shrink-0 text-xs text-muted-foreground">{relative(r.last_heartbeat_at)}</span>
           </span>
 
-          {/* Phone: the two facts the wide row shows inline, on their own line
-              instead of hidden. A runner you cannot identify is the failure this
-              list exists to prevent. */}
-          {(r.host || r.drill_rollup) && (
+          {/* Phone: the host the wide row shows inline, on its own line instead
+              of hidden. A runner you cannot identify is the failure this list
+              exists to prevent. (A readiness-drill badge sat beside it until
+              2026-10-12: drills are a debugging tool, and a months-old failure
+              painted a healthy box red — they live on the runner's detail.) */}
+          {r.host && (
             <span className="flex items-baseline gap-2 pl-[18px] text-xs sm:hidden">
-              {r.host && <span className="min-w-0 truncate text-muted-foreground">{r.host}</span>}
-              {r.drill_rollup && (
-                <span className={`shrink-0 ${drillBadgeClass(r.drill_rollup)}`}>
-                  checked {relative(r.drill_rollup.last_finished_at)}
-                </span>
-              )}
+              <span className="min-w-0 truncate text-muted-foreground">{r.host}</span>
             </span>
           )}
         </button>
