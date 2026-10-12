@@ -183,6 +183,23 @@ def fix_links(turn, rule, agent) -> list[dict]:
     return links
 
 
+def _reply_line(turn, rule) -> str:
+    """What the sender was told, in words: the owner should never have to guess."""
+    if not rule.notify_sender:
+        return "none: this rule does not reply to the sender"
+    notice = AdmissionNotice.objects.filter(turn=turn, kind=AdmissionNotice.SENDER).first()
+    if notice is None:
+        return "none"
+    to = f" to {notice.recipient}" if notice.recipient else ""
+    return {
+        AdmissionNotice.SENT: f"an automatic reply was sent{to} on the thread",
+        AdmissionNotice.PENDING: f"an automatic reply{to} is queued; the agent's runner sends it "
+                                 "on its next mailbox check",
+        AdmissionNotice.HELD: "none: automatic replies are off in this workspace "
+                              "(Settings → Admission rules)",
+    }.get(notice.status, f"none: {notice.detail}")
+
+
 def _owner_body(turn, rule, agent) -> tuple[str, str]:
     from .rules import summary
 
@@ -205,6 +222,7 @@ def _owner_body(turn, rule, agent) -> tuple[str, str]:
     lines += [
         f"Rule:    {rule.pk}: reject {summary(rule)}",
         f"Why:     {rule.reason}",
+        f"Reply:   {_reply_line(turn, rule)}",
         "",
         "Nothing ran. To handle this one, open the thread yourself. To stop rejecting turns "
         "like it, change the rule, the agent's turn mode, or who may reach it:",

@@ -158,7 +158,7 @@ class AdmissionNotice(models.Model):
     KIND_CHOICES = [(SENDER, "Sender"), (OWNER, "Owner")]
 
     SENT = "sent"                      # delivered
-    HELD = "held"                      # delivery is switched off on this deployment
+    HELD = "held"                      # automatic replies are off in this workspace
     SKIPPED = "skipped"                # deliberately not sent (loop safety, throttle)
     NOT_CONFIGURED = "not_configured"  # the transport is off (SES not enabled)
     FAILED = "failed"                  # tried, and nothing more will try

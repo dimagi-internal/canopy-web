@@ -310,7 +310,9 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
     `held`.
   * The **owner** gets, off the thread: an email (SES), plus a review ask on
     the agent's board parked on them (Waiting on you). Both name who wrote, the
-    subject and thread, the rule and its reason, and links to fix it: the rule
+    subject and thread, the rule and its reason, what the sender was told (a
+    `Reply:` line: sent, queued for the runner, off in this workspace, or why
+    not), and links to fix it: the rule
     on the settings page (`?rule=<id>`, highlighted), the agent's turn mode and
     runners, its interface callers, and its turns.
 * **Defaults.** Every workspace is seeded with two rows: by migration

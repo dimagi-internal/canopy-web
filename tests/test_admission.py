@@ -122,6 +122,8 @@ def test_a_confined_manual_email_on_a_cloud_runner_is_rejected_not_run(
     body = mail.outbox[0].body
     assert VIKRAM in body and f"/w/connect/settings/admission-rules?rule={rule.pk}" in body
     assert "/w/connect/agents/hal/settings#running" in body
+    # ...and says, in words, what the sender was told.
+    assert "Reply:   none: automatic replies are off in this workspace" in body
     # ...and lands on their Waiting on you.
     task = hal.tasks.get(idempotency_key=f"admission:{turn.pk}")
     assert task.ask_kind == "review" and task.waiting_on_user == fleet["jj"]
@@ -290,6 +292,7 @@ def test_with_replies_on_the_sender_is_answered_once_per_thread(
     kwargs = sending.call_args.kwargs
     assert kwargs["to"] == VIKRAM and kwargs["thread_id"] == "t-9" and kwargs["message_id"] == "m-1"
     assert "automatic reply" in kwargs["body"] and "Jonathan Jackson" in kwargs["body"]
+    assert f"Reply:   an automatic reply was sent to {VIKRAM} on the thread" in mail.outbox[-1].body
 
     # The same poll again: the same idempotency key, so no new turn and no notice.
     assert _mail(fleet["hal"], thread="t-9", count=1).pk == first.turn_id
