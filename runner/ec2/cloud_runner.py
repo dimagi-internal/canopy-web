@@ -4858,6 +4858,19 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             finish_body["session_key"] = cli_session_id
         _api("POST", f"/turns/{turn_id}/finish", finish_body)
         _log(f"finished turn {turn_id[:8]}: {finish}")
+        if confined:
+            # AFTER the finish, which writes result_note: a caller's turn hands its
+            # `For <Agent>'s owner:` line to the note the owner reads, even when the
+            # reply above it ran past the 2000 characters kept (canopy-web#1416).
+            try:
+                from canopy_transcript.owner_ask import find  # noqa: PLC0415
+
+                line = find(text)
+                if line:
+                    _api("POST", f"/turns/{turn_id}/events",
+                         {"events": [{"kind": "owner_ask", "payload": {"line": line}}]})
+            except Exception as exc:  # noqa: BLE001 — the transcript is still the record
+                _log(f"warn: could not send turn {turn_id[:8]} its owner line: {exc}")
         if cwd is not None:
             # After the finish, never before it: the transcript rows above are
             # read from ~/.claude/projects, not the worktree, but a release that

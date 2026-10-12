@@ -64,9 +64,13 @@ class HookListener:
 
     def __init__(self, *, port: int, nonce: str, resolve_session, forward,
                  read_menu=None, resolve_task=None, menu_store=None,
-                 on_usage_limit=None):
+                 on_usage_limit=None, on_stop=None):
         self.port = port
         self.nonce = nonce
+        # Injected: called with a `Stop` payload and its (project, task) keys —
+        # how a caller's session's `For <Agent>'s owner:` line reaches its turn
+        # (canopy-web#1416). Never allowed to slow or fail the hook.
+        self._on_stop = on_stop
         # Injected: called with Claude Code's cap message when ANY session on this
         # box ends on a usage cap. Every session here shares the box's one Claude
         # login, so one capped session means the whole runner is capped — the
@@ -128,6 +132,7 @@ class HookListener:
             # hook kind that forwards nothing.
             self._track_menu(payload)
             self._check_usage_limit(payload)
+            self._note_stop(payload)
             activity = activity_for_hook(payload)
             if activity is not None:
                 cwd = payload.get("cwd") or ""
@@ -176,6 +181,17 @@ class HookListener:
         except Exception:  # noqa: BLE001 — a hook must never see a failure
             logger.debug("hook handling failed (non-fatal)", exc_info=True)
             return "error"
+
+    def _note_stop(self, payload: dict) -> None:
+        if self._on_stop is None or self._resolve_task is None \
+                or payload.get("hook_event_name") != "Stop":
+            return
+        try:
+            keys = self._resolve_task(payload.get("cwd") or "")
+            if keys:
+                self._on_stop(payload, keys)
+        except Exception:  # noqa: BLE001 — a hook must never see a failure
+            logger.debug("stop handling failed (non-fatal)", exc_info=True)
 
     def _check_usage_limit(self, payload: dict) -> None:
         """Did this session's turn just end on a Claude usage cap?

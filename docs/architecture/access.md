@@ -233,6 +233,18 @@ an actor routing rule (an `auto` naming a person needs a verified message) → a
 source routing rule → the agent's own switch (`Agent.turn_mode`). Setting `auto`
 on any rung is for the agent's admins.
 
+## What a caller's turn tells the owner
+
+A confined turn can act on nothing, so a caller's procedure ends its final
+message with one line, `For <Agent>'s owner: <the ask>`, and tells the caller
+the request is noted where the owner reviews it. The runner lifts that line out
+(the laptop from the `cx-` session's `Stop` hook, whose profile names the turn;
+the cloud box from the finished reply) and sends it as an `owner_ask` turn
+event. canopy-web re-parses it and appends it to the turn's `result_note`, for a
+confined turn only and once per line (`apps/harness/owner_ask.py`,
+canopy-web#1416). The note is what every view of the turn shows the people who
+may read it; the transcript stays the record.
+
 ## Admission rules
 
 Some combinations of the above can never complete, and canopy refuses them

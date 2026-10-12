@@ -11,6 +11,7 @@ parser, which is what keeps this dependency one-directional."""
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import threading
 import time
@@ -591,6 +592,46 @@ def pause_for_usage_limit(cfg: Config, client: Client, text: str) -> None:
     logger.warning("usage cap on this box's Claude login — runner paused until %s", when)
 
 
+def send_owner_ask(client: Client, payload: dict, keys, *, profile_root=None,
+                   background: bool = True) -> None:
+    """A caller's session just ended a turn: if its final message carries the
+    `For <Agent>'s owner:` line, send it to the turn, whose result note is what
+    the owner reads (canopy-web#1416). Only for a `cx-` session, whose profile
+    names the turn it is serving; everything else is not a caller's session.
+    Posted off the hook's thread, and best-effort: the note is a convenience,
+    the transcript is still the record."""
+    from canopy_transcript import owner_ask
+
+    from . import caller, session_naming
+
+    root = profile_root or caller.PROFILE_ROOT
+    for _project, task in keys:
+        if not session_naming.is_restricted_task(task):
+            continue
+        turn_id = None
+        for name in dict.fromkeys((task, task[len("emdash-"):] if task.startswith("emdash-") else task)):
+            try:
+                turn_id = json.loads((Path(root) / f"{name}.json").read_text()).get("turn_id")
+                break
+            except (OSError, ValueError):
+                continue
+        line = owner_ask.from_stop_hook(payload) if turn_id else None
+        if not line:
+            continue
+
+        def post(turn_id=turn_id, line=line):
+            try:
+                client.post_events(turn_id, [{"kind": "owner_ask", "payload": {"line": line}}])
+            except Exception:  # noqa: BLE001
+                logger.warning("could not send turn %s its owner line", turn_id, exc_info=True)
+
+        if background:
+            threading.Thread(target=post, daemon=True, name="owner-ask").start()
+        else:
+            post()
+        return
+
+
 def start_hook_listener(cfg: Config, client: Client):
     """Install the user-level hook and start the loopback listener.
 
@@ -638,6 +679,7 @@ def start_hook_listener(cfg: Config, client: Client):
         # Beside runner.json and the PAUSED sentinel — per-box state, not config.
         menu_store=MenuStore(Path.home() / ".canopy" / "pending-menus.json"),
         on_usage_limit=lambda text: pause_for_usage_limit(cfg, client, text),
+        on_stop=lambda payload, keys: send_owner_ask(client, payload, keys),
     )
     listener.bind_sender(
         lambda session_id, events: client.post_session_stream(
