@@ -510,6 +510,7 @@ def create_project(agent: Agent, data) -> AgentProject:
     if getattr(data, "links", None):
         payload["links"] = [link.model_dump() for link in data.links]
     ext_id = (getattr(data, "ext_id", "") or "").strip() or next_project_ext_id(agent)
+    payload["owner_user"] = resolve_project_owner(agent, getattr(data, "owner_email", ""))
     return AgentProject.objects.create(agent=agent, ext_id=ext_id, **payload)
 
 
@@ -520,6 +521,8 @@ def patch_project(project: AgentProject, data: dict) -> AgentProject:
             setattr(project, f, _norm_project_status(value) if f == "status" else value)
     if "links" in data:
         project.links = data["links"]
+    if "owner_email" in data:
+        project.owner_user = resolve_project_owner(project.agent, data["owner_email"])
     project.save()
     return project
 
@@ -843,6 +846,17 @@ def resolve_waiting_on(agent: Agent, email: str):
     canopy can notify AND who can see the agent, so routing it to a stranger
     would create a wait nobody will ever answer.
     """
+    return _workspace_member(agent, email, instead="assigned")
+
+
+def resolve_project_owner(agent: Agent, email: str):
+    """A project's owner as a real person, or None to clear — the same
+    workspace rule as `resolve_waiting_on`, because the owner is who an idea
+    added on the team view emails (`ideas.notify`)."""
+    return _workspace_member(agent, email, instead="owner_note")
+
+
+def _workspace_member(agent: Agent, email: str, *, instead: str):
     email = (email or "").strip().lower()
     if not email:
         return None
@@ -854,7 +868,7 @@ def resolve_waiting_on(agent: Agent, email: str):
     if user is None or not wsvc.is_member(user, agent.workspace_id):
         raise UnknownPersonError(
             f"{email or 'that person'} is not a member of this agent's workspace — "
-            f"put the name in `assigned` instead"
+            f"put the name in `{instead}` instead"
         )
     return user
 

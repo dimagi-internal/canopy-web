@@ -1450,7 +1450,11 @@ def list_projects(request: HttpRequest, slug: str, status: str = "") -> list[Age
 @router.post("/{slug}/projects/", response={201: AgentProjectOut}, summary="Create a project",)
 def create_project(request: HttpRequest, slug: str, payload: AgentProjectIn) -> Status:
     agent = _agent_for_write(request, slug)
-    return Status(201, AgentProjectOut.model_validate(services.create_project(agent, payload)))
+    try:
+        project = services.create_project(agent, payload)
+    except services.UnknownPersonError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201, AgentProjectOut.model_validate(project))
 
 
 #: How many of the agent's turns a project page shows.
@@ -1528,7 +1532,11 @@ def patch_project(request: HttpRequest, slug: str, ref: str,
     if "links" in data and data["links"] is not None:
         data["links"] = [link if isinstance(link, dict) else link.model_dump()
                          for link in data["links"]]
-    return AgentProjectOut.model_validate(services.patch_project(project, data))
+    try:
+        project = services.patch_project(project, data)
+    except services.UnknownPersonError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return AgentProjectOut.model_validate(project)
 
 
 # ---- tasks, addressed by `ext_id` ----

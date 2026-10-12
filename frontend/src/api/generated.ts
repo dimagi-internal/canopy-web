@@ -13068,6 +13068,11 @@ export interface components {
              */
             readonly owner_note: string;
             /**
+             * Owner Email
+             * @default
+             */
+            readonly owner_email: string;
+            /**
              * Drive Folder Id
              * @default
              */
@@ -13375,6 +13380,8 @@ export interface components {
             readonly status?: string | null;
             /** Owner Note */
             readonly owner_note?: string | null;
+            /** Owner Email */
+            readonly owner_email?: string | null;
             /** Drive Folder Id */
             readonly drive_folder_id?: string | null;
             /** Drive Folder Url */
