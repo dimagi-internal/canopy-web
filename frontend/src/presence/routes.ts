@@ -1,19 +1,6 @@
 import type { RouteRule } from 'canopy-ui/presence'
 
 /**
- * Workspace segment for pages that are NOT tenant-scoped.
- *
- * The leading `~` is load-bearing, not decoration: the server's page-key
- * parser validates the workspace segment against `^[a-z0-9][a-z0-9_-]{0,63}$`,
- * which `~global` cannot match. A bare `global` CAN match it, which made
- * "global" a workspace name any user could create and then assert to skip
- * the membership gate entirely. Keep this in lockstep with
- * `apps/realtime/presence_keys.py`'s `GLOBAL_SENTINEL` (and with ace-web's,
- * which carries the identical constant).
- */
-const GLOBAL_SENTINEL = '~global'
-
-/**
  * canopy-web's route table for presence grouping.
  *
  * A route with no rule here yields `pageKeyFor(...) === null`, which opens no
@@ -45,7 +32,9 @@ const GLOBAL_SENTINEL = '~global'
  * — the safe default rather than putting them in a stranger's roster.
  */
 export const canopyPresenceRules: RouteRule[] = [
-  // --- Tenant-scoped (/w/:workspace/...) --------------------------------
+  // Every rule is tenant-scoped (/w/:workspace/...). The server still accepts
+  // the `~global` sentinel (`apps/realtime/presence_keys.py`) for a page with
+  // no workspace; none has presence today.
 
   // Live multiplayer chat: a co-edited draft plus a streamed reply, so two
   // people typing into the same session genuinely need to see each other.
@@ -68,13 +57,12 @@ export const canopyPresenceRules: RouteRule[] = [
     build: (m) => ({ workspace: m[1], resource: `ddd:${m[2]}`, subLocation: 'Narrative' }),
   },
 
-  // --- Global (not tenant-scoped) ---------------------------------------
-
   // The narrative review surface: a reviewer edits the scene's own text in
-  // place, so two reviewers on one narrative is exactly the silent-clobber
-  // case presence exists to warn about.
+  // place, so two reviewers on one review is exactly the silent-clobber case
+  // presence exists to warn about. Keyed by its workspace, so only members
+  // join the roster; an outside reader on a public link gets no badge.
   {
-    pattern: /^\/review\/([^/]+)/,
-    build: (m) => ({ workspace: GLOBAL_SENTINEL, resource: `review:${m[1]}`, subLocation: 'Review' }),
+    pattern: /^\/w\/([^/]+)\/review\/([^/]+)/,
+    build: (m) => ({ workspace: m[1], resource: `review:${m[2]}`, subLocation: 'Review' }),
   },
 ]
