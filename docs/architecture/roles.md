@@ -23,9 +23,8 @@ capability (`CONTENT_WRITE`, `AGENT_WORK`, `LOGS_READ`, `MEMBERS_MANAGE`, `INTEG
 `OWN`, …) to the lowest role that holds it, and every gate outside `apps/workspaces/` asks
 `perms.can(user, workspace, perms.<CAPABILITY>)` — never a role name.
 `tests/test_roles_named_only_in_workspaces.py` fails the build on a role constant, a
-`member_role(...)` comparison or a rank check anywhere else. That is the lesson of adding
-`admin` (2026-10-02): the same tier had been written five ways, and two of them silently
-changed meaning when a role was inserted. The frontend mirrors the table in
+`member_role(...)` comparison or a rank check anywhere else — a tier written by hand in a
+second place silently changes meaning the next time a role is inserted. The frontend mirrors the table in
 `frontend/src/lib/workspaceRoles.ts`, and a vitest reads `permissions.py` to keep the two equal.
 
 **Every route declares its gate.** `apps/api/route_gates.py` lists, for every operation in the
@@ -48,7 +47,8 @@ exactly one thing: **an owner of a workspace is an owner of every workspace belo
 else is inherited. A parent's editors and viewers have no access to a child, and a child's
 members have none to its parent or siblings.
 
-The narrowness is the design. `dimagi` is self-join for every `@dimagi.com` address, so if its
+The narrowness is the design. `dimagi` auto-approves an access request from every `@dimagi.com`
+address (`auto_approve_role = editor`), so if its
 *editors* inherited, every employee could read — and, as editors, delete — every division's
 agents, which is precisely what a division workspace exists to prevent.
 
@@ -150,8 +150,9 @@ follow-up; it would break every flat-route client in the Dimagi fleet today.
 ## The first tier has no account at all
 
 The genuinely read-only role is **not** a membership role — it is having a link and no
-account. `/storyboard/:slug`, `/narrative/:slug`, `/walkthrough/:id`, `/share/:token`,
-`/ddd-release/:narrative/:runId` and `/about` serve anonymous readers.
+account. The scoped viewers under `/w/:workspace/` — `storyboard/:slug`, `narrative/:slug`,
+`walkthrough/:id`, `review/:id`, `share/:token`, `ddd-release/:narrative/:runId` — and the
+public site serve anonymous readers (`_SCOPED_VIEWER` in `apps/common/middleware.py`).
 
 Two things enforce it together, and **both are required** — this catches people out:
 
@@ -190,11 +191,10 @@ Three ways (the full account, in the access glossary's words, is
   clears the login gate too. `/api/me/` reports `can_create_workspace` so the UI never
   offers a button that 403s.
 
-Gone: **app-credential provisioning** (2026-09-22 — a connected site's visitor is now a
-**contact**, not a member; `WorkspaceMembership.provisioned_by_app` stays as provenance),
-and **self-join** (2026-10-04 — `GET /joinable` + `POST /{slug}/join` made you an editor on
-a domain match with nobody asked; owner decision: "nothing automatic on dimagi.com except
-that they should be able to request an invitation").
+There is no fourth way. A connected site's visitor is a **contact**, never a member
+(`WorkspaceMembership.provisioned_by_app` is provenance on old rows only), and there is no
+self-join or domain auto-join: `access_request_domains` (`workspaces/0012`) means "may ask",
+never "may join".
 
 `apps/workspaces/tests/test_access_requests.py` asserts the only code that can create a
 `WorkspaceMembership` is `services._grant` (invite acceptance + request approval),
@@ -202,22 +202,11 @@ that they should be able to request an invitation").
 fourth door cannot appear quietly; `tests/test_no_implicit_enrolment.py` pins the same for
 `ensure_member` callers.
 
-**There is no automatic join.** Until 2026-09-12 there was: `auto_join_workspaces` added you
-as `editor` to every workspace matching your email domain, and it ran *as a side effect of a
-visibility check* — so merely looking at an agent silently granted write membership of a
-tenant. It was replaced by self-join (an explicit click), and that in turn by access
-requests: the domain list survives, renamed `access_request_domains` (`workspaces/0012`),
-and now means "may ask" rather than "may join".
-
-Nor is creating a row a way in — but it **was**, and that mattered more than auto-join did.
-Five create endpoints (projects — since retired —, shareouts, walkthroughs, reviews, issues) each held their own
-copy of `ws = pinned or ensure_default_workspace(); ensure_member(ws, request.user)`. On the
-flat `/api/…` mount nothing is pinned, so `ws` was the org default *whoever was calling*, and
-`ensure_member` made them an **editor** of it as a side effect of the write. An
-**invite-admitted** user — the one deliberately kept off the domain allowlist — became an
-editor of `dimagi` by posting one shareout, and from there passed every `editor` gate on the
-fleet. All five now resolve through `wsvc.creation_workspace`, which only ever returns a
-tenant the caller is already in and refuses with 422 when there is none.
+**Never grant membership as a side effect.** Not of a visibility check, and not of a write:
+a create resolves its workspace through `wsvc.creation_workspace`, which only ever returns a
+tenant the caller is already in and refuses with 422 when there is none. Calling
+`ensure_member` from a create path would let an invite-admitted user become an editor of the
+org default by posting one row; `tests/test_no_implicit_enrolment.py` pins it.
 
 A request cannot be used to probe tenants: a workspace whose domains do not match yours and
 a workspace that does not exist return the **same 404**. Approval is upgrade-only, like an
@@ -241,7 +230,7 @@ recur and the routes that deliberately sit off the ladder.
 - `_agent_for_write` — `AGENT_WORK` (editor and above). Reshaping: upsert, runner assignment,
   runner rules, turn mode, syncs, turns, skills, project create/patch, task create/patch. Setting
   `auto` — on a routing rule, an actor route or the agent's switch — additionally needs
-  `Agent.is_admin` (`_refuse_auto_unless_admin`, 2026-10-04).
+  `Agent.is_admin` (`_refuse_auto_unless_admin`).
 - `_agent_for_admin` — `Agent.is_admin`: the agent's owner, a workspace owner, or an explicit
   `AgentAdmin`, each a CURRENT member. Credentials, the vault pointer, the interface, the
   Google mailbox mint, moving the agent to another workspace.
@@ -250,11 +239,10 @@ recur and the routes that deliberately sit off the ladder.
 login) — `agents.services.runner_may_hold_agent`. Claiming an agent turn, resolving its
 credentials, the per-turn GitHub token, pinning a turn to a box (which also needs the pinner
 to be an agent admin or that runner's admin — `access.may_pin_runner`), and every routing write
-(runner list, source rules, actor routes) all ask it. Before 2026-10-02 an editor paired a
-box, listed it (disabled) on an agent and read every secret, both vault keys and the owner's
-GitHub token through `/credentials/resolve`; an assignment row was the whole trust boundary,
-and the editor tier wrote it. A teammate whose own laptop runs an agent's work therefore needs
-an admin grant on that agent.
+(runner list, source rules, actor routes) all ask it. Don't let a runner-assignment row be
+the trust boundary: the editor tier writes those rows, and a box that may claim an agent can
+resolve its secrets, vault keys and the owner's GitHub token. A teammate whose own laptop runs
+an agent's work therefore needs an admin grant on that agent.
 
 **A box serves only the workspaces it is enrolled in, and every workspace below one of them**
 (`RunnerEnrollment`, 2026-10-11; a division created later is covered too, separate roots never
@@ -318,7 +306,7 @@ being pushed about it after being removed. And removal sweeps the rest
 (`apps/workspaces/departure.py`): AgentAdmin, RunnerAdmin and chat participant rows in that
 workspace, lent GitHub tokens, their box on its agents' runner lists, and agent ownership
 (cleared, with a `warn` Event saying so); their open chat sockets there are closed. That is
-because `dimagi` is self-join: without the sweep, a removed person clicks Join and every
+because `dimagi` auto-approves access requests: without the sweep, a removed person asks again and every
 dormant grant wakes up. Removing or demoting an org owner sweeps the divisions they reached
 only by inheritance.
 
