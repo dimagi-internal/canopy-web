@@ -26,8 +26,11 @@ no longer exists, so the list cannot rot.
 
 **Workspace.** Every generated tool takes an optional `workspace`: the call is
 sent to `/api/w/{workspace}/…`, the canonical tenant URL, where
-`WorkspaceResolveMiddleware` checks membership. Omitted, the call goes to the
-flat route exactly as a PAT caller's would (reads span all your workspaces).
+`WorkspaceResolveMiddleware` checks membership. A list or search pinned that
+way covers the named workspace and the ones below it you belong to; a write
+lands in exactly the named workspace. Omitted, the call goes to the flat route
+exactly as a PAT caller's would (a list spans your workspaces when they sit in
+one tenant tree, and is refused otherwise).
 """
 from __future__ import annotations
 
@@ -439,13 +442,16 @@ def _annotations(method: str) -> ToolAnnotations:
 
 
 #: What the added `workspace` argument says. The read rule
-#: (`apps.workspaces.services.read_scope`) refuses an unpinned list or search by
-#: a caller whose workspaces span more than one tenant tree.
+#: (`apps.workspaces.services.read_scope`): a pinned list covers the pin and the
+#: caller's workspaces below it; an unpinned one by a caller whose workspaces span
+#: more than one tenant tree is refused.
 WORKSPACE_ARG_DESCRIPTION = (
-    "Workspace slug to act in. Omitting it works only when all your workspaces "
-    "are in one tenant tree (e.g. dimagi + connect): a list or search then spans "
-    "them, as the flat route does. If they span more than one organisation, a "
-    "list or search without `workspace` is refused (422) — name one."
+    "Workspace slug to act in. Naming a workspace covers it AND the workspaces "
+    "below it that you belong to (e.g. `dimagi` also returns `connect`'s rows), "
+    "so one call per organisation is enough; a write lands in exactly the named "
+    "workspace. Omitting it works only when all your workspaces are in one tenant "
+    "tree: a list or search then spans them. If they span more than one "
+    "organisation, a list or search without `workspace` is refused (422) — name one."
 )
 
 

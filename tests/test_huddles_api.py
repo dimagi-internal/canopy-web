@@ -320,6 +320,17 @@ def test_scoped_detail_spans_callers_workspaces(owner, ws, agents):
     assert c.get("/api/w/connect/huddles/").json()[0]["outcome_count"] == 1
 
 
+def test_a_huddle_list_takes_the_read_rule_and_summarises_within_the_tree(owner, ws, agents):
+    """Which huddles: the read rule (pinned dimagi covers connect, below it).
+    What each summarises: the pin's tree, as the detail does — so pinned to
+    connect the huddle still counts ace's task in dimagi (2026-10-12)."""
+    _cross_ws_huddle(owner, agents, ws)
+    c = _client(owner)
+    listed = c.get("/api/w/dimagi/huddles/").json()
+    assert [h["outcome_count"] for h in listed] == [1]
+    assert c.get("/api/w/connect/huddles/").json()[0]["outcome_count"] == 1
+
+
 def test_a_huddle_by_id_needs_no_pin_and_stays_in_its_own_tree(owner, ws, agents):
     """A caller in a second organisation (a family root) still opens a huddle by
     id unpinned — by id mixes nothing — and sees only the huddle's own tree.

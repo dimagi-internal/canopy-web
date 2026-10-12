@@ -74,7 +74,7 @@ rows landed in Dimagi work. Writes were fixed on 2026-10-08 (canopy-web#1289,
 
 | Request | Scope of a list / search |
 |---|---|
-| pinned — `/api/w/<ws>/…`, or the MCP `workspace` argument | that workspace (unchanged) |
+| pinned — `/api/w/<ws>/…`, or the MCP `workspace` argument | that workspace **and every workspace below it you belong to** (`pinned_read_scope`, 2026-10-12) |
 | unpinned, every membership in ONE tree (`dimagi` + `connect`) | the union, as before — one org's own data |
 | unpinned, memberships in MORE THAN ONE tree (`dimagi` + `marshellis`) | **422** `workspace-required`, naming the caller's workspaces grouped by tree |
 | unpinned, a connected site acting for its visitor (delegated token) | the site's own workspace — a site is one tenant's |
@@ -82,27 +82,65 @@ rows landed in Dimagi work. Writes were fixed on 2026-10-08 (canopy-web#1289,
 A tree is a root and everything under it (`services.tree_roots`; `WorkspaceOut.root` carries
 it to clients). The rule fails closed: nothing is guessed.
 
+### A pinned read covers the workspaces below the pin
+
+Owner decision (Jonathan, 2026-10-12): *a pinned READ of workspace W returns W plus every
+DESCENDANT of W that the caller is a member of* — directly, or by owning an ancestor (inherited
+ownership). Before it, a pinned read was exactly W, so `list_agents(workspace="dimagi")` missed
+every agent living in `connect` and every client fanned one read out per workspace to put the
+organisation back together.
+
+| Pinned read by… | `/api/w/dimagi/…` | `/api/w/connect/…` |
+|---|---|---|
+| a member of dimagi and connect | dimagi + connect | connect only — a pin never reaches UP |
+| a dimagi member who is not in connect | dimagi only — never a descendant you are not in | 404 (not a member) |
+| an owner of dimagi (owns connect by inheritance) | dimagi + connect | connect |
+
+- **Separate roots never join.** A root's subtree cannot contain another root, so a pin to
+  `dimagi` never returns `marshellis` rows, whoever asks.
+- **Writes pinned to W land in exactly W** — creation is `creation_workspace`, unchanged.
+- **Bulk writes pinned to W touch exactly W** (`services.write_scope` / `request_write_slugs`,
+  and `perms.request_slugs_with`, which reads it): "clear every shareout" pinned to `dimagi`
+  leaves `connect`'s alone, though the pinned read of the same feed shows both. The same scope
+  covers a bulk session reset and `purge_session_noise` with `apply`. A capability-gated LIST
+  (the event log's `LOGS_READ`) reads `perms.request_read_slugs_with`, which takes the subtree.
+- **By-id gates are unchanged** (`member_scope`: pinned → exactly the pin). A row a pinned list
+  shows from a child workspace is opened under ITS workspace — the web client links each row to
+  its own `/w/<ws>/…` and marks rows from another workspace with a small badge
+  (`components/WorkspaceBadge`); list items carry their workspace (`workspace` on agents, tasks,
+  projects and sessions, `workspace_slug` on turns).
+- **Per-workspace settings and admin pages stay exactly W.** Members, invites, access settings,
+  access requests, the shared vault, the runner order, retention and admission rules are read and
+  written by `/api/workspaces/<slug>/…` and gated by `membership`/`perms.can` on that one slug —
+  none of them reads the list scope.
+- **Clients learn it from `GET /api/workspaces/`**: each row carries
+  `pinned_read_covers_descendants: true`, and the `workspace-required` refusal names `pins` —
+  the fewest pinned reads that cover every one of the caller's workspaces (`covering_pins`; one
+  per organisation when the caller is in its root). The canopy CLI and the web client read once
+  per pin instead of once per workspace; a client that sees no flag keeps fanning out.
+
 **What it does not touch:**
 
 - **By-id reads.** Opening one object you belong to mixes nothing, so gates of the form
   `obj.workspace_id in …` read `request_member_slugs` / `member_scope` (every membership,
   never refused). A huddle or thread opened by id reads within *its own* tree
-  (`tree_scope(user, <its workspace>)`).
+  (`tree_scope(user, <its workspace>)`): its members can live anywhere in that organisation.
 - **Who you are and where you are** — `/api/me/`, `GET /api/workspaces/` (the switcher),
   invites and access requests, "my memory" (`people/me`, `hcp_collections.contexts`).
 - **The fleet's plumbing** — runner heartbeat, claim, schedule sync, mailbox probe
   (`runner_tenant_slugs`, `inbound.runner_mailboxes`), the runner list (`_runner_read_q`),
   routing, the per-user MCP agent-tool registry, and the realtime supervisor socket.
 
-Lists that span one org's workspaces on purpose (huddles, threads, the shared-sessions feed)
-use `tree_scope`: pinned, they span the caller's memberships in the pin's tree; unpinned, they
-take the rule above.
+Lists of huddles, threads and the shared-sessions feed take the same rule as every other list
+(they used to span the whole of the pin's tree, `tree_scope`, which reached UP from a pinned
+child; reconciled 2026-10-12): pinned to `dimagi` they cover `connect` too, pinned to `connect`
+they do not reach `dimagi`. Opening one by id still reads its own tree, as above.
 
 The web client mirrors it (`frontend/src/api/workspaceRetry.ts`): a flat GET refused this way
 is answered from PINNED reads. On a tenant page it is retried pinned to the URL's `/w/<ws>/`. On
 a root page (`/supervisor`, `/sessions`, `/activity`, `/schedules` — the fleet views, which span
-every workspace you belong to) it is looped over each workspace the refusal names, one pinned read
-per workspace, and the lists merged — so the server never answers a cross-organisation query and
+every workspace you belong to) it is looped over the `pins` the refusal names (each covers the
+workspaces below it — usually one read per organisation), and the lists merged — so the server never answers a cross-organisation query and
 the fleet view still shows everything. (It first retried a root page pinned to the first
 membership, which hid every other workspace's agents on `/supervisor`.)
 

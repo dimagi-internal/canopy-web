@@ -18,16 +18,26 @@ router = Router(tags=["huddles"])
 
 
 def _scope(request: HttpRequest):
-    """(visible turns, workspaces) for a huddle read. A huddle's members can live
-    in several workspaces, so a `/api/w/{ws}/huddles` read spans EVERY workspace
-    the caller belongs to rather than the pinned one — never more: each turn still
-    passes the same tenant/site filter, and each cell's content `turn_access`.
+    """(anchors' turns, summaries' turns, summaries' workspaces) for a huddle LIST.
 
-    Within ONE tenant tree (`wsvc.request_tree_slugs`): a pinned read spans the
-    caller's memberships in the pin's tree, and an unpinned read by a caller in
-    more than one tree is refused (422) rather than mixing organisations."""
-    workspaces = wsvc.request_tree_slugs(request)
-    return visible_turns_qs(request, slugs=workspaces), workspaces
+    WHICH huddles are listed takes the read rule like every list
+    (`wsvc.request_workspace_slugs`): a `/api/w/dimagi/huddles` read covers the
+    caller's workspaces below dimagi (connect), a `/api/w/connect/…` read does not
+    reach up to dimagi, and an unpinned read by a caller in more than one tree is
+    refused (422) rather than mixing organisations.
+
+    WHAT each listed huddle summarises — its rounds and the tasks it produced —
+    spans the caller's memberships in the pin's tenant tree (`wsvc.tree_scope`),
+    exactly as opening that huddle by id does (`get_huddle`): a huddle anchored in
+    connect whose member lives in dimagi counts that member's outcome on the list
+    too, rather than the list and the detail disagreeing. Never another tree's.
+    Each turn still passes the same tenant/site filter, and each cell's content
+    `turn_access`."""
+    listed = wsvc.request_workspace_slugs(request)
+    pin = getattr(request, "workspace_slug", None)
+    workspaces = wsvc.tree_scope(request.user, pin) if pin else listed
+    return (visible_turns_qs(request, slugs=listed),
+            visible_turns_qs(request, slugs=workspaces), workspaces)
 
 
 @router.get("/", response=list[HuddleSummaryOut], summary="List huddles")
@@ -36,12 +46,12 @@ def list_huddles(request: HttpRequest, agent: str | None = None, limit: int = 50
     its type, team, leader, members, how many rounds have been dispatched, whether it
     has been filed (`finished`) and how many board tasks it produced. `agent` keeps the
     huddles that agent led or was a member of."""
-    vis, workspaces = _scope(request)
+    listed, vis, workspaces = _scope(request)
     limit = max(1, min(limit, 200))
     kept, seen = [], set()
     # Anchors are one row per huddle, so walking them all to apply `agent` (a
     # membership test inside a JSON list) is cheap; summaries are batched after.
-    for a in services.anchors(vis).order_by("-created_at"):
+    for a in services.anchors(listed).order_by("-created_at"):
         ref = a.origin_ref if isinstance(a.origin_ref, dict) else {}
         hid = str(ref.get("huddle") or "")
         if not hid or hid in seen:

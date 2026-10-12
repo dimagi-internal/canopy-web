@@ -147,9 +147,20 @@ def slugs_with(user, capability: str, within: set[str] | None = None) -> set[str
 
 
 def request_slugs_with(request, capability: str) -> set[str]:
-    """`slugs_with`, scoped like every LIST or bulk write: a pinned
-    `/api/w/{ws}/` call considers only that workspace, and an unpinned one by a
-    caller in more than one tenant tree is refused (`services.read_scope`)."""
+    """`slugs_with`, scoped like a BULK write: a pinned `/api/w/{ws}/` call
+    considers exactly that workspace — never the ones below it, which a pinned
+    READ covers — and an unpinned one by a caller in more than one tenant tree is
+    refused (`services.write_scope`). For a LIST gated by a capability use
+    `request_read_slugs_with`."""
+    from . import services
+
+    return slugs_with(request.user, capability, within=services.request_write_slugs(request))
+
+
+def request_read_slugs_with(request, capability: str) -> set[str]:
+    """`slugs_with` over a LIST's scope (`services.request_workspace_slugs`: a
+    pinned read covers the caller's workspaces below the pin) — for a read gated
+    by a capability, e.g. the event log (`LOGS_READ`)."""
     from . import services
 
     return slugs_with(request.user, capability, within=services.request_workspace_slugs(request))

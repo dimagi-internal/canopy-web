@@ -12,8 +12,9 @@
 //
 // * on a tenant page (/w/:ws/…) — retried once, pinned to that workspace;
 // * on a root page — the fleet views, which span every workspace you belong to
-//   by design — LOOPED over each workspace the refusal names, one pinned read
-//   per workspace, and the lists merged. Every read is still pinned, so the
+//   by design — LOOPED over the pins the refusal names (`extras.pins`: one per
+//   organisation you are in at its top, since a pinned read covers the
+//   workspaces below the pin), one pinned read per pin, and the lists merged. Every read is still pinned, so the
 //   server never answers a cross-organisation query; the page just asks each
 //   workspace in turn (owner decision, Jonathan, 2026-10-11: "everything is
 //   properly tied to workspaces, we just loop over them").
@@ -56,12 +57,19 @@ export async function isWorkspaceRequired(res: Response): Promise<boolean> {
 async function refusedWorkspaces(res: Response): Promise<string[] | null> {
   if (res.status !== 422) return null
   try {
-    const body = (await res.clone().json()) as { type?: unknown; extras?: { workspaces?: unknown } }
+    const body = (await res.clone().json()) as {
+      type?: unknown
+      extras?: { workspaces?: unknown; pins?: unknown }
+    }
     if (typeof body?.type !== 'string' || !body.type.endsWith(WORKSPACE_REQUIRED_TYPE_SUFFIX)) return null
     // The problem body carries its fields under `extras` (apps/api's RFC 7807
     // handler), not at the top level — reading `body.workspaces` found nothing,
     // so a root page looped over zero workspaces and showed the raw refusal.
-    const named = body.extras?.workspaces
+    // `pins` (2026-10-12): a pinned read covers the workspaces below the pin, so
+    // the server names the fewest pins that cover every membership — usually one
+    // per organisation. Looping over every workspace instead would read connect
+    // twice (once under dimagi) and double the merged counts.
+    const named = Array.isArray(body.extras?.pins) ? body.extras.pins : body.extras?.workspaces
     return Array.isArray(named) ? named.filter((s): s is string => typeof s === 'string') : []
   } catch {
     return null

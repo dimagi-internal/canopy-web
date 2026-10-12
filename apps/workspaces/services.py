@@ -283,6 +283,21 @@ def tree_roots(slugs) -> dict[str, str]:
     return out
 
 
+def covering_pins(slugs) -> list[str]:
+    """The fewest of `slugs` whose pinned reads (`pinned_read_scope`) together
+    cover all of them: each one with no ANCESTOR among `slugs`. For ada@ in
+    dimagi, connect and marshellis → [dimagi, marshellis] — one read per
+    organisation when the caller is in its root. Sorted."""
+    slugs = set(slugs)
+    rows = dict(Workspace.objects.filter(slug__in=slugs).values_list("slug", "parent_id"))
+    out = []
+    for slug in slugs:
+        ws = Workspace(slug=slug, parent_id=rows.get(slug))
+        if not (set(ws.ancestor_slugs()) & slugs):
+            out.append(slug)
+    return sorted(out)
+
+
 class WorkspaceRequired(ProblemError):
     """422: an UNPINNED read by a caller whose workspaces span more than one
     tenant tree. The union of their memberships would mix organisations
@@ -301,25 +316,52 @@ class WorkspaceRequired(ProblemError):
             trees.setdefault(root, []).append(slug)
         trees = {r: sorted(v) for r, v in sorted(trees.items())}
         listed = "; ".join(f"{r}: {', '.join(v)}" for r, v in trees.items())
+        tops = covering_pins(roots)
         detail = (
             f"your workspaces span {len(trees)} organisations ({listed}), and a read "
             "that names no workspace would mix them. Name one: /api/w/<workspace>/… "
-            "(the MCP tools take `workspace`; the canopy CLI reads CANOPY_WEB_WORKSPACE)"
+            "(the MCP tools take `workspace`; the canopy CLI reads CANOPY_WEB_WORKSPACE). "
+            "A pinned read covers the workspaces below the pin that you belong to, so "
+            f"one read per organisation is enough: {', '.join(tops)}"
         )
+        # `pins`: the fewest pinned reads that together cover every one of the
+        # caller's workspaces (`covering_pins`) — what a client loops over.
         super().__init__(422, "Workspace required", type_=self.TYPE, detail=detail,
-                         extras={"workspaces": sorted(roots), "trees": trees})
+                         extras={"workspaces": sorted(roots), "trees": trees, "pins": tops})
         self.detail = detail
 
     def __str__(self) -> str:
         return self.detail
 
 
+def pinned_read_scope(user, pinned: str) -> set[str]:
+    """What a read PINNED to `pinned` spans: that workspace plus every workspace
+    BELOW it the caller is in (directly, or by owning an ancestor) — owner
+    decision, Jonathan, 2026-10-12: "a pinned read of W returns W plus every
+    descendant of W that the caller is a member of".
+
+    `dimagi` covers `connect` for anyone in both, so one pinned read answers the
+    whole organisation; `connect` does not cover `dimagi` (nothing above the pin);
+    a root's subtree never reaches another root, so organisations still never
+    mix. A descendant the caller is NOT in stays out — the pin widens to the
+    caller's own memberships, never past them.
+
+    Reads only. A write pinned to W lands in exactly W (`creation_workspace`), and
+    a bulk write is scoped by `write_scope` — exactly the pin."""
+    below = descendant_slugs({pinned})
+    if not below or user is None or not getattr(user, "is_authenticated", False):
+        return {pinned}
+    return {pinned} | (below & user_workspace_slugs(user))
+
+
 def read_scope(user, pinned: str | None = None) -> set[str]:
     """The workspaces a LIST or SEARCH may span for `user` — the read rule
-    (owner decision, Jonathan, 2026-10-11: "workspaces should need to be
-    specified — workspace confusion shouldn't be possible").
+    (owner decisions, Jonathan, 2026-10-11: "workspaces should need to be
+    specified — workspace confusion shouldn't be possible"; 2026-10-12: a pinned
+    read covers the workspaces below the pin).
 
-    * pinned → exactly that workspace (the caller already proved membership:
+    * pinned → that workspace and the caller's workspaces below it
+      (`pinned_read_scope`; the caller already proved membership of the pin:
       `WorkspaceResolveMiddleware`, or the MCP `workspace` argument);
     * unpinned, and every membership sits in ONE tree (dimagi + connect) → the
       union, as before: within one organisation it is that org's own data;
@@ -329,7 +371,7 @@ def read_scope(user, pinned: str | None = None) -> set[str]:
     By-id reads do NOT use this — see `member_scope`. Reading an object you are
     a member of by its id mixes nothing; a list across organisations does."""
     if pinned:
-        return {pinned}
+        return pinned_read_scope(user, pinned)
     if user is None or not getattr(user, "is_authenticated", False):
         return set()
     slugs = user_workspace_slugs(user)
@@ -338,20 +380,28 @@ def read_scope(user, pinned: str | None = None) -> set[str]:
     return slugs
 
 
-def tree_scope(user, pinned: str | None = None) -> set[str]:
-    """`read_scope` for a view whose subject spans workspaces (a huddle's or a
-    thread's members live in several): every membership in ONE tree.
+def write_scope(user, pinned: str | None = None) -> set[str]:
+    """The workspaces a BULK WRITE may touch (clear every shareout, reset every
+    session, flip a narrative's visibility across its rows): pinned → exactly
+    that workspace, never the ones below it — "clear my shareouts" pinned to
+    `dimagi` must not wipe `connect`'s. Unpinned → `read_scope` (one tree's
+    union, or the 422 for a caller in several)."""
+    if pinned:
+        return {pinned}
+    return read_scope(user)
 
-    Pinned → the caller's memberships in the pinned workspace's tree (not just
-    the pin — a dimagi huddle has connect members). Unpinned → `read_scope`,
-    so a caller in two trees must still name one."""
-    if not pinned:
-        return read_scope(user)
+
+def tree_scope(user, home: str) -> set[str]:
+    """For a view of ONE object whose subject spans workspaces (a huddle's or a
+    thread's members live in several): the caller's memberships in `home`'s
+    tenant tree, `home` included. By-id, so it never refuses; it never crosses
+    into another tree. Lists do not use it — a pinned list takes the read rule
+    (`read_scope`), which already covers the workspaces below the pin."""
     if user is None or not getattr(user, "is_authenticated", False):
         return set()
-    slugs = user_workspace_slugs(user) | {pinned}
+    slugs = user_workspace_slugs(user) | {home}
     roots = tree_roots(slugs)
-    return {s for s in slugs if roots[s] == roots[pinned]}
+    return {s for s in slugs if roots[s] == roots[home]}
 
 
 def member_scope(user, pinned: str | None = None) -> set[str]:
@@ -393,18 +443,33 @@ def _site_outsider(request, pin: str | None) -> bool:
 def request_workspace_slugs(request) -> set[str]:
     """The workspace slugs a LIST or SEARCH on THIS request may span — the
     single place a flat (`/api/…`) handler gets its tenant scope, so scoping
-    can't drift per endpoint. `read_scope` is the rule: pinned → that one;
-    unpinned → the caller's memberships when they sit in one tenant tree, else
-    a 422 (`WorkspaceRequired`) naming them; empty for anonymous callers.
+    can't drift per endpoint. `read_scope` is the rule: pinned → that workspace
+    and the caller's workspaces below it; unpinned → the caller's memberships
+    when they sit in one tenant tree, else a 422 (`WorkspaceRequired`) naming
+    them; empty for anonymous callers. A connected site acting for its visitor
+    reads exactly the site's workspace (a site is one tenant's).
 
     Filter list querysets by `workspace_id__in=request_workspace_slugs(request)`.
     Gate a by-id read/mutation with `obj.workspace_id in request_member_slugs(request)`
-    instead: that never refuses. Either way this is the hard tenant boundary:
-    data outside the caller's workspaces is unreachable."""
+    instead: that never refuses. Scope a BULK write by `request_write_slugs`.
+    Either way this is the hard tenant boundary: data outside the caller's
+    workspaces is unreachable."""
     pin = _read_pin(request)
     if _site_outsider(request, pin):
         return set()
+    if pin and not getattr(request, "workspace_slug", None):
+        return {pin}  # a site's own workspace: exactly it
     return read_scope(getattr(request, "user", None), pin)
+
+
+def request_write_slugs(request) -> set[str]:
+    """`write_scope` for a request: the workspaces a BULK write on it may touch —
+    pinned → exactly the pin (never the workspaces below it); unpinned → the read
+    rule. Narrow it by role with `perms.request_slugs_with`."""
+    pin = _read_pin(request)
+    if _site_outsider(request, pin):
+        return set()
+    return write_scope(getattr(request, "user", None), pin)
 
 
 def request_member_slugs(request) -> set[str]:
@@ -413,41 +478,38 @@ def request_member_slugs(request) -> set[str]:
     return member_scope(getattr(request, "user", None), getattr(request, "workspace_slug", None))
 
 
-def request_tree_slugs(request) -> set[str]:
-    """`tree_scope` for a request — see there."""
-    pin = _read_pin(request)
-    if _site_outsider(request, pin):
-        return set()
-    return tree_scope(getattr(request, "user", None), pin)
-
-
 def request_workspace_slugs_at_least(request, minimum: str) -> set[str]:
-    """The subset of `request_workspace_slugs` where the caller holds `minimum`
+    """The subset of `request_write_slugs` where the caller holds `minimum`
     or better — the WRITE scope a bulk mutation filters by.
 
     `request_workspace_slugs` answers "what may I read?". A bulk write (clear
     every shareout, delete a narrative across its rows) must not be scoped by
-    that answer, or a viewer's empty-filter clear wipes the tenant. This is the
-    same scope narrowed by role, read through `has_role_at_least` so the ladder
-    lives in one place. A pinned `/api/w/{ws}/` request is narrowed too: the
-    middleware checked membership, not role. Refused like a list is, for a
-    caller in more than one tree who names no workspace."""
+    that answer, or a viewer's empty-filter clear wipes the tenant — nor by the
+    pinned read's subtree, or a clear pinned to a parent wipes its children.
+    This is the write scope narrowed by role, read through `has_role_at_least`
+    so the ladder lives in one place. A pinned `/api/w/{ws}/` request is narrowed
+    too: the middleware checked membership, not role. Refused like a list is,
+    for a caller in more than one tree who names no workspace."""
     user = getattr(request, "user", None)
     if user is None or not user.is_authenticated:
         return set()
     return {
-        slug for slug in request_workspace_slugs(request)
+        slug for slug in request_write_slugs(request)
         if has_role_at_least(user, slug, minimum)
     }
 
 
-def workspace_slugs_for_user_id(user_id, workspace: str | None = None) -> set[str]:
+def workspace_slugs_for_user_id(user_id, workspace: str | None = None, *,
+                                write: bool = False) -> set[str]:
     """The workspace slugs a user (by pk) may LIST within — the MCP-side
     counterpart of `request_workspace_slugs`, for tools that carry a token
     subject rather than a request. `workspace` pins one (it must be a
-    membership, else empty). Same rule: unpinned and in more than one tree →
-    `WorkspaceRequired`. Empty set for an unresolvable user, so a scoped query
-    fails CLOSED (sees/clears nothing) instead of falling back to global."""
+    membership, else empty): a read then covers the user's workspaces below it
+    too (`pinned_read_scope`); with `write=True` (a bulk write, e.g. purging
+    session noise) exactly that workspace (`write_scope`). Same rule unpinned:
+    in more than one tree → `WorkspaceRequired`. Empty set for an unresolvable
+    user, so a scoped query fails CLOSED (sees/clears nothing) instead of
+    falling back to global."""
     if user_id is None:
         return set()
     from django.contrib.auth import get_user_model
@@ -455,9 +517,9 @@ def workspace_slugs_for_user_id(user_id, workspace: str | None = None) -> set[st
     user = get_user_model().objects.filter(pk=user_id).first()
     if user is None:
         return set()
-    if workspace:
-        return {workspace} if is_member(user, workspace) else set()
-    return read_scope(user)
+    if workspace and not is_member(user, workspace):
+        return set()
+    return write_scope(user, workspace) if write else read_scope(user, workspace)
 
 
 def effective_memberships(ws) -> list[WorkspaceMembership]:

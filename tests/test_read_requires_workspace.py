@@ -8,7 +8,8 @@ called without `workspace`, so family rows landed in Dimagi work.
 
 The rule (`apps.workspaces.services.read_scope`):
 
-* pinned (`/api/w/<ws>/…`, the MCP `workspace` arg) → that workspace, as before;
+* pinned (`/api/w/<ws>/…`, the MCP `workspace` arg) → that workspace and the
+  caller's workspaces below it (2026-10-12; `tests/test_pinned_read_covers_subtree.py`);
 * unpinned, every membership in ONE tree (dimagi + connect) → the union, as before;
 * unpinned, memberships in more than one tree → 422 naming them.
 
@@ -92,9 +93,10 @@ def test_two_trees_unpinned_list_is_refused_and_names_the_workspaces(world):
     assert body["extras"]["trees"] == {"dimagi": ["connect", "dimagi"], "marshellis": ["marshellis"]}
 
 
-def test_pinned_list_is_unchanged(world):
+def test_pinned_list_stays_in_its_tree(world):
     c = _client(world["ada"])
-    assert _slugs(c.get("/api/w/dimagi/agents/")) == {"hal"}
+    assert _slugs(c.get("/api/w/dimagi/agents/")) == {"hal", "ace"}  # connect is below dimagi
+    assert _slugs(c.get("/api/w/connect/agents/")) == {"ace"}
     assert _slugs(c.get("/api/w/marshellis/agents/")) == {"nanny"}
 
 

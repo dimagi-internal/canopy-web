@@ -69,11 +69,14 @@ def test_personal_flat_is_refused_across_two_tenant_trees(setup):
     assert {i["schedule"]["name"] for i in pinned.json()["items"]} == {"B"}
 
 
-def test_tenant_pinned_returns_one_workspace(setup):
+def test_tenant_pinned_returns_that_workspace_and_those_below(setup):
+    """A pinned read covers the caller's workspaces below the pin (2026-10-12):
+    beta sits under alpha, so alpha's week includes it and beta's does not reach up."""
     resp = setup.get(f"/api/w/alpha/agents/schedules/week?start={START}")
     assert resp.status_code == 200, resp.content
-    names = {i["schedule"]["name"] for i in resp.json()["items"]}
-    assert names == {"A"}  # alpha only
+    assert {i["schedule"]["name"] for i in resp.json()["items"]} == {"A", "B"}
+    below = setup.get(f"/api/w/beta/agents/schedules/week?start={START}")
+    assert {i["schedule"]["name"] for i in below.json()["items"]} == {"B"}
 
 
 def test_fires_present_in_the_week(setup):

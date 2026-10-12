@@ -681,6 +681,9 @@ class AgentProjectPatch(StrictModel):
 class AgentProjectOut(StrictModel):
     id: int
     agent_slug: str
+    #: The workspace the project lives in (its agent's). A list pinned to a
+    #: parent workspace carries its children's rows too.
+    workspace: str = ""
     ext_id: str
     name: str
     outcome: str
@@ -771,6 +774,8 @@ class AgentTaskOut(StrictModel):
     """A task, addressed by `(agent_slug, ext_id)` — there is no other id."""
 
     agent_slug: str
+    #: The workspace the task lives in (its agent's) — see `AgentProjectOut.workspace`.
+    workspace: str = ""
     ext_id: str
     project_ext_id: str | None = None
     project_name: str | None = None
