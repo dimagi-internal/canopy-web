@@ -800,6 +800,11 @@ def heartbeat(
     from apps.contacts import hcp_oauth
 
     hcp_oauth.maybe_deliver(now)
+    # And the admission sender notices no runner sent within a day, which end
+    # `failed` with the reason. At most once a minute; never raises.
+    from apps.admission import runner_notices
+
+    runner_notices.maybe_expire(now)
     return runner
 
 

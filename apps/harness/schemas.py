@@ -1394,6 +1394,34 @@ class MenuAnswerResultOut(Schema):
     ok: bool
 
 
+class AdmissionNoticeClaimIn(Schema):
+    #: {agent slug: the mailbox address this runner reads for it}.
+    mailboxes: dict[str, str] = {}
+
+
+class AdmissionNoticeOut(Schema):
+    id: int
+    agent: str
+    agent_name: str
+    #: The address the reply must come from ("" = the agent's mailbox, as read).
+    mailbox: str = ""
+    thread_id: str
+    #: Gmail's id of the message to answer ("" = the thread's newest).
+    message_id: str = ""
+    to: str
+    subject: str = ""
+    body: str
+
+
+class AdmissionNoticeClaimOut(Schema):
+    notices: list[AdmissionNoticeOut] = []
+
+
+class AdmissionNoticeReportIn(Schema):
+    outcome: Literal["sent", "skipped", "failed"]
+    detail: str = ""
+
+
 class MenuAnswerResultIn(Schema):
     session_id: uuid.UUID
     answer_id: str

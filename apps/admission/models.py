@@ -139,8 +139,12 @@ class AdmissionNotice(models.Model):
     HELD = "held"                      # delivery is switched off on this deployment
     SKIPPED = "skipped"                # deliberately not sent (loop safety, throttle)
     NOT_CONFIGURED = "not_configured"  # the transport is off (SES not enabled)
-    FAILED = "failed"                  # tried, and the transport refused
-    STATUS_CHOICES = [(s, s) for s in (SENT, HELD, SKIPPED, NOT_CONFIGURED, FAILED)]
+    FAILED = "failed"                  # tried, and nothing more will try
+    #: canopy-web could not send it, so the agent's runner owes it: the runner
+    #: that reads the mailbox claims it on its next poll and sends it through
+    #: its own gog client (`runner_notices.py`, canopy-web#1416).
+    PENDING = "pending"
+    STATUS_CHOICES = [(s, s) for s in (SENT, HELD, SKIPPED, NOT_CONFIGURED, FAILED, PENDING)]
 
     turn = models.ForeignKey("harness.Turn", on_delete=models.CASCADE, related_name="admission_notices")
     rule = models.ForeignKey(AdmissionRule, on_delete=models.SET_NULL, null=True, blank=True,
@@ -154,9 +158,24 @@ class AdmissionNotice(models.Model):
     detail = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # What a runner needs to send a PENDING sender notice exactly as canopy-web
+    # would have: the same fixed text, from the same mailbox, on the same message.
+    #: The mailbox the reply must come from (the agent's address).
+    mailbox = models.CharField(max_length=320, blank=True, default="")
+    #: Gmail's id of the message being answered ("" = the thread's newest).
+    message_id = models.CharField(max_length=64, blank=True, default="")
+    subject = models.CharField(max_length=998, blank=True, default="")
+    body = models.TextField(blank=True, default="")
+    #: The runner holding a PENDING notice, and since when. A claim is a lease
+    #: (`runner_notices.LEASE`), so a runner that dies mid-send does not keep it.
+    claimed_by = models.ForeignKey("harness.Runner", on_delete=models.SET_NULL, null=True,
+                                   blank=True, related_name="+")
+    claimed_at = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         ordering = ["-created_at"]
-        indexes = [models.Index(fields=["agent", "kind", "thread_id", "created_at"])]
+        indexes = [models.Index(fields=["agent", "kind", "thread_id", "created_at"]),
+                   models.Index(fields=["status", "kind"])]
 
     def __str__(self) -> str:  # pragma: no cover
         return f"notice:{self.kind}:{self.turn_id}:{self.status}"

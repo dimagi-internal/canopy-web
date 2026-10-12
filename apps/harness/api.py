@@ -33,6 +33,9 @@ from .schemas import (
     BackfillSyncOut,
     BackfillWriteOut,
     CloseSyncOut,
+    AdmissionNoticeClaimIn,
+    AdmissionNoticeClaimOut,
+    AdmissionNoticeReportIn,
     MenuAnswerResultIn,
     MenuAnswerResultOut,
     MenuAnswerSyncOut,
@@ -1790,6 +1793,31 @@ def post_menu_answer_result(request: HttpRequest, runner_id: uuid.UUID,
     binding.pending_answer = None
     binding.save(update_fields=["pending_answer"])
     return {"ok": True}
+
+
+@router.post("/runners/{runner_id}/admission-notices", response=AdmissionNoticeClaimOut)
+def claim_admission_notices(request: HttpRequest, runner_id: uuid.UUID,
+                            payload: AdmissionNoticeClaimIn):
+    """Automatic replies to rejected senders that canopy-web could not send,
+    leased to this runner to send from the mailboxes it reads."""
+    # The other half of an admission rule's sender notice (canopy-web#1416):
+    # canopy-web cannot refresh a desktop-client token, the runner's gog can.
+    # Polled from the runner's mailbox tick; `apps/admission/runner_notices.py`.
+    from apps.admission import runner_notices
+
+    runner = _runner_or_404(request, runner_id)
+    notices = runner_notices.claim(runner, payload.mailboxes)
+    return {"notices": [runner_notices.notice_out(n) for n in notices]}
+
+
+@router.post("/runners/{runner_id}/admission-notices/{notice_id}", response=MenuAnswerResultOut)
+def report_admission_notice(request: HttpRequest, runner_id: uuid.UUID, notice_id: int,
+                            payload: AdmissionNoticeReportIn):
+    """What this runner did with an automatic reply it was leased."""
+    from apps.admission import runner_notices
+
+    runner = _runner_or_404(request, runner_id)
+    return {"ok": runner_notices.report(runner, notice_id, payload.outcome, payload.detail)}
 
 
 @router.post("/runners/{runner_id}/session-backfill", response=BackfillWriteOut)

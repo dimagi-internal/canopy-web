@@ -3,12 +3,17 @@
 Both are FIXED TEXT, never written by a model — no session ever ran.
 
 * **Sender** — an automatic reply on their email thread, from the agent's own
-  mailbox (`gmail.py`), only for an email turn, and only when it is safe:
+  mailbox, only for an email turn, and only when it is safe:
   never to a machine (Auto-Submitted / Precedence / list mail, a no-reply
   address), the agent's own mailbox, a system sender of the workspace, or
   canopy/another agent; and at most once per thread per 24 hours. Off unless
   `CANOPY_ADMISSION_SENDER_NOTICES` is set: the notice is still recorded, as
-  `held`, so turning it on later changes nothing else.
+  `held`, so turning it on later changes nothing else. canopy-web sends it
+  itself when it can (`gmail.py`); when it cannot — the mailbox's token is on
+  the desktop `canopy` client, or Google refuses — the notice is left PENDING
+  and the agent's runner sends it on its next mailbox poll
+  (`runner_notices.py`). A notice never ends `failed` while a runner could
+  still send it.
 * **Owner** — separate from the thread, and owner-only: an email (SES,
   `apps/common/email.py`) plus a "Waiting on you" ask on the agent's board,
   both naming who wrote, the rule that fired and why, and links to fix it.
@@ -59,10 +64,10 @@ def deliver(turn_id, rule_id) -> None:
             logger.exception("admission: %s failed for turn %s", fn.__name__, turn_id)
 
 
-def _record(turn, rule, agent, kind, status, *, recipient="", detail="", thread_id=""):
+def _record(turn, rule, agent, kind, status, *, recipient="", detail="", thread_id="", **extra):
     return AdmissionNotice.objects.create(
         turn=turn, rule=rule, agent=agent, kind=kind, status=status,
-        recipient=recipient[:320], detail=detail, thread_id=thread_id[:64],
+        recipient=recipient[:320], detail=detail, thread_id=thread_id[:64], **extra,
     )
 
 
@@ -109,9 +114,9 @@ def _sender_notice(turn, rule, agent) -> None:
     thread_id = str(ref.get("thread_id") or "")
     sender = parseaddr(str(ref.get("from") or ""))[1].strip().lower()
 
-    def record(status, detail):
+    def record(status, detail, **extra):
         return _record(turn, rule, agent, AdmissionNotice.SENDER, status,
-                       recipient=sender, detail=detail, thread_id=thread_id)
+                       recipient=sender, detail=detail, thread_id=thread_id, **extra)
 
     if turn.origin != Turn.ORIGIN_EMAIL or not thread_id:
         return record(AdmissionNotice.SKIPPED, "only an email sender gets an automatic reply")
@@ -120,7 +125,7 @@ def _sender_notice(turn, rule, agent) -> None:
         return record(AdmissionNotice.SKIPPED, f"not replied to: {why}")
     recent = AdmissionNotice.objects.filter(
         agent=agent, kind=AdmissionNotice.SENDER, thread_id=thread_id,
-        status__in=[AdmissionNotice.SENT, AdmissionNotice.HELD],
+        status__in=[AdmissionNotice.SENT, AdmissionNotice.HELD, AdmissionNotice.PENDING],
         created_at__gte=timezone.now() - SENDER_WINDOW,
     ).exclude(turn=turn)
     if recent.exists():
@@ -130,18 +135,26 @@ def _sender_notice(turn, rule, agent) -> None:
                       "automatic replies are off on this deployment (CANOPY_ADMISSION_SENDER_NOTICES)")
     from . import gmail
 
+    message_id, subject, body = str(ref.get("message_id") or ""), str(ref.get("subject") or ""), sender_text(agent)
     try:
-        sent_id = gmail.send_reply(
-            agent, thread_id=thread_id, message_id=str(ref.get("message_id") or ""),
-            to=sender, subject=str(ref.get("subject") or ""), body=sender_text(agent),
-        )
+        sent_id = gmail.send_reply(agent, thread_id=thread_id, message_id=message_id,
+                                   to=sender, subject=subject, body=body)
     except gmail.Automated as exc:
         return record(AdmissionNotice.SKIPPED, f"not replied to: {exc}")
     except gmail.Unavailable as exc:
-        return record(AdmissionNotice.FAILED, f"not sent: {exc}")
+        # Nothing went out, and the agent's runner reads this mailbox with a
+        # client it CAN send from: leave the reply to it rather than give up.
+        return record(AdmissionNotice.PENDING,
+                      f"canopy-web could not send it ({exc}); left for the agent's runner",
+                      mailbox=(agent.email or "")[:320], message_id=message_id[:64],
+                      subject=subject[:998], body=body)
     except Exception as exc:  # noqa: BLE001
+        # The send call itself failed in a way that does not say whether Gmail
+        # delivered. Not retried, so the sender is never answered twice.
         logger.exception("admission: Gmail send failed for turn %s", turn.pk)
-        return record(AdmissionNotice.FAILED, f"not sent: Gmail refused ({type(exc).__name__})")
+        return record(AdmissionNotice.FAILED,
+                      f"not known to be sent: the Gmail send failed ({type(exc).__name__}) and "
+                      "is not retried, so the sender is never answered twice")
     return record(AdmissionNotice.SENT, f"replied on the thread (gmail message {sent_id})")
 
 

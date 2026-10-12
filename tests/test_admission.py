@@ -10,6 +10,8 @@ owner notice recorded, and no debugger turn.
 """
 from __future__ import annotations
 
+import datetime as dt
+import urllib.error
 from unittest import mock
 
 import pytest
@@ -18,7 +20,7 @@ from django.core import mail
 from django.test import Client
 from django.utils import timezone
 
-from apps.admission import defaults, gmail
+from apps.admission import defaults, gmail, notices, runner_notices
 from apps.admission.models import AdmissionNotice, AdmissionRule
 from apps.agents.interface import parse
 from apps.agents.models import Agent
@@ -277,11 +279,131 @@ def test_gmail_refuses_an_auto_submitted_message():
     assert not gmail._is_automated({"auto-submitted": "no"})
 
 
-def test_a_mailbox_canopy_cannot_send_from_is_recorded_as_not_sent(
+def test_a_mailbox_canopy_cannot_send_from_is_left_for_the_agents_runner(
         fleet, settings, django_capture_on_commit_callbacks):
+    # canopy-web#1416: hal's token is on the desktop `canopy` client (here: no
+    # token at all), so canopy-web cannot send. The notice is not given up on —
+    # it waits for the runner that reads hal's mailbox, carrying what it needs.
     settings.CANOPY_ADMISSION_SENDER_NOTICES = True
+    fleet["hal"].email = "hal@dimagi-ai.com"
+    fleet["hal"].save(update_fields=["email"])
     notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)  # no gog-token stored
-    assert notice.status == AdmissionNotice.FAILED and "gog-token" in notice.detail
+    assert notice.status == AdmissionNotice.PENDING and "gog-token" in notice.detail
+    assert (notice.mailbox, notice.message_id, notice.subject) == ("hal@dimagi-ai.com", "m-1", "Can Hal help?")
+    assert notice.body == notices.sender_text(fleet["hal"])
+
+
+# --- the runner sends what canopy-web could not (canopy-web#1416) --------------------
+
+@pytest.fixture
+def pending(fleet, settings, django_capture_on_commit_callbacks):
+    settings.CANOPY_ADMISSION_SENDER_NOTICES = True
+    fleet["hal"].email = "hal@dimagi-ai.com"
+    fleet["hal"].save(update_fields=["email"])
+    with mock.patch.object(gmail, "send_reply", side_effect=gmail.Unavailable("desktop client")):
+        notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-5")
+    assert notice.status == AdmissionNotice.PENDING
+    return notice
+
+
+def _runner_client(runner):
+    c = Client()
+    c.force_login(runner.owner)
+    return c
+
+
+def _lease(runner, mailboxes):
+    res = _runner_client(runner).post(f"/api/harness/runners/{runner.pk}/admission-notices",
+                                      {"mailboxes": mailboxes}, content_type="application/json")
+    assert res.status_code == 200, res.content
+    return res.json()["notices"]
+
+
+def _report(runner, notice_id, outcome, detail=""):
+    res = _runner_client(runner).post(
+        f"/api/harness/runners/{runner.pk}/admission-notices/{notice_id}",
+        {"outcome": outcome, "detail": detail}, content_type="application/json")
+    assert res.status_code == 200, res.content
+    return res.json()["ok"]
+
+
+def test_the_runner_leases_a_pending_notice_sends_it_and_reports_it(fleet, pending):
+    laptop = fleet["laptop"]
+    [leased] = _lease(laptop, {"hal": "HAL@dimagi-ai.com"})
+    assert leased == {
+        "id": pending.pk, "agent": "hal", "agent_name": "Hal", "mailbox": "hal@dimagi-ai.com",
+        "thread_id": "t-5", "message_id": "m-1", "to": VIKRAM, "subject": "Can Hal help?",
+        "body": notices.sender_text(fleet["hal"]),
+    }
+    # Leased: nobody else gets it while this runner holds it.
+    assert _lease(fleet["cloud"], {"hal": "hal@dimagi-ai.com"}) == []
+    assert _report(laptop, pending.pk, "sent", "replied (gmail message g-7)") is True
+    pending.refresh_from_db()
+    assert pending.status == AdmissionNotice.SENT and "g-7" in pending.detail
+    # Final: not leased again, and not reported twice.
+    assert _lease(laptop, {"hal": "hal@dimagi-ai.com"}) == []
+    assert _report(laptop, pending.pk, "sent") is False
+
+
+def test_a_notice_goes_only_to_a_runner_that_may_hold_the_agent_and_reads_its_mailbox(fleet, pending):
+    stranger = get_user_model().objects.create_user(username="s", email="s@dimagi.com")
+    M.objects.create(workspace=fleet["ws"], user=stranger, role=M.EDITOR)
+    theirs = _runner("their-mbp", Runner.EMDASH, stranger)
+    assert _lease(theirs, {"hal": "hal@dimagi-ai.com"}) == []           # not one of hal's admins
+    assert _lease(fleet["laptop"], {"hal": "other@dimagi-ai.com"}) == []  # not the mailbox written to
+    assert _lease(fleet["laptop"], {"eva": "hal@dimagi-ai.com"}) == []    # not the agent
+    assert [n["id"] for n in _lease(fleet["laptop"], {"hal": "hal@dimagi-ai.com"})] == [pending.pk]
+
+
+def test_a_failed_send_is_retried_after_the_lease_and_given_up_on_after_a_day(fleet, pending):
+    laptop = fleet["laptop"]
+    assert _lease(laptop, {"hal": "hal@dimagi-ai.com"})
+    assert _report(laptop, pending.pk, "failed", "gog: no auth") is True
+    pending.refresh_from_db()
+    assert pending.status == AdmissionNotice.PENDING and "gog: no auth" in pending.detail
+    assert _lease(laptop, {"hal": "hal@dimagi-ai.com"}) == []  # still leased
+    AdmissionNotice.objects.filter(pk=pending.pk).update(
+        claimed_at=timezone.now() - runner_notices.LEASE - dt.timedelta(seconds=1))
+    assert [n["id"] for n in _lease(fleet["cloud"], {"hal": "hal@dimagi-ai.com"})] == [pending.pk]
+
+    # A day on, nobody managed it: it ends failed, saying why, on the heartbeat.
+    AdmissionNotice.objects.filter(pk=pending.pk).update(
+        created_at=timezone.now() - runner_notices.EXPIRES - dt.timedelta(minutes=1))
+    runner_notices._last_expiry = None
+    services.heartbeat(laptop, active_turn_ids=[])
+    pending.refresh_from_db()
+    assert pending.status == AdmissionNotice.FAILED
+    assert "a runner tried and failed within 24 hours" in pending.detail
+
+
+def test_a_pending_notice_silences_the_thread_like_a_sent_one(
+        fleet, pending, django_capture_on_commit_callbacks):
+    with mock.patch.object(gmail, "send_reply", side_effect=gmail.Unavailable("desktop client")):
+        second = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-5", count=2)
+    assert second.status == AdmissionNotice.SKIPPED and "24 hours" in second.detail
+
+
+def test_gmail_raises_unavailable_only_when_nothing_was_sent():
+    agent = mock.Mock(name="agent")
+    agent.name = "Hal"
+    meta = {"payload": {"headers": [{"name": "Message-ID", "value": "<m@x>"}]}}
+    refused = urllib.error.HTTPError("u", 400, "bad", {}, None)
+    with mock.patch.object(gmail, "access_token", return_value=("tok", "hal@dimagi-ai.com")), \
+            mock.patch.object(gmail, "_call", side_effect=[meta, refused]):
+        with pytest.raises(gmail.Unavailable, match="HTTP 400"):
+            gmail.send_reply(agent, thread_id="t", message_id="m", to=VIKRAM, subject="s", body="b")
+    # Sent, then marking it read failed: that is a sent reply, never a retry.
+    with mock.patch.object(gmail, "access_token", return_value=("tok", "hal@dimagi-ai.com")), \
+            mock.patch.object(gmail, "_call", side_effect=[meta, {"id": "g-1"}, urllib.error.URLError("x")]):
+        assert gmail.send_reply(agent, thread_id="t", message_id="m", to=VIKRAM,
+                                subject="s", body="b") == "g-1"
+
+
+def test_a_send_that_may_have_gone_is_not_retried(fleet, settings, django_capture_on_commit_callbacks):
+    settings.CANOPY_ADMISSION_SENDER_NOTICES = True
+    with mock.patch.object(gmail, "send_reply", side_effect=TimeoutError("read timed out")):
+        notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)
+    assert notice.status == AdmissionNotice.FAILED and "never answered twice" in notice.detail
 
 
 # --- the settings API ------------------------------------------------------------------

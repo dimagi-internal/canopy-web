@@ -3608,6 +3608,21 @@ class _InboxClient:
         # re-poll of the same unread mail reads as "nothing new", not fresh work.
         return {**(payload or {}), "_created": status == 201}
 
+    # The automatic replies canopy-web could not send (canopy-web#1416), leased
+    # to this box for the mailboxes it reads; `canopy_runner.admission_notices`.
+    def claim_admission_notices(self, runner_id: str, mailboxes: dict) -> list:
+        status, payload = _api("POST", f"/runners/{runner_id}/admission-notices",
+                               {"mailboxes": mailboxes})
+        if status != 200:
+            raise RuntimeError(f"admission-notices lease: HTTP {status}")
+        return (payload or {}).get("notices", [])
+
+    def report_admission_notice(self, runner_id: str, notice_id: int, outcome: str,
+                                detail: str = "") -> bool:
+        status, payload = _api("POST", f"/runners/{runner_id}/admission-notices/{notice_id}",
+                               {"outcome": outcome, "detail": detail})
+        return status == 200 and bool((payload or {}).get("ok"))
+
 
 #: slug -> (fetched_at, the INSTANCE's mailbox per canopy-web, "" for none).
 _INSTANCE_MAILBOX: dict = {}
@@ -3848,6 +3863,15 @@ def _drain_inbox(runner_id: str) -> None:
             finally:
                 # Stamp even on failure, or a broken mailbox is retried every tick.
                 _INBOX_STAMPS[slug] = time.time()
+        # The automatic replies canopy-web could not send for these mailboxes
+        # (canopy-web#1416), with the client each was just proved to read with.
+        if due:
+            try:
+                from canopy_runner import admission_notices  # noqa: PLC0415
+
+                admission_notices.deliver(client, runner_id, {s: boxes[s] for s in due}, log=_log)
+            except Exception as exc:  # noqa: BLE001
+                _log(f"admission notices: {exc}")
     except Exception as exc:  # noqa: BLE001
         _log(f"inbox drain error: {exc}")
 

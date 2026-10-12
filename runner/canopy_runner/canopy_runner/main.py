@@ -267,6 +267,18 @@ def _maybe_check_inboxes(cfg: Config, client: Client, now_fn=time.time,
             # has expired would otherwise be retried every single tick, turning
             # one broken credential into a subprocess storm.
             stamps[agent] = now_fn()
+    # The automatic replies canopy-web could not send for the mailboxes just
+    # polled (canopy-web#1416): it holds no client that can refresh a desktop
+    # `canopy` token, and this box does. Same tick, same mailboxes, same pause.
+    try:
+        from . import admission_notices
+
+        admission_notices.deliver(
+            client, cfg.runner_id,
+            {a: boxes[a] for a in due_slugs if not (paused and a in paused)},
+            log=logger.info)
+    except Exception as exc:  # noqa: BLE001 — a notice never costs the inbox tick
+        logger.warning("admission notices: %s", exc)
     try:
         stamp.write_text(json.dumps(stamps))
     except OSError:
