@@ -34,9 +34,11 @@ function fired(rule: AdmissionRuleOut): string {
   return `${rule.fired_count.toLocaleString()}× · last ${when}`
 }
 
-function notices(rule: AdmissionRuleOut): string {
+function notices(rule: AdmissionRuleOut, repliesOn: boolean): string {
   if (rule.action === 'allow') return '—'
-  const parts = [rule.notify_sender && 'sender', rule.notify_owner && 'owner'].filter(Boolean)
+  // With replies off a rule's sender notice is recorded, not sent: say so where it is listed.
+  const sender = repliesOn ? 'sender' : 'sender (off)'
+  const parts = [rule.notify_sender && sender, rule.notify_owner && 'owner'].filter(Boolean)
   return parts.length ? parts.join(' + ') : 'none'
 }
 
@@ -155,11 +157,12 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
           decides what the refusal records and who is told, so it cannot be an <em>allow</em>.
         </p>
         <label
-          className={`mt-2 flex items-center gap-2 text-[12px] ${policy.sender_notices_enabled ? 'text-foreground-secondary' : 'text-muted-foreground'}`}
+          className="mt-3 flex items-start gap-2 rounded border border-border px-3 py-2 text-[12px]"
           data-testid="admission-sender-notices"
         >
           <input
             type="checkbox"
+            className="mt-0.5"
             checked={policy.sender_notices_enabled}
             disabled={!manage || busy}
             onChange={() => void run(
@@ -167,9 +170,18 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
               'Could not switch automatic replies')}
             data-testid="admission-sender-notices-toggle"
           />
-          {policy.sender_notices_enabled
-            ? 'Automatic replies to rejected senders are on in this workspace. A rule that asks for one replies on the sender’s thread, from the agent’s mailbox.'
-            : 'Automatic replies to rejected senders are off in this workspace: they are recorded, not sent. Owner notices still go out.'}
+          <span>
+            <span className="font-medium text-foreground">Send automatic replies to rejected senders</span>
+            {' '}
+            <span className={policy.sender_notices_enabled ? 'text-success' : 'text-muted-foreground'}>
+              {policy.sender_notices_enabled ? 'On' : 'Off'}
+            </span>
+            <span className="block text-muted-foreground">
+              {policy.sender_notices_enabled
+                ? 'On in this workspace: a rule that asks for one replies once on the sender’s thread, from the agent’s mailbox. Never to a machine, a no-reply address or another agent.'
+                : 'Off in this workspace: replies are recorded, not sent. Owner notices still go out.'}
+            </span>
+          </span>
         </label>
       </section>
 
@@ -227,7 +239,7 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
                     )}
                   </td>
                   <td className="py-1.5 pr-3 text-foreground-secondary">{r.reason}</td>
-                  <td className="py-1.5 pr-3 text-muted-foreground">{notices(r)}</td>
+                  <td className="py-1.5 pr-3 text-muted-foreground">{notices(r, policy.sender_notices_enabled)}</td>
                   <td className="whitespace-nowrap py-1.5 pr-3 text-muted-foreground" data-testid={`admission-fired-${r.id}`}>
                     {fired(r)}
                   </td>

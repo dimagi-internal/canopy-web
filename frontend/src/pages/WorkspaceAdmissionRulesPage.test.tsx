@@ -86,7 +86,7 @@ describe('WorkspaceAdmissionRulesPage', () => {
     expect(screen.getByTestId('admission-fired-3').textContent).toContain('2×')
     expect(screen.getByTestId('admission-fired-4').textContent).toContain('never')
     expect((screen.getByTestId('admission-toggle-4') as HTMLInputElement).checked).toBe(false)
-    expect(screen.getByTestId('admission-sender-notices').textContent).toContain('off in this workspace')
+    expect(screen.getByTestId('admission-sender-notices').textContent).toContain('Off in this workspace')
   })
 
   it('highlights the rule an owner notice links to', async () => {
