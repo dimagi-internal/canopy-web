@@ -202,7 +202,8 @@ def test_another_workspaces_rule_never_applies(fleet, django_capture_on_commit_c
 def test_a_new_workspace_is_seeded_and_seeding_is_idempotent(fleet):
     ws = Workspace.objects.create(slug="fresh", display_name="Fresh", created_by=fleet["jj"])
     keys = {r.seed_key: r.enabled for r in AdmissionRule.objects.filter(workspace=ws)}
-    assert keys == {"email-confined-manual-cloud": True, "email-confined-manual-laptop": False}
+    assert keys == {"email-confined-manual-cloud": True, "email-confined-manual-laptop": False,
+                    "blocked-sender": True, "offered-nothing": True}
     assert defaults.seed(ws.pk) == 0
 
 
@@ -214,7 +215,21 @@ def test_the_data_migration_seeds_every_existing_workspace(fleet):
     AdmissionRule.objects.all().delete()
     seed = importlib.import_module("apps.admission.migrations.0002_seed_default_rules").seed
     seed(registry, None)
-    assert AdmissionRule.objects.filter(workspace=fleet["ws"]).count() == len(defaults.DEFAULTS)
+    assert set(AdmissionRule.objects.filter(workspace=fleet["ws"]).values_list("seed_key", flat=True)) \
+        == {"email-confined-manual-cloud", "email-confined-manual-laptop"}
+
+
+def test_the_refusal_migration_seeds_only_its_own_rules(fleet):
+    import importlib
+
+    from django.apps import apps as registry
+
+    ws = fleet["ws"]
+    AdmissionRule.objects.filter(workspace=ws, seed_key__in=("blocked-sender", "offered-nothing")).delete()
+    _seeded(ws, "email-confined-manual-laptop").delete()  # a workspace removed a default
+    importlib.import_module("apps.admission.migrations.0005_seed_refusal_rules").seed(registry, None)
+    assert set(AdmissionRule.objects.filter(workspace=ws).values_list("seed_key", flat=True)) == {
+        "email-confined-manual-cloud", "blocked-sender", "offered-nothing"}  # not brought back
 
 
 def test_origin_choices_track_the_turn_vocabulary():
@@ -404,6 +419,85 @@ def test_a_send_that_may_have_gone_is_not_retried(fleet, settings, django_captur
     with mock.patch.object(gmail, "send_reply", side_effect=TimeoutError("read timed out")):
         notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)
     assert notice.status == AdmissionNotice.FAILED and "never answered twice" in notice.detail
+
+
+# --- the refusals canopy always makes, as rules (canopy-web#1416, #1400 item 6) ----------
+
+def _block(fleet, email=VIKRAM):
+    from apps.contacts.models import Contact
+
+    _mail(fleet["hal"], thread="t-0")  # records the contact
+    contact = Contact.objects.get(workspace=fleet["ws"], email=email)
+    contact.blocked_at, contact.blocked_reason = timezone.now(), "spam"
+    contact.save(update_fields=["blocked_at", "blocked_reason"])
+
+
+def test_a_blocked_senders_refusal_fires_its_rule_and_by_default_tells_nobody(
+        fleet, django_capture_on_commit_callbacks):
+    _block(fleet)
+    with django_capture_on_commit_callbacks(execute=True):
+        turn = _mail(fleet["hal"], thread="t-b")
+    rule = _seeded(fleet["ws"], "blocked-sender")
+    assert turn.status == Turn.CANCELLED and turn.result_note == "not run: the sender is blocked (spam)"
+    assert turn.events.filter(kind="status", payload__admission_rule=rule.pk).exists()
+    rule.refresh_from_db()
+    assert rule.fired_count == 1
+    assert not AdmissionNotice.objects.filter(turn=turn).exists() and mail.outbox == []
+
+
+def test_a_refusal_rule_sets_the_notices_but_can_never_let_the_turn_run(
+        fleet, django_capture_on_commit_callbacks):
+    _block(fleet)
+    rule = _seeded(fleet["ws"], "blocked-sender")
+    rule.notify_owner = True
+    rule.save()
+    with django_capture_on_commit_callbacks(execute=True):
+        turn = _mail(fleet["hal"], thread="t-c")
+    owner = AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.OWNER)
+    assert owner.status == AdmissionNotice.SENT and mail.outbox[0].to == ["jj@dimagi.com"]
+    assert not AdmissionNotice.objects.filter(turn=turn, kind=AdmissionNotice.SENDER).exists()
+
+    # Disabled, it records nothing — and the sender is STILL refused.
+    rule.refresh_from_db()
+    rule.enabled = False
+    rule.save()
+    with django_capture_on_commit_callbacks(execute=True):
+        again = _mail(fleet["hal"], thread="t-d")
+    assert again.status == Turn.CANCELLED and not again.events.filter(
+        payload__has_key="admission_rule").exists()
+    rule.refresh_from_db()
+    assert rule.fired_count == 1
+
+
+def test_a_person_offered_nothing_is_refused_and_their_rule_fires(
+        fleet, django_capture_on_commit_callbacks):
+    hal = fleet["hal"]
+    hal.interface = parse({})  # no interface: a contact is offered nothing
+    hal.save(update_fields=["interface"])
+    rule = _seeded(fleet["ws"], "offered-nothing")
+    rule.notify_owner = True
+    rule.save()
+    with django_capture_on_commit_callbacks(execute=True):
+        turn = _mail(hal, thread="t-n")
+    assert turn.status == Turn.CANCELLED and turn.result_note.startswith("not run:")
+    rule.refresh_from_db()
+    assert rule.fired_count == 1
+    assert AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.OWNER).status == AdmissionNotice.SENT
+    # An ordinary turn is never matched by a refusal rule.
+    assert _seeded(fleet["ws"], "blocked-sender").fired_count == 0
+
+
+def test_a_refusal_rule_cannot_be_an_allow_or_wait_for_a_runner(fleet):
+    admin = _member(fleet, M.ADMIN, "a@dimagi.com")
+    url = "/api/workspaces/connect/admission-rules"
+    for body in ({"sender": "blocked", "action": "allow", "reason": "let them in"},
+                 {"access": "none", "runner_kind": "cloud", "reason": "x"}):
+        res = admin.post(url, body, content_type="application/json")
+        assert res.status_code in (400, 422), res.content
+    ok = admin.post(url, {"origin": "slack", "access": "none", "reason": "tell me",
+                          "notify_owner": True}, content_type="application/json")
+    assert ok.status_code in (200, 201), ok.content
+    assert ok.json()["refusal"] is True and "offered nothing" in ok.json()["summary"]
 
 
 # --- the settings API ------------------------------------------------------------------

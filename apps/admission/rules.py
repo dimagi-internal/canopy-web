@@ -23,7 +23,7 @@ _PRINCIPAL = {
 _RUNNER = dict(AdmissionRule.RUNNER_KIND_CHOICES)
 
 #: The fields a create or update writes, beside `agent`.
-_FIELDS = ("origin", "principal", "access", "capability", "turn_mode", "runner_kind",
+_FIELDS = ("origin", "principal", "sender", "access", "capability", "turn_mode", "runner_kind",
            "action", "reason", "notify_sender", "notify_owner", "enabled")
 
 
@@ -32,10 +32,14 @@ def summary(rule: AdmissionRule) -> str:
     parts = [f"{_ORIGIN.get(rule.origin, rule.origin)}" if rule.origin else "Any turn"]
     if rule.principal:
         parts.append(_PRINCIPAL.get(rule.principal, rule.principal))
+    if rule.sender == AdmissionRule.BLOCKED:
+        parts.append("from a blocked sender")
     if rule.agent_id:
         parts.append(f"to {rule.agent.slug}")
     extra = []
-    if rule.access:
+    if rule.access == AdmissionRule.NONE:
+        extra.append("offered nothing")
+    elif rule.access:
         extra.append(rule.access)
     if rule.capability:
         extra.append(f"capability {rule.capability}")
@@ -55,6 +59,7 @@ def rule_out(rule: AdmissionRule) -> dict:
         **{f: getattr(rule, f) for f in _FIELDS},
         "summary": summary(rule),
         "seeded": bool(rule.seed_key),
+        "refusal": rule.is_refusal,
         "fired_count": rule.fired_count,
         "last_fired_at": rule.last_fired_at,
         "created_by": rule.created_by.email if rule.created_by_id else "",
@@ -69,6 +74,7 @@ def choices() -> dict:
     return {
         "origins": pairs(AdmissionRule.ORIGIN_CHOICES),
         "principals": pairs(AdmissionRule.PRINCIPAL_CHOICES),
+        "senders": pairs(AdmissionRule.SENDER_CHOICES),
         "access": pairs(AdmissionRule.ACCESS_CHOICES),
         "turn_modes": pairs(AdmissionRule.TURN_MODE_CHOICES),
         "runner_kinds": pairs(AdmissionRule.RUNNER_KIND_CHOICES),

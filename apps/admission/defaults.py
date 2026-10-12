@@ -27,13 +27,34 @@ DEFAULTS: tuple[dict, ...] = (
         "action": "reject", "notify_sender": True, "notify_owner": True, "enabled": False,
         "reason": _NO_APPROVER.format(where="a laptop session nobody is watching"),
     },
+    # The two refusals canopy always makes, as rows (canopy-web#1416, #1400 item 6).
+    # A row cannot let these turns run (`AdmissionRule.is_refusal`); it decides
+    # what the refusal records and who is told. Both ship with every notice OFF,
+    # which is exactly what these refusals did before they were rows — turning
+    # one on is the toggle.
+    {
+        "seed_key": "blocked-sender",
+        "origin": "email", "sender": "blocked",
+        "action": "reject", "notify_sender": False, "notify_owner": False, "enabled": True,
+        "reason": "the sender is blocked in this workspace, so their mail is not run.",
+    },
+    {
+        "seed_key": "offered-nothing",
+        "access": "none",
+        "action": "reject", "notify_sender": False, "notify_owner": False, "enabled": True,
+        "reason": ("the agent's interface offers this person nothing: they are not one of its "
+                   "admins, and no `full:` rule or capability lists them."),
+    },
 )
 
 
-def seed(workspace_id: str, rule_model=None) -> int:
+def seed(workspace_id: str, rule_model=None, keys=None) -> int:
     """Create the missing defaults for one workspace. Idempotent by `seed_key`,
     and a default someone DELETED is not brought back by a later call only
     because nothing calls this for an existing workspace again.
+
+    `keys` limits it to those defaults: a later migration seeds only what it
+    adds, so a default a workspace deleted is not brought back by it.
 
     Takes the model so the migration can pass its historical one. Uses
     `bulk_create`, which skips `save()`'s validation: the defaults are known to
@@ -43,6 +64,7 @@ def seed(workspace_id: str, rule_model=None) -> int:
         from .models import AdmissionRule as rule_model
     have = set(rule_model.objects.filter(workspace_id=workspace_id)
                .exclude(seed_key="").values_list("seed_key", flat=True))
-    rows = [rule_model(workspace_id=workspace_id, **d) for d in DEFAULTS if d["seed_key"] not in have]
+    rows = [rule_model(workspace_id=workspace_id, **d) for d in DEFAULTS
+            if d["seed_key"] not in have and (keys is None or d["seed_key"] in keys)]
     rule_model.objects.bulk_create(rows)
     return len(rows)

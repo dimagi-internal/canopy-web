@@ -20,7 +20,7 @@ import { listAgents, type AgentOut } from '@/api/agents'
 // `?rule=<id>`, so the rule that fired is highlighted and scrolled to.
 
 const EMPTY: AdmissionRuleIn = {
-  agent: '', origin: '', principal: '', access: '', capability: '', turn_mode: '', runner_kind: '',
+  agent: '', origin: '', principal: '', sender: '', access: '', capability: '', turn_mode: '', runner_kind: '',
   action: 'reject', reason: '', notify_sender: false, notify_owner: true, enabled: true,
 }
 
@@ -75,6 +75,7 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
       agent: rule.agent,
       origin: rule.origin as AdmissionRuleIn['origin'],
       principal: rule.principal as AdmissionRuleIn['principal'],
+      sender: rule.sender as AdmissionRuleIn['sender'],
       access: rule.access as AdmissionRuleIn['access'],
       capability: rule.capability,
       turn_mode: rule.turn_mode as AdmissionRuleIn['turn_mode'],
@@ -147,6 +148,11 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
           An <em>allow</em> rule exempts the turns it matches from every reject rule, which is how one
           agent opts out of a workspace-wide rule. A disabled rule matches nothing.
         </p>
+        <p className="mt-1 max-w-3xl text-[13px] text-foreground-secondary">
+          A rule on a <em>blocked sender</em> or on <em>access: none</em> (a person the agent offers
+          nothing) is different: canopy refuses those turns whatever the rules say. Such a rule only
+          decides what the refusal records and who is told, so it cannot be an <em>allow</em>.
+        </p>
         <p
           className={`mt-2 text-[12px] ${policy.sender_notices_enabled ? 'text-foreground-secondary' : 'text-muted-foreground'}`}
           data-testid="admission-sender-notices"
@@ -204,6 +210,11 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
                     </span>
                     {r.summary}
                     {r.seeded && <span className="ml-1 text-[11px] text-muted-foreground">(default)</span>}
+                    {r.refusal && (
+                      <span className="ml-1 text-[11px] text-muted-foreground" data-testid={`admission-refusal-${r.id}`}>
+                        · always refused; this sets the notices
+                      </span>
+                    )}
                   </td>
                   <td className="py-1.5 pr-3 text-foreground-secondary">{r.reason}</td>
                   <td className="py-1.5 pr-3 text-muted-foreground">{notices(r)}</td>
@@ -259,6 +270,11 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
               onChange={(e) => set({ principal: e.target.value as AdmissionRuleIn['principal'] })}>
               <option value="">Anyone</option>
               {c.principals.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <select aria-label="Sender" className={select} value={draft.sender}
+              onChange={(e) => set({ sender: e.target.value as AdmissionRuleIn['sender'] })}>
+              <option value="">Any sender</option>
+              {c.senders.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <select aria-label="Access" className={select} value={draft.access}
               onChange={(e) => set({ access: e.target.value as AdmissionRuleIn['access'] })}>

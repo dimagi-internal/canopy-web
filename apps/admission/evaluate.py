@@ -20,6 +20,16 @@ wins, then the oldest. A DISABLED rule matches nothing — in either direction.
 
 Rules apply to agent turns (an agent's own, or its chat's). A project turn has
 no agent and is never evaluated.
+
+* **Refusals** (`at_refusal`, canopy-web#1416): canopy refuses two kinds of turn
+  on its own, before any rule — a blocked sender's mail
+  (`harness.services._refused_email_turn`) and a person the agent offers
+  nothing (`_apply_capability`). Those stay refused whatever the rules say:
+  they are access decisions, and no admission rule can grant access. What a
+  rule decides for them is what a rejection decides for any other turn — the
+  ledger event, the fired count and the notices. Seeded as `blocked-sender`
+  and `offered-nothing`, both with every notice off, which is what the
+  refusals did before they were rows.
 """
 from __future__ import annotations
 
@@ -56,6 +66,8 @@ def facts(turn, *, runner=None, mode: str | None = None) -> dict:
     return {
         "origin": turn.origin,
         "principal": _PRINCIPAL_FOR_INITIATOR.get(turn.initiator_kind or "", AdmissionRule.SYSTEM),
+        # A blocked sender's turn never reaches `decide`; `at_refusal` says so.
+        "sender": "",
         "access": AdmissionRule.CONFINED if turn.capability else AdmissionRule.FULL,
         "capability": turn.capability or "",
         "turn_mode": mode,
@@ -114,6 +126,32 @@ def at_claim(turn, runner, mode: str) -> bool:
     return rule is not None and reject(turn, rule, runner=runner)
 
 
+def at_refusal(turn, *, sender: str = "", access: str = "") -> AdmissionRule | None:
+    """canopy just refused `turn` on its own (it is already CANCELLED, with its
+    reason in `result_note`): fire the refusal rule that covers it, if one is
+    enabled. Returns that rule. Never raises — the refusal stands either way."""
+    try:
+        agent = _agent_of(turn)
+        if agent is None:
+            return None
+        known = {**facts(turn), "sender": sender}
+        if access:
+            known["access"] = access
+        rules = [r for r in AdmissionRule.objects.filter(
+            workspace_id=agent.workspace_id, enabled=True, action=AdmissionRule.REJECT,
+        ).filter(Q(agent__isnull=True) | Q(agent=agent)).filter(
+            Q(sender=AdmissionRule.BLOCKED) | Q(access=AdmissionRule.NONE))
+            if match(r, known) is True]
+        if not rules:
+            return None
+        rule = sorted(rules, key=lambda r: (-r.specificity, r.pk))[0]
+        _fire(turn, rule, turn.result_note, {"at": "refusal"})
+        return rule
+    except Exception:  # noqa: BLE001 — the refusal is the safety; the record is not
+        logger.exception("admission: could not record the refusal of turn %s", turn.pk)
+        return None
+
+
 def result_note(rule: AdmissionRule) -> str:
     from .rules import summary
 
@@ -127,7 +165,6 @@ def reject(turn, rule: AdmissionRule, *, runner=None) -> bool:
     turn would start a debugger turn (`harness.auto_debug`). Guarded on the
     status so a turn another runner claimed in the meantime is left alone.
     """
-    from apps.harness.ledger import append_events
     from apps.harness.models import Turn
 
     note = result_note(rule)
@@ -138,8 +175,18 @@ def reject(turn, rule: AdmissionRule, *, runner=None) -> bool:
     if not updated:
         return False
     turn.refresh_from_db()
-    AdmissionRule.objects.filter(pk=rule.pk).update(fired_count=F("fired_count") + 1, last_fired_at=now)
     stage = {"runner": runner.name, "runner_kind": runner.kind} if runner is not None else {"at": "enqueue"}
+    _fire(turn, rule, note, stage)
+    return True
+
+
+def _fire(turn, rule: AdmissionRule, note: str, stage: dict) -> None:
+    """What every rejection records and owes, once the turn is CANCELLED."""
+    from apps.harness.ledger import append_events
+    from apps.harness.models import Turn
+
+    AdmissionRule.objects.filter(pk=rule.pk).update(
+        fired_count=F("fired_count") + 1, last_fired_at=timezone.now())
     append_events(turn, [{"kind": "status", "payload": {
         "status": Turn.CANCELLED, "result_note": note, "admission_rule": rule.pk, **stage,
     }}])
@@ -152,7 +199,6 @@ def reject(turn, rule: AdmissionRule, *, runner=None) -> bool:
         notices.deliver(turn_id, rule_id)
 
     transaction.on_commit(_notify)
-    return True
 
 
 def _log(turn, rule, note: str, stage: dict) -> None:

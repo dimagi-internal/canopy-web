@@ -16070,6 +16070,8 @@ export interface components {
             readonly origins: readonly components["schemas"]["AdmissionChoice"][];
             /** Principals */
             readonly principals: readonly components["schemas"]["AdmissionChoice"][];
+            /** Senders */
+            readonly senders: readonly components["schemas"]["AdmissionChoice"][];
             /** Access */
             readonly access: readonly components["schemas"]["AdmissionChoice"][];
             /** Turn Modes */
@@ -16091,6 +16093,8 @@ export interface components {
             readonly origin: string;
             /** Principal */
             readonly principal: string;
+            /** Sender */
+            readonly sender: string;
             /** Access */
             readonly access: string;
             /** Capability */
@@ -16113,6 +16117,8 @@ export interface components {
             readonly summary: string;
             /** Seeded */
             readonly seeded: boolean;
+            /** Refusal */
+            readonly refusal: boolean;
             /** Fired Count */
             readonly fired_count: number;
             /** Last Fired At */
@@ -16140,7 +16146,9 @@ export interface components {
         /**
          * AdmissionRuleIn
          * @description Blank conditions mean "any"; a rule needs at least one. `allow` exempts
-         *     matching turns from every `reject` rule in the workspace.
+         *     matching turns from every `reject` rule in the workspace. A rule on a
+         *     blocked sender or `access: none` is about turns canopy always refuses: it
+         *     sets what the refusal records and who is told, and cannot be an `allow`.
          */
         readonly AdmissionRuleIn: {
             /**
@@ -16162,11 +16170,17 @@ export interface components {
              */
             readonly principal: "" | "member" | "contact" | "agent" | "system";
             /**
+             * Sender
+             * @default
+             * @enum {string}
+             */
+            readonly sender: "" | "blocked";
+            /**
              * Access
              * @default
              * @enum {string}
              */
-            readonly access: "" | "confined" | "full";
+            readonly access: "" | "confined" | "full" | "none";
             /**
              * Capability
              * @default
@@ -16219,8 +16233,10 @@ export interface components {
             readonly origin?: ("" | "api" | "ace_web" | "canopy_web_chat" | "canopy_scheduler" | "email" | "slack") | null;
             /** Principal */
             readonly principal?: ("" | "member" | "contact" | "agent" | "system") | null;
+            /** Sender */
+            readonly sender?: ("" | "blocked") | null;
             /** Access */
-            readonly access?: ("" | "confined" | "full") | null;
+            readonly access?: ("" | "confined" | "full" | "none") | null;
             /** Capability */
             readonly capability?: string | null;
             /** Turn Mode */
