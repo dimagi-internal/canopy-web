@@ -670,6 +670,7 @@ SETTINGS: frozenset[str] = frozenset({
     "add_system_sender", "remove_system_sender",
     # workspaces: policy and routing
     "create_admission_rule", "update_admission_rule", "delete_admission_rule",
+    "set_admission_settings",
     "create_retention_rule", "update_retention_rule", "delete_retention_rule",
     "set_runner_order", "set_shared_vault",
     # workspaces: integrations
@@ -712,6 +713,7 @@ NOT_SETTINGS: dict[str, str] = {
     "create_run": "content", "fork_run": "content", "record_gate": "content", "record_verdict": "content",
     "create_sync": "content", "delete_sync": "content", "replace_skills": "content",
     "sync_skill_history": "content", "create_tasks": "content", "patch_task": "content",
+    "create_idea": "content",  # an idea is a task with kind=idea
     "act_on_task": "content", "patch_contact": "content",
     "delete_narrative": "content", "move_narrative": "content", "delete_version": "content",
     "delete_run": "content", "upsert_issue": "content", "delete_issue": "content",
