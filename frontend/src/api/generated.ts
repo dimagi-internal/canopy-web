@@ -4492,6 +4492,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/admission-settings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Switch automatic replies to rejected senders on or off
+         * @description On, a rule with "automatic reply to the sender" replies on the sender's
+         *     email thread, from the agent's mailbox, in fixed text. Off, the reply is
+         *     recorded and not sent. Needs the admin role.
+         */
+        readonly put: operations["set_admission_settings"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/admission-rules/{rule_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -16442,6 +16464,19 @@ export interface components {
              */
             readonly enabled: boolean;
         };
+        /** AdmissionSettingsOut */
+        readonly AdmissionSettingsOut: {
+            /** Sender Notices Enabled */
+            readonly sender_notices_enabled: boolean;
+        };
+        /**
+         * AdmissionSettingsIn
+         * @description Whether a rule's automatic reply to the sender is actually sent.
+         */
+        readonly AdmissionSettingsIn: {
+            /** Sender Notices Enabled */
+            readonly sender_notices_enabled: boolean;
+        };
         /**
          * AdmissionRulePatch
          * @description Only the fields sent change — so the enabled switch is `{"enabled": false}`.
@@ -27117,6 +27152,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AdmissionRuleOut"];
+                };
+            };
+        };
+    };
+    readonly set_admission_settings: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AdmissionSettingsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AdmissionSettingsOut"];
                 };
             };
         };

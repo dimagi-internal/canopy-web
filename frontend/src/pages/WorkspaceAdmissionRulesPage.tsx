@@ -6,6 +6,7 @@ import {
   createAdmissionRule,
   deleteAdmissionRule,
   getAdmissionRules,
+  setAdmissionSenderNotices,
   updateAdmissionRule,
   WorkspaceApiError,
   type AdmissionRuleIn,
@@ -153,14 +154,23 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
           nothing) is different: canopy refuses those turns whatever the rules say. Such a rule only
           decides what the refusal records and who is told, so it cannot be an <em>allow</em>.
         </p>
-        <p
-          className={`mt-2 text-[12px] ${policy.sender_notices_enabled ? 'text-foreground-secondary' : 'text-muted-foreground'}`}
+        <label
+          className={`mt-2 flex items-center gap-2 text-[12px] ${policy.sender_notices_enabled ? 'text-foreground-secondary' : 'text-muted-foreground'}`}
           data-testid="admission-sender-notices"
         >
+          <input
+            type="checkbox"
+            checked={policy.sender_notices_enabled}
+            disabled={!manage || busy}
+            onChange={() => void run(
+              () => setAdmissionSenderNotices(slug, !policy.sender_notices_enabled),
+              'Could not switch automatic replies')}
+            data-testid="admission-sender-notices-toggle"
+          />
           {policy.sender_notices_enabled
-            ? '● Automatic replies to senders are on for this deployment.'
-            : '○ Automatic replies to senders are off on this deployment: they are recorded, not sent. Owner notices still go out.'}
-        </p>
+            ? 'Automatic replies to rejected senders are on in this workspace. A rule that asks for one replies on the sender’s thread, from the agent’s mailbox.'
+            : 'Automatic replies to rejected senders are off in this workspace: they are recorded, not sent. Owner notices still go out.'}
+        </label>
       </section>
 
       <section>

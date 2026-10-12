@@ -12,8 +12,8 @@ Most agents' mailboxes hold a token minted at a terminal on the fleet's desktop
 refresh Google refuses, or a send Gmail refuses — this raises `Unavailable`
 and the notice is left PENDING for the agent's runner, which reads the same
 mailbox with its own gog client and sends the same fixed text on its next poll
-(`runner_notices.py`, canopy-web#1416, option b). Off unless
-`CANOPY_ADMISSION_SENDER_NOTICES` is set.
+(`runner_notices.py`, canopy-web#1416, option b). Off until a workspace
+admin turns automatic replies on (`AdmissionSettings`).
 
 `Unavailable` is raised only when NOTHING was sent: a failure after Gmail
 accepted the message (marking the thread read) is swallowed, because a runner

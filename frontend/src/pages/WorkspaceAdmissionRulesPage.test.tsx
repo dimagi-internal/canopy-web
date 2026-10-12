@@ -9,8 +9,10 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 import type { AdmissionRuleOut, AdmissionRulesOut } from '@/api/workspaces'
 
-const { getAdmissionRules, createAdmissionRule, updateAdmissionRule, deleteAdmissionRule, listAgents } =
+const { getAdmissionRules, createAdmissionRule, updateAdmissionRule, deleteAdmissionRule, listAgents,
+  setAdmissionSenderNotices } =
   vi.hoisted(() => ({
+    setAdmissionSenderNotices: vi.fn(),
     getAdmissionRules: vi.fn<(slug: string) => Promise<AdmissionRulesOut>>(),
     createAdmissionRule: vi.fn(),
     updateAdmissionRule: vi.fn(),
@@ -24,6 +26,7 @@ vi.mock('@/api/workspaces', async (orig) => ({
   createAdmissionRule,
   updateAdmissionRule,
   deleteAdmissionRule,
+  setAdmissionSenderNotices,
 }))
 vi.mock('@/api/agents', () => ({ listAgents }))
 
@@ -83,7 +86,7 @@ describe('WorkspaceAdmissionRulesPage', () => {
     expect(screen.getByTestId('admission-fired-3').textContent).toContain('2×')
     expect(screen.getByTestId('admission-fired-4').textContent).toContain('never')
     expect((screen.getByTestId('admission-toggle-4') as HTMLInputElement).checked).toBe(false)
-    expect(screen.getByTestId('admission-sender-notices').textContent).toContain('off on this deployment')
+    expect(screen.getByTestId('admission-sender-notices').textContent).toContain('off in this workspace')
   })
 
   it('highlights the rule an owner notice links to', async () => {
@@ -143,6 +146,15 @@ describe('WorkspaceAdmissionRulesPage', () => {
       'connect', 5, expect.objectContaining({ sender: 'blocked' })))
   })
 
+  it('lets an admin switch automatic replies on for the workspace', async () => {
+    getAdmissionRules.mockResolvedValue(policy())
+    setAdmissionSenderNotices.mockResolvedValue(true)
+    show()
+    fireEvent.click(await screen.findByTestId('admission-sender-notices-toggle'))
+    await waitFor(() => expect(setAdmissionSenderNotices).toHaveBeenCalledWith('connect', true))
+    expect(getAdmissionRules).toHaveBeenCalledTimes(2)
+  })
+
   it('shows a reader the rules and no controls', async () => {
     getAdmissionRules.mockResolvedValue(policy({ can_manage: false }))
     show()
@@ -150,5 +162,6 @@ describe('WorkspaceAdmissionRulesPage', () => {
     expect(screen.queryByTestId('admission-form')).toBeNull()
     expect(screen.queryByTestId('admission-delete-3')).toBeNull()
     expect((screen.getByTestId('admission-toggle-3') as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByTestId('admission-sender-notices-toggle') as HTMLInputElement).disabled).toBe(true)
   })
 })

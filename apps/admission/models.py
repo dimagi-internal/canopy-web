@@ -201,3 +201,28 @@ class AdmissionNotice(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"notice:{self.kind}:{self.turn_id}:{self.status}"
+
+
+class AdmissionSettings(models.Model):
+    """A workspace's admission switches, set by its admins on the Admission rules
+    page — never by the deployment, so turning a behaviour on is a setting a
+    person can see and flip, not an env var and a deploy (canopy-web#1416).
+
+    No row = the defaults below.
+    """
+
+    workspace = models.OneToOneField("workspaces.Workspace", on_delete=models.CASCADE,
+                                     primary_key=True, related_name="admission_settings")
+    #: Whether a rule's sender notice is actually SENT. Off, it is recorded as
+    #: `held`: an automatic reply goes out as the agent, so a person turns it on.
+    sender_notices_enabled = models.BooleanField(default=False)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"admission-settings:{self.workspace_id}"
+
+    @classmethod
+    def sender_notices_on(cls, workspace_id) -> bool:
+        return cls.objects.filter(workspace_id=workspace_id, sender_notices_enabled=True).exists()

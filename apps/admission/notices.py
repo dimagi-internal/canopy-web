@@ -6,9 +6,10 @@ Both are FIXED TEXT, never written by a model — no session ever ran.
   mailbox, only for an email turn, and only when it is safe:
   never to a machine (Auto-Submitted / Precedence / list mail, a no-reply
   address), the agent's own mailbox, a system sender of the workspace, or
-  canopy/another agent; and at most once per thread per 24 hours. Off unless
-  `CANOPY_ADMISSION_SENDER_NOTICES` is set: the notice is still recorded, as
-  `held`, so turning it on later changes nothing else. canopy-web sends it
+  canopy/another agent; and at most once per thread per 24 hours. Off until a
+  workspace admin turns it on (`AdmissionSettings`, on the Admission rules
+  page): the notice is still recorded, as `held`, so turning it on later
+  changes nothing else. canopy-web sends it
   itself when it can (`gmail.py`); when it cannot — the mailbox's token is on
   the desktop `canopy` client, or Google refuses — the notice is left PENDING
   and the agent's runner sends it on its next mailbox poll
@@ -27,11 +28,10 @@ import logging
 import re
 from email.utils import parseaddr
 
-from django.conf import settings
 from django.core.mail import EmailMessage
 from django.utils import timezone
 
-from .models import AdmissionNotice, AdmissionRule
+from .models import AdmissionNotice, AdmissionRule, AdmissionSettings
 
 logger = logging.getLogger(__name__)
 
@@ -130,9 +130,9 @@ def _sender_notice(turn, rule, agent) -> None:
     ).exclude(turn=turn)
     if recent.exists():
         return record(AdmissionNotice.SKIPPED, "this thread was already answered in the last 24 hours")
-    if not getattr(settings, "CANOPY_ADMISSION_SENDER_NOTICES", False):
+    if not AdmissionSettings.sender_notices_on(agent.workspace_id):
         return record(AdmissionNotice.HELD,
-                      "automatic replies are off on this deployment (CANOPY_ADMISSION_SENDER_NOTICES)")
+                      "automatic replies are off in this workspace (Settings → Admission rules)")
     from . import gmail
 
     message_id, subject, body = str(ref.get("message_id") or ""), str(ref.get("subject") or ""), sender_text(agent)

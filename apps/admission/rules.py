@@ -9,7 +9,7 @@ import logging
 
 from django.core.exceptions import ValidationError
 
-from .models import AdmissionRule
+from .models import AdmissionRule, AdmissionSettings
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,7 @@ def policy_for(workspace, *, can_manage: bool) -> dict:
     return {
         "workspace": workspace.slug,
         "can_manage": can_manage,
+        "sender_notices_enabled": AdmissionSettings.sender_notices_on(workspace.pk),
         "rules": [rule_out(r) for r in rules],
         "choices": choices(),
     }
@@ -161,3 +162,25 @@ def _log(workspace, user, kind: str, rule: AdmissionRule, *, before: str = "") -
         }], workspace=workspace)
     except Exception:  # noqa: BLE001
         logger.exception("admission: could not record %s for rule %s", kind, rule.pk)
+
+
+def set_sender_notices(workspace, enabled: bool, *, user) -> bool:
+    """Switch the workspace's automatic replies to senders on or off. Logged,
+    because it decides whether canopy sends mail as this workspace's agents."""
+    row, _ = AdmissionSettings.objects.get_or_create(workspace=workspace)
+    before = row.sender_notices_enabled
+    row.sender_notices_enabled, row.updated_by = enabled, user
+    row.save()
+    if before != enabled:
+        try:
+            from apps.events.services import record
+
+            record([{
+                "source": "admission", "kind": "admission.sender_notices", "level": "info",
+                "summary": f"{user.email} turned automatic replies to rejected senders "
+                           f"{'on' if enabled else 'off'}",
+                "payload": {"enabled": enabled, "user_id": user.pk},
+            }], workspace=workspace)
+        except Exception:  # noqa: BLE001
+            logger.exception("admission: could not record the sender-notice switch")
+    return enabled
