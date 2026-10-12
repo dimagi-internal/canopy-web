@@ -303,9 +303,11 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
     have gone out (a timeout) is never retried. There is no reply to a machine
     (Auto-Submitted, Precedence bulk/list, list mail), a no-reply address, the
     agent's own mailbox, a system sender, or canopy/another agent. At most one
-    reply goes per thread per 24 hours. This is **off** until
-    `CANOPY_ADMISSION_SENDER_NOTICES` is set; while it is off, the notice is
-    recorded as `held`.
+    reply goes per thread per 24 hours. It is **off** in each workspace until
+    one of its admins turns it on, on the Admission rules page
+    (`AdmissionSettings`, `PUT /api/workspaces/{slug}/admission-settings`,
+    logged to the event log); while it is off, the notice is recorded as
+    `held`.
   * The **owner** gets, off the thread: an email (SES), plus a review ask on
     the agent's board parked on them (Waiting on you). Both name who wrote, the
     subject and thread, the rule and its reason, and links to fix it: the rule

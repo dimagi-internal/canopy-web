@@ -418,6 +418,17 @@ export async function updateAdmissionRule(
   return res.data as unknown as AdmissionRuleOut
 }
 
+export async function setAdmissionSenderNotices(slug: string, enabled: boolean): Promise<boolean> {
+  const res = await apiV2.PUT('/api/workspaces/{slug}/admission-settings', {
+    params: { path: { slug } }, body: { sender_notices_enabled: enabled },
+  })
+  if (!res.response.ok) {
+    throw new WorkspaceApiError(res.response.status,
+      problemMessage(res.error, 'Failed to switch automatic replies'))
+  }
+  return Boolean(res.data?.sender_notices_enabled)
+}
+
 export async function deleteAdmissionRule(slug: string, ruleId: number): Promise<void> {
   const res = await apiV2.DELETE('/api/workspaces/{slug}/admission-rules/{rule_id}', {
     params: { path: { slug, rule_id: ruleId } },

@@ -18,6 +18,8 @@ from apps.admission.schemas import (
     AdmissionRuleIn,
     AdmissionRuleOut,
     AdmissionRulePatch,
+    AdmissionSettingsIn,
+    AdmissionSettingsOut,
     AdmissionRulesOut,
 )
 from apps.retention.schemas import (
@@ -988,15 +990,26 @@ def list_admission_rules(request: HttpRequest, slug: str) -> AdmissionRulesOut:
     """This workspace's admission rules: each one's conditions, action, notices,
     whether it is on, and how often it has fired. Any member may read them;
     changing them needs the admin role."""
-    from django.conf import settings
-
     from apps.admission import rules
 
     m = _require(request.user, slug, perms.READ)
     return AdmissionRulesOut(
         **rules.policy_for(m.workspace, can_manage=perms.role_allows(m.role, perms.ADMISSION_MANAGE)),
-        sender_notices_enabled=bool(getattr(settings, "CANOPY_ADMISSION_SENDER_NOTICES", False)),
     )
+
+
+@router.put("/{slug}/admission-settings", response=AdmissionSettingsOut,
+            summary="Switch automatic replies to rejected senders on or off")
+def set_admission_settings(request: HttpRequest, slug: str,
+                           payload: AdmissionSettingsIn) -> AdmissionSettingsOut:
+    """On, a rule with "automatic reply to the sender" replies on the sender's
+    email thread, from the agent's mailbox, in fixed text. Off, the reply is
+    recorded and not sent. Needs the admin role."""
+    from apps.admission import rules
+
+    m = _require(request.user, slug, perms.ADMISSION_MANAGE)
+    return AdmissionSettingsOut(sender_notices_enabled=rules.set_sender_notices(
+        m.workspace, payload.sender_notices_enabled, user=request.user))
 
 
 @router.post("/{slug}/admission-rules", response={201: AdmissionRuleOut},

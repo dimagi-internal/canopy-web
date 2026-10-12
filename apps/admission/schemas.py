@@ -102,8 +102,18 @@ class AdmissionChoices(StrictModel):
 class AdmissionRulesOut(StrictModel):
     workspace: str
     can_manage: bool
-    #: Whether the sender's automatic reply is switched on for this deployment.
-    #: Off, a rule's sender notice is recorded and not sent.
+    #: Whether this workspace sends a rule's automatic reply to the sender. Off,
+    #: it is recorded (`held`) and not sent. An admin switches it.
     sender_notices_enabled: bool
     rules: list[AdmissionRuleOut]
     choices: AdmissionChoices
+
+
+class AdmissionSettingsIn(StrictModel):
+    """Whether a rule's automatic reply to the sender is actually sent."""
+
+    sender_notices_enabled: bool
+
+
+class AdmissionSettingsOut(StrictModel):
+    sender_notices_enabled: bool

@@ -613,12 +613,6 @@ CANOPY_A2A_PROVIDER_URL = env("CANOPY_A2A_PROVIDER_URL", default="https://www.di
 # See docs/superpowers/specs/2026-10-05-content-retention-design.md.
 CANOPY_RETENTION_ENFORCE = env.bool("CANOPY_RETENTION_ENFORCE", default=False)
 
-# --- Admission rules: the sender's automatic reply (apps/admission/notices.py) ---
-# A rejected email turn owes its sender a fixed-text reply on their thread, sent
-# from the agent's own mailbox with the gog-token canopy-web holds. OFF until a
-# person turns it on: the notice is still recorded (`held`), and the owner's
-# notice (SES + a board ask) goes out regardless. canopy-web#1400.
-CANOPY_ADMISSION_SENDER_NOTICES = env.bool("CANOPY_ADMISSION_SENDER_NOTICES", default=False)
 
 # --- Auto-debug: a failed turn starts a debugger turn (apps/harness/auto_debug.py) ---
 # ON by default (Jonathan, 2026-10-07): a turn that ends FAILED immediately

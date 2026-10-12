@@ -600,6 +600,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "create_admission_rule": ("admission.manage",),
     "update_admission_rule": ("admission.manage",),
     "delete_admission_rule": ("admission.manage",),
+    "set_admission_settings": ("admission.manage",),
     "set_runner_order": ("runners.route",),  # admin+; routes agents in every division below too; each runner's owner must be a member (422 otherwise)
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins

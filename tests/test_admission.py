@@ -21,7 +21,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.admission import defaults, gmail, notices, runner_notices
-from apps.admission.models import AdmissionNotice, AdmissionRule
+from apps.admission.models import AdmissionNotice, AdmissionRule, AdmissionSettings
 from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.harness import services
@@ -78,6 +78,11 @@ def _mail(agent, *, sender=VIKRAM, thread="t-1", count=1, headers=VERIFIED):
 def _claim(runner, capture):
     with capture(execute=True):
         return claim_next_turn(runner)
+
+
+def _replies_on(fleet):
+    AdmissionSettings.objects.update_or_create(workspace=fleet["ws"],
+                                               defaults={"sender_notices_enabled": True})
 
 
 def _seeded(ws, key="email-confined-manual-cloud"):
@@ -259,8 +264,8 @@ def test_a_noreply_sender_gets_no_notice(fleet, django_capture_on_commit_callbac
 
 
 @pytest.fixture
-def sending(settings):
-    settings.CANOPY_ADMISSION_SENDER_NOTICES = True
+def sending(fleet):
+    _replies_on(fleet)
     with mock.patch.object(gmail, "send_reply", return_value="g-1") as send:
         yield send
 
@@ -295,11 +300,11 @@ def test_gmail_refuses_an_auto_submitted_message():
 
 
 def test_a_mailbox_canopy_cannot_send_from_is_left_for_the_agents_runner(
-        fleet, settings, django_capture_on_commit_callbacks):
+        fleet, django_capture_on_commit_callbacks):
     # canopy-web#1416: hal's token is on the desktop `canopy` client (here: no
     # token at all), so canopy-web cannot send. The notice is not given up on —
     # it waits for the runner that reads hal's mailbox, carrying what it needs.
-    settings.CANOPY_ADMISSION_SENDER_NOTICES = True
+    _replies_on(fleet)
     fleet["hal"].email = "hal@dimagi-ai.com"
     fleet["hal"].save(update_fields=["email"])
     notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)  # no gog-token stored
@@ -311,8 +316,8 @@ def test_a_mailbox_canopy_cannot_send_from_is_left_for_the_agents_runner(
 # --- the runner sends what canopy-web could not (canopy-web#1416) --------------------
 
 @pytest.fixture
-def pending(fleet, settings, django_capture_on_commit_callbacks):
-    settings.CANOPY_ADMISSION_SENDER_NOTICES = True
+def pending(fleet, django_capture_on_commit_callbacks):
+    _replies_on(fleet)
     fleet["hal"].email = "hal@dimagi-ai.com"
     fleet["hal"].save(update_fields=["email"])
     with mock.patch.object(gmail, "send_reply", side_effect=gmail.Unavailable("desktop client")):
@@ -414,8 +419,8 @@ def test_gmail_raises_unavailable_only_when_nothing_was_sent():
                                 subject="s", body="b") == "g-1"
 
 
-def test_a_send_that_may_have_gone_is_not_retried(fleet, settings, django_capture_on_commit_callbacks):
-    settings.CANOPY_ADMISSION_SENDER_NOTICES = True
+def test_a_send_that_may_have_gone_is_not_retried(fleet, django_capture_on_commit_callbacks):
+    _replies_on(fleet)
     with mock.patch.object(gmail, "send_reply", side_effect=TimeoutError("read timed out")):
         notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)
     assert notice.status == AdmissionNotice.FAILED and "never answered twice" in notice.detail
@@ -526,6 +531,25 @@ def test_any_member_reads_the_rules_and_only_an_admin_changes_them(fleet):
     assert admin.get(url).json()["can_manage"] is True
     assert admin.delete(f"{url}/{rid}").status_code == 204
     assert admin.post(url, {"reason": "everything"}, content_type="application/json").status_code == 422
+
+
+def test_automatic_replies_are_a_workspace_switch_only_an_admin_flips(
+        fleet, django_capture_on_commit_callbacks):
+    viewer = _member(fleet, M.VIEWER, "v2@dimagi.com")
+    admin = _member(fleet, M.ADMIN, "a2@dimagi.com")
+    url = "/api/workspaces/connect/admission-settings"
+    assert viewer.put(url, {"sender_notices_enabled": True},
+                      content_type="application/json").status_code == 403
+    res = admin.put(url, {"sender_notices_enabled": True}, content_type="application/json")
+    assert res.status_code == 200 and res.json() == {"sender_notices_enabled": True}
+    assert viewer.get("/api/workspaces/connect/admission-rules").json()["sender_notices_enabled"] is True
+    # Another workspace's switch is its own: a new one starts off.
+    other = Workspace.objects.create(slug="other", display_name="Other", created_by=fleet["jj"])
+    assert not AdmissionSettings.sender_notices_on(other.pk)
+    # On, the reply is attempted rather than held.
+    with mock.patch.object(gmail, "send_reply", return_value="g-2"):
+        notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-s")
+    assert notice.status == AdmissionNotice.SENT
 
 
 def test_a_rule_cannot_name_another_workspaces_agent(fleet):
