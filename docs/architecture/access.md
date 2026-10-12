@@ -4,8 +4,8 @@ Every word canopy uses about who may do what has exactly one meaning, and it is
 defined here. Code docstrings point at this page instead of re-defining terms
 (`apps/agents/access.py`, `apps/harness/caller_context.py`,
 `apps/workspaces/permissions.py`, `apps/agents/interface.py`,
-`apps/harness/turn_mode.py`). Owner decisions of 2026-10-04: reuse existing words,
-one meaning per word, no new terms.
+`apps/harness/turn_mode.py`). Reuse existing words, one meaning per word, no new
+terms.
 
 There are two ladders, and they are different questions:
 
@@ -16,7 +16,9 @@ There are two ladders, and they are different questions:
 THE rule that joins them is one function, `apps/agents/access.decide(agent, who,
 *, verified, origin, capability=None)`, which returns a `Decision(role, access,
 capability, may_request_auto, may_pin_runner, manual_only, basis, reason)`. Every
-door that makes an agent do work asks it.
+door that makes an agent do work asks it (see "Where it is asked" below);
+`tests/test_access_matrix.py` asks it through every door. Don't write a second
+predicate for "may this person make this agent do X" — ask `decide`.
 
 ## Workspace roles
 
@@ -37,10 +39,13 @@ outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.m
 
 ## Getting into a workspace
 
-Owner decision of 2026-10-04: nothing automatic, except that people at the org's
-domain may **request an invitation**. A person becomes a member in exactly three ways,
-and only `services._grant` (the first two) and workspace creation write a
-`WorkspaceMembership`:
+Nothing is automatic: there is no self-join and no domain auto-join. People at a
+listed domain may only **request an invitation**. A person becomes a member in
+exactly three ways, and the only code that may create a `WorkspaceMembership` is
+`services._grant` (the first two), `services.ensure_member` (the default-workspace
+bootstrap) and workspace creation — `apps/workspaces/tests/test_access_requests.py`
+fails on a fourth door, and `tests/test_no_implicit_enrolment.py` pins
+`ensure_member`'s callers:
 
 * **An invite.** An **admin** or **owner** invites an email address at a role they
   may grant (`permissions.may_manage_member`; **viewer** unless they choose
@@ -54,8 +59,11 @@ and only `services._grant` (the first two) and workspace creation write a
   deep link to the request's page,
   `/w/:workspace/settings/access-requests/:id`, where one of them **approves** at
   **viewer**, **editor** or **admin** (no higher than they may grant) or
-  **denies**, with an optional reason. The requester is emailed the outcome. A
-  notification failure never fails the request: it is stored on the request and
+  **denies**, with an optional reason. The requester is emailed the outcome. One
+  open request per person per workspace; asking again is idempotent. `GET
+  /api/workspaces/requestable` lists where you may ask. Notifications go through
+  the invite mechanism (labs SES) plus Web Push and are best-effort: a failure
+  never fails the request — it is stored on the request (`notify_result`) and
   written to the event log (`source=workspaces.access`, `warn`).
 * **Creating a workspace** makes you its **owner**.
 
@@ -139,9 +147,8 @@ Asked in this order; the first row that matches decides.
 * A **runner admin** is a runner's owner or a `RunnerAdmin` grant. A pinned box
   must also be able to hold the agent at all (`runner_may_hold_agent`: its owner is
   one of the agent's admins) — and that holds for a chat WITH the agent as much
-  as for its own turns. Chosen 2026-10-04: pinning is for an **agent admin
-  OR a runner admin**, consistent with actor routes, which already required the
-  runner admin.
+  as for its own turns. Pinning is for an **agent admin OR a runner admin**,
+  consistent with actor routes, which require the runner admin.
 
 ## System accounts
 
@@ -200,8 +207,8 @@ unchanged.
 ## Runner roles
 
 A runner has its own two-step ladder, separate from both of the above. Being a
-workspace member never makes you either (the `dimagi` workspace auto-joins a
-whole email domain).
+workspace member never makes you either (the `dimagi` workspace auto-approves
+access requests from a whole email domain).
 
 | Runner role | Who | May |
 |---|---|---|
@@ -241,15 +248,13 @@ the request is noted where the owner reviews it. The runner lifts that line out
 (the laptop from the `cx-` session's `Stop` hook, whose profile names the turn;
 the cloud box from the finished reply) and sends it as an `owner_ask` turn
 event. canopy-web re-parses it and appends it to the turn's `result_note`, for a
-confined turn only and once per line (`apps/harness/owner_ask.py`,
-canopy-web#1416). The note is what every view of the turn shows the people who
+confined turn only and once per line (`apps/harness/owner_ask.py`). The note is what every view of the turn shows the people who
 may read it; the transcript stays the record.
 
 ## Admission rules
 
 Some combinations of the above can never complete, and canopy refuses them
-before any session starts instead of spending one (`apps/admission`,
-canopy-web#1400). The worked example: an email from a **confined** caller, in
+before any session starts instead of spending one (`apps/admission`). The worked example: an email from a **confined** caller, in
 **manual** mode, claimed by a **cloud** runner. The ask procedure drafts a reply
 and waits for a human yes, and a cloud session that ends cannot receive one.
 
@@ -290,7 +295,9 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
     (`POST /api/harness/runners/{id}/admission-notices`, only for agents it may
     hold and only from the mailbox the sender wrote to), sends the same fixed
     text through its own gog client with the same threading and
-    `Auto-Submitted: auto-replied`, and reports it (canopy-web#1416). A runner
+    `Auto-Submitted: auto-replied`, and reports it
+    (`apps/admission/runner_notices.py`; the runner side is
+    `runner/canopy_runner/canopy_runner/admission_notices.py`). A runner
     failure leaves it pending for the next lease (15 minutes); one that no
     runner manages within 24 hours ends `failed`, saying why. A send that may
     have gone out (a timeout) is never retried. There is no reply to a machine
@@ -310,7 +317,7 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   notices, and is **on**. The second is the same on a laptop (`emdash`) runner
   and is **off**. From then on they are ordinary rows. Disable one, narrow it
   with an `allow`, or delete it (a deleted default is not re-seeded).
-* **Refusals as rules** (canopy-web#1416, #1400 item 6). canopy refuses two
+* **Refusals as rules.** canopy refuses two
   kinds of turn on its own, before any rule: mail from a contact the workspace
   **blocked** (`_refused_email_turn`), and a person the agent's interface
   **offers nothing** (`_apply_capability`, access `none`). Those are access
@@ -366,9 +373,105 @@ runners and the canopy plugin's hooks do the same). A runner gets confined turns
 only if it reports `envelope >= 2` (its code reads `confined`) and `profiles >= 3`
 (its guard confines writes) on every heartbeat.
 
+## How confinement is enforced
+
+Who asked is recorded on every turn (`initiator_*`), and the caller envelope
+(above) reaches the agent three ways: in the claim response, which the runner
+writes to `~/.canopy/caller/<turn_id>.json`; through the `who_is_asking` MCP
+tool; and beside every delivered prompt — the runner leaves
+`~/.canopy/caller/pending/<task>.json` before the send and the canopy plugin's
+`caller_context` UserPromptSubmit hook adds a summary next to the person's words
+(cloud: `CANOPY_CALLER`).
+
+* **Default deny.** No published interface means only the agent's admins and its
+  workspace's editors (manual) reach it; every viewer, contact or unidentified
+  caller is refused (rows 5 and 7). The interface is live state on canopy-web —
+  never a file in the agent's repo; owner-or-admin edit it on the agent. Each
+  capability is also an MCP tool for callers (`<slug>__<capability>`, e.g.
+  `ace__ask`; `apps/mcp/agent_tools.py`).
+* **An agent's own login is the agent.** `Agent.user` grades as `system`;
+  another agent's login grades like any person, or agent A could steer all of B.
+* **Three layers, each failing closed.** (1) canopy stamps `Turn.capability` at
+  enqueue (`harness.services._apply_capability`) or refuses the turn; (2) only a
+  runner reporting `profiles` (and `envelope >= 2`) may claim such a turn, and it
+  runs it in its own `cx-` session with the profile written to
+  `~/.canopy/profiles/<task>.json` first; (3) the plugin-wide `profile_guard`
+  PreToolUse hook refuses anything the profile does not list — Bash
+  argument-for-argument, `{thread_id}`-pinned, paths realpath'd.
+* **Native deny rules under the guard.** The runner also writes the capability as
+  Claude Code's own DENY rules (`runner/canopy_runner/canopy_runner/native_permissions.py`
+  → the `cx-` worktree's `.claude/settings.json`; `--settings` on cloud). Fleet
+  sessions run with `--dangerously-skip-permissions`, so only deny rules take
+  effect natively: whole tools, MCP servers and high-risk programs the capability
+  never grants. Exact-argument scoping stays the hook's job.
+* **A confined session never holds the runner owner's PAT.** It reaches canopy's
+  MCP with a **caller token** (`apps/harness/caller_tokens.py`, issued by
+  `harness.claiming.issue_credentials`): tools run as the caller (no canopy user
+  at all for an outside contact), and only the tools the capability lists exist
+  (`apps/mcp/turn_scope.py`).
+* **A confined turn holds no credentials it does not need.** canopy refuses it
+  the owner's GitHub token (`agents.delegations.github_token_for_turn` → 409).
+  The cloud runner builds its env from an allowlist (`_confined_env` in
+  `runner/ec2/cloud_runner.py`: Claude's login, locale/paths/TLS, which agent and
+  turn) — no `CANOPY_TOKEN`, no agent `.env`, no 1Password key (it never calls
+  `credentials/resolve`), no chat key; gog's keyring password only when the
+  capability's own bash rules run the mail path (`canopy email …` /
+  `bin/<slug>-email`).
+* **A colleague's FULL turn reads as the colleague.** A full-profile turn not
+  asked by the agent's owner, an admin or canopy (a `full:` rule, a workspace
+  editor, a writer in an admin's session — `caller_tokens.is_caller_scoped`)
+  gets a **scoped** caller token (`CallerToken.scoped`): every tool exists
+  (`all_tools`), but each runs as the conversation's current asker, so
+  `turn_access.can_read_turn_content` and the session ACL decide what
+  `harness_list_turns` / `read_turn_messages` / `read_turn_transcript` return.
+  The cloud runner leaves it at `~/.canopy/scoped/turn/<turn id>.token` and sets
+  `CANOPY_SCOPED_TURN` (`_scoped_token_env`); the laptop runner leaves
+  `~/.canopy/scoped/task/<emdash task>.token` from `execute._confine`
+  (`scoped_token.py`) and clears it for a later turn with none. The plugin's
+  `canopy-web-mcp-headers.js` sends it and never falls back to a PAT once it has
+  one; a write failure refuses the turn. A scoped token does not serve a
+  confined turn's conversation, and a confined token does not serve a full turn's.
+* **Known limit.** On a laptop every session is the same OS user and emdash
+  spawns it, so the runner cannot strip its environment; on any box, credential
+  FILES (agent `.env`s, gog's keyring, ace's Drive key) stay readable to an
+  escaped session. The guard and the native deny layer are what keep a confined
+  session off them.
+
+Spec: `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-and-access-design.md`.
+
+## Slack threads
+
+Who may write into a Slack thread's conversation is an access decision, so two
+Slack behaviours live here (`apps/slack/`, pinned in `tests/test_slack.py`).
+
+* **A confined reply in someone else's thread gets a thread of its own**
+  (`services._fork_confined`). When a message in an existing thread would run
+  confined — asked of a probe turn through `access.decide_for_turn`, so it cannot
+  disagree with the real stamp — and the thread's session is not the sender's,
+  canopy posts a new top-level message, opens a session keyed to THAT thread
+  (owned by the sender, `metadata.slack_forked_from` / `slack_forked_session`,
+  seeded with the thread they were reading), and links it from the original
+  thread. Sharing the owner's session would queue behind the owner's turn
+  (`routing.blocking_turn`) and answer in their thread from a `cx-` session
+  nobody can find. One fork per (thread, person); writing in the original thread
+  again continues it.
+* **`@canopy branch <ask>` splits a conversation into a new thread**
+  (`apps/slack/branch.py`). Inside a thread with an agent session, anyone who may
+  write into that conversation (its owner or an editor — a member who replied in
+  the thread is one — or an admin of its agent) gets a new top-level message, a
+  child `Session` (`parent_session`, `parent_claude_session` from the parent
+  binding's `transcript_id`, `metadata.slack_branched_from`) keyed to the new
+  thread, and a first turn seeded with the parent conversation, condensed by
+  `canopy_sessions.exports.build_branch_seed` (tool output dropped, capped at
+  `BRANCH_SEED_CHARS` = 30k, keeping the first ask and the end). The original
+  thread gets a link and carries on; branch as often as you like. The seed is a
+  prompt, not a Claude fork — emdash creates tasks through its UI and cannot pass
+  `--fork-session`. A viewer cannot branch (they could not write into it), and a
+  confined reply never branches (it forks, above).
+
 ## What agents know about a person (the fleet brain)
 
-`apps/contacts/people.py` + `people_api.py` (`/api/people/…`), canopy#804. One
+`apps/contacts/people.py` + `people_api.py` (`/api/people/…`). One
 `Person` per human — a member (`Person.user`, joined to their correspondent row by
 a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…)`).
 
@@ -443,12 +546,12 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
 * **Who writes: the session that learned it.** The agent records a fact in the
   turn where the person said it (HCP `addPreference`, `turn` = that turn), prompted
   by the envelope's person block and canopy's turn checklist. There is no
-  follow-up turn: the per-conversation `/canopy:people-digest` turn, its switches
-  and the stored per-person digest were removed 2026-10-09.
+  follow-up digest turn and no stored per-person digest — don't add a second pass
+  over a transcript; the session doing the work has the context.
 * **Retention** (`apps/retention`) scrubs turn content, not facts; a
   fact whose source turn was scrubbed keeps its statement.
 
-### v1.1 (canopy#804 follow-ups, 2026-10-07)
+### Project participants, coverage, and contact notes
 
 * **Project participants.** `AgentProject.participants` (through
   `ProjectParticipant`: `role` free text ≤ 80, `source` fact | turn | manual,
@@ -482,3 +585,16 @@ a VERIFIED address only) or a contact (`services.person_for(user=…|contact=…
   notes retracts it), so the brain is the one place agents read. The `notes`
   field is kept. Backfill: migration `contacts/0011` (historical models,
   idempotent) and `manage.py mirror_contact_notes`.
+
+### The HCP service
+
+The fleet brain is each person's Human Context Protocol instance
+(`apps/contacts/hcp.py`, `hcp_api.py`, discovery `/.well-known/hcp-configuration`),
+and apps canopy does not operate may ask a person for parts of it through
+canopy's own OAuth 2.0 authorization server (`hcp_oauth.py`, issuer
+`<origin>/api/hcp` — separate from the `/oauth/*` MCP sign-in server). `hcpat_`
+tokens open `/api/hcp/v1/` and nothing else, and the person's own record/use
+settings bound every client whatever it was granted. It is internal-only behind
+one gate, `HCP_SERVICE_AUDIENCE` (default `internal`). Clients, consent, tokens,
+revocation and every judgment call: `docs/architecture/hcp-service.md`; the
+self-audit against the spec: `docs/architecture/hcp-conformance.md`.
