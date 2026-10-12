@@ -118,6 +118,9 @@ ALLOWED_EVENT_KINDS = {
     "error",
     "heartbeat",
     "cancel_requested",
+    # A caller's turn's `For <Agent>'s owner:` line, lifted into result_note
+    # (owner_ask.py, canopy-web#1416).
+    "owner_ask",
 }
 
 # A runner is expected to flush the raw transcript periodically (never holding
@@ -2205,6 +2208,11 @@ def append_turn_events(request: HttpRequest, turn_id: uuid.UUID, payload: TurnEv
         if event.kind not in ALLOWED_EVENT_KINDS:
             raise HttpError(422, f"unknown event kind '{event.kind}'")
     count = services.append_events(turn, [e.dict() for e in payload.events])
+    from . import owner_ask
+
+    for event in payload.events:
+        if event.kind == owner_ask.EVENT:
+            owner_ask.record(turn, (event.payload or {}).get("line"))
     return {"count": count}
 
 
