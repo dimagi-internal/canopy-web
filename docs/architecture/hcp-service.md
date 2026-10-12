@@ -379,3 +379,59 @@ Outside the rollout:
   admin. It would need its own review step.
 - **Security review** of the consent screen and token endpoint by someone other than
   the author.
+
+## Retrieval: where search goes after keywords (not built — decided 2026-10-12)
+
+Today `hcp.search` ranks by term overlap (`_score`), declared as `lexical` (spec
+4.4.3). That misses paraphrases: "how does Jonathan like updates?" doesn't find
+"Prefers short answers". Jonathan's direction (2026-10-12), for when it matters
+(roughly a few hundred entries per person, or agents recording steadily):
+
+**Stay in Postgres; add pgvector. No separate vector or graph store.**
+- Filter first, then rank. Grant categories (4.4.1), reach restrictions
+  (4.1.5.1), status and person are ordinary `WHERE` clauses; ranking happens
+  only inside what the grant reaches. Separate vector stores tend to rank then
+  filter, which can silently drop the best matches.
+- Deletion stays total: the vector is a column on the entry row, so a hard
+  delete removes it in the same transaction. Vectors are personal data (a lot
+  of the sentence can be recovered from one); same permissions as the text.
+- Scale is tiny (one person's few hundred sentences per search), so compare
+  against every row: exact results, no approximate index needed. With the same
+  vectors, the database choice does not change quality.
+
+**What determines quality, in order:** the embedding model; what text is
+embedded (statement + category + dimension); hybrid ranking (Postgres full-text
+plus vector similarity, so names and exact terms still win); optionally an LLM
+re-rank of the top 10–20 against the stated purpose (then declare `llm`).
+
+**How it works:**
+- On write/update: call the embedding API once, store the vector beside the
+  sentence with the model's name and version. The sentence stays the source of
+  truth; vectors are only for finding.
+- On search: embed the query (new text, so one API call, ~100 ms; pgvector
+  can't make vectors), then rank in Postgres. Mark document vs query (Google's
+  `task_type` RETRIEVAL_DOCUMENT / RETRIEVAL_QUERY). If the API is down, fall
+  back to lexical.
+- Vectors from different models never mix. Changing models: embed everything
+  with the new model alongside the old, check it on the test set, switch
+  searches in one step, drop the old column. Minutes and pennies at our scale.
+- Agent-facing contract unchanged: ≤20 results, no paging, provenance redacted
+  (4.4.4), no counts of what was withheld (4.4.5).
+
+**Embedding model candidates** (pay per call; an always-on server would sit idle):
+- **Google `gemini-embedding-001` on Vertex AI** — strong; Dimagi has GCP via
+  Workspace. Confirm first: the *Google Cloud* BAA (separate from the Workspace
+  BAA) is accepted for the GCP org, and the model is on Google's HIPAA
+  covered-products list. Auth from AWS via workload identity federation (no
+  stored key). Memory text then leaves AWS for Google.
+- **Cohere Embed or Titan on AWS Bedrock** — keeps everything in canopy's AWS
+  account; the default if quality is close.
+- **Voyage** (Anthropic's recommendation, now MongoDB) — not on Bedrock; on AWS
+  only as an always-on SageMaker endpoint, or via Voyage's own API (outside
+  processor). Compare on test data only.
+
+**Before switching:** build a small fixed test set of real queries over real
+memory with the entries each should return, and pick the model and ranking by
+that, not by benchmarks. Providers retire models about yearly with notice
+(Google retired gecko and text-embedding-004 this way); a retirement notice
+should become a dated fleet task to re-embed.
