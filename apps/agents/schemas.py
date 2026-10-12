@@ -666,6 +666,9 @@ class AgentProjectIn(StrictModel):
     outcome: str = ""
     status: str = "active"
     owner_note: str = Field(default="", max_length=200)
+    # The owner as a real person — a member of the agent's workspace — so an
+    # idea added on the team view can email them. Unknown → 422.
+    owner_email: str = Field(default="", max_length=254)
     drive_folder_id: str = Field(default="", max_length=128)
     drive_folder_url: str = Field(default="", max_length=500)
     repo_slug: str = Field(default="", max_length=100)
@@ -678,6 +681,8 @@ class AgentProjectPatch(StrictModel):
     outcome: str | None = None
     status: str | None = None
     owner_note: str | None = Field(default=None, max_length=200)
+    # Present-and-empty clears the linked owner; absent leaves it.
+    owner_email: str | None = Field(default=None, max_length=254)
     drive_folder_id: str | None = Field(default=None, max_length=128)
     drive_folder_url: str | None = Field(default=None, max_length=500)
     repo_slug: str | None = Field(default=None, max_length=100)

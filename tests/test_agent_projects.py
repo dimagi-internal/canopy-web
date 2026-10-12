@@ -212,6 +212,28 @@ def test_reading_needs_membership_and_writing_needs_more(agent):
                    content_type="application/json").status_code == 403
 
 
+def test_the_owner_is_linked_by_email_to_a_workspace_member(client, agent, owner):
+    """`owner_email` makes the owner a real person — who an idea added on the
+    team view emails — and only a member of the agent's workspace can be one."""
+    created = _create(client, owner_email="JJ@dimagi.com")
+    assert created.status_code == 201, created.content
+    assert created.json()["owner_email"] == owner.email
+
+    User.objects.create_user("s", "s@example.com", "pw")
+    refused = client.patch("/api/agents/eva/projects/P1/", {"owner_email": "s@example.com"},
+                           content_type="application/json")
+    assert refused.status_code == 422
+    assert AgentProject.objects.get(ext_id="P1").owner_user == owner
+
+    note_only = client.patch("/api/agents/eva/projects/P1/", {"owner_note": "Jon"},
+                             content_type="application/json")
+    assert note_only.json()["owner_email"] == owner.email      # absent leaves it
+
+    cleared = client.patch("/api/agents/eva/projects/P1/", {"owner_email": ""},
+                           content_type="application/json")
+    assert cleared.json()["owner_email"] is None
+
+
 def test_projects_count_tasks_waiting_on_a_person(client, agent, owner):
     """`waiting_task_count` is `services.waiting_q` per project — an open ask or
     a live task parked on someone — the same on the agent list, the fleet list
