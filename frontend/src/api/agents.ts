@@ -336,6 +336,7 @@ export async function createProject(
       ext_id: '',
       status: 'active',
       owner_note: '',
+      owner_email: '',
       drive_folder_id: '',
       drive_folder_url: '',
       repo_slug: '',
