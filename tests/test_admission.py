@@ -252,15 +252,28 @@ def _reject_on_cloud(fleet, capture, **kw):
     return AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.SENDER)
 
 
-def test_a_noreply_sender_gets_no_notice(fleet, django_capture_on_commit_callbacks):
+@pytest.mark.parametrize("sender", [
+    "no-reply@example.org", "comments-noreply@docs.google.com",
+    "drive-shares-dm-noreply@google.com", "notifications.noreply@example.org",
+    "bounce+abc@example.org",
+])
+def test_a_noreply_sender_gets_no_notice(fleet, django_capture_on_commit_callbacks, sender):
     # A no-reply address cannot be a verified dimagi.com contact in the ask
     # list, so give it a rule of its own.
     hal = fleet["hal"]
     hal.interface = parse({"capabilities": {"ask": {"callers": ["contact"]}}})
     hal.save(update_fields=["interface"])
     notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks,
-                              sender="no-reply@example.org", headers=[])
+                              sender=sender, headers=[])
     assert notice.status == AdmissionNotice.SKIPPED and "no-reply" in notice.detail
+
+
+@pytest.mark.parametrize("sender", ["noreen@example.org", "postmasterclass@example.org",
+                                    "vikram@noreply-free.example.org"])
+def test_a_person_whose_address_merely_contains_the_letters_is_still_a_person(sender):
+    from apps.admission.notices import _NOREPLY
+
+    assert not _NOREPLY.search(sender.partition("@")[0])
 
 
 @pytest.fixture

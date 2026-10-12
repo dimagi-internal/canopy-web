@@ -38,8 +38,12 @@ logger = logging.getLogger(__name__)
 #: How long one thread's sender notice silences the next.
 SENDER_WINDOW = dt.timedelta(hours=24)
 
+# A no-reply WORD anywhere in the local part (the domain is never a reason), delimited the way Gmail tokenises it, as the
+# runner's inbox rules read it: `comments-noreply@docs.google.com` (a Doc comment) and
+# `drive-shares-dm-noreply@google.com` are machines too, not only `noreply@…`.
 _NOREPLY = re.compile(
-    r"^(?:noreply|no-reply|donotreply|do-not-reply|mailer-daemon|postmaster|bounces?)[@+.-]", re.I)
+    r"(?:^|[._+-])(?:noreply|no-reply|donotreply|do-not-reply|mailer-daemon|postmaster|bounces?)"
+    r"(?=[._+-]|$)", re.I)
 
 
 def deliver(turn_id, rule_id) -> None:
@@ -95,7 +99,7 @@ def _why_not_reply(turn, agent, sender: str) -> str:
         return "no sender address on the turn"
     if turn.initiator_kind in ("system", "agent"):
         return "the sender is canopy or another agent"
-    if _NOREPLY.match(sender):
+    if _NOREPLY.search(sender.partition("@")[0]):
         return "a no-reply address"
     own = {a.lower() for a in InboundMailbox.objects.filter(agent=agent).values_list("address", flat=True)}
     if agent.user_id and agent.user.email:
