@@ -1586,6 +1586,8 @@ step5_summary() {
 # Deliberately NOT a full bootstrap: cloning repos, `op inject` and plugin
 # installs are slow, and re-running them under a live agent is a way to break a
 # box that was working.
+# (A turn's `~/.<slug>/.env` does not need this: the runner re-injects it from the
+# agent's vault when it claims that agent's turn — `_refresh_agent_env`.)
 CREDENTIALS_ONLY=0
 for _arg in "$@"; do
   case "$_arg" in

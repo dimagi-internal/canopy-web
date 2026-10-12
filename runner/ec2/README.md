@@ -176,6 +176,7 @@ report of which features work, sent on every heartbeat; the list shows a red/amb
 | `canopy.cli` | the canopy CLI did not run (fail) or is behind the marketplace plugin (warn) — Refresh |
 | `disk` | root volume ≥ 80% (warn) / ≥ 90% (fail) — Refresh (bootstrap prunes caches) or grow `VolumeSize` (see "Disk") |
 | `github.<slug>` | the agent's owner has lent no GitHub token, or it is expired / cannot open a PR on the agent's repo — the OWNER sets it at the agent's Settings → Credentials → GitHub; checked at boot, so Refresh (or wait for the next bootstrap) to re-check |
+| `env.<slug>` | the agent's `~/.<slug>/.env` could not be re-read from its vault when a turn was claimed (op's reason in the detail) — turns run on the last good file, which may be stale. Fix the vault/key; the next claim after `AGENT_ENV_TTL_SECONDS` (300) retries |
 
 Per-agent results (mailbox, secrets via `op inject` — `env_ok`, with op's own
 reason in `detail`) stay on `GET /api/agents/{slug}/readiness`. A readiness
@@ -234,6 +235,12 @@ can already read the mailbox — import the NEWER of the vault's `gog-token` and
 canopy-web's stored one (by the token's own `created_at`), then verify with a real
 gmail call (`mailbox_ok`, `turn_ready`, posted to `GET /api/agents/<slug>/readiness`); (4)
 add + install the `canopy` Claude plugin; (5) print a per-agent readiness summary.
+
+Bootstrap is the FIRST writer of `~/.<slug>/.env`, not the only one: when a turn is
+claimed, the runner re-runs the same `op inject` with the agent's own key (at most
+once per `AGENT_ENV_TTL_SECONDS`, default 300, per agent), so a value changed in the
+agent's vault reaches its next turn without a restart. A failed refresh keeps the
+last good file and reports `env.<slug>` on the runner's health.
 
 **Agent turns run in their own worktree of the agent's clone.** A turn whose target
 resolves to an agent with a clone under `/opt/agents/<slug>` runs `claude -p` in a
@@ -396,7 +403,8 @@ uv run python manage.py create_token \
 
 # 3. Add ONE line to the agent repo's tracked .env.tpl:
 #      CANOPY_WEB_PAT=op://<vault>/<item>/<field>
-#    op inject materializes it into ~/.<slug>/.env on the next bootstrap.
+#    op inject materializes it into ~/.<slug>/.env when the agent's next turn
+#    is claimed (and at every bootstrap).
 ```
 
 `canopy_web.resolve_pat()` already reads `CANOPY_WEB_PAT` ahead of the token file,
