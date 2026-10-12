@@ -2272,7 +2272,7 @@ export interface paths {
         /** Save the agent's declared interface (YAML source, or a parsed mapping) */
         readonly put: operations["publish_interface"];
         readonly post?: never;
-        /** Unpublish the declared interface: every turn runs in the full profile again */
+        /** Unpublish the declared interface: only the agent's admins and its workspace's editors can reach it */
         readonly delete: operations["unpublish_interface"];
         readonly options?: never;
         readonly head?: never;

@@ -193,6 +193,15 @@ an emdash task name alone is not an identity.
   (`apps/realtime/presence_keys.py::GLOBAL_SENTINEL`, shared with ace-web) for a page
   with no workspace; no canopy-web page uses it.
 
+## How the runner drives a chat
+
+- `CHAT_STUB_EXECUTOR` (true in dev, false on labs): when off, a session turn waits for a runner with `capabilities.sessions: true`. The laptop runner drives the agent's emdash session and bridges the reply (`execute_chat_turn` + `chat_bridge.py`); `chat_pump` advances bridges each tick, in-flight turn ids on the heartbeat renew the 900s lease. A turn finishes when the transcript hands the floor back (`hands_back_to_human`: any terminal `stop_reason` other than `tool_use`); idle is only a 15-min backstop.
+- A spawned `claude` must not inherit the parent session: `runner/ec2/cloud_runner.py::_child_safe_env` strips `INHERITED_SESSION_MARKERS` (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_PID`, `CLAUDE_EFFORT`) — an inherited child marker turns transcript saving off. `CLAUDE_CODE_OAUTH_TOKEN` is never stripped (it is the box's login).
+- A watched session ships every conversational transcript row, `tool_use`/`tool_result` included (`packages/canopy_transcript::conversational_messages`); a row's payload is its stored `Message.content`, so live and history render identically. Tool payloads are capped at the runner (`TOOL_TEXT_MAX`, `TOOL_INPUT_STR_MAX`). The live chat bridge stays prose-only (tools there would render twice).
+- Optional hook path: the laptop runner installs `PreToolUse`/`PostToolUse`/`UserPromptSubmit`/`Stop` hooks in the user-level `~/.claude/settings.json` with a loopback listener (`hook_port`, default 8787; 0 disables); `forward_sessions` (default off) forwards them as view-only rows (`index=-1`); counters ride the heartbeat every 300s.
+- Transcript ordinals are `record * BLOCK_STRIDE + block` (`BLOCK_STRIDE` = 64; overflow spends the record's last slot on a marker row). `Session.ordinal_scheme` versions this; a stale session is reset automatically on its next write.
+- The runner reports sessions change-driven; `harness.signals.sessions_reported` fans the owner's sessions out as `supervisor.sessions` frames (typed in `frontend/src/api/types.ws.ts`; no page consumes them today).
+
 ## Live end-to-end check: `scripts/e2e_session_chat.py`
 
 - `tests/*_e2e.py` fake both ends; this script drives the real deployment, a real
