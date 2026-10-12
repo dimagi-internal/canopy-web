@@ -187,6 +187,18 @@ def test_a_write_changes_state_and_is_audited(tenancy):
     assert row.ok is True and row.user_id == tenancy["jj"].pk
 
 
+def test_a_setting_changed_through_mcp_is_in_the_settings_audit(tenancy):
+    """The same plumbing as the web UI and the CLI (`apps/events/audit.py`):
+    the tool is the route, so the row names MCP and the tool."""
+    from apps.events.models import SettingChange
+
+    with as_user(tenancy["jj"]):
+        _call("set_turn_mode", {"slug": "hal", "turn_mode": "auto"})
+    row = SettingChange.objects.get(operation="set_turn_mode")
+    assert row.via == "mcp" and row.mcp_tool == "set_turn_mode"
+    assert row.actor == tenancy["jj"] and row.workspace.slug == "connect"
+
+
 def test_a_refused_write_is_a_tool_error_and_audited(tenancy):
     with as_user(tenancy["other"]), pytest.raises(ToolError):
         _call("set_turn_mode", {"slug": "hal", "turn_mode": "auto"})

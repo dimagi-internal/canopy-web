@@ -844,7 +844,10 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
         request, agent, ids,
         RunnerAssignment.objects.filter(agent=agent, source="").values_list("runner_id", flat=True),
     )
+    from apps.harness import routing_audit
+
     with transaction.atomic():
+        before = routing_audit.agent_rows(agent, source="")
         # source="" ONLY. Source rules live in this table too, and an unscoped
         # delete here would destroy every one of them each time the default
         # order was saved.
@@ -853,6 +856,10 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
             RunnerAssignment(agent=agent, runner=by_id[row.runner_id], rank=i, enabled=row.enabled)
             for i, row in enumerate(rows_in)
         ])
+        routing_audit.record_routing_change(
+            request, workspace=agent.workspace,
+            target=agent.slug, scope="default runner order",
+            before=before, after=routing_audit.agent_rows(agent, source=""))
     return list_agent_runners(request, slug)
 
 
@@ -997,7 +1004,10 @@ def replace_agent_runner_rules(
             current.get((r.source, actor), {}).get("ids", ()),
         ))
 
+    from apps.harness import routing_audit
+
     with transaction.atomic():
+        before = routing_audit.agent_rows(agent, rules_only=True)
         RunnerAssignment.objects.filter(agent=agent).exclude(source="").delete()
         RunnerAssignment.objects.bulk_create([
             # `rank` is the runner's position WITHIN its rule — the list order the
@@ -1011,6 +1021,10 @@ def replace_agent_runner_rules(
             for r, actor in zip(payload.rules, actors)
             for rank, row in enumerate(r.runners)
         ])
+        routing_audit.record_routing_change(
+            request, workspace=agent.workspace,
+            target=agent.slug, scope="routing rules (all)",
+            before=before, after=routing_audit.agent_rows(agent, rules_only=True))
     return list_agent_runner_rules(request, slug)
 
 
@@ -1059,7 +1073,11 @@ def set_agent_runner_rule(
     _refuse_new_auto(request, agent, source, actor, payload.turn_mode, current)
     by_id = _runners_for_routing(request, agent, ids, current.get((source, actor), {}).get("ids", ()))
 
+    from apps.harness import routing_audit
+
+    scope = f"{source} rule" + (f" for {actor}" if actor else "")
     with transaction.atomic():
+        before = routing_audit.agent_rows(agent, source=source, actor=actor)
         RunnerAssignment.objects.filter(agent=agent, source=source, actor=actor).delete()
         RunnerAssignment.objects.bulk_create([
             RunnerAssignment(
@@ -1069,6 +1087,10 @@ def set_agent_runner_rule(
             )
             for rank, row in enumerate(payload.runners)
         ])
+        routing_audit.record_routing_change(
+            request, workspace=agent.workspace,
+            target=agent.slug, scope=scope, before=before,
+            after=routing_audit.agent_rows(agent, source=source, actor=actor))
     return list_agent_runner_rules(request, slug)
 
 
@@ -1079,9 +1101,17 @@ def delete_agent_runner_rule(request: HttpRequest, slug: str, source: str, actor
     to the next rule down and the agent's default order. Idempotent."""
     from apps.harness.models import RunnerAssignment
 
+    from apps.harness import routing_audit
+
     agent = _agent_for_write(request, slug)
     source, actor = _rule_key_or_422(source, actor)
-    RunnerAssignment.objects.filter(agent=agent, source=source, actor=actor).delete()
+    with transaction.atomic():
+        before = routing_audit.agent_rows(agent, source=source, actor=actor)
+        RunnerAssignment.objects.filter(agent=agent, source=source, actor=actor).delete()
+        routing_audit.record_routing_change(
+            request, workspace=agent.workspace,
+            target=agent.slug, scope=f"{source} rule" + (f" for {actor}" if actor else ""),
+            before=before, after=[])
     return Status(204, None)
 
 
@@ -1190,7 +1220,10 @@ def set_agent_actor_route(
         runners.update(_runners_for_routing(
             request, agent, ids, current.get((source, actor), {}).get("ids", ())))
 
+    from apps.harness import routing_audit
+
     with transaction.atomic():
+        before = routing_audit.agent_rows(agent, actor=actor, rules_only=True)
         RunnerAssignment.objects.filter(agent=agent, actor=actor).exclude(source="").delete()
         RunnerAssignment.objects.bulk_create([
             RunnerAssignment(
@@ -1201,6 +1234,10 @@ def set_agent_actor_route(
             for source in sources
             for rank, row in enumerate(payload.runners)
         ])
+        routing_audit.record_routing_change(
+            request, workspace=agent.workspace,
+            target=agent.slug, scope=f"route for {actor}", before=before,
+            after=routing_audit.agent_rows(agent, actor=actor, rules_only=True))
     return [r for r in list_agent_actor_routes(request, slug) if r.actor == actor]
 
 
@@ -1212,9 +1249,16 @@ def delete_agent_actor_route(request: HttpRequest, slug: str, actor: str):
     Idempotent — removing a person with no route is a 204."""
     from apps.harness.models import RunnerAssignment
 
+    from apps.harness import routing_audit
+
     agent = _agent_for_write(request, slug)
     actor = _actor_or_422(actor)
-    RunnerAssignment.objects.filter(agent=agent, actor=actor).exclude(source="").delete()
+    with transaction.atomic():
+        before = routing_audit.agent_rows(agent, actor=actor, rules_only=True)
+        RunnerAssignment.objects.filter(agent=agent, actor=actor).exclude(source="").delete()
+        routing_audit.record_routing_change(
+            request, workspace=agent.workspace,
+            target=agent.slug, scope=f"route for {actor}", before=before, after=[])
     return Status(204, None)
 
 
