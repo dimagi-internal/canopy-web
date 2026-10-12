@@ -929,77 +929,149 @@ def _agent_op_token(slug: str) -> str:
     return token
 
 
-#: When each agent's `~/.<slug>/.env` was last re-read from its vault. The vault
-#: is the one place a value lives: bootstrap used to be the ONLY writer of the
-#: file, so a value changed in 1Password reached no turn until the service
+#: Re-reading each agent's `~/.<slug>/.env` from its vault when a turn is claimed.
+#: The vault is the one place a value lives: bootstrap used to be the ONLY writer
+#: of the file, so a value changed in 1Password reached no turn until the service
 #: restarted — cloud-ec2-2 kept ACE's old Drive root all day on 2026-10-12.
-#: Re-injecting when a turn is claimed makes a change land within the TTL.
+#:
+#: Cheap by construction: at most once per TTL per agent, ONE `op vault get` per
+#: vault the template names (its `content_version` moves on any item change, and
+#: it returns no secret), and the full `op inject` only when that fingerprint —
+#: or the template itself — changed. Same rule and stamp format as the laptop's
+#: `canopy cred sync`, so the two cannot drift on what "changed" means.
 _AGENT_ENV_AT: dict[str, float] = {}
 _AGENT_ENV_TTL_SECONDS = float(os.environ.get("AGENT_ENV_TTL_SECONDS", "300"))
 _AGENT_ENV_TIMEOUT_SECONDS = float(os.environ.get("AGENT_ENV_TIMEOUT_SECONDS", "30"))
 _AGENT_ENV_LOCKS: dict[str, threading.Lock] = {}
 _AGENT_ENV_LOCKS_GUARD = threading.Lock()
+_OP_REF_VAULT = re.compile(r"op://([^/\s]+)/")
 
-#: A personal `op` sign-in on the box must not decide whose vault a refresh
-#: reads: with any of these set, op can pick the session over the agent's key
-#: ("Signin credentials are not compatible…", ACE on cloud-ec2-2, 2026-10-12).
+#: Only the agent's key decides whose vault is read — never a personal `op`
+#: session or Connect server that happens to be in this process's environment.
 _OP_PERSONAL_ENV_PREFIXES = ("OP_SESSION_",)
 _OP_PERSONAL_ENV_KEYS = ("OP_ACCOUNT", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN")
 
 
+def _op_key_account(op_token: str) -> str:
+    """The 1Password account a service-account key signs in to — read from the
+    key's own public header, never a secret. A key minted in the wrong account
+    fails every call with "Signin credentials are not compatible…", which names
+    nothing; saying WHICH account turns that into a diagnosis (ACE's key signed
+    in to a personal account on 2026-10-12)."""
+    import base64  # noqa: PLC0415
+    try:
+        raw = op_token.strip().removeprefix("ops_")
+        body = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        return str(body.get("signInAddress") or "").removeprefix("https://").rstrip("/")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _op_err(res: subprocess.CompletedProcess, what: str, op_token: str) -> str:
+    # op names the reference or vault it could not read, never a value.
+    err = " ".join((res.stderr or "").split())[:300] or f"{what} exited {res.returncode}"
+    if "not compatible" in err or "signin" in err.lower().replace(" ", ""):
+        account = _op_key_account(op_token)
+        if account:
+            err += f" — this key signs in to {account}; re-mint it in the account that holds the vault"
+    return err
+
+
+def _vault_fingerprint(tpl: pathlib.Path, env: dict, op_token: str) -> tuple[str, str]:
+    """`(fingerprint, error)`: the template's hash plus each vault's
+    content_version. One small `op vault get` per vault; no secret is read."""
+    import hashlib  # noqa: PLC0415
+    text = tpl.read_text()
+    parts = [hashlib.sha256(text.encode()).hexdigest()]
+    for vault in sorted(set(_OP_REF_VAULT.findall(text))):
+        res = subprocess.run(["op", "vault", "get", vault, "--format", "json"], env=env,
+                             capture_output=True, text=True, timeout=_AGENT_ENV_TIMEOUT_SECONDS)
+        if res.returncode != 0:
+            return "", _op_err(res, f"op vault get {vault}", op_token)
+        try:
+            version = json.loads(res.stdout).get("content_version")
+        except ValueError:
+            version = None
+        if version is None:
+            return "", f"op vault get {vault} returned no content_version"
+        parts.append(f"{vault}={version}")
+    return "|".join(parts), ""
+
+
 def _refresh_agent_env(slug: str, op_token: str) -> None:
-    """Re-materialize `~/.<slug>/.env` from the agent's vault — the same `op
-    inject` of the clone's `.env.tpl` bootstrap runs, with the agent's own key.
+    """Bring `~/.<slug>/.env` up to date with the agent's vault, cheaply.
 
     At most once per `_AGENT_ENV_TTL_SECONDS` per agent, timed from the last
-    ATTEMPT so an unreachable 1Password costs one slow claim per TTL, not every
-    claim. Never blocks a turn on failure: the existing file is kept (the write
-    is to a temp file swapped in only on success) and the failure is reported as
-    the `env.<slug>` health check, where an operator looks — not only in a boot
-    log. Bootstrap stays the first writer; this keeps the file current after it.
+    ATTEMPT, so an unreachable 1Password costs one slow claim per TTL. Probes the
+    fingerprint and re-runs bootstrap's `op inject` (agent's own key) only when it
+    moved — the stamp beside the file (`.env.stamp`) remembers the last one
+    injected. Never blocks a turn: a failure keeps the existing file (the inject
+    writes a temp file, swapped in only on success) and reports the `env.<slug>`
+    health check, where an operator looks.
     """
     tpl = pathlib.Path(AGENT_ROOT) / slug / ".env.tpl"
     if not op_token or not tpl.is_file():
         return  # bootstrap already reports an unregistered or tpl-less agent
     with _AGENT_ENV_LOCKS_GUARD:
         lock = _AGENT_ENV_LOCKS.setdefault(slug, threading.Lock())
-    with lock:  # two turns of one agent claimed together inject once
+    with lock:  # two turns of one agent claimed together probe once
         now = time.time()
         if now - _AGENT_ENV_AT.get(slug, 0.0) < _AGENT_ENV_TTL_SECONDS:
             return
         _AGENT_ENV_AT[slug] = now
         out = pathlib.Path.home() / f".{slug}" / ".env"
+        stamp = out.with_name(".env.stamp")
         tmp = out.with_name(".env.refresh")
         env = {k: v for k, v in _child_safe_env().items()
                if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
         env["OP_SERVICE_ACCOUNT_TOKEN"] = op_token
-        err = ""
         try:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            res = subprocess.run(["op", "inject", "-i", str(tpl), "-o", str(tmp), "-f"],
-                                 env=env, capture_output=True, text=True,
-                                 timeout=_AGENT_ENV_TIMEOUT_SECONDS)
-            if res.returncode == 0 and tmp.is_file():
-                os.chmod(tmp, 0o600)
-                os.replace(tmp, out)  # readers see the old file or the new one, never half
-            else:
-                # op names the reference it could not resolve, never a value.
-                err = " ".join((res.stderr or "").split())[:300] or f"op inject exited {res.returncode}"
+            prior = json.loads(stamp.read_text())
+            prior = prior if isinstance(prior, dict) else {}
+        except (OSError, ValueError):
+            prior = {}
+        last = prior.get("fingerprint")
+        err, injected = "", False
+        try:
+            fingerprint, err = _vault_fingerprint(tpl, env, op_token)
+            if not err and (fingerprint != last or not out.is_file()):
+                out.parent.mkdir(parents=True, exist_ok=True)
+                res = subprocess.run(["op", "inject", "-i", str(tpl), "-o", str(tmp), "-f"],
+                                     env=env, capture_output=True, text=True,
+                                     timeout=_AGENT_ENV_TIMEOUT_SECONDS)
+                if res.returncode == 0 and tmp.is_file():
+                    os.chmod(tmp, 0o600)
+                    os.replace(tmp, out)  # readers see the old file or the new one, never half
+                    prior.update(fingerprint=fingerprint, injected_at=now)
+                    injected = True
+                else:
+                    err = _op_err(res, "op inject", op_token)
         except subprocess.TimeoutExpired:
-            err = f"op inject timed out after {_AGENT_ENV_TIMEOUT_SECONDS:.0f}s"
+            err = f"1Password did not answer within {_AGENT_ENV_TIMEOUT_SECONDS:.0f}s"
         except OSError as exc:
-            err = f"op inject could not run ({exc})"
+            err = f"op could not run ({exc})"
         finally:
             tmp.unlink(missing_ok=True)
+        # Every check is stamped, success or not: the agent session's own SessionStart
+        # hook (`canopy cred sync`) reads `checked_at` and does not probe again.
+        try:
+            fd = os.open(stamp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(json.dumps({**prior, "checked_at": now}))
+        except OSError:
+            pass  # an unwritable stamp only costs a re-check
         if err:
             _log(f"warn: {slug}: could not refresh {out} from its vault — this turn uses the "
                  f"existing file, which may be stale: {err}")
             _set_check(f"env.{slug}", "warn",
                        f"vault refresh failed; turns run on the last good {out}: {err}")
-        else:
-            _set_check(f"env.{slug}", "ok",
-                       f"{out} refreshed from the vault at claim time "
-                       f"({time.strftime('%H:%M:%SZ', time.gmtime(now))})")
+            return
+        when = time.strftime("%H:%M:%SZ", time.gmtime(now))
+        if injected:
+            _log(f"{slug}: vault changed — re-injected {out}")
+        _set_check(f"env.{slug}", "ok",
+                   f"{out} {'re-injected (vault changed)' if injected else 'matches the vault'}"
+                   f" as of {when}")
 
 
 def _agent_env(slug: str | None) -> dict:
