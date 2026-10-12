@@ -929,6 +929,79 @@ def _agent_op_token(slug: str) -> str:
     return token
 
 
+#: When each agent's `~/.<slug>/.env` was last re-read from its vault. The vault
+#: is the one place a value lives: bootstrap used to be the ONLY writer of the
+#: file, so a value changed in 1Password reached no turn until the service
+#: restarted — cloud-ec2-2 kept ACE's old Drive root all day on 2026-10-12.
+#: Re-injecting when a turn is claimed makes a change land within the TTL.
+_AGENT_ENV_AT: dict[str, float] = {}
+_AGENT_ENV_TTL_SECONDS = float(os.environ.get("AGENT_ENV_TTL_SECONDS", "300"))
+_AGENT_ENV_TIMEOUT_SECONDS = float(os.environ.get("AGENT_ENV_TIMEOUT_SECONDS", "30"))
+_AGENT_ENV_LOCKS: dict[str, threading.Lock] = {}
+_AGENT_ENV_LOCKS_GUARD = threading.Lock()
+
+#: A personal `op` sign-in on the box must not decide whose vault a refresh
+#: reads: with any of these set, op can pick the session over the agent's key
+#: ("Signin credentials are not compatible…", ACE on cloud-ec2-2, 2026-10-12).
+_OP_PERSONAL_ENV_PREFIXES = ("OP_SESSION_",)
+_OP_PERSONAL_ENV_KEYS = ("OP_ACCOUNT", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN")
+
+
+def _refresh_agent_env(slug: str, op_token: str) -> None:
+    """Re-materialize `~/.<slug>/.env` from the agent's vault — the same `op
+    inject` of the clone's `.env.tpl` bootstrap runs, with the agent's own key.
+
+    At most once per `_AGENT_ENV_TTL_SECONDS` per agent, timed from the last
+    ATTEMPT so an unreachable 1Password costs one slow claim per TTL, not every
+    claim. Never blocks a turn on failure: the existing file is kept (the write
+    is to a temp file swapped in only on success) and the failure is reported as
+    the `env.<slug>` health check, where an operator looks — not only in a boot
+    log. Bootstrap stays the first writer; this keeps the file current after it.
+    """
+    tpl = pathlib.Path(AGENT_ROOT) / slug / ".env.tpl"
+    if not op_token or not tpl.is_file():
+        return  # bootstrap already reports an unregistered or tpl-less agent
+    with _AGENT_ENV_LOCKS_GUARD:
+        lock = _AGENT_ENV_LOCKS.setdefault(slug, threading.Lock())
+    with lock:  # two turns of one agent claimed together inject once
+        now = time.time()
+        if now - _AGENT_ENV_AT.get(slug, 0.0) < _AGENT_ENV_TTL_SECONDS:
+            return
+        _AGENT_ENV_AT[slug] = now
+        out = pathlib.Path.home() / f".{slug}" / ".env"
+        tmp = out.with_name(".env.refresh")
+        env = {k: v for k, v in _child_safe_env().items()
+               if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
+        env["OP_SERVICE_ACCOUNT_TOKEN"] = op_token
+        err = ""
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            res = subprocess.run(["op", "inject", "-i", str(tpl), "-o", str(tmp), "-f"],
+                                 env=env, capture_output=True, text=True,
+                                 timeout=_AGENT_ENV_TIMEOUT_SECONDS)
+            if res.returncode == 0 and tmp.is_file():
+                os.chmod(tmp, 0o600)
+                os.replace(tmp, out)  # readers see the old file or the new one, never half
+            else:
+                # op names the reference it could not resolve, never a value.
+                err = " ".join((res.stderr or "").split())[:300] or f"op inject exited {res.returncode}"
+        except subprocess.TimeoutExpired:
+            err = f"op inject timed out after {_AGENT_ENV_TIMEOUT_SECONDS:.0f}s"
+        except OSError as exc:
+            err = f"op inject could not run ({exc})"
+        finally:
+            tmp.unlink(missing_ok=True)
+        if err:
+            _log(f"warn: {slug}: could not refresh {out} from its vault — this turn uses the "
+                 f"existing file, which may be stale: {err}")
+            _set_check(f"env.{slug}", "warn",
+                       f"vault refresh failed; turns run on the last good {out}: {err}")
+        else:
+            _set_check(f"env.{slug}", "ok",
+                       f"{out} refreshed from the vault at claim time "
+                       f"({time.strftime('%H:%M:%SZ', time.gmtime(now))})")
+
+
 def _agent_env(slug: str | None) -> dict:
     """The turn environment, with the agent's OWN `~/.<slug>/.env` layered on top.
 
@@ -981,6 +1054,8 @@ def _agent_env(slug: str | None) -> dict:
     sf_home = _stage_salesforce(slug)
     if sf_home is not None:
         env["CHROME_SALES_HOME"] = str(sf_home)
+    # The vault, not this box's last bootstrap, decides what the turn reads.
+    _refresh_agent_env(slug, op_token)
     env_file = pathlib.Path.home() / f".{slug}" / ".env"
     try:
         raw = env_file.read_text()
