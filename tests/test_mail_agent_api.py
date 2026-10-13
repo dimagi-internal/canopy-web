@@ -251,3 +251,15 @@ def test_the_cap_is_read_from_the_locked_row_not_a_stale_route(w):
     with pytest.raises(agent_mail.SendRefused) as exc:
         agent_mail.send(route, to=["d@b.org"], text="x", thread=w.t)
     assert exc.value.status == 429
+
+
+def test_thread_detail_counterpart_matches_the_list(w):
+    c = _c(w.owner)
+    detail = c.get(f"/api/mail/threads/marshellis/{w.t.uuid}").json()
+    assert detail["counterpart"] == "x@x.org"  # newest is inbound: its sender
+    assert _reply(w, {"text": "x", "to": ["z@z.org"]}).status_code == 200
+    detail = c.get(f"/api/mail/threads/marshellis/{w.t.uuid}").json()
+    listed = {i["thread_id"]: i for i in c.get("/api/mail/threads/marshellis").json()["items"]}
+    assert detail["counterpart"] == listed[str(w.t.uuid)]["counterpart"] == "z@z.org"
+    empty = MailThread.objects.create(workspace=w.d.workspace, route=w.r, subject="Empty")
+    assert c.get(f"/api/mail/threads/marshellis/{empty.uuid}").json()["counterpart"] == ""

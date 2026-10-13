@@ -233,6 +233,16 @@ def _thread_out(t, *, messages: bool) -> dict:
     return out
 
 
+def _counterpart(direction, from_addr, to) -> str:
+    """The other party of a thread's newest message: its sender if inbound, else its first To."""
+    if direction == MailMessage.IN:
+        return from_addr or ""
+    if direction == MailMessage.OUT:
+        to = to if isinstance(to, list) else []
+        return to[0] if to else ""
+    return ""
+
+
 def _agent_route(ws, slug: str) -> MailRoute | None:
     """The agent's own address here: never the catch-all, and the same one every time."""
     return (MailRoute.objects.filter(domain__workspace=ws, kind=MailRoute.AGENT, agent__slug=slug,
@@ -266,18 +276,18 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
     items = []
     for t in qs[:200]:
         out = _thread_out(t, messages=False)
-        if t._dir == MailMessage.IN:
-            out["counterpart"] = t._from or ""
-        elif t._dir == MailMessage.OUT:
-            to = t._to if isinstance(t._to, list) else []
-            out["counterpart"] = to[0] if to else ""
+        out["counterpart"] = _counterpart(t._dir, t._from, t._to)
         items.append(out)
     return {"agent_address": address, "items": items}
 
 
 @router.get("/threads/{workspace}/{uuid}", response=MailThreadOut, summary="Read a mail thread")
 def get_mail_thread(request: HttpRequest, workspace: str, uuid: str) -> dict:
-    return _thread_out(_thread(_ws(request.user, workspace), uuid), messages=True)
+    t = _thread(_ws(request.user, workspace), uuid)
+    out = _thread_out(t, messages=True)
+    newest = t.messages.order_by("-created_at", "-pk").values("direction", "from_addr", "to").first()
+    out["counterpart"] = _counterpart(newest["direction"], newest["from_addr"], newest["to"]) if newest else ""
+    return out
 
 
 def _reply_recipients(t) -> list[str]:
