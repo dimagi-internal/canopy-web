@@ -44,8 +44,11 @@ def add_domain(workspace, name: str, *, by) -> MailDomain:
     if any(name == r or name.endswith("." + r)
            for r in (x.strip().lower().rstrip(".") for x in settings.MAIL_RESERVED_DOMAINS) if r):
         raise DomainError(422, "that domain is reserved")
-    if MailDomain.objects.filter(name=name).exists():
-        raise DomainError(409, "that domain is already registered")
+    holder = MailDomain.objects.filter(name=name).first()
+    if holder is not None:
+        if not _stale_pending(holder):
+            raise DomainError(409, "that domain is already registered")
+        _release(holder)
     try:
         with transaction.atomic():
             d = MailDomain.objects.create(workspace=workspace, name=name, created_by=by)
@@ -66,6 +69,28 @@ def add_domain(workspace, name: str, *, by) -> MailDomain:
         if isinstance(exc, (ClientError, BotoCoreError)):
             raise DomainError(502, f"SES refused: {_reason(exc)}") from None
         raise
+
+
+def _stale_pending(d: MailDomain) -> bool:
+    """A domain still pending DNS after the TTL is abandoned: it never proved control, so
+    it may not hold the name against anyone (in any workspace) any longer."""
+    ttl = dt.timedelta(days=settings.MAIL_PENDING_DOMAIN_TTL_DAYS)
+    return d.status == MailDomain.PENDING and d.created_at < timezone.now() - ttl
+
+
+def _release(d: MailDomain) -> None:
+    """Remove an abandoned pending domain: its SES identity (canopy created it for this row)
+    best effort, then the row and its routes. Threads stay (route → NULL)."""
+    try:
+        ses.delete_identity(d.name)
+    except ses.MailOff as exc:
+        raise DomainError(503, str(exc)) from None
+    except Exception:  # noqa: BLE001 - best effort: the stale row must not hold the name
+        log.warning("could not delete SES identity %s while releasing it", d.name, exc_info=True)
+    cache.delete(_cache_key(d))
+    log.info("released stale pending domain %s (workspace %s, added %s)",
+             d.name, d.workspace_id, d.created_at.isoformat())
+    d.delete()
 
 
 def _reason(exc) -> str:

@@ -391,3 +391,54 @@ def test_deleting_an_agents_route_keeps_its_threads_in_the_agents_list(owner, ws
     assert [i["thread_id"] for i in got["items"]] == [str(t.uuid)]
     assert got["agent_address"] == ""
     assert _c(owner).get("/api/mail/threads/marshellis", {"agent": "other"}).json()["items"] == []
+
+
+def _held_elsewhere(owner, *, status="pending", age_days=8):
+    other = Workspace.objects.create(slug="acme", display_name="Acme", created_by=owner)
+    d = MailDomain.objects.create(workspace=other, name="marshellis.com", status=status)
+    MailDomain.objects.filter(pk=d.pk).update(created_at=timezone.now() - dt.timedelta(days=age_days))
+    return d
+
+
+def test_a_stale_pending_domain_elsewhere_is_released_then_added(owner, ws, monkeypatch, settings, caplog):
+    from apps.mail.models import MailMessage, MailThread
+    settings.MAIL_PENDING_DOMAIN_TTL_DAYS = 7
+    stale = _held_elsewhere(owner)
+    route = MailRoute.objects.create(domain=stale, local_part="x", kind="drop")
+    t = MailThread.objects.create(workspace=stale.workspace, route=route, subject="kept")
+    MailMessage.objects.create(thread=t, direction="in", message_id="<k@x>")
+    deleted = []
+    monkeypatch.setattr(ses, "delete_identity", lambda d: deleted.append(d))
+    with caplog.at_level("INFO", logger="apps.mail.domains"):
+        r = _post(owner)
+    assert r.status_code == 200, r.content
+    assert deleted == ["marshellis.com"]
+    assert MailDomain.objects.get(name="marshellis.com").workspace == ws
+    assert not MailRoute.objects.filter(pk=route.pk).exists()
+    t.refresh_from_db()
+    assert t.route is None and t.messages.count() == 1
+    assert any("released stale pending domain marshellis.com" in rec.getMessage() for rec in caplog.records)
+
+
+def test_release_survives_an_identity_delete_failure(owner, ws, monkeypatch):
+    _held_elsewhere(owner)
+    monkeypatch.setattr(ses, "delete_identity", lambda d: (_ for _ in ()).throw(_client_error()))
+    assert _post(owner).status_code == 200
+    assert MailDomain.objects.get(name="marshellis.com").workspace == ws
+
+
+def test_a_stale_pending_domain_is_kept_when_mail_is_off(owner, ws, monkeypatch):
+    stale = _held_elsewhere(owner)
+    monkeypatch.setattr(ses, "delete_identity", lambda d: (_ for _ in ()).throw(ses.MailOff("off")))
+    assert _post(owner).status_code == 503
+    assert MailDomain.objects.filter(pk=stale.pk).exists()
+
+
+@pytest.mark.parametrize("status,age_days", [("pending", 6), ("verified", 30), ("suspended", 30)])
+def test_a_fresh_pending_or_any_verified_holder_still_409s(owner, ws, monkeypatch, settings, status, age_days):
+    settings.MAIL_PENDING_DOMAIN_TTL_DAYS = 7
+    held = _held_elsewhere(owner, status=status, age_days=age_days)
+    monkeypatch.setattr(ses, "delete_identity", lambda d: pytest.fail("deleted a live identity"))
+    r = _post(owner)
+    assert r.status_code == 409 and r.json()["detail"] == "that domain is already registered"
+    assert MailDomain.objects.get(name="marshellis.com").pk == held.pk
