@@ -10,5 +10,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts):
         for d in MailDomain.objects.all():
-            d = domains.refresh(d, force=True)
+            try:
+                d = domains.refresh(d, force=True)
+            except Exception as exc:  # one bad domain must not stop the rest
+                self.stderr.write(f"{d.name}: failed: {exc!r}")
+                continue
             self.stdout.write(f"{d.name}: {d.status} receiving={d.receiving} mx={d.mx_provider}")

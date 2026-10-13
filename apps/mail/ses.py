@@ -33,9 +33,18 @@ def _s3():
 
 
 def create_identity(domain: str, *, mail_from: str) -> list[str]:
+    """Create the SES identity; one that already exists (a retry after a half-finished
+    add) is adopted: its DKIM tokens are read back and mail-from is set again."""
+    from botocore.exceptions import ClientError
+
     _guard()
-    out = _sesv2().create_email_identity(
-        EmailIdentity=domain, ConfigurationSetName=settings.MAIL_CONFIGURATION_SET)
+    try:
+        out = _sesv2().create_email_identity(
+            EmailIdentity=domain, ConfigurationSetName=settings.MAIL_CONFIGURATION_SET)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "AlreadyExistsException":
+            raise
+        out = _sesv2().get_email_identity(EmailIdentity=domain)
     _sesv2().put_email_identity_mail_from_attributes(
         EmailIdentity=domain, MailFromDomain=mail_from, BehaviorOnMxFailure="USE_DEFAULT_VALUE")
     return list((out.get("DkimAttributes") or {}).get("Tokens") or [])

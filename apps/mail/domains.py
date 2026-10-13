@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import re
 
+from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
+from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -16,8 +19,16 @@ from apps.workspaces import services as wsvc
 from . import dns, ses
 from .models import MailDomain, MailRoute
 
-_DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+_DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$")
 _LOCAL_RE = re.compile(r"^(\*|[a-z0-9!#$%&'+/=?^_`{|}~-]+(\.[a-z0-9!#$%&'+/=?^_`{|}~-]+)*)$")
+_LOCAL_MAX = 64
+
+
+log = logging.getLogger(__name__)
+
+_CHECK_TTL = 60  # seconds a DNS check is reused
+_FORCE_COOLDOWN = 10  # seconds between forced refreshes of one domain
 
 
 class DomainError(Exception):
@@ -39,28 +50,69 @@ def add_domain(workspace, name: str, *, by) -> MailDomain:
         raise DomainError(409, "that domain is already registered") from None
     try:
         d.dkim_tokens = ses.create_identity(name, mail_from=f"{d.mail_from_subdomain}.{name}")
-    except ses.MailOff as exc:
-        d.delete()
-        raise DomainError(503, str(exc)) from None
-    d.save(update_fields=["dkim_tokens"])
-    return refresh(d, force=True)
+        d.save(update_fields=["dkim_tokens"])
+        return refresh(d, force=True)
+    except BaseException as exc:
+        _undo_add(d)
+        if isinstance(exc, ses.MailOff):
+            raise DomainError(503, str(exc)) from None
+        if isinstance(exc, (ClientError, BotoCoreError)):
+            raise DomainError(502, f"SES refused: {_reason(exc)}") from None
+        raise
+
+
+def _reason(exc) -> str:
+    if isinstance(exc, ClientError):
+        return str(exc.response.get("Error", {}).get("Code") or "error")[:80]
+    return type(exc).__name__
+
+
+def _undo_add(d: MailDomain) -> None:
+    try:
+        ses.delete_identity(d.name)
+    except Exception:  # best effort: nothing may stop the row being removed
+        log.warning("could not delete SES identity %s while undoing add", d.name, exc_info=True)
+    d.delete()
+
+
+def _cache_key(domain: MailDomain) -> str:
+    return f"mail:dns:{domain.pk}:{domain.name}"
+
+
+def records(domain: MailDomain) -> list:
+    """The domain's DNS records with live status, reused for 60 s (a page load makes
+    several lookups per record)."""
+    key = _cache_key(domain)
+    got = cache.get(key)
+    if got is None:
+        got = dns.check(domain)
+        cache.set(key, got, _CHECK_TTL)
+    return got
 
 
 def refresh(domain: MailDomain, *, force: bool = False) -> MailDomain:
     now = timezone.now()
-    if not force and domain.checked_at and now - domain.checked_at < dt.timedelta(seconds=60):
-        return domain
+    if domain.checked_at:
+        age = now - domain.checked_at
+        if age < dt.timedelta(seconds=_FORCE_COOLDOWN) or (
+                not force and age < dt.timedelta(seconds=_CHECK_TTL)):
+            return domain
+    if force:
+        cache.delete(_cache_key(domain))
     if domain.status == MailDomain.PENDING:
         try:
             if ses.identity_verified(domain.name):
-                domain.status = MailDomain.VERIFIED
+                # only flip a row that is still pending: a concurrent suspension wins
+                if MailDomain.objects.filter(pk=domain.pk, status=MailDomain.PENDING).update(
+                        status=MailDomain.VERIFIED):
+                    domain.status = MailDomain.VERIFIED
         except ses.MailOff:
             pass
     mx = dns._resolve(domain.name, "MX")
     domain.mx_provider = dns.mx_provider(mx)
     domain.receiving = any(settings.MAIL_INBOUND_MX in h.lower() for h in mx)
     domain.checked_at = now
-    domain.save(update_fields=["status", "mx_provider", "receiving", "checked_at"])
+    domain.save(update_fields=["mx_provider", "receiving", "checked_at"])
     return domain
 
 
@@ -69,6 +121,13 @@ def remove_domain(domain: MailDomain) -> None:
         ses.delete_identity(domain.name)
     except ses.MailOff:
         pass
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "NotFoundException":
+            log.error("SES identity %s not deleted (%s); removing the domain anyway",
+                      domain.name, _reason(exc), exc_info=True)
+    except BotoCoreError:
+        log.error("SES identity %s not deleted; removing the domain anyway", domain.name, exc_info=True)
+    cache.delete(_cache_key(domain))
     domain.routes.update(enabled=False)
     domain.delete()
 
@@ -76,7 +135,7 @@ def remove_domain(domain: MailDomain) -> None:
 def save_route(domain: MailDomain, *, local_part: str, kind: str, agent_slug: str = "",
                forward_to_user_id: int | None = None, enabled: bool = True) -> MailRoute:
     local = (local_part or "").strip().lower()
-    if not _LOCAL_RE.match(local):
+    if len(local) > _LOCAL_MAX or not _LOCAL_RE.match(local):
         raise DomainError(422, "that is not a valid address before the @")
     if local == settings.MAIL_FORWARDER_LOCAL_PART:
         raise DomainError(422, f"{local}@ is reserved for forwarded mail")
@@ -102,7 +161,9 @@ def _domain_for(host: str) -> MailDomain | None:
     labels = host.split(".")
     candidates = [".".join(labels[i:]) for i in range(len(labels) - 1)]
     found = {d.name: d for d in MailDomain.objects.filter(name__in=candidates).select_related("workspace")}
-    return next((found[c] for c in candidates if c in found), None)
+    nearest = [found[c] for c in candidates if c in found]
+    # a pending subdomain row must not shadow a live parent
+    return next((d for d in nearest if d.routes_live), nearest[0] if nearest else None)
 
 
 def resolve(address: str) -> tuple[MailDomain | None, MailRoute | None]:
@@ -112,7 +173,7 @@ def resolve(address: str) -> tuple[MailDomain | None, MailRoute | None]:
     domain = _domain_for(host)
     if domain is None:
         return None, None
-    if not domain.routes_live:
+    if not domain.routes_live or local == settings.MAIL_FORWARDER_LOCAL_PART:
         return domain, None
     routes = {r.local_part: r for r in domain.routes.filter(
         local_part__in=[local, MailRoute.CATCH_ALL], enabled=True).select_related("agent", "forward_to")}

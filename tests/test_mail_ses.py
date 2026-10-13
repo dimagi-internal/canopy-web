@@ -79,6 +79,26 @@ def test_create_identity_returns_dkim_tokens_and_sets_mail_from(on, sesv2):
     assert ses.create_identity("marshellis.com", mail_from="bounce.marshellis.com") == ["t1", "t2", "t3"]
 
 
+def test_create_identity_adopts_an_existing_identity(on, sesv2):
+    sesv2.add_client_error("create_email_identity", service_error_code="AlreadyExistsException",
+                           expected_params={"EmailIdentity": "marshellis.com",
+                                            "ConfigurationSetName": "canopy-tenant-mail"})
+    sesv2.add_response("get_email_identity", {"DkimAttributes": {"Tokens": ["a", "b", "c"]}},
+                       {"EmailIdentity": "marshellis.com"})
+    sesv2.add_response("put_email_identity_mail_from_attributes", {},
+                       {"EmailIdentity": "marshellis.com", "MailFromDomain": "bounce.marshellis.com",
+                        "BehaviorOnMxFailure": "USE_DEFAULT_VALUE"})
+    assert ses.create_identity("marshellis.com", mail_from="bounce.marshellis.com") == ["a", "b", "c"]
+
+
+def test_create_identity_other_errors_propagate(on, sesv2):
+    from botocore.exceptions import ClientError
+
+    sesv2.add_client_error("create_email_identity", service_error_code="LimitExceededException")
+    with pytest.raises(ClientError):
+        ses.create_identity("marshellis.com", mail_from="bounce.marshellis.com")
+
+
 def test_send_raw_always_carries_the_tenant_configuration_set(on, sesv2):
     sesv2.add_response("send_email", {"MessageId": "ses-1"},
                        {"FromEmailAddress": "ada@marshellis.com",

@@ -19,7 +19,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import dns, domains
+from . import domains
 from .models import MailDomain, MailRoute
 from .schemas import (MailDomainIn, MailDomainListOut, MailDomainOut, MailDomainPatchIn,
                       MailRouteIn, MailRouteOut)
@@ -60,7 +60,7 @@ def _domain_out(d: MailDomain, user) -> dict:
     return {"id": d.pk, "name": d.name, "status": d.status, "receiving": d.receiving,
             "mx_provider": d.mx_provider, "suspended_reason": d.suspended_reason,
             "daily_send_cap": d.daily_send_cap,
-            "records": [asdict(r) for r in dns.check(d)],
+            "records": [asdict(r) for r in domains.records(d)],
             "routes": [_route_out(r) for r in d.routes.select_related("agent", "forward_to")],
             "can_manage": perms.can(user, d.workspace, perms.INTEGRATIONS)}
 
