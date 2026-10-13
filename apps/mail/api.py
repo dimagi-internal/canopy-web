@@ -27,9 +27,21 @@ from apps.workspaces.models import Workspace
 
 from . import agent_mail, domains, inbound, reputation, ses, sns
 from .models import MailDomain, MailMessage, MailRoute, MailThread
-from .schemas import (MailDomainIn, MailDomainListOut, MailDomainOut, MailDomainPatchIn,
-                      MailMessageOut, MailReplyIn, MailResolveOut, MailRouteIn, MailRouteOut,
-                      MailSendIn, MailThreadListOut, MailThreadOut, MailThreadStateIn)
+from .schemas import (
+    MailDomainIn,
+    MailDomainListOut,
+    MailDomainOut,
+    MailDomainPatchIn,
+    MailMessageOut,
+    MailReplyIn,
+    MailResolveOut,
+    MailRouteIn,
+    MailRouteOut,
+    MailSendIn,
+    MailThreadListOut,
+    MailThreadOut,
+    MailThreadStateIn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,13 +122,19 @@ def update_mail_domain(request: HttpRequest, workspace: str, domain_id: int,
     ws = _admin_ws(request.user, workspace)
     d = _domain(ws, domain_id)
     before = {"daily_send_cap": d.daily_send_cap, "status": d.status}
+    fields = []
     if payload.daily_send_cap is not None:
         if not 1 <= payload.daily_send_cap <= 5000:
             raise HttpError(422, "daily_send_cap must be between 1 and 5000")
         d.daily_send_cap = payload.daily_send_cap
+        fields.append("daily_send_cap")
     if payload.unsuspend and d.status == MailDomain.SUSPENDED:
         d.status, d.suspended_reason = MailDomain.VERIFIED, ""
-    d.save()
+        fields += ["status", "suspended_reason"]
+    # Only the fields this request changes: a concurrent auto-suspension must not be undone.
+    if fields:
+        d.save(update_fields=fields)
+    d.refresh_from_db()
     audit.note_change(scope=f"mail.domain:{d.name}", before=before,
                       after={"daily_send_cap": d.daily_send_cap, "status": d.status})
     return _domain_out(d, request.user)
@@ -179,6 +197,8 @@ def _need(user, ws, cap):
 
 def _agent_full(user, route) -> None:
     """THE rule (`access.decide`) decides what a person may make this agent do; mail needs FULL."""
+    if route is None:
+        raise HttpError(409, "this address no longer exists")
     if not route.agent_id:
         raise HttpError(409, "this address is not an agent mailbox")
     d = access.decide(route.agent, user, verified=True, origin="email")
@@ -203,13 +223,21 @@ def _msg_out(m) -> dict:
 
 
 def _thread_out(t, *, messages: bool) -> dict:
-    out = {"thread_id": str(t.uuid), "address": t.route.address,
-           "agent": t.route.agent.slug if t.route.agent_id else "", "subject": t.subject,
+    agent = t.route.agent.slug if t.route_id and t.route.agent_id else ""
+    out = {"thread_id": str(t.uuid), "address": t.address, "agent": agent, "subject": t.subject,
            "message_count": t.message_count, "unread": t.unread, "archived": t.archived,
            "last_message_at": t.last_message_at.isoformat() if t.last_message_at else ""}
     if messages:
         out["messages"] = [_msg_out(m) for m in t.messages.prefetch_related("attachments")]
     return out
+
+
+def _agent_route(ws, slug: str) -> MailRoute | None:
+    """The agent's own address here: never the catch-all, and the same one every time."""
+    return (MailRoute.objects.filter(domain__workspace=ws, kind=MailRoute.AGENT, agent__slug=slug,
+                                     enabled=True)
+            .exclude(local_part=MailRoute.CATCH_ALL)
+            .select_related("domain", "agent").order_by("domain__name", "local_part").first())
 
 
 @router.get("/resolve", response=MailResolveOut, summary="Which mail backend serves an address")
@@ -228,8 +256,7 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
     address = ""
     if agent:
         qs = qs.filter(route__agent__slug=agent)
-        r = MailRoute.objects.filter(domain__workspace=ws, kind=MailRoute.AGENT, agent__slug=agent,
-                                     enabled=True).select_related("domain").first()
+        r = _agent_route(ws, agent)
         address = r.address if r else ""
     newest = MailMessage.objects.filter(thread=OuterRef("pk")).order_by("-created_at", "-pk")
     qs = qs.annotate(_dir=Subquery(newest.values("direction")[:1]),
@@ -257,7 +284,9 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
     ws = _ws(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
     t = _thread(ws, uuid)
-    if not t.route.enabled or t.route.kind != MailRoute.AGENT:
+    if t.route is None or not t.route.enabled:
+        raise HttpError(409, "this address no longer exists")
+    if t.route.kind != MailRoute.AGENT:
         raise HttpError(409, "this address no longer routes to an agent")
     _agent_full(request.user, t.route)
     to = payload.to or [m.from_addr for m in
@@ -276,8 +305,7 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
 def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict:
     ws = _ws(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
-    route = MailRoute.objects.filter(domain__workspace=ws, kind=MailRoute.AGENT, agent__slug=payload.agent,
-                                     enabled=True).select_related("domain", "agent").first()
+    route = _agent_route(ws, payload.agent)
     if route is None:
         raise HttpError(404, f"agent {payload.agent!r} has no mail address here")
     _agent_full(request.user, route)
@@ -317,12 +345,16 @@ def ses_inbound(request: HttpRequest):
         sns.verify(msg, topic_arn=settings.MAIL_INBOUND_TOPIC_ARN)
     except (ValueError, RecursionError, sns.Invalid):
         return 404, {"detail": "not found"}
+    except sns.Unavailable:
+        return 500, {"detail": "retry"}  # the cert fetch failed transiently: real mail must not drop
     kind = msg.get("Type")
     if kind == "SubscriptionConfirmation":
         try:
             sns.confirm(msg)
         except sns.Invalid:
             return 404, {"detail": "not found"}
+        except sns.Unavailable:
+            return 500, {"detail": "retry"}
         return 200, {"confirmed": True}
     if kind != "Notification":
         return 200, {"ignored": kind}
@@ -348,10 +380,17 @@ def ses_events(request: HttpRequest):
         sns.verify(msg, topic_arn=settings.MAIL_EVENTS_TOPIC_ARN)
     except (ValueError, RecursionError, sns.Invalid):
         return 404, {"detail": "not found"}
-    try:
-        if msg.get("Type") == "SubscriptionConfirmation":
+    except sns.Unavailable:
+        return 500, {"detail": "retry"}
+    if msg.get("Type") == "SubscriptionConfirmation":
+        try:
             sns.confirm(msg)
-            return 200, {"confirmed": True}
+        except sns.Invalid:
+            return 404, {"detail": "not found"}
+        except sns.Unavailable:
+            return 500, {"detail": "retry"}
+        return 200, {"confirmed": True}
+    try:
         if msg.get("Type") == "Notification":
             reputation.record(json.loads(msg.get("Message") or "{}"))
     except (OperationalError, InterfaceError):

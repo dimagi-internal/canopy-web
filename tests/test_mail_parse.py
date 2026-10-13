@@ -140,3 +140,34 @@ def test_headers_and_attachment_filename_are_json_and_utf8_safe():
     json.dumps(p.headers, ensure_ascii=False).encode("utf-8")
     assert p.attachments
     p.attachments[0].filename.encode("utf-8")
+
+
+_NUL_MAIL = (
+    b"From: \"Ev\x00e\" <eve@example.org>\r\n"
+    b"To: ada@marshellis.com\r\n"
+    b"Subject: hi\x00there\r\n"
+    b"Message-ID: <a\x00b@example.org>\r\n"
+    b"X-Odd: v\x00al\r\n"
+    b"MIME-Version: 1.0\r\n"
+    b"Content-Type: multipart/mixed; boundary=B\r\n\r\n"
+    b"--B\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nbo\x00dy\r\n"
+    b"--B\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>ht\x00ml</p>\r\n"
+    b"--B\r\nContent-Type: application/pdf\r\n"
+    b"Content-Disposition: attachment; filename=\"a\x00.pdf\"\r\n\r\nPDF\r\n"
+    b"--B--\r\n"
+)
+
+
+def _strings(p):
+    yield from (p.message_id, p.in_reply_to, p.from_addr, p.from_name, p.subject, p.text, p.html)
+    yield from p.references + p.to + p.cc
+    for a in p.attachments:
+        yield from (a.filename, a.content_type)
+    for k, v in p.headers:
+        yield from (k, v)
+
+
+def test_nul_bytes_never_reach_a_parsed_field():
+    p = parse.parse(_NUL_MAIL)
+    assert not [s for s in _strings(p) if "\x00" in s]
+    assert p.subject == "hithere" and "body" in p.text and "html" in p.html

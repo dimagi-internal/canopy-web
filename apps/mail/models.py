@@ -86,7 +86,11 @@ class MailRoute(models.Model):
 class MailThread(models.Model):
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
                                   related_name="mail_threads")
-    route = models.ForeignKey(MailRoute, on_delete=models.CASCADE, related_name="threads")
+    route = models.ForeignKey(MailRoute, null=True, blank=True, on_delete=models.SET_NULL,
+                              related_name="threads")
+    """NULL once the address's route is removed: the conversation outlives the route."""
+    address = models.CharField(max_length=320, blank=True, default="")
+    """The mailbox address this thread belongs to, snapshotted from the route at creation."""
     uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     """The `thread_id` turns and agents carry."""
     subject = models.CharField(max_length=998, blank=True, default="")
@@ -97,6 +101,11 @@ class MailThread(models.Model):
 
     class Meta:
         ordering = ["-last_message_at"]
+
+    def save(self, *args, **kwargs):
+        if not self.address and self.route_id:
+            self.address = self.route.address
+        super().save(*args, **kwargs)
 
 
 class MailMessage(models.Model):
@@ -124,7 +133,7 @@ class MailMessage(models.Model):
     raw_key = models.CharField(max_length=512, blank=True, default="")
     verdicts = models.JSONField(default=dict, blank=True)
     auth_results = models.TextField(blank=True, default="")
-    ses_message_id = models.CharField(max_length=128, blank=True, default="")
+    ses_message_id = models.CharField(max_length=128, blank=True, default="", db_index=True)
     delivery_status = models.CharField(max_length=12, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -138,7 +147,7 @@ class MailMessage(models.Model):
         if self.workspace_id is None and self.thread_id:
             self.workspace_id = self.thread.workspace_id
         if not self.mailbox and self.thread_id:
-            self.mailbox = self.thread.route.address
+            self.mailbox = self.thread.address
         super().save(*args, **kwargs)
 
 
@@ -152,7 +161,7 @@ class MailAttachment(models.Model):
 
 class MailForwardLog(models.Model):
     """One row per forwarded message — no body: canopy keeps no human mail it only passes on."""
-    FORWARDED, FAILED, DROPPED, SENDING = "forwarded", "failed", "dropped", "sending"
+    FORWARDED, DROPPED, SENDING = "forwarded", "dropped", "sending"
 
     domain = models.ForeignKey(MailDomain, on_delete=models.CASCADE, related_name="forwards")
     route = models.ForeignKey(MailRoute, null=True, on_delete=models.SET_NULL, related_name="+")
@@ -184,3 +193,8 @@ class MailEvent(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["domain", "kind", "at"])]
+        constraints = [
+            # SNS redelivers; one SES event of one kind counts once.
+            models.UniqueConstraint(fields=["ses_message_id", "kind"], name="mail_event_once",
+                                    condition=~models.Q(ses_message_id="")),
+        ]

@@ -153,3 +153,15 @@ def test_fresh_sending_claim_is_duplicate(route):
     _sending_row(route, p, 1)
     assert forward.forward(route, p, raw, "a@marshellis.com") == "duplicate"
     assert route.sent == []
+
+
+@pytest.mark.parametrize("email", ["x@other-ws.org", "x@team.other-ws.org"])
+def test_forward_to_another_canopy_mail_domain_is_a_loop(route, email):
+    u2 = User.objects.create_user("o", "o@o.com", "pw")
+    ws2 = Workspace.objects.create(slug="other", display_name="O", created_by=u2)
+    MailDomain.objects.create(workspace=ws2, name="other-ws.org", status="pending")
+    route.forward_to.email = email
+    route.forward_to.save()
+    raw = (FIX / "plain.eml").read_bytes()
+    assert forward.forward(route, parse.parse(raw), raw, "a@marshellis.com") == "dropped:loop"
+    assert route.sent == []

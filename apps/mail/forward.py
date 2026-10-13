@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from apps.workspaces import services as wsvc
 
-from . import ses
+from . import domains, ses
 from .models import MailForwardLog
 
 _STRIP = ("DKIM-Signature", "ARC-Seal", "ARC-Message-Signature", "ARC-Authentication-Results",
@@ -62,9 +62,11 @@ def _claim(route, parsed, recipient, status, user, error="") -> MailForwardLog |
 
 
 def _is_loop(email: str, domain: str) -> bool:
-    host = email.rsplit("@", 1)[-1].lower()
+    """A destination on ANY canopy mail domain (this one or another workspace's) could route
+    the copy straight back in; forward only to mail that leaves canopy."""
+    host = email.rsplit("@", 1)[-1].lower().rstrip(".")
     domain = domain.lower()
-    return host == domain or host.endswith("." + domain)
+    return host == domain or host.endswith("." + domain) or domains._domain_for(host) is not None
 
 
 def forward(route, parsed, raw: bytes, recipient: str) -> str:

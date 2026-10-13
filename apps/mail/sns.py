@@ -6,9 +6,11 @@ https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html
 from __future__ import annotations
 
 import base64
+import http.client
+import logging
 import re
 import ssl
-import logging
+import urllib.error
 import urllib.request
 from functools import lru_cache
 from urllib.parse import urlsplit
@@ -29,9 +31,24 @@ class Invalid(Exception):  # noqa: N818 - name is mandated by the mail spec
     pass
 
 
+class Unavailable(Exception):  # noqa: N818 - a transient failure: the caller answers 500 so SNS retries
+    pass
+
+
+def _classify(exc: BaseException, what: str) -> Exception:
+    """An HTTP 4xx is the sender's fault (an attacker-chosen path): Invalid. Anything else
+    — 5xx, a network error, a timeout, TLS — is transient: Unavailable, so SNS retries."""
+    if isinstance(exc, urllib.error.HTTPError) and 400 <= exc.code < 500:
+        return Invalid(f"{what}: HTTP {exc.code}")
+    return Unavailable(f"{what}: {type(exc).__name__}")
+
+
+_TRANSIENT = (OSError, ssl.SSLError, http.client.HTTPException)  # URLError/HTTPError/TimeoutError are OSErrors
+
+
 @lru_cache(maxsize=8)
 def _fetch_cert(url: str) -> bytes:
-    with urllib.request.urlopen(url, timeout=5) as r:  # noqa: S310 - host pinned by _CERT_URL
+    with urllib.request.urlopen(url, timeout=5) as r:  # noqa: S310 - host pinned by _sns_url in verify()
         return r.read()
 
 
@@ -87,14 +104,16 @@ def verify(msg: dict, *, topic_arn: str) -> None:
     if algo is None:
         raise Invalid("unsupported signature version")
     try:
-        cert = x509.load_pem_x509_certificate(_fetch_cert(url))
+        pem = _fetch_cert(url)
+    except _TRANSIENT as exc:
+        logger.warning("could not fetch SNS signing cert %s: %r", url, exc)
+        raise _classify(exc, "signing cert") from exc
+    try:
+        cert = x509.load_pem_x509_certificate(pem)
         cert.public_key().verify(base64.b64decode(msg.get("Signature", "")),
                                  _string_to_sign(msg), padding.PKCS1v15(), algo)
     except (InvalidSignature, ValueError, TypeError) as exc:
         raise Invalid("bad signature") from exc
-    except (OSError, ssl.SSLError) as exc:  # URLError/HTTPError/TimeoutError are OSErrors
-        logger.warning("could not fetch SNS signing cert %s: %r", url, exc)
-        raise Invalid("signing cert unavailable") from exc
 
 
 def confirm(msg: dict) -> None:
@@ -102,6 +121,6 @@ def confirm(msg: dict) -> None:
     _sns_url(url, msg.get("TopicArn", ""), path_ok=lambda p: p.startswith("/"), query_ok=True)
     try:
         _get(url)
-    except OSError as exc:
+    except _TRANSIENT as exc:
         logger.warning("could not confirm SNS subscription: %r", exc)
-        raise Invalid("subscribe failed") from exc
+        raise _classify(exc, "subscribe") from exc

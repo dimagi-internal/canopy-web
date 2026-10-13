@@ -7,7 +7,6 @@ from django.db.models import Q
 
 from .models import MailMessage, MailRoute, MailThread
 
-
 _IDS = re.compile(r"<[^<>\s]+>")
 
 

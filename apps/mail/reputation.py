@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 from email.utils import parseaddr
 
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -44,7 +45,15 @@ def record(event: dict) -> None:
     at = parse_datetime(mail.get("timestamp") or "") or timezone.now()
     msg_id = mail.get("messageId", "") or ""
     hard = kind == "Bounce" and (event.get("bounce") or {}).get("bounceType") == "Permanent"
-    MailEvent.objects.create(domain=domain, kind=kind, hard=hard, ses_message_id=msg_id, at=at)
+    if msg_id:
+        # SNS redelivers: one SES event of one kind counts once (unique on (ses_message_id, kind)).
+        try:
+            with transaction.atomic():
+                MailEvent.objects.create(domain=domain, kind=kind, hard=hard, ses_message_id=msg_id, at=at)
+        except IntegrityError:
+            return
+    else:
+        MailEvent.objects.create(domain=domain, kind=kind, hard=hard, ses_message_id=msg_id, at=at)
     if kind in _STATUS and msg_id:
         MailMessage.objects.filter(ses_message_id=msg_id).update(delivery_status=_STATUS[kind])
     evaluate(domain)

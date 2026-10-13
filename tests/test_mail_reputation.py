@@ -126,3 +126,17 @@ def test_events_endpoint_poison_event_is_200_transient_db_is_500(d, post, monkey
     assert post(msg).status_code == 200
     monkeypatch.setattr(reputation, "record", lambda e: (_ for _ in ()).throw(OperationalError("db")))
     assert post(msg).status_code == 500
+
+
+def test_a_redelivered_bounce_counts_once(d, post):
+    msg = {"Type": "Notification", "Message": json.dumps(_ev(bounce={"bounceType": "Permanent"}))}
+    assert post(msg).status_code == 200 and post(msg).status_code == 200
+    assert MailEvent.objects.filter(kind="Bounce").count() == 1
+    reputation.record(_ev("Delivery"))  # another kind for the same message still counts
+    assert MailEvent.objects.count() == 2
+
+
+def test_events_without_a_message_id_are_not_deduped(d):
+    for _ in range(2):
+        reputation.record({"eventType": "Send", "mail": {"source": "ada@marshellis.com"}})
+    assert MailEvent.objects.count() == 2

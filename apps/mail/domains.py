@@ -8,8 +8,8 @@ import re
 
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
-from django.core.cache import cache
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -136,8 +136,7 @@ def remove_domain(domain: MailDomain) -> None:
     except BotoCoreError:
         log.error("SES identity %s not deleted; removing the domain anyway", domain.name, exc_info=True)
     cache.delete(_cache_key(domain))
-    domain.routes.update(enabled=False)
-    domain.delete()
+    domain.delete()  # routes go with it; their threads and messages stay (route → NULL)
 
 
 def save_route(domain: MailDomain, *, local_part: str, kind: str, agent_slug: str = "",
@@ -149,6 +148,8 @@ def save_route(domain: MailDomain, *, local_part: str, kind: str, agent_slug: st
         raise DomainError(422, f"{local}@ is reserved for forwarded mail")
     agent = forward_to = None
     if kind == MailRoute.AGENT:
+        if local == MailRoute.CATCH_ALL:
+            raise DomainError(422, "the catch-all can forward or drop, not belong to an agent")
         agent = Agent.objects.filter(slug=agent_slug, workspace=domain.workspace).first()
         if agent is None:
             raise DomainError(422, f"no agent {agent_slug!r} in this workspace")

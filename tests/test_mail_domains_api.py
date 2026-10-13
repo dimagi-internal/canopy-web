@@ -265,3 +265,119 @@ def test_mail_refresh_command_continues_after_a_failure(ws, monkeypatch, capsys)
     monkeypatch.setattr(domains, "refresh", flaky)
     call_command("mail_refresh")
     assert sorted(seen) == ["a.com", "b.com"]
+
+
+def _mail_world(ws, owner):
+    from apps.mail.models import MailMessage, MailThread
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com", status="verified")
+    a = Agent.objects.create(slug="mada", name="Ada", workspace=ws, owner=owner)
+    r = MailRoute.objects.create(domain=d, local_part="ada", kind="agent", agent=a)
+    t = MailThread.objects.create(workspace=ws, route=r, subject="Hello", message_count=1)
+    MailMessage.objects.create(thread=t, direction="in", message_id="<in-1@x.org>",
+                               from_addr="x@x.org", subject="Hello", text="hi")
+    return d, r, t
+
+
+def test_deleting_a_route_keeps_its_threads_and_messages(owner, ws):
+    from apps.mail.models import MailMessage, MailThread
+    d, r, t = _mail_world(ws, owner)
+    assert t.address == "ada@marshellis.com"
+    resp = _c(owner).delete(f"/api/mail/domains/marshellis/{d.pk}/routes/{r.pk}")
+    assert resp.status_code == 204
+    t = MailThread.objects.get(pk=t.pk)
+    assert t.route_id is None and t.address == "ada@marshellis.com"
+    assert MailMessage.objects.filter(thread=t).count() == 1
+
+
+def test_removing_a_domain_keeps_its_threads(owner, ws):
+    from apps.mail.models import MailMessage, MailThread
+    d, r, t = _mail_world(ws, owner)
+    assert _c(owner).delete(f"/api/mail/domains/marshellis/{d.pk}").status_code == 204
+    assert not MailDomain.objects.exists() and not MailRoute.objects.exists()
+    assert MailThread.objects.get(pk=t.pk).route_id is None
+    assert MailMessage.objects.count() == 1
+
+
+def test_threads_without_a_route_still_list_read_and_refuse_replies(owner, ws):
+    d, r, t = _mail_world(ws, owner)
+    r.delete()
+    c = _c(owner)
+    items = c.get("/api/mail/threads/marshellis").json()["items"]
+    assert [(i["address"], i["agent"]) for i in items] == [("ada@marshellis.com", "")]
+    got = c.get(f"/api/mail/threads/marshellis/{t.uuid}")
+    assert got.status_code == 200 and got.json()["address"] == "ada@marshellis.com"
+    assert len(got.json()["messages"]) == 1
+    rep = c.post(f"/api/mail/threads/marshellis/{t.uuid}/reply", {"text": "x"},
+                 content_type="application/json")
+    assert rep.status_code == 409 and rep.json()["detail"] == "this address no longer exists"
+    st = c.post(f"/api/mail/threads/marshellis/{t.uuid}/state", {"unread": False},
+                content_type="application/json")
+    assert st.status_code == 409
+
+
+def test_reply_on_a_disabled_route_is_409(owner, ws):
+    d, r, t = _mail_world(ws, owner)
+    MailRoute.objects.filter(pk=r.pk).update(enabled=False)
+    rep = _c(owner).post(f"/api/mail/threads/marshellis/{t.uuid}/reply", {"text": "x"},
+                         content_type="application/json")
+    assert rep.status_code == 409 and rep.json()["detail"] == "this address no longer exists"
+
+
+def test_catch_all_cannot_belong_to_an_agent(owner, ws):
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com", status="verified")
+    Agent.objects.create(slug="mada", name="Ada", workspace=ws, owner=owner)
+    r = _c(owner).put(f"/api/mail/domains/marshellis/{d.pk}/routes",
+                      {"local_part": "*", "kind": "agent", "agent_slug": "mada"},
+                      content_type="application/json")
+    assert r.status_code == 422
+    assert r.json()["detail"] == "the catch-all can forward or drop, not belong to an agent"
+    assert not MailRoute.objects.exists()
+
+
+def test_agent_address_and_send_never_pick_the_catch_all_and_are_deterministic(owner, ws, monkeypatch):
+    sent = []
+    monkeypatch.setattr(ses, "send_raw", lambda **kw: sent.append(kw) or "ses-1")
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com", status="verified")
+    a = Agent.objects.create(slug="mada", name="Ada", workspace=ws, owner=owner)
+    # a legacy catch-all agent row (save_route now refuses one) and two real addresses
+    MailRoute.objects.create(domain=d, local_part="*", kind="agent", agent=a)
+    MailRoute.objects.create(domain=d, local_part="zed", kind="agent", agent=a)
+    MailRoute.objects.create(domain=d, local_part="ada", kind="agent", agent=a)
+    c = _c(owner)
+    for _ in range(3):
+        got = c.get("/api/mail/threads/marshellis", {"agent": "mada"}).json()
+        assert got["agent_address"] == "ada@marshellis.com"
+    r = c.post("/api/mail/send/marshellis", {"agent": "mada", "to": ["x@x.org"], "subject": "s", "text": "t"},
+               content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert sent[0]["from_addr"] == "ada@marshellis.com"
+
+
+def test_send_with_only_a_catch_all_agent_route_is_404(owner, ws):
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com", status="verified")
+    a = Agent.objects.create(slug="mada", name="Ada", workspace=ws, owner=owner)
+    MailRoute.objects.create(domain=d, local_part="*", kind="agent", agent=a)
+    c = _c(owner)
+    assert c.get("/api/mail/threads/marshellis", {"agent": "mada"}).json()["agent_address"] == ""
+    r = c.post("/api/mail/send/marshellis", {"agent": "mada", "to": ["x@x.org"], "subject": "s", "text": "t"},
+               content_type="application/json")
+    assert r.status_code == 404
+
+
+def test_patching_the_cap_does_not_undo_a_concurrent_suspension(owner, ws, monkeypatch):
+    from apps.mail import api as mail_api
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com", status="verified")
+    real = mail_api._domain
+
+    def stale(w, pk):  # the row is read, then auto-suspension lands before the save
+        got = real(w, pk)
+        MailDomain.objects.filter(pk=pk).update(status="suspended", suspended_reason="bounces")
+        return got
+
+    monkeypatch.setattr(mail_api, "_domain", stale)
+    r = _c(owner).patch(f"/api/mail/domains/marshellis/{d.pk}", {"daily_send_cap": 300},
+                        content_type="application/json")
+    assert r.status_code == 200, r.content
+    d.refresh_from_db()
+    assert d.daily_send_cap == 300 and d.status == "suspended" and d.suspended_reason == "bounces"
+    assert r.json()["status"] == "suspended"

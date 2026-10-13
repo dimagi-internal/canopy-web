@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import datetime
+import http.client
 import json
+import ssl
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -249,14 +252,86 @@ def test_good_subscribe_url_is_fetched(monkeypatch):
     assert len(got) == 1
 
 
-def test_cert_fetch_failure_is_404(world, monkeypatch):
-    def down(url):
-        raise OSError("dns")
+def _http_error(code):
+    return urllib.error.HTTPError(GOOD_CERT, code, "x", {}, None)
 
-    monkeypatch.setattr(sns, "_fetch_cert", down)
-    body = {"Type": "Notification", "TopicArn": TOPIC, "SignatureVersion": "2", "Signature": "eA==",
-            "SigningCertURL": GOOD_CERT, "Message": "{}"}
-    assert Client().post(URL, json.dumps(body), content_type="text/plain").status_code == 404
+
+_TRANSIENT_ERRORS = [
+    lambda: urllib.error.URLError("dns"),
+    lambda: TimeoutError("slow"),
+    lambda: ssl.SSLError("handshake"),
+    lambda: http.client.RemoteDisconnected("gone"),
+    lambda: OSError("reset"),
+    lambda: _http_error(503),
+]
+
+
+def _raiser(make):
+    def boom(*_a, **_k):
+        raise make()
+    return boom
+
+
+_SIGNED = {"Type": "Notification", "TopicArn": TOPIC, "SignatureVersion": "2", "Signature": "eA==",
+           "SigningCertURL": GOOD_CERT, "Message": "{}"}
+
+
+@pytest.mark.parametrize("make", [lambda: _http_error(404), lambda: _http_error(403)])
+def test_cert_fetch_4xx_is_invalid_and_404(world, monkeypatch, make):
+    monkeypatch.setattr(sns, "_fetch_cert", _raiser(make))
+    with pytest.raises(sns.Invalid):
+        sns.verify(_SIGNED, topic_arn=TOPIC)
+    assert Client().post(URL, json.dumps(_SIGNED), content_type="text/plain").status_code == 404
+
+
+@pytest.mark.parametrize("make", _TRANSIENT_ERRORS)
+def test_transient_cert_fetch_failure_is_500_so_sns_retries(world, monkeypatch, make):
+    monkeypatch.setattr(sns, "_fetch_cert", _raiser(make))
+    with pytest.raises(sns.Unavailable):
+        sns.verify(_SIGNED, topic_arn=TOPIC)
+    assert Client().post(URL, json.dumps(_SIGNED), content_type="text/plain").status_code == 500
+    assert world.calls == []
+
+
+_GOOD_SUB = "https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription"
+
+
+def test_subscribe_4xx_is_invalid(monkeypatch):
+    monkeypatch.setattr(sns, "_get", _raiser(lambda: _http_error(404)))
+    with pytest.raises(sns.Invalid):
+        sns.confirm({"TopicArn": TOPIC, "SubscribeURL": _GOOD_SUB})
+
+
+@pytest.mark.parametrize("make", _TRANSIENT_ERRORS)
+def test_transient_subscribe_failure_is_unavailable(monkeypatch, make):
+    monkeypatch.setattr(sns, "_get", _raiser(make))
+    with pytest.raises(sns.Unavailable):
+        sns.confirm({"TopicArn": TOPIC, "SubscribeURL": _GOOD_SUB})
+
+
+@pytest.mark.parametrize("url", [URL, "/api/mail/ses/events/"])
+def test_transient_confirm_failure_is_500_on_both_doors(world, settings, monkeypatch, url):
+    settings.MAIL_EVENTS_TOPIC_ARN = TOPIC
+    monkeypatch.setattr(sns, "verify", lambda m, topic_arn: None)
+    monkeypatch.setattr(sns, "_get", _raiser(lambda: TimeoutError("slow")))
+    body = {"Type": "SubscriptionConfirmation", "TopicArn": TOPIC, "SubscribeURL": _GOOD_SUB}
+    assert Client().post(url, json.dumps(body), content_type="text/plain").status_code == 500
+
+
+@pytest.mark.parametrize("url", [URL, "/api/mail/ses/events/"])
+def test_invalid_confirm_is_404_on_both_doors(world, settings, monkeypatch, url):
+    settings.MAIL_EVENTS_TOPIC_ARN = TOPIC
+    monkeypatch.setattr(sns, "verify", lambda m, topic_arn: None)
+    monkeypatch.setattr(sns, "_get", _raiser(lambda: _http_error(404)))
+    body = {"Type": "SubscriptionConfirmation", "TopicArn": TOPIC, "SubscribeURL": _GOOD_SUB}
+    assert Client().post(url, json.dumps(body), content_type="text/plain").status_code == 404
+
+
+def test_transient_cert_failure_on_events_door_is_500(world, settings, monkeypatch):
+    settings.MAIL_EVENTS_TOPIC_ARN = TOPIC
+    monkeypatch.setattr(sns, "_fetch_cert", _raiser(lambda: TimeoutError("slow")))
+    assert Client().post("/api/mail/ses/events/", json.dumps(_SIGNED),
+                         content_type="text/plain").status_code == 500
 
 
 def test_deeply_nested_json_is_404(world):

@@ -44,9 +44,14 @@ _TAGS = re.compile(r"<[^>]+>")
 _CRLF = re.compile(r"[\r\n\v\f\u2028\u2029\x85]+")
 
 
+def _nonul(v: str) -> str:
+    """Postgres text cannot hold NUL: one in a stored field loses the whole message."""
+    return v.replace("\x00", "")
+
+
 def _clean(v: str) -> str:
     # Lone surrogates (from raw 8-bit headers) would break later DB/JSON writes.
-    v = v.encode("utf-8", "replace").decode("utf-8")
+    v = _nonul(v.encode("utf-8", "replace").decode("utf-8"))
     return _CRLF.sub(" ", v).strip()
 
 
@@ -124,16 +129,16 @@ def _html_to_text(h: str) -> str:
 
 
 def _content(part) -> str:
-    """Decoded text of a part; tolerate unknown/bad charsets instead of raising."""
+    """Decoded text of a part, NUL-free; tolerate unknown/bad charsets instead of raising."""
     try:
-        return part.get_content()
+        return _nonul(part.get_content())
     except (LookupError, UnicodeError, ValueError, AssertionError):
         charset = part.get_content_charset() or "utf-8"
         try:
             codecs.lookup(charset)
         except (LookupError, ValueError):
             charset = "utf-8"
-        return (part.get_payload(decode=True) or b"").decode(charset, errors="replace")
+        return _nonul((part.get_payload(decode=True) or b"").decode(charset, errors="replace"))
 
 
 def _safe_items(msg) -> list[tuple[str, str]]:
@@ -169,7 +174,7 @@ def parse(raw: bytes) -> Parsed:
     html = _content(html_part) if html_part is not None else ""
     text = _content(text_part) if text_part is not None else _html_to_text(html)
     attachments = [
-        Attachment(_safe_filename(part), part.get_content_type(),
+        Attachment(_safe_filename(part), _clean(part.get_content_type()),
                    part.get_payload(decode=True) or b"")
         for part in msg.iter_attachments()
     ]

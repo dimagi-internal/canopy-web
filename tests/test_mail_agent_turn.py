@@ -119,3 +119,13 @@ def test_ses_authentication_results_grade_the_sender(route):
     assert agent_mail.deliver(route, p, "incoming/abc") == "agent"
     c = Contact.objects.get(email="someone@example.org")
     assert c.auth_result != Contact.AUTH_NONE
+
+
+def test_mail_with_nul_bytes_is_stored_not_lost(route):
+    from tests.test_mail_parse import _NUL_MAIL
+
+    p = parse.parse(_NUL_MAIL)
+    assert agent_mail.deliver(route, p, "incoming/nul") == "agent"
+    m = MailMessage.objects.get()
+    assert m.subject == "hithere" and "body" in m.text and "\x00" not in m.message_id
+    assert m.attachments.get().filename == "a.pdf"

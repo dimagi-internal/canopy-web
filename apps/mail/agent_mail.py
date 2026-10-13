@@ -43,6 +43,7 @@ def _wake(route, parsed, msg, thread) -> None:
                     "message_id": parsed.message_id, "discovered_by": "ses",
                     "message_count": thread.message_count, "headers": _auth_results(parsed)},
         authserv_id=settings.MAIL_SES_AUTHSERV_ID,
+        initiator=None,  # email derives its initiator from the sender inside enqueue_turn
     )
 
 
