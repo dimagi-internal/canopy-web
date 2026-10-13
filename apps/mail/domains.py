@@ -41,6 +41,9 @@ def add_domain(workspace, name: str, *, by) -> MailDomain:
     name = (name or "").strip().lower().rstrip(".")
     if not _DOMAIN_RE.match(name):
         raise DomainError(422, "that is not a domain name")
+    if any(name == r or name.endswith("." + r)
+           for r in (x.strip().lower().rstrip(".") for x in settings.MAIL_RESERVED_DOMAINS) if r):
+        raise DomainError(422, "that domain is reserved")
     if MailDomain.objects.filter(name=name).exists():
         raise DomainError(409, "that domain is already registered")
     try:
@@ -48,14 +51,18 @@ def add_domain(workspace, name: str, *, by) -> MailDomain:
             d = MailDomain.objects.create(workspace=workspace, name=name, created_by=by)
     except IntegrityError:
         raise DomainError(409, "that domain is already registered") from None
+    created = False
     try:
         d.dkim_tokens = ses.create_identity(name, mail_from=f"{d.mail_from_subdomain}.{name}")
+        created = True
         d.save(update_fields=["dkim_tokens"])
         return refresh(d, force=True)
-    except BaseException as exc:
-        _undo_add(d)
+    except Exception as exc:
+        _undo_add(d, created=created)
         if isinstance(exc, ses.MailOff):
             raise DomainError(503, str(exc)) from None
+        if isinstance(exc, ses.IdentityExists):
+            raise DomainError(409, "that domain is already registered with the mail provider") from None
         if isinstance(exc, (ClientError, BotoCoreError)):
             raise DomainError(502, f"SES refused: {_reason(exc)}") from None
         raise
@@ -67,11 +74,12 @@ def _reason(exc) -> str:
     return type(exc).__name__
 
 
-def _undo_add(d: MailDomain) -> None:
-    try:
-        ses.delete_identity(d.name)
-    except Exception:  # best effort: nothing may stop the row being removed
-        log.warning("could not delete SES identity %s while undoing add", d.name, exc_info=True)
+def _undo_add(d: MailDomain, *, created: bool) -> None:
+    if created:  # only an identity this call created is ours to delete
+        try:
+            ses.delete_identity(d.name)
+        except Exception:  # best effort: nothing may stop the row being removed
+            log.warning("could not delete SES identity %s while undoing add", d.name, exc_info=True)
     d.delete()
 
 

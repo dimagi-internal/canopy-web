@@ -668,6 +668,10 @@ MAIL_CONFIGURATION_SET = env("MAIL_CONFIGURATION_SET", default="canopy-tenant-ma
 MAIL_SES_AUTHSERV_ID = env("MAIL_SES_AUTHSERV_ID", default="amazonses.com")
 MAIL_INBOUND_MX = env("MAIL_INBOUND_MX", default="inbound-smtp.us-east-1.amazonaws.com")
 MAIL_FORWARDER_LOCAL_PART = "canopy-forwarder"
+# Platform domains (and their subdomains) no workspace may register: their SES identities
+# belong to Dimagi/AWS, and a tenant must never be able to alter or delete them.
+MAIL_RESERVED_DOMAINS = env.list(
+    "MAIL_RESERVED_DOMAINS", default=["dimagi.com", "dimagi-ai.com", "amazonses.com", "amazonaws.com"])
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Canopy <noreply@localhost>")
 # Who is emailed when someone sends suggested edits on a review (apps/reviews/notify.py).
 # ACE runs the DDD loops that post these reviews, so it reads them for now; the person

@@ -32,9 +32,13 @@ def _s3():
     return boto3.client("s3", region_name=settings.MAIL_SES_REGION)
 
 
+class IdentityExists(Exception):  # noqa: N818 - reads as the condition
+    """SES already holds this identity (ours or someone else's). We never touch it."""
+
+
 def create_identity(domain: str, *, mail_from: str) -> list[str]:
-    """Create the SES identity; one that already exists (a retry after a half-finished
-    add) is adopted: its DKIM tokens are read back and mail-from is set again."""
+    """Create a NEW SES identity. One that already exists in the shared account is not
+    ours to adopt or alter: IdentityExists is raised and nothing is changed."""
     from botocore.exceptions import ClientError
 
     _guard()
@@ -42,11 +46,18 @@ def create_identity(domain: str, *, mail_from: str) -> list[str]:
         out = _sesv2().create_email_identity(
             EmailIdentity=domain, ConfigurationSetName=settings.MAIL_CONFIGURATION_SET)
     except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") != "AlreadyExistsException":
-            raise
-        out = _sesv2().get_email_identity(EmailIdentity=domain)
-    _sesv2().put_email_identity_mail_from_attributes(
-        EmailIdentity=domain, MailFromDomain=mail_from, BehaviorOnMxFailure="USE_DEFAULT_VALUE")
+        if exc.response.get("Error", {}).get("Code") == "AlreadyExistsException":
+            raise IdentityExists(domain) from None
+        raise
+    try:
+        _sesv2().put_email_identity_mail_from_attributes(
+            EmailIdentity=domain, MailFromDomain=mail_from, BehaviorOnMxFailure="USE_DEFAULT_VALUE")
+    except Exception:
+        try:  # we created it a moment ago, so removing it is ours to do
+            _sesv2().delete_email_identity(EmailIdentity=domain)
+        except Exception:  # noqa: S110 - best effort; the original error is what matters
+            pass
+        raise
     return list((out.get("DkimAttributes") or {}).get("Tokens") or [])
 
 

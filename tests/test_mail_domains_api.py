@@ -129,13 +129,43 @@ def _post(owner, name="marshellis.com"):
     return _c(owner).post("/api/mail/domains/marshellis", {"name": name}, content_type="application/json")
 
 
-def test_add_cleans_up_when_ses_refuses(owner, ws, monkeypatch):
+def test_add_when_ses_refuses_is_502_and_deletes_nothing_we_did_not_create(owner, ws, monkeypatch):
     deleted = []
     monkeypatch.setattr(ses, "create_identity", lambda d, mail_from: (_ for _ in ()).throw(_client_error()))
     monkeypatch.setattr(ses, "delete_identity", lambda d: deleted.append(d))
     r = _post(owner)
     assert r.status_code == 502 and "AccessDenied" in r.json()["detail"]
+    assert not MailDomain.objects.exists() and deleted == []
+
+
+def test_failure_after_a_successful_create_deletes_the_identity(owner, ws, monkeypatch):
+    deleted = []
+    monkeypatch.setattr(domains, "refresh",
+                        lambda d, force=False: (_ for _ in ()).throw(_client_error("Throttling")))
+    monkeypatch.setattr(ses, "delete_identity", lambda d: deleted.append(d))
+    assert _post(owner).status_code == 502
     assert not MailDomain.objects.exists() and deleted == ["marshellis.com"]
+
+
+def test_existing_ses_identity_is_409_row_gone_and_never_deleted(owner, ws, monkeypatch):
+    deleted = []
+
+    def exists(d, mail_from):
+        raise ses.IdentityExists(d)
+    monkeypatch.setattr(ses, "create_identity", exists)
+    monkeypatch.setattr(ses, "delete_identity", lambda d: deleted.append(d))
+    r = _post(owner)
+    assert r.status_code == 409 and "mail provider" in r.json()["detail"]
+    assert not MailDomain.objects.exists() and deleted == []
+
+
+@pytest.mark.parametrize("name", ["canopy.dimagi.com", "dimagi.com", "x.amazonaws.com"])
+def test_reserved_domains_are_refused_before_any_write_or_ses_call(owner, ws, monkeypatch, name):
+    calls = []
+    monkeypatch.setattr(ses, "create_identity", lambda d, mail_from: calls.append(d))
+    r = _post(owner, name)
+    assert r.status_code == 422 and r.json()["detail"] == "that domain is reserved"
+    assert calls == [] and not MailDomain.objects.exists()
 
 
 def test_add_cleans_up_on_unexpected_error_even_if_delete_fails(owner, ws, monkeypatch):

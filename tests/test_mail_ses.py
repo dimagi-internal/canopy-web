@@ -79,16 +79,23 @@ def test_create_identity_returns_dkim_tokens_and_sets_mail_from(on, sesv2):
     assert ses.create_identity("marshellis.com", mail_from="bounce.marshellis.com") == ["t1", "t2", "t3"]
 
 
-def test_create_identity_adopts_an_existing_identity(on, sesv2):
+def test_create_identity_refuses_an_existing_identity_and_touches_nothing(on, sesv2):
     sesv2.add_client_error("create_email_identity", service_error_code="AlreadyExistsException",
                            expected_params={"EmailIdentity": "marshellis.com",
                                             "ConfigurationSetName": "canopy-tenant-mail"})
-    sesv2.add_response("get_email_identity", {"DkimAttributes": {"Tokens": ["a", "b", "c"]}},
-                       {"EmailIdentity": "marshellis.com"})
-    sesv2.add_response("put_email_identity_mail_from_attributes", {},
-                       {"EmailIdentity": "marshellis.com", "MailFromDomain": "bounce.marshellis.com",
-                        "BehaviorOnMxFailure": "USE_DEFAULT_VALUE"})
-    assert ses.create_identity("marshellis.com", mail_from="bounce.marshellis.com") == ["a", "b", "c"]
+    with pytest.raises(ses.IdentityExists):
+        ses.create_identity("marshellis.com", mail_from="bounce.marshellis.com")
+    sesv2.assert_no_pending_responses()  # no get/put mail-from was queued, none was made
+
+
+def test_create_identity_removes_what_it_created_if_mail_from_fails(on, sesv2):
+    sesv2.add_response("create_email_identity", {"DkimAttributes": {"Tokens": ["a"]}},
+                       {"EmailIdentity": "marshellis.com", "ConfigurationSetName": "canopy-tenant-mail"})
+    sesv2.add_client_error("put_email_identity_mail_from_attributes", service_error_code="BadRequestException")
+    sesv2.add_response("delete_email_identity", {}, {"EmailIdentity": "marshellis.com"})
+    with pytest.raises(Exception, match="BadRequest"):
+        ses.create_identity("marshellis.com", mail_from="bounce.marshellis.com")
+    sesv2.assert_no_pending_responses()
 
 
 def test_create_identity_other_errors_propagate(on, sesv2):
