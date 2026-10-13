@@ -117,6 +117,9 @@ function sessionBase(isContact: boolean, sid: string): string {
   return isContact ? `/api/contact/sessions/${id}` : `/api/canopy-sessions/${id}`
 }
 
+/** Wait before trying a page's question a second time. */
+const ASK_RETRY_MS = 1500
+
 export function EmbedApp({ link, app }: Props) {
   const [phase, setPhase] = useState<Phase>({ kind: 'connecting' })
   const [init, setInit] = useState<HostInit | null>(null)
@@ -337,16 +340,28 @@ export function EmbedApp({ link, app }: Props) {
   // if the agent is known, after the visitor picks one if there are several —
   // and is the visitor's first message, shown to them exactly as sent.
   const [asked, setAsked] = useState<string | null>(null)
+  const [unsent, setUnsent] = useState<{ text: string; error: string; n: number } | null>(null)
   useEffect(() => link.onAsk(setAsked), [link])
   useEffect(() => {
     if (asked === null) return
     if (phase.kind !== 'ready' && phase.kind !== 'chatting') return
     const text = asked
+    const agent = phase.agent
     setAsked(null)
-    void startConversation(phase.agent, text).catch(() => {
-      // Back to the start screen rather than a dead panel; the visitor can ask again.
-      setPhase({ kind: 'ready', agent: phase.agent })
-    })
+    // Never lost. A start that fails is tried once more (a question asked as
+    // the page loads can meet a transient refusal); one that fails again
+    // leaves the question in the composer with the reason, for the visitor to
+    // send, instead of dropping back to an empty start screen.
+    void startConversation(agent, text)
+      .catch(() => new Promise((r) => setTimeout(r, ASK_RETRY_MS)).then(() => startConversation(agent, text)))
+      .catch((e: unknown) => {
+        setUnsent((u) => ({
+          text,
+          error: e instanceof Error ? e.message : 'could not start the conversation',
+          n: (u?.n ?? 0) + 1,
+        }))
+        setPhase({ kind: 'ready', agent })
+      })
   }, [asked, phase, startConversation])
 
   if (phase.kind === 'connecting') {
@@ -385,6 +400,10 @@ export function EmbedApp({ link, app }: Props) {
   if (phase.kind === 'ready') {
     return (
       <EmbedStart
+        // Remounted with an unsent question, so the composer starts from it.
+        key={unsent ? `unsent-${unsent.n}` : 'start'}
+        initialBody={unsent?.text}
+        initialError={unsent?.error}
         agent={phase.agent}
         client={client}
         isContact={principal?.kind === 'contact'}
@@ -428,6 +447,8 @@ function EmbedStart({
   onStart,
   onOpen,
   onClose,
+  initialBody,
+  initialError,
 }: {
   agent: EmbedAgent
   client: CanopyClient
@@ -435,11 +456,14 @@ function EmbedStart({
   onStart: (text: string) => Promise<void>
   onOpen: (sessionId: string) => void
   onClose: () => void
+  /** A question the page asked that could not be sent: shown, not dropped. */
+  initialBody?: string
+  initialError?: string
 }) {
   const { rows: history, putAway } = useEarlierChats(client, agent, isContact)
-  const [body, setBody] = useState('')
+  const [body, setBody] = useState(initialBody ?? '')
   const [sending, setSending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(initialError ?? null)
 
   const send = useCallback(() => {
     const text = body.trim()
