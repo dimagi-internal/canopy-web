@@ -137,6 +137,22 @@ describe('ProjectOverview', () => {
     expect(screen.getByText('Ideas in progress')).toBeTruthy()
   })
 
+  it('leads where it stands with what is live today, kept out of the link row', async () => {
+    getProjectTeam.mockResolvedValue(
+      team({
+        links: [
+          { label: 'Live app', url: 'https://labs.test/supply/', kind: '', waiting_on: '' },
+          { label: 'Stock review and forecasts per programme', url: 'https://labs.test/supply/10112/',
+            kind: 'live', waiting_on: '' },
+        ],
+      }),
+    )
+    show()
+    const live = await screen.findByTestId('team-live')
+    expect(live.textContent).toBe('Live todayStock review and forecasts per programme')
+    expect(screen.getByTestId('team-links').textContent).not.toContain('Stock review')
+  })
+
   it('lists each open decision as one line with who it waits on', async () => {
     getProjectTeam.mockResolvedValue(team())
     show()

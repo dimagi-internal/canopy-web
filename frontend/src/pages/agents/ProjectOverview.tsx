@@ -68,6 +68,9 @@ export function ProjectOverview({
   if (!fresh) return <WorkbenchSkeleton />
   const data = fresh.data
   if (!data) return <p className="text-[13px] text-destructive">{fresh.error}</p>
+  // `live` links say what the product does today; they lead "Where it stands".
+  const live = data.links.filter((l) => l.kind === 'live')
+  const links = data.links.filter((l) => l.kind !== 'live')
 
   return (
     <div data-testid="project-overview">
@@ -80,11 +83,11 @@ export function ProjectOverview({
             {data.outcome}
           </p>
         )}
-        {data.links.length > 0 && (
+        {links.length > 0 && (
           // Unlabelled, a row of pills read as tags or filters; they are where to go.
           <ul className="mt-3 flex flex-wrap items-center gap-2" data-testid="team-links" aria-label="Links">
             <li className="text-[11px] uppercase tracking-wide text-muted-foreground">Links</li>
-            {data.links.map((l) => (
+            {links.map((l) => (
               <li key={`${l.label}|${l.url}`}>
                 <a
                   href={l.url}
@@ -111,6 +114,20 @@ export function ProjectOverview({
         <div className="space-y-5">
           {/* These count IDEAS, not the product: a project whose app is live
               but whose ideas are all still open must not read "nothing built". */}
+          {live.length > 0 && (
+            <div data-testid="team-live">
+              <h3 className="mb-1 text-[12px] font-medium text-muted-foreground">Live today</h3>
+              <ul className="space-y-1">
+                {live.map((l) => (
+                  <li key={`${l.label}|${l.url}`} className="text-[13px] text-foreground">
+                    <a href={l.url} target="_blank" rel="noreferrer" className="hover:underline">
+                      {l.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <StandingList
             title="Ideas shipped"
             ideas={data.built}
