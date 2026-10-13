@@ -70,3 +70,52 @@ def test_the_agents_own_mail_never_wakes_it(route):
     p.from_addr = "ada@marshellis.com"
     assert agent_mail.deliver(route, p, "incoming/a3") == "stored:own-mail"
     assert _email_turns().count() == 0
+
+
+def test_two_messages_on_one_thread_get_distinct_turn_keys(route):
+    p1 = parse.parse((FIX / "plain.eml").read_bytes())
+    p2 = parse.parse((FIX / "reply.eml").read_bytes())
+    agent_mail.deliver(route, p1, "incoming/a")
+    agent_mail.deliver(route, p2, "incoming/b")
+    keys = list(_email_turns().values_list("idempotency_key", flat=True))
+    assert len(keys) == len(set(keys)) == 2
+    assert {str(m.pk) for m in MailMessage.objects.all()} == {k.rsplit("-", 1)[1] for k in keys}
+
+
+def test_a_crash_before_enqueue_is_healed_by_redelivery(route, monkeypatch):
+    from apps.harness import services
+
+    p = parse.parse((FIX / "plain.eml").read_bytes())
+    real = services.enqueue_turn
+
+    def boom(**kw):
+        raise RuntimeError("crash")
+
+    monkeypatch.setattr(services, "enqueue_turn", boom)
+    with pytest.raises(RuntimeError):
+        agent_mail.deliver(route, p, "incoming/abc")
+    assert MailMessage.objects.count() == 1 and _email_turns().count() == 0
+    monkeypatch.setattr(services, "enqueue_turn", real)
+    assert agent_mail.deliver(route, p, "incoming/abc") == "agent"
+    assert _email_turns().count() == 1
+    assert agent_mail.deliver(route, p, "incoming/abc") == "duplicate"
+    assert _email_turns().count() == 1
+
+
+def test_quiet_mail_does_not_mark_the_thread_unread(route):
+    p = parse.parse((FIX / "auto.eml").read_bytes())
+    agent_mail.deliver(route, p, "incoming/a2")
+    assert MailMessage.objects.get().thread.unread is False
+
+
+def test_ses_authentication_results_grade_the_sender(route):
+    from apps.contacts.models import Contact
+
+    p = parse.parse((FIX / "plain.eml").read_bytes())
+    p.headers = list(p.headers) + [(
+        "Authentication-Results",
+        "amazonses.com; spf=pass smtp.mailfrom=example.org; "
+        "dkim=pass header.d=example.org; dmarc=pass header.from=example.org")]
+    assert agent_mail.deliver(route, p, "incoming/abc") == "agent"
+    c = Contact.objects.get(email="someone@example.org")
+    assert c.auth_result != Contact.AUTH_NONE
