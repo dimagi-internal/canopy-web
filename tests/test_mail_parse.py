@@ -177,3 +177,9 @@ def test_reply_to_is_a_scrubbed_address_list():
     p = parse.parse(_mail(b"From: a@x.org\r\nReply-To: \"Team\" <Team@X.org>, b@y.org\r\nSubject: s\r\n"))
     assert p.reply_to == ["team@x.org", "b@y.org"]
     assert parse.parse(raw("plain.eml")).reply_to == []
+
+
+def test_reply_to_is_capped():
+    many = ", ".join(f"u{i}@x.org" for i in range(60)) + ", " + "a" * 330 + "@x.org"
+    p = parse.parse(_mail(f"From: a@x.org\r\nReply-To: {many}\r\n".encode()))
+    assert len(p.reply_to) == 50 and all(len(a) <= 320 for a in p.reply_to)

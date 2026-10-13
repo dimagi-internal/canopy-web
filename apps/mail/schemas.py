@@ -76,6 +76,7 @@ class MailMessageOut(Schema):
     from_name: str
     to: list[str]
     cc: list[str]
+    reply_to: list[str] = []
     subject: str
     text: str
     html: str
@@ -95,6 +96,7 @@ class MailThreadOut(Schema):
     archived: bool
     last_message_at: str
     counterpart: str = ""
+    default_reply_to: list[str] = []
     messages: list[MailMessageOut] = []
 
 

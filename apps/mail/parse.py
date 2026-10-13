@@ -189,5 +189,5 @@ def parse(raw: bytes) -> Parsed:
         attachments=attachments,
         headers=[(_clean(str(k)), _clean(str(v))) for k, v in _safe_items(msg)],
         automated=_is_automated(msg),
-        reply_to=_addrs(msg, "Reply-To"),
+        reply_to=[a for a in _addrs(msg, "Reply-To") if len(a) <= 320][:50],
     )

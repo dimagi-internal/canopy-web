@@ -207,16 +207,38 @@ def test_list_counterpart_and_agent_address(w):
     assert c.get("/api/mail/threads/marshellis").json()["agent_address"] == ""
 
 
-def test_reply_defaults_to_the_newest_inbound_reply_to_else_its_sender(w):
-    MailMessage.objects.create(thread=w.t, direction="in", message_id="<in-2@x.org>", from_addr="y@x.org",
-                               reply_to=["team@x.org", "boss@x.org"], subject="Hello", text="again")
+def _inbound(w, n, from_addr, reply_to=()):
+    return MailMessage.objects.create(thread=w.t, direction="in", message_id=f"<in-{n}@x.org>",
+                                      from_addr=from_addr, reply_to=list(reply_to), subject="Hello", text="hi")
+
+
+def _detail(w):
+    return _c(w.owner).get(f"/api/mail/threads/marshellis/{w.t.uuid}").json()
+
+
+def test_same_domain_reply_to_is_honoured(w):
+    _inbound(w, 2, "y@x.org", ["team@x.org", "boss@lists.x.org"])
+    assert _detail(w)["default_reply_to"] == ["team@x.org", "boss@lists.x.org"]
+    assert _detail(w)["messages"][-1]["reply_to"] == ["team@x.org", "boss@lists.x.org"]
     assert _reply(w, {"text": "x"}).status_code == 200
-    assert w.sent[-1]["to"] == ["team@x.org", "boss@x.org"]
-    MailMessage.objects.create(thread=w.t, direction="in", message_id="<in-3@x.org>", from_addr="z@x.org",
-                               subject="Hello", text="third")
-    MailDomain.objects.filter(pk=w.d.pk).update(daily_send_cap=100)
+    assert w.sent[-1]["to"] == ["team@x.org", "boss@lists.x.org"]
+
+
+def test_foreign_domain_reply_to_falls_back_to_the_sender(w):
+    _inbound(w, 2, "y@x.org", ["team@x.org", "attacker@evil.example"])
+    assert _detail(w)["default_reply_to"] == ["y@x.org"]
     assert _reply(w, {"text": "x"}).status_code == 200
-    assert w.sent[-1]["to"] == ["z@x.org"]
+    assert w.sent[-1]["to"] == ["y@x.org"]
+    _inbound(w, 3, "y@x.org", ["x@notx.org"])  # a suffix that is not a subdomain
+    assert _detail(w)["default_reply_to"] == ["y@x.org"]
+
+
+def test_malformed_and_own_reply_to_entries_are_dropped_not_a_422(w):
+    _inbound(w, 2, "y@x.org", ["not an address", "ada@marshellis.com", "ok@x.org"])
+    assert _detail(w)["default_reply_to"] == ["ok@x.org"]
+    assert _reply(w, {"text": "x"}).status_code == 200 and w.sent[-1]["to"] == ["ok@x.org"]
+    _inbound(w, 3, "z@x.org", ["ada@marshellis.com", "bad@@x"])
+    assert _detail(w)["default_reply_to"] == ["z@x.org"]
 
 
 def test_thread_detail_exposes_verdicts(w):

@@ -228,7 +228,7 @@ def _msg_out(m) -> dict:
     atts = [{"filename": a.filename, "content_type": a.content_type, "size": a.size,
              "url": _presign(a)} for a in m.attachments.all()]
     return {"id": m.pk, "direction": m.direction, "message_id": m.message_id, "from_addr": m.from_addr,
-            "from_name": m.from_name, "to": m.to, "cc": m.cc, "subject": m.subject, "text": m.text,
+            "from_name": m.from_name, "to": m.to, "cc": m.cc, "reply_to": m.reply_to or [], "subject": m.subject, "text": m.text,
             "html": m.html, "delivery_status": m.delivery_status, "verdicts": m.verdicts or {},
             "created_at": m.created_at.isoformat(),
             "attachments": atts}
@@ -298,16 +298,37 @@ def get_mail_thread(request: HttpRequest, workspace: str, uuid: str) -> dict:
     out = _thread_out(t, messages=True)
     newest = t.messages.order_by("-created_at", "-pk").values("direction", "from_addr", "to").first()
     out["counterpart"] = _counterpart(newest["direction"], newest["from_addr"], newest["to"]) if newest else ""
+    out["default_reply_to"] = _reply_recipients(t)
     return out
 
 
+def _host(addr: str) -> str:
+    return addr.rpartition("@")[2].lower().rstrip(".")
+
+
 def _reply_recipients(t) -> list[str]:
-    # The newest inbound message's Reply-To when it has one (a list, a role address),
-    # else its sender.
+    """Who a reply with no `to` goes to: the newest inbound message's Reply-To, but only
+    when every Reply-To address is on the sender's own domain (or a subdomain of it) —
+    else its sender. Reply-To is unauthenticated, so a foreign one could steer the agent's
+    reply anywhere. Malformed entries and the mailbox's own address are dropped first, so
+    Reply-To content can never fail the whole reply."""
     m = t.messages.filter(direction=MailMessage.IN).order_by("-created_at", "-pk").first()
     if m is None:
         return []
-    return list(m.reply_to or []) or ([m.from_addr] if m.from_addr else [])
+    sender = [m.from_addr] if m.from_addr else []
+    own = (t.address or "").lower()
+    candidates = []
+    for a in m.reply_to or []:
+        a = (a or "").strip().lower()
+        if (a and a != own and len(a) <= 320 and a.isascii() and agent_mail._ADDR_RE.match(a)
+                and a not in candidates):
+            candidates.append(a)
+    home = _host(m.from_addr or "")
+    if not candidates or not home:
+        return sender
+    if all(_host(a) == home or _host(a).endswith("." + home) for a in candidates):
+        return candidates[:agent_mail.MAX_RECIPIENTS]
+    return sender
 
 
 @router.post("/threads/{workspace}/{uuid}/reply", response=MailMessageOut, summary="Reply on a thread as its agent")

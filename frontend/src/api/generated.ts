@@ -9640,6 +9640,11 @@ export interface components {
             readonly to: readonly string[];
             /** Cc */
             readonly cc: readonly string[];
+            /**
+             * Reply To
+             * @default []
+             */
+            readonly reply_to: readonly string[];
             /** Subject */
             readonly subject: string;
             /** Text */
@@ -9696,6 +9701,11 @@ export interface components {
              * @default
              */
             readonly counterpart: string;
+            /**
+             * Default Reply To
+             * @default []
+             */
+            readonly default_reply_to: readonly string[];
             /**
              * Messages
              * @default []

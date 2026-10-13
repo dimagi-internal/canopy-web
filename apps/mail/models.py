@@ -132,7 +132,7 @@ class MailMessage(models.Model):
     from_name = models.CharField(max_length=320, blank=True, default="")
     to = models.JSONField(default=list, blank=True)
     cc = models.JSONField(default=list, blank=True)
-    reply_to = models.JSONField(default=list, blank=True)
+    reply_to = models.JSONField(default=list, blank=True, db_default=[])
     """The inbound message's Reply-To addresses; a reply goes there, else to from_addr."""
     subject = models.CharField(max_length=998, blank=True, default="")
     text = models.TextField(blank=True, default="")
