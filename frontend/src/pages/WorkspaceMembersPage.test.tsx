@@ -132,7 +132,7 @@ function systemAccount(overrides: Partial<SystemAccountOut> = {}): SystemAccount
 }
 
 describe('WorkspaceMembersPage', () => {
-  it('names a system account in the member list (not its synthetic email) and lists its bound senders', async () => {
+  it('lists a system account only in its own section, not among the members', async () => {
     listMembers.mockResolvedValue([
       member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' }),
       member({ user_id: 9, email: 'connect.aws-1a2b@system.canopy.invalid', role: 'editor', system: true }),
@@ -142,13 +142,15 @@ describe('WorkspaceMembersPage', () => {
 
     renderPage()
 
-    expect(await screen.findByText('System account — cannot sign in')).toBeTruthy()
+    expect(await screen.findByText('alice@dimagi.com')).toBeTruthy()
+    expect(screen.queryByText('System account — cannot sign in')).toBeNull()
     expect(screen.queryByText('connect.aws-1a2b@system.canopy.invalid')).toBeNull()
-    expect(screen.getAllByText('AWS CloudWatch alarms').length).toBeGreaterThan(0)
+    // The System accounts section still names it, lists its bound senders and
+    // carries its one role control.
+    expect(screen.getAllByLabelText('Role for AWS CloudWatch alarms').length).toBe(1)
+    expect(screen.getAllByText('AWS CloudWatch alarms').length).toBe(1)
     expect(screen.getByText('no-reply@sns.amazonaws.com')).toBeTruthy()
     expect(screen.getByText('^(ALARM|OK): "labs-')).toBeTruthy()
-    // An owner may manage it — never above editor.
-    expect(screen.getByLabelText('Role for AWS CloudWatch alarms')).toBeTruthy()
   })
 
   it('a non-manager sees system accounts but no controls', async () => {
