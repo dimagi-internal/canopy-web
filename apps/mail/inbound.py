@@ -4,7 +4,7 @@
 Order matters: verdicts first (spam/virus never reach a person or an agent),
 then each recipient independently through domains.resolve.
 
-Retry discipline (SNS retries any 5xx for ~6 h): only TRANSIENT failures may
+Retry discipline (SNS retries any 5xx for ~40 min): only TRANSIENT failures may
 surface as `Transient`; a deterministic bug is recorded as `error:<Type>` and
 the notification is acknowledged. Deliver/forward dedupe makes redelivery safe
 for the recipients that already succeeded.

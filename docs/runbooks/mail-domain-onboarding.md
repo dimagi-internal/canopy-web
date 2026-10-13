@@ -43,7 +43,7 @@ The mail stack's HTTPS subscriptions send a `SubscriptionConfirmation` the momen
        --query 'Subscriptions[].[Endpoint,SubscriptionArn]'
    done
    ```
-   A `PendingConfirmation` ARN means canopy-web was not ready when it was created. Fix: delete that subscription and re-create it (`aws sns subscribe --topic-arn <arn> --protocol https --notification-endpoint <CanopyBaseUrl parameter of the mail stack>/api/mail/ses/<inbound|events>/ --attributes DeliveryPolicy='{"healthyRetryPolicy":{"numRetries":100,"numMaxDelayRetries":30,"minDelayTarget":20,"maxDelayTarget":600,"backoffFunction":"exponential"}}'`), or redeploy the mail stack after deleting it.
+   A `PendingConfirmation` ARN means canopy-web was not ready when it was created. Fix: delete that subscription and re-create it (`aws sns subscribe --topic-arn <arn> --protocol https --notification-endpoint <CanopyBaseUrl parameter of the mail stack>/api/mail/ses/<inbound|events>/ --attributes DeliveryPolicy='{"healthyRetryPolicy":{"numRetries":30,"numNoDelayRetries":0,"numMinDelayRetries":2,"numMaxDelayRetries":14,"minDelayTarget":20,"maxDelayTarget":120,"backoffFunction":"exponential"}}'`), or redeploy the mail stack after deleting it.
 
 ## Per domain
 

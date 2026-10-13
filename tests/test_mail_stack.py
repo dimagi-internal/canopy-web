@@ -82,3 +82,12 @@ def test_inbound_bucket_outlives_the_stack():
 def test_endpoints_default_to_the_canonical_address():
     params = yaml.load(STACK.read_text(), Loader=_L)["Parameters"]
     assert params["CanopyBaseUrl"]["Default"] == "https://canopy.dimagi.com"
+
+
+def test_sns_retry_policy_fits_under_the_one_hour_cap():
+    """SNS rejects an HTTPS DeliveryPolicy whose total retry time exceeds 3600 s
+    (the first live deploy rolled back on exactly this). numRetries * maxDelayTarget
+    is an upper bound on that total."""
+    for name in ("InboundSubscription", "EventsSubscription"):
+        p = _res()[name]["Properties"]["DeliveryPolicy"]["healthyRetryPolicy"]
+        assert p["numRetries"] * p["maxDelayTarget"] <= 3600, name
