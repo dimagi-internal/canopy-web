@@ -400,7 +400,23 @@ def _held_elsewhere(owner, *, status="pending", age_days=8):
     return d
 
 
-def test_a_stale_pending_domain_elsewhere_is_released_then_added(owner, ws, monkeypatch, settings, caplog):
+@pytest.fixture()
+def unverified(monkeypatch):
+    """SES says the stale holder never verified (NotFound, as for a deleted identity);
+    the newly added domain then reads as not verified yet."""
+    calls = []
+
+    def nope(d):
+        calls.append(d)
+        if len(calls) == 1:
+            raise _client_error("NotFoundException")
+        return False
+    monkeypatch.setattr(ses, "identity_verified", nope)
+
+
+def test_a_stale_pending_domain_elsewhere_is_released_then_added(owner, ws, monkeypatch, settings, caplog,
+                                                                  unverified):
+    from apps.events.models import SettingChange
     from apps.mail.models import MailMessage, MailThread
     settings.MAIL_PENDING_DOMAIN_TTL_DAYS = 7
     stale = _held_elsewhere(owner)
@@ -418,16 +434,42 @@ def test_a_stale_pending_domain_elsewhere_is_released_then_added(owner, ws, monk
     t.refresh_from_db()
     assert t.route is None and t.messages.count() == 1
     assert any("released stale pending domain marshellis.com" in rec.getMessage() for rec in caplog.records)
+    released = SettingChange.objects.get(workspace=stale.workspace)
+    assert released.summary == "released: pending past TTL"
+    assert released.changes == [{"scope": "mail.domain:marshellis.com",
+                                 "before": {"name": "marshellis.com", "status": "pending"}, "after": None}]
+    added = SettingChange.objects.get(workspace=ws)
+    assert added.changes[0]["after"] == {"name": "marshellis.com"}
 
 
-def test_release_survives_an_identity_delete_failure(owner, ws, monkeypatch):
+def test_a_stale_row_that_ses_says_verified_is_flipped_not_released(owner, ws, monkeypatch):
+    held = _held_elsewhere(owner)
+    monkeypatch.setattr(ses, "identity_verified", lambda d: True)
+    monkeypatch.setattr(ses, "delete_identity", lambda d: pytest.fail("deleted a verified identity"))
+    r = _post(owner)
+    assert r.status_code == 409 and r.json()["detail"] == "that domain is already registered"
+    held.refresh_from_db()
+    assert held.status == "verified" and held.workspace.slug == "acme"
+    assert MailDomain.objects.count() == 1
+
+
+@pytest.mark.parametrize("fails_on", ["identity_verified", "delete_identity"])
+def test_a_provider_failure_keeps_the_stale_row_and_is_502(owner, ws, monkeypatch, unverified, fails_on):
+    stale = _held_elsewhere(owner)
+    monkeypatch.setattr(ses, fails_on, lambda d: (_ for _ in ()).throw(_client_error("Throttling")))
+    r = _post(owner)
+    assert r.status_code == 502 and "the mail provider refused: Throttling" in r.json()["detail"]
+    assert MailDomain.objects.get(name="marshellis.com").pk == stale.pk
+
+
+def test_an_identity_already_gone_is_fine_on_release(owner, ws, monkeypatch, unverified):
     _held_elsewhere(owner)
-    monkeypatch.setattr(ses, "delete_identity", lambda d: (_ for _ in ()).throw(_client_error()))
+    monkeypatch.setattr(ses, "delete_identity", lambda d: (_ for _ in ()).throw(_client_error("NotFoundException")))
     assert _post(owner).status_code == 200
     assert MailDomain.objects.get(name="marshellis.com").workspace == ws
 
 
-def test_a_stale_pending_domain_is_kept_when_mail_is_off(owner, ws, monkeypatch):
+def test_a_stale_pending_domain_is_kept_when_mail_is_off(owner, ws, monkeypatch, unverified):
     stale = _held_elsewhere(owner)
     monkeypatch.setattr(ses, "delete_identity", lambda d: (_ for _ in ()).throw(ses.MailOff("off")))
     assert _post(owner).status_code == 503

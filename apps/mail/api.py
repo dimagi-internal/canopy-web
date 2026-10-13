@@ -90,6 +90,14 @@ def _raise(exc: domains.DomainError):
     raise HttpError(exc.status, str(exc))
 
 
+def _refuse_keeping(request, exc: domains.DomainError):
+    # A refusal whose state change must commit (a stale row found verified is flipped):
+    # answer the problem instead of raising, so the route's transaction is not rolled back.
+    from apps.api.api import _on_http_error
+
+    return _on_http_error(request, HttpError(exc.status, str(exc)))
+
+
 @router.get("/domains/{workspace}", response=MailDomainListOut, summary="List mail domains")
 def list_mail_domains(request: HttpRequest, workspace: str) -> dict:
     ws = _ws(request.user, workspace)
@@ -104,6 +112,8 @@ def add_mail_domain(request: HttpRequest, workspace: str, payload: MailDomainIn)
     try:
         d = domains.add_domain(ws, payload.name, by=request.user)
     except domains.DomainError as exc:
+        if exc.keep:
+            return _refuse_keeping(request, exc)
         _raise(exc)
     audit.note_change(scope=f"mail.domain:{d.name}", before=None, after={"name": d.name})
     return _domain_out(d, request.user)
