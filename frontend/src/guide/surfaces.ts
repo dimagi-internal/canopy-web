@@ -203,6 +203,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Add or remove a watched mailbox', 'Enable/disable a mailbox', 'Copy the GCP setup commands'],
   },
   {
+    path: '/w/:workspace/settings/email',
+    title: 'Email',
+    audience: 'Workspace admin bringing their own domain to canopy',
+    what: "Run a domain's email through canopy instead of a mail provider. Add the domain, publish the DNS records shown (each is checked live), and once it verifies, choose where each address goes: an agent's mailbox (mail becomes that agent's email turn and it replies as that address), a member of this workspace (forwarded to their canopy login email), or dropped. `*` catches every address not listed. The page warns before the MX switch takes mail from your current provider, caps how much a domain sends per day, and suspends sending automatically if bounces or complaints climb.",
+    actions: ['Add a domain and see its DNS records', 'Route an address to an agent or a member', 'Re-check DNS', 'Change the daily send cap or lift a suspension'],
+  },
+  {
     path: '/w/:workspace/settings/topology',
     title: 'Fleet map',
     audience: 'Workspace admin or owner',

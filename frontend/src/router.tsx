@@ -31,6 +31,7 @@ import { AccessRequestPage } from './pages/AccessRequestPage'
 import { BetaRequestPage, BetaRequestsPage } from './pages/BetaRequestsPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
+import { WorkspaceEmailPage } from '@/pages/WorkspaceEmailPage'
 import { SlackSettingsPage } from '@/pages/SlackSettingsPage'
 import { DddPage } from './pages/DddPage'
 import { TimelinePage } from './pages/TimelinePage'
@@ -271,6 +272,7 @@ export const routeTable: RouteObject[] = [
           { path: 'access-requests/:requestId', element: <AccessRequestPage /> },
           { path: 'slack', element: <SlackSettingsPage /> },
           { path: 'inbound', element: <InboundPushPage /> },
+          { path: 'email', element: <WorkspaceEmailPage /> },
           { path: 'connected-apps', element: <ConnectedAppsPage /> },
           { path: 'secrets', element: <WorkspaceSecretsPage /> },
           { path: 'retention', element: <WorkspaceRetentionPage /> },

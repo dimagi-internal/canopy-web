@@ -119,6 +119,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     configuration token canopy uses to manage `/<agent>` slash commands, and the
     one-way, owner-only "declare the app an agent".
   - **inbound** — the Gmail push doorbell.
+  - **email** — the workspace's own mail domain via SES: DNS records, per-address routes (agent / member forward / drop), daily send cap.
   - **connected-apps** ("Connected sites") — which websites may host one of
     this workspace's agents.
   - **secrets** — the workspace's SHARED 1Password vault (what every agent here
