@@ -1,0 +1,19 @@
+From: Some Person <someone@example.org>
+To: ada@marshellis.com
+Date: Mon, 12 Oct 2026 10:00:00 +0000
+MIME-Version: 1.0
+Subject: Attached
+Message-ID: <att-1@example.org>
+Content-Type: multipart/mixed; boundary="BOUND"
+
+--BOUND
+Content-Type: text/plain; charset=utf-8
+
+See attached.
+--BOUND
+Content-Type: application/pdf; name="a.pdf"
+Content-Disposition: attachment; filename="a.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJSVFT0YK
+--BOUND--
