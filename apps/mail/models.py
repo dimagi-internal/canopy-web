@@ -105,7 +105,7 @@ class MailMessage(models.Model):
 
     thread = models.ForeignKey(MailThread, on_delete=models.CASCADE, related_name="messages")
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
-                                  related_name="+", null=True)
+                                  related_name="+")
     """Denormalised from thread for the per-workspace unique constraint."""
     direction = models.CharField(max_length=3, choices=[(IN, "in"), (OUT, "out")])
     mailbox = models.CharField(max_length=320, default="")

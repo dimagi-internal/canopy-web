@@ -48,3 +48,17 @@ def test_message_id_unique_per_mailbox(ws):
 
 def test_mail_is_off_by_default(settings):
     assert settings.MAIL_ENABLED is False
+
+
+@pytest.mark.parametrize("kind,with_agent,with_forward", [
+    (MailRoute.AGENT, False, False),
+    (MailRoute.FORWARD, False, False),
+    (MailRoute.DROP, False, True),
+    (MailRoute.AGENT, True, True),
+])
+def test_route_target_must_match_kind(ws, kind, with_agent, with_forward):
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com")
+    agent = Agent.objects.create(slug="mada", name="Ada", workspace=ws) if with_agent else None
+    with pytest.raises(IntegrityError), transaction.atomic():
+        MailRoute.objects.create(domain=d, local_part="x", kind=kind, agent=agent,
+                                 forward_to=ws.created_by if with_forward else None)
