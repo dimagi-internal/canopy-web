@@ -1000,19 +1000,28 @@ def close_sessions_cmd(args) -> int:
             print(f"{len(rows):4d}  total")
         return 0
     result = close_all.close_all(cfg, project=None if args.all else args.project, rows=rows)
+    client = Client(cfg.base_url, cfg.token)
     if result["closed"] or result["absent"]:
         try:
-            close_all.report_closes(cfg, Client(cfg.base_url, cfg.token))
+            close_all.report_closes(cfg, client)
         except Exception:  # noqa: BLE001 — absence says the same thing, minutes later
             logger.debug("close report failed (non-fatal)", exc_info=True)
+    # Every outcome, failures and skips included, so a session left open says why
+    # in Supervisor — not only in this box's log, which may be another macOS
+    # user's and unreadable from where the person is looking.
+    close_all.report_outcomes(cfg, client, result)
     if args.json:
         print(json.dumps(result))
     else:
         print(f"closed {len(result['closed'])}, already gone {len(result['absent'])}, "
               f"failed {len(result['failed'])}, skipped {len(result['skipped'])}")
         for f in result["failed"]:
-            print(f"  failed {f['project']}/{f['task']}: {f['error']}")
-    return 1 if result["failed"] else 0
+            print(f"  failed {f['project']}/{f['task']}: {f.get('reason') or f['error']}")
+        for task in result["skipped"]:
+            print(f"  skipped {task}: {close_all.close.NO_PROJECT}")
+        if result["failed"] or result["skipped"]:
+            print("Each one left open says why in Supervisor.")
+    return 1 if (result["failed"] or result["skipped"]) else 0
 
 
 def pair_cmd(args) -> int:

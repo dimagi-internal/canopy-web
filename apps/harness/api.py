@@ -32,6 +32,8 @@ from .schemas import (
     ClaimedTurnOut,
     BackfillSyncOut,
     BackfillWriteOut,
+    CloseResultsIn,
+    CloseResultsOut,
     CloseSyncOut,
     AdmissionNoticeClaimIn,
     AdmissionNoticeClaimOut,
@@ -1736,9 +1738,45 @@ def list_closes(request: HttpRequest, runner_id: uuid.UUID):
     )
     return {"closes": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
-         "project": b.session.emdash_project}
+         "project": b.session.emdash_project, "close_error": b.close_error}
         for b in bindings
     ]}
+
+
+@router.post("/runners/{runner_id}/close-results", response=CloseResultsOut)
+def post_close_results(request: HttpRequest, runner_id: uuid.UUID, payload: CloseResultsIn):
+    """The runner reports what became of its attempts to close sessions.
+
+    A failure is recorded on the session (`close_error`) so Supervisor can say
+    "Close failed: <reason>" and offer a Retry; a success clears it. Every close
+    path reports here, including the menu bar's "Close sessions", which has no
+    server-side request behind it. Matched on (this runner, project, task name);
+    a result for a task the server does not know is ignored.
+    """
+    from django.db.models import Q
+    from django.utils import timezone
+
+    from apps.canopy_sessions.models import RunnerBinding
+
+    runner = _runner_or_404(request, runner_id)
+    now = timezone.now()
+    updated = 0
+    for r in payload.results:
+        if not r.session_key:
+            continue
+        # The project is half the key (task names repeat across projects). A
+        # binding written before the project was recorded carries a blank, so a
+        # named project also matches a blank one — never a DIFFERENT project.
+        where = Q(emdash_project=r.project)
+        if r.project:
+            where |= Q(emdash_project="")
+        bindings = RunnerBinding.objects.filter(runner=runner, session_key=r.session_key).filter(where)
+        if r.ok:
+            updated += bindings.exclude(close_error="").update(close_error="", close_error_at=None)
+        else:
+            reason = (r.error or "").strip() or "the runner could not close it"
+            updated += bindings.update(close_error=reason[:300], close_error_at=now)
+    return {"updated": updated}
 
 
 @router.get("/runners/{runner_id}/menu-answers", response=MenuAnswerSyncOut)

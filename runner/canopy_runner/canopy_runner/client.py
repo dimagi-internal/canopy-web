@@ -315,6 +315,12 @@ class Client:
         _, payload = self._call("GET", f"/runners/{runner_id}/closes")
         return (payload or {}).get("closes", [])
 
+    def post_close_results(self, runner_id: str, results: list[dict]) -> None:
+        """Tell the server what became of close attempts — `{session_key, project,
+        ok, error}` each — so a failed close shows in Supervisor ("Close failed:
+        <reason>") instead of only in this box's log."""
+        self._call("POST", f"/runners/{runner_id}/close-results", {"results": results})
+
     def sync_menu_answers(self, runner_id: str) -> list[dict]:
         """Answers a human has given that we have not pressed yet."""
         _, payload = self._call("GET", f"/runners/{runner_id}/menu-answers")

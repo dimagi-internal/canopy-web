@@ -536,6 +536,18 @@ class RunnerBinding(models.Model):
     # following report retires it anyway") assumes the runner DELETED the task,
     # which never happens if the frame is lost.
     close_requested = models.BooleanField(default=False)
+    # Why the runner's last attempt to close this session FAILED, in a short
+    # human sentence ("emdash unreachable over CDP"), and when. Blank = no failed
+    # close outstanding. Written by the runner (POST /runners/{id}/close-results)
+    # from every close path — the phone's, and the menu bar's "Close sessions",
+    # which runs on the box with no server request behind it. Before this the
+    # reason lived only in ~/.canopy/runner.log, often in another macOS user's
+    # home folder, and the session just stayed open in Supervisor.
+    #
+    # Cleared by a successful close, by a new close request (Retry), and by the
+    # task no longer being reported (the close is satisfied either way).
+    close_error = models.CharField(max_length=300, blank=True, default="")
+    close_error_at = models.DateTimeField(null=True, blank=True)
     # Consecutive COMPLETE reports from this binding's own runner that did not
     # include its task. A report that arrives is an observation of the whole
     # open set (a runner that cannot read emdash sends none), so absence from

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CLOSE_CONFIRM_TIMEOUT_MS,
   closeDestination,
+  closeFailure,
   closeIntent,
   closeResultMessage,
   settleClosing,
@@ -78,7 +79,7 @@ describe('settleClosing — a relayed close is watched to the end', () => {
 
   it('keeps waiting while the runner has not retired the session yet', () => {
     const r = settleClosing({ a: 1_000 }, [active('a')], 5_000)
-    expect(r).toEqual({ pending: { a: 1_000 }, done: [], stuck: [] })
+    expect(r).toEqual({ pending: { a: 1_000 }, done: [], stuck: [], failed: [] })
   })
 
   it('is done once the session leaves the listing, or is no longer active', () => {
@@ -90,5 +91,22 @@ describe('settleClosing — a relayed close is watched to the end', () => {
     const r = settleClosing({ a: 0 }, [active('a')], CLOSE_CONFIRM_TIMEOUT_MS + 1)
     expect(r.stuck).toEqual(['a'])
     expect(r.pending).toEqual({})
+  })
+
+  it('stops waiting once the runner reports the close FAILED — the row says why', () => {
+    const r = settleClosing({ a: 1_000 }, [{ id: 'a', status: 'active', close_error: 'emdash unreachable over CDP' }], 5_000)
+    expect(r).toEqual({ pending: {}, done: [], stuck: [], failed: ['a'] })
+  })
+})
+
+describe('closeFailure', () => {
+  it("is the runner's reason while the session is still open", () => {
+    expect(closeFailure({ status: 'active', close_error: 'emdash unreachable over CDP' }))
+      .toBe('emdash unreachable over CDP')
+  })
+
+  it('is nothing when no close failed, or the session closed after all', () => {
+    expect(closeFailure({ status: 'active', close_error: '' })).toBeNull()
+    expect(closeFailure({ status: 'archived', close_error: 'x' })).toBeNull()
   })
 })

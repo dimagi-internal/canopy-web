@@ -2574,7 +2574,11 @@ def close_session(*, session: Session) -> str:
         # which never happened. Verified 2026-08-01: the API answered
         # `{"ok":true,"closing":true}` and the runner logged nothing at all.
         binding.close_requested = True
-        binding.save(update_fields=["close_requested"])
+        # A new request (the Retry next to "Close failed: …") starts clean: the
+        # runner reports again if this attempt fails too.
+        binding.close_error = ""
+        binding.close_error_at = None
+        binding.save(update_fields=["close_requested", "close_error", "close_error_at"])
         from apps.realtime import groups
 
         groups.publish(groups.runner_group(binding.runner_id), {

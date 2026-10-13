@@ -227,6 +227,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "post_session_stream": ("runner",),  # session must be bound to this runner
     "list_backfills": ("runner",),
     "list_closes": ("runner",),
+    "post_close_results": ("runner",),  # only this runner's bindings
     "list_menu_answers": ("runner",),
     "post_menu_answer_result": ("runner",),
     "claim_admission_notices": ("runner",),  # + runner_may_hold_agent per notice
@@ -755,6 +756,7 @@ NOT_SETTINGS: dict[str, str] = {
     "claim_admission_notices": "runner-protocol", "report_admission_notice": "runner-protocol",
     "claim_turn": "runner-protocol", "runner_heartbeat": "runner-protocol",
     "post_menu_answer_result": "runner-protocol", "post_runner_mint_result": "runner-protocol",
+    "post_close_results": "runner-protocol",
     "post_runner_mint_url": "runner-protocol", "record_session": "runner-protocol",
     "resolve_session": "runner-protocol", "post_session_backfill": "runner-protocol",
     "post_session_stream": "runner-protocol", "report_sessions": "runner-protocol",
