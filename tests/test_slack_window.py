@@ -274,6 +274,10 @@ def test_a_clock_time_reads_back_to_then_on_the_askers_clock(channel, linked, ha
     assert "agreed, let's ask hal" in turn.prompt and "probably the new index" in turn.prompt
     assert "OLD" not in turn.prompt
     label = then.strftime("%I:%M %p").lstrip("0") + " " + then.strftime("%Z")
+    # Seven minutes before a run just after midnight in New York is yesterday
+    # there, and the label says so (CI failed on exactly this at 00:07 EDT).
+    if then.date() != datetime.fromtimestamp(NOW, ZoneInfo("America/New_York")).date():
+        label += " yesterday"
     assert f"since {label}" in turn.prompt
     assert turn.chat_session.title.startswith(f"Slack: since {label}")
     ev = Event.objects.get(kind="slack.window_read")
