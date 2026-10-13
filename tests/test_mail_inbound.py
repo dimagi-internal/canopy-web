@@ -37,7 +37,8 @@ def world(settings, monkeypatch):
     MailRoute.objects.create(domain=d, local_part="ada", kind="agent", agent=a)
     MailRoute.objects.create(domain=d, local_part="*", kind="forward", forward_to=u)
     calls = []
-    monkeypatch.setattr(inbound, "deliver_agent", lambda r, p, k, **kw: calls.append(("agent", r.address, kw.get("verdicts"))) or "agent")
+    monkeypatch.setattr(inbound, "deliver_agent",
+                        lambda r, p, k, **kw: calls.append(("agent", r.address, kw.get("verdicts"))) or "agent")
     monkeypatch.setattr(inbound, "deliver_forward", lambda r, p, raw, rcpt: calls.append(("fwd", rcpt)) or "forwarded")
     monkeypatch.setattr(ses, "get_object", lambda key: (FIX / "plain.eml").read_bytes())
     return type("W", (), {"calls": calls, "user": u})
