@@ -32,9 +32,11 @@ _FORCE_COOLDOWN = 10  # seconds between forced refreshes of one domain
 
 
 class DomainError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, *, keep: bool = False):
         super().__init__(message)
         self.status = status
+        self.keep = keep
+        """True when the refusal changed state that must be committed (answer, don't raise)."""
 
 
 def add_domain(workspace, name: str, *, by) -> MailDomain:
@@ -44,8 +46,13 @@ def add_domain(workspace, name: str, *, by) -> MailDomain:
     if any(name == r or name.endswith("." + r)
            for r in (x.strip().lower().rstrip(".") for x in settings.MAIL_RESERVED_DOMAINS) if r):
         raise DomainError(422, "that domain is reserved")
-    if MailDomain.objects.filter(name=name).exists():
-        raise DomainError(409, "that domain is already registered")
+    holder = MailDomain.objects.filter(name=name).first()
+    if holder is not None:
+        if not _stale_pending(holder):
+            raise DomainError(409, "that domain is already registered")
+        released = _release(holder)
+    else:
+        released = False
     try:
         with transaction.atomic():
             d = MailDomain.objects.create(workspace=workspace, name=name, created_by=by)
@@ -56,7 +63,9 @@ def add_domain(workspace, name: str, *, by) -> MailDomain:
         d.dkim_tokens = ses.create_identity(name, mail_from=f"{d.mail_from_subdomain}.{name}")
         created = True
         d.save(update_fields=["dkim_tokens"])
-        return refresh(d, force=True)
+        d = refresh(d, force=True)
+        d.released_stale_claim = released  # for the add's audit note; not a field
+        return d
     except Exception as exc:
         _undo_add(d, created=created)
         if isinstance(exc, ses.MailOff):
@@ -66,6 +75,72 @@ def add_domain(workspace, name: str, *, by) -> MailDomain:
         if isinstance(exc, (ClientError, BotoCoreError)):
             raise DomainError(502, f"SES refused: {_reason(exc)}") from None
         raise
+
+
+def _ttl_cutoff():
+    return timezone.now() - dt.timedelta(days=settings.MAIL_PENDING_DOMAIN_TTL_DAYS)
+
+
+def _stale_pending(d: MailDomain) -> bool:
+    """A domain still pending DNS after the TTL is abandoned: it never proved control, so
+    it may not hold the name against anyone (in any workspace) any longer."""
+    return d.status == MailDomain.PENDING and d.created_at < _ttl_cutoff()
+
+
+def _not_found(exc) -> bool:
+    return isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code") == "NotFoundException"
+
+
+def _release(holder: MailDomain) -> bool:
+    """Remove an abandoned pending domain — but only if SES agrees it never verified.
+
+    Under a row lock: ask SES first (the row may be stale while DNS did verify — then the
+    row is flipped to verified and the name stays taken, 409). Otherwise delete the row
+    (and its routes; threads stay, route → NULL) conditionally on it still being pending
+    past the TTL, and only when that delete removed it delete its SES identity (canopy
+    created it for that row). Any provider failure keeps the row: 503 mail off, 502 else.
+    """
+    with transaction.atomic():
+        row = MailDomain.objects.select_for_update(of=("self",)).filter(pk=holder.pk).first()
+        if row is None:
+            return False  # released concurrently: the name is free, nothing was ours to release
+        try:
+            verified = ses.identity_verified(row.name)
+        except ses.MailOff as exc:
+            raise DomainError(503, str(exc)) from None
+        except (ClientError, BotoCoreError) as exc:
+            if not _not_found(exc):
+                raise DomainError(502, f"the mail provider refused: {_reason(exc)}") from None
+            verified = False
+        if not verified:
+            _release_locked(row)
+            released = True
+        else:
+            # SES says DKIM verified: the row was only stale. It keeps the name.
+            MailDomain.objects.filter(pk=row.pk, status=MailDomain.PENDING).update(status=MailDomain.VERIFIED)
+            released = False
+    if not released:
+        raise DomainError(409, "that domain is already registered", keep=True)
+    cache.delete(_cache_key(row))
+    # The holder side is logged server-side only: the adder's audit row says a stale claim
+    # was released and nothing about whose it was (no cross-tenant detail either way).
+    log.info("mail: released stale pending domain %s (held by workspace %s, created %s)",
+             row.name, row.workspace_id, row.created_at.isoformat())
+    return True
+
+
+def _release_locked(row: MailDomain) -> None:
+    _, per_model = MailDomain.objects.filter(
+        pk=row.pk, status=MailDomain.PENDING, created_at__lt=_ttl_cutoff()).delete()
+    if per_model.get(MailDomain._meta.label, 0) != 1:
+        raise DomainError(409, "that domain is already registered")
+    try:
+        ses.delete_identity(row.name)
+    except ses.MailOff as exc:
+        raise DomainError(503, str(exc)) from None  # raised inside the lock's transaction: the delete rolls back
+    except (ClientError, BotoCoreError) as exc:
+        if not _not_found(exc):
+            raise DomainError(502, f"the mail provider refused: {_reason(exc)}") from None
 
 
 def _reason(exc) -> str:

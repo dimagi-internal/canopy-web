@@ -17,8 +17,8 @@ import {
 import { listMembers, type MemberOut } from '@/api/workspaces'
 
 // A workspace's own email domain run through canopy (apps/mail, SES). Any member
-// can read it; the server answers `can_manage` per domain, so this page never
-// guesses at a role. Forwards go only to workspace members, so there is
+// can read it; the server answers `can_manage` for the list and per domain, so this
+// page never guesses at a role. Forwards go only to workspace members, so there is
 // deliberately no free-text email field anywhere here.
 
 const field =
@@ -50,8 +50,22 @@ function goesTo(r: MailRouteOut): string {
   return 'Dropped'
 }
 
-function copy(text: string) {
-  void navigator.clipboard?.writeText(text)
+// A Copy button that says "Copied" for a moment once the clipboard has the text.
+function CopyButton({ text, label }: { text: string; label: string }): JSX.Element {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const t = window.setTimeout(() => setCopied(false), 1500)
+    return () => window.clearTimeout(t)
+  }, [copied])
+  return (
+    <button type="button" className="text-primary hover:underline" aria-label={label}
+      onClick={() => {
+        navigator.clipboard?.writeText(text).then(() => setCopied(true), () => {})
+      }}>
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
 }
 
 function DomainSection({ workspace, domain, agents, members, onChange, onRemoved }: {
@@ -68,6 +82,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
   const [kind, setKind] = useState<Kind>('agent')
   const [agent, setAgent] = useState('')
   const [member, setMember] = useState('')
+  const [enabled, setEnabled] = useState(true)
   const [cap, setCap] = useState(String(domain.daily_send_cap))
   const manage = domain.can_manage
   const status = STATUS[domain.status] ?? { label: domain.status, cls: 'text-muted-foreground' }
@@ -88,11 +103,26 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         kind,
         agent_slug: kind === 'agent' ? agent : '',
         forward_to_user_id: kind === 'forward' ? Number(member) : null,
-        enabled: true,
+        enabled,
       })
       setLocal('')
+      setEnabled(true)
       await reload()
     }, 'Could not save the address')
+  }
+
+  // Flips one route on or off through the same PUT, keeping everything else as it is.
+  async function toggleRoute(r: MailRouteOut) {
+    await run(async () => {
+      await saveMailRoute(workspace, domain.id, {
+        local_part: r.local_part,
+        kind: r.kind,
+        agent_slug: r.agent_slug,
+        forward_to_user_id: r.forward_to_user_id ?? null,
+        enabled: !r.enabled,
+      })
+      await reload()
+    }, 'Could not change the address')
   }
 
   const canSave = local.trim() !== '' && (kind === 'drop' || (kind === 'agent' ? agent !== '' : member !== ''))
@@ -161,8 +191,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                 <td className="break-all py-1.5 pr-3 font-mono text-foreground-secondary">{r.name}</td>
                 <td className="py-1.5 pr-3">
                   <span className="break-all font-mono text-foreground">{r.value}</span>{' '}
-                  <button type="button" className="text-primary hover:underline" onClick={() => copy(r.value)}
-                    aria-label={`Copy ${r.purpose} value`}>Copy</button>
+                  <CopyButton text={r.value} label={`Copy ${r.purpose} value`} />
                 </td>
                 <td className="py-1.5 pr-3 text-foreground-secondary">{r.priority ?? ''}</td>
                 <td className="py-1.5">
@@ -196,13 +225,21 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                 <tr key={r.id} className="border-b border-border">
                   <td className="py-1.5 pr-3 text-foreground">{r.address}</td>
                   <td className="py-1.5 pr-3 text-foreground-secondary">{goesTo(r)}</td>
-                  <td className="py-1.5 pr-3 text-foreground-secondary">{r.enabled ? 'Yes' : 'No'}</td>
+                  <td className="py-1.5 pr-3 text-foreground-secondary">
+                    {manage ? (
+                      <label className="-my-2.5 inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center">
+                        <input type="checkbox" checked={r.enabled} disabled={busy} className="h-3.5 w-3.5 accent-primary"
+                          aria-label={`Enabled: ${r.address}`} onChange={() => void toggleRoute(r)} />
+                      </label>
+                    ) : (r.enabled ? 'Yes' : 'No')}
+                  </td>
                   {manage && (
                     <td className="whitespace-nowrap py-1.5 text-right">
                       <button type="button" className="px-2 text-primary hover:underline"
                         onClick={() => {
                           setLocal(r.local_part); setKind(r.kind as Kind); setAgent(r.agent_slug)
                           setMember(r.forward_to_user_id ? String(r.forward_to_user_id) : '')
+                          setEnabled(r.enabled)
                         }}>Edit</button>
                       <button type="button" className="px-2 text-destructive hover:underline" disabled={busy}
                         onClick={() => {
@@ -240,6 +277,11 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                 {members.map((m) => <option key={m.user_id} value={m.user_id}>{`${m.email} (${m.role})`}</option>)}
               </select>
             )}
+            <label className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 text-[12px] text-foreground-secondary sm:min-h-0">
+              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)}
+                aria-label="Enabled" className="h-3.5 w-3.5 accent-primary" />
+              Enabled
+            </label>
             <button type="button" className={primary} disabled={busy || !canSave} onClick={() => void saveRoute()}>
               Save address
             </button>
@@ -269,6 +311,7 @@ export function WorkspaceEmailPage(): JSX.Element {
   const [list, setList] = useState<MailDomainListOut | null>(null)
   const [agents, setAgents] = useState<AgentOut[]>([])
   const [members, setMembers] = useState<MemberOut[]>([])
+  const [lookupError, setLookupError] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -277,10 +320,16 @@ export function WorkspaceEmailPage(): JSX.Element {
     listMailDomains(slug).then(setList).catch((e: unknown) => setError(message(e, 'Could not load email')))
   }, [slug])
 
+  // Agents and members fill the route pickers; a failure is said, not swallowed.
+  const addLookupError = (m: string) => setLookupError((prev) => (prev ? `${prev} ${m}` : m))
+
   useEffect(() => {
     load()
-    listAgents().then((p) => setAgents(p.items.filter((a) => a.workspace === slug))).catch(() => {})
-    listMembers(slug).then(setMembers).catch(() => {})
+    setLookupError(null)
+    listAgents().then((p) => setAgents(p.items.filter((a) => a.workspace === slug)))
+      .catch((e: unknown) => addLookupError(`Could not load agents: ${message(e, 'unknown error')}`))
+    listMembers(slug).then(setMembers)
+      .catch((e: unknown) => addLookupError(`Could not load members: ${message(e, 'unknown error')}`))
   }, [slug, load])
 
   async function add() {
@@ -303,8 +352,6 @@ export function WorkspaceEmailPage(): JSX.Element {
       : <p className="text-[13px] text-muted-foreground">Loading…</p>
   }
 
-  const canAdd = list.items.length === 0 || list.items.some((d) => d.can_manage)
-
   return (
     <div className="flex max-w-5xl flex-col gap-5" data-testid="workspace-email">
       <section>
@@ -319,7 +366,10 @@ export function WorkspaceEmailPage(): JSX.Element {
         <p className="text-[13px] text-muted-foreground">Email domains are off on this deployment.</p>
       ) : (
         <>
-          {list.items.length === 0 && canAdd && (
+          {lookupError && (
+            <p className="text-[12px] text-destructive" data-testid="mail-lookup-error">{lookupError}</p>
+          )}
+          {list.items.length === 0 && list.can_manage && (
             <div className="flex flex-wrap items-center gap-2">
               <input aria-label="Domain" placeholder="example.com" value={name}
                 onChange={(e) => setName(e.target.value)} className={`${field} w-64`} />

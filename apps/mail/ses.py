@@ -26,6 +26,17 @@ def _sesv2():
     return boto3.client("sesv2", region_name=settings.MAIL_SES_REGION)
 
 
+def _sesv2_send():
+    """The client for sends only: agent_mail.send holds the domain row lock across the
+    call, so it must fail fast rather than ride botocore's default 60 s timeouts and retries."""
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client("sesv2", region_name=settings.MAIL_SES_REGION,
+                        config=Config(connect_timeout=5, read_timeout=20,
+                                      retries={"max_attempts": 2, "mode": "standard"}))
+
+
 def _s3():
     import boto3
 
@@ -74,7 +85,7 @@ def delete_identity(domain: str) -> None:
 
 def send_raw(*, from_addr: str, to: list[str], raw: bytes) -> str:
     _guard()
-    out = _sesv2().send_email(
+    out = _sesv2_send().send_email(
         FromEmailAddress=from_addr,
         Destination={"ToAddresses": list(to)},
         Content={"Raw": {"Data": raw}},

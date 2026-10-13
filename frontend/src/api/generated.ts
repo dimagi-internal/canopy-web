@@ -9514,6 +9514,11 @@ export interface components {
         readonly MailDomainListOut: {
             /** Enabled */
             readonly enabled: boolean;
+            /**
+             * Can Manage
+             * @default false
+             */
+            readonly can_manage: boolean;
             /** Items */
             readonly items: readonly components["schemas"]["MailDomainOut"][];
         };
@@ -9635,6 +9640,11 @@ export interface components {
             readonly to: readonly string[];
             /** Cc */
             readonly cc: readonly string[];
+            /**
+             * Reply To
+             * @default []
+             */
+            readonly reply_to: readonly string[];
             /** Subject */
             readonly subject: string;
             /** Text */
@@ -9643,6 +9653,13 @@ export interface components {
             readonly html: string;
             /** Delivery Status */
             readonly delivery_status: string;
+            /**
+             * Verdicts
+             * @default {}
+             */
+            readonly verdicts: {
+                readonly [key: string]: string;
+            };
             /** Created At */
             readonly created_at: string;
             /**
@@ -9684,6 +9701,11 @@ export interface components {
              * @default
              */
             readonly counterpart: string;
+            /**
+             * Default Reply To
+             * @default []
+             */
+            readonly default_reply_to: readonly string[];
             /**
              * Messages
              * @default []

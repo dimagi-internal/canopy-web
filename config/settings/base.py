@@ -668,6 +668,9 @@ MAIL_CONFIGURATION_SET = env("MAIL_CONFIGURATION_SET", default="canopy-tenant-ma
 MAIL_SES_AUTHSERV_ID = env("MAIL_SES_AUTHSERV_ID", default="amazonses.com")
 MAIL_INBOUND_MX = env("MAIL_INBOUND_MX", default="inbound-smtp.us-east-1.amazonaws.com")
 MAIL_FORWARDER_LOCAL_PART = "canopy-forwarder"
+# A domain still pending DNS after this many days no longer holds its name: adding it
+# again (from any workspace) releases the stale row and its SES identity first.
+MAIL_PENDING_DOMAIN_TTL_DAYS = env.int("MAIL_PENDING_DOMAIN_TTL_DAYS", default=7)
 # Platform domains (and their subdomains) no workspace may register: their SES identities
 # belong to Dimagi/AWS, and a tenant must never be able to alter or delete them.
 MAIL_RESERVED_DOMAINS = env.list(

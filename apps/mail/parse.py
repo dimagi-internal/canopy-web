@@ -35,6 +35,7 @@ class Parsed:
     attachments: list[Attachment] = field(default_factory=list)
     headers: list[tuple[str, str]] = field(default_factory=list)
     automated: bool = False
+    reply_to: list[str] = field(default_factory=list)
 
 
 _IDS = re.compile(r"<[^<>\s]+>")
@@ -188,4 +189,5 @@ def parse(raw: bytes) -> Parsed:
         attachments=attachments,
         headers=[(_clean(str(k)), _clean(str(v))) for k, v in _safe_items(msg)],
         automated=_is_automated(msg),
+        reply_to=[a for a in _addrs(msg, "Reply-To") if len(a) <= 320][:50],
     )

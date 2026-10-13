@@ -132,11 +132,15 @@ class MailMessage(models.Model):
     from_name = models.CharField(max_length=320, blank=True, default="")
     to = models.JSONField(default=list, blank=True)
     cc = models.JSONField(default=list, blank=True)
+    reply_to = models.JSONField(default=list, blank=True, db_default=[])
+    """The inbound message's Reply-To addresses; a reply goes there, else to from_addr."""
     subject = models.CharField(max_length=998, blank=True, default="")
     text = models.TextField(blank=True, default="")
     html = models.TextField(blank=True, default="")
     raw_key = models.CharField(max_length=512, blank=True, default="")
     verdicts = models.JSONField(default=dict, blank=True)
+    """SES receipt verdicts of an inbound message, lowercase name → status
+    (spf, dkim, dmarc, spam, virus: PASS | FAIL | GRAY | PROCESSING_FAILED | DISABLED)."""
     auth_results = models.TextField(blank=True, default="")
     ses_message_id = models.CharField(max_length=128, blank=True, default="", db_index=True)
     delivery_status = models.CharField(max_length=12, blank=True, default="")

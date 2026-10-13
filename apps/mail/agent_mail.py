@@ -51,7 +51,7 @@ def _turn_key(agent, thread, msg) -> str:
     return f"email-{agent.slug}-{thread.uuid}-{msg.pk}"
 
 
-def deliver(route, parsed, raw_key: str) -> str:
+def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None) -> str:
     ws = route.domain.workspace
     existing = (MailMessage.objects.filter(workspace=ws, mailbox=route.address,
                                            message_id=parsed.message_id)
@@ -66,8 +66,8 @@ def deliver(route, parsed, raw_key: str) -> str:
                     message_id=parsed.message_id, in_reply_to=parsed.in_reply_to,
                     references=" ".join(parsed.references), from_addr=parsed.from_addr,
                     from_name=parsed.from_name, to=parsed.to, cc=parsed.cc,
-                    subject=parsed.subject[:998], text=parsed.text, html=parsed.html,
-                    raw_key=ses.keep(raw_key),
+                    reply_to=parsed.reply_to, subject=parsed.subject[:998], text=parsed.text, html=parsed.html,
+                    raw_key=ses.keep(raw_key), verdicts=dict(verdicts or {}),
                     auth_results="\n".join(h["value"] for h in _auth_results(parsed)))
                 for i, att in enumerate(parsed.attachments):
                     key = f"attachments/{ws.slug}/{msg.pk}/{i}"
@@ -139,7 +139,18 @@ def _sent_today(domain) -> int:
 
 def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachments=()) -> MailMessage:
     """Send as the route's agent. The From is always the route address."""
-    domain = route.domain
+    # The domain row is locked (select_for_update) across the cap check, the SES call and
+    # the insert, so concurrent sends from one domain are serialised and cannot overshoot
+    # the daily cap. The lock is held during the SES call — acceptable at this volume.
+    # A failed send raises inside the transaction, so no MailMessage row is left behind.
+    with transaction.atomic():
+        domain = MailDomain.objects.select_for_update(of=("self",)).select_related("workspace").get(
+            pk=route.domain_id)
+        return _send_locked(route, domain, to=to, cc=cc, subject=subject, text=text, html=html,
+                            thread=thread, attachments=attachments)
+
+
+def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachments) -> MailMessage:
     if domain.status == MailDomain.SUSPENDED:
         raise SendRefused(409, f"sending from {domain.name} is suspended: {domain.suspended_reason}")
     if domain.status != MailDomain.VERIFIED:
@@ -186,15 +197,14 @@ def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachm
         raise SendRefused(502, f"the mail provider refused: {code}") from None
     except BotoCoreError as exc:
         raise SendRefused(502, f"the mail provider refused: {type(exc).__name__}") from None
-    with transaction.atomic():
-        if thread is None:
-            thread = MailThread.objects.create(workspace=domain.workspace, route=route, subject=subject[:998])
-        out = MailMessage.objects.create(
-            thread=thread, workspace=domain.workspace, direction=MailMessage.OUT, mailbox=route.address,
-            message_id=msg["Message-ID"], in_reply_to=msg.get("In-Reply-To", ""),
-            references=msg.get("References", ""), from_addr=route.address, to=to, cc=cc,
-            subject=subject[:998], text=text, html=html, ses_message_id=ses_id,
-            delivery_status=MailMessage.SENT)
-        MailThread.objects.filter(pk=thread.pk).update(
-            message_count=F("message_count") + 1, last_message_at=timezone.now(), unread=False)
+    if thread is None:
+        thread = MailThread.objects.create(workspace=domain.workspace, route=route, subject=subject[:998])
+    out = MailMessage.objects.create(
+        thread=thread, workspace=domain.workspace, direction=MailMessage.OUT, mailbox=route.address,
+        message_id=msg["Message-ID"], in_reply_to=msg.get("In-Reply-To", ""),
+        references=msg.get("References", ""), from_addr=route.address, to=to, cc=cc,
+        subject=subject[:998], text=text, html=html, ses_message_id=ses_id,
+        delivery_status=MailMessage.SENT)
+    MailThread.objects.filter(pk=thread.pk).update(
+        message_count=F("message_count") + 1, last_message_at=timezone.now(), unread=False)
     return out

@@ -90,11 +90,20 @@ def _raise(exc: domains.DomainError):
     raise HttpError(exc.status, str(exc))
 
 
+def _refuse_keeping(request, exc: domains.DomainError):
+    # A refusal whose state change must commit (a stale row found verified is flipped):
+    # answer the problem instead of raising, so the route's transaction is not rolled back.
+    from apps.api.api import _on_http_error
+
+    return _on_http_error(request, HttpError(exc.status, str(exc)))
+
+
 @router.get("/domains/{workspace}", response=MailDomainListOut, summary="List mail domains")
 def list_mail_domains(request: HttpRequest, workspace: str) -> dict:
     ws = _ws(request.user, workspace)
     items = [_domain_out(domains.refresh(d), request.user) for d in ws.mail_domains.all()]
-    return {"enabled": settings.MAIL_ENABLED, "items": items}
+    return {"enabled": settings.MAIL_ENABLED, "items": items,
+            "can_manage": perms.can(request.user, ws, perms.INTEGRATIONS)}
 
 
 @router.post("/domains/{workspace}", response=MailDomainOut, summary="Add a mail domain (admin or owner)")
@@ -103,8 +112,16 @@ def add_mail_domain(request: HttpRequest, workspace: str, payload: MailDomainIn)
     try:
         d = domains.add_domain(ws, payload.name, by=request.user)
     except domains.DomainError as exc:
+        if exc.keep:
+            return _refuse_keeping(request, exc)
         _raise(exc)
-    audit.note_change(scope=f"mail.domain:{d.name}", before=None, after={"name": d.name})
+    if getattr(d, "released_stale_claim", False):
+        # Folded into the adder's own row; never the holder's workspace or any detail of it.
+        audit.note_change(scope=f"mail.domain:{d.name}", before={"name": d.name, "released_stale_claim": True},
+                          after={"name": d.name},
+                          summary=f"added {d.name}; released a stale unverified claim on it")
+    else:
+        audit.note_change(scope=f"mail.domain:{d.name}", before=None, after={"name": d.name})
     return _domain_out(d, request.user)
 
 
@@ -217,8 +234,9 @@ def _msg_out(m) -> dict:
     atts = [{"filename": a.filename, "content_type": a.content_type, "size": a.size,
              "url": _presign(a)} for a in m.attachments.all()]
     return {"id": m.pk, "direction": m.direction, "message_id": m.message_id, "from_addr": m.from_addr,
-            "from_name": m.from_name, "to": m.to, "cc": m.cc, "subject": m.subject, "text": m.text,
-            "html": m.html, "delivery_status": m.delivery_status, "created_at": m.created_at.isoformat(),
+            "from_name": m.from_name, "to": m.to, "cc": m.cc, "reply_to": m.reply_to or [], "subject": m.subject, "text": m.text,
+            "html": m.html, "delivery_status": m.delivery_status, "verdicts": m.verdicts or {},
+            "created_at": m.created_at.isoformat(),
             "attachments": atts}
 
 
@@ -230,6 +248,16 @@ def _thread_out(t, *, messages: bool) -> dict:
     if messages:
         out["messages"] = [_msg_out(m) for m in t.messages.prefetch_related("attachments")]
     return out
+
+
+def _counterpart(direction, from_addr, to) -> str:
+    """The other party of a thread's newest message: its sender if inbound, else its first To."""
+    if direction == MailMessage.IN:
+        return from_addr or ""
+    if direction == MailMessage.OUT:
+        to = to if isinstance(to, list) else []
+        return to[0] if to else ""
+    return ""
 
 
 def _agent_route(ws, slug: str) -> MailRoute | None:
@@ -265,18 +293,48 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
     items = []
     for t in qs[:200]:
         out = _thread_out(t, messages=False)
-        if t._dir == MailMessage.IN:
-            out["counterpart"] = t._from or ""
-        elif t._dir == MailMessage.OUT:
-            to = t._to if isinstance(t._to, list) else []
-            out["counterpart"] = to[0] if to else ""
+        out["counterpart"] = _counterpart(t._dir, t._from, t._to)
         items.append(out)
     return {"agent_address": address, "items": items}
 
 
 @router.get("/threads/{workspace}/{uuid}", response=MailThreadOut, summary="Read a mail thread")
 def get_mail_thread(request: HttpRequest, workspace: str, uuid: str) -> dict:
-    return _thread_out(_thread(_ws(request.user, workspace), uuid), messages=True)
+    t = _thread(_ws(request.user, workspace), uuid)
+    out = _thread_out(t, messages=True)
+    newest = t.messages.order_by("-created_at", "-pk").values("direction", "from_addr", "to").first()
+    out["counterpart"] = _counterpart(newest["direction"], newest["from_addr"], newest["to"]) if newest else ""
+    out["default_reply_to"] = _reply_recipients(t)
+    return out
+
+
+def _host(addr: str) -> str:
+    return addr.rpartition("@")[2].lower().rstrip(".")
+
+
+def _reply_recipients(t) -> list[str]:
+    """Who a reply with no `to` goes to: the newest inbound message's Reply-To, but only
+    when every Reply-To address is on the sender's own domain (or a subdomain of it) —
+    else its sender. Reply-To is unauthenticated, so a foreign one could steer the agent's
+    reply anywhere. Malformed entries and the mailbox's own address are dropped first, so
+    Reply-To content can never fail the whole reply."""
+    m = t.messages.filter(direction=MailMessage.IN).order_by("-created_at", "-pk").first()
+    if m is None:
+        return []
+    sender = [m.from_addr] if m.from_addr else []
+    own = (t.address or "").lower()
+    candidates = []
+    for a in m.reply_to or []:
+        a = (a or "").strip().lower()
+        if (a and a != own and len(a) <= 320 and a.isascii() and agent_mail._ADDR_RE.match(a)
+                and a not in candidates):
+            candidates.append(a)
+    home = _host(m.from_addr or "")
+    if not candidates or not home:
+        return sender
+    if all(_host(a) == home or _host(a).endswith("." + home) for a in candidates):
+        return candidates[:agent_mail.MAX_RECIPIENTS]
+    return sender
 
 
 @router.post("/threads/{workspace}/{uuid}/reply", response=MailMessageOut, summary="Reply on a thread as its agent")
@@ -289,9 +347,7 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
     if t.route.kind != MailRoute.AGENT:
         raise HttpError(409, "this address no longer routes to an agent")
     _agent_full(request.user, t.route)
-    to = payload.to or [m.from_addr for m in
-                        t.messages.filter(direction=MailMessage.IN).order_by("-created_at", "-pk")[:1]
-                        if m.from_addr]
+    to = payload.to or _reply_recipients(t)
     if not to:
         raise HttpError(422, "no one to reply to")
     try:
@@ -331,6 +387,20 @@ def set_mail_thread_state(request: HttpRequest, workspace: str, uuid: str, paylo
     return _thread_out(t, messages=False)
 
 
+def _notification_message(msg: dict) -> dict | None:
+    # A verified Notification whose Message is not a JSON object is not mail or an event —
+    # e.g. SES's "Successfully validated SNS topic for Amazon SES event publishing." —
+    # so it is acknowledged and noted at INFO, never logged as a failure.
+    try:
+        body = json.loads(msg.get("Message") or "{}")
+    except (ValueError, RecursionError):
+        body = None
+    if not isinstance(body, dict):
+        logger.info("ignored non-JSON notification on %s: %.80r", msg.get("TopicArn"), msg.get("Message"))
+        return None
+    return body
+
+
 @router.post("/ses/inbound/", auth=None, response={200: dict, 404: dict, 500: dict},
              url_name="ses_inbound", summary="SES receipt notifications (SNS HTTPS delivery)")
 def ses_inbound(request: HttpRequest):
@@ -358,8 +428,11 @@ def ses_inbound(request: HttpRequest):
         return 200, {"confirmed": True}
     if kind != "Notification":
         return 200, {"ignored": kind}
+    note = _notification_message(msg)
+    if note is None:
+        return 200, {"ignored": "non-JSON notification"}
     try:
-        out = inbound.handle(json.loads(msg.get("Message") or "{}"))
+        out = inbound.handle(note)
     except inbound.Transient as exc:
         logger.warning("mail inbound transient failure; SNS will retry: %s", exc.outcomes)
         return 500, {"detail": "retry"}
@@ -390,10 +463,13 @@ def ses_events(request: HttpRequest):
         except sns.Unavailable:
             return 500, {"detail": "retry"}
         return 200, {"confirmed": True}
+    if msg.get("Type") != "Notification":
+        return 200, {}
+    event = _notification_message(msg)
+    if event is None:
+        return 200, {"ignored": "non-JSON notification"}
     try:
-        if msg.get("Type") == "Notification":
-            reputation.record(json.loads(msg.get("Message") or "{}"),
-                              sns_message_id=str(msg.get("MessageId") or "")[:128])
+        reputation.record(event, sns_message_id=str(msg.get("MessageId") or "")[:128])
     except (OperationalError, InterfaceError):
         logger.exception("ses events: transient db error; SNS will retry")
         return 500, {"detail": "try again"}

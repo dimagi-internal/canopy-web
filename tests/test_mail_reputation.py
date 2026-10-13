@@ -148,3 +148,47 @@ def test_events_without_an_sns_message_id_are_not_deduped(d):
     for _ in range(2):
         reputation.record({"eventType": "Send", "mail": {"source": "ada@marshellis.com"}})
     assert MailEvent.objects.count() == 2
+
+
+@pytest.mark.parametrize("kind,evaluated", [("Send", False), ("Delivery", False), ("Bounce", True),
+                                            ("Complaint", True), ("Reject", True)])
+def test_only_bad_outcomes_are_evaluated_but_every_event_is_recorded(d, monkeypatch, kind, evaluated):
+    seen = []
+    monkeypatch.setattr(reputation, "evaluate", lambda dom, **kw: seen.append(dom.pk))
+    reputation.record(_ev(kind))
+    assert MailEvent.objects.filter(kind=kind).count() == 1
+    assert seen == ([d.pk] if evaluated else [])
+
+
+def test_sends_still_count_in_the_bounce_denominator(d):
+    for _ in range(100):
+        reputation.record(_ev("Send"))
+    for _ in range(4):
+        reputation.record(_ev("Bounce"))
+    d.refresh_from_db()
+    assert d.status == "verified"  # 4 % of 100 sends is not over the limit
+    reputation.record(_ev("Bounce"))
+    d.refresh_from_db()
+    assert d.status == "suspended"
+
+
+def test_record_prunes_this_domains_events_older_than_8_days(d):
+    other = MailDomain.objects.create(workspace=d.workspace, name="other.org", status="verified")
+    _events(d, "Send", 3, ago=dt.timedelta(days=9))
+    _events(d, "Send", 2, ago=dt.timedelta(days=7, hours=12))
+    _events(other, "Send", 4, ago=dt.timedelta(days=9))
+    reputation.record(_ev("Delivery"))
+    assert MailEvent.objects.filter(domain=d).count() == 3  # 2 inside 8 days + the new one
+    assert MailEvent.objects.filter(domain=other).count() == 4
+
+
+def test_the_send_that_reaches_min_sends_is_evaluated(d, monkeypatch):
+    _events(d, "Send", reputation.MIN_SENDS - 1)
+    _events(d, "Bounce", 5)  # 10 % — only counted once there are MIN_SENDS sends
+    reputation.record(_ev("Send"))
+    d.refresh_from_db()
+    assert d.status == "suspended" and "bounce rate" in d.suspended_reason
+    seen = []
+    monkeypatch.setattr(reputation, "evaluate", lambda dom, **kw: seen.append(dom.pk))
+    reputation.record(_ev("Send"))  # MIN_SENDS + 1: not the crossing send
+    assert seen == []

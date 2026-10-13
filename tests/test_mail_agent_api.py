@@ -205,3 +205,83 @@ def test_list_counterpart_and_agent_address(w):
     Agent.objects.create(slug="bare", name="Bare", workspace=w.d.workspace, owner=w.owner)
     assert c.get("/api/mail/threads/marshellis", {"agent": "bare"}).json()["agent_address"] == ""
     assert c.get("/api/mail/threads/marshellis").json()["agent_address"] == ""
+
+
+def _inbound(w, n, from_addr, reply_to=()):
+    return MailMessage.objects.create(thread=w.t, direction="in", message_id=f"<in-{n}@x.org>",
+                                      from_addr=from_addr, reply_to=list(reply_to), subject="Hello", text="hi")
+
+
+def _detail(w):
+    return _c(w.owner).get(f"/api/mail/threads/marshellis/{w.t.uuid}").json()
+
+
+def test_same_domain_reply_to_is_honoured(w):
+    _inbound(w, 2, "y@x.org", ["team@x.org", "boss@lists.x.org"])
+    assert _detail(w)["default_reply_to"] == ["team@x.org", "boss@lists.x.org"]
+    assert _detail(w)["messages"][-1]["reply_to"] == ["team@x.org", "boss@lists.x.org"]
+    assert _reply(w, {"text": "x"}).status_code == 200
+    assert w.sent[-1]["to"] == ["team@x.org", "boss@lists.x.org"]
+
+
+def test_foreign_domain_reply_to_falls_back_to_the_sender(w):
+    _inbound(w, 2, "y@x.org", ["team@x.org", "attacker@evil.example"])
+    assert _detail(w)["default_reply_to"] == ["y@x.org"]
+    assert _reply(w, {"text": "x"}).status_code == 200
+    assert w.sent[-1]["to"] == ["y@x.org"]
+    _inbound(w, 3, "y@x.org", ["x@notx.org"])  # a suffix that is not a subdomain
+    assert _detail(w)["default_reply_to"] == ["y@x.org"]
+
+
+def test_malformed_and_own_reply_to_entries_are_dropped_not_a_422(w):
+    _inbound(w, 2, "y@x.org", ["not an address", "ada@marshellis.com", "ok@x.org"])
+    assert _detail(w)["default_reply_to"] == ["ok@x.org"]
+    assert _reply(w, {"text": "x"}).status_code == 200 and w.sent[-1]["to"] == ["ok@x.org"]
+    _inbound(w, 3, "z@x.org", ["ada@marshellis.com", "bad@@x"])
+    assert _detail(w)["default_reply_to"] == ["z@x.org"]
+
+
+def test_thread_detail_exposes_verdicts(w):
+    MailMessage.objects.filter(message_id="<in-1@x.org>").update(verdicts={"spf": "PASS", "dmarc": "FAIL"})
+    msgs = _c(w.owner).get(f"/api/mail/threads/marshellis/{w.t.uuid}").json()["messages"]
+    assert msgs[0]["verdicts"] == {"spf": "PASS", "dmarc": "FAIL"}
+
+
+def test_send_locks_the_domain_row_around_cap_check_send_and_insert(w, monkeypatch):
+    from django.db import connection
+
+    from apps.mail import agent_mail
+    locked, during = [], []
+    real = MailDomain.objects.select_for_update
+    monkeypatch.setattr(MailDomain.objects, "select_for_update",
+                        lambda *a, **k: locked.append(connection.in_atomic_block) or real(*a, **k))
+
+    def send_raw(**kw):
+        during.append(connection.in_atomic_block)
+        return "ses-x"
+    monkeypatch.setattr(ses, "send_raw", send_raw)
+    route = MailRoute.objects.select_related("domain", "agent").get(pk=w.r.pk)
+    agent_mail.send(route, to=["a@b.org"], text="x", thread=w.t)
+    assert locked == [True] and during == [True]
+
+
+def test_the_cap_is_read_from_the_locked_row_not_a_stale_route(w):
+    from apps.mail import agent_mail
+    route = MailRoute.objects.select_related("domain", "agent").get(pk=w.r.pk)
+    route.domain.daily_send_cap = 100  # stale in memory; the row says 2
+    agent_mail.send(route, to=["a@b.org", "c@b.org"], text="x", thread=w.t)
+    with pytest.raises(agent_mail.SendRefused) as exc:
+        agent_mail.send(route, to=["d@b.org"], text="x", thread=w.t)
+    assert exc.value.status == 429
+
+
+def test_thread_detail_counterpart_matches_the_list(w):
+    c = _c(w.owner)
+    detail = c.get(f"/api/mail/threads/marshellis/{w.t.uuid}").json()
+    assert detail["counterpart"] == "x@x.org"  # newest is inbound: its sender
+    assert _reply(w, {"text": "x", "to": ["z@z.org"]}).status_code == 200
+    detail = c.get(f"/api/mail/threads/marshellis/{w.t.uuid}").json()
+    listed = {i["thread_id"]: i for i in c.get("/api/mail/threads/marshellis").json()["items"]}
+    assert detail["counterpart"] == listed[str(w.t.uuid)]["counterpart"] == "z@z.org"
+    empty = MailThread.objects.create(workspace=w.d.workspace, route=w.r, subject="Empty")
+    assert c.get(f"/api/mail/threads/marshellis/{empty.uuid}").json()["counterpart"] == ""

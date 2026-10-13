@@ -391,3 +391,134 @@ def test_deleting_an_agents_route_keeps_its_threads_in_the_agents_list(owner, ws
     assert [i["thread_id"] for i in got["items"]] == [str(t.uuid)]
     assert got["agent_address"] == ""
     assert _c(owner).get("/api/mail/threads/marshellis", {"agent": "other"}).json()["items"] == []
+
+
+def _held_elsewhere(owner, *, status="pending", age_days=8):
+    # Another tenant the adder is no member of.
+    them = User.objects.create_user("acme-owner", "boss@acme-holdco.example", "pw")
+    other = Workspace.objects.create(slug="acme-holdco", display_name="Acme Holdco", created_by=them)
+    WorkspaceMembership.objects.create(workspace=other, user=them, role="owner")
+    d = MailDomain.objects.create(workspace=other, name="marshellis.com", status=status)
+    MailDomain.objects.filter(pk=d.pk).update(created_at=timezone.now() - dt.timedelta(days=age_days))
+    return d
+
+
+@pytest.fixture()
+def unverified(monkeypatch):
+    """SES says the stale holder never verified (NotFound, as for a deleted identity);
+    the newly added domain then reads as not verified yet."""
+    calls = []
+
+    def nope(d):
+        calls.append(d)
+        if len(calls) == 1:
+            raise _client_error("NotFoundException")
+        return False
+    monkeypatch.setattr(ses, "identity_verified", nope)
+
+
+def test_a_stale_pending_domain_elsewhere_is_released_then_added(owner, ws, monkeypatch, settings, caplog,
+                                                                  unverified):
+    from apps.events.models import SettingChange
+    from apps.mail.models import MailMessage, MailThread
+    settings.MAIL_PENDING_DOMAIN_TTL_DAYS = 7
+    stale = _held_elsewhere(owner)
+    route = MailRoute.objects.create(domain=stale, local_part="x", kind="drop")
+    t = MailThread.objects.create(workspace=stale.workspace, route=route, subject="kept")
+    MailMessage.objects.create(thread=t, direction="in", message_id="<k@x>")
+    deleted = []
+    monkeypatch.setattr(ses, "delete_identity", lambda d: deleted.append(d))
+    with caplog.at_level("INFO", logger="apps.mail.domains"):
+        r = _post(owner)
+    assert r.status_code == 200, r.content
+    assert deleted == ["marshellis.com"]
+    assert MailDomain.objects.get(name="marshellis.com").workspace == ws
+    assert not MailRoute.objects.filter(pk=route.pk).exists()
+    t.refresh_from_db()
+    assert t.route is None and t.messages.count() == 1
+    assert any("released stale pending domain marshellis.com (held by workspace acme-holdco" in rec.getMessage()
+               for rec in caplog.records)
+    # One audit row, the adder's own; the holder's workspace gets none from this request.
+    assert not SettingChange.objects.filter(workspace=stale.workspace).exists()
+    added = SettingChange.objects.get()
+    assert added.workspace == ws
+    assert added.summary == "added marshellis.com; released a stale unverified claim on it"
+    assert added.changes == [{"scope": "mail.domain:marshellis.com",
+                              "before": {"name": "marshellis.com", "released_stale_claim": True},
+                              "after": {"name": "marshellis.com"}}]
+    # What the adder can read back names nothing of the other tenant.
+    resp = _c(owner).get("/api/events/setting-changes")
+    scopes = {c["scope"] for item in resp.json()["items"] for c in item["changes"]}
+    assert scopes == {"mail.domain:marshellis.com"}
+    assert "acme" not in resp.content.decode().lower()
+
+
+def test_a_stale_row_that_ses_says_verified_is_flipped_not_released(owner, ws, monkeypatch):
+    held = _held_elsewhere(owner)
+    monkeypatch.setattr(ses, "identity_verified", lambda d: True)
+    monkeypatch.setattr(ses, "delete_identity", lambda d: pytest.fail("deleted a verified identity"))
+    r = _post(owner)
+    assert r.status_code == 409 and r.json()["detail"] == "that domain is already registered"
+    held.refresh_from_db()
+    assert held.status == "verified" and held.workspace.slug == "acme-holdco"
+    assert MailDomain.objects.count() == 1
+
+
+@pytest.mark.parametrize("fails_on", ["identity_verified", "delete_identity"])
+def test_a_provider_failure_keeps_the_stale_row_and_is_502(owner, ws, monkeypatch, unverified, fails_on):
+    stale = _held_elsewhere(owner)
+    monkeypatch.setattr(ses, fails_on, lambda d: (_ for _ in ()).throw(_client_error("Throttling")))
+    r = _post(owner)
+    assert r.status_code == 502 and "the mail provider refused: Throttling" in r.json()["detail"]
+    assert MailDomain.objects.get(name="marshellis.com").pk == stale.pk
+
+
+def test_an_identity_already_gone_is_fine_on_release(owner, ws, monkeypatch, unverified):
+    _held_elsewhere(owner)
+    monkeypatch.setattr(ses, "delete_identity", lambda d: (_ for _ in ()).throw(_client_error("NotFoundException")))
+    assert _post(owner).status_code == 200
+    assert MailDomain.objects.get(name="marshellis.com").workspace == ws
+
+
+def test_a_stale_pending_domain_is_kept_when_mail_is_off(owner, ws, monkeypatch, unverified):
+    stale = _held_elsewhere(owner)
+    monkeypatch.setattr(ses, "delete_identity", lambda d: (_ for _ in ()).throw(ses.MailOff("off")))
+    assert _post(owner).status_code == 503
+    assert MailDomain.objects.filter(pk=stale.pk).exists()
+
+
+@pytest.mark.parametrize("status,age_days", [("pending", 6), ("verified", 30), ("suspended", 30)])
+def test_a_fresh_pending_or_any_verified_holder_still_409s(owner, ws, monkeypatch, settings, status, age_days):
+    settings.MAIL_PENDING_DOMAIN_TTL_DAYS = 7
+    held = _held_elsewhere(owner, status=status, age_days=age_days)
+    monkeypatch.setattr(ses, "delete_identity", lambda d: pytest.fail("deleted a live identity"))
+    r = _post(owner)
+    assert r.status_code == 409 and r.json()["detail"] == "that domain is already registered"
+    assert MailDomain.objects.get(name="marshellis.com").pk == held.pk
+
+
+def test_list_says_whether_the_caller_may_manage_even_with_no_domains(owner, ws):
+    ed = User.objects.create_user("ed", "ed@x.com", "pw")
+    WorkspaceMembership.objects.create(workspace=ws, user=ed, role="editor")
+    assert _c(owner).get("/api/mail/domains/marshellis").json()["can_manage"] is True
+    body = _c(ed).get("/api/mail/domains/marshellis").json()
+    assert body["items"] == [] and body["can_manage"] is False
+
+
+def test_re_adding_your_own_stale_claim_has_a_sensible_summary(owner, ws, monkeypatch, unverified):
+    from apps.events.models import SettingChange
+    stale = MailDomain.objects.create(workspace=ws, name="marshellis.com")
+    MailDomain.objects.filter(pk=stale.pk).update(created_at=timezone.now() - dt.timedelta(days=8))
+    assert _post(owner).status_code == 200
+    row = SettingChange.objects.get()
+    assert row.workspace == ws
+    assert row.summary == "added marshellis.com; released a stale unverified claim on it"
+
+
+def test_a_plain_add_keeps_the_default_audit_summary(owner, ws):
+    from apps.events.models import SettingChange
+    assert _post(owner).status_code == 200
+    row = SettingChange.objects.get()
+    assert row.changes == [{"scope": "mail.domain:marshellis.com", "before": None,
+                            "after": {"name": "marshellis.com"}}]
+    assert "released" not in row.summary
