@@ -148,6 +148,24 @@ export function AgentProjectPage(): JSX.Element {
     </>
   )
   const who = agent.name || agent.slug
+  const isFinished = (t: TaskOut) => t.status === 'done' || t.status === 'declined'
+  const open = nested.roots.filter((t) => !isFinished(t))
+  const finished = nested.roots.filter(isFinished)
+  const card = (t: TaskOut) => (
+    <TaskCard
+      key={t.ext_id}
+      task={t}
+      onChanged={() => {
+        reload()
+        refreshWaiting()
+      }}
+      canEdit={canEdit}
+      // Every card on this page is in this project.
+      showProject={false}
+      // A product area is one board: its big pieces nest their subtasks.
+      childrenOf={nested.childrenOf}
+    />
+  )
 
   return (
     // pb-28: room under the last section for the site-wide floating "Canopy AI" button.
@@ -176,23 +194,25 @@ export function AgentProjectPage(): JSX.Element {
             {tasks.length === 0 ? (
               <p className="text-[13px] text-muted-foreground">No tasks in this project yet.</p>
             ) : (
-              <div className="space-y-2">
-                {nested.roots.map((t) => (
-                  <TaskCard
-                    key={t.ext_id}
-                    task={t}
-                    onChanged={() => {
-                      reload()
-                      refreshWaiting()
-                    }}
-                    canEdit={canEdit}
-                    // Every card on this page is in this project.
-                    showProject={false}
-                    // A product area is one board: its big pieces nest their subtasks.
-                    childrenOf={nested.childrenOf}
-                  />
-                ))}
-              </div>
+              <>
+                {open.length === 0 ? (
+                  <p className="text-[13px] text-muted-foreground" data-testid="no-open-work">
+                    Nothing open — {who}'s work here is done.
+                  </p>
+                ) : (
+                  <div className="space-y-2">{open.map(card)}</div>
+                )}
+                {/* A finished card reads exactly like an open one, so finished
+                    work folds away under its own count rather than mixing in. */}
+                {finished.length > 0 && (
+                  <details className="mt-4" data-testid="finished-work">
+                    <summary className="cursor-pointer text-[12px] text-muted-foreground hover:text-foreground">
+                      Done ({finished.length})
+                    </summary>
+                    <div className="mt-2 space-y-2">{finished.map(card)}</div>
+                  </details>
+                )}
+              </>
             )}
           </Section>
 

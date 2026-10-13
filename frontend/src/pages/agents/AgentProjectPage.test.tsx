@@ -252,6 +252,12 @@ describe('AgentProjectPage', () => {
     await screen.findByTestId('task-T1')
     const cards = screen.getAllByTestId(/^task-T/).map((el) => el.getAttribute('data-testid'))
     expect(cards).toEqual(['task-T1', 'task-T9'])
+    // Finished work folds away under its count, closed, so it can't pass for open.
+    const finished = screen.getByTestId('finished-work') as HTMLDetailsElement
+    expect(finished.open).toBe(false)
+    expect(within(finished).getByText('Done (1)')).toBeTruthy()
+    expect(within(finished).getByTestId('task-T9')).toBeTruthy()
+    expect(within(finished).queryByTestId('task-T1')).toBeNull()
 
     const turn = screen.getByTestId('turn-0b5c-uuid')
     expect(turn.getAttribute('href')).toBe('/w/connect/agents/eva/turns#0b5c-uuid')
