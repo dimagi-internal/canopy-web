@@ -5,10 +5,13 @@ Credentials come from the ECS task role (deploy/aws/canopy-mail.cfn.yaml).
 """
 from __future__ import annotations
 
+import re
+from urllib.parse import quote
+
 from django.conf import settings
 
 
-class MailOff(Exception):
+class MailOff(Exception):  # noqa: N818 - name is mandated by the mail spec
     """MAIL_ENABLED is false: nothing was sent, created or read."""
 
 
@@ -80,9 +83,18 @@ def put_object(key: str, data: bytes, content_type: str) -> None:
                      ContentType=content_type or "application/octet-stream")
 
 
+def _disposition(filename: str) -> str:
+    """Content-Disposition for a download. `filename` comes from inbound mail, so it is
+    attacker-controlled: the ASCII fallback drops anything that could break out of the
+    quoted header, and filename* carries the real name percent-encoded."""
+    name = filename or "attachment"
+    fallback = re.sub(r'["\\]|[^\x20-\x7e]', "_", name) or "attachment"
+    return f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(name, safe="")}'
+
+
 def presign(key: str, filename: str) -> str:
     _guard()
     return _s3().generate_presigned_url(
         "get_object", ExpiresIn=300,
         Params={"Bucket": settings.MAIL_INBOUND_BUCKET, "Key": key,
-                "ResponseContentDisposition": f'attachment; filename="{filename}"'})
+                "ResponseContentDisposition": _disposition(filename)})
