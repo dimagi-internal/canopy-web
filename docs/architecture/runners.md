@@ -51,6 +51,12 @@ In order, each a hard stop:
 
 1. `runner.live_status != ONLINE` → nothing. This covers **pause** (`live_status`
    returns PAUSED); a pause outranks a pin. Then the fleet-wide `FleetHold`.
+   Every pause — the UI, MCP, Ada, the box's own `~/.canopy/PAUSED` sentinel —
+   goes through `services.pause`, which records `paused_by`, and, when the pause
+   has no `unpause_at`, puts the queued turns only that box could take to the
+   admission rules (`access.md` → reach rules). `turn_reach` reports a turn whose
+   every taker is paused as `parked` (with `held_until` when one resumes on its
+   own), not `offline`.
 2. Lazy sweeps: expired leases, `schedule_turns.release_stale_occurrence_turns_all`,
    `skip_late_scheduled_turns` (see Scheduled turns).
 3. Candidate filter: pinned here, or (`runner_target_q` ∧ routing kind); a cloud

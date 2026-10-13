@@ -24,7 +24,7 @@ _RUNNER = dict(AdmissionRule.RUNNER_KIND_CHOICES)
 
 #: The fields a create or update writes, beside `agent`.
 _FIELDS = ("origin", "principal", "sender", "access", "capability", "turn_mode", "runner_kind",
-           "action", "reason", "notify_sender", "notify_owner", "enabled")
+           "reach", "wait_hours", "action", "reason", "notify_sender", "notify_owner", "enabled")
 
 
 def summary(rule: AdmissionRule) -> str:
@@ -47,6 +47,10 @@ def summary(rule: AdmissionRule) -> str:
         extra.append(rule.turn_mode)
     if rule.runner_kind:
         extra.append(f"on a {_RUNNER.get(rule.runner_kind, rule.runner_kind)} runner")
+    if rule.reach == AdmissionRule.PAUSED:
+        extra.append("every runner that could take it paused indefinitely")
+    elif rule.reach == AdmissionRule.OFFLINE:
+        extra.append(f"no runner that could take it reachable for {rule.wait_hours}h")
     text = " ".join(parts)
     return f"{text}, {', '.join(extra)}" if extra else text
 
@@ -78,6 +82,7 @@ def choices() -> dict:
         "access": pairs(AdmissionRule.ACCESS_CHOICES),
         "turn_modes": pairs(AdmissionRule.TURN_MODE_CHOICES),
         "runner_kinds": pairs(AdmissionRule.RUNNER_KIND_CHOICES),
+        "reaches": pairs(AdmissionRule.REACH_CHOICES),
         "actions": pairs(AdmissionRule.ACTION_CHOICES),
     }
 

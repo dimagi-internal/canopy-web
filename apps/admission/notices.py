@@ -47,7 +47,7 @@ _NOREPLY = re.compile(
     r"(?=[._+-]|$)", re.I)
 
 
-def deliver(turn_id, rule_id) -> None:
+def deliver(turn_id, rule_id, *, detail: str = "") -> None:
     from apps.harness.models import Turn
 
     turn = Turn.objects.filter(pk=turn_id).select_related(
@@ -55,18 +55,19 @@ def deliver(turn_id, rule_id) -> None:
     rule = AdmissionRule.objects.filter(pk=rule_id).first()
     if turn is None or rule is None:
         return
-    from .evaluate import _agent_of
-
-    agent = _agent_of(turn)
+    agent = turn.acting_agent
     if agent is None:
         return
-    for wanted, fn in ((rule.notify_sender, _sender_notice), (rule.notify_owner, _owner_notice)):
+    for wanted, kind, send in (
+        (rule.notify_sender, "sender notice", lambda: _sender_notice(turn, rule, agent)),
+        (rule.notify_owner, "owner notice", lambda: _owner_notice(turn, rule, agent, detail=detail)),
+    ):
         if not wanted:
             continue
         try:
-            fn(turn, rule, agent)
+            send()
         except Exception:  # noqa: BLE001 — a notice is never worth a crash in the claim path
-            logger.exception("admission: %s failed for turn %s", fn.__name__, turn_id)
+            logger.exception("admission: %s failed for turn %s", kind, turn_id)
 
 
 def _record(turn, rule, agent, kind, status, *, recipient="", detail="", thread_id="", **extra):
@@ -184,6 +185,9 @@ def fix_links(turn, rule, agent) -> list[dict]:
         {"label": f"The rejected turn ({turn.pk})",
          "url": wsvc.scoped_url(ws, f"/agents/{agent.slug}/turns")},
     ]
+    if rule.reach:
+        links.insert(1, {"label": "The runners (resume one, or check why it is down)",
+                         "url": wsvc.public_url("/supervisor?tab=runners")})
     thread_id = str((turn.origin_ref or {}).get("thread_id") or "")
     if thread_id:
         links.append({"label": f"The Gmail thread (in {agent.slug}'s mailbox)",
@@ -208,7 +212,7 @@ def _reply_line(turn, rule) -> str:
     }.get(notice.status, f"none: {notice.detail}")
 
 
-def _owner_body(turn, rule, agent) -> tuple[str, str]:
+def _owner_body(turn, rule, agent, detail: str = "") -> tuple[str, str]:
     from .rules import summary
 
     ref = turn.origin_ref or {}
@@ -230,6 +234,7 @@ def _owner_body(turn, rule, agent) -> tuple[str, str]:
     lines += [
         f"Rule:    {rule.pk}: reject {summary(rule)}",
         f"Why:     {rule.reason}",
+        *([f"Runners: {detail}"] if detail else []),
         f"Reply:   {_reply_line(turn, rule)}",
         "",
         "Nothing ran. To handle this one, open the thread yourself. To stop rejecting turns "
@@ -240,13 +245,13 @@ def _owner_body(turn, rule, agent) -> tuple[str, str]:
     return title, "\n".join(lines)
 
 
-def _owner_notice(turn, rule, agent) -> None:
+def _owner_notice(turn, rule, agent, *, detail: str = "") -> None:
     owner = agent.owner
     if owner is None or not owner.email:
         _record(turn, rule, agent, AdmissionNotice.OWNER, AdmissionNotice.SKIPPED,
                 detail="the agent has no owner with an email address")
         return
-    title, body = _owner_body(turn, rule, agent)
+    title, body = _owner_body(turn, rule, agent, detail)
     try:
         status = (AdmissionNotice.SENT if EmailMessage(subject=title, body=body, to=[owner.email]).send()
                   else AdmissionNotice.NOT_CONFIGURED)

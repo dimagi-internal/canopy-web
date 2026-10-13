@@ -36,6 +36,10 @@ class CloseRefused(Exception):
         self.reason = reason
 
 
+class CloseFailed(Exception):
+    """The delete was attempted and did not take: the task is still in emdash."""
+
+
 #: What a person sees in Supervisor for a session the runner would not close
 #: because it cannot place it in one project (including one with no project).
 NO_PROJECT = "couldn't tell which project's task this is"
@@ -54,6 +58,8 @@ def failure_reason(exc: BaseException, *, cdp_port: int = 9222) -> str:
     if isinstance(exc, CloseRefused):
         detail = _REFUSAL_DETAIL.get(getattr(exc, "reason", ""), "")
         return f"{NO_PROJECT} ({detail})" if detail else NO_PROJECT
+    if isinstance(exc, CloseFailed):
+        return "emdash still has this task, but its sidebar did not show it to delete"
     msg = " ".join(str(exc).split())
     if isinstance(exc, cdp_control.CDPError):
         if not cdp_control.cdp_healthy(port=cdp_port):
@@ -64,6 +70,12 @@ def failure_reason(exc: BaseException, *, cdp_port: int = 9222) -> str:
             return "Node.js is not installed for the runner"
         return f"emdash: {msg}"[:200] if msg else "emdash refused the delete"
     return (msg or type(exc).__name__)[:200]
+
+
+def outcome(session_key: str, project: str, error: str = "") -> dict:
+    """One close result as `report_results` sends it: ok when there is no error.
+    The single shape every close path reports."""
+    return {"session_key": session_key, "project": project, "ok": not error, "error": error}
 
 
 def report_results(cfg, client, results: list[dict]) -> None:
@@ -79,10 +91,6 @@ def report_results(cfg, client, results: list[dict]) -> None:
     except Exception:  # noqa: BLE001
         logger.warning("could not report %d close result(s) to canopy", len(results),
                        exc_info=True)
-
-
-class CloseFailed(Exception):
-    """The delete was attempted and did not take: the task is still in emdash."""
 
 
 # Keys already warned about, so a refusal retried every poll tick logs once.

@@ -131,6 +131,11 @@ class TurnStatus:
     #: For QUEUED_BEHIND: what holds it — "session" (the previous message in
     #: this conversation) or "agent" (another turn of the same agent).
     behind: str | None = None
+    #: For WAITING_RUNNER: its runners are not asleep but PAUSED — somebody
+    #: decided (`claim.Reach` PARKED). `held_until` is when the first resumes on
+    #: its own; None means only a person resuming one will run it.
+    parked: bool = False
+    held_until: datetime | None = None
 
     @property
     def settled(self) -> bool:
@@ -163,9 +168,23 @@ class TurnStatus:
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "requires": list(self.requires),
             "behind": self.behind,
+            "parked": self.parked,
+            "held_until": self.held_until.isoformat() if self.held_until else None,
             "settled": self.settled,
             "stuck": self.stuck,
         }
+
+
+def rejection(turn: Turn) -> str | None:
+    """Why canopy closed this turn before it ran, when an admission rule did —
+    else None (a person pressing stop is not a rejection). The sender of a chat,
+    Slack or MCP ask learns it here; an emailer from the rule's own notice."""
+    from apps.admission.evaluate import REJECTED_PREFIX
+
+    note = (turn.result_note or "").strip()
+    if not note.startswith(REJECTED_PREFIX):
+        return None
+    return note.removeprefix(REJECTED_PREFIX).strip()[:DETAIL_MAX] or None
 
 
 def runner_gone(turn: Turn) -> bool:
@@ -224,7 +243,7 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) ->
             state, runners, pinned = PICKING_UP, (turn.pinned_runner.name,), True
         elif reach is not None and reach.kind == harness.LIVE:
             state, runners = PICKING_UP, tuple(r.name for r in reach.runners)
-        elif reach is not None and reach.kind == harness.OFFLINE:
+        elif reach is not None and reach.kind in (harness.OFFLINE, harness.PARKED):
             state, runners = WAITING_RUNNER, tuple(r.name for r in reach.runners)
         else:
             state, runners = UNROUTED, ()
@@ -255,7 +274,8 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) ->
         cloud_runner_id=str(cloud.id) if cloud is not None else None,
         last_seen_at=turn.claimed_by.last_heartbeat_at if turn.claimed_by_id else None,
         menu_pending=menu_pending,
-        detail=((turn.result_note or "").strip()[:DETAIL_MAX] or None) if state == FAILED else None,
+        detail=(((turn.result_note or "").strip()[:DETAIL_MAX] or None) if state == FAILED
+                else rejection(turn) if state == CANCELLED else None),
         finished_at=turn.finished_at if state in TERMINAL else None,
         # Named only when the requirement is what blocks it (`Reach`), so a turn
         # stuck on routing or confinement is not blamed on ZDR.
@@ -263,6 +283,8 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False) ->
                   if turn.status == Turn.QUEUED
                   and getattr(reach, "blocked_by_requirements", False) else ()),
         behind=behind,
+        parked=state == WAITING_RUNNER and getattr(reach, "kind", None) == harness.PARKED,
+        held_until=getattr(reach, "held_until", None) if state == WAITING_RUNNER else None,
     )
 
 

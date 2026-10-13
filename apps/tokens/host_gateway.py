@@ -144,7 +144,7 @@ def resolve(turn_id: str) -> SiteContext:
     if turn is None:
         raise GatewayRefusal("no_turn", "turn not found")
     session = turn.chat_session if turn.chat_session_id else None
-    agent = turn.agent if turn.agent_id else (session.agent if session is not None else None)
+    agent = turn.acting_agent
     if agent is None or session is None:
         raise GatewayRefusal("no_site", "this conversation was not held on a connected site")
 

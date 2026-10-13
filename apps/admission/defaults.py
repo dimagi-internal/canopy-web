@@ -38,6 +38,24 @@ DEFAULTS: tuple[dict, ...] = (
         "action": "reject", "notify_sender": False, "notify_owner": False, "enabled": True,
         "reason": "the sender is blocked in this workspace, so their mail is not run.",
     },
+    # Turns no runner will take (canopy-web#1416 follow-up). Ordinary rules, not
+    # refusals: nothing about the PERSON is wrong, so an admin may switch either
+    # off and let such turns sit queued instead. Both tell the owner; neither
+    # auto-replies (the sender of a chat, Slack or MCP ask reads the reason on
+    # the turn itself).
+    {
+        "seed_key": "no-runner-paused",
+        "reach": "paused",
+        "action": "reject", "notify_sender": False, "notify_owner": True, "enabled": True,
+        "reason": ("every runner that could take this is paused with no time set to resume, "
+                   "so it would sit queued until someone noticed."),
+    },
+    {
+        "seed_key": "no-runner-offline",
+        "reach": "offline", "wait_hours": 24,
+        "action": "reject", "notify_sender": False, "notify_owner": True, "enabled": True,
+        "reason": "no runner that could take this has been reachable for a day.",
+    },
     {
         "seed_key": "offered-nothing",
         "access": "none",

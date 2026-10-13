@@ -14,6 +14,7 @@ Access = Literal["", "confined", "full", "none"]
 Sender = Literal["", "blocked"]
 TurnMode = Literal["", "manual", "auto"]
 RunnerKind = Literal["", "emdash", "cloud", "remote"]
+Reach = Literal["", "paused", "offline"]
 Action = Literal["reject", "allow"]
 
 
@@ -31,6 +32,9 @@ class AdmissionRuleIn(StrictModel):
     capability: str = Field("", max_length=64)
     turn_mode: TurnMode = ""
     runner_kind: RunnerKind = ""
+    reach: Reach = Field("", description="Turns no runner will take: every runner that could is "
+                         "paused with no resume time, or none has been reachable for `wait_hours`.")
+    wait_hours: int = Field(24, ge=1, le=24 * 30)
     action: Action = "reject"
     reason: str = Field(min_length=1, max_length=2000)
     notify_sender: bool = False
@@ -49,6 +53,8 @@ class AdmissionRulePatch(StrictModel):
     capability: str | None = Field(None, max_length=64)
     turn_mode: TurnMode | None = None
     runner_kind: RunnerKind | None = None
+    reach: Reach | None = None
+    wait_hours: int | None = Field(None, ge=1, le=24 * 30)
     action: Action | None = None
     reason: str | None = Field(None, min_length=1, max_length=2000)
     notify_sender: bool | None = None
@@ -67,6 +73,8 @@ class AdmissionRuleOut(StrictModel):
     capability: str
     turn_mode: str
     runner_kind: str
+    reach: str
+    wait_hours: int
     action: str
     reason: str
     notify_sender: bool
@@ -96,6 +104,7 @@ class AdmissionChoices(StrictModel):
     access: list[AdmissionChoice]
     turn_modes: list[AdmissionChoice]
     runner_kinds: list[AdmissionChoice]
+    reaches: list[AdmissionChoice]
     actions: list[AdmissionChoice]
 
 

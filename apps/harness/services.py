@@ -115,7 +115,10 @@ from .claim import (
     DEFAULT_LEASE_SECONDS,  # noqa: F401
     LIVE,  # noqa: F401
     OFFLINE,  # noqa: F401
+    PARKED,  # noqa: F401
+    queued_turns_covered_by,  # noqa: F401
     Reach,  # noqa: F401
+    runner_situation,  # noqa: F401
     sweep_expired_leases,  # noqa: F401
     turn_reach,  # noqa: F401
     UNCLAIMABLE_GRACE,  # noqa: F401
@@ -384,8 +387,7 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
     """
     from apps.agents import access
 
-    agent = turn.agent if turn.agent_id else (
-        turn.chat_session.agent if turn.chat_session_id and turn.chat_session.agent_id else None)
+    agent = turn.acting_agent
     if agent is None:
         return
     decision = access.decide_for_turn(turn, agent, requested)
@@ -626,6 +628,49 @@ def enqueue_turn(
     return turn, True
 
 
+_PAUSE_FIELDS = ["paused", "paused_note", "paused_at", "paused_by", "unpause_at"]
+
+
+def pause(runner: Runner, *, note: str = "", until: dt.datetime | None = None, by=None) -> None:
+    """Park a runner: the one write every pause makes (/pause from the UI, MCP,
+    Ada, and the runner's own sentinel, which calls /pause too).
+
+    `until` schedules the unpause. It never weakens a stronger pause: it is not
+    added to an open-ended one, and a second cap only moves it later. A pause
+    without `until` cancels any scheduled unpause — the operator outranks the
+    clock. A `until` already past parks nothing.
+
+    A pause that ends up open-ended strands every queued turn only this box
+    could take, so those are put to the admission rules now (after commit)
+    rather than left queued for a resume nobody scheduled.
+    """
+    now = timezone.now()
+    if until is not None and until <= now:
+        return  # the reset has already passed — nothing to park
+    note = (note or "")[:200]
+    if not runner.paused:
+        runner.paused_at = now
+        runner.unpause_at = until
+    elif runner.unpause_at is None:
+        if until is not None:
+            return  # an operator's open-ended pause; keep it and its note
+    else:
+        runner.unpause_at = None if until is None else max(until, runner.unpause_at)
+    runner.paused_note = note
+    runner.paused_by = by if getattr(by, "is_authenticated", False) else None
+    runner.paused = True
+    runner.save(update_fields=_PAUSE_FIELDS)
+    if runner.unpause_at is None:
+        runner_pk = runner.pk
+
+        def _strand_check():
+            from apps.admission import evaluate
+
+            evaluate.recheck_stranded(Runner.objects.get(pk=runner_pk))
+
+        transaction.on_commit(_strand_check)
+
+
 def unpause(runner: Runner) -> None:
     """Lift a runner's pause and cancel any scheduled unpause. The one write both
     /unpause and the scheduled wake make."""
@@ -634,8 +679,9 @@ def unpause(runner: Runner) -> None:
     runner.paused = False
     runner.paused_note = ""
     runner.paused_at = None
+    runner.paused_by = None
     runner.unpause_at = None
-    runner.save(update_fields=["paused", "paused_note", "paused_at", "unpause_at"])
+    runner.save(update_fields=_PAUSE_FIELDS)
 
 
 def wake_due_runners(now: dt.datetime) -> set:
@@ -751,9 +797,15 @@ def heartbeat(
     # down, deleting its `~/.canopy/PAUSED` sentinel.
     try:
         if runner.pk in wake_due_runners(now):
-            runner.refresh_from_db(fields=["paused", "paused_note", "paused_at", "unpause_at"])
+            runner.refresh_from_db(fields=_PAUSE_FIELDS)
     except Exception:  # noqa: BLE001 — a wake must never cost a runner its heartbeat
         logger.exception("pause: running scheduled unpauses failed")
+    # And the other half of "nothing will take this": a queued turn whose runners
+    # have all been down longer than an admission rule waits is rejected and its
+    # owner told, rather than left queued. Throttled inside; never raises.
+    from apps.admission import evaluate as admission
+
+    admission.sweep_unrunnable(now)
     # The update nudge: this is the one moment both shas are in hand — the
     # deploy moved the expectation, the beat just reported what's installed.
     # Ring the box's control channel so its updater checks NOW instead of
@@ -1439,7 +1491,7 @@ def turn_session_title(turn, proposed: str = "") -> str:
     named = readable_title(proposed) or readable_title(turn.prompt or "")
     if named:
         return named[:200]
-    agent = turn.agent or (turn.chat_session.agent if turn.chat_session_id else None)
+    agent = turn.acting_agent
     return f"{agent.name} turn" if agent else "Turn"
 
 

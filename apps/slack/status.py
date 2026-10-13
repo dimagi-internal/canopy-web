@@ -160,6 +160,10 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         line = f":hourglass_flowing_sand: Sent to *{st.runners[0]}* — {agent} will pick this up there."
     elif st.state == ts.PICKING_UP:
         line = f":hourglass_flowing_sand: {agent} is picking this up on {_runner_names(st.runners)}."
+    elif st.state == ts.WAITING_RUNNER and st.parked:
+        line = (f":double_vertical_bar: Queued — {agent}'s runner {_runner_names(st.runners)} "
+                + (f"is paused until {_when(st.held_until)}. It runs then." if st.held_until else
+                   "is paused, so this runs only when someone resumes it."))
     elif st.state == ts.WAITING_RUNNER:
         line = (f":double_vertical_bar: Queued — {agent}'s runner {_runner_names(st.runners)} "
                 "is offline, so nothing is working on this yet. It runs when the runner is back.")
@@ -199,6 +203,9 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         # Refused at the door (its interface offers this caller nothing), never
         # started — not someone pressing stop. The sender gets the why privately.
         line = f":no_entry_sign: Not run — {agent} doesn't take requests from this person here."
+    elif st.state == ts.CANCELLED and st.detail:
+        # An admission rule closed it before it ran (`turn_status.rejection`).
+        line = f":no_entry_sign: Not run — {st.detail}"
     elif st.state == ts.CANCELLED:
         from apps.harness.services import stopped_by
 

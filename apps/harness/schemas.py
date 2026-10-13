@@ -62,7 +62,8 @@ class UnclaimableTurnOut(Schema):
     created_at: dt.datetime
     reason: str
     # "config" = nothing declares this target (needs a fix); "offline" = something
-    # does, but no runner is reachable right now (usually transient).
+    # does, but no runner is reachable right now (usually transient); "parked" =
+    # every runner that could take it is paused (`reason` says by whom, until when).
     kind: str = "config"
 
 
@@ -121,6 +122,7 @@ class RunnerOut(Schema):
     paused: bool
     paused_note: str
     paused_at: dt.datetime | None
+    paused_by_email: str | None = None
     # The scheduled unpause, if one is set (a usage cap's reset); null = paused
     # until a human unpauses.
     unpause_at: dt.datetime | None = None
@@ -293,6 +295,10 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_owner_email(obj) -> str | None:
         return obj.owner.email if obj.owner_id else None
+
+    @staticmethod
+    def resolve_paused_by_email(obj) -> str | None:
+        return obj.paused_by.email if obj.paused_by_id else None
 
     @staticmethod
     def resolve_paired_by_email(obj) -> str | None:

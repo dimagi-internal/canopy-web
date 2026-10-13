@@ -104,6 +104,13 @@ class Runner(models.Model):
     )
     paused_note = models.CharField(max_length=200, blank=True, default="")
     paused_at = models.DateTimeField(null=True, blank=True)
+    # WHO paused it: the signed-in caller of /pause — a person from the UI or
+    # MCP, or the box's owner when the runner turns its local sentinel into that
+    # same call. Named in what a turn the pause strands is told
+    # (`claim.Reach.why`), because "paused" alone sends the reader hunting.
+    paused_by = models.ForeignKey(
+        "auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
     # A scheduled UNPAUSE — a one-off job, not a kind of pause. The pause above is
     # the one state; this only says when the server will lift it. A runner sets it
     # on ITSELF when its Claude subscription hits a usage cap: the CLI names the
@@ -758,6 +765,17 @@ class Turn(models.Model):
         its own resolver, which wins there; the two agree on agent turns.
         """
         return self.agent.slug if self.agent_id else ""
+
+    @property
+    def acting_agent(self):
+        """The agent this turn runs AS — its own, or its chat's — else None (a
+        repo turn, an agentless chat). The one answer routing, the hold gate,
+        admission, turn mode and the caller envelope all ask."""
+        if self.agent_id:
+            return self.agent
+        if self.chat_session_id and self.chat_session.agent_id:
+            return self.chat_session.agent
+        return None
 
     def __str__(self) -> str:  # pragma: no cover
         return f"turn:{self.target}:{self.status}:{self.id.hex[:8]}"

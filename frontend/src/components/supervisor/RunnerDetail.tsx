@@ -243,14 +243,18 @@ export function RunnerDetail({
           </div>
           {runner.paused ? (
             <p className="text-[12px] text-muted-foreground" data-testid="runner-pause-why">
+              {runner.paused_by_email ? <>Paused by {runner.paused_by_email}: </> : null}
               {runner.paused_note || 'No reason given.'}{' '}
               {runner.unpause_at ? (
                 <span data-testid="runner-unpause-at">
-                  Resumes on its own at {new Date(runner.unpause_at).toLocaleString()} — resume
-                  now to let it claim sooner.
+                  Resumes on its own at {new Date(runner.unpause_at).toLocaleString()} — work only
+                  it could take waits until then; resume now to let it claim sooner.
                 </span>
               ) : (
-                <>Queued work waits for this runner rather than failing — resume to let it claim again.</>
+                <>
+                  Work only this runner could take is not run: the workspace&apos;s admission rule
+                  rejects it and tells the agent&apos;s owner. Resume to let it claim again.
+                </>
               )}
             </p>
           ) : (

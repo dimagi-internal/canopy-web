@@ -222,13 +222,20 @@ export interface TurnStatus {
   /** The agent is sitting on a dialog. A separate axis from `state`: a turn
    *  blocked on a question is still RUNNING as far as the turn is concerned. */
   menu_pending: boolean;
-  /** Why a `failed` turn failed, in the runner's words. Null for every other
-   *  state. Absent on an older server. */
   /** For `queued_behind`: what it waits behind — `session` (the previous
    *  message in this conversation) or `agent` (another turn of the same
    *  agent). Absent on an older server. */
   behind?: "session" | "agent" | null;
+  /** Why a `failed` turn failed, in the runner's words; or why a `cancelled`
+   *  one was never run (an admission rule rejected it). Null otherwise, and
+   *  for a turn someone stopped. Absent on an older server. */
   detail?: string | null;
+  /** For `waiting_runner`: its runners are PAUSED by someone, not asleep.
+   *  Absent on an older server. */
+  parked?: boolean;
+  /** For a `parked` turn: when the first of its runners resumes on its own
+   *  (ISO). Null = only a person resuming one will run it. */
+  held_until?: string | null;
   /** When a settled turn finished — lets the kit drop a failure the
    *  conversation has since moved past. Absent on an older server. */
   finished_at?: string | null;

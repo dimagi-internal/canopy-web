@@ -133,11 +133,8 @@ def _runner_name(turn: Turn) -> str:
 
 
 def _agent_of(turn: Turn) -> str:
-    if turn.agent_id:
-        return turn.agent.slug
-    if turn.chat_session_id and turn.chat_session.agent_id:
-        return turn.chat_session.agent.slug
-    return turn.project or ""
+    agent = turn.acting_agent
+    return agent.slug if agent is not None else (turn.project or "")
 
 
 def _workspace_of(turn: Turn) -> str | None:

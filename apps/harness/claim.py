@@ -129,18 +129,9 @@ def _assignment_rows_for_turns(turns) -> tuple[dict, dict]:
     return load_assignment_rows(agent_ids)
 
 
-def _held_agent(t: Turn):
-    """The agent a turn runs AS — its own, or its chat's — else None."""
-    if t.agent_id:
-        return t.agent
-    if t.chat_session_id and t.chat_session.agent_id:
-        return t.chat_session.agent
-    return None
-
-
 def _may_hold(r: Runner, t: Turn, holds: dict | None) -> bool:
     """claim_next_turn's `runner_may_hold_agent` gate, cached per (runner, agent)."""
-    agent = _held_agent(t)
+    agent = t.acting_agent
     if agent is None:
         return True
     from apps.agents.services import runner_may_hold_agent
@@ -244,7 +235,7 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
     return out
 
 
-LIVE, OFFLINE, UNROUTED = "live", "offline", "config"
+LIVE, OFFLINE, PARKED, UNROUTED = "live", "offline", "parked", "config"
 
 
 @dataclass
@@ -253,6 +244,9 @@ class Reach:
 
     `live` — an ONLINE runner will claim it; `runners` are those runners.
     `offline` — runners could take it, none is online; `runners` are those.
+    `parked` — every runner that could take it is PAUSED (someone decided, not a
+    lapsed heartbeat); `runners` are those. `held_until` says when the first of
+    them resumes on its own, or None when none will without a person.
     `config` (UNROUTED) — nothing could ever take it until routing changes.
     """
 
@@ -269,6 +263,23 @@ class Reach:
     #: but not until that turn ends — "picking this up" would be a promise the
     #: claim is not keeping (canopy-web#1147).
     behind: Turn | None = None
+    #: For PARKED: when the first of its runners resumes on its own (a scheduled
+    #: unpause), or None when only a person resuming one will run it.
+    held_until: dt.datetime | None = None
+
+
+def _parked(takers) -> tuple[bool, dt.datetime | None]:
+    """(every runner that could take it is paused, when the first resumes on its
+    own — None if none will). The ONE parked rule, for `turn_reach` and the
+    stuck-turn warning alike.
+
+    Not "offline": waiting on a lapsed heartbeat is waiting on a laptop lid,
+    waiting on a pause is waiting on somebody's decision — and only a scheduled
+    unpause ends one without a person."""
+    if not takers or not all(r.paused for r in takers):
+        return False, None
+    resumes = [r.unpause_at for r in takers if r.unpause_at is not None]
+    return True, (min(resumes) if resumes else None)
 
 
 def turn_reach(turn: Turn) -> Reach:
@@ -312,11 +323,45 @@ def turn_reach(turn: Turn) -> Reach:
             without = [r for r in without if r.live_status == Runner.ONLINE]
         return bool(without)
 
+    parked, held_until = _parked(covering)
+    if parked:
+        return Reach(PARKED, covering, blocked_by_requirements(live_only=True),
+                     held_until=held_until)
     if covering:
         # Its own runners are merely offline; the requirement is the blocker
         # only if a runner that IS live would otherwise have taken it.
         return Reach(OFFLINE, covering, blocked_by_requirements(live_only=True))
     return Reach(UNROUTED, [], blocked_by_requirements(live_only=False))
+
+
+def _when(at: dt.datetime | None) -> str:
+    return timezone.localtime(at, dt.timezone.utc).strftime("%b %-d %H:%M UTC") if at else "never"
+
+
+def runner_situation(r: Runner) -> str:
+    """One runner, in the words a stranded turn's sender and owner read: who
+    paused it, when, why, and until when — or since when it was last heard
+    from. The one sentence every notice about a stuck turn uses."""
+    if r.paused:
+        who = (r.paused_by.get_full_name() or r.paused_by.email) if r.paused_by_id else "someone"
+        why = f" ({r.paused_note})" if r.paused_note else ""
+        end = (f", until {_when(r.unpause_at)}" if r.unpause_at
+               else ", with no time set to resume")
+        return f"{r.name} was paused by {who} on {_when(r.paused_at)}{why}{end}"
+    return f"{r.name} has not been heard from since {_when(r.last_heartbeat_at)}"
+
+
+def queued_turns_covered_by(runner: Runner) -> list[Turn]:
+    """The QUEUED turns this runner is one of the takers for — the same coverage
+    `turn_reach` and the claim use, so a pause re-checks exactly the turns it
+    could have stranded."""
+    queued = list(Turn.objects.filter(status=Turn.QUEUED).select_related(
+        "agent", "chat_session", "chat_session__runner_binding", "chat_session__agent"))
+    if not queued:
+        return []
+    defaults, priorities = _assignment_rows_for_turns(queued)
+    covered = _coverage({t.pk for t in queued}, [runner], defaults, priorities).get(runner, set())
+    return [t for t in queued if t.pk in covered]
 
 
 def _readable_session_turn_q(user) -> Q:
@@ -410,7 +455,8 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     # Would ANY paired runner take it if it were up? Separates "misconfigured" from
     # "temporarily unreachable" — the difference between "fix the routing matrix"
     # and "wait, or check the runner".
-    claimable_ever = set().union(*_coverage(ids, runners, defaults, priorities).values())
+    ever_by_runner = _coverage(ids, runners, defaults, priorities)
+    claimable_ever = set().union(*ever_by_runner.values())
     # Counterfactual, for turns whose conversation requires something and that no
     # runner will ever take: would one take it WITHOUT the requirement? Only then
     # is the requirement the blocker; otherwise the ordinary reason applies.
@@ -419,7 +465,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
                                              ignore_requirements=True).values()) if required else set()
     # The same counterfactual for the hold gate: a turn only boxes whose owners
     # are not admins of its agent would take is a grant away, not a routing fix.
-    unheld = {t.pk for t in queued if t.pk not in claimable_ever and _held_agent(t) is not None}
+    unheld = {t.pk for t in queued if t.pk not in claimable_ever and t.acting_agent is not None}
     blocked_by_hold = set().union(*_coverage(unheld, runners, defaults, priorities,
                                              ignore_hold=True).values()) if unheld else set()
 
@@ -441,13 +487,18 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         elif t.pk in blocked_by_hold:
             kind = "config"
             reason = (f"the runners {what} are owned by people who are not admins of "
-                      f"'{_held_agent(t).slug}', so they may not run as it — make the "
+                      f"'{t.acting_agent.slug}', so they may not run as it — make the "
                       "runner's owner an admin of the agent")
         elif t.capability and t.pk not in claimable_ever:
             kind = "config"
             reason = (f"this is a caller's turn, confined to '{t.capability}', and no runner "
                       "that can confine one serves it — update the runner and the canopy "
                       "plugin on a box assigned to it")
+        elif t.pk in claimable_ever and _parked(takers := [
+                r for r, pks in ever_by_runner.items() if t.pk in pks])[0]:
+            kind = "parked"
+            reason = f"every runner that {what} is paused: " + "; ".join(
+                runner_situation(r) for r in takers)
         elif t.pk in claimable_ever:
             kind = "offline"
             reason = f"a runner {what}, but none are reachable right now (offline or heartbeat lapsed)"
@@ -617,7 +668,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # editor tier and must not be a way to direct an agent at your own box.
         # A chat with an agent runs as that agent just the same (its session,
         # its credentials), so a session turn is held to its agent's rule too.
-        held = _held_agent(turn)
+        held = turn.acting_agent
         if held is not None:
             if held.id not in trusted:
                 trusted[held.id] = runner_may_hold_agent(runner, held)

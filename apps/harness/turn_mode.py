@@ -156,13 +156,6 @@ def _accountable_cap(turn, agent) -> Resolved | None:
                             f"admin of {agent.slug}")
 
 
-def _agent_of(turn):
-    if turn.agent_id:
-        return turn.agent
-    cs = getattr(turn, "chat_session", None)
-    return cs.agent if cs is not None and cs.agent_id else None
-
-
 def session_started_manual(turn) -> Resolved | None:
     """MANUAL when an earlier claimed turn of `turn`'s session was manual, else None.
 
@@ -205,7 +198,7 @@ def for_turn(turn, priorities: dict | None = None, *, fresh: bool = False) -> Re
     """
     if turn.turn_mode and not fresh:
         return Resolved(turn.turn_mode, turn.turn_mode_basis or "")
-    agent = _agent_of(turn)
+    agent = turn.acting_agent
     if agent is None:
         return None
     started = session_started_manual(turn)

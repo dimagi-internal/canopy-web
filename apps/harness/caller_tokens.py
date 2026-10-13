@@ -54,8 +54,7 @@ def is_caller_scoped(turn: Turn) -> bool:
 
     if turn.capability:
         return False            # confined: has its own token
-    agent = turn.agent if turn.agent_id else (
-        turn.chat_session.agent if turn.chat_session_id and turn.chat_session.agent_id else None)
+    agent = turn.acting_agent
     if agent is None:
         return False
     d = access.decide_for_turn(turn, agent)
@@ -117,8 +116,7 @@ def resolve(raw: str) -> Grant | None:
     if current.status in Turn.TERMINAL and current.finished_at and \
             current.finished_at < now - AFTER_FINISH:
         return None
-    agent = current.agent if current.agent_id else (
-        current.chat_session.agent if current.chat_session_id else None)
+    agent = current.acting_agent
     if agent is None:
         return None
     user = current.initiator_user if current.initiator_user_id else None

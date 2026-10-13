@@ -22,7 +22,7 @@ import { listAgents, type AgentOut } from '@/api/agents'
 
 const EMPTY: AdmissionRuleIn = {
   agent: '', origin: '', principal: '', sender: '', access: '', capability: '', turn_mode: '', runner_kind: '',
-  action: 'reject', reason: '', notify_sender: false, notify_owner: true, enabled: true,
+  reach: '', wait_hours: 24, action: 'reject', reason: '', notify_sender: false, notify_owner: true, enabled: true,
 }
 
 const select =
@@ -83,6 +83,8 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
       capability: rule.capability,
       turn_mode: rule.turn_mode as AdmissionRuleIn['turn_mode'],
       runner_kind: rule.runner_kind as AdmissionRuleIn['runner_kind'],
+      reach: rule.reach as AdmissionRuleIn['reach'],
+      wait_hours: rule.wait_hours,
       action: rule.action as AdmissionRuleIn['action'],
       reason: rule.reason,
       notify_sender: rule.notify_sender,
@@ -320,6 +322,25 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
               <option value="">Any runner</option>
               {c.runner_kinds.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
+            <select aria-label="Runners that could take it" className={select} value={draft.reach}
+              onChange={(e) => set({ reach: e.target.value as AdmissionRuleIn['reach'] })}>
+              <option value="">Whatever its runners are doing</option>
+              {c.reaches.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            {draft.reach === 'offline' && (
+              <label className="flex items-center gap-1 text-[12px] text-muted-foreground">
+                after
+                <input
+                  aria-label="Wait (hours)"
+                  type="number"
+                  min={1}
+                  value={draft.wait_hours}
+                  onChange={(e) => set({ wait_hours: Math.max(1, Number(e.target.value) || 1) })}
+                  className="min-h-11 w-16 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground sm:min-h-0"
+                />
+                h
+              </label>
+            )}
           </div>
           <input
             aria-label="Why"

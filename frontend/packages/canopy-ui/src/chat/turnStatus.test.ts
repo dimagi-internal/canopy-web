@@ -113,6 +113,25 @@ describe("turnNotice", () => {
     expect(n?.text).toContain("jj-mbp is offline");
   });
 
+  it("says a paused box is paused, and until when it holds the turn", () => {
+    const held = turnNotice(status({
+      state: "waiting_runner", stuck: true, claimed_by: null, parked: true,
+      held_until: "2026-10-12T21:00:00Z",
+    }));
+    expect(held?.text).toContain("jj-mbp is paused until");
+    expect(held?.text).toContain("It runs then.");
+    const open = turnNotice(status({ state: "waiting_runner", stuck: true, claimed_by: null, parked: true }));
+    expect(open?.text).toContain("runs only when someone resumes it");
+  });
+
+  it("says why a rejected turn was never run, and nothing for one somebody stopped", () => {
+    const rejected = turnNotice(status({
+      state: "cancelled", settled: true, detail: "jj-mbp was paused by Jonathan Jackson",
+    }));
+    expect(rejected).toMatchObject({ tone: "error", text: "Not run — jj-mbp was paused by Jonathan Jackson" });
+    expect(turnNotice(status({ state: "cancelled", settled: true, detail: null }))).toBeNull();
+  });
+
   it("reads differently for the state waiting cannot fix", () => {
     const n = turnNotice(status({ state: "unrouted", stuck: true, runners: [], claimed_by: null }));
     // Not a warning you can wait out — an error somebody has to go and fix.
