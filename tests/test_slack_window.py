@@ -281,8 +281,11 @@ def test_a_clock_time_reads_back_to_then_on_the_askers_clock(channel, linked, ha
     assert f"since {label}" in turn.prompt
     assert turn.chat_session.title.startswith(f"Slack: since {label}")
     ev = Event.objects.get(kind="slack.window_read")
-    # 7 minutes before NOW, truncated to the minute, read some seconds after NOW.
-    assert ev.payload["since"] == label and 7 <= ev.payload["minutes"] <= 10
+    # 7 minutes before NOW, truncated to the minute, read however long after
+    # NOW this test runs: NOW is set at import, and a slow CI run reached this
+    # test four minutes later (11 minutes against a fixed cap of 10).
+    elapsed = int((time.time() - NOW) // 60)
+    assert ev.payload["since"] == label and 7 <= ev.payload["minutes"] <= 9 + elapsed
 
 
 def test_a_clock_time_with_no_slack_timezone_is_refused(channel, linked, hal):
