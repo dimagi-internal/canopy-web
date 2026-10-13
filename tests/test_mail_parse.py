@@ -93,3 +93,32 @@ def test_crlf_injection_in_subject_is_neutralised():
     p = parse.parse(raw("crlf_display_name.eml"))
     assert "\r" not in p.subject and "\n" not in p.subject
     assert "Line1" in p.subject and "Line2" in p.subject
+
+
+def _mail(headers: bytes) -> bytes:
+    return headers + b"To: ada@marshellis.com\r\nMessage-ID: <h@x>\r\n\r\nbody\r\n"
+
+
+@pytest.mark.parametrize("n", [5, 0])
+def test_literal_parking_token_in_name_is_preserved(n):
+    p = parse.parse(_mail(
+        f"From: ENCWORD{n}X <a@b.org>, =?utf-8?q?Hi?= <c@d.org>\r\n".encode()))
+    assert p.from_addr == "a@b.org"
+    assert p.from_name == f"ENCWORD{n}X"
+
+
+def test_8bit_raw_headers_are_encodable():
+    p = parse.parse(_mail(b"From: Jos\xe9\xff <a@b.org>\r\nSubject: caf\xe9 \xff\r\n"))
+    assert p.from_addr == "a@b.org"
+    p.subject.encode("utf-8")
+    p.from_name.encode("utf-8")
+
+
+def test_malformed_encoded_word_does_not_raise():
+    p = parse.parse(_mail(b"From: =?utf-8?b?!!!?= <a@b.org>\r\nSubject: =?utf-8?b?!!!?=\r\n"))
+    assert p.from_addr == "a@b.org"
+
+
+def test_unicode_line_separators_scrubbed():
+    p = parse.parse(_mail("Subject: a b\u0085c\r\n".encode()))
+    assert not any(c in p.subject for c in " \u0085")

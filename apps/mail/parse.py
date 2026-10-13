@@ -5,6 +5,7 @@ import codecs
 import hashlib
 import html as htmlmod
 import re
+import secrets
 from dataclasses import dataclass, field
 from email import policy
 from email.header import decode_header, make_header
@@ -40,10 +41,12 @@ _IDS = re.compile(r"<[^<>\s]+>")
 _TAGS = re.compile(r"<[^>]+>")
 
 
-_CRLF = re.compile(r"[\r\n]+")
+_CRLF = re.compile(r"[\r\n\v\f\u2028\u2029\x85]+")
 
 
 def _clean(v: str) -> str:
+    # Lone surrogates (from raw 8-bit headers) would break later DB/JSON writes.
+    v = v.encode("utf-8", "replace").decode("utf-8")
     return _CRLF.sub(" ", v).strip()
 
 
@@ -78,22 +81,36 @@ _ENCWORD = re.compile(r"=\?[^?\s]+\?[bBqQ]\?[^?\s]*\?=")
 
 
 def _addr_pairs(msg, name: str) -> list[tuple[str, str]]:
+    values = [_clean(v) for v in _raw_all(msg, name)]
+    try:
+        return _addr_pairs_parked(values)
+    except Exception:
+        pass
+    try:
+        return [(_clean(n), _clean(a).lower()) for n, a in getaddresses(values) if _clean(a)]
+    except Exception:
+        return []
+
+
+def _addr_pairs_parked(values: list[str]) -> list[tuple[str, str]]:
     # Encoded-words may decode to specials (":", ",", CR/LF); park them behind
-    # inert tokens while parsing addresses, then restore and decode the names.
+    # inert, unpredictable tokens while parsing addresses, then restore and decode.
+    nonce = secrets.token_hex(8)
     words: list[str] = []
+    tok = re.compile(f"ENCWORD{nonce}N(\\d+)X")
 
     def park(m):
         words.append(m.group(0))
-        return f"ENCWORD{len(words) - 1}X"
+        return f"ENCWORD{nonce}N{len(words) - 1}X"
 
     def restore(v: str) -> str:
-        return re.sub(r"ENCWORD(\d+)X", lambda m: words[int(m.group(1))], v)
+        def one(m):
+            i = int(m.group(1))
+            return words[i] if i < len(words) else m.group(0)
+        return tok.sub(one, v)
 
-    try:
-        pairs = getaddresses([_ENCWORD.sub(park, _clean(v)) for v in _raw_all(msg, name)])
-    except Exception:
-        return []
-    return [(_decode_words(restore(n)), _clean(a).lower()) for n, a in pairs if a and _clean(a)]
+    pairs = getaddresses([_ENCWORD.sub(park, v) for v in values])
+    return [(_decode_words(restore(n)), _clean(a).lower()) for n, a in pairs if _clean(a)]
 
 
 def _addrs(msg, name: str) -> list[str]:
