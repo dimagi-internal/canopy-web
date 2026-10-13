@@ -120,5 +120,23 @@ def test_malformed_encoded_word_does_not_raise():
 
 
 def test_unicode_line_separators_scrubbed():
-    p = parse.parse(_mail("Subject: a b\u0085c\r\n".encode()))
-    assert not any(c in p.subject for c in " \u0085")
+    p = parse.parse(_mail(b"Subject: =?utf-8?q?a=C2=85b=E2=80=A8c?=\r\n"))
+    assert p.subject == "a b c"
+
+
+def test_headers_and_attachment_filename_are_json_and_utf8_safe():
+    import json
+
+    raw_mail = (
+        b"From: a@b.org\r\nAuthentication-Results: mx; dkim=pass d=caf\xe9\xff\r\n"
+        b"Message-ID: <h@x>\r\nMIME-Version: 1.0\r\n"
+        b'Content-Type: multipart/mixed; boundary="B"\r\n\r\n'
+        b"--B\r\nContent-Type: text/plain\r\n\r\nhi\r\n"
+        b"--B\r\nContent-Type: application/pdf\r\n"
+        b'Content-Disposition: attachment; filename="caf\xe9\xff.pdf"\r\n'
+        b"Content-Transfer-Encoding: base64\r\n\r\nJVBERg==\r\n--B--\r\n"
+    )
+    p = parse.parse(raw_mail)
+    json.dumps(p.headers, ensure_ascii=False).encode("utf-8")
+    assert p.attachments
+    p.attachments[0].filename.encode("utf-8")

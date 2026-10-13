@@ -143,6 +143,13 @@ def _safe_items(msg) -> list[tuple[str, str]]:
         return []
 
 
+def _safe_filename(part) -> str:
+    try:
+        return _clean(part.get_filename() or "") or "attachment"
+    except Exception:
+        return "attachment"
+
+
 def _is_automated(msg) -> bool:
     auto = _hdr(msg, "Auto-Submitted").lower()
     prec = _hdr(msg, "Precedence").lower()
@@ -162,7 +169,7 @@ def parse(raw: bytes) -> Parsed:
     html = _content(html_part) if html_part is not None else ""
     text = _content(text_part) if text_part is not None else _html_to_text(html)
     attachments = [
-        Attachment(part.get_filename() or "attachment", part.get_content_type(),
+        Attachment(_safe_filename(part), part.get_content_type(),
                    part.get_payload(decode=True) or b"")
         for part in msg.iter_attachments()
     ]
@@ -174,6 +181,6 @@ def parse(raw: bytes) -> Parsed:
         to=_addrs(msg, "To"), cc=_addrs(msg, "Cc"),
         subject=_hdr(msg, "Subject"), text=text, html=html,
         attachments=attachments,
-        headers=[(k, str(v)) for k, v in _safe_items(msg)],
+        headers=[(_clean(str(k)), _clean(str(v))) for k, v in _safe_items(msg)],
         automated=_is_automated(msg),
     )
