@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 
-from . import cdp_control, desktop, session_target, sessions
+from . import cdp_control, desktop, emdash, session_target, sessions
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,10 @@ class CloseRefused(Exception):
     """The session could not be placed in exactly one emdash project, so it was
     NOT deleted. A delete is irreversible; by name alone it can take another
     agent's same-named session (ada's and eva's "editing", 2026-10-04)."""
+
+
+class CloseFailed(Exception):
+    """The delete was attempted and did not take: the task is still in emdash."""
 
 
 # Keys already warned about, so a refusal retried every poll tick logs once.
@@ -70,6 +74,13 @@ def close_session(session_key: str, *, project: str = "", cdp_port: int = 9222,
         raise CloseRefused(f"{session_key}: {target.reason}")
     result = cdp_control.close_task(session_key, port=cdp_port, project=target.project)
     action = str(result.get("action") or "deleted")
+    if action == "absent" and target.project in (emdash.task_projects(emdash_db or "", session_key) or []):
+        # The sidebar could not find a row emdash's own DB still holds (a collapsed
+        # project hid it, 2026-10-12). That is a close that did not happen, not one
+        # that already had: reporting it as gone archives the row for ~10s until the
+        # next report revives it, and tells the human it closed.
+        raise CloseFailed(f"{session_key}: emdash still has this task under {target.project!r} "
+                          "but its sidebar did not show it")
     sessions.request_close_report(session_key)
     logger.info("closed emdash task %s (%s)", session_key, action)
     return action

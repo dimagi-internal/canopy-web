@@ -39,6 +39,35 @@ def test_an_already_absent_task_still_queues_the_signal(monkeypatch):
     assert sessions._PENDING_CLOSED == {"gone"}
 
 
+def test_absent_from_the_sidebar_but_held_by_emdash_is_a_failed_close(monkeypatch):
+    """A collapsed project hides its rows, so the sidebar says "absent" for a task
+    emdash still holds (hal's box, 2026-10-12). That close did not happen: report
+    it as one, and queue no closing signal the next report would only revive."""
+    sessions._PENDING_CLOSED.clear()
+    monkeypatch.setattr(close.cdp_control, "close_task",
+                        lambda t, port=9222, project="": {"ok": True, "action": "absent"})
+    monkeypatch.setattr(close.emdash, "task_projects", lambda db, name: ["eva"])
+    try:
+        close.close_session("c-resume-idm-2-8356", project="eva", emdash_db="/x.db")
+    except close.CloseFailed:
+        pass
+    else:
+        raise AssertionError("expected CloseFailed")
+    assert sessions._PENDING_CLOSED == set()
+
+
+def test_absent_everywhere_is_still_already_gone(monkeypatch):
+    """The DB agrees it is gone (deleted a moment earlier in emdash): success."""
+    sessions._PENDING_CLOSED.clear()
+    monkeypatch.setattr(close.cdp_control, "close_task",
+                        lambda t, port=9222, project="": {"ok": True, "action": "absent"})
+    # resolve() sees it under eva, the post-delete re-read no longer does.
+    reads = iter([["eva"], []])
+    monkeypatch.setattr(close.emdash, "task_projects", lambda db, name: next(reads))
+    assert close.close_session("gone", project="eva", emdash_db="/x.db") == "absent"
+    assert sessions._PENDING_CLOSED == {"gone"}
+
+
 def test_a_failed_delete_queues_nothing(monkeypatch):
     """The row must stay where it is. Nothing was written server-side, so doing
     nothing here is already the correct outcome — reporting the close would be the
