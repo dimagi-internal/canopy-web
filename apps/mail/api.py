@@ -6,6 +6,8 @@ are workspace settings (INTEGRATIONS: admin or owner), audited via route_gates.S
 """
 from __future__ import annotations
 
+import json
+import logging
 import uuid as uuidlib
 from dataclasses import asdict
 
@@ -22,11 +24,13 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import agent_mail, domains, ses
+from . import agent_mail, domains, inbound, ses, sns
 from .models import MailDomain, MailMessage, MailRoute, MailThread
 from .schemas import (MailDomainIn, MailDomainListOut, MailDomainOut, MailDomainPatchIn,
                       MailMessageOut, MailReplyIn, MailResolveOut, MailRouteIn, MailRouteOut,
                       MailSendIn, MailThreadListOut, MailThreadOut, MailThreadStateIn)
+
+logger = logging.getLogger(__name__)
 
 router = Router(auth=session_auth, tags=["mail"])
 
@@ -296,3 +300,38 @@ def set_mail_thread_state(request: HttpRequest, workspace: str, uuid: str, paylo
         t.archived = payload.archived
     t.save(update_fields=["unread", "archived"])
     return _thread_out(t, messages=False)
+@router.post("/ses/inbound/", auth=None, response={200: dict, 404: dict, 500: dict},
+             url_name="ses_inbound", summary="SES receipt notifications (SNS HTTPS delivery)")
+def ses_inbound(request: HttpRequest):
+    """SNS posts `text/plain`, so the body is read raw rather than through a schema.
+
+    Verify before trusting a byte; 404 on any failure so a probe learns nothing.
+    500 only for transient failures (SNS retries those for ~6 h); anything
+    deterministic is acknowledged with 200 so a poisoned message cannot loop.
+    """
+    try:
+        msg = json.loads(request.body or b"{}")
+        sns.verify(msg, topic_arn=settings.MAIL_INBOUND_TOPIC_ARN)
+    except (ValueError, sns.Invalid):
+        return 404, {"detail": "not found"}
+    kind = msg.get("Type")
+    if kind == "SubscriptionConfirmation":
+        try:
+            sns.confirm(msg)
+        except sns.Invalid:
+            return 404, {"detail": "not found"}
+        return 200, {"confirmed": True}
+    if kind != "Notification":
+        return 200, {"ignored": kind}
+    try:
+        out = inbound.handle(json.loads(msg.get("Message") or "{}"))
+    except inbound.Transient as exc:
+        logger.warning("mail inbound transient failure; SNS will retry: %s", exc.outcomes)
+        return 500, {"detail": "retry"}
+    except inbound.TRANSIENT:
+        logger.exception("mail inbound transient failure; SNS will retry")
+        return 500, {"detail": "retry"}
+    except Exception as exc:  # noqa: BLE001 - deterministic: acknowledge, never retry
+        logger.exception("mail inbound failed permanently; acknowledged")
+        return 200, {"outcomes": [{"recipient": "*", "outcome": f"error:{type(exc).__name__}"}]}
+    return 200, {"outcomes": out}

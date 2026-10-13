@@ -83,6 +83,8 @@ dependencies = [
     "pywebpush>=2.3.0",
     "canopy-agent-factory>=1,<2",
     "pyyaml>=6.0.3",
+    # apps/mail/sns.py verifies SNS message signatures (RSA over the cert SNS publishes).
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]
