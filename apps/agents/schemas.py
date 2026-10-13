@@ -614,7 +614,11 @@ class AgentTaskLink(StrictModel):
     #: `decision`: an open question this task is carrying for a person — the
     #: project's team view lists each one as a line under "waiting on". Blank
     #: for an ordinary link.
-    kind: Literal["", "decision"] = ""
+    #: `live`: on a PROJECT, what the product already does today — its label
+    #: says what, its url opens it. The project page leads "Where it stands"
+    #: with these, so a live product never reads as "nothing built" because
+    #: none of its ideas is marked shipped.
+    kind: Literal["", "decision", "live"] = ""
     #: On a decision: who it waits on, by name. Blank falls back to the task's
     #: waiting-on person, then the project's owner.
     waiting_on: str = Field(default="", max_length=120)

@@ -13069,7 +13069,7 @@ export interface components {
              * @default
              * @enum {string}
              */
-            readonly kind: "" | "decision";
+            readonly kind: "" | "decision" | "live";
             /**
              * Waiting On
              * @default
