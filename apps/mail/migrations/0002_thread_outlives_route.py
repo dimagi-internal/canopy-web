@@ -16,6 +16,10 @@ def delete_routeless_threads(apps, schema_editor):
     # Reverse only: 0001's route is NOT NULL, so a thread whose route was removed cannot
     # survive going back (`migrate mail zero` in the rip-out list runs after domains go).
     apps.get_model("mail", "MailThread").objects.filter(route__isnull=True).delete()
+    if schema_editor.connection.vendor == "postgresql":
+        # The delete queues deferred FK trigger events; Postgres refuses the ALTER TABLE
+        # that follows in this transaction until they fire.
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 class Migration(migrations.Migration):
