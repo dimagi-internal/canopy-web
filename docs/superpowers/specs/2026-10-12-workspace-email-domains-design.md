@@ -206,6 +206,6 @@ Every write route is classified in `apps/api/route_gates.py` (domain/route write
 1. `canopy-web-mail` stack deployed (by hand, labs admin).
 2. canopy-web PRs: models + domain UI → inbound + forward → agent turns + REST → reputation
    guard. Each deployable alone; nothing routes until a domain verifies.
-3. marshellis: add domain, publish DNS (Jonathan, Cloudflare), test on `mailtest.`
+3. marshellis: add domain, publish DNS (Cloudflare, via a marshellis-scoped API token), test on `mail.`
    subdomain, seed routes `jjackson@` and `support@` → jjackson, `*` → jjackson; cut MX.
 4. canopy CLI backend switch, then the first marshellis agent.
