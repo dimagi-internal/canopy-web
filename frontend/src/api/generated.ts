@@ -612,6 +612,93 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/mail/domains/{workspace}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List mail domains */
+        readonly get: operations["list_mail_domains"];
+        readonly put?: never;
+        /** Add a mail domain (admin or owner) */
+        readonly post: operations["add_mail_domain"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/mail/domains/{workspace}/{domain_id}/refresh": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Re-check a domain's DNS and verification now */
+        readonly post: operations["refresh_mail_domain"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/mail/domains/{workspace}/{domain_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Remove a mail domain (admin or owner) */
+        readonly delete: operations["remove_mail_domain"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Change a domain's send cap or lift its suspension (admin or owner) */
+        readonly patch: operations["update_mail_domain"];
+        readonly trace?: never;
+    };
+    readonly "/api/mail/domains/{workspace}/{domain_id}/routes": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Create or replace the route for one address (admin or owner) */
+        readonly put: operations["save_mail_route"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/mail/domains/{workspace}/{domain_id}/routes/{route_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Remove an address's route (admin or owner) */
+        readonly delete: operations["delete_mail_route"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/slack-config/{workspace}": {
         readonly parameters: {
             readonly query?: never;
@@ -9259,6 +9346,115 @@ export interface components {
              * @default
              */
             readonly error: string;
+        };
+        /** DnsRecordOut */
+        readonly DnsRecordOut: {
+            /** Purpose */
+            readonly purpose: string;
+            /** Type */
+            readonly type: string;
+            /** Name */
+            readonly name: string;
+            /** Value */
+            readonly value: string;
+            /** Priority */
+            readonly priority?: number | null;
+            /** Ok */
+            readonly ok?: boolean | null;
+            /**
+             * Found
+             * @default []
+             */
+            readonly found: readonly string[];
+        };
+        /** MailDomainListOut */
+        readonly MailDomainListOut: {
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Items */
+            readonly items: readonly components["schemas"]["MailDomainOut"][];
+        };
+        /** MailDomainOut */
+        readonly MailDomainOut: {
+            /** Id */
+            readonly id: number;
+            /** Name */
+            readonly name: string;
+            /** Status */
+            readonly status: string;
+            /** Receiving */
+            readonly receiving: boolean;
+            /** Mx Provider */
+            readonly mx_provider: string;
+            /** Suspended Reason */
+            readonly suspended_reason: string;
+            /** Daily Send Cap */
+            readonly daily_send_cap: number;
+            /** Records */
+            readonly records: readonly components["schemas"]["DnsRecordOut"][];
+            /** Routes */
+            readonly routes: readonly components["schemas"]["MailRouteOut"][];
+            /** Can Manage */
+            readonly can_manage: boolean;
+        };
+        /** MailRouteOut */
+        readonly MailRouteOut: {
+            /** Id */
+            readonly id: number;
+            /** Local Part */
+            readonly local_part: string;
+            /** Address */
+            readonly address: string;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Agent Slug
+             * @default
+             */
+            readonly agent_slug: string;
+            /** Forward To User Id */
+            readonly forward_to_user_id?: number | null;
+            /**
+             * Forward To Email
+             * @default
+             */
+            readonly forward_to_email: string;
+            /** Enabled */
+            readonly enabled: boolean;
+        };
+        /** MailDomainIn */
+        readonly MailDomainIn: {
+            /** Name */
+            readonly name: string;
+        };
+        /** MailDomainPatchIn */
+        readonly MailDomainPatchIn: {
+            /** Daily Send Cap */
+            readonly daily_send_cap?: number | null;
+            /**
+             * Unsuspend
+             * @default false
+             */
+            readonly unsuspend: boolean;
+        };
+        /** MailRouteIn */
+        readonly MailRouteIn: {
+            /** Local Part */
+            readonly local_part: string;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Agent Slug
+             * @default
+             */
+            readonly agent_slug: string;
+            /** Forward To User Id */
+            readonly forward_to_user_id?: number | null;
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
         };
         /** SlackAgentOut */
         readonly SlackAgentOut: {
@@ -21862,6 +22058,174 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["WatchReportOut"];
                 };
+            };
+        };
+    };
+    readonly list_mail_domains: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailDomainListOut"];
+                };
+            };
+        };
+    };
+    readonly add_mail_domain: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MailDomainIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailDomainOut"];
+                };
+            };
+        };
+    };
+    readonly refresh_mail_domain: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly domain_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailDomainOut"];
+                };
+            };
+        };
+    };
+    readonly remove_mail_domain: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly domain_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_mail_domain: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly domain_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MailDomainPatchIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailDomainOut"];
+                };
+            };
+        };
+    };
+    readonly save_mail_route: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly domain_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MailRouteIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailRouteOut"];
+                };
+            };
+        };
+    };
+    readonly delete_mail_route: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly domain_id: number;
+                readonly route_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

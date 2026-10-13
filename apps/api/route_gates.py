@@ -533,6 +533,14 @@ GATES: dict[str, tuple[str, ...]] = {
     "delete_mailbox": ("integrations",),
     "runner_mailboxes": ("member",),  # every workspace the caller is in
     "report_watch": ("events.write",),  # mailbox's agent's workspace membership only
+    # --- apps/mail/api.py
+    "list_mail_domains": ("member",),
+    "add_mail_domain": ("integrations",),
+    "refresh_mail_domain": ("member",),  # re-reads DNS/SES; changes no configuration
+    "update_mail_domain": ("integrations",),
+    "remove_mail_domain": ("integrations",),
+    "save_mail_route": ("integrations",),
+    "delete_mail_route": ("integrations",),
     # --- apps/push/api.py
     "vapid_public_key": ("authenticated",),
     "subscribe": ("self",),
@@ -625,6 +633,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "create_idea": "any member may put their OWN want on a project, in their own words, as themself — a suggested kind=idea task carrying only their quote, with no on_approve; it names nobody else, and recording someone else's words is create_tasks (agent.work)",
     "put_contributor_summary": "an agent's login is a member, and that is who writes a contributor page — only while the person lets agents learn about them and has granted that agent; otherwise only the person themself",
     "add_person_fact": "an agent's login is a member, and that is who writes facts (contract canopy#804); a fact is append-only, attributed, visible to its subject and retractable by them",
+    "refresh_mail_domain": "re-checks DNS and SES verification and caches the answer; changes no configuration",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
 }
 
@@ -643,6 +652,8 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
 # missing one is the gap this exists to close.
 
 SETTINGS: frozenset[str] = frozenset({
+    # mail: workspace email domains and their routes
+    "add_mail_domain", "update_mail_domain", "remove_mail_domain", "save_mail_route", "delete_mail_route",
     # agents: identity, ownership, access, integrations, credentials
     "upsert_agent", "delete_agent", "transfer_owner", "link_canopy_user",
     "grant_admin", "revoke_admin",
@@ -707,6 +718,7 @@ WRITE_KINDS: dict[str, str] = {
 }
 
 NOT_SETTINGS: dict[str, str] = {
+    "refresh_mail_domain": "action",
     # content
     "create_run_doc": "content", "put_run_doc_state": "content", "mark_task_action_applied": "content",
     "create_project": "content", "patch_project": "content",
