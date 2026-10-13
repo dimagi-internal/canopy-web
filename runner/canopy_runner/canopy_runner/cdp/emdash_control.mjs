@@ -218,6 +218,13 @@ const sidebarLabels = () => page.evaluate(() => [...document.querySelectorAll('b
 const openInProject = async (task, project, action = 'click') => {
   if (!await scrollToFind(`New task for ${project}`)) return { found: false };
   await page.waitForTimeout(160);
+  // A COLLAPSED project keeps its header but renders none of its task rows, so the
+  // section reads as empty and every task in it looks deleted — close-task then
+  // reported "absent" (success) for a task emdash still held, and it came straight
+  // back on the next report (hal's box, 2026-10-12). The header's toggle says which
+  // state it is in ("Expand <p>" collapsed, "Collapse <p>" open — read live off emdash
+  // 1.2.8): open it, and leave it open, before reading the section.
+  if (await clickLabel(`Expand ${project}`)) await page.waitForTimeout(400);
   let carried = false;
   let lastTop = -1;
   for (let i = 0; i < 40; i++) {
