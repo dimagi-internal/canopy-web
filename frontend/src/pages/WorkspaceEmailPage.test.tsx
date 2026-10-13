@@ -162,4 +162,20 @@ describe('WorkspaceEmailPage', () => {
     expect(writeText).toHaveBeenCalledWith('v=spf1 include:zohomail.com include:amazonses.com -all')
     await vi.waitFor(() => expect(btn.textContent).toBe('Copied'))
   })
+  it('the form has its own Enabled control, so a disabled edit is visible and reversible', async () => {
+    vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
+      enabled: true, can_manage: true, items: [{ ...domain, routes: [{ ...domain.routes[0], enabled: false }] }],
+    })
+    renderPage()
+    await screen.findByText('*@marshellis.com')
+    const control = screen.getByLabelText('Enabled') as HTMLInputElement
+    expect(control.checked).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    expect(control.checked).toBe(false)
+    fireEvent.click(control)
+    fireEvent.change(screen.getByLabelText('Local part'), { target: { value: 'new' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save address' }))
+    await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
+      local_part: 'new', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true }))
+  })
 })

@@ -144,7 +144,8 @@ def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachm
     # the daily cap. The lock is held during the SES call — acceptable at this volume.
     # A failed send raises inside the transaction, so no MailMessage row is left behind.
     with transaction.atomic():
-        domain = MailDomain.objects.select_for_update().select_related("workspace").get(pk=route.domain_id)
+        domain = MailDomain.objects.select_for_update(of=("self",)).select_related("workspace").get(
+            pk=route.domain_id)
         return _send_locked(route, domain, to=to, cc=cc, subject=subject, text=text, html=html,
                             thread=thread, attachments=attachments)
 

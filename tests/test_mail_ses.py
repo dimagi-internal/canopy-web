@@ -25,6 +25,7 @@ def sesv2(monkeypatch):
     client = boto3.client("sesv2", region_name="us-east-1",
                           aws_access_key_id="x", aws_secret_access_key="x")
     monkeypatch.setattr(ses, "_sesv2", lambda: client)
+    monkeypatch.setattr(ses, "_sesv2_send", lambda: client)
     with Stubber(client) as stub:
         yield stub
 
@@ -165,3 +166,10 @@ def test_presign_sanitises_an_attacker_controlled_filename(on, s3_signing):
 def test_presign_empty_filename_falls_back_to_attachment(on, s3_signing):
     url = ses.presign("incoming/abc", "")
     assert _disposition_of(url) == 'attachment; filename="attachment"; filename*=UTF-8\'\'attachment'
+
+
+def test_sends_use_a_fail_fast_client_and_nothing_else_does(on):
+    # agent_mail.send holds the domain row lock across the SES call.
+    cfg = ses._sesv2_send().meta.config
+    assert (cfg.connect_timeout, cfg.read_timeout, cfg.retries.get("total_max_attempts")) == (5, 20, 3)  # 2 retries
+    assert ses._sesv2().meta.config.read_timeout == 60

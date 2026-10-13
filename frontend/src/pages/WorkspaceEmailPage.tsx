@@ -227,8 +227,10 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                   <td className="py-1.5 pr-3 text-foreground-secondary">{goesTo(r)}</td>
                   <td className="py-1.5 pr-3 text-foreground-secondary">
                     {manage ? (
-                      <input type="checkbox" checked={r.enabled} disabled={busy}
-                        aria-label={`Enabled: ${r.address}`} onChange={() => void toggleRoute(r)} />
+                      <label className="-my-2.5 inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center">
+                        <input type="checkbox" checked={r.enabled} disabled={busy} className="h-3.5 w-3.5 accent-primary"
+                          aria-label={`Enabled: ${r.address}`} onChange={() => void toggleRoute(r)} />
+                      </label>
                     ) : (r.enabled ? 'Yes' : 'No')}
                   </td>
                   {manage && (
@@ -275,6 +277,11 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                 {members.map((m) => <option key={m.user_id} value={m.user_id}>{`${m.email} (${m.role})`}</option>)}
               </select>
             )}
+            <label className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 text-[12px] text-foreground-secondary sm:min-h-0">
+              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)}
+                aria-label="Enabled" className="h-3.5 w-3.5 accent-primary" />
+              Enabled
+            </label>
             <button type="button" className={primary} disabled={busy || !canSave} onClick={() => void saveRoute()}>
               Save address
             </button>

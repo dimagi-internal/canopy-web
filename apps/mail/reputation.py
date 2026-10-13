@@ -21,8 +21,9 @@ MAX_COMPLAINT = 0.0008
 BURST_WINDOW = dt.timedelta(hours=1)
 BURST_HARD_BOUNCES = 10
 _KINDS = ("Send", "Delivery", "Bounce", "Complaint", "Reject")
-# Only these can push a rate over a limit. A Send still counts — it is the denominator —
-# so it is recorded, just never the trigger for an evaluation.
+# These raise a rate, so each one is evaluated. A Send only lowers rates — except the one
+# that brings the window to MIN_SENDS, which makes the earlier bounces count for the first
+# time — so a Send is evaluated only then. Every event is recorded either way.
 _EVALUATE_ON = ("Bounce", "Complaint", "Reject")
 RETAIN = dt.timedelta(days=8)  # the 7-day window plus a day; older events are never read
 _STATUS = {"Delivery": MailMessage.DELIVERED, "Bounce": MailMessage.BOUNCED,
@@ -64,7 +65,8 @@ def record(event: dict, *, sns_message_id: str = "") -> None:
         MailMessage.objects.filter(ses_message_id=msg_id).update(delivery_status=_STATUS[kind])
     # Opportunistic prune of this domain only: a small delete on the (domain, kind, at) index.
     MailEvent.objects.filter(domain=domain, at__lt=timezone.now() - RETAIN).delete()
-    if kind in _EVALUATE_ON:
+    if kind in _EVALUATE_ON or (kind == "Send" and MailEvent.objects.filter(
+            domain=domain, kind="Send", at__gte=timezone.now() - WINDOW).count() == MIN_SENDS):
         evaluate(domain)
 
 

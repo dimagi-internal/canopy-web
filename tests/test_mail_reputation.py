@@ -180,3 +180,15 @@ def test_record_prunes_this_domains_events_older_than_8_days(d):
     reputation.record(_ev("Delivery"))
     assert MailEvent.objects.filter(domain=d).count() == 3  # 2 inside 8 days + the new one
     assert MailEvent.objects.filter(domain=other).count() == 4
+
+
+def test_the_send_that_reaches_min_sends_is_evaluated(d, monkeypatch):
+    _events(d, "Send", reputation.MIN_SENDS - 1)
+    _events(d, "Bounce", 5)  # 10 % — only counted once there are MIN_SENDS sends
+    reputation.record(_ev("Send"))
+    d.refresh_from_db()
+    assert d.status == "suspended" and "bounce rate" in d.suspended_reason
+    seen = []
+    monkeypatch.setattr(reputation, "evaluate", lambda dom, **kw: seen.append(dom.pk))
+    reputation.record(_ev("Send"))  # MIN_SENDS + 1: not the crossing send
+    assert seen == []
