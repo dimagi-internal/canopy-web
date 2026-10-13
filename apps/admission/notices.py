@@ -29,6 +29,7 @@ import re
 from email.utils import parseaddr
 
 from django.core.mail import EmailMessage
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import AdmissionNotice, AdmissionRule, AdmissionSettings
@@ -106,6 +107,13 @@ def _why_not_reply(turn, agent, sender: str) -> str:
         own.add(agent.user.email.lower())
     if sender in own:
         return "the agent's own mailbox"
+    # By address too, not only by how the turn was typed: an agent writing from its own
+    # login can be recorded as a member, and it must still never get an automatic reply.
+    from apps.agents.models import Agent
+
+    if (Agent.objects.filter(Q(email__iexact=sender) | Q(user__email__iexact=sender)).exists()
+            or InboundMailbox.objects.filter(address__iexact=sender).exists()):
+        return "the sender is another agent"
     if SystemSender.objects.filter(account__workspace_id=agent.workspace_id, address__iexact=sender).exists():
         return "a system sender of this workspace"
     return ""
