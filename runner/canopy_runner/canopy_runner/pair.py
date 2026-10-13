@@ -23,7 +23,6 @@ from __future__ import annotations
 import json
 import os
 import platform
-import pwd
 import shutil
 import socket
 import subprocess
@@ -31,6 +30,7 @@ import urllib.request
 from pathlib import Path
 
 from .client import Client
+from .platform_jobs import process_account
 
 DEFAULT_BASE_URL = "https://canopy.dimagi.com"
 DEFAULT_TOKEN_REF = "@~/.claude/canopy/workbench-token"
@@ -53,7 +53,7 @@ class PairError(Exception):
 def macos_user() -> str:
     """The account from the UID, never $LOGNAME/$USER: a session with LOGNAME=root
     once pinned a runner to an account that doesn't exist (#1008)."""
-    return pwd.getpwuid(os.getuid()).pw_name
+    return process_account()
 
 
 def default_runner_name(user: str) -> str:

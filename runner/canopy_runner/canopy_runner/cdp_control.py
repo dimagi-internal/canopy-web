@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import json
 import os
-import pwd
 import socket
 import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from .platform_jobs import process_account
 
 SIDECAR = Path(__file__).parent / "cdp" / "emdash_control.mjs"
 # The one dependency emdash_control.mjs imports. Its presence is the cheap,
@@ -86,7 +87,7 @@ def _account() -> str:
     pinned ``root@…`` into ~/.canopy/host-id, and the pin made it permanent — so the
     fleet list showed a laptop runner owned by "root" and session ownership was keyed
     on an account that does not exist. The uid cannot disagree with the account."""
-    return pwd.getpwuid(os.getuid()).pw_name
+    return process_account()
 
 
 def host_id() -> str:

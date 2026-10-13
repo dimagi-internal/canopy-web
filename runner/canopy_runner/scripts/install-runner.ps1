@@ -188,9 +188,13 @@ try {
     $tar = Join-Path $Tmp "src.tar"
     & git -C $Repo archive --output $tar $Ref
     if ($LASTEXITCODE -ne 0) { Fail "git archive failed" }
-    # bsdtar ships in Windows 10 1803+ as tar.exe.
-    & tar -x -f $tar -C $Tmp
-    if ($LASTEXITCODE -ne 0) { Fail "tar extraction failed (is tar.exe present? Windows 10 1803+)" }
+    # bsdtar ships in Windows 10 1803+ as System32\tar.exe. Call it by full path, not
+    # bare `tar`: from a shell with Git for Windows on PATH, `tar` resolves to GNU tar,
+    # which reads "C:\..." as host "C" and dies with "Cannot connect to C: resolve failed".
+    $sysTar = Join-Path $env:SystemRoot "System32\tar.exe"
+    if (-not (Test-Path $sysTar)) { Fail "tar.exe not found at $sysTar (Windows 10 1803+ ships it)" }
+    & $sysTar -x -f $tar -C $Tmp
+    if ($LASTEXITCODE -ne 0) { Fail "tar extraction failed ($sysTar)" }
 
     # Stamp build provenance into the TEMP tree only -- never the working checkout.
     $buildInfo = @"

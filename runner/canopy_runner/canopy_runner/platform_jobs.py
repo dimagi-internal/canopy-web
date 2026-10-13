@@ -49,6 +49,24 @@ def is_windows() -> bool:
     return os.name == "nt"
 
 
+def process_account() -> str:
+    """The account this process RUNS AS, from the OS, never from the environment.
+
+    Not ``getpass.getuser()``: that reads LOGNAME/USER/USERNAME first, and a
+    session launched with LOGNAME=root once pinned a runner to an account that
+    does not exist (#1008). POSIX asks the uid; Windows asks GetUserNameW (what
+    ``os.getlogin()`` calls there), which reads the process token. ``pwd`` is
+    imported inside the POSIX branch for the same reason ``os.getuid()`` is
+    above: it does not exist on Windows, and a module-level import made every
+    canopy-runner command die with ModuleNotFoundError before it started.
+    """
+    if is_windows():
+        return os.getlogin()
+    import pwd
+
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
 def updater_job_name() -> str:
     """What the updater job is called on THIS box — for log lines and errors."""
     return WINDOWS_UPDATER_TASK if is_windows() else UPDATER_LABEL
