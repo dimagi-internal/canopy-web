@@ -223,9 +223,27 @@ describe('AgentProjectPage', () => {
       'https://drive.google.com/drive/folders/abc',
     )
     expect(screen.getByText(/dimagi\/connect/)).toBeTruthy()
-    expect(screen.getByText(/jonathan@dimagi\.com/)).toBeTruthy()
+    // The owner is named once, in the overview; the select alone says the status.
+    expect(screen.queryByText(/jonathan@dimagi\.com/)).toBeNull()
+    expect(screen.getByText('Owned by Jonathan Jackson, built with Eva.')).toBeTruthy()
     // No second page to send people to.
     expect(screen.queryByText(/Team view/)).toBeNull()
+  })
+
+  it('lists each idea once: its task stays out of the work, its subtasks are in it', async () => {
+    getProject.mockResolvedValue(
+      detail({
+        tasks: [
+          task({ ext_id: 'T5', title: 'An idea', kind: 'idea' }),
+          task({ ext_id: 'T6', title: 'Work toward it', parent_ext_id: 'T5' }),
+          task({ ext_id: 'T1', title: 'Live one' }),
+        ],
+      }),
+    )
+    show()
+    await screen.findByTestId('task-T1')
+    const cards = screen.getAllByTestId(/^task-T/).map((el) => el.getAttribute('data-testid'))
+    expect(cards).toEqual(['task-T6', 'task-T1'])
   })
 
   it('lists live tasks before finished ones, and turns link to the Turns page', async () => {

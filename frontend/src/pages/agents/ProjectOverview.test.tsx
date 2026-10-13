@@ -7,15 +7,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-const { getProjectTeam, addIdea } = vi.hoisted(() => ({
+const { getProjectTeam, addIdea, actOnTask } = vi.hoisted(() => ({
   getProjectTeam: vi.fn<(slug: string, ref: string) => Promise<unknown>>(),
   addIdea: vi.fn<(slug: string, ref: string, body: { quote: string }) => Promise<unknown>>(),
+  actOnTask: vi.fn(async () => ({})),
 }))
 
 vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
   getProjectTeam,
   addIdea,
+  actOnTask,
 }))
 
 const { ProjectOverview } = await import('./ProjectOverview')
@@ -149,6 +151,18 @@ describe('ProjectOverview', () => {
     show()
     await screen.findByTestId('project-overview')
     expect(screen.getAllByTestId('mark-shipped')).toHaveLength(2)
+  })
+
+  it('asks before marking an idea shipped', async () => {
+    getProjectTeam.mockResolvedValue(team({ my_person_id: 7 }))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    show()
+    await screen.findByTestId('project-overview')
+    fireEvent.click(screen.getAllByTestId('mark-shipped')[0])
+    expect(actOnTask).not.toHaveBeenCalled()
+    fireEvent.click(screen.getAllByTestId('mark-shipped')[0])
+    expect(actOnTask).toHaveBeenCalledWith('hal', 'T71', 'done')
+    confirm.mockRestore()
   })
 
   it('names each idea’s task and its work for whoever runs it', async () => {

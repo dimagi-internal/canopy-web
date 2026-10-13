@@ -200,6 +200,8 @@ function MarkShipped({ agent, idea, onDone }: { agent: string; idea: IdeaOut; on
         type="button"
         disabled={busy}
         onClick={() => {
+          // One click otherwise moves it to Built for everyone, sitting next to every idea.
+          if (!window.confirm(`Mark “${idea.title || idea.quote}” shipped? It moves to Built.`)) return
           setBusy(true)
           setError(null)
           actOnTask(agent, idea.ext_id, 'done')
