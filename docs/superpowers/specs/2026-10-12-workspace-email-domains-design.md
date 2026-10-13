@@ -103,8 +103,9 @@ both headers from the thread.
    root SPF (a **merged** suggestion when one exists, e.g.
    `v=spf1 include:zohomail.com include:amazonses.com -all`); a starter DMARC
    `p=none; rua=` record; and the root MX → `inbound-smtp.us-east-1.amazonaws.com`.
-3. Status flips to `verified` when SES reports DKIM success (polled on page view + a
-   periodic task). Sending works from here.
+3. Status flips to `verified` when SES reports DKIM success — refreshed lazily on every
+   domain read (and `manage.py mail_refresh`); canopy-web has no periodic scheduler and
+   this needs none. Sending works from here.
 4. **MX is shown as its own "Receiving" status.** Before it is live the page names the
    current MX provider ("Zoho currently receives mail for this domain — switching MX
    moves all of it here") so nobody breaks a working mailbox by accident.
@@ -124,10 +125,12 @@ SES → S3 `incoming/<id>` + SNS → `POST /api/mail/ses/inbound/`:
    - **forward:** re-send through SES as `"<Orig Name> via <domain>"
      <canopy-forwarder@<domain>>`, `Reply-To:` original sender, original
      To/Date/subject, `X-Original-From`, body + attachments intact, to the user's login
-     email. Log to `MailForwardLog`. Fails → retried by the periodic task while the raw
-     object exists (7 days).
+     email. Log to `MailForwardLog`. A failed send returns 500 so **SNS retries** (the
+     subscription's delivery policy retries for ~6 h); the `message_id` dedupe makes a
+     retry safe.
    - **drop:** log only.
-4. Always return 200 to SNS after a durable log row exists (SNS retries otherwise).
+4. Return 200 once the message is durably handled (stored, forwarded, or logged as
+   dropped); 500 only for a transient failure worth an SNS retry.
 
 ### Agent turn
 For an agent-routed message, `mail` calls `harness.services.enqueue_turn` exactly as the
@@ -137,11 +140,14 @@ runner's inbox loop does for Gmail: origin `email`, idempotency key
 "ses", message_count, headers: [Authentication-Results]}`. Skipped (stored, no turn):
 the agent's own address as sender, and automated mail (`Auto-Submitted` ≠ `no`,
 `Precedence: bulk|list|junk`, `List-Unsubscribe`) — the same positive-marker,
-fail-open rule as `inbox_rules`. Admission rules apply to the turn as to any other.
+fail-open rule as `inbox_rules`. Admission rules apply to the turn as to any other. Sender grading: `enqueue_turn` gains
+ a server-only `authserv_id` kwarg (not on the REST schema) so SES mail is graded
+ against `amazonses.com` (`MAIL_SES_AUTHSERV_ID`) while runner-posted Gmail turns keep
+ `INBOUND_EMAIL_AUTHSERV_ID` — a runner can never choose its own trusted receiver.
 No runner reads the mailbox; the doorbell is the turn itself.
 
 ### Agent reads and sends (REST, so MCP for free)
-Under `/api/w/{ws}/mail/` (gate: `AGENT_WORK` for an agent's own mailbox; `READ` to view
+Under `/api/mail/…/{workspace}` (the `apps/inbound` path idiom; gate: `AGENT_WORK` for an agent's own mailbox; `READ` to view
 threads on canopy-web; `INTEGRATIONS` for domains/routes):
 - `GET resolve?address=` → `{backend: "ses", agent}` or 404 (caller falls back to Gmail).
 - `GET threads?agent=`, `GET threads/{uuid}` (messages + attachment links).
