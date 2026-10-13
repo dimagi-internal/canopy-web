@@ -333,7 +333,7 @@ Framework tier. Any agent with Slack on can be reached by mention, DM, `/canopy 
 - `GET /api/slack-config/{workspace}` (member) — The workspace's Slack connection.
 - `PUT|DELETE /api/slack-config/{workspace}/config-token` (owner) — Give / withdraw the Slack **app configuration token** (refresh half; rotated on receipt, stored encrypted, refreshed under a row lock) that lets canopy manage the app's slash commands by editing its manifest. 422 if Slack refuses it.
 - `POST /api/slack-config/{workspace}/sync` (admin+) — Reconcile slash commands now (also runs on every switch flip): adds `/canopy` and `/<slug>` per Slack-enabled agent across every linked tenant, removes only canopy's own commands, writes the rest of the manifest back as exported. A slug over 32 chars is reported, not truncated.
-- `PUT /api/slack-config/{workspace}/history` (admin+) — Whether `@canopy <agent> --history <minutes|time> <ask>` may hand the agent the channel's recent messages, and the longest window.
+- `PUT /api/slack-config/{workspace}/history` (admin+) — Whether `@canopy <agent> --history <minutes|time|Nmsgs> <ask>` may hand the agent the channel's recent messages, and the longest window.
 - `POST /api/slack-config/{workspace}/declare-agent` (owner) — Declare the Slack app an agent (manifest: `features.agent_view`, `assistant:write`, agent events) so Slack draws its own Working… indicator and Stop button. One-way: Slack cannot undo it.
 - `/api/slack-config/` is deliberately not under `/api/slack/`, which is allowlisted for Slack's anonymous signed webhooks. UI: `/w/:workspace/settings/slack`.
 
