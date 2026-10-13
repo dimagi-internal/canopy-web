@@ -266,9 +266,9 @@ def commands(request: HttpRequest) -> HttpResponse:
         return _ephemeral(f"Link your canopy account: {services.link_url(team_id, slack_user_id)}")
     if word in ("", "help", "agents"):
         return _ephemeral(services.agent_list(installation)
-                          + " Add `--history <minutes, time or messages>` before your ask to give the agent"
-                          " this channel's recent messages, e.g. `/canopy hal --history 30 pick this up`,"
-                          " `--history 9am` (your Slack timezone) or `--history 5msgs`."
+                          + " Add `--history` before your ask to give the agent this channel's recent"
+                          " messages: `/canopy hal --history --min 30 pick this up`, `--history --msgs 5`"
+                          " or `--history 9am` (your Slack timezone)."
                           " `/canopy cloud` sends anything of yours stuck behind an offline"
                           " runner to a cloud runner (runner admins only).")
     if word == services.CLOUD_WORD:
@@ -287,9 +287,9 @@ def commands(request: HttpRequest) -> HttpResponse:
     if not ask:
         usage = f"/{agent.slug}" if command == agent.slug else f"/canopy {agent.slug}"
         return _ephemeral(f"What would you like `{agent.slug}` to do? `{usage} <ask>` — or"
-                          f" `{usage} --history 30 <ask>` to include the channel's last 30 minutes"
-                          " (or `--history 9am` for everything since 9 on your clock, or"
-                          " `--history 5msgs` for the last 5 messages).")
+                          f" `{usage} --history --min 30 <ask>` to include the channel's last 30 minutes"
+                          " (or `--history --msgs 5` for its last 5 messages, or `--history 9am` for"
+                          " everything since 9 on your clock).")
     anchor = f"<@{slack_user_id}> asked *{agent.slug}*: {ask}"
     try:
         root_ts = client.post_message(installation.bot_token, channel=channel_id, text=anchor)

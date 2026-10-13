@@ -8,8 +8,8 @@ said. Design: `docs/superpowers/specs/2026-09-18-slack-front-door-design.md`
 § "Feeding it context from several threads" — its guarantees are this module's:
 
 1. **Only on request — and the request is a flag, not a phrase.** `--history`
-   with a whole number of minutes, a clock time (`9am`, `14:30`) or a message
-   count (`5msgs`, `5 messages`) must be the first thing in the ask; English that merely talks about reading back never
+   with a unit and a number (`--min 30`, `--msgs 5`), a bare number of minutes or
+   a clock time (`9am`, `14:30`) must be the first thing in the ask; English that merely talks about reading back never
    matches, and a malformed flag is an error, never a guess. A clock time is read
    on the ASKER's clock (their Slack profile timezone) as its most recent past
    occurrence; with no timezone to read it in, it is refused, never taken as UTC.
@@ -75,22 +75,24 @@ _TWENTY_FOUR = re.compile(r"^(?P<h>\d{1,2}):(?P<m>\d{2})$")
 #: silent misparse, so it is refused with the one-word spelling.
 _SPLIT_MERIDIEM = re.compile(r"^\s+(?:am|pm)(?=\s|$)", re.IGNORECASE)
 
-#: A count of messages: `5msgs`, `5msg`, `5messages` as one word, or `5 messages`
-#: as two. The two-word form must be caught, not read as `5` minutes and an ask
-#: starting "messages" — the same silent misparse `_SPLIT_MERIDIEM` refuses.
-_COUNT = re.compile(r"^(?P<n>\d+)(?:msgs?|messages?)$", re.IGNORECASE)
+#: The unit, said as its own flag with the number after: `--history --min 30`,
+#: `--history --msgs 5` (also `--min=30`, `--msgs=5`, and the dash Slack
+#: auto-corrects `--` into). A bare `--history 30` is still minutes.
+_UNIT = re.compile(r"^(?:--|—|–)(?P<unit>mins?|minutes?|msgs?|messages?)(?:=(?P<n>\S*))?$", re.IGNORECASE)
+_NEXT = re.compile(r"^\s+(?P<n>\S+)")
+#: `5msgs` / `5 messages`: a count with the unit after the number. Read as `5`
+#: minutes it would be a silent misparse, so it is refused with `--msgs 5`.
+_COUNT_AFTER = re.compile(r"^(?P<n>\d+)(?:msgs?|messages?)$", re.IGNORECASE)
 _SPLIT_COUNT = re.compile(r"^\s+(?:msgs?|messages?)(?=\s|$)", re.IGNORECASE)
 
 
 def usage(max_minutes: int) -> str:
-    return ("Usage: `--history <minutes, time or messages> <ask>` as the first thing you type — "
-            "e.g. `--history 10 pick this up`, `--history 9am catch me up` or "
-            "`--history 5msgs summarise`. "
-            f"Minutes are a whole number, 1–{max_minutes}. A time (`9am`, `9:30pm`, `14:30`) is in "
-            "your Slack timezone and means the last time the clock read that — before midnight "
-            f"it can be yesterday — no more than {max_minutes} minutes back. A message count "
-            f"(`5msgs`, or `5 messages`) is the channel's newest messages, 1–{message_ceiling()}, "
-            f"from no more than {max_minutes} minutes back.")
+    return ("Usage: `--history --min <minutes> <ask>` or `--history --msgs <count> <ask>` as the first "
+            "thing you type — e.g. `--history --min 30 pick this up` or `--history --msgs 5 summarise`. "
+            f"Minutes are a whole number, 1–{max_minutes}; a count is the channel's newest messages, "
+            f"1–{message_ceiling()}, from no more than {max_minutes} minutes back. `--history 9am` "
+            "(also `9:30pm`, `14:30`) reads back to that time on your Slack clock — before midnight "
+            f"it can be yesterday — no more than {max_minutes} minutes back.")
 
 
 @dataclass(frozen=True)
@@ -177,15 +179,24 @@ def parse(prompt: str, *, max_minutes: int, tz: Callable[[], str] | None = None,
         word = rest.split()[0]
         raise HistoryFlagError(f"`--history {arg} {word}` — write the time as one word, "
                                f"`--history {arg}{word.lower()}`. {usage(max_minutes)}")
-    count_m = _COUNT.match(arg)
-    if count_m is None and arg.isdigit() and _SPLIT_COUNT.match(rest):
-        word = _SPLIT_COUNT.match(rest)
-        count_m, rest = _COUNT.match(arg + word.group(0).strip()), rest[word.end():]
-    if count_m is not None:
-        n = int(count_m["n"])
-        if not 1 <= n <= message_ceiling():
-            raise HistoryFlagError(f"`--history {arg}` — {usage(max_minutes)}")
-        return Window(max_minutes, last=n), rest.strip()
+    unit = _UNIT.match(arg)
+    if unit is not None:
+        n, said = unit["n"], arg
+        if n is None:  # the number is the next word
+            nxt = _NEXT.match(rest)
+            n, rest = (nxt["n"], rest[nxt.end():]) if nxt else ("", rest)
+            said = f"{arg} {n}".strip()
+        messages = unit["unit"].lower().startswith(("msg", "message"))
+        top = message_ceiling() if messages else max_minutes
+        if not (n or "").isdigit() or not 1 <= int(n) <= top:
+            raise HistoryFlagError(f"`--history {said}` — {usage(max_minutes)}")
+        win = Window(max_minutes, last=int(n)) if messages else Window(int(n))
+        return win, rest.strip()
+    count_after = _COUNT_AFTER.match(arg) or (arg.isdigit() and _SPLIT_COUNT.match(rest))
+    if count_after:
+        n = re.match(r"\d+", arg).group(0)
+        raise HistoryFlagError(f"`--history {arg}…` — put the unit first: `--history --msgs {n}`. "
+                               f"{usage(max_minutes)}")
     if arg.isdigit():
         if not 1 <= int(arg) <= max_minutes:
             raise HistoryFlagError(f"`--history {arg}` — {usage(max_minutes)}")

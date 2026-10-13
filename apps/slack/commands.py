@@ -153,7 +153,7 @@ def command_name(slug: str) -> str | None:
 
 #: Slack shows a command's usage hint as you type it — the one place someone
 #: learns that `--history` exists without having been told (`window.py`).
-HISTORY_HINT = "[--history <minutes, time or messages, e.g. 30, 9am or 5msgs> to include recent channel messages] "
+HISTORY_HINT = "[--history --min <n> | --msgs <n> | <time, e.g. 9am> to include recent channel messages] "
 
 
 def desired_commands(installation: SlackInstallation) -> tuple[dict[str, dict], list[str]]:
