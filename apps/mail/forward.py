@@ -7,12 +7,14 @@ no longer verify over the rewritten headers.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from email import policy
 from email.parser import BytesParser
 from email.utils import formataddr
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from apps.workspaces import services as wsvc
 
@@ -44,7 +46,7 @@ def build(route, parsed, raw: bytes, recipient: str) -> bytes:
         return _rewrite(BytesParser(policy=policy.compat32).parsebytes(raw), route, parsed, recipient)
 
 
-SENDING = "sending"
+STALE_CLAIM = timedelta(minutes=10)  # a "sending" claim older than this was orphaned by a crash
 
 
 def _claim(route, parsed, recipient, status, user, error="") -> MailForwardLog | None:
@@ -78,9 +80,14 @@ def forward(route, parsed, raw: bytes, recipient: str) -> str:
         if _claim(route, parsed, recipient, MailForwardLog.DROPPED, user, drop[1]) is None:
             return "duplicate"
         return drop[0]
-    row = _claim(route, parsed, recipient, SENDING, user)
+    row = _claim(route, parsed, recipient, MailForwardLog.SENDING, user)
     if row is None:
-        return "duplicate"
+        now = timezone.now()
+        key = dict(domain=route.domain, message_id=parsed.message_id, recipient=recipient)
+        if MailForwardLog.objects.filter(status=MailForwardLog.SENDING, created_at__lt=now - STALE_CLAIM,
+                                         **key).update(created_at=now) != 1:
+            return "duplicate"
+        row = MailForwardLog.objects.get(**key)
     try:
         ses.send_raw(from_addr=f"{settings.MAIL_FORWARDER_LOCAL_PART}@{route.domain.name}",
                      to=[user.email], raw=build(route, parsed, raw, recipient))

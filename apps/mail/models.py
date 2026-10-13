@@ -152,7 +152,7 @@ class MailAttachment(models.Model):
 
 class MailForwardLog(models.Model):
     """One row per forwarded message — no body: canopy keeps no human mail it only passes on."""
-    FORWARDED, FAILED, DROPPED = "forwarded", "failed", "dropped"
+    FORWARDED, FAILED, DROPPED, SENDING = "forwarded", "failed", "dropped", "sending"
 
     domain = models.ForeignKey(MailDomain, on_delete=models.CASCADE, related_name="forwards")
     route = models.ForeignKey(MailRoute, null=True, on_delete=models.SET_NULL, related_name="+")

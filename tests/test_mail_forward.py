@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from email import policy
 from email.parser import BytesParser
 from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 from apps.mail import forward, parse, ses
 from apps.mail.models import MailDomain, MailForwardLog, MailRoute
@@ -124,3 +126,30 @@ def test_loop_is_dropped(route, email):
     assert forward.forward(route, parse.parse(raw), raw, "a@marshellis.com") == "dropped:loop"
     assert route.sent == []
     assert MailForwardLog.objects.get().error == "forwarding loop"
+
+
+def _sending_row(route, p, age_minutes):
+    row = MailForwardLog.objects.create(
+        domain=route.domain, route=route, message_id=p.message_id, recipient="a@marshellis.com",
+        status="sending", destination=route.forward_to)
+    MailForwardLog.objects.filter(pk=row.pk).update(created_at=timezone.now() - timedelta(minutes=age_minutes))
+    return row
+
+
+def test_stale_sending_claim_is_reclaimed_and_forwards_once(route):
+    raw = (FIX / "plain.eml").read_bytes()
+    p = parse.parse(raw)
+    _sending_row(route, p, 11)
+    assert forward.forward(route, p, raw, "a@marshellis.com") == "forwarded"
+    assert len(route.sent) == 1
+    assert MailForwardLog.objects.get().status == "forwarded"
+    assert forward.forward(route, p, raw, "a@marshellis.com") == "duplicate"
+    assert len(route.sent) == 1
+
+
+def test_fresh_sending_claim_is_duplicate(route):
+    raw = (FIX / "plain.eml").read_bytes()
+    p = parse.parse(raw)
+    _sending_row(route, p, 1)
+    assert forward.forward(route, p, raw, "a@marshellis.com") == "duplicate"
+    assert route.sent == []
