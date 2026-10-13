@@ -103,8 +103,10 @@ export function IdeaRow({
   return (
     <li data-testid={`idea-${idea.ext_id}`} className="px-3 py-2">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        {showRefs && <span className="text-[11px] text-muted-foreground">{idea.ext_id}</span>}
-        <span className="min-w-0 flex-1 text-[13px] text-foreground">
+        {/* Full width on a phone, so the stage track and control wrap below
+            it rather than squeezing it to a word per line. */}
+        <span className="w-full min-w-0 text-[13px] text-foreground sm:w-auto sm:flex-1">
+          {showRefs && <span className="mr-2 text-[11px] text-muted-foreground">{idea.ext_id}</span>}
           {idea.title || `“${idea.quote}”`}
         </span>
         <StageTrack stage={idea.stage} />

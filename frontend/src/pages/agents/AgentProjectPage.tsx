@@ -95,10 +95,11 @@ export function AgentProjectPage(): JSX.Element {
     )
   }
 
-  const tasks = liveFirst(detail.tasks ?? [])
+  // The ideas are listed once, in the overview; here is only the agent's work.
+  // An idea's subtasks have no parent on this list, so they surface as cards.
+  const tasks = liveFirst((detail.tasks ?? []).filter((t) => t.kind !== 'idea'))
   const nested = nestTasks(tasks)
   const turns = detail.recent_turns ?? []
-  const owner = detail.owner_email || detail.owner_note
   const pageHref = (personId: number) =>
     `/w/${workspace}/agents/${agent.slug}/projects/${encodeURIComponent(detail.ext_id)}/people/${personId}`
 
@@ -107,7 +108,8 @@ export function AgentProjectPage(): JSX.Element {
     <>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] text-muted-foreground">
         <span>{detail.ext_id}</span>
-        <StatusChip status={detail.status} />
+        {/* The select says the status for an editor; the chip is for everyone else. */}
+        {!canEdit && <StatusChip status={detail.status} />}
         {canEdit && (
           <label className="inline-flex items-center gap-1.5">
             Status
@@ -135,7 +137,6 @@ export function AgentProjectPage(): JSX.Element {
             </select>
           </label>
         )}
-        {canEdit && owner && <span>Owner: {owner}</span>}
         {detail.drive_folder_url && (
           <a href={detail.drive_folder_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
             Drive folder
@@ -170,7 +171,7 @@ export function AgentProjectPage(): JSX.Element {
           <Section
             id="project-tasks"
             title={`${who}'s work`}
-            description={`The tasks ${who} is doing on this project, open first. An idea's subtasks are the work toward it.`}
+            description={`What ${who} is doing on this project, open first. The ideas themselves are listed above.`}
           >
             {tasks.length === 0 ? (
               <p className="text-[13px] text-muted-foreground">No tasks in this project yet.</p>
