@@ -392,6 +392,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Run a schedule now', 'Pause or edit a schedule', 'Create a new schedule'],
   },
   {
+    path: '/w/:workspace/agents/:slug/mail',
+    title: 'Agent mail',
+    audience: 'Workspace members',
+    what: "The email threads this agent has sent and received, read-only: a dense list of threads beside the open thread, with each message's direction, delivery status, body and attachments.",
+    needsFirst: 'An email address for this agent (Settings → Email, admin).',
+    actions: ['Open a thread to read it', 'Download an attachment'],
+  },
+  {
     path: '/w/:workspace/agents/:slug/skills',
     title: 'Agent skills',
     audience: 'The person(s) who own this agent',

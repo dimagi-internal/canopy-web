@@ -89,6 +89,9 @@ const AgentSettingsSection = lazySection(() =>
 const AgentSkillsSection = lazySection(() =>
   import('./pages/agents/AgentSkillsSection').then((m) => ({ default: m.AgentSkillsSection })),
 )
+const AgentMailSection = lazySection(() =>
+  import('./pages/agents/AgentMailSection').then((m) => ({ default: m.AgentMailSection })),
+)
 const AgentHuddlesSection = lazySection(() =>
   import('./pages/agents/AgentHuddlesSection').then((m) => ({ default: m.AgentHuddlesSection })),
 )
@@ -349,6 +352,7 @@ export const routeTable: RouteObject[] = [
           { path: 'turns', element: <LazySection><AgentTurnsSection /></LazySection> },
           { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
           { path: 'huddles', element: <LazySection><AgentHuddlesSection /></LazySection> },
+          { path: 'mail', element: <LazySection><AgentMailSection /></LazySection> },
           { path: 'settings', element: <LazySection><AgentSettingsSection /></LazySection> },
           // Credentials is a section of Settings now. Old links (and bookmarks)
           // keep working and keep their query, e.g. `?google=ok`.

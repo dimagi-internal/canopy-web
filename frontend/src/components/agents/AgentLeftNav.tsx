@@ -34,6 +34,8 @@ export function AgentLeftNav({ agent, waiting }: { agent: AgentDetailOut; waitin
     { to: 'schedules', label: 'Schedules' },
     // The huddles it led or joined — the tasks they produced are on Tasks.
     { to: 'huddles', label: 'Huddles' },
+    // Read-only: the agent's email threads.
+    { to: 'mail', label: 'Mail' },
     // Skills carries its own history.
     { to: 'skills', label: 'Skills' },
     // Last, and its own entry: every control that CONFIGURES the agent — owner,
