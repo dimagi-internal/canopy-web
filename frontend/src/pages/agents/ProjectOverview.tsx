@@ -81,7 +81,9 @@ export function ProjectOverview({
           </p>
         )}
         {data.links.length > 0 && (
-          <ul className="mt-3 flex flex-wrap gap-2" data-testid="team-links">
+          // Unlabelled, a row of pills read as tags or filters; they are where to go.
+          <ul className="mt-3 flex flex-wrap items-center gap-2" data-testid="team-links" aria-label="Links">
+            <li className="text-[11px] uppercase tracking-wide text-muted-foreground">Links</li>
             {data.links.map((l) => (
               <li key={`${l.label}|${l.url}`}>
                 <a
@@ -107,8 +109,14 @@ export function ProjectOverview({
       {/* Where it stands */}
       <Section id="team-standing" title="Where it stands">
         <div className="space-y-5">
-          <StandingList title="Built" ideas={data.built} empty="Nothing is marked shipped yet." />
-          {data.in_progress.length > 0 && <StandingList title="In progress" ideas={data.in_progress} />}
+          {/* These count IDEAS, not the product: a project whose app is live
+              but whose ideas are all still open must not read "nothing built". */}
+          <StandingList
+            title="Ideas shipped"
+            ideas={data.built}
+            empty="None of the ideas below is shipped yet."
+          />
+          {data.in_progress.length > 0 && <StandingList title="Ideas in progress" ideas={data.in_progress} />}
           <div>
             <h3 className="mb-1 text-[12px] font-medium text-muted-foreground">
               Waiting on a decision ({data.waiting.length})

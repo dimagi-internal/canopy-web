@@ -128,6 +128,15 @@ describe('ProjectOverview', () => {
     expect(sections).toEqual(['Where it stands', 'Ideas', 'People'])
   })
 
+  it('labels the links, and says the standing counts ideas, not the product', async () => {
+    getProjectTeam.mockResolvedValue(team())
+    show()
+    expect((await screen.findByTestId('team-links')).textContent).toMatch(/^Links/)
+    expect(screen.getByText('Ideas shipped')).toBeTruthy()
+    expect(screen.getByText('None of the ideas below is shipped yet.')).toBeTruthy()
+    expect(screen.getByText('Ideas in progress')).toBeTruthy()
+  })
+
   it('lists each open decision as one line with who it waits on', async () => {
     getProjectTeam.mockResolvedValue(team())
     show()
