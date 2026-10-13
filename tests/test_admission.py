@@ -278,6 +278,18 @@ def test_a_person_whose_address_merely_contains_the_letters_is_still_a_person(se
     assert not _NOREPLY.search(sender.partition("@")[0])
 
 
+def test_another_agents_address_gets_no_notice_however_the_turn_was_typed(
+        fleet, django_capture_on_commit_callbacks):
+    hal = fleet["hal"]
+    hal.interface = parse({"capabilities": {"ask": {"callers": ["contact"]}}})
+    hal.save(update_fields=["interface"])
+    Agent.objects.create(slug="ada", name="Ada", workspace=fleet["ws"], owner=fleet["jj"],
+                         email="ada@dimagi-ai.com")
+    notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks,
+                              sender="Ada <ada@dimagi-ai.com>", headers=[])
+    assert notice.status == AdmissionNotice.SKIPPED and "another agent" in notice.detail
+
+
 @pytest.fixture
 def sending(fleet):
     _replies_on(fleet)
