@@ -541,6 +541,12 @@ GATES: dict[str, tuple[str, ...]] = {
     "remove_mail_domain": ("integrations",),
     "save_mail_route": ("integrations",),
     "delete_mail_route": ("integrations",),
+    "resolve_mail_address": ("authenticated",),  # 404 unless the caller is a member of the address's workspace
+    "list_mail_threads": ("member",),
+    "get_mail_thread": ("member",),
+    "reply_mail_thread": ("agent.work",),
+    "send_mail": ("agent.work",),
+    "set_mail_thread_state": ("agent.work",),
     # --- apps/push/api.py
     "vapid_public_key": ("authenticated",),
     "subscribe": ("self",),
@@ -719,6 +725,7 @@ WRITE_KINDS: dict[str, str] = {
 
 NOT_SETTINGS: dict[str, str] = {
     "refresh_mail_domain": "action",
+    "reply_mail_thread": "conversation", "send_mail": "conversation", "set_mail_thread_state": "conversation",
     # content
     "create_run_doc": "content", "put_run_doc_state": "content", "mark_task_action_applied": "content",
     "create_project": "content", "patch_project": "content",

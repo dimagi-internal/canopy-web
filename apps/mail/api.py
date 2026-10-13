@@ -6,6 +6,7 @@ are workspace settings (INTEGRATIONS: admin or owner), audited via route_gates.S
 """
 from __future__ import annotations
 
+import uuid as uuidlib
 from dataclasses import asdict
 
 from django.conf import settings
@@ -19,10 +20,11 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import domains
-from .models import MailDomain, MailRoute
+from . import agent_mail, domains, ses
+from .models import MailDomain, MailMessage, MailRoute, MailThread
 from .schemas import (MailDomainIn, MailDomainListOut, MailDomainOut, MailDomainPatchIn,
-                      MailRouteIn, MailRouteOut)
+                      MailMessageOut, MailReplyIn, MailResolveOut, MailRouteIn, MailRouteOut,
+                      MailSendIn, MailThreadListOut, MailThreadOut, MailThreadStateIn)
 
 router = Router(auth=session_auth, tags=["mail"])
 
@@ -150,3 +152,107 @@ def delete_mail_route(request: HttpRequest, workspace: str, domain_id: int, rout
     audit.note_change(scope=f"mail.route:{r.address}", before=_route_out(r), after=None)
     r.delete()
     return 204, None
+
+
+def _thread(ws, uuid: str) -> MailThread:
+    try:
+        key = uuidlib.UUID(uuid)
+    except ValueError:
+        raise HttpError(404, "no such thread") from None
+    t = MailThread.objects.filter(workspace=ws, uuid=key).select_related("route__agent", "route__domain").first()
+    if t is None:
+        raise HttpError(404, "no such thread")
+    return t
+
+
+def _need(user, ws, cap):
+    if not perms.can(user, ws, cap):
+        raise HttpError(403, "not allowed")
+
+
+def _msg_out(m) -> dict:
+    atts = [{"filename": a.filename, "content_type": a.content_type, "size": a.size,
+             "url": ses.presign(a.s3_key, a.filename)} for a in m.attachments.all()]
+    return {"id": m.pk, "direction": m.direction, "message_id": m.message_id, "from_addr": m.from_addr,
+            "from_name": m.from_name, "to": m.to, "cc": m.cc, "subject": m.subject, "text": m.text,
+            "html": m.html, "delivery_status": m.delivery_status, "created_at": m.created_at.isoformat(),
+            "attachments": atts}
+
+
+def _thread_out(t, *, messages: bool) -> dict:
+    out = {"thread_id": str(t.uuid), "address": t.route.address,
+           "agent": t.route.agent.slug if t.route.agent_id else "", "subject": t.subject,
+           "message_count": t.message_count, "unread": t.unread, "archived": t.archived,
+           "last_message_at": t.last_message_at.isoformat() if t.last_message_at else ""}
+    if messages:
+        out["messages"] = [_msg_out(m) for m in t.messages.prefetch_related("attachments")]
+    return out
+
+
+@router.get("/resolve", response=MailResolveOut, summary="Which mail backend serves an address")
+def resolve_mail_address(request: HttpRequest, address: str) -> dict:
+    domain, route = domains.resolve(address)
+    if (route is None or route.kind != MailRoute.AGENT
+            or domain.workspace_id not in wsvc.user_workspace_slugs(request.user)):
+        raise HttpError(404, "not an SES mailbox")
+    return {"backend": "ses", "workspace": domain.workspace_id, "agent": route.agent.slug}
+
+
+@router.get("/threads/{workspace}", response=MailThreadListOut, summary="List mail threads")
+def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", archived: bool = False) -> dict:
+    ws = _ws(request.user, workspace)
+    qs = MailThread.objects.filter(workspace=ws, archived=archived).select_related("route__agent", "route__domain")
+    if agent:
+        qs = qs.filter(route__agent__slug=agent)
+    return {"items": [_thread_out(t, messages=False) for t in qs[:200]]}
+
+
+@router.get("/threads/{workspace}/{uuid}", response=MailThreadOut, summary="Read a mail thread")
+def get_mail_thread(request: HttpRequest, workspace: str, uuid: str) -> dict:
+    return _thread_out(_thread(_ws(request.user, workspace), uuid), messages=True)
+
+
+@router.post("/threads/{workspace}/{uuid}/reply", response=MailMessageOut, summary="Reply on a thread as its agent")
+def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: MailReplyIn) -> dict:
+    ws = _ws(request.user, workspace)
+    _need(request.user, ws, perms.AGENT_WORK)
+    t = _thread(ws, uuid)
+    to = payload.to or [m.from_addr for m in
+                        t.messages.filter(direction=MailMessage.IN).order_by("-created_at", "-pk")[:1]
+                        if m.from_addr]
+    if not to:
+        raise HttpError(422, "no one to reply to")
+    try:
+        m = agent_mail.send(t.route, to=to, cc=payload.cc, text=payload.text, html=payload.html, thread=t)
+    except agent_mail.SendRefused as exc:
+        raise HttpError(exc.status, str(exc)) from None
+    return _msg_out(m)
+
+
+@router.post("/send/{workspace}", response=MailMessageOut, summary="Start a new thread as an agent")
+def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict:
+    ws = _ws(request.user, workspace)
+    _need(request.user, ws, perms.AGENT_WORK)
+    route = MailRoute.objects.filter(domain__workspace=ws, kind=MailRoute.AGENT, agent__slug=payload.agent,
+                                     enabled=True).select_related("domain", "agent").first()
+    if route is None:
+        raise HttpError(404, f"agent {payload.agent!r} has no mail address here")
+    try:
+        m = agent_mail.send(route, to=payload.to, cc=payload.cc, subject=payload.subject,
+                            text=payload.text, html=payload.html)
+    except agent_mail.SendRefused as exc:
+        raise HttpError(exc.status, str(exc)) from None
+    return _msg_out(m)
+
+
+@router.post("/threads/{workspace}/{uuid}/state", response=MailThreadOut, summary="Mark a thread read/archived")
+def set_mail_thread_state(request: HttpRequest, workspace: str, uuid: str, payload: MailThreadStateIn) -> dict:
+    ws = _ws(request.user, workspace)
+    _need(request.user, ws, perms.AGENT_WORK)
+    t = _thread(ws, uuid)
+    if payload.unread is not None:
+        t.unread = payload.unread
+    if payload.archived is not None:
+        t.archived = payload.archived
+    t.save(update_fields=["unread", "archived"])
+    return _thread_out(t, messages=False)

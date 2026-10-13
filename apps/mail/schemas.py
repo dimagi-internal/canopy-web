@@ -58,3 +58,69 @@ class MailRouteIn(Schema):
     agent_slug: str = ""
     forward_to_user_id: int | None = None
     enabled: bool = True
+
+
+class MailAttachmentOut(Schema):
+    filename: str
+    content_type: str
+    size: int
+    url: str
+
+
+class MailMessageOut(Schema):
+    id: int
+    direction: str
+    message_id: str
+    from_addr: str
+    from_name: str
+    to: list[str]
+    cc: list[str]
+    subject: str
+    text: str
+    html: str
+    delivery_status: str
+    created_at: str
+    attachments: list[MailAttachmentOut] = []
+
+
+class MailThreadOut(Schema):
+    thread_id: str
+    address: str
+    agent: str
+    subject: str
+    message_count: int
+    unread: bool
+    archived: bool
+    last_message_at: str
+    messages: list[MailMessageOut] = []
+
+
+class MailThreadListOut(Schema):
+    items: list[MailThreadOut]
+
+
+class MailReplyIn(Schema):
+    text: str
+    html: str = ""
+    to: list[str] = []
+    cc: list[str] = []
+
+
+class MailSendIn(Schema):
+    agent: str
+    to: list[str]
+    cc: list[str] = []
+    subject: str
+    text: str
+    html: str = ""
+
+
+class MailThreadStateIn(Schema):
+    unread: bool | None = None
+    archived: bool | None = None
+
+
+class MailResolveOut(Schema):
+    backend: str
+    workspace: str
+    agent: str
