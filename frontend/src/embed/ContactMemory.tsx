@@ -18,7 +18,9 @@ import { contactMemorySource, type ContactHcp, type ContactHcpState } from './se
  *   canopy already holds some of theirs, which stays theirs to see, download and delete.
  */
 const pretty = (c: string) => c.replace(/_/g, ' ')
-const PANEL = 'mt-1 max-w-md rounded-md border border-border bg-background p-2 text-[12px]'
+// Hangs below the header, never wider than the frame (the widget panel is narrow).
+const PANEL =
+  'absolute right-0 top-full z-30 mt-1 w-72 max-w-[calc(100vw-1.5rem)] whitespace-normal break-words rounded-md border border-border bg-background p-2 text-left text-[12px] shadow-md'
 const PRIMARY = 'rounded-md border border-border px-2 py-0.5 hover:bg-muted disabled:opacity-50'
 const QUIET = 'rounded-md px-2 py-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50'
 
@@ -96,6 +98,7 @@ export function ContactMemory({
       )
     }
     return (
+      <div className="relative">
       <div role="dialog" aria-label="Let canopy learn from you" className={PANEL}>
         <p className="text-foreground">
           <strong>{agentName}</strong> would like to learn from you
@@ -124,11 +127,12 @@ export function ContactMemory({
         </div>
         {failed && <p className="mt-1 text-destructive">Not saved — try again.</p>}
       </div>
+      </div>
     )
   }
 
   return (
-    <div className="flex flex-col items-start">
+    <div className="relative flex flex-col items-start">
       <span className="flex items-center gap-1">
         {enabled && <SessionMemoryToggles key={epoch} sessionId={sessionId} source={source} />}
         <button type="button" className={QUIET}

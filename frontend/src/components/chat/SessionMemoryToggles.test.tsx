@@ -41,8 +41,8 @@ describe('SessionMemoryToggles', () => {
   it('shows only available features, with their effective state', async () => {
     getSessionMemory.mockResolvedValue({ session_id: 's1', record: feature(true, true), use: feature(false, false) })
     render(<SessionMemoryToggles sessionId="s1" />)
-    await waitFor(() => expect(screen.getByText('Learn from me: on')).toBeTruthy())
-    expect(screen.queryByText(/Use my memory:/)).toBeNull()
+    await waitFor(() => expect(screen.getByText('Learn ✓')).toBeTruthy())
+    expect(screen.queryByText(/Use/)).toBeNull()
   })
 
   it('renders nothing when memory is not on for this person (rollout gate)', async () => {
@@ -59,13 +59,17 @@ describe('SessionMemoryToggles', () => {
     getSessionMemory.mockResolvedValue({ session_id: 's1', record: feature(true, false), use: feature(true, false) })
     setSessionMemory.mockResolvedValueOnce({ session_id: 's1', record: feature(true, false), use: feature(true, false, true) })
     render(<SessionMemoryToggles sessionId="s1" />)
-    await waitFor(() => expect(screen.getByText('Use my memory: off')).toBeTruthy())
-    fireEvent.click(screen.getByText('Use my memory: off'))
-    await waitFor(() => expect(screen.getByText('Use my memory: on')).toBeTruthy())
+    // One compact chip; clicking it opens the panel with a switch per feature.
+    fireEvent.click(await screen.findByText('Learn – · Use –'))
+    const use = () => screen.getByRole('switch', { name: 'Use my memory in this conversation' })
+    expect(use().getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(use())
+    await waitFor(() => expect(screen.getByText('Learn – · Use ✓')).toBeTruthy())
+    expect(use().getAttribute('aria-checked')).toBe('true')
     expect(setSessionMemory).toHaveBeenLastCalledWith('s1', { use: 'on' })
     setSessionMemory.mockResolvedValueOnce({ session_id: 's1', record: feature(true, false), use: feature(true, false) })
-    fireEvent.click(screen.getByText('Use my memory: on'))
-    await waitFor(() => expect(screen.getByText('Use my memory: off')).toBeTruthy())
+    fireEvent.click(use())
+    await waitFor(() => expect(screen.getByText('Learn – · Use –')).toBeTruthy())
     expect(setSessionMemory).toHaveBeenLastCalledWith('s1', { use: 'inherit' })
   })
 
@@ -81,9 +85,9 @@ describe('SessionMemoryToggles', () => {
       grant: vi.fn(),
     }
     render(<SessionMemoryToggles sessionId="s1" source={source} />)
-    await waitFor(() => expect(screen.getByText('Learn from me: on')).toBeTruthy())
+    fireEvent.click(await screen.findByText('Learn ✓ · Use –'))
+    expect(screen.getByRole('dialog', { name: 'Your memory in this conversation' })).toBeTruthy()
     expect(screen.queryByRole('switch')).toBeNull()
-    fireEvent.click(screen.getByText('Learn from me: on'))
     expect(save).not.toHaveBeenCalled()
     const link = screen.getByText('Change in canopy') as HTMLAnchorElement
     expect(link.href).toBe('https://canopy.example/w/connect/chat/s1')
@@ -100,9 +104,9 @@ describe('SessionMemoryToggles', () => {
       grant: vi.fn(),
     }
     render(<SessionMemoryToggles sessionId="s1" source={source} />)
-    await waitFor(() => expect(screen.getByText('Learn from me: on')).toBeTruthy())
+    fireEvent.click(await screen.findByText('Learn ✓'))
     fireEvent.click(screen.getByRole('switch'))
-    await waitFor(() => expect(screen.getByText('Learn from me: off')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Learn –')).toBeTruthy())
     expect(source.save).toHaveBeenCalledWith({ record: 'off' })
     expect(getSessionMemory).not.toHaveBeenCalled()
     expect(setSessionMemory).not.toHaveBeenCalled()
@@ -130,9 +134,8 @@ describe('SessionMemoryToggles', () => {
     render(<SessionMemoryToggles sessionId="s1" />)
     const dialog = await screen.findByRole('dialog', { name: 'Grant Ada access' })
     expect(dialog.textContent).toContain('Ada would like to learn from you')
-    expect(dialog.textContent).toContain("What it learns helps Dimagi's agents help you next time.")
     expect(dialog.textContent).toContain('work context, general preferences · write · for this conversation only')
-    expect(screen.getByText('Learn from me: on, not granted')).toBeTruthy()
+    expect(screen.getByText('Learn ?')).toBeTruthy() // on, but waiting for the person's OK
     expect(grantSessionAgent).not.toHaveBeenCalled() // nothing preselected or sent
   })
 
@@ -190,9 +193,11 @@ describe('SessionMemoryToggles', () => {
       grant: vi.fn(),
     }
     render(<SessionMemoryToggles sessionId="s1" source={source} />)
-    await screen.findByText(/Not granted to Ada yet/)
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect((screen.getByText('grant it in canopy') as HTMLAnchorElement).href).toBe('https://canopy.example/w/connect/chat/s1')
+    fireEvent.click(await screen.findByText('Learn ?'))
+    const panel = screen.getByRole('dialog', { name: 'Your memory in this conversation' })
+    expect(panel.textContent).toContain('Ada not allowed yet')
+    expect(screen.queryByText(/Allow/)).toBeNull()
+    expect((screen.getByText('Change in canopy') as HTMLAnchorElement).href).toBe('https://canopy.example/w/connect/chat/s1')
     expect(source.grant).not.toHaveBeenCalled()
   })
 })
