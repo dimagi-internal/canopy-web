@@ -69,6 +69,17 @@ afterEach(() => {
 })
 
 describe('SessionFeed', () => {
+  it("says why a close failed, in the runner's words, and Retry closes again", async () => {
+    listSessions.mockResolvedValue([s('a', { close_error: 'emdash unreachable over CDP' })])
+    closeSession.mockResolvedValue({ ok: true, closing: true, reason: '' })
+    renderFeed()
+    const note = await screen.findByTestId('feed-close-failed-a')
+    expect(note.textContent).toContain('Close failed:')
+    expect(note.textContent).toContain('emdash unreachable over CDP')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(closeSession).toHaveBeenCalledWith('a'))
+  })
+
   it('asks the list for replies, and shows only sessions waiting on you', async () => {
     listSessions.mockResolvedValue([s('done'), s('busy', { running: true, feed_status: '' }), s('answered', { agent_spoke_last: false, feed_status: '' })])
     renderFeed()

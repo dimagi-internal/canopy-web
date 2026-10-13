@@ -434,8 +434,15 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if total == 0 { note("No open sessions"); return }
         // The CLI sends them busiest-first; a JSON object does not keep that order.
-        for (project, n) in projects.sorted(by: { ($0.value, $1.key) > ($1.value, $0.key) })
-        where !project.isEmpty {
+        for (project, n) in projects.sorted(by: { ($0.value, $1.key) > ($1.value, $0.key) }) {
+            // Listed so the counts add up to the total, but not closable on their
+            // own: with no project a delete would be by name alone, which can take
+            // another agent's session. "All sessions" reports each one to canopy,
+            // where Supervisor says why it stayed open.
+            if project.isEmpty {
+                note("(no project) — \(n) session\(n == 1 ? "" : "s")")
+                continue
+            }
             let item = NSMenuItem(title: "\(project) — \(n) session\(n == 1 ? "" : "s")…",
                                   action: #selector(closeProjectSessions(_:)), keyEquivalent: "")
             item.target = self

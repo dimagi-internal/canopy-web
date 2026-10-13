@@ -1417,10 +1417,32 @@ class CloseOut(Schema):
     #: The emdash project owning `session_key`. The runner REFUSES a delete it
     #: cannot place in exactly one project rather than delete by name alone.
     project: str = ""
+    #: The failure the server already holds for this close ("" for none), so a
+    #: runner retrying every tick reports only when its reason changes.
+    close_error: str = ""
 
 
 class CloseSyncOut(Schema):
     closes: list[CloseOut] = []
+
+
+class CloseResultIn(Schema):
+    session_key: str
+    #: The emdash project the task was looked for in; blank when the runner
+    #: could not tell (a task with no project is never deleted by name alone).
+    project: str = ""
+    ok: bool
+    #: Why it failed, in a short sentence a person can act on. Ignored when ok.
+    error: str = ""
+
+
+class CloseResultsIn(Schema):
+    results: list[CloseResultIn] = []
+
+
+class CloseResultsOut(Schema):
+    #: Bindings whose failed-close record was written or cleared.
+    updated: int
 
 
 InvestigationStatus = Literal["open", "held", "debugger_failed", "resolved", "escalated"]

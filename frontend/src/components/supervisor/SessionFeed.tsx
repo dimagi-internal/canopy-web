@@ -5,7 +5,8 @@ import { closeSession, listSessions, sendMessage, type ChatSession } from '@/api
 import type { AgentOut } from '@/api/agents'
 import { Markdown } from '@/components/Markdown'
 import { relativeTime } from '@/components/activity/turnLog'
-import { CLOSE_POLL_MS, closeIntent, closeResultMessage, settleClosing } from '@/components/chat/closeAction'
+import { CLOSE_POLL_MS, closeFailure, closeIntent, closeResultMessage, settleClosing } from '@/components/chat/closeAction'
+import { CloseFailedNote } from '@/components/chat/CloseFailedNote'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
 import { NewChatMenu } from '@/components/chat/NewChatMenu'
 import { TurnModeBadge } from '@/components/chat/TurnModeBadge'
@@ -360,6 +361,7 @@ function FeedCard({
   // (~10s) un-archives anything it reports open (harness/services.py), so the
   // card came straight back. /close deletes the task; the report then retires it.
   const intent = closeIntent(s)
+  const closeFailed = closeFailure(s)
   const done = async () => {
     if (busy || closing) return
     if (intent.kind === 'blocked') {
@@ -493,7 +495,14 @@ function FeedCard({
           className="text-[13px] placeholder:text-muted-foreground dark:placeholder:text-foreground-secondary"
         />
         {err && <p className="text-[12px] text-destructive">{err}</p>}
-        {stuck && !closing && (
+        {closeFailed && !closing ? (
+          <CloseFailedNote
+            reason={closeFailed}
+            onRetry={() => void done()}
+            busy={busy === 'done'}
+            testId={`feed-close-failed-${s.id}`}
+          />
+        ) : stuck && !closing && (
           <p className="text-[12px] text-destructive" data-testid={`feed-close-stuck-${s.id}`}>
             Still open: {s.runner_name ?? 'its runner'} has not confirmed the close. Try again, or close it in emdash.
           </p>

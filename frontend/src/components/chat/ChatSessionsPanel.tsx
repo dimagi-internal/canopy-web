@@ -7,7 +7,8 @@ import { relativeTime } from '@/components/activity/turnLog'
 import { sessionTargetLabel } from './sessionTargetLabel'
 import { sessionDisplayTitle } from './sessionDisplayTitle'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
-import { closeIntent, closeResultMessage, settleClosing } from './closeAction'
+import { closeFailure, closeIntent, closeResultMessage, settleClosing } from './closeAction'
+import { CloseFailedNote } from './CloseFailedNote'
 import { parkedReason, parkedSummary, partitionByRunnerReachability, repoChoices } from './runnerEligibility'
 import { NewChatMenu } from './NewChatMenu'
 import { TurnModeBadge } from './TurnModeBadge'
@@ -334,6 +335,7 @@ export function ChatSessionsPanel({
             const header = projectHeader(rows, i, sort)
             const parkedWhy = parkedReason(s)
             const intent = closeIntent(s)
+            const closeFailed = closeFailure(s)
             return (
               <li key={s.id}>
                 {header && (
@@ -431,6 +433,15 @@ export function ChatSessionsPanel({
                     {s.id in pendingClose ? 'Closing…' : closingId === s.id ? '…' : '×'}
                   </button>
                 </div>
+                {closeFailed && !(s.id in pendingClose) && (
+                  <CloseFailedNote
+                    reason={closeFailed}
+                    onRetry={() => void onClose(s)}
+                    busy={closingId === s.id}
+                    testId={`session-close-failed-${s.id}`}
+                    className="px-3 pb-2"
+                  />
+                )}
               </li>
             )
           })}

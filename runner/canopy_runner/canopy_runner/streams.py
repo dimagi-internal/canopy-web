@@ -177,6 +177,11 @@ def drain_closes(cfg: Config, client: Client) -> None:
 
     Idempotent by construction — closing a task that is already gone is a no-op,
     and the server retires the request when the task stops being reported.
+
+    A failure is REPORTED, so Supervisor shows "Close failed: <reason>" next to
+    the session instead of the reason living only in this box's log. The server
+    hands back the reason it already holds, so a close retried every tick
+    reports only when its reason changes (or after a Retry cleared it).
     """
     from . import close as close_mod
 
@@ -185,18 +190,30 @@ def drain_closes(cfg: Config, client: Client) -> None:
     except Exception:  # noqa: BLE001
         logger.debug("close sync failed (non-fatal)", exc_info=True)
         return
+    results: list[dict] = []
     for c in closes:
         session_key = c.get("session_key") or ""
         if not session_key:
             continue
+        project = c.get("project") or ""
+        held = c.get("close_error") or ""
         try:
-            close_mod.close_session(session_key, project=c.get("project") or "",
+            close_mod.close_session(session_key, project=project,
                                     cdp_port=cfg.cdp_port, emdash_db=cfg.emdash_db, cfg=cfg)
             logger.info("closed %s from the poll tick", session_key)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             # Left set: the server clears it when the task stops being reported,
             # so a failure here simply retries next tick.
             logger.debug("close from the poll tick failed for %s", session_key, exc_info=True)
+            reason = close_mod.failure_reason(exc, cdp_port=cfg.cdp_port)
+            if reason != held:
+                results.append({"session_key": session_key, "project": project,
+                                "ok": False, "error": reason})
+        else:
+            if held:
+                results.append({"session_key": session_key, "project": project,
+                                "ok": True, "error": ""})
+    close_mod.report_results(cfg, client, results)
 
 
 def drain_menu_answers(cfg: Config, client: Client) -> None:

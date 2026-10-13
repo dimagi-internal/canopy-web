@@ -51,27 +51,45 @@ def close_all(cfg: Config, *, project: str | None = None,
 
     A session whose project is unknown is skipped rather than closed by name: a
     delete is irreversible and the name alone may be another agent's session.
-    Returns {"closed": [...], "absent": [...], "failed": [{task, project, error}],
-    "skipped": [...]} — one failure never stops the rest."""
+    Returns {"closed": [...], "absent": [...], "failed": [{task, project, error,
+    reason}], "skipped": [...], "outcomes": [...]} — one failure never stops the
+    rest. `outcomes` is what `report_outcomes` sends canopy: every attempt,
+    skipped ones included, so a session left open says why in Supervisor."""
     if rows is None:
         rows = open_sessions(cfg)
-    result: dict = {"closed": [], "absent": [], "failed": [], "skipped": []}
+    result: dict = {"closed": [], "absent": [], "failed": [], "skipped": [], "outcomes": []}
     for r in rows:
         task, proj = r.get("emdash_task") or "", r.get("project") or ""
         if not task or (project is not None and proj != project):
             continue
         if not proj:
             result["skipped"].append(task)
+            result["outcomes"].append({"session_key": task, "project": "", "ok": False,
+                                       "error": close.NO_PROJECT})
             continue
         try:
             action = close.close_session(task, project=proj, cdp_port=cfg.cdp_port,
                                          emdash_db=cfg.emdash_db, cfg=cfg)
         except Exception as exc:  # noqa: BLE001 — CloseRefused, CDPError, anything
             logger.warning("close %s/%s failed: %s", proj, task, exc)
-            result["failed"].append({"task": task, "project": proj, "error": str(exc)})
+            reason = close.failure_reason(exc, cdp_port=cfg.cdp_port)
+            result["failed"].append({"task": task, "project": proj, "error": str(exc),
+                                     "reason": reason})
+            result["outcomes"].append({"session_key": task, "project": proj, "ok": False,
+                                       "error": reason})
             continue
         result["absent" if action == "absent" else "closed"].append(task)
+        result["outcomes"].append({"session_key": task, "project": proj, "ok": True,
+                                   "error": ""})
     return result
+
+
+def report_outcomes(cfg: Config, client: Client, result: dict) -> None:
+    """Tell canopy how every close went — failures AND skips, not only the
+    successes. This process is the only thing that knows: the menu bar's close
+    has no server-side request behind it, so a failure reported nowhere else is
+    a session that simply stays open in Supervisor with no reason given."""
+    close.report_results(cfg, client, result.get("outcomes") or [])
 
 
 def report_closes(cfg: Config, client: Client) -> None:

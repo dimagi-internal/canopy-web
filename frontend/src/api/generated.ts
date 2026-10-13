@@ -5697,6 +5697,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/close-results": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post Close Results
+         * @description The runner reports what became of its attempts to close sessions.
+         *
+         *     A failure is recorded on the session (`close_error`) so Supervisor can say
+         *     "Close failed: <reason>" and offer a Retry; a success clears it. Every close
+         *     path reports here, including the menu bar's "Close sessions", which has no
+         *     server-side request behind it. Matched on (this runner, project, task name);
+         *     a result for a task the server does not know is ignored.
+         */
+        readonly post: operations["post_close_results"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/menu-answers": {
         readonly parameters: {
             readonly query?: never;
@@ -11721,6 +11747,13 @@ export interface components {
              * @default false
              */
             readonly waiting_on_you: boolean;
+            /**
+             * Close Error
+             * @default
+             */
+            readonly close_error: string;
+            /** Close Error At */
+            readonly close_error_at?: string | null;
             /**
              * Notify Every Completion
              * @default false
@@ -17984,6 +18017,11 @@ export interface components {
              * @default
              */
             readonly project: string;
+            /**
+             * Close Error
+             * @default
+             */
+            readonly close_error: string;
         };
         /** CloseSyncOut */
         readonly CloseSyncOut: {
@@ -17992,6 +18030,36 @@ export interface components {
              * @default []
              */
             readonly closes: readonly components["schemas"]["CloseOut"][];
+        };
+        /** CloseResultsOut */
+        readonly CloseResultsOut: {
+            /** Updated */
+            readonly updated: number;
+        };
+        /** CloseResultIn */
+        readonly CloseResultIn: {
+            /** Session Key */
+            readonly session_key: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /** Ok */
+            readonly ok: boolean;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+        };
+        /** CloseResultsIn */
+        readonly CloseResultsIn: {
+            /**
+             * Results
+             * @default []
+             */
+            readonly results: readonly components["schemas"]["CloseResultIn"][];
         };
         /** MenuAnswerOut */
         readonly MenuAnswerOut: {
@@ -18981,6 +19049,13 @@ export interface components {
              * @default false
              */
             readonly waiting_on_you: boolean;
+            /**
+             * Close Error
+             * @default
+             */
+            readonly close_error: string;
+            /** Close Error At */
+            readonly close_error_at?: string | null;
             /**
              * Notify Every Completion
              * @default false
@@ -28541,6 +28616,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CloseSyncOut"];
+                };
+            };
+        };
+    };
+    readonly post_close_results: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CloseResultsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CloseResultsOut"];
                 };
             };
         };

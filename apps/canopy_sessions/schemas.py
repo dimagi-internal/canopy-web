@@ -252,6 +252,11 @@ class SessionOut(Schema):
     # an idle one are indistinguishable in the list — the "it looks like the
     # session stopped" half of the 2026-07-31 spark report.
     waiting_on_you: bool = False
+    # The runner tried to close this session and could not — why, in a short
+    # sentence, and when. "" when no failed close is outstanding. Shown as
+    # "Close failed: <reason>" with a Retry (which re-requests the close).
+    close_error: str = ""
+    close_error_at: dt.datetime | None = None
     # Push on every finished turn, rather than once the chat has gone quiet.
     notify_every_completion: bool = False
     # The supervisor feed's two fields, filled only when the list is asked for

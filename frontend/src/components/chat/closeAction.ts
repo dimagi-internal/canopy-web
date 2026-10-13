@@ -82,22 +82,35 @@ export const CLOSE_CONFIRM_TIMEOUT_MS = 45_000
  * away, find the row still there, and show it exactly as before: a close that
  * worked looked like one that failed, so people tapped ✕ again (2026-09-23,
  * `runner-config` closed twice, seven seconds apart). A row now stays marked
- * "Closing…" until it leaves the listing (`done`), or until the timeout
- * passes, when it is reported as `stuck` instead of silently kept.
+ * "Closing…" until it leaves the listing (`done`), until the runner reports
+ * that the close FAILED (`failed` — the row then says why, "Close failed: …",
+ * with a Retry), or until the timeout passes, when it is reported as `stuck`
+ * instead of silently kept.
  */
 export function settleClosing(
   pending: Record<string, number>,
-  listed: { id: string; status: string }[],
+  listed: { id: string; status: string; close_error?: string | null }[],
   now: number,
-): { pending: Record<string, number>; done: string[]; stuck: string[] } {
+): { pending: Record<string, number>; done: string[]; stuck: string[]; failed: string[] } {
   const stillActive = new Set(listed.filter((s) => s.status === 'active').map((s) => s.id))
+  const failedNow = new Set(listed.filter((s) => s.close_error).map((s) => s.id))
   const next: Record<string, number> = {}
   const done: string[] = []
   const stuck: string[] = []
+  const failed: string[] = []
   for (const [id, since] of Object.entries(pending)) {
     if (!stillActive.has(id)) done.push(id)
+    else if (failedNow.has(id)) failed.push(id)
     else if (now - since > CLOSE_CONFIRM_TIMEOUT_MS) stuck.push(id)
     else next[id] = since
   }
-  return { pending: next, done, stuck }
+  return { pending: next, done, stuck, failed }
+}
+
+/** The runner's own reason this session's last close failed, or null when no
+ *  failed close is outstanding (or it is already closed). */
+export function closeFailure(s: Pick<ChatSession, 'status' | 'close_error'>): string | null {
+  if (s.status !== 'active') return null
+  const why = (s.close_error ?? '').trim()
+  return why || null
 }

@@ -1994,6 +1994,10 @@ def replace_reported_sessions(
     # ack) keeps one source of truth: the report already decides what is open.
     RunnerBinding.objects.filter(runner=runner, close_requested=True).exclude(
         id__in=touched_ids).update(close_requested=False)
+    # ...and so is a FAILED close: the task is gone, whoever removed it, so the
+    # "Close failed: …" a runner reported no longer describes anything.
+    RunnerBinding.objects.filter(runner=runner).exclude(close_error="").exclude(
+        id__in=touched_ids).update(close_error="", close_error_at=None)
 
     stale_menus = RunnerBinding.objects.filter(runner=runner).exclude(
         pending_question__isnull=True,

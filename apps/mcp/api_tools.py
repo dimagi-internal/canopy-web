@@ -123,6 +123,7 @@ EXCLUDED: dict[str, str] = {
     "post_session_stream": _RUNNER,
     "list_backfills": _RUNNER,
     "list_closes": _RUNNER,
+    "post_close_results": _RUNNER,
     "list_menu_answers": _RUNNER,
     "post_menu_answer_result": _RUNNER,
     "claim_admission_notices": _RUNNER,
