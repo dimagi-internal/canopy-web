@@ -111,6 +111,7 @@ INSTALLED_APPS = [
     "apps.slack",
     "apps.contacts",
     "apps.retention",
+    "apps.mail",
     "apps.admission",
     "apps.plugins",
     # The canopy SDK's Django half (app label `canopy_host`): the single-use jti
@@ -646,6 +647,21 @@ CANOPY_EMAIL_ENABLED = env.bool("CANOPY_EMAIL_ENABLED", default=False)
 CANOPY_SES_REGION = env("CANOPY_SES_REGION", default=env("AWS_REGION", default="us-east-1"))
 # Tag every send with a configuration set so bounces and complaints are observed.
 CANOPY_SES_CONFIGURATION_SET = env("CANOPY_SES_CONFIGURATION_SET", default="")
+
+# --- Mail domains (apps/mail) ---
+# A workspace's own domain, run through SES in the labs account
+# (deploy/aws/canopy-mail.cfn.yaml). OFF until the stack exists: every inbound
+# and send path refuses, and says so, while this is false.
+MAIL_ENABLED = env.bool("MAIL_ENABLED", default=False)
+MAIL_SES_REGION = env("MAIL_SES_REGION", default=CANOPY_SES_REGION)
+MAIL_INBOUND_BUCKET = env("MAIL_INBOUND_BUCKET", default="")
+MAIL_INBOUND_TOPIC_ARN = env("MAIL_INBOUND_TOPIC_ARN", default="")
+MAIL_EVENTS_TOPIC_ARN = env("MAIL_EVENTS_TOPIC_ARN", default="")
+MAIL_CONFIGURATION_SET = env("MAIL_CONFIGURATION_SET", default="canopy-tenant-mail")
+# OUR receiver for SES mail — the one Authentication-Results header we trust.
+MAIL_SES_AUTHSERV_ID = env("MAIL_SES_AUTHSERV_ID", default="amazonses.com")
+MAIL_INBOUND_MX = env("MAIL_INBOUND_MX", default="inbound-smtp.us-east-1.amazonaws.com")
+MAIL_FORWARDER_LOCAL_PART = "canopy-forwarder"
 if CANOPY_EMAIL_ENABLED:
     EMAIL_BACKEND = "apps.common.email.SesEmailBackend"
 elif DEBUG:

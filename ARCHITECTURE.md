@@ -58,6 +58,7 @@ the arrow's direction and enforce it in CI.
 | `runs` | **product** | DDD run aggregation/versioning. |
 | `beta_requests` | **product** | The public site's request-access form (`POST /api/beta-requests`, anonymous; access is closed to Dimagi and its partners). Stores the request and emails the person who grants access; grants nothing and creates no user. Product because the public site is canopy's own, not substrate an agent host would reuse. |
 | `storyboards` | **product** | An ordered arc of DDD narratives — acts over entries — shareable as ONE capability-bearing link (`read`/`comment`/`suggest`). Curates narratives, so product. An entry FOLLOWS its narrative's current release rather than freezing a run id, which is safe only because every `feedback.Feedback` row records the version it was left against. Anonymous read mirrors `runs`' release endpoint: `auth=None`, self-enforcing, 404 (never 403) on a wrong token so existence never leaks. |
+| `mail` | **product** | A workspace's own email domain run through Amazon SES: `MailDomain` (DKIM-verified, globally unique), `MailRoute`s (agent mailbox / forward to a member / drop), threads, messages (deduped per mailbox), forward log and SES events. Removable: nothing in a framework app imports it. Off until `MAIL_ENABLED`. See `docs/superpowers/specs/2026-10-12-workspace-email-domains-design.md`. |
 
 ## Accepted seams (carve-outs)
 
