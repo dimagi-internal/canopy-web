@@ -35,3 +35,22 @@ describe('Markdown images', () => {
     expect(container.innerHTML).not.toContain('data:image')
   })
 })
+
+describe('Markdown links', () => {
+  it('follows a link in place by default', () => {
+    const { container } = render(<Markdown>{'[the explorer](https://labs.example.org/pmc/)'}</Markdown>)
+    const a = container.querySelector('a')!
+    expect(a.getAttribute('href')).toBe('https://labs.example.org/pmc/')
+    expect(a.getAttribute('target')).toBeNull()
+  })
+
+  it('opens a link in a new tab inside an embedded panel, which a framed page would refuse', () => {
+    const { container } = render(
+      <Markdown linksInNewTab>{'[the explorer](https://labs.example.org/pmc/)'}</Markdown>,
+    )
+    const a = container.querySelector('a')!
+    expect(a.getAttribute('href')).toBe('https://labs.example.org/pmc/')
+    expect(a.getAttribute('target')).toBe('_blank')
+    expect(a.getAttribute('rel')).toContain('noopener')
+  })
+})
