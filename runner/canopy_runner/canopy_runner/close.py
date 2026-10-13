@@ -47,7 +47,8 @@ def close_session(session_key: str, *, project: str = "", cdp_port: int = 9222,
 
     Raises CloseRefused, touching nothing, when the project cannot be resolved
     (see session_target) — never a delete by name alone. Raises CDPError if the
-    delete could not be completed. The caller logs either and moves on.
+    delete could not be completed, and CloseFailed if the sidebar called
+    the task absent while emdash's DB still holds it. The caller logs either and moves on.
     """
     if cfg is not None and desktop.is_desktop_session(cfg, session_key):
         # A Claude desktop session has no emdash task: it is open for as long as the
