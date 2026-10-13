@@ -269,7 +269,9 @@ class SessionOut(Schema):
     # Is this session on the CALLER's supervisor feed — feed-only (`?reply=true`).
     # "waiting" = it is; "not_yours" / "parked" / "auto" = waiting, but held back
     # (someone else's runner, a paused/offline runner, an agent's own run); "" =
-    # not waiting on anybody. The same rule decides who is pushed about a session
+    # not waiting on anybody. "parked" needs EVIDENCE: a dialog (`waiting_on_you`)
+    # or a turn queued/in flight that the box cannot take — an idle session on a
+    # paused runner is "", not parked. The same rule decides who is pushed about a session
     # (canopy_sessions.feed), so the feed and the phone cannot disagree.
     feed_status: str = ""
     # What this conversation's host requires of the runner it runs on (e.g.

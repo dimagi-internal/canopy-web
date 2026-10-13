@@ -17042,6 +17042,11 @@ export interface components {
              * @default true
              */
             readonly can_administer: boolean;
+            /**
+             * Open Sessions
+             * @default 0
+             */
+            readonly open_sessions: number;
             /** Health Checks */
             readonly health_checks?: {
                 readonly [key: string]: components["schemas"]["HealthCheck"];

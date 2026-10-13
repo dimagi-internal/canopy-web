@@ -1001,6 +1001,23 @@ def set_runner_engine(request: HttpRequest, runner_id: uuid.UUID, payload: Runne
     return out
 
 
+def _open_sessions_by_runner(runner_ids) -> dict:
+    """{runner id: sessions open on it} — active and still reported, the session
+    list's own `state=active` rule (`unseen_q`), so the two counts cannot drift."""
+    from apps.canopy_sessions.models import Session
+    from apps.canopy_sessions.staleness import unseen_q
+
+    if not runner_ids:
+        return {}
+    rows = (
+        Session.objects.filter(status=Session.ACTIVE, runner_binding__runner_id__in=runner_ids)
+        .exclude(unseen_q())
+        .values("runner_binding__runner_id")
+        .annotate(n=models.Count("pk", distinct=True))
+    )
+    return {row["runner_binding__runner_id"]: row["n"] for row in rows}
+
+
 @router.get("/runners/", response=list[RunnerOut], summary="List the fleet I can see")
 def list_runners(request: HttpRequest):
     """The supervisor's runner status, and the fleet read every preflight makes.
@@ -1026,7 +1043,9 @@ def list_runners(request: HttpRequest):
         following = {r.pk for r in qs if services.agents_following_runner(r) & set(offered)}
         qs = qs.filter(Q(agent_assignments__agent_id__in=offered) | Q(pk__in=following)).distinct()
     rows = list(qs[:50])
+    open_by_runner = _open_sessions_by_runner([r.pk for r in rows])
     for r in rows:
+        r.open_sessions = open_by_runner.get(r.pk, 0)
         # Resolved here rather than in the schema because it is a property of the
         # (caller, runner) PAIR, and a Ninja resolver only sees the row.
         r.can_manage = r.owner_id in (request.user.id, None)

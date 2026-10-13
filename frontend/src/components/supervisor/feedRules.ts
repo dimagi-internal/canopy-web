@@ -15,7 +15,11 @@ import type { ChatSession } from '@/api/chat'
  *   - `waiting` is on the feed;
  *   - `auto` (an agent's own run) is held back unless `showAuto`, and counted;
  *   - `parked` (paused/offline runner) is held back and COUNTED, not shown —
- *     a reply would queue until that box returns;
+ *     a reply would queue until that box returns. The server stamps it only
+ *     with EVIDENCE that something is held up there: a dialog
+ *     (`waiting_on_you`) or a turn queued/in flight for the session. An idle
+ *     session on a paused box is not parked (it is `''`, off the feed) — the
+ *     runner's row in Supervisor → Runners counts those instead;
  *   - `not_yours` (someone else's runner) is not yours to answer, so it is
  *     neither shown nor counted: its owner has it on their own feed.
  */
@@ -84,14 +88,26 @@ export type ParkedGroup = {
   /** A pause is somebody's decision; offline/degraded is a box to fix. */
   reason: 'paused' | 'offline'
   count: number
-  /** Of those, blocked on a dialog. */
+  /** Of those, blocked on a dialog — they need the person. */
   waiting: number
+  /**
+   * Of those, the rest: a turn for the session is queued or in flight and the
+   * box cannot take it. The server parks a session only on one of these two
+   * pieces of evidence (`apps/canopy_sessions/feed.py`), so a parked row that is
+   * not `waiting_on_you` is exactly this.
+   */
+  queued: number
   /** Why the runner cannot take turns, in its own words ('' when it said nothing). */
   note: string
 }
 
 /**
  * The parked sessions grouped by the runner holding them, busiest first.
+ *
+ * "Parked" is never "idle on a paused box": the server only parks a session it
+ * has evidence is held up (a dialog, or a queued turn). Four idle emdash tasks
+ * on a deliberately paused laptop were once banner-ed as "4 sessions are
+ * waiting" (2026-10-12) — the banner says what is actually waiting instead.
  *
  * A bare count ("+ 7 more waiting on a paused or offline runner") reads fine
  * when one box of many is down, and wrong when the box that is down is the
@@ -114,6 +130,7 @@ export function parkedByRunner(
     if (hit) {
       hit.count += 1
       if (s.waiting_on_you) hit.waiting += 1
+      else hit.queued += 1
       continue
     }
     const reason: ParkedGroup['reason'] = s.runner_status === 'paused' ? 'paused' : 'offline'
@@ -122,7 +139,8 @@ export function parkedByRunner(
       ? (reason === 'paused' ? runner.paused_note : '') || runner.status_note || runner.ready_note || ''
       : ''
     by.set(name, {
-      runnerName: name, runner, reason, count: 1, waiting: s.waiting_on_you ? 1 : 0, note: note.trim(),
+      runnerName: name, runner, reason, count: 1,
+      waiting: s.waiting_on_you ? 1 : 0, queued: s.waiting_on_you ? 0 : 1, note: note.trim(),
     })
   }
   return [...by.values()].sort((a, b) => b.count - a.count)

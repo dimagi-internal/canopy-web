@@ -194,9 +194,10 @@ describe('SessionFeed', () => {
       </MemoryRouter>,
     )
     const line = await screen.findByTestId('feed-parked-haldimagi-mbp-cdp')
-    expect(line.textContent).toContain('2 sessions are waiting on haldimagi-mbp-cdp')
+    // Says WHAT is held up — a dialog, a queued turn — never a bare "waiting".
+    expect(line.textContent).toContain("1 session needs you and 1 has a turn queued, but haldimagi-mbp-cdp can't take turns")
+    expect(line.textContent).not.toContain('waiting')
     expect(line.textContent).toContain('emdash CDP unreachable on :9224')
-    expect(line.textContent).toContain('1 of them needs an answer')
     expect(line.querySelector('a')?.getAttribute('href')).toBe('/supervisor?tab=runners&runner=r-1')
     // Still held back from the cards themselves: a reply would only queue.
     expect(screen.queryByTestId('feed-card-d1')).toBeNull()
@@ -204,12 +205,26 @@ describe('SessionFeed', () => {
 
   it('says a paused runner is paused, and still names an unknown one', async () => {
     listSessions.mockResolvedValue([
-      s('p', { runner_online: false, runner_status: 'paused', runner_name: 'jj-mbp-cdp', feed_status: 'parked' }),
+      s('p', { runner_online: false, runner_status: 'paused', runner_name: 'jj-mbp-cdp', feed_status: 'parked', waiting_on_you: true }),
+      s('q', { runner_online: false, runner_status: 'paused', runner_name: 'jj-mbp-cdp', feed_status: 'parked', waiting_on_you: true }),
     ])
     renderFeed()
     const line = await screen.findByTestId('feed-parked-jj-mbp-cdp')
-    expect(line.textContent).toContain('1 session is waiting on jj-mbp-cdp, which is paused')
+    expect(line.textContent).toContain('2 sessions need you, but jj-mbp-cdp is paused')
     expect(line.textContent).toContain('Resume it from the runner')
+  })
+
+  it('shows no banner for idle sessions on a paused runner', async () => {
+    // The server does not park them (no dialog, nothing queued): feed_status is ''.
+    // Four of these once read "4 sessions are waiting on …, which is paused"
+    // about a box its owner had paused on purpose (2026-10-12).
+    listSessions.mockResolvedValue([
+      s('i1', { runner_online: false, runner_status: 'paused', runner_name: 'jj-mbp-cdp', feed_status: '' }),
+      s('i2', { runner_online: false, runner_status: 'paused', runner_name: 'jj-mbp-cdp', feed_status: '' }),
+    ])
+    renderFeed()
+    expect(await screen.findByTestId('feed-empty')).toBeTruthy()
+    expect(screen.queryByTestId('feed-parked')).toBeNull()
   })
 
   it('offers New chat right on the feed', async () => {

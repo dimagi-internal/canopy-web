@@ -162,6 +162,11 @@ an emdash task name alone is not an identity.
   runner and they did not start it; on a cloud box an agent-opened session belongs
   to the agent's owner), `parked` (runner paused/offline) or `auto` (an agent's own
   auto-mode run, not a chat).
+- `parked` needs evidence: a dialog (`waiting_on_you`) or a turn for the session
+  queued/in flight (`Turn.NON_TERMINAL`, via `driving_turns`). An idle session on a
+  paused/offline runner is not parked and not on the Feed; Supervisor → Runners
+  counts it on the runner's row (`RunnerOut.open_sessions`). The Feed banner says
+  what is held up ("2 sessions need you, but X is paused"), never a bare "waiting".
 - `GET /api/canopy-sessions/?reply=true` stamps every row with `feed_status`; the
   Feed only sorts and counts that verdict. The "is asking" / "is done" pushes go to
   the first candidate the session is on the Feed for

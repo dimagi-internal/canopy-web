@@ -46,6 +46,11 @@ describe('RunnerStatus', () => {
     expect(chip.getAttribute('title')).toBe('token limit')
   })
 
+  it('counts the open sessions on a paused runner — the feed does not nag about idle ones', () => {
+    render(<RunnerStatus runners={[runner({ paused: true, status: 'paused', open_sessions: 4 })]} />)
+    expect(screen.getByTestId('runner-paused-jj-mbp').textContent).toBe('paused · 4 open sessions')
+  })
+
   it('shows paused instead of not-ready — the pause explains the silence', () => {
     render(<RunnerStatus runners={[runner({ paused: true, ready: false, status: 'paused' })]} />)
     expect(screen.getByTestId('runner-paused-jj-mbp')).toBeTruthy()

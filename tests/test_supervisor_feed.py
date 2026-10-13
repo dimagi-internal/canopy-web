@@ -153,3 +153,86 @@ def test_every_session_row_carries_its_turn_mode(fleet):
     c.force_login(fleet["jj"])
     row = next(r for r in c.get("/api/canopy-sessions/").json() if r["id"] == str(session.id))
     assert row["turn_mode"] == "auto"
+
+
+# --- "parked" needs evidence (Jonathan, 2026-10-12) -------------------------
+#
+# The feed said "4 sessions are waiting on haldimagi-mbp-cdp, which is paused"
+# about four idle emdash tasks on a box he had paused on purpose: no dialog, not
+# running, nothing queued. A session on a paused/offline runner is parked only
+# when something is demonstrably held up there — a dialog, or a turn for it that
+# is queued or in flight. Idle ones are off the feed; Runners counts them.
+
+
+def _idle_finished_session(fleet, *, on, key="idle"):
+    """The agent had the last word and stopped: no dialog, nothing running."""
+    from apps.canopy_sessions.models import Message
+
+    session = Session.objects.create(
+        workspace=fleet["ws"], agent=fleet["agent"], title=key, origin=Session.ORIGIN_RUNNER,
+    )
+    RunnerBinding.objects.create(
+        session=session, runner=fleet["runners"][on], session_key=key, live_seen_at=timezone.now(),
+    )
+    Message.objects.create(session=session, turn_index=10, role=Message.USER, plaintext="go")
+    Message.objects.create(session=session, turn_index=11, role=Message.ASSISTANT, plaintext="Done.")
+    return Session.objects.select_related("runner_binding__runner").get(pk=session.pk)
+
+
+def _pause(runner):
+    runner.paused = True
+    runner.save(update_fields=["paused"])
+
+
+def test_an_idle_session_on_a_paused_runner_is_not_parked(fleet):
+    _pause(fleet["runners"]["jj"])
+    session = _idle_finished_session(fleet, on="jj")
+    assert _feed_status(fleet["jj"], session) == ""
+
+
+def test_an_idle_session_on_an_offline_runner_is_not_parked(fleet):
+    Runner.objects.filter(pk=fleet["runners"]["jj"].pk).update(status=Runner.DISCONNECTED)
+    session = _idle_finished_session(fleet, on="jj")
+    assert _feed_status(fleet["jj"], session) == ""
+
+
+def test_the_same_idle_session_on_a_live_runner_is_on_the_feed(fleet):
+    """The evidence rule is about the HOLD only: a finished turn on a box that can
+    take the reply is still the person's move."""
+    session = _idle_finished_session(fleet, on="jj")
+    assert _feed_status(fleet["jj"], session) == feed.WAITING
+
+
+def test_a_turn_queued_behind_a_paused_runner_parks_the_session(fleet):
+    from apps.harness.models import Turn
+
+    _pause(fleet["runners"]["jj"])
+    session = _idle_finished_session(fleet, on="jj")
+    Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+                        idempotency_key="q1", status=Turn.QUEUED)
+    assert _feed_status(fleet["jj"], session) == feed.PARKED
+
+
+def test_a_finished_turn_is_not_evidence(fleet):
+    from apps.harness.models import Turn
+
+    _pause(fleet["runners"]["jj"])
+    session = _idle_finished_session(fleet, on="jj")
+    Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+                        idempotency_key="d1", status=Turn.DONE)
+    assert _feed_status(fleet["jj"], session) == ""
+
+
+def test_the_runner_list_counts_open_sessions(fleet):
+    _pause(fleet["runners"]["jj"])
+    _idle_finished_session(fleet, on="jj", key="a")
+    _idle_finished_session(fleet, on="jj", key="b")
+    gone = _idle_finished_session(fleet, on="jj", key="c")
+    RunnerBinding.objects.filter(session=gone).update(
+        live_seen_at=timezone.now() - timezone.timedelta(hours=1),
+    )
+    c = Client()
+    c.force_login(fleet["jj"])
+    rows = {r["name"]: r for r in c.get("/api/harness/runners/").json()}
+    assert rows["jj-mbp"]["open_sessions"] == 2
+    assert rows["sarvesh-mbp"]["open_sessions"] == 0

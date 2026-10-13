@@ -392,6 +392,17 @@ def with_driving_turn(sessions):
     )
 
 
+def with_open_turn(sessions):
+    """`sessions` annotated with `_turn_open`: a turn that drives each one is
+    queued or in flight (`Turn.NON_TERMINAL`). The feed's evidence that a session
+    on a paused/offline runner is genuinely held up (`feed.status`)."""
+    from django.db.models import Exists
+
+    return sessions.annotate(
+        _turn_open=Exists(driving_turns().filter(status__in=Turn.NON_TERMINAL)),
+    )
+
+
 def last_reply_from(rows) -> tuple[str, bool]:
     """(the agent's last reply, did the agent have the last word) from
     chronological (role, text) pairs. Tool and system rows are not speech.
