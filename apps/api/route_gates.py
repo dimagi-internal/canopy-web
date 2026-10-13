@@ -548,6 +548,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "send_mail": ("agent.work",),
     "set_mail_thread_state": ("agent.work",),
     "ses_inbound": ("host",),  # auth=None; SNS signature + pinned cert host + pinned topic, 404 otherwise
+    "ses_events": ("host",),  # auth=None; SNS signature + topic ARN verified, 404 otherwise
     # --- apps/push/api.py
     "vapid_public_key": ("authenticated",),
     "subscribe": ("self",),
@@ -795,6 +796,7 @@ NOT_SETTINGS: dict[str, str] = {
     "subscribe": "person-data", "unsubscribe": "person-data",
     # telemetry
     "record_events": "telemetry", "report_watch": "telemetry", "gmail_push": "telemetry", "ses_inbound": "telemetry",
+    "ses_events": "telemetry",
     # request
     "submit_beta_request": "request", "decline_beta_request": "request",
     "request_workspace_access": "request",

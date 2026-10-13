@@ -699,7 +699,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/mail/ses/inbound/": {
+    readonly "/api/mail/ses/events/": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -708,15 +708,8 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /**
-         * SES receipt notifications (SNS HTTPS delivery)
-         * @description SNS posts `text/plain`, so the body is read raw rather than through a schema.
-         *
-         *     Verify before trusting a byte; 404 on any failure so a probe learns nothing.
-         *     500 only for transient failures (SNS retries those for ~6 h); anything
-         *     deterministic is acknowledged with 200 so a poisoned message cannot loop.
-         */
-        readonly post: operations["ses_inbound"];
+        /** SES sending events (SNS HTTPS delivery) */
+        readonly post: operations["ses_events"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -22253,7 +22246,7 @@ export interface operations {
             };
         };
     };
-    readonly ses_inbound: {
+    readonly ses_events: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;

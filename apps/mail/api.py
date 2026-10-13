@@ -12,6 +12,7 @@ import uuid as uuidlib
 from dataclasses import asdict
 
 from django.conf import settings
+from django.db import InterfaceError, OperationalError
 from django.db.models import OuterRef, Subquery
 from django.http import HttpRequest
 from ninja import Router
@@ -24,7 +25,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import agent_mail, domains, inbound, ses, sns
+from . import agent_mail, domains, inbound, reputation, ses, sns
 from .models import MailDomain, MailMessage, MailRoute, MailThread
 from .schemas import (MailDomainIn, MailDomainListOut, MailDomainOut, MailDomainPatchIn,
                       MailMessageOut, MailReplyIn, MailResolveOut, MailRouteIn, MailRouteOut,
@@ -300,6 +301,8 @@ def set_mail_thread_state(request: HttpRequest, workspace: str, uuid: str, paylo
         t.archived = payload.archived
     t.save(update_fields=["unread", "archived"])
     return _thread_out(t, messages=False)
+
+
 @router.post("/ses/inbound/", auth=None, response={200: dict, 404: dict, 500: dict},
              url_name="ses_inbound", summary="SES receipt notifications (SNS HTTPS delivery)")
 def ses_inbound(request: HttpRequest):
@@ -335,3 +338,25 @@ def ses_inbound(request: HttpRequest):
         logger.exception("mail inbound failed permanently; acknowledged")
         return 200, {"outcomes": [{"recipient": "*", "outcome": f"error:{type(exc).__name__}"}]}
     return 200, {"outcomes": out}
+
+
+@router.post("/ses/events/", auth=None, response={200: dict, 404: dict, 500: dict},
+             summary="SES sending events (SNS HTTPS delivery)")
+def ses_events(request: HttpRequest):
+    try:
+        msg = json.loads(request.body or b"{}")
+        sns.verify(msg, topic_arn=settings.MAIL_EVENTS_TOPIC_ARN)
+    except (ValueError, RecursionError, sns.Invalid):
+        return 404, {"detail": "not found"}
+    try:
+        if msg.get("Type") == "SubscriptionConfirmation":
+            sns.confirm(msg)
+            return 200, {"confirmed": True}
+        if msg.get("Type") == "Notification":
+            reputation.record(json.loads(msg.get("Message") or "{}"))
+    except (OperationalError, InterfaceError):
+        logger.exception("ses events: transient db error; SNS will retry")
+        return 500, {"detail": "try again"}
+    except Exception:  # noqa: BLE001 — a poisoned event must not be retried by SNS for hours
+        logger.exception("ses events: dropping unprocessable event")
+    return 200, {}
