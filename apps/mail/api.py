@@ -339,6 +339,20 @@ def set_mail_thread_state(request: HttpRequest, workspace: str, uuid: str, paylo
     return _thread_out(t, messages=False)
 
 
+def _notification_message(msg: dict) -> dict | None:
+    # A verified Notification whose Message is not a JSON object is not mail or an event —
+    # e.g. SES's "Successfully validated SNS topic for Amazon SES event publishing." —
+    # so it is acknowledged and noted at INFO, never logged as a failure.
+    try:
+        body = json.loads(msg.get("Message") or "{}")
+    except (ValueError, RecursionError):
+        body = None
+    if not isinstance(body, dict):
+        logger.info("ignored non-JSON notification on %s: %.80r", msg.get("TopicArn"), msg.get("Message"))
+        return None
+    return body
+
+
 @router.post("/ses/inbound/", auth=None, response={200: dict, 404: dict, 500: dict},
              url_name="ses_inbound", summary="SES receipt notifications (SNS HTTPS delivery)")
 def ses_inbound(request: HttpRequest):
@@ -366,8 +380,11 @@ def ses_inbound(request: HttpRequest):
         return 200, {"confirmed": True}
     if kind != "Notification":
         return 200, {"ignored": kind}
+    note = _notification_message(msg)
+    if note is None:
+        return 200, {"ignored": "non-JSON notification"}
     try:
-        out = inbound.handle(json.loads(msg.get("Message") or "{}"))
+        out = inbound.handle(note)
     except inbound.Transient as exc:
         logger.warning("mail inbound transient failure; SNS will retry: %s", exc.outcomes)
         return 500, {"detail": "retry"}
@@ -398,10 +415,13 @@ def ses_events(request: HttpRequest):
         except sns.Unavailable:
             return 500, {"detail": "retry"}
         return 200, {"confirmed": True}
+    if msg.get("Type") != "Notification":
+        return 200, {}
+    event = _notification_message(msg)
+    if event is None:
+        return 200, {"ignored": "non-JSON notification"}
     try:
-        if msg.get("Type") == "Notification":
-            reputation.record(json.loads(msg.get("Message") or "{}"),
-                              sns_message_id=str(msg.get("MessageId") or "")[:128])
+        reputation.record(event, sns_message_id=str(msg.get("MessageId") or "")[:128])
     except (OperationalError, InterfaceError):
         logger.exception("ses events: transient db error; SNS will retry")
         return 500, {"detail": "try again"}

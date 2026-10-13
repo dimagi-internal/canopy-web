@@ -368,3 +368,22 @@ def test_receipt_verdicts_are_passed_to_agent_delivery(world):
     inbound.handle(n)
     assert world.calls == [("agent", "ada@marshellis.com",
                             {"spf": "PASS", "dkim": "GRAY", "dmarc": "FAIL", "spam": "PASS", "virus": "PASS"})]
+
+
+_SES_VALIDATION = "Successfully validated SNS topic for Amazon SES event publishing."
+
+
+@pytest.mark.parametrize("url,topic_setting", [(URL, "MAIL_INBOUND_TOPIC_ARN"),
+                                               ("/api/mail/ses/events/", "MAIL_EVENTS_TOPIC_ARN")])
+@pytest.mark.parametrize("message", [_SES_VALIDATION, '"a json string"', "[1, 2]"])
+def test_non_json_notification_is_ignored_quietly_on_both_doors(world, signed, settings, caplog,
+                                                                 url, topic_setting, message):
+    setattr(settings, topic_setting, TOPIC)
+    body = {"Type": "Notification", "TopicArn": TOPIC, "Message": message}
+    with caplog.at_level("INFO", logger="apps.mail.api"):
+        r = Client().post(url, json.dumps(body), content_type="text/plain")
+    assert r.status_code == 200 and r.json() == {"ignored": "non-JSON notification"}
+    assert any("ignored non-JSON notification" in rec.getMessage() and rec.levelname == "INFO"
+               for rec in caplog.records)
+    assert not [rec for rec in caplog.records if rec.levelno >= 30]
+    assert world.calls == []
