@@ -22,6 +22,8 @@ vi.mock('@/api/mail', async (orig) => ({
   ...(await orig<typeof import('@/api/mail')>()),
   listMailDomains: vi.fn(async () => ({ enabled: true, items: [domain] })),
   saveMailRoute: vi.fn(async () => domain.routes[0]),
+  deleteMailRoute: vi.fn(async () => undefined),
+  removeMailDomain: vi.fn(async () => undefined),
 }))
 vi.mock('@/api/agents', () => ({ listAgents: vi.fn(async () => ({ items: [{ slug: 'hal', name: 'Hal', workspace: 'marshellis' }] })) }))
 vi.mock('@/api/workspaces', async (orig) => ({
@@ -74,6 +76,28 @@ describe('WorkspaceEmailPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save address' }))
     await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
       local_part: 'jj', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true }))
+  })
+  it('confirms before removing an address, saying threads are kept', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    renderPage()
+    await screen.findByText('*@marshellis.com')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(confirm).toHaveBeenLastCalledWith(
+      'Remove *@marshellis.com? It stops receiving mail. Existing threads are kept.')
+    expect(mail.deleteMailRoute).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    await vi.waitFor(() => expect(mail.deleteMailRoute).toHaveBeenCalledWith('marshellis', 1, 9))
+    confirm.mockRestore()
+  })
+  it('confirms before removing a domain, saying threads are kept', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false)
+    renderPage()
+    await screen.findByText('*@marshellis.com')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove domain' }))
+    expect(confirm).toHaveBeenLastCalledWith(
+      'Remove marshellis.com? Its addresses stop receiving mail. Existing threads are kept.')
+    expect(mail.removeMailDomain).not.toHaveBeenCalled()
+    confirm.mockRestore()
   })
   it('hides everything but a note when email is off', async () => {
     vi.mocked(mail.listMailDomains).mockResolvedValueOnce({ enabled: false, items: [] })

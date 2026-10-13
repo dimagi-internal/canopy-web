@@ -10,6 +10,7 @@ export type MailDomainListOut = components['schemas']['MailDomainListOut']
 export type MailRouteIn = components['schemas']['MailRouteIn']
 export type MailThreadOut = components['schemas']['MailThreadOut']
 export type MailThreadListOut = components['schemas']['MailThreadListOut']
+export type MailMessageOut = components['schemas']['MailMessageOut']
 
 // Same shape as InboundApiError: callers branch on the status (403 non-admin,
 // 409 domain taken elsewhere, 422 reserved domain / reserved local part).
@@ -71,15 +72,22 @@ export async function deleteMailRoute(workspace: string, domainId: number, route
   if (!res.response.ok) fail(res, 'Failed to remove the route')
 }
 
-export async function listMailThreads(workspace: string, agent = ''): Promise<MailThreadListOut> {
+export type MailThreadList = { items: MailThreadOut[]; agent_address: string }
+
+// The agent's threads plus its own address here ('' when it has none).
+export async function fetchMailThreads(workspace: string, agent?: string): Promise<MailThreadList> {
   const res = await apiV2.GET('/api/mail/threads/{workspace}', {
-    params: { path: { workspace }, query: { agent } } })
-  if (!res.response.ok) fail(res, 'Failed to load mail')
-  return res.data as MailThreadListOut
+    params: { path: { workspace }, query: agent ? { agent } : {} },
+  })
+  if (!res.response.ok) fail(res, 'Failed to load mail threads')
+  const d = res.data as MailThreadListOut
+  return { items: [...d.items], agent_address: d.agent_address ?? '' }
 }
 
-export async function getMailThread(workspace: string, uuid: string): Promise<MailThreadOut> {
-  const res = await apiV2.GET('/api/mail/threads/{workspace}/{uuid}', { params: { path: { workspace, uuid } } })
-  if (!res.response.ok) fail(res, 'Failed to load the thread')
+export async function fetchMailThread(workspace: string, threadId: string): Promise<MailThreadOut> {
+  const res = await apiV2.GET('/api/mail/threads/{workspace}/{uuid}', {
+    params: { path: { workspace, uuid: threadId } },
+  })
+  if (!res.response.ok) fail(res, 'Failed to load mail thread')
   return res.data as MailThreadOut
 }

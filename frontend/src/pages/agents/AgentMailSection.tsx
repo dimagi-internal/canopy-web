@@ -6,7 +6,7 @@ import {
   fetchMailThreads,
   type MailMessageOut,
   type MailThreadOut,
-} from '@/api/mailThreads'
+} from '@/api/mail'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
@@ -16,8 +16,21 @@ import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 // viewer's IP and read time), so the CSP goes FIRST and allows no network.
 const CSP_META =
   `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`
+// CSP does not stop navigation: a <meta http-equiv="refresh"> would send the
+// frame to any URL. Parse the way the browser will (any case, any attribute
+// order, odd spacing) and drop every refresh meta before the frame sees it.
+export function stripMetaRefresh(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const refresh = Array.from(doc.querySelectorAll('meta[http-equiv]')).filter(
+    (el) => (el.getAttribute('http-equiv') ?? '').trim().toLowerCase() === 'refresh',
+  )
+  if (refresh.length === 0) return html
+  refresh.forEach((el) => el.remove())
+  return doc.documentElement.outerHTML
+}
+
 export function sandboxedSrcDoc(html: string): string {
-  return CSP_META + html
+  return CSP_META + stripMetaRefresh(html)
 }
 
 // Delivery states of an outbound message, in semantic tokens.

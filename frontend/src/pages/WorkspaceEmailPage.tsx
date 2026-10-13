@@ -110,7 +110,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         {manage && (
           <button type="button" className="px-2 text-[12px] text-destructive hover:underline" disabled={busy}
             onClick={() => {
-              if (!window.confirm(`Remove ${domain.name}? Its addresses stop working.`)) return
+              if (!window.confirm(`Remove ${domain.name}? Its addresses stop receiving mail. Existing threads are kept.`)) return
               void run(async () => { await removeMailDomain(workspace, domain.id); onRemoved() }, 'Could not remove the domain')
             }}>
             Remove domain
@@ -205,7 +205,10 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
                           setMember(r.forward_to_user_id ? String(r.forward_to_user_id) : '')
                         }}>Edit</button>
                       <button type="button" className="px-2 text-destructive hover:underline" disabled={busy}
-                        onClick={() => void run(async () => { await deleteMailRoute(workspace, domain.id, r.id); await reload() }, 'Could not remove the address')}>
+                        onClick={() => {
+                          if (!window.confirm(`Remove ${r.address}? It stops receiving mail. Existing threads are kept.`)) return
+                          void run(async () => { await deleteMailRoute(workspace, domain.id, r.id); await reload() }, 'Could not remove the address')
+                        }}>
                         Remove
                       </button>
                     </td>

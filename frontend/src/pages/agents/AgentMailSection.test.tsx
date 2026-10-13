@@ -7,13 +7,13 @@ const { fetchMailThreads, fetchMailThread } = vi.hoisted(() => ({
   fetchMailThreads: vi.fn(),
   fetchMailThread: vi.fn(),
 }))
-vi.mock('@/api/mailThreads', () => ({ fetchMailThreads, fetchMailThread }))
+vi.mock('@/api/mail', () => ({ fetchMailThreads, fetchMailThread }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useOutletContext: () => ({ agent: { slug: 'echo', name: 'Echo', workspace: 'connect' } }),
 }))
 
-const { AgentMailSection } = await import('./AgentMailSection')
+const { AgentMailSection, sandboxedSrcDoc } = await import('./AgentMailSection')
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 
@@ -74,6 +74,25 @@ describe('AgentMailSection', () => {
       `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`,
     )).toBe(true)
     expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer')
+  })
+
+  it.each([
+    '<meta http-equiv="refresh" content="0;url=https://evil.example">',
+    '<META HTTP-EQUIV="Refresh" CONTENT="0; URL=https://evil.example">',
+    '<meta content="0;url=https://evil.example" http-equiv=refresh>',
+    "<meta name=x content='0;url=https://evil.example' http-equiv = ' REFRESH ' />",
+  ])('strips a meta refresh before building srcDoc: %s', (meta) => {
+    const out = sandboxedSrcDoc(`<html><head>${meta}</head><body><p>Hi</p></body></html>`)
+    expect(out.toLowerCase()).not.toContain('refresh')
+    expect(out).not.toContain('evil.example')
+    expect(out).toContain('<p>Hi</p>')
+    expect(out.startsWith(
+      `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`,
+    )).toBe(true)
+  })
+
+  it('leaves html without a meta refresh untouched', () => {
+    expect(sandboxedSrcDoc('<p>Hi</p>').endsWith('<p>Hi</p>')).toBe(true)
   })
 
   it('shows attachments as download links', async () => {
