@@ -281,7 +281,7 @@ TOKEN=$(cat ~/.claude/canopy/workbench-token)
    ```bash
    curl -X POST {base}/api/harness/turns/ \
      -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-     -d '{"agent_slug":"echo","origin":"manual","idempotency_key":"e2e-'$(date +%s)'"}'
+     -d '{"agent_slug":"echo","origin":"api","idempotency_key":"e2e-'$(date +%s)'"}'
    ```
 2. Within seconds: an emdash session appears live in the sidebar (created or
    reused) running `/canopy:drain-turn echo`.

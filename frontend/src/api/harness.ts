@@ -188,7 +188,7 @@ export async function enqueueTurn(input: {
   const body = {
     agent_slug: agentSlug,
     project,
-    origin: 'manual',
+    origin: 'api',
     idempotency_key: key,
     prompt,
     // A thread_key makes the runner REUSE one session across dispatches (the

@@ -14115,7 +14115,7 @@ export interface components {
              * @default api
              * @enum {string}
              */
-            readonly origin: "api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill";
+            readonly origin: "api" | "ace_web" | "email" | "slack";
             /** Origin Ref */
             readonly origin_ref?: {
                 readonly [key: string]: unknown;
@@ -18799,7 +18799,7 @@ export interface components {
              * Origin
              * @enum {string}
              */
-            readonly origin: "api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill";
+            readonly origin: "api" | "ace_web" | "email" | "slack";
             /** Idempotency Key */
             readonly idempotency_key: string;
             /**
@@ -19945,7 +19945,7 @@ export interface components {
             /** Placement */
             readonly placement?: string | null;
             /** Origin */
-            readonly origin?: ("api" | "ace_web" | "email" | "slack" | "board" | "cron" | "manual" | "drill") | null;
+            readonly origin?: ("api" | "ace_web" | "email" | "slack") | null;
             readonly parent?: components["schemas"]["ParentIn"] | null;
             /**
              * Clear Prompt

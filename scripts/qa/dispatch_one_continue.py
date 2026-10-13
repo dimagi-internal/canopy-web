@@ -61,7 +61,7 @@ def main() -> int:
     args = ap.parse_args()
 
     body = {
-        "origin": "manual", "idempotency_key": f"dispatch1-{int(time.time())}",
+        "origin": "api", "idempotency_key": f"dispatch1-{int(time.time())}",
         "prompt": args.prompt,
         "origin_ref": {"thread_key": args.thread, "e2e": {"script": SCRIPT, "nonce": NONCE}},
     }

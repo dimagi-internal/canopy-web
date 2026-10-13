@@ -56,6 +56,17 @@ def test_legacy_origins_normalize_rather_than_422(legacy, expected):
     assert TurnSpecIn(origin=legacy).origin == expected
 
 
+def test_the_published_schema_advertises_only_postable_origins():
+    """OpenAPI is every MCP tool's input schema. Listing the retired spellings
+    there led agents to send `manual`, silently stored as `api`; they are still
+    ACCEPTED (above), just never offered."""
+    from apps.api.api import api
+
+    schemas = api.get_openapi_schema()["components"]["schemas"]
+    for name in ("TurnIn", "TurnSpecIn"):
+        assert schemas[name]["properties"]["origin"]["enum"] == ["api", "ace_web", "email", "slack"]
+
+
 def test_an_unknown_origin_is_still_rejected():
     with pytest.raises(ValueError):
         TurnIn(agent_slug="echo", origin="wat", idempotency_key="k")

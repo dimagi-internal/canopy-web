@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from canopy_cron import validate_cron, validate_timezone
 from canopy_sdk import contract
 from ninja import Schema
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, WithJsonSchema, field_validator, model_validator
 
 # Kept in lockstep with Turn.ORIGIN_CHOICES / Turn.ROUTING_CHOICES (models.py).
 # These are the values the DB columns accept (origin max_length=32, routing
@@ -21,9 +21,17 @@ from pydantic import Field, field_validator, model_validator
 # (one in-repo producer each) — a caller spelling them would borrow that source's
 # routing rule. Retired spellings are normalized, not rejected: the live fleet
 # posts `cron`/`manual` today and 422'ing them would break Echo/Ada mid-flight.
-Origin = Literal[
-    "api", "ace_web", "email", "slack",           # postable
-    "board", "cron", "manual", "drill",           # legacy, normalized below
+# But they are NOT advertised: the published schema (OpenAPI, so every MCP tool)
+# lists only what a caller should send. Advertising them led agents to pick
+# `manual`, which is then silently stored as `api`, so a routing rule written
+# for "manual" turns could never match.
+_POSTABLE_ORIGINS = ("api", "ace_web", "email", "slack")
+Origin = Annotated[
+    Literal[
+        "api", "ace_web", "email", "slack",           # postable
+        "board", "cron", "manual", "drill",           # legacy, normalized below
+    ],
+    WithJsonSchema({"type": "string", "enum": list(_POSTABLE_ORIGINS)}),
 ]
 # What a per-agent routing rule may name — the full vocabulary, including the
 # server-only sources (a rule NAMES a source, it does not produce one).

@@ -85,7 +85,7 @@ def main() -> int:
         # 4. Dispatch a Continue into it (tenant-scoped path — the pin the composer uses).
         turn_path = f"/api/w/{ws}/harness/turns/" if ws else "/api/harness/turns/"
         st, turn = _req("POST", turn_path,
-                        {"project": PROJECT, "origin": "manual",
+                        {"project": PROJECT, "origin": "api",
                          "idempotency_key": f"smoke-{int(time.time())}",
                          "prompt": "smoke: continue this session",
                          "origin_ref": {"thread_key": THREAD,
