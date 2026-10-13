@@ -255,7 +255,7 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
     qs = MailThread.objects.filter(workspace=ws, archived=archived).select_related("route__agent", "route__domain")
     address = ""
     if agent:
-        qs = qs.filter(route__agent__slug=agent)
+        qs = qs.filter(agent_slug=agent)  # snapshotted: survives the route's removal
         r = _agent_route(ws, agent)
         address = r.address if r else ""
     newest = MailMessage.objects.filter(thread=OuterRef("pk")).order_by("-created_at", "-pk")
@@ -392,7 +392,8 @@ def ses_events(request: HttpRequest):
         return 200, {"confirmed": True}
     try:
         if msg.get("Type") == "Notification":
-            reputation.record(json.loads(msg.get("Message") or "{}"))
+            reputation.record(json.loads(msg.get("Message") or "{}"),
+                              sns_message_id=str(msg.get("MessageId") or "")[:128])
     except (OperationalError, InterfaceError):
         logger.exception("ses events: transient db error; SNS will retry")
         return 500, {"detail": "try again"}

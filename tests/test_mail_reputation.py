@@ -122,21 +122,29 @@ def test_events_endpoint_404_when_verification_fails(d, post, monkeypatch):
 
 def test_events_endpoint_poison_event_is_200_transient_db_is_500(d, post, monkeypatch):
     msg = {"Type": "Notification", "Message": json.dumps(_ev("Send"))}
-    monkeypatch.setattr(reputation, "record", lambda e: (_ for _ in ()).throw(KeyError("x")))
+    monkeypatch.setattr(reputation, "record", lambda e, **kw: (_ for _ in ()).throw(KeyError("x")))
     assert post(msg).status_code == 200
-    monkeypatch.setattr(reputation, "record", lambda e: (_ for _ in ()).throw(OperationalError("db")))
+    monkeypatch.setattr(reputation, "record", lambda e, **kw: (_ for _ in ()).throw(OperationalError("db")))
     assert post(msg).status_code == 500
 
 
-def test_a_redelivered_bounce_counts_once(d, post):
-    msg = {"Type": "Notification", "Message": json.dumps(_ev(bounce={"bounceType": "Permanent"}))}
+def test_a_redelivered_sns_message_counts_once(d, post):
+    msg = {"Type": "Notification", "MessageId": "sns-1",
+           "Message": json.dumps(_ev(bounce={"bounceType": "Permanent"}))}
     assert post(msg).status_code == 200 and post(msg).status_code == 200
     assert MailEvent.objects.filter(kind="Bounce").count() == 1
-    reputation.record(_ev("Delivery"))  # another kind for the same message still counts
-    assert MailEvent.objects.count() == 2
+    assert MailEvent.objects.get().sns_message_id == "sns-1"
 
 
-def test_events_without_a_message_id_are_not_deduped(d):
+def test_two_sns_bounces_for_one_ses_message_count_twice(d, post):
+    # one multi-recipient send can bounce per recipient: same SES id, distinct SNS messages
+    for sns_id in ("sns-1", "sns-2"):
+        msg = {"Type": "Notification", "MessageId": sns_id, "Message": json.dumps(_ev())}
+        assert post(msg).status_code == 200
+    assert MailEvent.objects.filter(kind="Bounce", ses_message_id="m1").count() == 2
+
+
+def test_events_without_an_sns_message_id_are_not_deduped(d):
     for _ in range(2):
         reputation.record({"eventType": "Send", "mail": {"source": "ada@marshellis.com"}})
     assert MailEvent.objects.count() == 2

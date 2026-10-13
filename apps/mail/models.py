@@ -91,6 +91,9 @@ class MailThread(models.Model):
     """NULL once the address's route is removed: the conversation outlives the route."""
     address = models.CharField(max_length=320, blank=True, default="")
     """The mailbox address this thread belongs to, snapshotted from the route at creation."""
+    agent_slug = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    """The agent whose mailbox received the thread, snapshotted at creation ("" for a
+    non-agent route), so the agent's list keeps the thread after its route is removed."""
     uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     """The `thread_id` turns and agents carry."""
     subject = models.CharField(max_length=998, blank=True, default="")
@@ -105,6 +108,8 @@ class MailThread(models.Model):
     def save(self, *args, **kwargs):
         if not self.address and self.route_id:
             self.address = self.route.address
+        if not self.agent_slug and self.route_id and self.route.agent_id:
+            self.agent_slug = self.route.agent.slug
         super().save(*args, **kwargs)
 
 
@@ -189,12 +194,14 @@ class MailEvent(models.Model):
     kind = models.CharField(max_length=16)  # Send | Delivery | Bounce | Complaint | Reject
     hard = models.BooleanField(default=False)  # a Permanent bounce
     ses_message_id = models.CharField(max_length=128, blank=True, default="")
+    sns_message_id = models.CharField(max_length=128, blank=True, default="")
+    """The SNS envelope MessageId: the exact identity of one delivery, so a redelivery
+    counts once while several Bounce notifications for one multi-recipient send all count."""
     at = models.DateTimeField()
 
     class Meta:
         indexes = [models.Index(fields=["domain", "kind", "at"])]
         constraints = [
-            # SNS redelivers; one SES event of one kind counts once.
-            models.UniqueConstraint(fields=["ses_message_id", "kind"], name="mail_event_once",
-                                    condition=~models.Q(ses_message_id="")),
+            models.UniqueConstraint(fields=["sns_message_id"], name="mail_event_once",
+                                    condition=~models.Q(sns_message_id="")),
         ]

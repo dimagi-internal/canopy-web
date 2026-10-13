@@ -34,7 +34,7 @@ def _domain_of(source) -> MailDomain | None:
     return MailDomain.objects.filter(name=host).first() if host else None
 
 
-def record(event: dict) -> None:
+def record(event: dict, *, sns_message_id: str = "") -> None:
     kind = event.get("eventType") or event.get("notificationType") or ""
     mail = event.get("mail") or {}
     if kind not in _KINDS:
@@ -45,15 +45,17 @@ def record(event: dict) -> None:
     at = parse_datetime(mail.get("timestamp") or "") or timezone.now()
     msg_id = mail.get("messageId", "") or ""
     hard = kind == "Bounce" and (event.get("bounce") or {}).get("bounceType") == "Permanent"
-    if msg_id:
-        # SNS redelivers: one SES event of one kind counts once (unique on (ses_message_id, kind)).
+    row = dict(domain=domain, kind=kind, hard=hard, ses_message_id=msg_id, at=at, sns_message_id=sns_message_id)
+    if sns_message_id:
+        # SNS redelivers the same envelope MessageId: count it once. Keyed on the envelope,
+        # not the SES message id, because one multi-recipient send can bounce several times.
         try:
             with transaction.atomic():
-                MailEvent.objects.create(domain=domain, kind=kind, hard=hard, ses_message_id=msg_id, at=at)
+                MailEvent.objects.create(**row)
         except IntegrityError:
             return
     else:
-        MailEvent.objects.create(domain=domain, kind=kind, hard=hard, ses_message_id=msg_id, at=at)
+        MailEvent.objects.create(**row)
     if kind in _STATUS and msg_id:
         MailMessage.objects.filter(ses_message_id=msg_id).update(delivery_status=_STATUS[kind])
     evaluate(domain)

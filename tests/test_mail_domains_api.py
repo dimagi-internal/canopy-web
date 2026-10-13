@@ -381,3 +381,13 @@ def test_patching_the_cap_does_not_undo_a_concurrent_suspension(owner, ws, monke
     d.refresh_from_db()
     assert d.daily_send_cap == 300 and d.status == "suspended" and d.suspended_reason == "bounces"
     assert r.json()["status"] == "suspended"
+
+
+def test_deleting_an_agents_route_keeps_its_threads_in_the_agents_list(owner, ws):
+    d, r, t = _mail_world(ws, owner)
+    assert t.agent_slug == "mada"
+    assert _c(owner).delete(f"/api/mail/domains/marshellis/{d.pk}/routes/{r.pk}").status_code == 204
+    got = _c(owner).get("/api/mail/threads/marshellis", {"agent": "mada"}).json()
+    assert [i["thread_id"] for i in got["items"]] == [str(t.uuid)]
+    assert got["agent_address"] == ""
+    assert _c(owner).get("/api/mail/threads/marshellis", {"agent": "other"}).json()["items"] == []

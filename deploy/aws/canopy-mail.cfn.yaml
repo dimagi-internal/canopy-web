@@ -31,8 +31,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 # CloudFormation cannot activate a receipt rule set, so do it once afterwards:
 #   aws ses set-active-receipt-rule-set --profile labs --region us-east-1 --rule-set-name canopy-inbound
 #
-# Removing the feature: empty the bucket, then delete this stack (deactivate the rule
-# set first: aws ses set-active-receipt-rule-set with no --rule-set-name).
+# Removing the feature: deactivate the rule set (aws ses set-active-receipt-rule-set with
+# no --rule-set-name), then delete this stack. The inbound bucket is retained
+# (DeletionPolicy: Retain): once kept/ is no longer needed, empty and delete it by hand.
 Parameters:
   TaskRoleName:
     Type: String
