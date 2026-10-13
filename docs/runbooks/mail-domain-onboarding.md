@@ -59,13 +59,22 @@ The mail stack's HTTPS subscriptions send a `SubscriptionConfirmation` the momen
 
 A suspended domain (bounce/complaint rate) shows its reason on the settings page; fix the cause, then re-enable it there. Raw inbound mail in `incoming/` is deleted after 7 days.
 
-**Replaying a message** (one that was dropped, errored, or went to the wrong route before a fix), within those 7 days. Its key is `incoming/<SES message id>` (list them with `aws s3 ls --profile labs s3://canopy-inbound-mail-858923557655/incoming/`); then run it as a one-off task on the canopy-web task definition (`aws ecs run-task` with a `containerOverrides` command, output in the `/ecs/labs-jj-canopy-web` log group — the pattern in `docs/runbooks/connecting-a-system.md`):
+**Replaying a message**, within those 7 days. Its key is `incoming/<SES message id>` (list them with `aws s3 ls --profile labs s3://canopy-inbound-mail-858923557655/incoming/`); run it as a one-off task on the canopy-web task definition (`aws ecs run-task` with a `containerOverrides` command, output in the `/ecs/labs-jj-canopy-web` log group — the pattern in `docs/runbooks/connecting-a-system.md`). **Always `--dry-run` first**:
 ```bash
 python manage.py mail_replay incoming/<ses-message-id> --dry-run          # where each copy would go
 python manage.py mail_replay incoming/<ses-message-id>                    # To/Cc/Delivered-To on our domains
 python manage.py mail_replay incoming/<ses-message-id> --recipient ada@<domain>   # a Bcc recipient, or just one
+python manage.py mail_replay incoming/<ses-message-id> --reforward        # retry a forward logged as dropped
 ```
-It prints `recipient: outcome` per address. Repeating it is safe: a copy that already arrived reports `duplicate` (agent mail dedupes on Message-ID per mailbox; a forward is sent once per recipient). A transient failure prints the outcomes and exits non-zero — run it again.
+What a replay can fix, after the cause is fixed (a route added, a domain verified, a bug deployed):
+- `dropped:no-route`, `dropped:unknown-domain`, `dropped:drop-route` — nothing was recorded, so a replay routes it afresh.
+- `error:*` — a failed agent delivery or forward left nothing behind; a replay retries it.
+- Agent mail — delivered at most once per mailbox (Message-ID dedupe); a copy already stored reports `duplicate`, and a stored copy whose turn never enqueued gets its turn.
+- A forward logged as **dropped** (`dropped:not-a-member`, `dropped:no-email`, `dropped:loop`) is a recorded outcome: a plain replay reports `duplicate`; `--reforward` clears that DROPPED record first and retries it.
+- A forward already **forwarded** never sends again, `--reforward` or not.
+- `dropped:spam` / `dropped:virus` stay dropped (the SES verdict headers in the stored message are read).
+
+It prints `recipient: outcome` per address. A transient failure prints the outcomes and exits non-zero — run it again.
 
 A domain left `pending` (DNS never published) holds its name for `MAIL_PENDING_DOMAIN_TTL_DAYS` (7); after that, adding the name from any workspace releases the stale row and its SES identity.
 

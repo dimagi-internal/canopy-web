@@ -124,3 +124,55 @@ def test_a_real_replay_of_delivered_agent_mail_is_a_duplicate(world, monkeypatch
     assert lines == ["ada@marshellis.com: agent"]
     assert run("incoming/abc", "--recipient", "ada@marshellis.com").splitlines() == [
         "ada@marshellis.com: duplicate"]
+
+
+def test_ses_verdict_header_wins_over_one_the_sender_appended(world):
+    # SES prepends its headers; an attacker's own "PASS" sits further down.
+    world.raw = RAW.replace(b"X-SES-Spam-Verdict: PASS\r\n", b"X-SES-Spam-Verdict: FAIL\r\n") \
+        .replace(b"Subject: Hello", b"X-SES-Spam-Verdict: PASS\r\nSubject: Hello")
+    assert run("incoming/abc", "--recipient", "ada@marshellis.com").strip() == "ada@marshellis.com: dropped:spam"
+    assert world.calls == []
+
+
+def _forward_world(world, monkeypatch):
+    from apps.mail import forward
+    sent = []
+    monkeypatch.setattr(inbound, "deliver_forward", lambda r, p, raw, rcpt: forward.forward(r, p, raw, rcpt))
+    monkeypatch.setattr(ses, "send_raw", lambda **kw: sent.append(kw) or "ses-1")
+    return sent
+
+
+def test_reforward_clears_a_dropped_forward_and_retries_it(world, monkeypatch):
+    from apps.mail.models import MailForwardLog
+    sent = _forward_world(world, monkeypatch)
+    d = MailDomain.objects.get()
+    MailForwardLog.objects.create(domain=d, message_id="<replay-1@example.org>", recipient="apple@marshellis.com",
+                                  status=MailForwardLog.DROPPED, error="destination is no longer a member")
+    assert run("incoming/abc", "--recipient", "apple@marshellis.com").strip() == "apple@marshellis.com: duplicate"
+    assert sent == []
+    assert run("incoming/abc", "--recipient", "apple@marshellis.com", "--reforward").strip() == \
+        "apple@marshellis.com: forwarded"
+    assert len(sent) == 1
+    assert MailForwardLog.objects.get().status == MailForwardLog.FORWARDED
+
+
+def test_reforward_never_resends_an_already_forwarded_copy(world, monkeypatch):
+    from apps.mail.models import MailForwardLog
+    sent = _forward_world(world, monkeypatch)
+    MailForwardLog.objects.create(domain=MailDomain.objects.get(), message_id="<replay-1@example.org>",
+                                  recipient="apple@marshellis.com", status=MailForwardLog.FORWARDED)
+    assert run("incoming/abc", "--recipient", "apple@marshellis.com", "--reforward").strip() == \
+        "apple@marshellis.com: duplicate"
+    assert sent == [] and MailForwardLog.objects.count() == 1
+
+
+def test_s3_errors_are_clear_command_errors(world, monkeypatch):
+    from botocore.exceptions import EndpointConnectionError
+    monkeypatch.setattr(ses, "get_object", lambda key: (_ for _ in ()).throw(
+        ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")))
+    with pytest.raises(CommandError, match="refused: AccessDenied"):
+        run("incoming/abc")
+    monkeypatch.setattr(ses, "get_object", lambda key: (_ for _ in ()).throw(
+        EndpointConnectionError(endpoint_url="https://s3")))
+    with pytest.raises(CommandError, match="could not reach the mail provider: EndpointConnectionError"):
+        run("incoming/abc")

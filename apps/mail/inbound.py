@@ -162,7 +162,9 @@ _HEADER_VERDICTS = {"spam": "x-ses-spam-verdict", "virus": "x-ses-virus-verdict"
 def header_verdicts(parsed) -> dict[str, str]:
     """The spam/virus verdicts SES writes into the stored message's headers (the receipt
     notification, which also carried spf/dkim/dmarc, is gone by the time of a replay)."""
-    found = {k.lower(): v for k, v in parsed.headers}
+    found: dict[str, str] = {}
+    for k, v in parsed.headers:
+        found.setdefault(k.lower(), v)  # the FIRST: SES prepends its own; a sender's copy sits below
     return {name: found[h].strip()[:32] for name, h in _HEADER_VERDICTS.items() if found.get(h, "").strip()}
 
 
@@ -174,9 +176,24 @@ def default_recipients(parsed) -> list[str]:
             if "@" in a and domains._domain_for(a.rpartition("@")[2]) is not None]
 
 
-def replay(key: str, recipients: list[str] | None = None, *, dry_run: bool = False) -> list[dict]:
+def _clear_dropped_forward(rcpt: str, parsed) -> bool:
+    """Remove a DROPPED forward claim (never a FORWARDED one) so a replay can forward it."""
+    from .models import MailForwardLog
+
+    kind, route = plan(rcpt)
+    if kind != MailRoute.FORWARD:
+        return False
+    n, _ = MailForwardLog.objects.filter(domain=route.domain, message_id=parsed.message_id, recipient=rcpt,
+                                         status=MailForwardLog.DROPPED).delete()
+    return bool(n)
+
+
+def replay(key: str, recipients: list[str] | None = None, *, dry_run: bool = False,
+           reforward: bool = False) -> list[dict]:
     """Re-handle a raw `incoming/` object. Raises ValueError for a refused key or no
-    recipients, ses.MailOff when mail is off, and Transient like `deliver`."""
+    recipients, ses.MailOff when mail is off, and Transient like `deliver`. With
+    `reforward`, a forward that was logged as DROPPED is cleared first so it is retried;
+    an already-FORWARDED copy is never sent again."""
     if not valid_key(key):
         raise ValueError(f"refused key {key!r}: only incoming/ objects, no '..'")
     raw = ses.get_object(key)
@@ -188,6 +205,10 @@ def replay(key: str, recipients: list[str] | None = None, *, dry_run: bool = Fal
     reason = blocked(verdicts)
     if reason:
         return [{"recipient": r, "outcome": f"dropped:{reason}"} for r in rcpts]
+    if reforward and not dry_run:
+        for r in rcpts:
+            if _clear_dropped_forward(r, parsed):
+                logger.info("mail replay cleared the dropped forward of %s to %s", parsed.message_id, r)
     if dry_run:
         out = []
         for r in rcpts:
