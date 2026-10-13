@@ -217,3 +217,9 @@ def test_reply_defaults_to_the_newest_inbound_reply_to_else_its_sender(w):
     MailDomain.objects.filter(pk=w.d.pk).update(daily_send_cap=100)
     assert _reply(w, {"text": "x"}).status_code == 200
     assert w.sent[-1]["to"] == ["z@x.org"]
+
+
+def test_thread_detail_exposes_verdicts(w):
+    MailMessage.objects.filter(message_id="<in-1@x.org>").update(verdicts={"spf": "PASS", "dmarc": "FAIL"})
+    msgs = _c(w.owner).get(f"/api/mail/threads/marshellis/{w.t.uuid}").json()["messages"]
+    assert msgs[0]["verdicts"] == {"spf": "PASS", "dmarc": "FAIL"}

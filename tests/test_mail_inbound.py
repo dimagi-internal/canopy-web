@@ -37,7 +37,7 @@ def world(settings, monkeypatch):
     MailRoute.objects.create(domain=d, local_part="ada", kind="agent", agent=a)
     MailRoute.objects.create(domain=d, local_part="*", kind="forward", forward_to=u)
     calls = []
-    monkeypatch.setattr(inbound, "deliver_agent", lambda r, p, k: calls.append(("agent", r.address)) or "agent")
+    monkeypatch.setattr(inbound, "deliver_agent", lambda r, p, k, **kw: calls.append(("agent", r.address, kw.get("verdicts"))) or "agent")
     monkeypatch.setattr(inbound, "deliver_forward", lambda r, p, raw, rcpt: calls.append(("fwd", rcpt)) or "forwarded")
     monkeypatch.setattr(ses, "get_object", lambda key: (FIX / "plain.eml").read_bytes())
     return type("W", (), {"calls": calls, "user": u})
@@ -88,7 +88,7 @@ def test_garbage_body_is_404(world):
 
 def test_signed_notification_is_handled(world, signed):
     r = post(note(["ada@marshellis.com"]))
-    assert r.status_code == 200 and world.calls == [("agent", "ada@marshellis.com")]
+    assert r.status_code == 200 and [c[:2] for c in world.calls] == [("agent", "ada@marshellis.com")]
 
 
 def test_subscription_confirmation_is_verified_then_confirmed(world, monkeypatch):
@@ -141,7 +141,7 @@ def test_deterministic_bug_is_200_not_a_six_hour_retry_loop(world, signed, monke
 
 
 def test_one_recipient_failing_does_not_stop_the_others(world, signed, monkeypatch):
-    def bad(r, p, k):
+    def bad(r, p, k, **kw):
         raise ValueError("bug")
 
     monkeypatch.setattr(inbound, "deliver_agent", bad)
@@ -152,7 +152,7 @@ def test_one_recipient_failing_does_not_stop_the_others(world, signed, monkeypat
 
 
 def test_transient_recipient_error_still_finishes_the_rest_then_500s(world, signed, monkeypatch):
-    def bad(r, p, k):
+    def bad(r, p, k, **kw):
         raise OperationalError("db gone")
 
     monkeypatch.setattr(inbound, "deliver_agent", bad)
@@ -358,3 +358,12 @@ def test_recipients_are_deduped_after_lowercasing(world):
     out = inbound.handle(note(["Ada@marshellis.com", "ada@MARSHELLIS.com", "apple@marshellis.com"]))
     assert [o["recipient"] for o in out] == ["ada@marshellis.com", "apple@marshellis.com"]
     assert len(world.calls) == 2
+
+
+def test_receipt_verdicts_are_passed_to_agent_delivery(world):
+    n = note(["ada@marshellis.com"])
+    n["receipt"].update({"spfVerdict": {"status": "PASS"}, "dkimVerdict": {"status": "GRAY"},
+                         "dmarcVerdict": {"status": "FAIL"}})
+    inbound.handle(n)
+    assert world.calls == [("agent", "ada@marshellis.com",
+                            {"spf": "PASS", "dkim": "GRAY", "dmarc": "FAIL", "spam": "PASS", "virus": "PASS"})]

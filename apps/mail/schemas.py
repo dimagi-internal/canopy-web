@@ -79,6 +79,7 @@ class MailMessageOut(Schema):
     text: str
     html: str
     delivery_status: str
+    verdicts: dict[str, str] = {}
     created_at: str
     attachments: list[MailAttachmentOut] = []
 

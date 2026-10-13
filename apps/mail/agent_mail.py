@@ -51,7 +51,7 @@ def _turn_key(agent, thread, msg) -> str:
     return f"email-{agent.slug}-{thread.uuid}-{msg.pk}"
 
 
-def deliver(route, parsed, raw_key: str) -> str:
+def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None) -> str:
     ws = route.domain.workspace
     existing = (MailMessage.objects.filter(workspace=ws, mailbox=route.address,
                                            message_id=parsed.message_id)
@@ -67,7 +67,7 @@ def deliver(route, parsed, raw_key: str) -> str:
                     references=" ".join(parsed.references), from_addr=parsed.from_addr,
                     from_name=parsed.from_name, to=parsed.to, cc=parsed.cc,
                     reply_to=parsed.reply_to, subject=parsed.subject[:998], text=parsed.text, html=parsed.html,
-                    raw_key=ses.keep(raw_key),
+                    raw_key=ses.keep(raw_key), verdicts=dict(verdicts or {}),
                     auth_results="\n".join(h["value"] for h in _auth_results(parsed)))
                 for i, att in enumerate(parsed.attachments):
                     key = f"attachments/{ws.slug}/{msg.pk}/{i}"

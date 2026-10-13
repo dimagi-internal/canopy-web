@@ -9643,6 +9643,13 @@ export interface components {
             readonly html: string;
             /** Delivery Status */
             readonly delivery_status: string;
+            /**
+             * Verdicts
+             * @default {}
+             */
+            readonly verdicts: {
+                readonly [key: string]: string;
+            };
             /** Created At */
             readonly created_at: string;
             /**

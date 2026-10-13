@@ -30,10 +30,10 @@ class Transient(Exception):  # noqa: N818 - carries the outcomes of a notificati
         self.outcomes = outcomes
 
 
-def deliver_agent(route, parsed, raw_key: str) -> str:
+def deliver_agent(route, parsed, raw_key: str, *, verdicts: dict | None = None) -> str:
     from . import agent_mail
 
-    return agent_mail.deliver(route, parsed, raw_key)
+    return agent_mail.deliver(route, parsed, raw_key, verdicts=verdicts)
 
 
 def deliver_forward(route, parsed, raw: bytes, recipient: str) -> str:
@@ -51,14 +51,28 @@ def _object_key(notification: dict) -> str:
     return f"{prefix}{message_id}" if message_id else ""
 
 
-def _route_one(rcpt: str, parsed, raw: bytes, key: str) -> str:
+_VERDICTS = {"spf": "spfVerdict", "dkim": "dkimVerdict", "dmarc": "dmarcVerdict",
+             "spam": "spamVerdict", "virus": "virusVerdict"}
+
+
+def receipt_verdicts(receipt: dict) -> dict[str, str]:
+    """The receipt's verdict statuses, lowercase name → status (only those present)."""
+    out = {}
+    for name, k in _VERDICTS.items():
+        status = (receipt.get(k) or {}).get("status")
+        if isinstance(status, str) and status:
+            out[name] = status[:32]
+    return out
+
+
+def _route_one(rcpt: str, parsed, raw: bytes, key: str, verdicts: dict) -> str:
     domain, route = domains.resolve(rcpt)
     if domain is None:
         return "dropped:unknown-domain"
     if route is None:
         return "dropped:no-route"
     if route.kind == MailRoute.AGENT:
-        return deliver_agent(route, parsed, key)
+        return deliver_agent(route, parsed, key, verdicts=verdicts)
     if route.kind == MailRoute.FORWARD:
         return deliver_forward(route, parsed, raw, rcpt)
     return "dropped:drop-route"
@@ -88,11 +102,12 @@ def handle(notification: dict) -> list[dict]:
         logger.warning("mail inbound ignored: MAIL_ENABLED is off")
         return [{"recipient": r, "outcome": "dropped:mail-off"} for r in recipients]
     parsed = parse.parse(raw)
+    verdicts = receipt_verdicts(receipt)
     out: list[dict] = []
     transient = False
     for rcpt in recipients:
         try:
-            outcome = _route_one(rcpt, parsed, raw, key)
+            outcome = _route_one(rcpt, parsed, raw, key, verdicts)
         except ses.MailOff:
             outcome = "dropped:mail-off"
         except TRANSIENT as exc:

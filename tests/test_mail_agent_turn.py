@@ -136,3 +136,9 @@ def test_reply_to_is_stored(route):
     p.reply_to = ["list@example.org"]
     agent_mail.deliver(route, p, "incoming/abc")
     assert MailMessage.objects.get().reply_to == ["list@example.org"]
+
+
+def test_verdicts_are_stored_on_agent_mail(route):
+    p = parse.parse((FIX / "plain.eml").read_bytes())
+    agent_mail.deliver(route, p, "incoming/abc", verdicts={"spf": "PASS", "spam": "PASS"})
+    assert MailMessage.objects.get().verdicts == {"spf": "PASS", "spam": "PASS"}

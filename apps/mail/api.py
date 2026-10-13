@@ -218,7 +218,8 @@ def _msg_out(m) -> dict:
              "url": _presign(a)} for a in m.attachments.all()]
     return {"id": m.pk, "direction": m.direction, "message_id": m.message_id, "from_addr": m.from_addr,
             "from_name": m.from_name, "to": m.to, "cc": m.cc, "subject": m.subject, "text": m.text,
-            "html": m.html, "delivery_status": m.delivery_status, "created_at": m.created_at.isoformat(),
+            "html": m.html, "delivery_status": m.delivery_status, "verdicts": m.verdicts or {},
+            "created_at": m.created_at.isoformat(),
             "attachments": atts}
 
 
