@@ -11,6 +11,15 @@ import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '@/lib/scopedLinks'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 
+// The email's own HTML is untrusted. sandbox="" blocks scripts, but <img>, CSS
+// url() and <link> would still fetch remotely (a tracking pixel reveals the
+// viewer's IP and read time), so the CSP goes FIRST and allows no network.
+const CSP_META =
+  `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`
+export function sandboxedSrcDoc(html: string): string {
+  return CSP_META + html
+}
+
 // Delivery states of an outbound message, in semantic tokens.
 const STATUS_CLASS: Record<string, string> = {
   sent: 'text-muted-foreground',
@@ -26,6 +35,7 @@ function MessageView({ m }: { m: MailMessageOut }) {
         <span className="rounded border border-border px-1.5 text-[11px] uppercase">{m.direction}</span>
         <span className="text-foreground">{m.from_name ? `${m.from_name} <${m.from_addr}>` : m.from_addr}</span>
         <span>to {m.to.join(', ')}</span>
+        {m.cc.length > 0 && <span>cc {m.cc.join(', ')}</span>}
         <time dateTime={m.created_at}>{relativeAge(m.created_at)}</time>
         {m.direction === 'out' && m.delivery_status && (
           <span className={STATUS_CLASS[m.delivery_status] ?? 'text-muted-foreground'}>{m.delivery_status}</span>
@@ -37,7 +47,8 @@ function MessageView({ m }: { m: MailMessageOut }) {
         <iframe
           title={`Message ${m.id}`}
           sandbox=""
-          srcDoc={m.html}
+          srcDoc={sandboxedSrcDoc(m.html)}
+          referrerPolicy="no-referrer"
           className="mt-2 h-72 w-full rounded border border-border bg-background"
         />
       ) : (
@@ -47,9 +58,13 @@ function MessageView({ m }: { m: MailMessageOut }) {
         <ul className="mt-2 flex flex-wrap gap-3 text-[12px]">
           {m.attachments.map((a) => (
             <li key={a.url}>
-              <a href={a.url} download={a.filename} className="text-primary underline" rel="noopener noreferrer">
-                {a.filename}
-              </a>
+              {/^https:\/\//.test(a.url) ? (
+                <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                  {a.filename}
+                </a>
+              ) : (
+                <span className="text-muted-foreground">{a.filename}</span>
+              )}
             </li>
           ))}
         </ul>
@@ -66,6 +81,7 @@ export function AgentMailSection() {
   const [error, setError] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [thread, setThread] = useState<MailThreadOut | null>(null)
+  const [threadError, setThreadError] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -87,9 +103,10 @@ export function AgentMailSection() {
     if (!openId) return
     let alive = true
     setThread(null)
+    setThreadError(null)
     fetchMailThread(workspace, openId)
       .then((t) => alive && setThread(t))
-      .catch(() => alive && setThread(null))
+      .catch((e: unknown) => alive && setThreadError(e instanceof Error ? e.message : 'Failed to load thread'))
     return () => {
       alive = false
     }
@@ -128,14 +145,20 @@ export function AgentMailSection() {
                 <tr
                   key={t.thread_id}
                   onClick={() => setOpenId(t.thread_id)}
-                  aria-selected={t.thread_id === openId}
+                  aria-current={t.thread_id === openId ? 'true' : undefined}
                   className={`cursor-pointer border-t border-border hover:bg-muted ${
                     t.thread_id === openId ? 'bg-muted' : ''
                   }`}
                 >
                   <td className="py-1.5 pr-2">
                     {t.unread && <span aria-label="unread" className="mr-1.5 inline-block h-2 w-2 rounded-full bg-primary" />}
-                    <span className={t.unread ? 'font-semibold text-foreground' : 'text-foreground'}>{t.subject}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setOpenId(t.thread_id) }}
+                      className={`text-left ${t.unread ? 'font-semibold text-foreground' : 'text-foreground'}`}
+                    >
+                      {t.subject}
+                    </button>
                   </td>
                   <td className="py-1.5 pr-2 text-muted-foreground">{t.counterpart || t.address}</td>
                   <td className="py-1.5 pr-2 text-muted-foreground">{t.message_count}</td>
@@ -147,6 +170,8 @@ export function AgentMailSection() {
           <section aria-label="Thread" className="min-w-0">
             {!openId ? (
               <p className="text-[13px] text-muted-foreground">Select a thread to read it.</p>
+            ) : threadError ? (
+              <p role="alert" className="text-[13px] text-destructive">{threadError}</p>
             ) : thread === null ? (
               <WorkbenchSkeleton />
             ) : (

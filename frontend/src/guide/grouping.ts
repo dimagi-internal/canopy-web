@@ -50,7 +50,7 @@ const NAV_HOME: Record<string, string> = {
  * menu at all. (Measured before this existed.)
  *
  * These are assigned BEFORE the nav groups, which matters for exactly one case:
- * the ten rail sections all sit under `/w/:workspace/agents/:slug/`, so nav's
+ * the eleven rail sections all sit under `/w/:workspace/agents/:slug/`, so nav's
  * `/w/:workspace/agents` would otherwise absorb them into Fleet and leave this
  * group empty.
  *

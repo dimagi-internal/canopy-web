@@ -70,6 +70,10 @@ describe('AgentMailSection', () => {
     const frame = container.querySelector('iframe')!
     expect(frame.getAttribute('sandbox')).toBe('')
     expect(frame.getAttribute('srcdoc')).toContain('<p>Hi</p>')
+    expect(frame.getAttribute('srcdoc')!.startsWith(
+      `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`,
+    )).toBe(true)
+    expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer')
   })
 
   it('shows attachments as download links', async () => {
@@ -101,5 +105,42 @@ describe('AgentMailSection', () => {
     renderMail()
     expect((await screen.findByRole('alert')).textContent).toBe('boom')
     expect(screen.queryByText(/no email address/)).toBeNull()
+  })
+
+  it('shows an alert when the thread fails to load', async () => {
+    fetchMailThreads.mockResolvedValue({ items: [thread], agent_address: 'echo@mail.example.org' })
+    fetchMailThread.mockRejectedValue(new Error('thread gone'))
+    renderMail()
+    fireEvent.click(await screen.findByText('Grant question'))
+    expect((await screen.findByRole('alert')).textContent).toBe('thread gone')
+  })
+
+  it('shows the LAST clicked thread when responses arrive out of order', async () => {
+    const t2 = { ...thread, thread_id: 't2', subject: 'Second thread' }
+    fetchMailThreads.mockResolvedValue({ items: [thread, t2], agent_address: 'a@b.org' })
+    let res1: (v: unknown) => void = () => {}
+    let res2: (v: unknown) => void = () => {}
+    fetchMailThread.mockImplementation((_ws: string, id: string) =>
+      new Promise((r) => { if (id === 't1') res1 = r; else res2 = r }))
+    renderMail()
+    fireEvent.click(await screen.findByText('Grant question'))
+    fireEvent.click(screen.getByText('Second thread'))
+    res2({ ...detail(), ...t2, messages: [{ ...detail().messages[1], text: 'from two' }] })
+    res1(detail())
+    expect(await screen.findByText('from two')).toBeTruthy()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.queryByText('First hello')).toBeNull()
+  })
+
+  it('renders cc, and non-https attachment urls as plain text', async () => {
+    fetchMailThreads.mockResolvedValue({ items: [thread], agent_address: 'a@b.org' })
+    const d = detail()
+    fetchMailThread.mockResolvedValue({ ...d, messages: [{ ...d.messages[0], cc: ['bob@x.org'],
+      attachments: [{ filename: 'evil.txt', content_type: 'text/plain', size: 1, url: 'javascript:alert(1)' }] }] })
+    renderMail()
+    fireEvent.click(await screen.findByText('Grant question'))
+    expect(await screen.findByText('cc bob@x.org')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'evil.txt' })).toBeNull()
+    expect(screen.getByText('evil.txt')).toBeTruthy()
   })
 })
