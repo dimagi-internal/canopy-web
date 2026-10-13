@@ -78,13 +78,6 @@ def normalize_profile(value) -> str:
     return _LEGACY_PROFILE.get(v, v)
 
 
-def _agent_of(turn):
-    if turn.agent_id:
-        return turn.agent
-    cs = getattr(turn, "chat_session", None)
-    return cs.agent if cs is not None and cs.agent_id else None
-
-
 def _verified(turn) -> bool:
     kind, grade = turn.initiator_kind, turn.initiator_assurance or ""
     if kind == who.USER:
@@ -211,7 +204,7 @@ UNPROVEN_MEMBER_EVENT = "unproven_member"
 
 def unproven_member(turn) -> dict | None:
     """`unproven_member` for a turn on its own — what the envelope carries."""
-    return _unproven_member(turn, _agent_of(turn))
+    return _unproven_member(turn, turn.acting_agent)
 
 
 def _unproven_member(turn, agent) -> dict | None:
@@ -269,7 +262,7 @@ def sender_trust(turn) -> dict | None:
         return None
     if (turn.initiator_assurance or "") in Contact.EMAIL_ALIGNED:
         return None
-    agent = _agent_of(turn)
+    agent = turn.acting_agent
     contact = turn.initiator_contact if turn.initiator_contact_id else None
     if agent is None or contact is None or not contact.email:
         return None
@@ -300,7 +293,7 @@ def build(turn, *, reader_user=None) -> dict:
     `PersonAccess(via=envelope)` — reader the turn's agent, plus `reader_user`
     when someone fetched the envelope themselves (REST / MCP) — so the person
     can see every time an agent was handed what canopy knows about them."""
-    agent = _agent_of(turn)
+    agent = turn.acting_agent
     ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
     cs = getattr(turn, "chat_session", None)
     rel = relationship(turn, agent)
@@ -461,7 +454,7 @@ def _trigger(turn, ref: dict) -> dict:
 def _matched_classes(turn) -> list[str]:
     """The caller classes that earned this turn its capability (e.g. `contact:verified`)
     — the interface clause an operator would edit to change who gets `ask`."""
-    agent = _agent_of(turn)
+    agent = turn.acting_agent
     if agent is None or not turn.capability:
         return []
     from apps.agents.interface import caller_classes
@@ -474,7 +467,7 @@ def _matched_classes(turn) -> list[str]:
 
 def _thread_history(turn, ref: dict) -> dict | None:
     tid = ref.get("thread_id")
-    agent = _agent_of(turn)
+    agent = turn.acting_agent
     if not tid or agent is None:
         return None
     from django.db.models import Q

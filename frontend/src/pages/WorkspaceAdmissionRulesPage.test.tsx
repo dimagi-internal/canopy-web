@@ -40,12 +40,13 @@ const choices = {
   access: pairs('confined', 'full', 'none'),
   turn_modes: pairs('manual', 'auto'),
   runner_kinds: pairs('emdash', 'cloud'),
+  reaches: pairs('paused', 'offline'),
   actions: pairs('reject', 'allow'),
 }
 
 const cloud: AdmissionRuleOut = {
   id: 3, workspace: 'connect', agent: '', origin: 'email', principal: '', sender: '', access: 'confined',
-  capability: '', turn_mode: 'manual', runner_kind: 'cloud', action: 'reject',
+  capability: '', turn_mode: 'manual', runner_kind: 'cloud', reach: '', wait_hours: 24, action: 'reject',
   reason: 'nobody can approve the reply', notify_sender: true, notify_owner: true, enabled: true,
   summary: 'Email, confined, manual, on a Cloud runner', seeded: true, refusal: false, fired_count: 2,
   last_fired_at: '2026-10-10T23:46:00Z', created_by: '', updated_at: '2026-10-11T00:00:00Z',

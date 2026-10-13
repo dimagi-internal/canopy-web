@@ -64,8 +64,7 @@ def close_all(cfg: Config, *, project: str | None = None,
             continue
         if not proj:
             result["skipped"].append(task)
-            result["outcomes"].append({"session_key": task, "project": "", "ok": False,
-                                       "error": close.NO_PROJECT})
+            result["outcomes"].append(close.outcome(task, "", close.NO_PROJECT))
             continue
         try:
             action = close.close_session(task, project=proj, cdp_port=cfg.cdp_port,
@@ -75,12 +74,10 @@ def close_all(cfg: Config, *, project: str | None = None,
             reason = close.failure_reason(exc, cdp_port=cfg.cdp_port)
             result["failed"].append({"task": task, "project": proj, "error": str(exc),
                                      "reason": reason})
-            result["outcomes"].append({"session_key": task, "project": proj, "ok": False,
-                                       "error": reason})
+            result["outcomes"].append(close.outcome(task, proj, reason))
             continue
         result["absent" if action == "absent" else "closed"].append(task)
-        result["outcomes"].append({"session_key": task, "project": proj, "ok": True,
-                                   "error": ""})
+        result["outcomes"].append(close.outcome(task, proj))
     return result
 
 

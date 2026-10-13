@@ -277,6 +277,8 @@ def test_as_dict_is_flat_json_native_and_carries_the_derived_questions():
         # Derived, not re-derived by four clients that could disagree.
         "requires": [],
         "behind": None,
+        "parked": False,
+        "held_until": None,
         "settled": False,
         "stuck": True,
     }

@@ -62,6 +62,15 @@ class AdmissionRule(models.Model):
     # Runner.KIND_CHOICES. `emdash` is a laptop running emdash; `cloud` a cloud box.
     RUNNER_KIND_CHOICES = [("emdash", "Laptop (emdash)"), ("cloud", "Cloud"), ("remote", "Remote")]
 
+    #: Where the turn stands with the runners that could take it (`harness.claim.
+    #: Reach`). A turn no runner WILL take is not a turn that runs late — it is one
+    #: that never runs, and nobody is told unless a rule says so.
+    PAUSED, OFFLINE = "paused", "offline"
+    REACH_CHOICES = [
+        (PAUSED, "Paused: every runner that could take it is paused, with no time set to resume"),
+        (OFFLINE, "Offline: no runner that could take it has been reachable for the wait"),
+    ]
+
     workspace = models.ForeignKey(
         "workspaces.Workspace", on_delete=models.CASCADE, related_name="admission_rules",
     )
@@ -79,6 +88,10 @@ class AdmissionRule(models.Model):
     #: `blocked` matches a sender the workspace blocked (`Contact.is_blocked`).
     sender = models.CharField(max_length=8, choices=SENDER_CHOICES, blank=True, default="")
     runner_kind = models.CharField(max_length=10, choices=RUNNER_KIND_CHOICES, blank=True, default="")
+    reach = models.CharField(max_length=8, choices=REACH_CHOICES, blank=True, default="")
+    #: For `reach: offline` only: how long a turn may wait on runners that are
+    #: down before it is rejected. A laptop asleep overnight is normal; a day is not.
+    wait_hours = models.PositiveIntegerField(default=24)
 
     action = models.CharField(max_length=8, choices=ACTION_CHOICES, default=REJECT)
     reason = models.TextField(help_text="Why matching turns are rejected; shown to the owner.")
@@ -110,7 +123,8 @@ class AdmissionRule(models.Model):
         return f"admission:{self.workspace_id}:{self.pk}:{self.action}"
 
     #: The conditions, in the order a summary reads them.
-    CONDITIONS = ("origin", "principal", "sender", "access", "capability", "turn_mode", "runner_kind")
+    CONDITIONS = ("origin", "principal", "sender", "access", "capability", "turn_mode", "runner_kind",
+                  "reach")
     #: Conditions only known once a runner claims the turn.
     CLAIM_TIME = ("turn_mode", "runner_kind")
 
@@ -136,6 +150,14 @@ class AdmissionRule(models.Model):
             raise ValidationError(
                 "a refusal happens before any runner or mode is chosen, so it cannot "
                 "be narrowed by turn mode or runner")
+        if self.reach and (self.turn_mode or self.runner_kind):
+            raise ValidationError(
+                "a rule about turns no runner will take cannot also be narrowed by the "
+                "runner or turn mode that claims them — nothing claims them")
+        if self.reach and self.action == self.ALLOW:
+            raise ValidationError(
+                "an allow rule cannot be about runners being paused or offline; to keep "
+                "such turns queued, disable or narrow the reject rule instead")
         if not self.specificity:
             # A rule with no conditions rejects (or exempts) every turn in the
             # workspace. Disabling the agent is the honest way to do that.

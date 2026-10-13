@@ -39,6 +39,7 @@ from . import (
     secrets,
     serializers,
     services,
+    staleness,
     status_feed,
 )
 from . import activity as session_activity
@@ -463,11 +464,10 @@ def _filtered_sessions(
         rows = rows.filter(_activity__gte=_aware(since))
     if until is not None:
         rows = rows.filter(_activity__lt=_aware(until))
-    unseen = services.unseen_q()   # defined once in staleness.py; see Step 3
     if state == "active":
-        rows = rows.filter(status=Session.ACTIVE).exclude(unseen)
+        rows = staleness.active(rows)
     elif state == "archived":
-        rows = rows.filter(Q(status=Session.ARCHIVED) | unseen)
+        rows = rows.filter(Q(status=Session.ARCHIVED) | services.unseen_q())
     return rows
 
 

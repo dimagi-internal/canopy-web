@@ -329,7 +329,10 @@ def reply_state(turn_id: str) -> dict:
                       "with this conversation_id and your answer as the message."
     if turn.status == Turn.QUEUED:
         reach = harness.turn_reach(turn)
-        if reach.kind != harness.LIVE:
+        if reach.kind == harness.PARKED:
+            out["note"] = "Its runner is paused: " + "; ".join(
+                harness.runner_situation(r) for r in reach.runners) + "."
+        elif reach.kind != harness.LIVE:
             out["note"] = ("No online runner can take this yet — it will run when one can."
                            if reach.kind == harness.OFFLINE else
                            "No runner serves this agent for you right now; its owner has been "

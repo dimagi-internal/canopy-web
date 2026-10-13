@@ -207,12 +207,10 @@ def drain_closes(cfg: Config, client: Client) -> None:
             logger.debug("close from the poll tick failed for %s", session_key, exc_info=True)
             reason = close_mod.failure_reason(exc, cdp_port=cfg.cdp_port)
             if reason != held:
-                results.append({"session_key": session_key, "project": project,
-                                "ok": False, "error": reason})
+                results.append(close_mod.outcome(session_key, project, reason))
         else:
             if held:
-                results.append({"session_key": session_key, "project": project,
-                                "ok": True, "error": ""})
+                results.append(close_mod.outcome(session_key, project))
     close_mod.report_results(cfg, client, results)
 
 

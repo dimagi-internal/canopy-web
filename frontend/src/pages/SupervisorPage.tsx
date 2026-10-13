@@ -401,7 +401,9 @@ export default function SupervisorPage(): JSX.Element {
               className="rounded-lg border-2 border-warning bg-warning/15 p-3 text-warning"
             >
               <p className="text-[13px] font-bold uppercase tracking-wide">
-                {stuckShown.every((t) => t.kind === 'offline')
+                {stuckShown.every((t) => t.kind === 'parked')
+                  ? `⚠ ${stuckShown.length} queued turn${stuckShown.length === 1 ? '' : 's'} waiting on a paused runner`
+                  : stuckShown.every((t) => t.kind === 'offline' || t.kind === 'parked')
                   ? `⚠ ${stuckShown.length} queued turn${stuckShown.length === 1 ? '' : 's'} waiting on an unreachable runner`
                   : `⚠ ${stuckShown.length} queued turn${stuckShown.length === 1 ? '' : 's'} no runner can claim`}
               </p>
@@ -415,7 +417,9 @@ export default function SupervisorPage(): JSX.Element {
                 ))}
               </ul>
               <p className="mt-1.5 text-[12px] leading-snug opacity-90">
-                {stuckShown.every((t) => t.kind === 'offline')
+                {stuckShown.every((t) => t.kind === 'parked')
+                  ? 'These run when their runner is resumed (below), or at the resume time it was paused until.'
+                  : stuckShown.every((t) => t.kind === 'offline' || t.kind === 'parked')
                   ? 'These will run as soon as a runner reconnects — no action needed unless it stays.'
                   : 'Declare it on a runner (below) or cancel the turn — it will not run otherwise.'}
               </p>

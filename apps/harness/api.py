@@ -1007,13 +1007,12 @@ def _open_sessions_by_runner(runner_ids) -> dict:
     """{runner id: sessions open on it} — active and still reported, the session
     list's own `state=active` rule (`unseen_q`), so the two counts cannot drift."""
     from apps.canopy_sessions.models import Session
-    from apps.canopy_sessions.staleness import unseen_q
+    from apps.canopy_sessions.staleness import active
 
     if not runner_ids:
         return {}
     rows = (
-        Session.objects.filter(status=Session.ACTIVE, runner_binding__runner_id__in=runner_ids)
-        .exclude(unseen_q())
+        active(Session.objects.filter(runner_binding__runner_id__in=runner_ids))
         .values("runner_binding__runner_id")
         .annotate(n=models.Count("pk", distinct=True))
     )
@@ -1229,24 +1228,7 @@ def pause_runner(request: HttpRequest, runner_id: uuid.UUID, payload: PauseIn):
     scheduled unpause — the operator outranks the clock.
     """
     runner = _runner_or_404(request, runner_id)
-    now = timezone.now()
-    until = payload.until
-    if until is not None and until <= now:
-        return runner  # the reset has already passed — nothing to park
-    note = (payload.note or "")[:200]
-    if not runner.paused:
-        runner.paused_at = now
-        runner.unpause_at = until
-        runner.paused_note = note
-    elif runner.unpause_at is None:
-        if until is not None:
-            return runner  # an operator's open-ended pause; keep it and its note
-        runner.paused_note = note
-    else:
-        runner.unpause_at = None if until is None else max(until, runner.unpause_at)
-        runner.paused_note = note
-    runner.paused = True
-    runner.save(update_fields=["paused", "paused_note", "paused_at", "unpause_at"])
+    services.pause(runner, note=payload.note or "", until=payload.until, by=request.user)
     return runner
 
 
@@ -1772,9 +1754,6 @@ def post_close_results(request: HttpRequest, runner_id: uuid.UUID, payload: Clos
     server-side request behind it. Matched on (this runner, project, task name);
     a result for a task the server does not know is ignored.
     """
-    from django.db.models import Q
-    from django.utils import timezone
-
     from apps.canopy_sessions.models import RunnerBinding
 
     runner = _runner_or_404(request, runner_id)

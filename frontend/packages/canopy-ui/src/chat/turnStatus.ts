@@ -108,6 +108,14 @@ export interface TurnNotice {
  * straight into the session makes messages but no Turn, so without this a
  * day-old failure sat in red under a thread that was plainly working.
  */
+/** A resume time as the reader's local "Oct 12, 3:00 PM". */
+function formatWhen(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 export function turnNotice(
   status?: TurnStatus | null,
   { latestMessageAt }: { latestMessageAt?: string | null } = {},
@@ -124,6 +132,17 @@ export function turnNotice(
   const need = status.requires?.length ? status.requires.map((r) => r.toUpperCase()).join(", ") : "";
   switch (status.state) {
     case "waiting_runner":
+      if (status.parked) {
+        return {
+          tone: "warn",
+          // Paused is somebody's decision, not a laptop lid: say whether it ends
+          // on its own.
+          text: status.held_until
+            ? `Queued — ${runners || "its runner"} is paused until ${formatWhen(status.held_until)}. It runs then.`
+            : `Queued — ${runners || "its runner"} is paused, so this runs only when someone resumes it.`,
+          offer,
+        };
+      }
       return {
         tone: "warn",
         // Names the box, because the fix is physical: go and open it.
@@ -170,6 +189,12 @@ export function turnNotice(
         text: status.detail ? `Could not finish — ${status.detail}` : "Could not finish.",
         offer: null,
       };
+    case "cancelled":
+      // Only a REJECTED turn carries a detail (an admission rule closed it before
+      // it ran); one somebody stopped needs no sentence.
+      return status.detail
+        ? { tone: "error", text: `Not run — ${status.detail}`, offer: null }
+        : null;
     case "missed":
       return { tone: "warn", text: "Missed — nothing picked it up in time.", offer: null };
     default:

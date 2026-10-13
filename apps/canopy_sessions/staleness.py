@@ -176,6 +176,12 @@ def unseen_q() -> Q:
     return runner_unseen | web_unseen
 
 
+def active(sessions):
+    """`state=active`: open, and still being observed — the ONE rule for "open
+    sessions", read by the session list and the per-runner count alike."""
+    return sessions.filter(status="active").exclude(unseen_q())
+
+
 def archive_stale_sessions(session_model) -> int:
     """WRITE the derived rule down: archive every session `unseen_q` currently matches.
     Returns the number of rows changed.

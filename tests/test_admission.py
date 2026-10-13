@@ -210,7 +210,8 @@ def test_a_new_workspace_is_seeded_and_seeding_is_idempotent(fleet):
     ws = Workspace.objects.create(slug="fresh", display_name="Fresh", created_by=fleet["jj"])
     keys = {r.seed_key: r.enabled for r in AdmissionRule.objects.filter(workspace=ws)}
     assert keys == {"email-confined-manual-cloud": True, "email-confined-manual-laptop": False,
-                    "blocked-sender": True, "offered-nothing": True}
+                    "blocked-sender": True, "offered-nothing": True,
+                    "no-runner-paused": True, "no-runner-offline": True}
     assert defaults.seed(ws.pk) == 0
 
 
@@ -236,7 +237,8 @@ def test_the_refusal_migration_seeds_only_its_own_rules(fleet):
     _seeded(ws, "email-confined-manual-laptop").delete()  # a workspace removed a default
     importlib.import_module("apps.admission.migrations.0005_seed_refusal_rules").seed(registry, None)
     assert set(AdmissionRule.objects.filter(workspace=ws).values_list("seed_key", flat=True)) == {
-        "email-confined-manual-cloud", "blocked-sender", "offered-nothing"}  # not brought back
+        "email-confined-manual-cloud", "blocked-sender", "offered-nothing",
+        "no-runner-paused", "no-runner-offline"}  # the laptop default is not brought back
 
 
 def test_origin_choices_track_the_turn_vocabulary():

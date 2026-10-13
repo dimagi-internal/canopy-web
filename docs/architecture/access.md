@@ -262,8 +262,9 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   admins (`admission.manage`) at `/w/:workspace/settings/admission-rules`. Its
   conditions are any subset of: agent, origin (the `Turn.origin` vocabulary),
   principal (`member`/`contact`/`agent`/`system`, from who asked), access
-  (`confined`/`full`), capability, turn mode, and runner kind
-  (`emdash`/`cloud`/`remote`). A blank condition means any. A rule needs at
+  (`confined`/`full`), capability, turn mode, runner kind
+  (`emdash`/`cloud`/`remote`), and reach (`paused`/`offline`, below). A blank
+  condition means any. A rule needs at
   least one. Its action is `reject` or `allow`. It also carries a reason and two
   notice switches (sender, owner), and it can be enabled or disabled.
 * **Where it is evaluated.** At enqueue, beside `_apply_capability`, for rules
@@ -335,6 +336,26 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   and every new workspace, seed `blocked-sender` and `offered-nothing`, each
   with **every notice off**, which is what these refusals did before. A blocked
   sender still gets no reply unless an admin turns one on.
+
+* **Reach rules: no runner will take it.** `reach: paused` matches a turn when
+  every runner that could take it (`harness.claim.turn_reach`, the claim's own
+  coverage) is paused with no `unpause_at`; `reach: offline` when none is
+  reachable and the turn has waited the rule's `wait_hours`. A pause WITH a
+  resume time matches neither: the turn waits, and its status says
+  `waiting_runner` with `parked` and `held_until`. Reach is asked at enqueue
+  when such a rule is in scope; again for the queued turns a runner could take
+  the moment it is paused open-ended (`harness.services.pause` →
+  `evaluate.recheck_stranded`); and by `evaluate.sweep_unrunnable` on the
+  heartbeat clock (every 5 minutes at most) for the offline wait. A claim
+  never matches one. A reach rule cannot be an `allow` or name a runner kind or
+  mode. The rejection's `result_note` and the owner's notice (a `Runners:`
+  line) name each runner's situation (`claim.runner_situation`): who paused it
+  (`Runner.paused_by`), when, its note and its resume time, or since when it was
+  last heard from. A chat, Slack or MCP asker reads that on the turn
+  (`turn_status.rejection` → `TurnStatus.detail` on a `cancelled` turn).
+  Migration `admission/0008`, and every new workspace, seed `no-runner-paused`
+  and `no-runner-offline` (24h): ordinary rules, **on**, owner notice only. An
+  admin who disables them gets turns that sit queued instead.
 
 ## The caller envelope
 

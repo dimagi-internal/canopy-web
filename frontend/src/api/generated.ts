@@ -16431,6 +16431,8 @@ export interface components {
             readonly turn_modes: readonly components["schemas"]["AdmissionChoice"][];
             /** Runner Kinds */
             readonly runner_kinds: readonly components["schemas"]["AdmissionChoice"][];
+            /** Reaches */
+            readonly reaches: readonly components["schemas"]["AdmissionChoice"][];
             /** Actions */
             readonly actions: readonly components["schemas"]["AdmissionChoice"][];
         };
@@ -16456,6 +16458,10 @@ export interface components {
             readonly turn_mode: string;
             /** Runner Kind */
             readonly runner_kind: string;
+            /** Reach */
+            readonly reach: string;
+            /** Wait Hours */
+            readonly wait_hours: number;
             /** Action */
             readonly action: string;
             /** Reason */
@@ -16552,6 +16558,18 @@ export interface components {
              */
             readonly runner_kind: "" | "emdash" | "cloud" | "remote";
             /**
+             * Reach
+             * @description Turns no runner will take: every runner that could is paused with no resume time, or none has been reachable for `wait_hours`.
+             * @default
+             * @enum {string}
+             */
+            readonly reach: "" | "paused" | "offline";
+            /**
+             * Wait Hours
+             * @default 24
+             */
+            readonly wait_hours: number;
+            /**
              * Action
              * @default reject
              * @enum {string}
@@ -16609,6 +16627,10 @@ export interface components {
             readonly turn_mode?: ("" | "manual" | "auto") | null;
             /** Runner Kind */
             readonly runner_kind?: ("" | "emdash" | "cloud" | "remote") | null;
+            /** Reach */
+            readonly reach?: ("" | "paused" | "offline") | null;
+            /** Wait Hours */
+            readonly wait_hours?: number | null;
             /** Action */
             readonly action?: ("reject" | "allow") | null;
             /** Reason */
@@ -17037,6 +17059,8 @@ export interface components {
             readonly paused_note: string;
             /** Paused At */
             readonly paused_at: string | null;
+            /** Paused By Email */
+            readonly paused_by_email?: string | null;
             /** Unpause At */
             readonly unpause_at?: string | null;
             /** Last Heartbeat At */
