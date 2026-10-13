@@ -447,9 +447,10 @@ def test_a_stale_pending_domain_elsewhere_is_released_then_added(owner, ws, monk
                               "before": {"name": "marshellis.com", "released_stale_claim": True},
                               "after": {"name": "marshellis.com"}}]
     # What the adder can read back names nothing of the other tenant.
-    body = _c(owner).get("/api/events/setting-changes").content.decode().lower()
-    assert "marshellis.com" in body
-    assert "acme" not in body
+    resp = _c(owner).get("/api/events/setting-changes")
+    scopes = {c["scope"] for item in resp.json()["items"] for c in item["changes"]}
+    assert scopes == {"mail.domain:marshellis.com"}
+    assert "acme" not in resp.content.decode().lower()
 
 
 def test_a_stale_row_that_ses_says_verified_is_flipped_not_released(owner, ws, monkeypatch):
