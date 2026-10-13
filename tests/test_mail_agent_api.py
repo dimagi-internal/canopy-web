@@ -186,3 +186,22 @@ def test_disabled_route_and_other_workspace_and_pending_domain(w):
     assert _c(other).get(f"/api/mail/threads/other/{w.t.uuid}").status_code == 404
     MailDomain.objects.filter(pk=w.d.pk).update(status="pending")
     assert _reply(w, {"text": "x"}).status_code == 409
+
+
+def test_list_counterpart_and_agent_address(w):
+    c = _c(w.owner)
+    empty = MailThread.objects.create(workspace=w.d.workspace, route=w.r, subject="Empty")
+    assert _reply(w, {"text": "x", "to": ["z@z.org"]}).status_code == 200  # newest on w.t is outbound
+    out_t = MailThread.objects.get(pk=w.t.pk)
+    inbound = MailThread.objects.create(workspace=w.d.workspace, route=w.r, subject="In")
+    MailMessage.objects.create(thread=inbound, direction="in", message_id="<i2@x.org>",
+                               from_addr="who@x.org", subject="In", text="hi")
+    body = c.get("/api/mail/threads/marshellis", {"agent": "mada"}).json()
+    by = {i["thread_id"]: i for i in body["items"]}
+    assert body["agent_address"] == "ada@marshellis.com"
+    assert by[str(out_t.uuid)]["counterpart"] == "z@z.org"
+    assert by[str(inbound.uuid)]["counterpart"] == "who@x.org"
+    assert by[str(empty.uuid)]["counterpart"] == ""
+    Agent.objects.create(slug="bare", name="Bare", workspace=w.d.workspace, owner=w.owner)
+    assert c.get("/api/mail/threads/marshellis", {"agent": "bare"}).json()["agent_address"] == ""
+    assert c.get("/api/mail/threads/marshellis").json()["agent_address"] == ""

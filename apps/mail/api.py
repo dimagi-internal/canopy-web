@@ -10,6 +10,7 @@ import uuid as uuidlib
 from dataclasses import asdict
 
 from django.conf import settings
+from django.db.models import OuterRef, Subquery
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -219,9 +220,26 @@ def resolve_mail_address(request: HttpRequest, address: str) -> dict:
 def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", archived: bool = False) -> dict:
     ws = _ws(request.user, workspace)
     qs = MailThread.objects.filter(workspace=ws, archived=archived).select_related("route__agent", "route__domain")
+    address = ""
     if agent:
         qs = qs.filter(route__agent__slug=agent)
-    return {"items": [_thread_out(t, messages=False) for t in qs[:200]]}
+        r = MailRoute.objects.filter(domain__workspace=ws, kind=MailRoute.AGENT, agent__slug=agent,
+                                     enabled=True).select_related("domain").first()
+        address = r.address if r else ""
+    newest = MailMessage.objects.filter(thread=OuterRef("pk")).order_by("-created_at", "-pk")
+    qs = qs.annotate(_dir=Subquery(newest.values("direction")[:1]),
+                     _from=Subquery(newest.values("from_addr")[:1]),
+                     _to=Subquery(newest.values("to")[:1]))
+    items = []
+    for t in qs[:200]:
+        out = _thread_out(t, messages=False)
+        if t._dir == MailMessage.IN:
+            out["counterpart"] = t._from or ""
+        elif t._dir == MailMessage.OUT:
+            to = t._to if isinstance(t._to, list) else []
+            out["counterpart"] = to[0] if to else ""
+        items.append(out)
+    return {"agent_address": address, "items": items}
 
 
 @router.get("/threads/{workspace}/{uuid}", response=MailThreadOut, summary="Read a mail thread")

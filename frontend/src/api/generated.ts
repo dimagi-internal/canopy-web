@@ -9612,6 +9612,11 @@ export interface components {
         };
         /** MailThreadListOut */
         readonly MailThreadListOut: {
+            /**
+             * Agent Address
+             * @default
+             */
+            readonly agent_address: string;
             /** Items */
             readonly items: readonly components["schemas"]["MailThreadOut"][];
         };
@@ -9633,6 +9638,11 @@ export interface components {
             readonly archived: boolean;
             /** Last Message At */
             readonly last_message_at: string;
+            /**
+             * Counterpart
+             * @default
+             */
+            readonly counterpart: string;
             /**
              * Messages
              * @default []

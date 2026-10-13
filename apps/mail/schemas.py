@@ -92,10 +92,12 @@ class MailThreadOut(Schema):
     unread: bool
     archived: bool
     last_message_at: str
+    counterpart: str = ""
     messages: list[MailMessageOut] = []
 
 
 class MailThreadListOut(Schema):
+    agent_address: str = ""
     items: list[MailThreadOut]
 
 
