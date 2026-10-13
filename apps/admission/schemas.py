@@ -15,7 +15,7 @@ Sender = Literal["", "blocked"]
 TurnMode = Literal["", "manual", "auto"]
 RunnerKind = Literal["", "emdash", "cloud", "remote"]
 Reach = Literal["", "paused", "offline"]
-Action = Literal["reject", "allow"]
+Action = Literal["reject", "allow", "auto"]
 
 
 class AdmissionRuleIn(StrictModel):

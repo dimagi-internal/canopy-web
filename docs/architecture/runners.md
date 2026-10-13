@@ -69,7 +69,8 @@ In order, each a hard stop:
 4. Per candidate: runner flags satisfy the turn's requirements (above the pin);
    `runner_may_hold_agent` (above the pin); then, unless pinned here, the
    availability cascade for the agent / repo order / session agent.
-5. Turn mode decided and stamped (`turn_mode.for_turn`), admission rules
+5. Turn mode decided and stamped (`turn_mode.for_turn`), an admission `auto` rule
+   may raise a standing manual to auto, then admission rejects
    (`apps/admission`, see `access.md` → "Admission rules"), then the conditional
    update to CLAIMED inside its own `transaction.atomic()` (an `IntegrityError` from
    `one_executing_turn_per_agent` means another box won). The claim event records

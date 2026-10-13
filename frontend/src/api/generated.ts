@@ -16574,7 +16574,7 @@ export interface components {
              * @default reject
              * @enum {string}
              */
-            readonly action: "reject" | "allow";
+            readonly action: "reject" | "allow" | "auto";
             /** Reason */
             readonly reason: string;
             /**
@@ -16632,7 +16632,7 @@ export interface components {
             /** Wait Hours */
             readonly wait_hours?: number | null;
             /** Action */
-            readonly action?: ("reject" | "allow") | null;
+            readonly action?: ("reject" | "allow" | "auto") | null;
             /** Reason */
             readonly reason?: string | null;
             /** Notify Sender */

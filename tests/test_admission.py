@@ -589,3 +589,61 @@ def test_a_rule_cannot_name_another_workspaces_agent(fleet):
                                     {"agent": "zed", "origin": "email", "reason": "x"},
                                     content_type="application/json")
     assert res.status_code == 422
+
+
+# --- run in auto mode where nobody is watching ------------------------------------
+
+def _auto_on_cloud(fleet, **kw):
+    return AdmissionRule.objects.create(
+        workspace=fleet["ws"], agent=fleet["hal"], runner_kind="cloud",
+        action=AdmissionRule.AUTO, reason="no laptop is free, so nobody would approve it", **kw)
+
+
+def test_an_auto_rule_runs_the_unwatched_cloud_turn_in_auto_instead_of_rejecting_it(
+        fleet, django_capture_on_commit_callbacks):
+    rule = _auto_on_cloud(fleet)
+    _route(fleet["hal"], fleet["cloud"])
+    turn = _mail(fleet["hal"])
+    claimed = _claim(fleet["cloud"], django_capture_on_commit_callbacks)
+    assert claimed is not None and claimed.pk == turn.pk
+    assert claimed.turn_mode == "auto" and f"admission rule {rule.pk}" in claimed.turn_mode_basis
+    assert not AdmissionNotice.objects.filter(turn=turn).exists()  # nothing was rejected
+    rule.refresh_from_db()
+    assert rule.fired_count == 1
+    from apps.events.models import Event
+
+    assert Event.objects.filter(kind="admission.auto", payload__turn_id=str(turn.pk)).exists()
+
+
+def test_on_a_watched_laptop_the_auto_rule_does_not_apply_and_the_turn_stays_manual(
+        fleet, django_capture_on_commit_callbacks):
+    rule = _auto_on_cloud(fleet)
+    _route(fleet["hal"], fleet["laptop"])
+    turn = _mail(fleet["hal"])
+    claimed = _claim(fleet["laptop"], django_capture_on_commit_callbacks)
+    assert claimed.pk == turn.pk and claimed.turn_mode == "manual"
+    rule.refresh_from_db()
+    assert rule.fired_count == 0
+
+
+def test_an_auto_rule_never_raises_a_manual_someone_asked_for(fleet, django_capture_on_commit_callbacks):
+    _auto_on_cloud(fleet)
+    _route(fleet["hal"], fleet["cloud"])
+    from apps.harness import initiator as who
+
+    turn, _ = services.enqueue_turn(agent=fleet["hal"], origin=Turn.ORIGIN_API,
+                                    idempotency_key="dispatch-manual", prompt="do it",
+                                    initiator=who.for_user(fleet["jj"], via="api", assurance="pat"))
+    Turn.objects.filter(pk=turn.pk).update(requested_turn_mode="manual",
+                                           requested_turn_mode_by=fleet["jj"])
+    claimed = _claim(fleet["cloud"], django_capture_on_commit_callbacks)
+    assert claimed.pk == turn.pk and claimed.turn_mode == "manual"
+    assert "dispatch by jj@dimagi.com" in claimed.turn_mode_basis
+
+
+def test_an_auto_rule_cannot_be_about_refused_or_unclaimed_turns(fleet):
+    from django.core.exceptions import ValidationError
+
+    with pytest.raises(ValidationError):
+        AdmissionRule.objects.create(workspace=fleet["ws"], sender=AdmissionRule.BLOCKED,
+                                     action=AdmissionRule.AUTO, reason="x")

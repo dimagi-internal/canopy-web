@@ -41,7 +41,7 @@ const choices = {
   turn_modes: pairs('manual', 'auto'),
   runner_kinds: pairs('emdash', 'cloud'),
   reaches: pairs('paused', 'offline'),
-  actions: pairs('reject', 'allow'),
+  actions: pairs('reject', 'allow', 'auto'),
 }
 
 const cloud: AdmissionRuleOut = {
@@ -145,6 +145,16 @@ describe('WorkspaceAdmissionRulesPage', () => {
     fireEvent.click(screen.getByTestId('admission-save'))
     await waitFor(() => expect(updateAdmissionRule).toHaveBeenCalledWith(
       'connect', 5, expect.objectContaining({ sender: 'blocked' })))
+  })
+
+  it('marks a run-in-auto-mode rule and gives it no notices', async () => {
+    const auto: AdmissionRuleOut = { ...cloud, id: 9, action: 'auto', turn_mode: '', access: '', origin: '',
+      summary: 'Any turn to ace, on a Cloud runner' }
+    getAdmissionRules.mockResolvedValue(policy({ rules: [auto] }))
+    show()
+    const row = await screen.findByTestId('admission-rule-9')
+    expect(row.textContent).toContain('auto')
+    expect(row.textContent).toContain('—')
   })
 
   it('lets an admin switch automatic replies on for the workspace', async () => {
