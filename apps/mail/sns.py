@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import base64
 import re
+import ssl
+import logging
 import urllib.request
 from functools import lru_cache
+from urllib.parse import urlsplit
 
-_SNS_URL = r"https://sns\.[a-z0-9-]+\.amazonaws\.com/"
-_CERT_URL = re.compile(_SNS_URL + r"[^?#]+\.pem$")
-_SUBSCRIBE_URL = re.compile(_SNS_URL)
+logger = logging.getLogger(__name__)
+
+_CERT_PATH = re.compile(r"/SimpleNotificationService-[0-9a-f]+\.pem")
 _FIELDS = {
     "Notification": ["Message", "MessageId", "Subject", "Timestamp", "TopicArn", "Type"],
     "SubscriptionConfirmation": ["Message", "MessageId", "SubscribeURL", "Timestamp", "Token",
@@ -37,6 +40,30 @@ def _get(url: str) -> None:
         pass
 
 
+def _region(topic_arn: str) -> str:
+    parts = topic_arn.split(":")
+    if len(parts) != 6 or parts[0] != "arn" or parts[2] != "sns" or not re.fullmatch(r"[a-z0-9-]+", parts[3]):
+        raise Invalid("malformed topic ARN")
+    return parts[3]
+
+
+def _sns_url(url, topic_arn: str, *, path_ok, query_ok: bool = False) -> None:
+    """Exact host rule: https://sns.<topic region>.amazonaws.com, no userinfo/port/query/fragment."""
+    if not isinstance(url, str):
+        raise Invalid("not a URL")
+    if not url.isprintable() or any(c.isspace() for c in url):  # urlsplit silently strips \n, \t
+        raise Invalid("control characters in URL")
+    try:
+        u = urlsplit(url)
+        port = u.port
+    except ValueError as exc:
+        raise Invalid("malformed URL") from exc
+    if (u.scheme != "https" or u.hostname != f"sns.{_region(topic_arn)}.amazonaws.com"
+            or u.username is not None or u.password is not None or port is not None
+            or (u.query and not query_ok) or u.fragment or "@" in u.netloc or not path_ok(u.path)):
+        raise Invalid("URL is not the pinned SNS endpoint")
+
+
 def _string_to_sign(msg: dict) -> bytes:
     keys = _FIELDS.get(msg.get("Type", ""))
     if keys is None:
@@ -55,8 +82,7 @@ def verify(msg: dict, *, topic_arn: str) -> None:
     if not topic_arn or msg.get("TopicArn") != topic_arn:
         raise Invalid("not our topic")
     url = msg.get("SigningCertURL", "")
-    if not isinstance(url, str) or not _CERT_URL.match(url):
-        raise Invalid("signing cert is not hosted by SNS")
+    _sns_url(url, topic_arn, path_ok=lambda p: bool(_CERT_PATH.fullmatch(p)))
     algo = {"1": hashes.SHA1(), "2": hashes.SHA256()}.get(str(msg.get("SignatureVersion")))  # noqa: S303
     if algo is None:
         raise Invalid("unsupported signature version")
@@ -66,10 +92,16 @@ def verify(msg: dict, *, topic_arn: str) -> None:
                                  _string_to_sign(msg), padding.PKCS1v15(), algo)
     except (InvalidSignature, ValueError, TypeError) as exc:
         raise Invalid("bad signature") from exc
+    except (OSError, ssl.SSLError) as exc:  # URLError/HTTPError/TimeoutError are OSErrors
+        logger.warning("could not fetch SNS signing cert %s: %r", url, exc)
+        raise Invalid("signing cert unavailable") from exc
 
 
 def confirm(msg: dict) -> None:
     url = msg.get("SubscribeURL", "")
-    if not isinstance(url, str) or not _SUBSCRIBE_URL.match(url):
-        raise Invalid("subscribe URL is not SNS")
-    _get(url)
+    _sns_url(url, msg.get("TopicArn", ""), path_ok=lambda p: p.startswith("/"), query_ok=True)
+    try:
+        _get(url)
+    except OSError as exc:
+        logger.warning("could not confirm SNS subscription: %r", exc)
+        raise Invalid("subscribe failed") from exc

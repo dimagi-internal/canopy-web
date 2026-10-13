@@ -312,7 +312,7 @@ def ses_inbound(request: HttpRequest):
     try:
         msg = json.loads(request.body or b"{}")
         sns.verify(msg, topic_arn=settings.MAIL_INBOUND_TOPIC_ARN)
-    except (ValueError, sns.Invalid):
+    except (ValueError, RecursionError, sns.Invalid):
         return 404, {"detail": "not found"}
     kind = msg.get("Type")
     if kind == "SubscriptionConfirmation":

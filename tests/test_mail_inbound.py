@@ -197,10 +197,89 @@ def test_real_signature_verifies_and_a_mutated_message_fails(monkeypatch, versio
     monkeypatch.setattr(sns, "_fetch_cert", lambda url: pem)
     msg = {"Type": "Notification", "MessageId": "m1", "TopicArn": TOPIC, "Message": "hello",
            "Timestamp": "2026-10-12T00:00:00.000Z", "SignatureVersion": version,
-           "SigningCertURL": "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-x.pem"}
+           "SigningCertURL": "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-abc123.pem"}
     algo = hashes.SHA1() if version == "1" else hashes.SHA256()
     sig = key.sign(sns._string_to_sign(msg), padding.PKCS1v15(), algo)
     msg["Signature"] = base64.b64encode(sig).decode()
     sns.verify(msg, topic_arn=TOPIC)  # passes
     with pytest.raises(sns.Invalid):
         sns.verify({**msg, "Message": "tampered"}, topic_arn=TOPIC)
+
+
+GOOD_CERT = "https://sns.us-east-1.amazonaws.com/SimpleNotificationService-abc123.pem"
+
+
+@pytest.mark.parametrize("url", [
+    "https://sns.s3.amazonaws.com/SimpleNotificationService-abc123.pem",
+    "https://sns.s3-us-west-2.amazonaws.com/SimpleNotificationService-abc123.pem",
+    "https://sns.eu-west-1.amazonaws.com/SimpleNotificationService-abc123.pem",
+    "https://evil@sns.us-east-1.amazonaws.com/SimpleNotificationService-abc123.pem",
+    "https://sns.us-east-1.amazonaws.com@evil.com/SimpleNotificationService-abc123.pem",
+    "https://sns.us-east-1.amazonaws.com:8443/SimpleNotificationService-abc123.pem",
+    "http://sns.us-east-1.amazonaws.com/SimpleNotificationService-abc123.pem",
+    GOOD_CERT + "\n",
+    GOOD_CERT + "?x=1",
+    "https://sns.us-east-1.amazonaws.com/other.pem",
+    "https://sns.us-east-1.amazonaws.com/a/SimpleNotificationService-abc123.pem",
+])
+def test_bad_cert_urls_are_invalid(url, monkeypatch):
+    monkeypatch.setattr(sns, "_fetch_cert", lambda u: pytest.fail("fetched a bad URL"))
+    with pytest.raises(sns.Invalid):
+        sns.verify({"Type": "Notification", "TopicArn": TOPIC, "SignatureVersion": "2",
+                    "SigningCertURL": url, "Signature": "x"}, topic_arn=TOPIC)
+
+
+@pytest.mark.parametrize("url", [
+    "https://sns.s3.amazonaws.com/?Action=ConfirmSubscription",
+    "https://sns.eu-west-1.amazonaws.com/?Action=ConfirmSubscription",
+    "https://u@sns.us-east-1.amazonaws.com/?x",
+    "https://sns.us-east-1.amazonaws.com:444/?x",
+    "http://sns.us-east-1.amazonaws.com/?x",
+])
+def test_bad_subscribe_urls_are_not_fetched(url, monkeypatch):
+    monkeypatch.setattr(sns, "_get", lambda u: pytest.fail("fetched a bad URL"))
+    with pytest.raises(sns.Invalid):
+        sns.confirm({"TopicArn": TOPIC, "SubscribeURL": url})
+
+
+def test_good_subscribe_url_is_fetched(monkeypatch):
+    got = []
+    monkeypatch.setattr(sns, "_get", got.append)
+    sns.confirm({"TopicArn": TOPIC, "SubscribeURL": "https://sns.us-east-1.amazonaws.com/?Action=ConfirmSubscription"})
+    assert len(got) == 1
+
+
+def test_cert_fetch_failure_is_404(world, monkeypatch):
+    def down(url):
+        raise OSError("dns")
+
+    monkeypatch.setattr(sns, "_fetch_cert", down)
+    body = {"Type": "Notification", "TopicArn": TOPIC, "SignatureVersion": "2", "Signature": "eA==",
+            "SigningCertURL": GOOD_CERT, "Message": "{}"}
+    assert Client().post(URL, json.dumps(body), content_type="text/plain").status_code == 404
+
+
+def test_deeply_nested_json_is_404(world):
+    assert Client().post(URL, "[" * 100000, content_type="text/plain").status_code == 404
+
+
+@pytest.mark.parametrize("key", ["kept/abc", "other/abc", "incoming/../kept/abc"])
+def test_bad_object_key_is_refused_without_s3(world, monkeypatch, key):
+    monkeypatch.setattr(ses, "get_object", lambda k: pytest.fail("read S3"))
+    out = inbound.handle(note(["ada@marshellis.com"], action={"type": "S3", "objectKey": key}))
+    assert out == [{"recipient": "ada@marshellis.com", "outcome": "dropped:bad-key"}]
+
+
+def test_noops_never_touch_s3(world, monkeypatch):
+    monkeypatch.setattr(ses, "get_object", lambda k: pytest.fail("read S3"))
+    n = note(["ada@marshellis.com"])
+    assert inbound.handle({**n, "notificationType": "AmazonSnsSubscriptionSucceeded"}) == []
+    assert inbound.handle(note([])) == []
+    no_key = {k: v for k, v in note(["ada@marshellis.com"], action={"type": "S3"}).items() if k != "mail"}
+    assert inbound.handle(no_key) == []
+
+
+def test_recipients_are_deduped_after_lowercasing(world):
+    out = inbound.handle(note(["Ada@marshellis.com", "ada@MARSHELLIS.com", "apple@marshellis.com"]))
+    assert [o["recipient"] for o in out] == ["ada@marshellis.com", "apple@marshellis.com"]
+    assert len(world.calls) == 2

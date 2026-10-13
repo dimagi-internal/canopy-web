@@ -66,7 +66,10 @@ def _route_one(rcpt: str, parsed, raw: bytes, key: str) -> str:
 
 def handle(notification: dict) -> list[dict]:
     receipt = notification.get("receipt") or {}
-    recipients = [r.lower() for r in receipt.get("recipients") or []]
+    recipients = list(dict.fromkeys(r.lower() for r in receipt.get("recipients") or []))
+    kind = notification.get("notificationType")
+    if (kind is not None and kind != "Received") or not recipients:
+        return []
     bad = [k for k in ("spamVerdict", "virusVerdict")
            if (receipt.get(k) or {}).get("status") == "FAIL"]
     if bad:
@@ -74,6 +77,11 @@ def handle(notification: dict) -> list[dict]:
         logger.info("mail dropped (%s) for %s", reason, recipients)
         return [{"recipient": r, "outcome": f"dropped:{reason}"} for r in recipients]
     key = _object_key(notification)
+    if not key:
+        return []
+    if not key.startswith("incoming/") or ".." in key:
+        logger.warning("mail inbound refused object key %r", key)
+        return [{"recipient": r, "outcome": "dropped:bad-key"} for r in recipients]
     try:
         raw = ses.get_object(key)
     except ses.MailOff:
