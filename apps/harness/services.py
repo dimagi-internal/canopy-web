@@ -173,7 +173,7 @@ logger = logging.getLogger(__name__)
 MAX_SESSIONLESS_RETRIES = 3
 
 
-def _record_email_contact(agent, origin_ref):
+def _record_email_contact(agent, origin_ref, *, authserv_id: str | None = None):
     """Upsert a Contact for an email turn's sender, in the AGENT's workspace.
 
     The agent's tenant, not the enqueuer's: `Turn.enqueued_by` on an email turn
@@ -203,7 +203,7 @@ def _record_email_contact(agent, origin_ref):
         address=sender,
         display_name=str(ref.get("from_name") or ""),
         headers=headers if isinstance(headers, list) else None,
-        authserv_id=settings.INBOUND_EMAIL_AUTHSERV_ID,
+        authserv_id=authserv_id or settings.INBOUND_EMAIL_AUTHSERV_ID,
     )
 
 
@@ -428,6 +428,7 @@ def enqueue_turn(
     requested_turn_mode_by=None,
     parent=None,
     provenance_extra: dict | None = None,
+    authserv_id: str | None = None,
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -436,6 +437,9 @@ def enqueue_turn(
     workspace: it has no agent/session to derive tenancy from, and claim_next_turn
     fails it closed without one, so accepting it here would silently queue a turn
     nothing can ever run. Session turns derive tenancy from session.workspace.
+
+    `authserv_id` — server-side callers only (apps/mail): the receiver whose
+    Authentication-Results this mail is graded on. Never taken from a request.
 
     `parent` names what this turn was started FROM ({turn, session, task, host,
     project, claude_session}: ids, or a Turn/Session) — a payload's `parent`, or
@@ -484,7 +488,7 @@ def enqueue_turn(
         # spoofable identity and "a message creates a member" is exactly the
         # pattern this codebase spent a release removing from five endpoints.
         try:
-            email_contact = _record_email_contact(agent, origin_ref)
+            email_contact = _record_email_contact(agent, origin_ref, authserv_id=authserv_id)
         except Exception:  # noqa: BLE001
             email_contact = None
             logger.exception("could not record the sender of an email turn")

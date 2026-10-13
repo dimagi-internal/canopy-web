@@ -145,3 +145,23 @@ def test_unblocking_lets_the_next_message_through(ctx):
     contacts.unblock(c)
     turn, _ = _email(agent, key="b")
     assert turn.status == Turn.QUEUED
+
+
+def test_rest_turn_cannot_pick_its_trusted_receiver(ctx):
+    """`authserv_id` is a server-side kwarg of enqueue_turn (apps/mail only). A
+    REST payload carrying one, beside an amazonses.com header, is graded none."""
+    owner, _ws, _agent = ctx
+    raw, _ = PersonalToken.create_for_user(user=owner, label="runner")
+    ses_hdr = "amazonses.com; dkim=pass header.i=@llo-foo.org; dmarc=pass header.from=llo-foo.org"
+    r = Client(HTTP_AUTHORIZATION=f"Bearer {raw}").post(
+        "/api/harness/turns/",
+        {"agent_slug": "ace", "origin": "email", "idempotency_key": "email-rest-ses",
+         "authserv_id": "amazonses.com",
+         "origin_ref": {"from": "fatima@llo-foo.org", "thread_id": "t-ses",
+                        "authserv_id": "amazonses.com",
+                        "headers": [{"name": "Authentication-Results", "value": ses_hdr}]}},
+        content_type="application/json",
+    )
+    assert r.status_code == 201, r.content
+    c = Contact.objects.get(email="fatima@llo-foo.org")
+    assert c.auth_result == Contact.AUTH_NONE

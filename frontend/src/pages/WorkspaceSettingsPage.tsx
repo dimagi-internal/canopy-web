@@ -36,6 +36,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { segment: 'access-requests', label: 'Access requests' },
   { segment: 'slack', label: 'Slack' },
   { segment: 'inbound', label: 'Inbound email' },
+  { segment: 'email', label: 'Email' },
   { segment: 'connected-apps', label: 'Connected sites' },
   { segment: 'secrets', label: 'Secrets' },
   { segment: 'retention', label: 'Retention' },

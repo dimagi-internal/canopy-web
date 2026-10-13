@@ -47,6 +47,11 @@ def _no_live_dns(monkeypatch):
     except Exception:  # a suite with no Django (runner/*) has nothing to patch
         return
     monkeypatch.setattr(domain_proof, "_lookup_dmarc", lambda domain: "unknown")
+    try:
+        from apps.mail import dns as mail_dns
+    except Exception:
+        return
+    monkeypatch.setattr(mail_dns, "_resolve", lambda name, rtype: [])
 
 
 @pytest.fixture()

@@ -84,6 +84,11 @@ Every browser-facing address canopy-web serves. The SPA route table is
   - **Turns** — packaged units of work + optional transcript, and the
     **Status reports** section (`#status-reports`).
   - **Schedules**, **Huddles**.
+  - **Mail** (`mail`) — read-only email threads for the agent
+    (`GET /api/mail/threads/{workspace}?agent=`): thread table beside the open
+    thread; HTML bodies render only in a `sandbox=""` iframe behind a no-network
+    CSP, meta refreshes stripped; attachments are
+    presigned download links. No address → points to Settings → Email.
   - **Skills** — catalog, and **History** (`skills/history`): how each skill
     changed, read from the agent repo's git history with the owner's GitHub grant.
   - **Settings** — everything that configures the agent, grouped by question:
@@ -119,6 +124,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     configuration token canopy uses to manage `/<agent>` slash commands, and the
     one-way, owner-only "declare the app an agent".
   - **inbound** — the Gmail push doorbell.
+  - **email** — the workspace's own mail domain via SES: DNS records, per-address routes (agent / member forward / drop; the catch-all forwards or drops), daily send cap. Removing an address or the domain asks first and says existing threads are kept.
   - **connected-apps** ("Connected sites") — which websites may host one of
     this workspace's agents.
   - **secrets** — the workspace's SHARED 1Password vault (what every agent here

@@ -1,0 +1,197 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# Workspace email domains (apps/mail): receive into S3, notify canopy-web over SNS,
+# send as tenant domains through their own configuration set.
+#
+# Owns the AWS side of the feature and nothing else:
+#   * an S3 bucket SES writes raw inbound MIME into (incoming/ expires after 7 days;
+#     kept/ holds agent mail canopy-web copies on ingest and never expires)
+#   * the receipt rule set `canopy-inbound` with ONE rule, `canopy-all`, that has no
+#     recipient filter — SES only accepts mail for verified identities and canopy-web
+#     drops mail for any domain no workspace owns, so adding a domain never edits it
+#   * SNS topics + HTTPS subscriptions to canopy-web (inbound notifications, send events)
+#   * the configuration set `canopy-tenant-mail` every tenant send goes through
+#   * a policy on the shared ECS task role: create/inspect/delete tenant identities and
+#     send. Its ses:FromAddress condition bars Dimagi addresses for THIS policy only —
+#     IAM allows are additive and canopy-ses-send grants unconditioned sends, so the
+#     real guard is app-level (agent_mail.send / forward only ever send from a
+#     MailDomain address) and the condition is defence in depth. The configuration set
+#     is likewise enforced in app code (apps/mail/ses.send_raw always passes it), not IAM.
+#
+# Deploy canopy-web with the Mail* parameters FIRST (see docs/runbooks/mail-domain-onboarding.md): the
+# HTTPS subscriptions send a SubscriptionConfirmation at stack create that canopy-web must already
+# be able to verify.
+#
+# Deployed by hand with a labs admin login, not by the Deploy to Labs workflow: the
+# deploy role holds no ses:*, and this stack changes about once.
+#
+#   aws cloudformation deploy --profile labs --stack-name canopy-web-mail \
+#     --template-file deploy/aws/canopy-mail.cfn.yaml --capabilities CAPABILITY_NAMED_IAM
+#
+# CloudFormation cannot activate a receipt rule set, so do it once afterwards:
+#   aws ses set-active-receipt-rule-set --profile labs --region us-east-1 --rule-set-name canopy-inbound
+#
+# Removing the feature: deactivate the rule set (aws ses set-active-receipt-rule-set with
+# no --rule-set-name), then delete this stack. The inbound bucket is retained
+# (DeletionPolicy: Retain): once kept/ is no longer needed, empty and delete it by hand.
+Parameters:
+  TaskRoleName:
+    Type: String
+    Default: labs-jj-ecs-task-role
+  CanopyBaseUrl:
+    Type: String
+    Default: https://canopy.dimagi.com
+Resources:
+  InboundBucket:
+    Type: AWS::S3::Bucket
+    # kept/ is the only raw copy of agent mail: never delete it with the stack.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub canopy-inbound-mail-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      LifecycleConfiguration:
+        Rules:
+          - Id: incoming-7d
+            Status: Enabled
+            Prefix: incoming/
+            ExpirationInDays: 7
+  InboundBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref InboundBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ses.amazonaws.com}
+            Action: s3:PutObject
+            Resource: !Sub ${InboundBucket.Arn}/incoming/*
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                AWS:SourceArn: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:receipt-rule-set/canopy-inbound:receipt-rule/canopy-all
+  InboundTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: canopy-inbound-mail
+  InboundTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref InboundTopic]
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ses.amazonaws.com}
+            Action: sns:Publish
+            Resource: !Ref InboundTopic
+            Condition:
+              StringEquals: {AWS:SourceAccount: !Ref AWS::AccountId}
+  InboundSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref InboundTopic
+      Protocol: https
+      Endpoint: !Sub ${CanopyBaseUrl}/api/mail/ses/inbound/
+      DeliveryPolicy:
+        healthyRetryPolicy:
+          numRetries: 100
+          numMaxDelayRetries: 30
+          minDelayTarget: 20
+          maxDelayTarget: 600
+          backoffFunction: exponential
+  RuleSet:
+    Type: AWS::SES::ReceiptRuleSet
+    Properties:
+      RuleSetName: canopy-inbound
+  ReceiptRule:
+    Type: AWS::SES::ReceiptRule
+    DependsOn: [InboundBucketPolicy, InboundTopicPolicy]
+    Properties:
+      RuleSetName: !Ref RuleSet
+      Rule:
+        Name: canopy-all
+        Enabled: true
+        ScanEnabled: true
+        TlsPolicy: Require
+        Actions:
+          - S3Action:
+              BucketName: !Ref InboundBucket
+              ObjectKeyPrefix: incoming/
+              TopicArn: !Ref InboundTopic
+  EventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: canopy-mail-events
+  EventsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref EventsTopic]
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ses.amazonaws.com}
+            Action: sns:Publish
+            Resource: !Ref EventsTopic
+            Condition:
+              StringEquals: {AWS:SourceAccount: !Ref AWS::AccountId}
+  EventsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref EventsTopic
+      Protocol: https
+      Endpoint: !Sub ${CanopyBaseUrl}/api/mail/ses/events/
+      DeliveryPolicy:
+        healthyRetryPolicy:
+          numRetries: 100
+          numMaxDelayRetries: 30
+          minDelayTarget: 20
+          maxDelayTarget: 600
+          backoffFunction: exponential
+  TenantConfigSet:
+    Type: AWS::SES::ConfigurationSet
+    Properties:
+      Name: canopy-tenant-mail
+  TenantConfigSetEvents:
+    Type: AWS::SES::ConfigurationSetEventDestination
+    DependsOn: EventsTopicPolicy
+    Properties:
+      ConfigurationSetName: !Ref TenantConfigSet
+      EventDestination:
+        Name: canopy-mail-events
+        Enabled: true
+        MatchingEventTypes: [send, delivery, bounce, complaint, reject]
+        SnsDestination: {TopicARN: !Ref EventsTopic}
+  MailPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: canopy-mail
+      Roles: [!Ref TaskRoleName]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: [ses:CreateEmailIdentity, ses:GetEmailIdentity, ses:DeleteEmailIdentity,
+                     ses:PutEmailIdentityMailFromAttributes, ses:PutEmailIdentityDkimSigningAttributes,
+                     ses:TagResource]
+            Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
+          - Effect: Allow
+            Action: [ses:SendRawEmail, ses:SendEmail]
+            Resource: '*'
+            Condition:
+              StringNotLike:
+                ses:FromAddress: ['*@dimagi.com', '*@*.dimagi.com', '*@dimagi-ai.com']
+          - Effect: Allow
+            Action: [s3:GetObject, s3:PutObject]
+            Resource: !Sub ${InboundBucket.Arn}/*
+Outputs:
+  InboundBucket: {Value: !Ref InboundBucket}
+  InboundTopicArn: {Value: !Ref InboundTopic}
+  EventsTopicArn: {Value: !Ref EventsTopic}

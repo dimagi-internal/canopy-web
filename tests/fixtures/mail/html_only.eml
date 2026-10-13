@@ -1,0 +1,9 @@
+From: Some Person <someone@example.org>
+To: ada@marshellis.com
+Date: Mon, 12 Oct 2026 10:00:00 +0000
+MIME-Version: 1.0
+Subject: Html
+Message-ID: <html-1@example.org>
+Content-Type: text/html; charset=utf-8
+
+<p>Hello <b>there</b></p>

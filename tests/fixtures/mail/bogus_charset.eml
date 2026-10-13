@@ -1,0 +1,8 @@
+From: Some Person <someone@example.org>
+To: ada@marshellis.com
+Subject: =?bogus-9?q?x?=
+Message-ID: <bogus-1@example.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=bogus-9
+
+Plain body here.

@@ -111,6 +111,7 @@ INSTALLED_APPS = [
     "apps.slack",
     "apps.contacts",
     "apps.retention",
+    "apps.mail",
     "apps.admission",
     "apps.plugins",
     # The canopy SDK's Django half (app label `canopy_host`): the single-use jti
@@ -652,6 +653,25 @@ elif DEBUG:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 else:
     EMAIL_BACKEND = "apps.common.email.NotConfiguredEmailBackend"
+
+# --- Mail domains (apps/mail) ---
+# A workspace's own domain, run through SES in the labs account
+# (deploy/aws/canopy-mail.cfn.yaml). OFF until the stack exists: every inbound
+# and send path refuses, and says so, while this is false.
+MAIL_ENABLED = env.bool("MAIL_ENABLED", default=False)
+MAIL_SES_REGION = env("MAIL_SES_REGION", default=CANOPY_SES_REGION)
+MAIL_INBOUND_BUCKET = env("MAIL_INBOUND_BUCKET", default="")
+MAIL_INBOUND_TOPIC_ARN = env("MAIL_INBOUND_TOPIC_ARN", default="")
+MAIL_EVENTS_TOPIC_ARN = env("MAIL_EVENTS_TOPIC_ARN", default="")
+MAIL_CONFIGURATION_SET = env("MAIL_CONFIGURATION_SET", default="canopy-tenant-mail")
+# OUR receiver for SES mail — the one Authentication-Results header we trust.
+MAIL_SES_AUTHSERV_ID = env("MAIL_SES_AUTHSERV_ID", default="amazonses.com")
+MAIL_INBOUND_MX = env("MAIL_INBOUND_MX", default="inbound-smtp.us-east-1.amazonaws.com")
+MAIL_FORWARDER_LOCAL_PART = "canopy-forwarder"
+# Platform domains (and their subdomains) no workspace may register: their SES identities
+# belong to Dimagi/AWS, and a tenant must never be able to alter or delete them.
+MAIL_RESERVED_DOMAINS = env.list(
+    "MAIL_RESERVED_DOMAINS", default=["dimagi.com", "dimagi-ai.com", "amazonses.com", "amazonaws.com"])
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Canopy <noreply@localhost>")
 # Who is emailed when someone sends suggested edits on a review (apps/reviews/notify.py).
 # ACE runs the DDD loops that post these reviews, so it reads them for now; the person

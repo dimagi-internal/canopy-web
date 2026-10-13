@@ -1,0 +1,207 @@
+from __future__ import annotations
+
+import pytest
+from django.contrib.auth.models import User
+from django.test import Client
+
+from apps.agents.models import Agent
+from apps.mail import ses
+from apps.mail.models import MailDomain, MailMessage, MailRoute, MailThread
+from apps.workspaces.models import Workspace, WorkspaceMembership
+
+pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture()
+def w(settings, monkeypatch):
+    settings.MAIL_ENABLED = True
+    sent = []
+    monkeypatch.setattr(ses, "send_raw", lambda **kw: sent.append(kw) or f"ses-{len(sent)}")
+    owner = User.objects.create_user("jj", "jjackson@dimagi.com", "pw")
+    viewer = User.objects.create_user("v", "v@x.com", "pw")
+    ws = Workspace.objects.create(slug="marshellis", display_name="M", created_by=owner)
+    WorkspaceMembership.objects.create(workspace=ws, user=owner, role="owner")
+    WorkspaceMembership.objects.create(workspace=ws, user=viewer, role="viewer")
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com", status="verified", daily_send_cap=2)
+    a = Agent.objects.create(slug="mada", name="Ada", workspace=ws, owner=owner)
+    r = MailRoute.objects.create(domain=d, local_part="ada", kind="agent", agent=a)
+    t = MailThread.objects.create(workspace=ws, route=r, subject="Hello", message_count=1)
+    MailMessage.objects.create(thread=t, direction="in", message_id="<in-1@x.org>",
+                               from_addr="x@x.org", subject="Hello", text="hi")
+    return type("W", (), dict(owner=owner, viewer=viewer, d=d, t=t, r=r, sent=sent))
+
+
+def _c(u):
+    c = Client()
+    c.force_login(u)
+    return c
+
+
+def _reply(w, body, user=None):
+    return _c(user or w.owner).post(f"/api/mail/threads/marshellis/{w.t.uuid}/reply", body,
+                                    content_type="application/json")
+
+
+def test_resolve_names_the_ses_backend_for_members_only(w):
+    r = _c(w.owner).get("/api/mail/resolve", {"address": "ada@marshellis.com"})
+    assert r.json() == {"backend": "ses", "workspace": "marshellis", "agent": "mada"}
+    stranger = User.objects.create_user("s", "s@s.com", "pw")
+    assert _c(stranger).get("/api/mail/resolve", {"address": "ada@marshellis.com"}).status_code == 404
+    assert _c(w.owner).get("/api/mail/resolve", {"address": "eva@dimagi-ai.com"}).status_code == 404
+
+
+def test_reply_threads_and_sends_as_the_agent(w):
+    r = _reply(w, {"text": "Thanks!"})
+    assert r.status_code == 200, r.content
+    sent = w.sent[0]
+    assert sent["from_addr"] == "ada@marshellis.com" and sent["to"] == ["x@x.org"]
+    assert b"In-Reply-To: <in-1@x.org>" in sent["raw"]
+    out = MailMessage.objects.get(direction="out")
+    assert out.thread == w.t and out.ses_message_id == "ses-1" and out.delivery_status == "sent"
+    assert out.mailbox == "ada@marshellis.com"
+
+
+def test_viewer_can_read_but_not_send(w):
+    assert _c(w.viewer).get(f"/api/mail/threads/marshellis/{w.t.uuid}").status_code == 200
+    assert _reply(w, {"text": "x"}, w.viewer).status_code == 403
+
+
+def test_daily_cap_is_enforced(w):
+    for _ in range(2):
+        assert _reply(w, {"text": "x"}).status_code == 200
+    assert _reply(w, {"text": "x"}).status_code == 429
+
+
+def test_suspended_domain_refuses_sends(w):
+    MailDomain.objects.filter(pk=w.d.pk).update(status="suspended", suspended_reason="bounces")
+    r = _reply(w, {"text": "x"})
+    assert r.status_code == 409 and "bounces" in r.json()["detail"]
+
+
+def test_reply_with_no_inbound_has_no_one_to_reply_to(w):
+    w.t.messages.all().delete()
+    assert _reply(w, {"text": "x"}).status_code == 422
+
+
+def test_recipients_must_be_addresses_and_headers_cannot_be_injected(w):
+    assert _reply(w, {"text": "x", "to": ["not an address"]}).status_code == 422
+    assert _reply(w, {"text": "x", "to": ["a@b.org\r\nBcc: evil@e.org"]}).status_code == 422
+    r = _c(w.owner).post("/api/mail/send/marshellis",
+                         {"agent": "mada", "to": ["a@b.org"], "subject": "Hi\r\nBcc: evil@e.org", "text": "x"},
+                         content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert b"\r\nBcc:" not in w.sent[0]["raw"] and b"\nBcc:" not in w.sent[0]["raw"]
+
+
+def test_cannot_send_to_the_agents_own_address(w):
+    assert _reply(w, {"text": "x", "to": ["Ada@marshellis.com"]}).status_code == 422
+    assert w.sent == []
+
+
+def test_send_starts_a_thread_and_lists_and_state(w):
+    c = _c(w.owner)
+    r = c.post("/api/mail/send/marshellis", {"agent": "mada", "to": ["a@b.org"], "subject": "Yo", "text": "x"},
+               content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert MailThread.objects.filter(subject="Yo", route=w.r).count() == 1
+    assert c.post("/api/mail/send/marshellis", {"agent": "nobody", "to": ["a@b.org"], "subject": "Yo",
+                                                "text": "x"}, content_type="application/json").status_code == 404
+    items = c.get("/api/mail/threads/marshellis", {"agent": "mada"}).json()["items"]
+    assert len(items) == 2
+    s = c.post(f"/api/mail/threads/marshellis/{w.t.uuid}/state", {"archived": True, "unread": False},
+               content_type="application/json")
+    assert s.status_code == 200 and s.json()["archived"] is True
+    assert len(c.get("/api/mail/threads/marshellis", {"agent": "mada"}).json()["items"]) == 1
+    assert c.get("/api/mail/threads/marshellis/00000000-0000-0000-0000-000000000000").status_code == 404
+
+
+def _editor(w):
+    u = User.objects.create_user("ed", "ed@x.com", "pw")
+    WorkspaceMembership.objects.create(workspace=w.d.workspace, user=u, role="editor")
+    return u
+
+
+def test_editor_with_full_access_can_send(w):
+    assert _reply(w, {"text": "x"}, _editor(w)).status_code == 200
+
+
+def test_viewer_is_refused_on_every_write(w):
+    c = _c(w.viewer)
+    for url, body in [(f"/api/mail/threads/marshellis/{w.t.uuid}/reply", {"text": "x"}),
+                      ("/api/mail/send/marshellis", {"agent": "mada", "to": ["a@b.org"], "subject": "s", "text": "x"}),
+                      (f"/api/mail/threads/marshellis/{w.t.uuid}/state", {"archived": True})]:
+        assert c.post(url, body, content_type="application/json").status_code == 403
+
+
+def test_access_decide_denial_is_a_403_with_its_reason(w, monkeypatch):
+    from apps.agents import access
+    monkeypatch.setattr(access, "decide", lambda *a, **k: access.Decision(
+        "member", access.NONE, None, False, False, False, "refused", "ada offers nothing to you"))
+    for r in (_reply(w, {"text": "x"}),
+              _c(w.owner).post("/api/mail/send/marshellis",
+                               {"agent": "mada", "to": ["a@b.org"], "subject": "s", "text": "x"},
+                               content_type="application/json"),
+              _c(w.owner).post(f"/api/mail/threads/marshellis/{w.t.uuid}/state", {"archived": True},
+                               content_type="application/json")):
+        assert r.status_code == 403 and "offers nothing" in r.json()["detail"]
+    assert w.sent == []
+
+
+def test_provider_failure_leaves_nothing_behind(w, monkeypatch):
+    from botocore.exceptions import ClientError
+
+    def boom(**kw):
+        raise ClientError({"Error": {"Code": "MessageRejected"}}, "SendRawEmail")
+    monkeypatch.setattr(ses, "send_raw", boom)
+    r = _c(w.owner).post("/api/mail/send/marshellis", {"agent": "mada", "to": ["a@b.org"], "subject": "s",
+                                                       "text": "x"}, content_type="application/json")
+    assert r.status_code == 502 and "MessageRejected" in r.json()["detail"]
+    assert _reply(w, {"text": "x"}).status_code == 502
+    assert not MailMessage.objects.filter(direction="out").exists()
+    assert MailThread.objects.count() == 1
+
+    def off(**kw):
+        raise ses.MailOff()
+    monkeypatch.setattr(ses, "send_raw", off)
+    assert _reply(w, {"text": "x"}).status_code == 503
+
+
+def test_recipient_limits_and_ascii(w):
+    assert _reply(w, {"text": "x", "to": [f"u{i}@b.org" for i in range(51)]}).status_code == 422
+    assert _reply(w, {"text": "x", "to": ["josé@b.org"]}).status_code == 422
+
+
+def test_cap_counts_recipients(w):
+    assert _reply(w, {"text": "x", "to": ["a@b.org", "c@b.org"]}).status_code == 200
+    assert _reply(w, {"text": "x"}).status_code == 429
+
+
+def test_disabled_route_and_other_workspace_and_pending_domain(w):
+    MailRoute.objects.filter(pk=w.r.pk).update(enabled=False)
+    assert _reply(w, {"text": "x"}).status_code == 409
+    MailRoute.objects.filter(pk=w.r.pk).update(enabled=True)
+    other = User.objects.create_user("o", "o@o.com", "pw")
+    ws2 = Workspace.objects.create(slug="other", display_name="O", created_by=other)
+    WorkspaceMembership.objects.create(workspace=ws2, user=other, role="owner")
+    assert _c(other).get(f"/api/mail/threads/other/{w.t.uuid}").status_code == 404
+    MailDomain.objects.filter(pk=w.d.pk).update(status="pending")
+    assert _reply(w, {"text": "x"}).status_code == 409
+
+
+def test_list_counterpart_and_agent_address(w):
+    c = _c(w.owner)
+    empty = MailThread.objects.create(workspace=w.d.workspace, route=w.r, subject="Empty")
+    assert _reply(w, {"text": "x", "to": ["z@z.org"]}).status_code == 200  # newest on w.t is outbound
+    out_t = MailThread.objects.get(pk=w.t.pk)
+    inbound = MailThread.objects.create(workspace=w.d.workspace, route=w.r, subject="In")
+    MailMessage.objects.create(thread=inbound, direction="in", message_id="<i2@x.org>",
+                               from_addr="who@x.org", subject="In", text="hi")
+    body = c.get("/api/mail/threads/marshellis", {"agent": "mada"}).json()
+    by = {i["thread_id"]: i for i in body["items"]}
+    assert body["agent_address"] == "ada@marshellis.com"
+    assert by[str(out_t.uuid)]["counterpart"] == "z@z.org"
+    assert by[str(inbound.uuid)]["counterpart"] == "who@x.org"
+    assert by[str(empty.uuid)]["counterpart"] == ""
+    Agent.objects.create(slug="bare", name="Bare", workspace=w.d.workspace, owner=w.owner)
+    assert c.get("/api/mail/threads/marshellis", {"agent": "bare"}).json()["agent_address"] == ""
+    assert c.get("/api/mail/threads/marshellis").json()["agent_address"] == ""

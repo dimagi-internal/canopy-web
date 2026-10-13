@@ -31,6 +31,7 @@ import { AccessRequestPage } from './pages/AccessRequestPage'
 import { BetaRequestPage, BetaRequestsPage } from './pages/BetaRequestsPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
+import { WorkspaceEmailPage } from '@/pages/WorkspaceEmailPage'
 import { SlackSettingsPage } from '@/pages/SlackSettingsPage'
 import { DddPage } from './pages/DddPage'
 import { TimelinePage } from './pages/TimelinePage'
@@ -87,6 +88,9 @@ const AgentSettingsSection = lazySection(() =>
 )
 const AgentSkillsSection = lazySection(() =>
   import('./pages/agents/AgentSkillsSection').then((m) => ({ default: m.AgentSkillsSection })),
+)
+const AgentMailSection = lazySection(() =>
+  import('./pages/agents/AgentMailSection').then((m) => ({ default: m.AgentMailSection })),
 )
 const AgentHuddlesSection = lazySection(() =>
   import('./pages/agents/AgentHuddlesSection').then((m) => ({ default: m.AgentHuddlesSection })),
@@ -271,6 +275,7 @@ export const routeTable: RouteObject[] = [
           { path: 'access-requests/:requestId', element: <AccessRequestPage /> },
           { path: 'slack', element: <SlackSettingsPage /> },
           { path: 'inbound', element: <InboundPushPage /> },
+          { path: 'email', element: <WorkspaceEmailPage /> },
           { path: 'connected-apps', element: <ConnectedAppsPage /> },
           { path: 'secrets', element: <WorkspaceSecretsPage /> },
           { path: 'retention', element: <WorkspaceRetentionPage /> },
@@ -347,6 +352,7 @@ export const routeTable: RouteObject[] = [
           { path: 'turns', element: <LazySection><AgentTurnsSection /></LazySection> },
           { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
           { path: 'huddles', element: <LazySection><AgentHuddlesSection /></LazySection> },
+          { path: 'mail', element: <LazySection><AgentMailSection /></LazySection> },
           { path: 'settings', element: <LazySection><AgentSettingsSection /></LazySection> },
           // Credentials is a section of Settings now. Old links (and bookmarks)
           // keep working and keep their query, e.g. `?google=ok`.

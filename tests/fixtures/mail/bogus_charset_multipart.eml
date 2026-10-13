@@ -1,0 +1,16 @@
+From: Some Person <someone@example.org>
+To: ada@marshellis.com
+Subject: Multipart bogus
+Message-ID: <bogus-2@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="B"
+
+--B
+Content-Type: text/plain; charset=x-unknown
+
+Text part body.
+--B
+Content-Type: text/html; charset=x-unknown
+
+<p>Html part body.</p>
+--B--

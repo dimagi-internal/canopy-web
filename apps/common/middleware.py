@@ -94,6 +94,7 @@ PUBLIC_PATH_PREFIXES = (
     # `session_auth`. See apps/agents/a2a_api.py.
     "/api/a2a/",
     "/api/inbound/",          # auth=None — self-enforces via the Google-signed OIDC push token
+    "/api/mail/ses/",         # auth=None — SNS-signed; apps/mail/sns.verify checks signature + topic, 404 otherwise
     "/api/slack/",            # Slack webhooks — self-enforce via the Slack signing secret (apps/slack/views.py)
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
     "/api/beta-requests",        # auth=None — the public site's request-access form; grants nothing
