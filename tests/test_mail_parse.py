@@ -171,3 +171,9 @@ def test_nul_bytes_never_reach_a_parsed_field():
     p = parse.parse(_NUL_MAIL)
     assert not [s for s in _strings(p) if "\x00" in s]
     assert p.subject == "hithere" and "body" in p.text and "html" in p.html
+
+
+def test_reply_to_is_a_scrubbed_address_list():
+    p = parse.parse(_mail(b"From: a@x.org\r\nReply-To: \"Team\" <Team@X.org>, b@y.org\r\nSubject: s\r\n"))
+    assert p.reply_to == ["team@x.org", "b@y.org"]
+    assert parse.parse(raw("plain.eml")).reply_to == []

@@ -279,6 +279,15 @@ def get_mail_thread(request: HttpRequest, workspace: str, uuid: str) -> dict:
     return _thread_out(_thread(_ws(request.user, workspace), uuid), messages=True)
 
 
+def _reply_recipients(t) -> list[str]:
+    # The newest inbound message's Reply-To when it has one (a list, a role address),
+    # else its sender.
+    m = t.messages.filter(direction=MailMessage.IN).order_by("-created_at", "-pk").first()
+    if m is None:
+        return []
+    return list(m.reply_to or []) or ([m.from_addr] if m.from_addr else [])
+
+
 @router.post("/threads/{workspace}/{uuid}/reply", response=MailMessageOut, summary="Reply on a thread as its agent")
 def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: MailReplyIn) -> dict:
     ws = _ws(request.user, workspace)
@@ -289,9 +298,7 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
     if t.route.kind != MailRoute.AGENT:
         raise HttpError(409, "this address no longer routes to an agent")
     _agent_full(request.user, t.route)
-    to = payload.to or [m.from_addr for m in
-                        t.messages.filter(direction=MailMessage.IN).order_by("-created_at", "-pk")[:1]
-                        if m.from_addr]
+    to = payload.to or _reply_recipients(t)
     if not to:
         raise HttpError(422, "no one to reply to")
     try:

@@ -66,7 +66,7 @@ def deliver(route, parsed, raw_key: str) -> str:
                     message_id=parsed.message_id, in_reply_to=parsed.in_reply_to,
                     references=" ".join(parsed.references), from_addr=parsed.from_addr,
                     from_name=parsed.from_name, to=parsed.to, cc=parsed.cc,
-                    subject=parsed.subject[:998], text=parsed.text, html=parsed.html,
+                    reply_to=parsed.reply_to, subject=parsed.subject[:998], text=parsed.text, html=parsed.html,
                     raw_key=ses.keep(raw_key),
                     auth_results="\n".join(h["value"] for h in _auth_results(parsed)))
                 for i, att in enumerate(parsed.attachments):

@@ -205,3 +205,15 @@ def test_list_counterpart_and_agent_address(w):
     Agent.objects.create(slug="bare", name="Bare", workspace=w.d.workspace, owner=w.owner)
     assert c.get("/api/mail/threads/marshellis", {"agent": "bare"}).json()["agent_address"] == ""
     assert c.get("/api/mail/threads/marshellis").json()["agent_address"] == ""
+
+
+def test_reply_defaults_to_the_newest_inbound_reply_to_else_its_sender(w):
+    MailMessage.objects.create(thread=w.t, direction="in", message_id="<in-2@x.org>", from_addr="y@x.org",
+                               reply_to=["team@x.org", "boss@x.org"], subject="Hello", text="again")
+    assert _reply(w, {"text": "x"}).status_code == 200
+    assert w.sent[-1]["to"] == ["team@x.org", "boss@x.org"]
+    MailMessage.objects.create(thread=w.t, direction="in", message_id="<in-3@x.org>", from_addr="z@x.org",
+                               subject="Hello", text="third")
+    MailDomain.objects.filter(pk=w.d.pk).update(daily_send_cap=100)
+    assert _reply(w, {"text": "x"}).status_code == 200
+    assert w.sent[-1]["to"] == ["z@x.org"]
