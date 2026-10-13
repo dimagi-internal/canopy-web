@@ -94,7 +94,8 @@ def _raise(exc: domains.DomainError):
 def list_mail_domains(request: HttpRequest, workspace: str) -> dict:
     ws = _ws(request.user, workspace)
     items = [_domain_out(domains.refresh(d), request.user) for d in ws.mail_domains.all()]
-    return {"enabled": settings.MAIL_ENABLED, "items": items}
+    return {"enabled": settings.MAIL_ENABLED, "items": items,
+            "can_manage": perms.can(request.user, ws, perms.INTEGRATIONS)}
 
 
 @router.post("/domains/{workspace}", response=MailDomainOut, summary="Add a mail domain (admin or owner)")

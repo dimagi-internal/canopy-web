@@ -9514,6 +9514,11 @@ export interface components {
         readonly MailDomainListOut: {
             /** Enabled */
             readonly enabled: boolean;
+            /**
+             * Can Manage
+             * @default false
+             */
+            readonly can_manage: boolean;
             /** Items */
             readonly items: readonly components["schemas"]["MailDomainOut"][];
         };

@@ -40,6 +40,7 @@ class MailDomainOut(Schema):
 
 class MailDomainListOut(Schema):
     enabled: bool
+    can_manage: bool = False
     items: list[MailDomainOut]
 
 

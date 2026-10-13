@@ -442,3 +442,11 @@ def test_a_fresh_pending_or_any_verified_holder_still_409s(owner, ws, monkeypatc
     r = _post(owner)
     assert r.status_code == 409 and r.json()["detail"] == "that domain is already registered"
     assert MailDomain.objects.get(name="marshellis.com").pk == held.pk
+
+
+def test_list_says_whether_the_caller_may_manage_even_with_no_domains(owner, ws):
+    ed = User.objects.create_user("ed", "ed@x.com", "pw")
+    WorkspaceMembership.objects.create(workspace=ws, user=ed, role="editor")
+    assert _c(owner).get("/api/mail/domains/marshellis").json()["can_manage"] is True
+    body = _c(ed).get("/api/mail/domains/marshellis").json()
+    assert body["items"] == [] and body["can_manage"] is False
