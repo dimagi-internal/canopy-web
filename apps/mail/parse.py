@@ -1,6 +1,7 @@
 """Raw MIME → the fields canopy stores. stdlib only."""
 from __future__ import annotations
 
+import codecs
 import hashlib
 import html as htmlmod
 import re
@@ -48,6 +49,26 @@ def _html_to_text(h: str) -> str:
     return re.sub(r"[ \t]+", " ", htmlmod.unescape(_TAGS.sub("", h))).strip()
 
 
+def _content(part) -> str:
+    """Decoded text of a part; tolerate unknown/bad charsets instead of raising."""
+    try:
+        return part.get_content()
+    except (LookupError, UnicodeError, ValueError, AssertionError):
+        charset = part.get_content_charset() or "utf-8"
+        try:
+            codecs.lookup(charset)
+        except (LookupError, ValueError):
+            charset = "utf-8"
+        return (part.get_payload(decode=True) or b"").decode(charset, errors="replace")
+
+
+def _hdr(msg, name: str) -> str:
+    try:
+        return str(msg.get(name, "") or "")
+    except Exception:  # malformed header must not abort parsing
+        return ""
+
+
 def _is_automated(msg) -> bool:
     auto = str(msg.get("Auto-Submitted", "")).strip().lower()
     prec = str(msg.get("Precedence", "")).strip().lower()
@@ -63,8 +84,8 @@ def parse(raw: bytes) -> Parsed:
         message_id = f"<{hashlib.sha256(raw).hexdigest()[:32]}@canopy>"
     text_part = msg.get_body(preferencelist=("plain",))
     html_part = msg.get_body(preferencelist=("html",))
-    html = html_part.get_content() if html_part is not None else ""
-    text = text_part.get_content() if text_part is not None else _html_to_text(html)
+    html = _content(html_part) if html_part is not None else ""
+    text = _content(text_part) if text_part is not None else _html_to_text(html)
     attachments = [
         Attachment(part.get_filename() or "attachment", part.get_content_type(),
                    part.get_payload(decode=True) or b"")
@@ -76,7 +97,7 @@ def parse(raw: bytes) -> Parsed:
         references=_IDS.findall(str(msg.get("References", ""))),
         from_addr=addr.lower(), from_name=name,
         to=_addrs(msg.get_all("To")), cc=_addrs(msg.get_all("Cc")),
-        subject=str(msg.get("Subject", "")), text=text, html=html,
+        subject=_hdr(msg, "Subject"), text=text, html=html,
         attachments=attachments,
         headers=[(k, str(v)) for k, v in msg.items()],
         automated=_is_automated(msg),

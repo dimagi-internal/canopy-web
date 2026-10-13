@@ -56,3 +56,28 @@ def test_reply_joins_the_thread_it_references():
     MailMessage.objects.create(thread=t, direction="out", message_id="<orig-1@marshellis.com>")
     assert threads.place(r, parse.parse(raw("reply.eml"))) == t
     assert threads.place(r, parse.parse(raw("plain.eml"))) != t
+
+
+def test_bogus_charset_single_part_parses():
+    p = parse.parse(raw("bogus_charset.eml"))
+    assert "Plain body here." in p.text
+
+
+def test_bogus_charset_multipart_parses():
+    p = parse.parse(raw("bogus_charset_multipart.eml"))
+    assert "Text part body." in p.text and "Html part body." in p.html
+
+
+@pytest.mark.django_db
+def test_multi_id_in_reply_to_and_case_insensitive_match():
+    u = User.objects.create_user("jj2", "jj2@x.com", "pw")
+    ws = Workspace.objects.create(slug="m2", display_name="M", created_by=u)
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com", status="verified")
+    a = Agent.objects.create(slug="mada2", name="Ada", workspace=ws)
+    r = MailRoute.objects.create(domain=d, local_part="ada", kind="agent", agent=a)
+    t = MailThread.objects.create(workspace=ws, route=r, subject="x")
+    MailMessage.objects.create(thread=t, direction="out", message_id="<Orig-1@Marshellis.com>")
+    p = parse.parse(raw("reply.eml"))
+    p.references = []
+    p.in_reply_to = "<x@y> <orig-1@marshellis.com>"
+    assert threads.place(r, p) == t
