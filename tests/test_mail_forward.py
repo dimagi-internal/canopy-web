@@ -38,7 +38,7 @@ def test_forward_rewrites_from_and_keeps_reply_to(route):
     assert sent["to"] == ["jjackson@dimagi.com"]
     msg = BytesParser(policy=policy.default).parsebytes(sent["raw"])
     assert "via marshellis.com" in msg["From"]
-    assert msg["Reply-To"]  # the original sender
+    assert parse.parse(raw).from_addr in msg["Reply-To"]
     assert msg["X-Original-To"] == "apple@marshellis.com"
     assert [p.get_filename() for p in msg.iter_attachments()] == ["a.pdf"]
     assert not msg.get("DKIM-Signature")  # the original's signature would now fail
@@ -67,7 +67,7 @@ def test_transient_failure_raises_and_leaves_no_success_row(route, monkeypatch):
     raw = (FIX / "plain.eml").read_bytes()
     with pytest.raises(RuntimeError):
         forward.forward(route, parse.parse(raw), raw, "a@marshellis.com")
-    assert not MailForwardLog.objects.filter(status="forwarded").exists()
+    assert not MailForwardLog.objects.exists()
 
 
 def test_malformed_charset_original_still_forwards(route):
@@ -76,3 +76,51 @@ def test_malformed_charset_original_still_forwards(route):
     out = BytesParser(policy=policy.compat32).parsebytes(route.sent[0]["raw"])
     assert out["X-Original-To"] == "a@marshellis.com"
     assert "via marshellis.com" in out["From"]
+
+
+def test_concurrent_claim_blocks_second_forward(route):
+    raw = (FIX / "plain.eml").read_bytes()
+    p = parse.parse(raw)
+    MailForwardLog.objects.create(domain=route.domain, route=route, message_id=p.message_id,
+                                  recipient="a@marshellis.com", status="sending",
+                                  destination=route.forward_to)
+    assert forward.forward(route, p, raw, "a@marshellis.com") == "duplicate"
+    assert route.sent == []
+
+
+def test_compat32_fallback_when_smtp_rewrite_raises(route, monkeypatch):
+    real = forward._rewrite
+    calls = []
+
+    def flaky(msg, *a):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ValueError("malformed")
+        return real(msg, *a)
+
+    monkeypatch.setattr(forward, "_rewrite", flaky)
+    raw = (FIX / "with_attachment.eml").read_bytes()
+    out = forward.build(route, parse.parse(raw), raw, "a@marshellis.com")
+    assert len(calls) == 2
+    msg = BytesParser(policy=policy.default).parsebytes(out)
+    assert "via marshellis.com" in msg["From"]
+    assert not msg.get("DKIM-Signature")
+
+
+def test_blank_email_is_dropped(route):
+    route.forward_to.email = ""
+    route.forward_to.save()
+    raw = (FIX / "plain.eml").read_bytes()
+    assert forward.forward(route, parse.parse(raw), raw, "a@marshellis.com") == "dropped:no-email"
+    assert route.sent == []
+    assert MailForwardLog.objects.get().error == "destination has no email address"
+
+
+@pytest.mark.parametrize("email", ["x@marshellis.com", "x@mail.marshellis.com"])
+def test_loop_is_dropped(route, email):
+    route.forward_to.email = email
+    route.forward_to.save()
+    raw = (FIX / "plain.eml").read_bytes()
+    assert forward.forward(route, parse.parse(raw), raw, "a@marshellis.com") == "dropped:loop"
+    assert route.sent == []
+    assert MailForwardLog.objects.get().error == "forwarding loop"
