@@ -241,6 +241,61 @@ def test_the_header_names_the_window_in_the_askers_terms():
     assert "over the last 10 minute(s)" in window.render("xoxb", [], channel_id="C1", win=window.Window(10))
 
 
+@pytest.mark.parametrize("text, last, ask", [
+    ("--history 5msgs summarise", 5, "summarise"),
+    ("--history 5msg", 5, ""),
+    ("--history 3messages what did we decide?", 3, "what did we decide?"),
+    ("--history 5 messages summarise", 5, "summarise"),   # two words: a count, not 5 minutes
+    ("--history 1 message", 1, ""),
+    ("—history 4MSGS pick this up", 4, "pick this up"),
+])
+def test_a_message_count_is_recognised(text, last, ask):
+    """The count is the newest messages, reaching back no further than the
+    workspace's limit — so the window carries that limit as its minutes."""
+    assert window.parse(text, max_minutes=120) == (window.Window(120, last=last), ask)
+
+
+@pytest.mark.parametrize("text", ["--history 0msgs", "--history 0 messages", "--history 99999msgs"])
+def test_a_message_count_out_of_range_is_refused(text):
+    with pytest.raises(window.HistoryFlagError):
+        window.parse(text, max_minutes=120)
+
+
+def _line(ts: float, *replies: float) -> window.Line:
+    return window.Line(f"{ts:.6f}", "U", f"m{ts:g}", [window.Line(f"{r:.6f}", "U", f"m{r:g}") for r in replies])
+
+
+def test_the_last_n_messages_are_the_newest_posted_wherever_they_were_posted():
+    """A thread's replies count as messages; a reply whose parent is too old
+    to keep stands alone, and a kept parent keeps only its kept replies."""
+    lines = [_line(1, 2, 7), _line(3), _line(4, 5, 6), _line(8)]
+    kept = window._newest(lines, 4)          # 5, 6, 7, 8
+    assert [(ln.ts[:1], [r.ts[:1] for r in ln.replies]) for ln in kept] == [
+        ("5", []), ("6", []), ("7", []), ("8", [])]
+    kept = window._newest(lines, 6)          # 3..8: parent 4 is kept with both replies
+    assert [(ln.ts[:1], [r.ts[:1] for r in ln.replies]) for ln in kept] == [
+        ("3", []), ("4", ["5", "6"]), ("7", []), ("8", [])]
+    assert window.count(window._newest(lines, 99)) == 8
+
+
+def test_the_header_names_a_message_count():
+    text = window.render("xoxb", [], channel_id="C1", win=window.Window(120, last=5))
+    assert "the last 5 message(s)" in text and 'last="5"' in text
+
+
+def test_read_back_by_message_count(channel, linked, hal):
+    """The channel above holds four messages in its window (2, 6, 5 and 4
+    minutes ago, the last three one thread); the newest two are 4 and 2."""
+    assert mention("<@UBOT> hal --history 2msgs pick this up", ts=_ts(0)).status_code == 200
+    turn = _turn()
+    assert "agreed, let's ask hal" in turn.prompt and "probably the new index" in turn.prompt
+    assert "yes, since this morning" not in turn.prompt and "OLD" not in turn.prompt
+    assert 'last="2"' in turn.prompt and 'messages="2"' in turn.prompt
+    assert turn.chat_session.title.startswith("Slack: last 2 messages")
+    ev = Event.objects.get(kind="slack.window_read")
+    assert ev.payload["last"] == 2 and ev.payload["messages"] == 2
+
+
 def test_the_message_ceiling_is_server_policy(channel, settings):
     settings.SLACK_HISTORY_MESSAGE_CEILING = 1
     lines = window.fetch("xoxb-test", channel_id="C1", minutes=10)

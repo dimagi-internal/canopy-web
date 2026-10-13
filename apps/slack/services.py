@@ -528,7 +528,8 @@ def handle_message(inbound: Inbound) -> Outcome:
         prompt, refusal = _with_window(installation, principal, agent, inbound, win, ask)
         if refusal is not None:
             return refusal
-        title = (f"Slack: since {win.since}" if win.since else f"Slack: last {win.minutes} min") \
+        title = (f"Slack: last {win.last} messages" if win.last
+                 else f"Slack: since {win.since}" if win.since else f"Slack: last {win.minutes} min") \
             + (f" — {ask}" if ask else "")
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
                                       title=title)
@@ -668,7 +669,8 @@ def _first_closed_notice(session: Session, slack_user_id: str) -> bool:
 
 def _with_window(installation: SlackInstallation, principal: Principal, agent: Agent,
                  inbound: Inbound, win: window.Window, ask: str) -> tuple[str, Outcome | None]:
-    """The ask, with the channel's last `win.minutes` in front of it (see `window`).
+    """The ask, with the channel's window in front of it (see `window`): its last
+    `win.minutes`, or its newest `win.last` messages within them.
 
     Members only: the window can hold a private channel's messages, and a
     contact's session is one no member can open — nobody could check what it
@@ -683,7 +685,7 @@ def _with_window(installation: SlackInstallation, principal: Principal, agent: A
                            workspace_id=agent.workspace_id)
     try:
         lines = window.fetch(installation.bot_token, channel_id=inbound.channel_id, minutes=win.minutes,
-                             thread_ts=inbound.thread_ts, skip_ts=inbound.ts)
+                             thread_ts=inbound.thread_ts, skip_ts=inbound.ts, last=win.last)
     except client.SlackApiError as e:
         _record_window(agent, principal, inbound, win, 0, error=e.error)
         return "", Outcome(WINDOW_REFUSED, f"canopy couldn't read this channel ({e.error}). "
@@ -760,7 +762,7 @@ def _record_window(agent: Agent, principal: Principal, inbound: Inbound, win: wi
                         f"for {agent.slug}: " + (f"failed ({error})" if error else f"{n} message(s)"))[:500],
             "payload": {"team": inbound.team_id, "channel": inbound.channel_id, "ts": inbound.ts,
                         "user": principal.user.pk, "agent": agent.slug, "minutes": win.minutes,
-                        "since": win.since, "messages": n, "error": error},
+                        "since": win.since, "last": win.last, "messages": n, "error": error},
         }], workspace=agent.workspace)
     except Exception:  # noqa: BLE001 — bookkeeping must not fail the ask
         logger.exception("could not record a Slack window read")
