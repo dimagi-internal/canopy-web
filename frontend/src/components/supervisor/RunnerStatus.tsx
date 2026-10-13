@@ -77,7 +77,13 @@ export function RunnerStatus({
               className="shrink-0 rounded bg-info/15 px-1 text-[10px] text-info"
               title={r.paused_note || undefined}
             >
+              {/* Idle sessions on a paused box are not waiting on anybody, so the
+                  feed does not nag about them (feed.py: parked needs evidence) —
+                  they are counted here, where the pause itself lives. */}
               paused
+              {(r.open_sessions ?? 0) > 0
+                ? ` · ${r.open_sessions} open session${r.open_sessions === 1 ? '' : 's'}`
+                : ''}
             </span>
           ) : !r.ready ? (
             <span data-testid={`runner-notready-${r.name}`} className="shrink-0 rounded bg-destructive/15 px-1 text-[10px] text-destructive">

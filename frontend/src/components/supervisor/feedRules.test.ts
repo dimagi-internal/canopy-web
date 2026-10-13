@@ -74,10 +74,21 @@ describe('parkedByRunner', () => {
       ],
       fleet,
     )
-    expect(groups.map((g) => [g.runnerName, g.count, g.waiting, g.reason, g.note, g.runner?.id])).toEqual([
-      ['other', 2, 1, 'offline', 'emdash CDP unreachable', 'r2'],
-      ['box', 1, 0, 'offline', 'heartbeat lost', 'r1'],
+    expect(groups.map((g) => [g.runnerName, g.count, g.waiting, g.queued, g.reason, g.note, g.runner?.id])).toEqual([
+      ['other', 2, 1, 1, 'offline', 'emdash CDP unreachable', 'r2'],
+      ['box', 1, 0, 1, 'offline', 'heartbeat lost', 'r1'],
     ])
+  })
+
+  it('ignores idle sessions on a paused runner — the server does not park them', () => {
+    const groups = parkedByRunner(
+      [
+        s('i1', { feed_status: '', runner_name: 'box', runner_status: 'paused' }),
+        s('i2', { feed_status: '', runner_name: 'box', runner_status: 'paused' }),
+      ],
+      fleet,
+    )
+    expect(groups).toEqual([])
   })
 
   it('reads the pause note for a paused runner, and survives a runner the fleet does not list', () => {

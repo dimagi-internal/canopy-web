@@ -37,6 +37,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     owner_email: null,
     can_manage: true,
     can_administer: true,
+    open_sessions: 0,
     flags: [],
     known_flags: ['zdr'],
     ...overrides,

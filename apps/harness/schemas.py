@@ -172,6 +172,12 @@ class RunnerOut(Schema):
     # because they gate different routes: reporting one for the other is how a
     # UI ends up rendering a control that 404s.
     can_administer: bool = True
+    # How many sessions are open on this box right now (active, and still being
+    # reported — the same rule as the session list's `state=active`). Stamped by
+    # the fleet list only; 0 elsewhere. Supervisor → Runners shows it beside a
+    # pause ("paused · 4 open sessions"): idle sessions on a paused box are not
+    # waiting on anybody, so they are counted here rather than on the feed.
+    open_sessions: int = 0
     # What the box reports about its own features (Runner.health), keyed by
     # check name. A map rather than a list on purpose: openapi-fetch's Readable<T>
     # degrades an array of OBJECTS inside a response into an ArrayLike the client

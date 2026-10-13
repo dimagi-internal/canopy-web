@@ -19,7 +19,14 @@ fired it (a dialog appeared; a turn finished) while the list has to read it:
                  the box's owner drives it and sees it on their own feed. A
                  cloud box has nobody at it, so a session an agent opened there
                  belongs to the agent's owner;
-      PARKED     its runner is paused or offline, so a reply would only queue;
+      PARKED     its runner is paused or offline AND something is demonstrably
+                 held up there: a dialog is waiting (`waiting_on_you`) or a turn
+                 for it is queued/in flight (`turn_open`). An idle session on a
+                 paused box — the agent finished, nothing asked, nothing queued —
+                 is NOT parked and not on the feed at all: a deliberate pause is
+                 not something to nag about, and calling it "waiting" without
+                 that evidence is wrong (Jonathan, 2026-10-12). Supervisor →
+                 Runners counts those open sessions on the runner's row instead;
       AUTO       an agent drove it on its own (auto mode, not a chat), so it
                  did not stop to wait for anybody. The feed can show these on
                  request; nothing pushes about them.
@@ -66,15 +73,24 @@ def held(viewer, session, *, turn_mode: str | None, turn_origin: str | None) -> 
 
 def status(
     viewer, session, *, waiting_on_you: bool, agent_spoke_last: bool, running: bool,
-    turn_mode: str | None, turn_origin: str | None,
+    turn_mode: str | None, turn_origin: str | None, turn_open: bool = False,
 ) -> str:
     """`WAITING` when on the viewer's feed; a `held` reason when waiting but held
-    back; "" when the session is not waiting on anybody."""
+    back; "" when the session is not waiting on anybody.
+
+    `turn_open`: a turn that drives this session is queued or in flight
+    (`Turn.NON_TERMINAL`). It is the only evidence besides a dialog that a session
+    on a paused/offline runner is held up — so `PARKED` means exactly one of the
+    two, and the feed can say which (a parked row that is not `waiting_on_you`
+    has a turn stuck behind the box)."""
+    reason = held(viewer, session, turn_mode=turn_mode, turn_origin=turn_origin)
+    if reason == PARKED:
+        return PARKED if (waiting_on_you or turn_open) else ""
     if not needs_next_prompt(
         waiting_on_you=waiting_on_you, agent_spoke_last=agent_spoke_last, running=running,
     ):
         return ""
-    return held(viewer, session, turn_mode=turn_mode, turn_origin=turn_origin) or WAITING
+    return reason or WAITING
 
 
 def driving_turn(session) -> tuple[str, str]:

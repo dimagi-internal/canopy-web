@@ -130,6 +130,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         feed.status(
             viewer, session, waiting_on_you=waiting_on_you, agent_spoke_last=agent_spoke_last,
             running=running, turn_mode=turn_mode, turn_origin=turn_origin,
+            turn_open=bool(getattr(session, "_turn_open", False)),
         )
         if reply and viewer is not None
         else ""
@@ -509,7 +510,7 @@ def list_sessions(
     # auto session that just ran and a manual one waiting on you can be told apart.
     rows = services.with_driving_turn(rows)
     if reply:
-        rows = services.with_last_reply(rows)
+        rows = services.with_open_turn(services.with_last_reply(rows))
     out = [_out(s, reply=reply, viewer=request.user) for s in rows]
     # Waiting first, then running, then genuinely-most-recent. Sorting by
     # created_at made a dead repo and a live one interleave arbitrarily (both

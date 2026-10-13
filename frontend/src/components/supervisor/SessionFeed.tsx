@@ -261,14 +261,23 @@ function ParkedBanner({ groups }: { groups: ParkedGroup[] }): JSX.Element {
       data-testid="feed-parked"
     >
       {groups.map((g) => {
-        const n = `${g.count} session${g.count === 1 ? '' : 's'}`
+        const plural = (k: number) => (k === 1 ? '' : 's')
+        // Say WHAT is held up — never a bare "waiting". A parked session has a
+        // dialog up (it needs you) or a turn queued that this box cannot take.
+        const what = [
+          g.waiting > 0 ? `${g.waiting} session${plural(g.waiting)} need${g.waiting === 1 ? 's' : ''} you` : '',
+          g.queued > 0
+            ? `${g.queued}${g.waiting > 0 ? '' : ` session${plural(g.queued)}`} ha${g.queued === 1 ? 's' : 've'} a turn queued`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' and ')
         const name = g.runnerName || 'a runner'
         const state = g.reason === 'paused' ? 'is paused' : "can't take turns"
         const href = g.runner ? `/supervisor?tab=runners&runner=${g.runner.id}` : '/supervisor?tab=runners'
         return (
           <p key={g.runnerName} data-testid={`feed-parked-${g.runnerName || 'unknown'}`}>
-            {n} {g.count === 1 ? 'is' : 'are'} waiting on <strong className="text-foreground">{name}</strong>, which{' '}
-            {state}
+            {what}, but <strong className="text-foreground">{name}</strong> {state}
             {g.note ? (
               <>
                 : <em>{g.note}</em>
@@ -276,7 +285,7 @@ function ParkedBanner({ groups }: { groups: ParkedGroup[] }): JSX.Element {
             ) : (
               ''
             )}
-            .{g.waiting > 0 ? ` ${g.waiting} of them need${g.waiting === 1 ? 's' : ''} an answer.` : ''}{' '}
+            .{' '}
             <Link to={href} className="font-medium text-foreground underline underline-offset-2">
               {g.reason === 'paused' ? 'Resume it from the runner →' : 'Open the runner →'}
             </Link>
