@@ -72,3 +72,13 @@ def test_canopy_web_mail_is_off_by_default():
     params = yaml.load(web.read_text(), Loader=_L)["Parameters"]
     assert params["MailEnabled"]["Default"] == "false"
     assert "Description" in params["DesiredCount"]
+
+
+def test_inbound_bucket_outlives_the_stack():
+    bucket = _res()["InboundBucket"]
+    assert bucket["DeletionPolicy"] == "Retain" and bucket["UpdateReplacePolicy"] == "Retain"
+
+
+def test_endpoints_default_to_the_canonical_address():
+    params = yaml.load(STACK.read_text(), Loader=_L)["Parameters"]
+    assert params["CanopyBaseUrl"]["Default"] == "https://canopy.dimagi.com"

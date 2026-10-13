@@ -29,9 +29,12 @@ per workspace; the UI ships handling one.
 
 New app **`apps/mail/`**, **product tier**. Framework apps never import it (enforced by
 `tests/test_architecture_boundary.py`); it imports framework (`harness`, `workspaces`,
-`agents`, `common`) freely. Ripping it out = delete the app (its migration drops its
-tables), its `route_gates` entries, its frontend pages + guide descriptors, and the
-`canopy-web-mail` CloudFormation stack. Nothing else changes, because:
+`agents`, `common`) freely. Ripping it out follows the ordered rip-out list in
+`docs/architecture/mail.md` (`manage.py migrate mail zero` first, then the app, its
+tests/fixtures/conftest block, registry lines in settings/api/route_gates/middleware/the
+boundary test, the frontend api module, pages, nav tab, routes, guide descriptors and the
+regenerated types, the docs lines, and the `canopy-web-mail` stack plus its retained
+bucket and the `Mail*` parameters). Nothing else changes, because:
 
 - It does **not** extend `apps/inbound` (`InboundMailbox` is Gmail-push routing and stays
   Gmail-only). SES mailboxes are a separate routing table owned by `mail`; the runner's
@@ -72,9 +75,9 @@ The task role is shared with connect-labs; the app only ever sends from a `MailD
   goes to a canopy user's own login email**, never a typed address), `enabled`.
   Exact local-part match wins over `*`. Reserved local part `canopy-forwarder`
   (the From of forwarded mail) cannot be routed.
-  When a domain is verified, creating an agent in the workspace offers a default
-  `slug@domain` route.
-- **`MailThread`** — `workspace`, `route` (the agent route it belongs to), public
+  The catch-all can forward or drop, never belong to an agent.
+- **`MailThread`** — `workspace`, `route` (the agent route it belongs to; `SET_NULL`, so
+  removing a route or domain keeps the thread), `address` (snapshotted from the route), public
   `uuid` (the `thread_id` agents and turns carry), `subject`, `last_message_at`,
   `message_count`.
 - **`MailMessage`** — `thread`, `direction` (`in`/`out`), `message_id` (RFC 5322,
@@ -112,8 +115,8 @@ both headers from the thread.
 
 ### Inbound
 SES → S3 `incoming/<id>` + SNS → `POST /api/mail/ses/inbound/`:
-1. Verify the SNS signature (cert URL must be `sns.us-east-1.amazonaws.com`, topic ARN
-   must be ours); handle `SubscriptionConfirmation` by fetching the SubscribeURL once.
+1. Verify the SNS signature (cert URL host must be `sns.<region>.amazonaws.com`, the
+   region taken from our topic ARN; topic ARN must be ours); handle `SubscriptionConfirmation` by fetching the SubscribeURL once.
    Verify before parsing anything else.
 2. Fetch the raw object, parse (stdlib `email`). Look up the domain of each recipient
    (a subdomain resolves to its verified parent, so `x@mail.marshellis.com` uses
@@ -125,9 +128,10 @@ SES → S3 `incoming/<id>` + SNS → `POST /api/mail/ses/inbound/`:
    - **forward:** re-send through SES as `"<Orig Name> via <domain>"
      <canopy-forwarder@<domain>>`, `Reply-To:` original sender, original
      To/Date/subject, `X-Original-From`, body + attachments intact, to the user's login
-     email. Log to `MailForwardLog`. A failed send returns 500 so **SNS retries** (the
-     subscription's delivery policy retries for ~6 h); the `message_id` dedupe makes a
-     retry safe.
+     email. Log to `MailForwardLog`. A transient send failure returns 500 so **SNS
+     retries** (the subscription's custom DeliveryPolicy: 100 retries, exponential
+     backoff up to 10 min); `MAIL_ENABLED` off is 200 `dropped:mail-off`; other errors
+     are acknowledged. The `message_id` dedupe makes a retry safe.
    - **drop:** log only.
 4. Return 200 once the message is durably handled (stored, forwarded, or logged as
    dropped); 500 only for a transient failure worth an SNS retry.
@@ -135,7 +139,7 @@ SES → S3 `incoming/<id>` + SNS → `POST /api/mail/ses/inbound/`:
 ### Agent turn
 For an agent-routed message, `mail` calls `harness.services.enqueue_turn` exactly as the
 runner's inbox loop does for Gmail: origin `email`, idempotency key
-`email-<agent>-<thread uuid>-<message_count>`, prompt `/<agent>:turn --thread <uuid>`,
+`email-<agent>-<thread uuid>-<message pk>`, prompt `/<agent>:turn --thread <uuid>`,
 `origin_ref = {thread_id, backend: "ses", from, subject, message_id, discovered_by:
 "ses", message_count, headers: [Authentication-Results]}`. Skipped (stored, no turn):
 the agent's own address as sender, and automated mail (`Auto-Submitted` ≠ `no`,
@@ -147,8 +151,8 @@ fail-open rule as `inbox_rules`. Admission rules apply to the turn as to any oth
 No runner reads the mailbox; the doorbell is the turn itself.
 
 ### Agent reads and sends (REST, so MCP for free)
-Under `/api/mail/…/{workspace}` (the `apps/inbound` path idiom; gate: `AGENT_WORK` for an agent's own mailbox; `READ` to view
-threads on canopy-web; `INTEGRATIONS` for domains/routes):
+Under `/api/mail/…/{workspace}` (the `apps/inbound` path idiom; gate: `AGENT_WORK` for an agent's own mailbox; workspace
+membership to view threads on canopy-web; `INTEGRATIONS` for domains/routes):
 - `GET resolve?address=` → `{backend: "ses", agent}` or 404 (caller falls back to Gmail).
 - `GET threads?agent=`, `GET threads/{uuid}` (messages + attachment links).
 - `POST threads/{uuid}/reply`, `POST send` (new thread) — From is the agent's route
@@ -190,9 +194,9 @@ Every write route is classified in `apps/api/route_gates.py` (domain/route write
 - SNS endpoint verifies signature + topic before reading the payload; replays dedupe on
   `message_id`.
 - HTML bodies render sandboxed; attachments download via short-lived presigned URLs
-  after a `READ` check.
-- Removing a domain: `DeleteEmailIdentity`, routes disabled, stored threads kept until
-  an admin deletes them (no retention-rule integration in v1).
+  handed only to workspace members.
+- Removing a domain: `DeleteEmailIdentity`, its routes deleted, stored threads and messages
+  kept (route set NULL; no thread delete and no retention-rule integration in v1).
 
 ## Testing
 
