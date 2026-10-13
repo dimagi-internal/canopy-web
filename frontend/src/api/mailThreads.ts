@@ -15,14 +15,17 @@ export class MailThreadsApiError extends Error {
   }
 }
 
-export async function fetchMailThreads(workspace: string, agent?: string): Promise<MailThreadOut[]> {
+export type MailThreadList = { items: MailThreadOut[]; agent_address: string }
+
+export async function fetchMailThreads(workspace: string, agent?: string): Promise<MailThreadList> {
   const res = await apiV2.GET('/api/mail/threads/{workspace}', {
     params: { path: { workspace }, query: agent ? { agent } : {} },
   })
   if (!res.response.ok) {
     throw new MailThreadsApiError(res.response.status, problemMessage(res.error, 'Failed to load mail threads'))
   }
-  return (res.data as { items: MailThreadOut[] }).items
+  const d = res.data as { items: MailThreadOut[]; agent_address?: string }
+  return { items: d.items, agent_address: d.agent_address ?? '' }
 }
 
 export async function fetchMailThread(workspace: string, threadId: string): Promise<MailThreadOut> {

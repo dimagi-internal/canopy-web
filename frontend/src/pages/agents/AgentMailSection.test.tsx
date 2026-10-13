@@ -19,7 +19,7 @@ afterEach(() => { cleanup(); vi.clearAllMocks() })
 
 const thread = {
   thread_id: 't1', address: 'echo@mail.example.org', agent: 'echo', subject: 'Grant question',
-  message_count: 2, unread: true, archived: false, last_message_at: '2026-10-11T10:00:00Z',
+  counterpart: 'amy@x.org', message_count: 2, unread: true, archived: false, last_message_at: '2026-10-11T10:00:00Z',
 }
 const detail = (html = '') => ({
   ...thread,
@@ -44,11 +44,13 @@ function renderMail() {
 
 describe('AgentMailSection', () => {
   it('lists threads and loads one on click, in order with direction labels', async () => {
-    fetchMailThreads.mockResolvedValue([thread])
+    fetchMailThreads.mockResolvedValue({ items: [thread], agent_address: 'echo@mail.example.org' })
     fetchMailThread.mockResolvedValue(detail())
     renderMail()
     const row = await screen.findByText('Grant question')
     expect(fetchMailThreads).toHaveBeenCalledWith('connect', 'echo')
+    expect(screen.getByRole('columnheader', { name: 'With' })).toBeTruthy()
+    expect(screen.getAllByText('amy@x.org').length).toBeGreaterThan(0)
     fireEvent.click(row)
     await waitFor(() => expect(fetchMailThread).toHaveBeenCalledWith('connect', 't1'))
     const first = await screen.findByText('First hello')
@@ -60,7 +62,7 @@ describe('AgentMailSection', () => {
   })
 
   it('renders html only in an iframe with an empty sandbox', async () => {
-    fetchMailThreads.mockResolvedValue([thread])
+    fetchMailThreads.mockResolvedValue({ items: [thread], agent_address: 'echo@mail.example.org' })
     fetchMailThread.mockResolvedValue(detail('<p>Hi</p>'))
     const { container } = renderMail()
     fireEvent.click(await screen.findByText('Grant question'))
@@ -71,7 +73,7 @@ describe('AgentMailSection', () => {
   })
 
   it('shows attachments as download links', async () => {
-    fetchMailThreads.mockResolvedValue([thread])
+    fetchMailThreads.mockResolvedValue({ items: [thread], agent_address: 'echo@mail.example.org' })
     fetchMailThread.mockResolvedValue(detail())
     renderMail()
     fireEvent.click(await screen.findByText('Grant question'))
@@ -79,11 +81,25 @@ describe('AgentMailSection', () => {
     expect(link.getAttribute('href')).toBe('https://s3/budget?sig=1')
   })
 
-  it('explains an agent with no mail and links to email settings', async () => {
-    fetchMailThreads.mockResolvedValue([])
+  it('explains an agent with no address and links to email settings', async () => {
+    fetchMailThreads.mockResolvedValue({ items: [], agent_address: '' })
     renderMail()
     expect(await screen.findByText(/This agent has no email address/)).toBeTruthy()
     const link = screen.getByRole('link', { name: /Settings → Email/ })
     expect(link.getAttribute('href')).toBe('/w/connect/settings/email')
+  })
+
+  it('says no mail yet when the agent has an address but no threads', async () => {
+    fetchMailThreads.mockResolvedValue({ items: [], agent_address: 'echo@mail.example.org' })
+    renderMail()
+    expect(await screen.findByText('No mail yet for echo@mail.example.org.')).toBeTruthy()
+    expect(screen.queryByText(/no email address/)).toBeNull()
+  })
+
+  it('shows an error, not the no-address state, when the fetch fails', async () => {
+    fetchMailThreads.mockRejectedValue(new Error('boom'))
+    renderMail()
+    expect((await screen.findByRole('alert')).textContent).toBe('boom')
+    expect(screen.queryByText(/no email address/)).toBeNull()
   })
 })
