@@ -337,7 +337,7 @@ def ses_inbound(request: HttpRequest):
     """SNS posts `text/plain`, so the body is read raw rather than through a schema.
 
     Verify before trusting a byte; 404 on any failure so a probe learns nothing.
-    500 only for transient failures (SNS retries those for ~6 h); anything
+    500 only for transient failures (SNS retries those for ~40 min); anything
     deterministic is acknowledged with 200 so a poisoned message cannot loop.
     """
     try:

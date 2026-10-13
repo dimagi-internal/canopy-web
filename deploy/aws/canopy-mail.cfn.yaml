@@ -101,11 +101,14 @@ Resources:
       Protocol: https
       Endpoint: !Sub ${CanopyBaseUrl}/api/mail/ses/inbound/
       DeliveryPolicy:
+        # SNS caps an HTTPS policy's total retry time at 3600 s; this is ~40 min.
         healthyRetryPolicy:
-          numRetries: 100
-          numMaxDelayRetries: 30
+          numRetries: 30
+          numNoDelayRetries: 0
+          numMinDelayRetries: 2
+          numMaxDelayRetries: 14
           minDelayTarget: 20
-          maxDelayTarget: 600
+          maxDelayTarget: 120
           backoffFunction: exponential
   RuleSet:
     Type: AWS::SES::ReceiptRuleSet
@@ -149,11 +152,14 @@ Resources:
       Protocol: https
       Endpoint: !Sub ${CanopyBaseUrl}/api/mail/ses/events/
       DeliveryPolicy:
+        # SNS caps an HTTPS policy's total retry time at 3600 s; this is ~40 min.
         healthyRetryPolicy:
-          numRetries: 100
-          numMaxDelayRetries: 30
+          numRetries: 30
+          numNoDelayRetries: 0
+          numMinDelayRetries: 2
+          numMaxDelayRetries: 14
           minDelayTarget: 20
-          maxDelayTarget: 600
+          maxDelayTarget: 120
           backoffFunction: exponential
   TenantConfigSet:
     Type: AWS::SES::ConfigurationSet
