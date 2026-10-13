@@ -54,10 +54,9 @@ like `canopy-email.cfn.yaml` (the deploy role holds no `ses:*`):
 | SNS topic `canopy-inbound-mail` | The receipt rule's S3 action notifies it (object key only — never content, so the 150 KB SNS limit is irrelevant). HTTPS subscription → canopy-web `/api/mail/ses/inbound/`. |
 | Receipt rule set `canopy-inbound` (active) with ONE rule `canopy-all` | **No recipient filter**, `ScanEnabled: true`, TLS required, one S3 action (bucket + `incoming/` + topic). SES only accepts mail for verified identities, and canopy-web drops mail for any domain no workspace owns — so the rule never changes when a domain is added. |
 | Configuration set `canopy-tenant-mail` | Every tenant send uses it — separate from connect-labs' `labs-jj-email`. Event destination (SEND, DELIVERY, BOUNCE, COMPLAINT, REJECT) → SNS topic `canopy-mail-events` → `/api/mail/ses/events/`. |
-| IAM policy on `labs-jj-ecs-task-role` | `ses:CreateEmailIdentity`, `GetEmailIdentity`, `DeleteEmailIdentity`, `PutEmailIdentityMailFromAttributes`, `PutEmailIdentityDkimSigningAttributes` on `identity/*`; `ses:SendRawEmail`/`SendEmail` on `identity/*` **conditioned** on `ses:FromAddress` not being `*@dimagi.com` / `*@connect.dimagi.com` and on the `canopy-tenant-mail` configuration set; `s3:GetObject`/`PutObject`/`CopyObject` on the bucket. |
+| IAM policy on `labs-jj-ecs-task-role` | `ses:CreateEmailIdentity`, `GetEmailIdentity`, `DeleteEmailIdentity`, `PutEmailIdentityMailFromAttributes`, `PutEmailIdentityDkimSigningAttributes` on `identity/*`; `ses:SendRawEmail`/`SendEmail` on `identity/*` with a `ses:FromAddress` condition barring `*@dimagi.com` / `*@connect.dimagi.com` (defence in depth for this policy only — IAM allows are additive; the real guard is app-level, and the `canopy-tenant-mail` configuration set is enforced in app code, `ses.send_raw` always passes it, not by IAM); `s3:GetObject`/`PutObject`/`CopyObject` on the bucket. |
 
-The task role is shared with connect-labs; the send condition keeps a tenant path from
-sending as Dimagi domains.
+The task role is shared with connect-labs; the app only ever sends from a `MailDomain` address (the IAM condition is a backstop).
 
 ## Data model (`apps/mail/models.py`)
 

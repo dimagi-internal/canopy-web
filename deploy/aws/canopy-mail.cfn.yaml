@@ -11,8 +11,16 @@ AWSTemplateFormatVersion: '2010-09-09'
 #     drops mail for any domain no workspace owns, so adding a domain never edits it
 #   * SNS topics + HTTPS subscriptions to canopy-web (inbound notifications, send events)
 #   * the configuration set `canopy-tenant-mail` every tenant send goes through
-#   * a policy on the shared ECS task role: create/inspect/delete tenant identities, and
-#     send as them — but never as a Dimagi address
+#   * a policy on the shared ECS task role: create/inspect/delete tenant identities and
+#     send. Its ses:FromAddress condition bars Dimagi addresses for THIS policy only —
+#     IAM allows are additive and canopy-ses-send grants unconditioned sends, so the
+#     real guard is app-level (agent_mail.send / forward only ever send from a
+#     MailDomain address) and the condition is defence in depth. The configuration set
+#     is likewise enforced in app code (apps/mail/ses.send_raw always passes it), not IAM.
+#
+# Deploy canopy-web with the Mail* parameters FIRST (see docs/runbooks/mail-domain-onboarding.md): the
+# HTTPS subscriptions send a SubscriptionConfirmation at stack create that canopy-web must already
+# be able to verify.
 #
 # Deployed by hand with a labs admin login, not by the Deploy to Labs workflow: the
 # deploy role holds no ses:*, and this stack changes about once.
@@ -118,18 +126,38 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: canopy-mail-events
+  EventsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref EventsTopic]
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ses.amazonaws.com}
+            Action: sns:Publish
+            Resource: !Ref EventsTopic
+            Condition:
+              StringEquals: {AWS:SourceAccount: !Ref AWS::AccountId}
   EventsSubscription:
     Type: AWS::SNS::Subscription
     Properties:
       TopicArn: !Ref EventsTopic
       Protocol: https
       Endpoint: !Sub ${CanopyBaseUrl}/api/mail/ses/events/
+      DeliveryPolicy:
+        healthyRetryPolicy:
+          numRetries: 100
+          numMaxDelayRetries: 30
+          minDelayTarget: 20
+          maxDelayTarget: 600
+          backoffFunction: exponential
   TenantConfigSet:
     Type: AWS::SES::ConfigurationSet
     Properties:
       Name: canopy-tenant-mail
   TenantConfigSetEvents:
     Type: AWS::SES::ConfigurationSetEventDestination
+    DependsOn: EventsTopicPolicy
     Properties:
       ConfigurationSetName: !Ref TenantConfigSet
       EventDestination:
@@ -156,8 +184,6 @@ Resources:
             Condition:
               StringNotLike:
                 ses:FromAddress: ['*@dimagi.com', '*@*.dimagi.com', '*@dimagi-ai.com']
-              StringEquals:
-                ses:ConfigurationSet: canopy-tenant-mail
           - Effect: Allow
             Action: [s3:GetObject, s3:PutObject]
             Resource: !Sub ${InboundBucket.Arn}/*

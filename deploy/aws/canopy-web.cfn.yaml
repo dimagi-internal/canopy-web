@@ -42,6 +42,9 @@ Parameters:
   DesiredCount:
     Type: Number
     Default: 0
+    Description: >
+      Start at 0 so the stack creates cleanly before secrets + image exist. Set
+      secret values + push the image, then update the stack with DesiredCount=1.
   # Workspace email domains (apps/mail). Values are the canopy-web-mail stack's
   # Outputs; leave MailEnabled "false" until that stack exists.
   MailEnabled:
@@ -56,9 +59,6 @@ Parameters:
   MailEventsTopicArn:
     Type: String
     Default: ""
-    Description: >
-      Start at 0 so the stack creates cleanly before secrets + image exist. Set
-      secret values + push the image, then update the stack with DesiredCount=1.
 
 Resources:
   EcrRepo:

@@ -2,28 +2,42 @@
 
 Design and invariants: `docs/architecture/mail.md`. Do the first two steps once per AWS account; the rest per domain.
 
-## One-time: the AWS side and canopy-web
+## One-time: canopy-web first, then the AWS side
 
-1. **Deploy the stack** with a labs admin login (the deploy role holds no `ses:*`):
+The mail stack's HTTPS subscriptions send a `SubscriptionConfirmation` the moment they are created, and canopy-web can only verify and confirm it if it already knows the topic ARNs. The ARNs and bucket name are deterministic, so set canopy-web up first. (The SNS doors verify signatures regardless of `MAIL_ENABLED`, but need the topic ARN settings.)
+
+1. **Turn the feature on in canopy-web** with the known names, then deploy:
+   ```bash
+   aws cloudformation deploy --profile labs --stack-name canopy-web \
+     --template-file deploy/aws/canopy-web.cfn.yaml --capabilities CAPABILITY_IAM \
+     --parameter-overrides MailEnabled=true \
+       MailInboundBucket=canopy-inbound-mail-858923557655 \
+       MailInboundTopicArn=arn:aws:sns:us-east-1:858923557655:canopy-inbound-mail \
+       MailEventsTopicArn=arn:aws:sns:us-east-1:858923557655:canopy-mail-events
+   gh workflow run "Deploy to Labs (AWS)" --ref main
+   ```
+   The workflow overrides only `ImageTag`, so the `Mail*` values persist across later deploys. Confirm `/api/openapi.json` lists `/api/mail/domains/{workspace}`.
+2. **Deploy the mail stack** with a labs admin login (the deploy role holds no `ses:*`):
    ```bash
    aws cloudformation deploy --profile labs --stack-name canopy-web-mail \
      --template-file deploy/aws/canopy-mail.cfn.yaml --capabilities CAPABILITY_NAMED_IAM
    aws cloudformation describe-stacks --profile labs --stack-name canopy-web-mail \
      --query 'Stacks[0].Outputs'
    ```
-2. **Activate the rule set** (CloudFormation cannot):
+   The Outputs must equal the names used in step 1.
+3. **Activate the rule set** (CloudFormation cannot):
    ```bash
    aws ses set-active-receipt-rule-set --profile labs --region us-east-1 --rule-set-name canopy-inbound
    ```
-3. **Turn the feature on in canopy-web.** Pass the Outputs to the canopy-web stack and deploy:
+4. **Verify both subscriptions are `Confirmed`:**
    ```bash
-   aws cloudformation deploy --profile labs --stack-name canopy-web \
-     --template-file deploy/aws/canopy-web.cfn.yaml --capabilities CAPABILITY_IAM \
-     --parameter-overrides MailEnabled=true MailInboundBucket=<InboundBucket> \
-       MailInboundTopicArn=<InboundTopicArn> MailEventsTopicArn=<EventsTopicArn>
-   gh workflow run "Deploy to Labs (AWS)" --ref main
+   for t in canopy-inbound-mail canopy-mail-events; do
+     aws sns list-subscriptions-by-topic --profile labs --region us-east-1 \
+       --topic-arn arn:aws:sns:us-east-1:858923557655:$t \
+       --query 'Subscriptions[].[Endpoint,SubscriptionArn]'
+   done
    ```
-   The workflow overrides only `ImageTag`, so the `Mail*` values persist across later deploys. Confirm `/api/openapi.json` lists `/api/mail/domains/{workspace}`. SNS sends a `SubscriptionConfirmation` to each endpoint; canopy-web confirms it on receipt, so check both subscriptions show `Confirmed` in SNS.
+   A `PendingConfirmation` ARN means canopy-web was not ready when it was created. Fix: delete that subscription and re-create it (`aws sns subscribe --topic-arn <arn> --protocol https --notification-endpoint <CanopyBaseUrl parameter of the mail stack>/api/mail/ses/<inbound|events>/ --attributes DeliveryPolicy='{"healthyRetryPolicy":{"numRetries":100,"numMaxDelayRetries":30,"minDelayTarget":20,"maxDelayTarget":600,"backoffFunction":"exponential"}}'`), or redeploy the mail stack after deleting it.
 
 ## Per domain
 
