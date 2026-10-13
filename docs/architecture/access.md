@@ -279,6 +279,18 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   exempt anyone. At enqueue, a condition not known yet counts as matching for an
   `allow` and as not matching for a `reject`, so the claim decides. Among
   matching rejects, the most specific wins, then the oldest.
+* **Run in auto mode** (`action: auto`). This is the third action, and it is
+  decided at claim before the rejects (`evaluate.auto_rule`). A matching turn
+  whose mode resolved **manual** runs **auto** instead. The basis reads
+  `admission rule <id>: <reason>`, the rule's fired count rises, and the event
+  log gets `admission.auto` once the claim lands. It raises only the agent's
+  STANDING posture (`turn_mode.Resolved.raisable`: a routing rule or
+  `Agent.turn_mode`). It never raises an editor's cap, a dispatch that asked for
+  manual, a session that started manual, or auto withheld from an unverified
+  message. It cannot be about refused or unclaimed turns. The use: `ace,
+  cloud → auto`. A runner list puts the laptops first, so the cloud only takes
+  the turn when no watched laptop is free, and there it runs instead of waiting
+  for an approval nobody will give.
 * **What a rejection does.** The turn closes **CANCELLED**, not FAILED, so no
   debugger turn starts. `result_note` reads `rejected: admission rule <id>
   (<conditions>) — <reason>`, the ledger's status event carries the rule id, the

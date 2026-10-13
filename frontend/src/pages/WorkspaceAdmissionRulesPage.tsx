@@ -35,7 +35,7 @@ function fired(rule: AdmissionRuleOut): string {
 }
 
 function notices(rule: AdmissionRuleOut, repliesOn: boolean): string {
-  if (rule.action === 'allow') return '—'
+  if (rule.action !== 'reject') return '—'
   // With replies off a rule's sender notice is recorded, not sent: say so where it is listed.
   const sender = repliesOn ? 'sender' : 'sender (off)'
   const parts = [rule.notify_sender && sender, rule.notify_owner && 'owner'].filter(Boolean)
@@ -151,7 +151,9 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
           rejected turn is closed as cancelled. Its sender can get a fixed automatic reply on their thread,
           and the agent&rsquo;s owner gets a separate notice saying which rule fired, with a link back here.
           An <em>allow</em> rule exempts the turns it matches from every reject rule, which is how one
-          agent opts out of a workspace-wide rule. A disabled rule matches nothing.
+          agent opts out of a workspace-wide rule. A <em>run in auto mode</em> rule lets a matching turn
+          that would wait for approval run in auto instead (say, on a cloud runner nobody is watching);
+          it never overrides a manual someone chose. A disabled rule matches nothing.
         </p>
         <p className="mt-1 max-w-3xl text-[13px] text-foreground-secondary">
           A rule on a <em>blocked sender</em> or on <em>access: none</em> (a person the agent offers
@@ -229,7 +231,9 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
                     <span className={clsx('mr-1 rounded border px-1 text-[11px]',
                       r.action === 'reject'
                         ? 'border-destructive/30 bg-destructive/10 text-destructive'
-                        : 'border-success/30 bg-success/10 text-success')}>
+                        : r.action === 'auto'
+                          ? 'border-warning/30 bg-warning/10 text-warning'
+                          : 'border-success/30 bg-success/10 text-success')}>
                       {r.action}
                     </span>
                     {r.summary}
@@ -351,12 +355,12 @@ export function WorkspaceAdmissionRulesPage(): JSX.Element {
           />
           <div className="mt-2 flex flex-wrap items-center gap-4 text-[12px] text-muted-foreground">
             <label className="flex items-center gap-1">
-              <input type="checkbox" checked={draft.notify_sender} disabled={draft.action === 'allow'}
+              <input type="checkbox" checked={draft.notify_sender} disabled={draft.action !== 'reject'}
                 onChange={(e) => set({ notify_sender: e.target.checked })} />
               Automatic reply to the sender
             </label>
             <label className="flex items-center gap-1">
-              <input type="checkbox" checked={draft.notify_owner} disabled={draft.action === 'allow'}
+              <input type="checkbox" checked={draft.notify_owner} disabled={draft.action !== 'reject'}
                 onChange={(e) => set({ notify_owner: e.target.checked })} />
               Notify the agent&rsquo;s owner
             </label>

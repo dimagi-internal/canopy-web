@@ -224,6 +224,57 @@ def sweep_unrunnable(now: dt.datetime) -> int:
     return rejected
 
 
+#: Event kind for a turn an `auto` rule raised.
+AUTO_EVENT = "admission.auto"
+
+
+def auto_rule(turn, runner, mode) -> AdmissionRule | None:
+    """The enabled `auto` rule under which this runner claims `turn` in AUTO, or
+    None. Only a MANUAL that is the agent's standing posture can be raised
+    (`turn_mode.Resolved.raisable`): never an editor's cap, a dispatch that asked
+    for manual, a session that started manual, or auto withheld from an
+    unverified message. Pure; `record_auto` records it once the claim lands."""
+    from apps.harness import turn_mode as modes
+
+    if mode is None or mode.mode != modes.MANUAL or not mode.raisable:
+        return None
+    agent = turn.acting_agent
+    if agent is None:
+        return None
+    known = facts(turn, runner=runner, mode=modes.MANUAL)
+    autos = [r for r in _rules(agent) if r.action == AdmissionRule.AUTO and match(r, known) is True]
+    return sorted(autos, key=lambda r: (-r.specificity, r.pk))[0] if autos else None
+
+
+def auto_basis(rule: AdmissionRule) -> str:
+    return f"admission rule {rule.pk}: {rule.reason}"[:320]
+
+
+def record_auto(turn, rule: AdmissionRule, runner) -> None:
+    """A claim under `rule` landed: count it and log it. Never raises."""
+    try:
+        AdmissionRule.objects.filter(pk=rule.pk).update(
+            fired_count=F("fired_count") + 1, last_fired_at=timezone.now())
+        _log_auto(turn, turn.acting_agent, rule, runner)
+    except Exception:  # noqa: BLE001
+        logger.exception("admission: could not record the auto mode of turn %s", turn.pk)
+
+
+def _log_auto(turn, agent, rule, runner) -> None:
+    try:
+        from apps.events.services import record
+
+        record([{
+            "source": "admission", "kind": AUTO_EVENT, "level": "info",
+            "summary": f"{agent.slug}: turn {turn.pk} runs in auto on {runner.name}: "
+                       f"admission rule {rule.pk} — {rule.reason}"[:500],
+            "payload": {"rule_id": rule.pk, "turn_id": str(turn.pk), "agent": agent.slug,
+                        "runner": runner.name, "runner_kind": runner.kind},
+        }], workspace=agent.workspace)
+    except Exception:  # noqa: BLE001
+        logger.exception("admission: could not log the auto mode of turn %s", turn.pk)
+
+
 def at_claim(turn, runner, mode: str) -> bool:
     """Reject a candidate turn this runner is about to claim. True if it was
     rejected (the caller moves on to its next candidate)."""

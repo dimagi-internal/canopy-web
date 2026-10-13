@@ -699,10 +699,14 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
 
         mode = modes.for_turn(turn, priorities, fresh=True)
         # Admission rules (apps/admission): the one point where the runner's kind
-        # and the resolved mode are both known. A rejected turn is closed
+        # and the resolved mode are both known. An `auto` rule may first raise a
+        # standing manual to auto on this runner; then a rejected turn is closed
         # CANCELLED with its notices owed, and never reaches a session.
         from apps.admission import evaluate as admission
 
+        auto = admission.auto_rule(turn, runner, mode)
+        if auto is not None:
+            mode = modes.Resolved(modes.AUTO, admission.auto_basis(auto))
         if admission.at_claim(turn, runner, mode.mode if mode else ""):
             continue
         rides = ridable.get(turn.chat_session_id) if turn.chat_session_id else None
@@ -728,6 +732,8 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             continue  # another runner claimed for this agent between our check and update
         if updated:
             turn.refresh_from_db()
+            if auto is not None:
+                admission.record_auto(turn, auto, runner)
             append_events(turn, [{"kind": "status", "payload": {
                 "status": Turn.CLAIMED, "runner": runner.name,
                 **_routing_basis(turn, runner, priorities),

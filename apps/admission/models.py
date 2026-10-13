@@ -24,10 +24,13 @@ from django.db import models
 
 
 class AdmissionRule(models.Model):
-    REJECT, ALLOW = "reject", "allow"
+    REJECT, ALLOW, AUTO = "reject", "allow", "auto"
     ACTION_CHOICES = [
         (REJECT, "Reject: close the turn before it runs"),
         (ALLOW, "Allow: exempt matching turns from every reject rule"),
+        # Raises only the agent's standing posture: never a mode someone chose
+        # to hold back (`turn_mode.Resolved.raisable`). See `evaluate.raise_mode`.
+        (AUTO, "Run in auto mode: run a matching manual turn in auto instead"),
     ]
 
     # The Turn.origin vocabulary. Not imported from harness so a migration
@@ -154,6 +157,10 @@ class AdmissionRule(models.Model):
             raise ValidationError(
                 "a rule about turns no runner will take cannot also be narrowed by the "
                 "runner or turn mode that claims them — nothing claims them")
+        if self.action == self.AUTO and (self.is_refusal or self.reach):
+            raise ValidationError(
+                "run in auto mode is about a turn a runner is claiming; a refused turn or "
+                "one no runner will take never runs")
         if self.reach and self.action == self.ALLOW:
             raise ValidationError(
                 "an allow rule cannot be about runners being paused or offline; to keep "

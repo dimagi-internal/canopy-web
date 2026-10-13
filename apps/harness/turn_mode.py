@@ -60,7 +60,7 @@ the claim path (which has them) and from the envelope (which loads them).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import actors
 
@@ -73,6 +73,11 @@ class Resolved:
     mode: str
     # Human-readable, repeated by the agent in its turn opening.
     basis: str
+    # True only for the agent's STANDING posture (a routing rule or the agent's
+    # switch). An admission `auto` rule may raise that; never a mode someone held
+    # back: an editor's cap, a dispatch that asked for manual, a session that
+    # started manual, or auto withheld from an unverified message.
+    raisable: bool = field(default=False, compare=False)
 
 
 def _rule_label(origin: str, actor: str) -> str:
@@ -92,9 +97,9 @@ def resolve(*, agent, origin: str, actor: str, verified: bool, priorities: dict)
         label = _rule_label(origin, actor if named else "")
         if mode == AUTO and named and not verified:
             return Resolved(MANUAL, f"{label}: auto withheld, message not verified")
-        return Resolved(mode, label)
+        return Resolved(mode, label, raisable=True)
     mode = agent.turn_mode if agent.turn_mode in MODES else MANUAL
-    return Resolved(mode, "agent")
+    return Resolved(mode, "agent", raisable=True)
 
 
 def requested(turn, agent) -> Resolved | None:
