@@ -239,15 +239,40 @@ def _runner_read_q(request: HttpRequest) -> Q:
     """
     ws = getattr(request, "workspace_slug", None)
     if ws:
-        # Tenant-pinned: exact match only, and no null-workspace leg at all — a
-        # null-workspace runner is wrong-tenant here, not ungated (the property
+        # Tenant-pinned: homed here, or SERVING here (`_runners_serving_q`), and
+        # no null-workspace leg at all — a null-workspace runner is wrong-tenant
+        # here, not ungated (the property
         # test_pinned_null_workspace_runner_is_neither_listed_nor_actionable
         # pins). WorkspaceResolveMiddleware has already gated membership of `ws`.
-        return Q(workspace_id=ws)
+        return Q(workspace_id=ws) | _runners_serving_q({ws})
+    slugs = wsvc.user_workspace_slugs(request.user)
     return (
-        Q(workspace_id__in=wsvc.user_workspace_slugs(request.user))
+        Q(workspace_id__in=slugs)
+        | _runners_serving_q(slugs)
         | (Q(workspace_id__isnull=True) & _runner_owned_q(request))
     )
+
+
+def _runners_serving_q(slugs) -> Q:
+    """Runners the claim path would hand a turn in any of `slugs` — the tenant
+    gate itself (`services.runner_tenant_slugs`: owner's `agent.work` ∩
+    enrollment coverage), not `Runner.workspace`, which only records where a box
+    LIVES. The fleet's cloud boxes live in `dimagi` and serve `connect`; an
+    exact match on the home workspace listed them nowhere in `connect` and
+    422'd a turn pinned to one there, while claim gave the same box the same
+    turn unpinned (#1447).
+
+    Read-only widening: everything that speaks FOR a runner still gates on
+    `_runner_visibility_q` (ownership). A runner with no home workspace stays
+    out, as the read predicate has always kept it; a NULL owner fails closed
+    inside `runner_tenant_slugs`."""
+    slugs = set(slugs)
+    if not slugs:
+        return Q(pk__in=[])
+    candidates = (Runner.objects.exclude(status=Runner.RETIRED)
+                  .filter(owner__isnull=False, workspace__isnull=False)
+                  .select_related("owner").prefetch_related("enrollments"))
+    return Q(pk__in=[r.pk for r in candidates if services.runner_tenant_slugs(r) & slugs])
 
 
 def _runner_visibility_q(request: HttpRequest) -> Q:
