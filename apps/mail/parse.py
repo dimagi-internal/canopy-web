@@ -7,8 +7,9 @@ import html as htmlmod
 import re
 from dataclasses import dataclass, field
 from email import policy
+from email.header import decode_header, make_header
 from email.parser import BytesParser
-from email.utils import getaddresses, parseaddr
+from email.utils import getaddresses
 
 
 @dataclass
@@ -39,8 +40,64 @@ _IDS = re.compile(r"<[^<>\s]+>")
 _TAGS = re.compile(r"<[^>]+>")
 
 
-def _addrs(values) -> list[str]:
-    return [a.lower() for _, a in getaddresses([str(v) for v in values or []]) if a]
+_CRLF = re.compile(r"[\r\n]+")
+
+
+def _clean(v: str) -> str:
+    return _CRLF.sub(" ", v).strip()
+
+
+def _raw_all(msg, name: str) -> list[str]:
+    """Raw (undecoded, unparsed) values of every header called `name`; never raises."""
+    try:
+        want = name.lower()
+        return [str(v) for k, v in msg.raw_items() if k.lower() == want]
+    except Exception:
+        return []
+
+
+def _raw(msg, name: str) -> str:
+    vals = _raw_all(msg, name)
+    return vals[0] if vals else ""
+
+
+def _decode_words(v: str) -> str:
+    try:
+        v = str(make_header(decode_header(v)))
+    except Exception:
+        pass
+    return _clean(v)
+
+
+def _hdr(msg, name: str) -> str:
+    """Decoded single-line header value; never raises, never contains CR/LF."""
+    return _decode_words(_raw(msg, name))
+
+
+_ENCWORD = re.compile(r"=\?[^?\s]+\?[bBqQ]\?[^?\s]*\?=")
+
+
+def _addr_pairs(msg, name: str) -> list[tuple[str, str]]:
+    # Encoded-words may decode to specials (":", ",", CR/LF); park them behind
+    # inert tokens while parsing addresses, then restore and decode the names.
+    words: list[str] = []
+
+    def park(m):
+        words.append(m.group(0))
+        return f"ENCWORD{len(words) - 1}X"
+
+    def restore(v: str) -> str:
+        return re.sub(r"ENCWORD(\d+)X", lambda m: words[int(m.group(1))], v)
+
+    try:
+        pairs = getaddresses([_ENCWORD.sub(park, _clean(v)) for v in _raw_all(msg, name)])
+    except Exception:
+        return []
+    return [(_decode_words(restore(n)), _clean(a).lower()) for n, a in pairs if a and _clean(a)]
+
+
+def _addrs(msg, name: str) -> list[str]:
+    return [a for _, a in _addr_pairs(msg, name)]
 
 
 def _html_to_text(h: str) -> str:
@@ -62,24 +119,25 @@ def _content(part) -> str:
         return (part.get_payload(decode=True) or b"").decode(charset, errors="replace")
 
 
-def _hdr(msg, name: str) -> str:
+def _safe_items(msg) -> list[tuple[str, str]]:
     try:
-        return str(msg.get(name, "") or "")
-    except Exception:  # malformed header must not abort parsing
-        return ""
+        return list(msg.raw_items())
+    except Exception:
+        return []
 
 
 def _is_automated(msg) -> bool:
-    auto = str(msg.get("Auto-Submitted", "")).strip().lower()
-    prec = str(msg.get("Precedence", "")).strip().lower()
+    auto = _hdr(msg, "Auto-Submitted").lower()
+    prec = _hdr(msg, "Precedence").lower()
     return bool((auto and auto != "no") or prec in ("bulk", "list", "junk")
-                or msg.get("List-Unsubscribe"))
+                or _raw(msg, "List-Unsubscribe").strip())
 
 
 def parse(raw: bytes) -> Parsed:
     msg = BytesParser(policy=policy.default).parsebytes(raw)
-    name, addr = parseaddr(str(msg.get("From", "")))
-    message_id = str(msg.get("Message-ID", "")).strip()
+    frm = _addr_pairs(msg, "From")
+    name, addr = frm[0] if frm else ("", "")
+    message_id = _hdr(msg, "Message-ID")
     if not _IDS.fullmatch(message_id or ""):
         message_id = f"<{hashlib.sha256(raw).hexdigest()[:32]}@canopy>"
     text_part = msg.get_body(preferencelist=("plain",))
@@ -93,12 +151,12 @@ def parse(raw: bytes) -> Parsed:
     ]
     return Parsed(
         message_id=message_id,
-        in_reply_to=" ".join(_IDS.findall(str(msg.get("In-Reply-To", "")))),
-        references=_IDS.findall(str(msg.get("References", ""))),
-        from_addr=addr.lower(), from_name=name,
-        to=_addrs(msg.get_all("To")), cc=_addrs(msg.get_all("Cc")),
+        in_reply_to=" ".join(_IDS.findall(_hdr(msg, "In-Reply-To"))),
+        references=_IDS.findall(_hdr(msg, "References")),
+        from_addr=addr, from_name=name,
+        to=_addrs(msg, "To"), cc=_addrs(msg, "Cc"),
         subject=_hdr(msg, "Subject"), text=text, html=html,
         attachments=attachments,
-        headers=[(k, str(v)) for k, v in msg.items()],
+        headers=[(k, str(v)) for k, v in _safe_items(msg)],
         automated=_is_automated(msg),
     )

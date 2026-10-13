@@ -81,3 +81,15 @@ def test_multi_id_in_reply_to_and_case_insensitive_match():
     p.references = []
     p.in_reply_to = "<x@y> <orig-1@marshellis.com>"
     assert threads.place(r, p) == t
+
+
+def test_crlf_in_encoded_display_name_does_not_raise():
+    p = parse.parse(raw("crlf_display_name.eml"))
+    assert p.from_addr == "a@b.org"
+    assert "\r" not in p.from_name and "\n" not in p.from_name
+
+
+def test_crlf_injection_in_subject_is_neutralised():
+    p = parse.parse(raw("crlf_display_name.eml"))
+    assert "\r" not in p.subject and "\n" not in p.subject
+    assert "Line1" in p.subject and "Line2" in p.subject

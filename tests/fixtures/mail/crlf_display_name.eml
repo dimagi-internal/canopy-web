@@ -1,0 +1,8 @@
+From: =?utf-8?q?Evil=0D=0ABcc:_x@y?= <a@b.org>
+To: ada@marshellis.com
+Subject: =?utf-8?q?Line1=0D=0ALine2?=
+Message-ID: <crlf-1@example.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Body.
