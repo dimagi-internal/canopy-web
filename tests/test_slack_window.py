@@ -242,12 +242,12 @@ def test_the_header_names_the_window_in_the_askers_terms():
 
 
 @pytest.mark.parametrize("text, last, ask", [
-    ("--history 5msgs summarise", 5, "summarise"),
-    ("--history 5msg", 5, ""),
-    ("--history 3messages what did we decide?", 3, "what did we decide?"),
-    ("--history 5 messages summarise", 5, "summarise"),   # two words: a count, not 5 minutes
-    ("--history 1 message", 1, ""),
-    ("—history 4MSGS pick this up", 4, "pick this up"),
+    ("--history --msgs 5 summarise", 5, "summarise"),
+    ("--history --msgs 5", 5, ""),
+    ("--history --msgs=3 what did we decide?", 3, "what did we decide?"),
+    ("--history --messages 1", 1, ""),
+    ("—history —msgs 4 pick this up", 4, "pick this up"),   # Slack's auto-corrected dashes
+    ("--HISTORY --MSG 2 go", 2, "go"),
 ])
 def test_a_message_count_is_recognised(text, last, ask):
     """The count is the newest messages, reaching back no further than the
@@ -255,9 +255,34 @@ def test_a_message_count_is_recognised(text, last, ask):
     assert window.parse(text, max_minutes=120) == (window.Window(120, last=last), ask)
 
 
-@pytest.mark.parametrize("text", ["--history 0msgs", "--history 0 messages", "--history 99999msgs"])
-def test_a_message_count_out_of_range_is_refused(text):
+@pytest.mark.parametrize("text, minutes, ask", [
+    ("--history --min 30 pick this up", 30, "pick this up"),
+    ("--history --mins 10", 10, ""),
+    ("--history --minutes=15 what did we decide?", 15, "what did we decide?"),
+    ("—history —min 5 summarise", 5, "summarise"),
+])
+def test_minutes_can_name_their_unit(text, minutes, ask):
+    assert window.parse(text, max_minutes=120) == (window.Window(minutes), ask)
+
+
+@pytest.mark.parametrize("text", [
+    "--history --msgs",            # no number
+    "--history --msgs five",
+    "--history --msgs 0",
+    "--history --msgs 99999",      # over the server's message ceiling
+    "--history --min 121",         # over the workspace's limit
+    "--history --min 0",
+    "--history --hours 2",         # not a unit
+])
+def test_a_unit_without_a_good_number_is_refused(text):
     with pytest.raises(window.HistoryFlagError):
+        window.parse(text, max_minutes=120)
+
+
+@pytest.mark.parametrize("text", ["--history 5msgs summarise", "--history 5 messages summarise"])
+def test_a_count_with_the_unit_after_says_put_it_first(text):
+    """Never read as 5 minutes and an ask starting "messages"."""
+    with pytest.raises(window.HistoryFlagError, match="--history --msgs 5"):
         window.parse(text, max_minutes=120)
 
 
@@ -286,7 +311,7 @@ def test_the_header_names_a_message_count():
 def test_read_back_by_message_count(channel, linked, hal):
     """The channel above holds four messages in its window (2, 6, 5 and 4
     minutes ago, the last three one thread); the newest two are 4 and 2."""
-    assert mention("<@UBOT> hal --history 2msgs pick this up", ts=_ts(0)).status_code == 200
+    assert mention("<@UBOT> hal --history --msgs 2 pick this up", ts=_ts(0)).status_code == 200
     turn = _turn()
     assert "agreed, let's ask hal" in turn.prompt and "probably the new index" in turn.prompt
     assert "yes, since this morning" not in turn.prompt and "OLD" not in turn.prompt
