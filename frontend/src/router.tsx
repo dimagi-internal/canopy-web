@@ -73,12 +73,6 @@ const AgentProjectPage = lazySection(() =>
 const ContributorPage = lazySection(() =>
   import('./pages/agents/ContributorPage').then((m) => ({ default: m.ContributorPage })),
 )
-const TeamContributorPage = lazySection(() =>
-  import('./pages/agents/ContributorPage').then((m) => ({ default: m.TeamContributorPage })),
-)
-const TeamProjectPage = lazySection(() =>
-  import('./pages/projects/TeamProjectPage').then((m) => ({ default: m.TeamProjectPage })),
-)
 const AgentTasksSection = lazySection(() =>
   import('./pages/agents/AgentTasksSection').then((m) => ({ default: m.AgentTasksSection })),
 )
@@ -186,6 +180,13 @@ export function SettingsRedirect({ to }: { to: string }) {
 function WorkspaceIndex() {
   const { workspace } = useParams()
   return <Navigate to={`/w/${workspace}/agents`} replace />
+}
+
+// /w/:workspace/projects/:agent/:ref[/people/:person] → the project's one page.
+export function ProjectPageRedirect() {
+  const { workspace, agent = '', ref = '', person } = useParams()
+  const page = `/w/${workspace}/agents/${agent}/projects/${encodeURIComponent(ref)}`
+  return <Navigate to={person ? `${page}/people/${person}` : page} replace />
 }
 
 /**
@@ -296,14 +297,11 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/agents', element: <AgentsPage /> },
       // The retired workbench Projects page. Agent projects/tasks replaced it.
       { path: '/w/:workspace/projects', element: <WorkspaceIndex /> },
-      // A project's TEAM VIEW (hal T82): the page to send a teammate — what it
-      // is, where it stands, its ideas, its people — outside the agent console.
-      // The agent's work board stays at /w/:workspace/agents/:slug/projects/:ref.
-      { path: '/w/:workspace/projects/:agent/:ref', element: <LazySection><TeamProjectPage /></LazySection> },
-      {
-        path: '/w/:workspace/projects/:agent/:ref/people/:person',
-        element: <LazySection><TeamContributorPage /></LazySection>,
-      },
+      // The old team-view address (hal T82) — a second page about the same
+      // project, outside the agent console. A project has one page now; links
+      // already sent land on it.
+      { path: '/w/:workspace/projects/:agent/:ref', element: <ProjectPageRedirect /> },
+      { path: '/w/:workspace/projects/:agent/:ref/people/:person', element: <ProjectPageRedirect /> },
       { path: '/w/:workspace/schedules', element: <SchedulesPage /> },
       {
         path: '/w/:workspace/chat',

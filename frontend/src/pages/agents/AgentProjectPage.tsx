@@ -5,17 +5,16 @@ import { AgentApiError, getProject, patchProject, type ProjectDetailOut, type Ta
 import { relativeTime } from '@/components/activity/turnLog'
 import { nestTasks, TaskCard } from '@/components/TasksBoard'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
-import { ProjectIdeasSection } from '@/pages/agents/ProjectIdeasSection'
+import { ProjectOverview } from '@/pages/agents/ProjectOverview'
 import { ProjectStatusOptions, StatusChip } from '@/pages/agents/projectParts'
 import { Section } from '@/pages/agents/sectionLayout'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
-// ONE PROJECT'S WORK BOARD — always the same sections in the same order
-// (Header, People, Ideas, Tasks, Activity, Links), so a person learns one page
-// rather than one per project. It is the agent's and its editors' page; the
-// TEAM VIEW (`/w/:ws/projects/:agent/:ref`, hal T82) is the one for teammates,
-// and each links to the other.
+// ONE PROJECT'S PAGE — the one page for everyone, teammate or editor, always
+// in the same order: what it is, where it stands, the ideas, the people
+// (ProjectOverview), then the agent's work on it and the turns that touched it.
+// The link to share is this one; the old team-view address redirects here.
 
 /** Live tasks first; otherwise the server's order (position) stands. */
 function liveFirst(tasks: readonly TaskOut[]): TaskOut[] {
@@ -29,7 +28,10 @@ export function AgentProjectPage(): JSX.Element {
   // `refreshWaiting` keeps the rail's "waiting on you" badge honest after a card
   // acts.
   const { agent, canEdit, refreshWaiting } = useOutletContext<AgentOutletContext>()
-  const { ref = '', workspace = '' } = useParams<{ ref: string; workspace: string }>()
+  const { ref = '', workspace = '' } = useParams<{
+    ref: string
+    workspace: string
+  }>()
 
   const [data, setData] = useState<{
     key: string
@@ -96,39 +98,21 @@ export function AgentProjectPage(): JSX.Element {
   const tasks = liveFirst(detail.tasks ?? [])
   const nested = nestTasks(tasks)
   const turns = detail.recent_turns ?? []
-  const links = detail.links ?? []
   const owner = detail.owner_email || detail.owner_note
+  const pageHref = (personId: number) =>
+    `/w/${workspace}/agents/${agent.slug}/projects/${encodeURIComponent(detail.ext_id)}/people/${personId}`
 
-  const teamHref = `/w/${workspace}/projects/${agent.slug}/${encodeURIComponent(detail.ext_id)}`
-
-  return (
-    // pb-28: room under the last section for the site-wide floating "Canopy AI" button.
-    <div className="max-w-4xl px-6 py-8 pb-28">
-      {back}
-
-      {/* The team view is the page to send a teammate; this is the agent's work board. */}
-      <p className="mt-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-[12px] text-muted-foreground">
-        This is {agent.name || agent.slug}'s work board for {detail.name}.{' '}
-        <Link to={teamHref} className="font-medium text-primary hover:underline" data-testid="team-view-link">
-          Team view
-        </Link>{' '}
-        is the page to share with teammates.
-      </p>
-
-      {/* Header */}
-      <header className="mt-3 mb-8 border-b border-border pb-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] text-muted-foreground">{detail.ext_id}</span>
-          <h1 className="text-base font-semibold text-foreground">{detail.name}</h1>
-          <StatusChip status={detail.status} />
-        </div>
-        {detail.outcome && <p className="mt-1 text-[13px] text-foreground-secondary">{detail.outcome}</p>}
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] text-muted-foreground">
+  // The project's own fields, for whoever runs it; a teammate sees them read-only.
+  const details = (
+    <>
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[12px] text-muted-foreground">
+        <span>{detail.ext_id}</span>
+        <StatusChip status={detail.status} />
+        {canEdit && (
           <label className="inline-flex items-center gap-1.5">
             Status
             <select
               aria-label="Project status"
-              disabled={!canEdit}
               value={detail.status}
               onChange={(e) => {
                 const status = e.target.value
@@ -150,97 +134,99 @@ export function AgentProjectPage(): JSX.Element {
               <ProjectStatusOptions />
             </select>
           </label>
-          {owner && <span>Owner: {owner}</span>}
-          {detail.drive_folder_url && (
-            <a
-              href={detail.drive_folder_url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary hover:underline"
-            >
-              Drive folder
-            </a>
-          )}
-          {detail.repo_slug && <span>Repo: {detail.repo_slug}</span>}
-        </div>
-        {statusError && <p className="mt-2 text-[12px] text-destructive">{statusError}</p>}
-      </header>
-
-      <ProjectIdeasSection slug={agent.slug} projectRef={detail.ext_id} />
-
-      <Section id="project-tasks" title="Tasks" description="This project's tasks, open first.">
-        {tasks.length === 0 ? (
-          <p className="text-[13px] text-muted-foreground">No tasks in this project yet.</p>
-        ) : (
-          <div className="space-y-2">
-            {nested.roots.map((t) => (
-              <TaskCard
-                key={t.ext_id}
-                task={t}
-                onChanged={() => {
-                  reload()
-                  refreshWaiting()
-                }}
-                canEdit={canEdit}
-                // Every card on this page is in this project.
-                showProject={false}
-                // A product area is one board: its big pieces nest their subtasks.
-                childrenOf={nested.childrenOf}
-              />
-            ))}
-          </div>
         )}
-      </Section>
-
-      <Section
-        id="project-activity"
-        title="Activity"
-        description="Recent turns that touched one of this project's tasks, newest first."
-      >
-        {turns.length === 0 ? (
-          <p className="text-[13px] text-muted-foreground">No turns have touched this project yet.</p>
-        ) : (
-          <ul className="divide-y divide-border rounded-lg border border-border">
-            {turns.map((turn) => (
-              <li key={turn.id}>
-                <Link
-                  to={`../../turns#${turn.id}`}
-                  relative="path"
-                  data-testid={`turn-${turn.id}`}
-                  className="flex items-baseline gap-2 px-3 py-2 text-[13px] hover:bg-muted"
-                >
-                  <span className="shrink-0 text-[11px] text-muted-foreground">{turn.status}</span>
-                  <span className="min-w-0 flex-1 truncate text-foreground">
-                    {turn.prompt_preview || '(no prompt)'}
-                  </span>
-                  <span className="shrink-0 text-[11px] text-muted-foreground">
-                    {relativeTime(turn.created_at, new Date())}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+        {canEdit && owner && <span>Owner: {owner}</span>}
+        {detail.drive_folder_url && (
+          <a href={detail.drive_folder_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+            Drive folder
+          </a>
         )}
-      </Section>
+        {detail.repo_slug && <span>Repo: {detail.repo_slug}</span>}
+      </div>
+      {statusError && <p className="mt-2 text-[12px] text-destructive">{statusError}</p>}
+    </>
+  )
+  const who = agent.name || agent.slug
 
-      <Section id="project-links" title="Links" description="Deliverables the agent recorded on this project.">
-        <details data-testid="project-links">
-          <summary className="cursor-pointer text-[12px] text-muted-foreground hover:text-foreground">
-            {links.length} link{links.length === 1 ? '' : 's'}
-          </summary>
-          {links.length > 0 && (
-            <ul className="mt-2 space-y-1 text-[13px]">
-              {links.map((l) => (
-                <li key={`${l.label}|${l.url}`}>
-                  <a href={l.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
-                    {l.label || l.url}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </details>
-      </Section>
+  return (
+    // pb-28: room under the last section for the site-wide floating "Canopy AI" button.
+    <div className="max-w-4xl px-6 py-8 pb-28">
+      {back}
+      <div className="mt-4">
+        <ProjectOverview
+          agent={agent.slug}
+          projectRef={detail.ext_id}
+          pageHref={pageHref}
+          showRefs={canEdit}
+          details={details}
+        />
+      </div>
+
+      {/* The agent's working detail is for whoever runs the work. A teammate
+          reads the overview above: task cards, approve buttons and review
+          logs read to them as an admin console. */}
+      {canEdit && (
+        <>
+          <Section
+            id="project-tasks"
+            title={`${who}'s work`}
+            description={`The tasks ${who} is doing on this project, open first. An idea's subtasks are the work toward it.`}
+          >
+            {tasks.length === 0 ? (
+              <p className="text-[13px] text-muted-foreground">No tasks in this project yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {nested.roots.map((t) => (
+                  <TaskCard
+                    key={t.ext_id}
+                    task={t}
+                    onChanged={() => {
+                      reload()
+                      refreshWaiting()
+                    }}
+                    canEdit={canEdit}
+                    // Every card on this page is in this project.
+                    showProject={false}
+                    // A product area is one board: its big pieces nest their subtasks.
+                    childrenOf={nested.childrenOf}
+                  />
+                ))}
+              </div>
+            )}
+          </Section>
+
+          <Section
+            id="project-activity"
+            title="Activity"
+            description="Recent turns that touched one of this project's tasks, newest first."
+          >
+            {turns.length === 0 ? (
+              <p className="text-[13px] text-muted-foreground">No turns have touched this project yet.</p>
+            ) : (
+              <ul className="divide-y divide-border rounded-lg border border-border">
+                {turns.map((turn) => (
+                  <li key={turn.id}>
+                    <Link
+                      to={`../../turns#${turn.id}`}
+                      relative="path"
+                      data-testid={`turn-${turn.id}`}
+                      className="flex items-baseline gap-2 px-3 py-2 text-[13px] hover:bg-muted"
+                    >
+                      <span className="shrink-0 text-[11px] text-muted-foreground">{turn.status}</span>
+                      <span className="min-w-0 flex-1 truncate text-foreground">
+                        {turn.prompt_preview || '(no prompt)'}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                        {relativeTime(turn.created_at, new Date())}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+        </>
+      )}
     </div>
   )
 }

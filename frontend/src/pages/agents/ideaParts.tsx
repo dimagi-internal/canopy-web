@@ -6,8 +6,8 @@ import { saidOn, STAGE_LABEL, tally, unwritten, type Stage } from '@/pages/agent
 
 // IDEAS (hal T82). An idea is a task with kind "idea": a person's want about
 // the product, in their words, with the work toward it as its subtasks. A task
-// of kind "work" — the agent's own — never shows here. Shared by the work
-// board's Ideas section, the team view and the contributor page.
+// of kind "work" — the agent's own — never shows here. Shared by the project
+// page's overview and the contributor page.
 
 const STAGE_TONE: Record<Stage, string> = {
   proposed: 'bg-info/10 text-info border-info/30',
@@ -96,7 +96,7 @@ export function IdeaRow({
   pageHref: (personId: number) => string
   showFrom?: boolean
   showRefs?: boolean
-  /** Rendered at the row's end — e.g. the team view's "Mark shipped". */
+  /** Rendered at the row's end — e.g. the project overview's "Mark shipped". */
   control?: JSX.Element
 }): JSX.Element {
   const who = idea.who

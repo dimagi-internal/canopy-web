@@ -47,6 +47,9 @@ const NOT_DOCUMENTABLE = new Set([
   '/w/:workspace',
   '/w/:workspace/projects',
   '/projects',
+  // The old project team view: a project has one page now, in the agent's console.
+  '/w/:workspace/projects/:agent/:ref',
+  '/w/:workspace/projects/:agent/:ref/people/:person',
   // The four pages that became sections of /w/:workspace/settings.
   '/w/:workspace/members',
   '/w/:workspace/connected-apps',
