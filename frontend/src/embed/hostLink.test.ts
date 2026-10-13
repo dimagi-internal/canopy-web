@@ -335,3 +335,41 @@ describe('the host theme', () => {
     expect(seen).toEqual([])
   })
 })
+
+describe('a question the page asks', () => {
+  it('reaches a listener, trimmed', async () => {
+    const { link, fromHost } = harness()
+    const seen: string[] = []
+    link.onAsk((t) => seen.push(t))
+
+    await fromHost({ source: SOURCE, type: 'ask', text: '  Explain this answer.  ' })
+
+    expect(seen).toEqual(['Explain this answer.'])
+  })
+
+  it('is held for the first listener when it arrives before the app is listening', async () => {
+    const { link, fromHost } = harness()
+    await fromHost({ source: SOURCE, type: 'ask', text: 'Explain this answer.' })
+
+    const seen: string[] = []
+    link.onAsk((t) => seen.push(t))
+    // Handed over once, not again to a later listener.
+    const later: string[] = []
+    link.onAsk((t) => later.push(t))
+
+    expect(seen).toEqual(['Explain this answer.'])
+    expect(later).toEqual([])
+  })
+
+  it('drops an empty or non-text question, and one from an origin the server did not name', async () => {
+    const { link, fromHost } = harness()
+    const seen: string[] = []
+    link.onAsk((t) => seen.push(t))
+
+    await fromHost({ source: SOURCE, type: 'ask', text: '   ' })
+    await fromHost({ source: SOURCE, type: 'ask', text: 42 })
+    await fromHost({ source: SOURCE, type: 'ask', text: 'Explain.' }, 'https://evil.example.com')
+
+    expect(seen).toEqual([])
+  })
+})

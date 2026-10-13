@@ -94,6 +94,14 @@ export type HostMessage =
   | { source: typeof SOURCE; type: 'visibility'; open: boolean }
   /** The host re-themed (e.g. its own light/dark toggle) while the panel is up. */
   | { source: typeof SOURCE; type: 'theme'; theme: SafeTheme }
+  /** The page asks the agent a question on the visitor's behalf — a button such
+   *  as "Explain this answer". The frame starts a conversation with this text as
+   *  the visitor's first message, so it is shown to them exactly as sent. */
+  | { source: typeof SOURCE; type: 'ask'; text: string }
+
+/** Longest question a host may send. A button's question is a sentence; this
+ *  stops a page pasting a document into somebody's conversation. */
+export const MAX_ASK_CHARS = 2000
 
 export function isFrameMessage(data: unknown): data is FrameMessage {
   if (typeof data !== 'object' || data === null) return false

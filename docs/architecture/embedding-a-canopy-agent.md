@@ -507,7 +507,7 @@ called when data your page shows has changed (§5a); `dismissible`, `storage`,
 
 The returned object has `open()`, `close()`, `toggle()`, `isOpen()`,
 `dismiss()`, `isDismissed()`, `setPageState()`, `registerAction()`,
-`unregisterAction()`, `setTheme()`, `setLauncherVisible()`, `destroy()`, and the older
+`unregisterAction()`, `setTheme()`, `setLauncherVisible()`, `ask()`, `destroy()`, and the older
 `provideContext()` (§5).
 
 `setLauncherVisible(false)` hides the bubble on a page where it is wrong — it
@@ -515,6 +515,15 @@ covers that page's own controls, or duplicates what the page already is — and
 `true` brings it back on the next route. It is yours, not the visitor's: unlike
 `dismiss()` it is reversible, and it is what canopy uses to keep the bubble off
 its own chat pages, where it sat on the Send button.
+
+`ask(text)` opens the panel and starts a new conversation with `text` as the
+visitor's first message — for a page control such as "Explain this answer", so
+the words about a page come from the agent rather than being written into it.
+The visitor sees the question exactly as sent, and the agent reads the page
+state as for any first message. Asked before the panel has loaded, the question
+waits and is sent once it has. Text is trimmed and capped at 2,000 characters;
+an empty one does nothing. Older widgets have no `ask`, so feature-detect it
+(`typeof widget.ask === 'function'`) and fall back to `open()`.
 
 ---
 
