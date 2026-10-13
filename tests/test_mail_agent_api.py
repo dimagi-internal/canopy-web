@@ -223,3 +223,31 @@ def test_thread_detail_exposes_verdicts(w):
     MailMessage.objects.filter(message_id="<in-1@x.org>").update(verdicts={"spf": "PASS", "dmarc": "FAIL"})
     msgs = _c(w.owner).get(f"/api/mail/threads/marshellis/{w.t.uuid}").json()["messages"]
     assert msgs[0]["verdicts"] == {"spf": "PASS", "dmarc": "FAIL"}
+
+
+def test_send_locks_the_domain_row_around_cap_check_send_and_insert(w, monkeypatch):
+    from django.db import connection
+
+    from apps.mail import agent_mail
+    locked, during = [], []
+    real = MailDomain.objects.select_for_update
+    monkeypatch.setattr(MailDomain.objects, "select_for_update",
+                        lambda *a, **k: locked.append(connection.in_atomic_block) or real(*a, **k))
+
+    def send_raw(**kw):
+        during.append(connection.in_atomic_block)
+        return "ses-x"
+    monkeypatch.setattr(ses, "send_raw", send_raw)
+    route = MailRoute.objects.select_related("domain", "agent").get(pk=w.r.pk)
+    agent_mail.send(route, to=["a@b.org"], text="x", thread=w.t)
+    assert locked == [True] and during == [True]
+
+
+def test_the_cap_is_read_from_the_locked_row_not_a_stale_route(w):
+    from apps.mail import agent_mail
+    route = MailRoute.objects.select_related("domain", "agent").get(pk=w.r.pk)
+    route.domain.daily_send_cap = 100  # stale in memory; the row says 2
+    agent_mail.send(route, to=["a@b.org", "c@b.org"], text="x", thread=w.t)
+    with pytest.raises(agent_mail.SendRefused) as exc:
+        agent_mail.send(route, to=["d@b.org"], text="x", thread=w.t)
+    assert exc.value.status == 429
