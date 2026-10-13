@@ -79,7 +79,8 @@ sending as Dimagi domains.
   `uuid` (the `thread_id` agents and turns carry), `subject`, `last_message_at`,
   `message_count`.
 - **`MailMessage`** — `thread`, `direction` (`in`/`out`), `message_id` (RFC 5322,
-  unique per workspace — the dedupe key for SNS redelivery), `in_reply_to`,
+  unique per workspace + mailbox — the dedupe key for SNS redelivery; one email to two
+  agents is two rows), `in_reply_to`,
   `references`, `from_addr`, `to`, `cc`, `subject`, `text`, `html` (sanitised on render,
   never `allow-same-origin`), `raw_key` (S3, `kept/…`), `verdicts` (SES spam / virus /
   SPF / DKIM / DMARC), `delivery_status` (out: `sent`/`delivered`/`bounced`/`complained`).
