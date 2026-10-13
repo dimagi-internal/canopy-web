@@ -42,6 +42,20 @@ Parameters:
   DesiredCount:
     Type: Number
     Default: 0
+  # Workspace email domains (apps/mail). Values are the canopy-web-mail stack's
+  # Outputs; leave MailEnabled "false" until that stack exists.
+  MailEnabled:
+    Type: String
+    Default: "false"
+  MailInboundBucket:
+    Type: String
+    Default: ""
+  MailInboundTopicArn:
+    Type: String
+    Default: ""
+  MailEventsTopicArn:
+    Type: String
+    Default: ""
     Description: >
       Start at 0 so the stack creates cleanly before secrets + image exist. Set
       secret values + push the image, then update the stack with DesiredCount=1.
@@ -443,6 +457,12 @@ Resources:
             # ses:SendEmail on it (canopy-email.cfn.yaml, policy canopy-ses-send),
             # and the config set routes bounces/complaints to labs-jj-email-events.
             - { Name: CANOPY_EMAIL_ENABLED, Value: "true" }
+            # Workspace email domains (apps/mail): off until canopy-mail.cfn.yaml is
+            # deployed and its Outputs are passed in as the Mail* parameters.
+            - { Name: MAIL_ENABLED, Value: !Ref MailEnabled }
+            - { Name: MAIL_INBOUND_BUCKET, Value: !Ref MailInboundBucket }
+            - { Name: MAIL_INBOUND_TOPIC_ARN, Value: !Ref MailInboundTopicArn }
+            - { Name: MAIL_EVENTS_TOPIC_ARN, Value: !Ref MailEventsTopicArn }
             - { Name: CANOPY_SES_CONFIGURATION_SET, Value: labs-jj-email }
             - { Name: CANOPY_ATTACHMENTS_BUCKET, Value: labs-jj-canopy-web-attachments-858923557655 }
             # Web Push (VAPID). The public key is not a secret — it ships in the

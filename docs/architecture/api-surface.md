@@ -418,5 +418,16 @@ The entire surface a **contact token** can reach (minted at `POST /api/auth/cont
 - `GET /api/contact/turns/unclaimable` · `GET /api/contact/turns/{turn_id}` · `GET …/{turn_id}/transcript` — My queued turns no runner can take; one turn of my conversation; its raw transcript.
 - `GET /api/contact/sessions/{id}/apps/{tool_call_id}/resource` · `POST …/call` · `POST …/read` · `PUT …/context` · `POST …/message` — MCP Apps Views, as the contact.
 
+### Mail (`apps/mail`) — workspace email domains
+Product tier, removable (`docs/architecture/mail.md`). Every route refuses when `MAIL_ENABLED` is off.
+- `GET /api/mail/domains/{workspace}` (member) · `POST …` (`integrations`) — A workspace's domains with DNS rows and status; add one (409 if the name is already owned anywhere).
+- `POST /api/mail/domains/{workspace}/{domain_id}/refresh` (member) — Re-check DNS and SES verification now.
+- `PATCH /api/mail/domains/{workspace}/{domain_id}` (`integrations`) — `daily_send_cap`; `unsuspend: true` re-enables a suspended domain. `DELETE …` removes the domain and its SES identity.
+- `PUT /api/mail/domains/{workspace}/{domain_id}/routes` (`integrations`) — Create or update a route by `local_part` (`*` = catch-all; kind `agent` | `forward` | `drop`; a forward goes only to a workspace member's login email). `DELETE …/routes/{route_id}`.
+- `GET /api/mail/resolve?address=` (authenticated) — `{backend: "ses", workspace, agent}` only if the caller is a member of the address's workspace, else 404 (the canopy CLI then uses Gmail).
+- `GET /api/mail/threads/{workspace}?agent=&archived=` (member) · `GET …/{uuid}` — Threads and one thread's messages (attachments as short-lived presigned URLs).
+- `POST /api/mail/threads/{workspace}/{uuid}/reply` · `POST /api/mail/send/{workspace}` (`agent.work`) — Reply in a thread / start one, from the agent's route address; enforces the domain's status and `daily_send_cap`. `POST …/threads/{workspace}/{uuid}/state` (`agent.work`) — `{unread?, archived?}`.
+- `POST /api/mail/ses/inbound/` · `POST /api/mail/ses/events/` — SNS doors, `auth=None`, allowlisted in `apps/common/middleware.py`, self-enforcing: the SNS signature and topic ARN are verified before the body is read. Inbound stores/forwards/drops (500 only for a transient failure SNS should retry); events update delivery status and the reputation guard.
+
 ### Plugin marketplace (`apps/plugins/views.py`, bare views)
 - `GET /w/{ws}/marketplace.json` · `GET /w/{ws}/plugins/{agent}/{version}.zip` — The workspace's agents as a Claude Code plugin marketplace. Bearer canopy token, members only; no identity → 401 naming the header (never a sign-in redirect), non-member → 404. Contract: `docs/architecture/plugin-marketplace.md`.

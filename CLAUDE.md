@@ -130,6 +130,7 @@ Each is enforced or load-bearing across the codebase; the pointer says where.
 - MCP tools/auth → `docs/architecture/mcp-surface.md`. The embedded widget, canopy-ui/canopy-client/dimagi-canopy packaging, MCP Apps Views, the host-grant live probe, `scripts/e2e_embed_widget.py` → `docs/architecture/embedding-internals.md`. Host-facing embedding guide + page contract → `docs/architecture/embedding-a-canopy-agent.md`; host grant wire contract → `sdk/python/README.md`
 - Deploys, CI/merge queue, AWS/IAM, the old address, Postgres hosting → `docs/architecture/deploy.md`. Styling, themes, `canopy-ui`, the service worker/PWA, static caching → `docs/architecture/frontend.md`
 - Who changed which setting, through what (`SettingChange`, `route_gates.SETTINGS`, `audit.note_change`) → `docs/architecture/settings-audit.md`
+- Workspace email domains (`apps/mail`: SES receive/send, routes, forwarding, agent mail turns, the `canopy-web-mail` stack, rip-out list) → `docs/architecture/mail.md`; setup → `docs/runbooks/mail-domain-onboarding.md`
 - Pages and what each does → `docs/architecture/pages.md`. Every API route → `docs/architecture/api-surface.md`. The plugin marketplace → `docs/architecture/plugin-marketplace.md`
 - Connecting a system (operator side) → `docs/runbooks/connecting-a-system.md`; Gmail push → `docs/runbooks/gmail-push-provisioning.md`; the mobile loop against real emdash → `docs/runbooks/mobile-loop-real-emdash.md`
 - Product design + glossary → `docs/designs/canopy-web-design.md`; deferred work → `TODOS.md`
