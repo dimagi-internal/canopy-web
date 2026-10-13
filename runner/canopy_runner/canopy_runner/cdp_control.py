@@ -8,7 +8,6 @@ supersedes DB injection + app patching. This module shells out to
 from __future__ import annotations
 
 import json
-import os
 import socket
 import subprocess
 import urllib.error
