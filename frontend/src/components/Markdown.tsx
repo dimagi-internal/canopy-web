@@ -60,16 +60,38 @@ const components: Components = {
   },
 }
 
+// Inside an embedded panel a link must leave the panel. Followed in place it
+// loads the target INTO the panel's iframe, and a site that refuses framing
+// (Labs does) shows "refused to connect" where the answer was (2026-10-13: the
+// PMC explorer link an agent gave on Labs' targeting page). A new tab is a
+// normal page: the frame's sandbox lets popups escape it (#1359).
+const newTabComponents: Components = {
+  ...components,
+  a: ({ href, children, title }) => (
+    <a href={href} title={title} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+}
+
 export function Markdown({
   children,
   className = '',
+  linksInNewTab = false,
 }: {
   children: string
   className?: string
+  /** Open every link in a new tab: for surfaces in someone else's page (the embed). */
+  linksInNewTab?: boolean
 }): JSX.Element {
   return (
     <div className={`${PROSE} ${className}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>{children}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        components={linksInNewTab ? newTabComponents : components}
+      >
+        {children}
+      </ReactMarkdown>
     </div>
   )
 }

@@ -65,7 +65,11 @@ interface Props {
  *  around code. Same agent, same words, visibly worse than canopy-web, which
  *  is precisely the complaint. */
 function renderMarkdown(text: string) {
-  return <Markdown className="text-sm leading-relaxed">{text}</Markdown>
+  return (
+    <Markdown className="text-sm leading-relaxed" linksInNewTab>
+      {text}
+    </Markdown>
+  )
 }
 
 /** Tell canopy what this page can do and what it is showing.
