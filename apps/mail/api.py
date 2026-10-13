@@ -115,7 +115,13 @@ def add_mail_domain(request: HttpRequest, workspace: str, payload: MailDomainIn)
         if exc.keep:
             return _refuse_keeping(request, exc)
         _raise(exc)
-    audit.note_change(scope=f"mail.domain:{d.name}", before=None, after={"name": d.name})
+    if getattr(d, "released_stale_claim", False):
+        # Folded into the adder's own row; never the holder's workspace or any detail of it.
+        audit.note_change(scope=f"mail.domain:{d.name}", before={"name": d.name, "released_stale_claim": True},
+                          after={"name": d.name},
+                          summary=f"added {d.name}; released a stale unverified claim on it")
+    else:
+        audit.note_change(scope=f"mail.domain:{d.name}", before=None, after={"name": d.name})
     return _domain_out(d, request.user)
 
 

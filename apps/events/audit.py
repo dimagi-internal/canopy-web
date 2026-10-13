@@ -116,6 +116,7 @@ def _refused(result) -> bool:
 
 def _record(request, op: str, kwargs: dict, notes: list) -> None:
     from apps.common import request_context
+    from apps.events.models import SettingChange
 
     ctx = getattr(request, "provenance_context", None) or request_context.current()
     cred = ctx.get("credential") or {}
@@ -125,34 +126,11 @@ def _record(request, op: str, kwargs: dict, notes: list) -> None:
     target = " / ".join(str(v) for v in path_args.values())
     changed = [n for n in notes if n["changed"]]
     who = getattr(user, "email", "") or cred.get("label") or "someone"
-    default = f"{who} {_verb(request.method)} {op}" + (f" on {target}" if target else "")
-    # One row per workspace the request changed: a note naming another workspace (e.g.
-    # adding a mail domain releases another workspace's stale claim on it) is recorded
-    # THERE, where that workspace's admins read it; notes without one share the row of
-    # the workspace the request is about.
-    inferred = None
-    groups: list[tuple[Any, list]] = []
-    for n in changed:
-        ws = n["workspace"]
-        if ws is None:
-            inferred = inferred or _workspace_for(request, path_args)
-            ws = inferred
-        for key, members in groups:
-            if key == ws:
-                members.append(n)
-                break
-        else:
-            groups.append((ws, [n]))
-    if not groups:
-        groups = [(_workspace_for(request, path_args), [])]
-    for workspace, members in groups:
-        _create(request, op, user, ctx, cred, path_args, body, target, workspace, members,
-                next((n["summary"] for n in members if n["summary"]), "") or default)
-
-
-def _create(request, op, user, ctx, cred, path_args, body, target, workspace, changed, summary) -> None:
-    from apps.events.models import SettingChange
-
+    summary = next((n["summary"] for n in changed if n["summary"]), "") or (
+        f"{who} {_verb(request.method)} {op}" + (f" on {target}" if target else "")
+    )
+    workspace = next((n["workspace"] for n in changed if n["workspace"] is not None), None) \
+        or _workspace_for(request, path_args)
     SettingChange.objects.create(
         workspace=workspace,
         actor=user,

@@ -394,7 +394,10 @@ def test_deleting_an_agents_route_keeps_its_threads_in_the_agents_list(owner, ws
 
 
 def _held_elsewhere(owner, *, status="pending", age_days=8):
-    other = Workspace.objects.create(slug="acme", display_name="Acme", created_by=owner)
+    # Another tenant the adder is no member of.
+    them = User.objects.create_user("acme-owner", "boss@acme-holdco.example", "pw")
+    other = Workspace.objects.create(slug="acme-holdco", display_name="Acme Holdco", created_by=them)
+    WorkspaceMembership.objects.create(workspace=other, user=them, role="owner")
     d = MailDomain.objects.create(workspace=other, name="marshellis.com", status=status)
     MailDomain.objects.filter(pk=d.pk).update(created_at=timezone.now() - dt.timedelta(days=age_days))
     return d
@@ -433,13 +436,20 @@ def test_a_stale_pending_domain_elsewhere_is_released_then_added(owner, ws, monk
     assert not MailRoute.objects.filter(pk=route.pk).exists()
     t.refresh_from_db()
     assert t.route is None and t.messages.count() == 1
-    assert any("released stale pending domain marshellis.com" in rec.getMessage() for rec in caplog.records)
-    released = SettingChange.objects.get(workspace=stale.workspace)
-    assert released.summary == "released: pending past TTL"
-    assert released.changes == [{"scope": "mail.domain:marshellis.com",
-                                 "before": {"name": "marshellis.com", "status": "pending"}, "after": None}]
-    added = SettingChange.objects.get(workspace=ws)
-    assert added.changes[0]["after"] == {"name": "marshellis.com"}
+    assert any("released stale pending domain marshellis.com (held by workspace acme-holdco" in rec.getMessage()
+               for rec in caplog.records)
+    # One audit row, the adder's own; the holder's workspace gets none from this request.
+    assert not SettingChange.objects.filter(workspace=stale.workspace).exists()
+    added = SettingChange.objects.get()
+    assert added.workspace == ws
+    assert added.summary == "added marshellis.com; released a stale unverified claim on it"
+    assert added.changes == [{"scope": "mail.domain:marshellis.com",
+                              "before": {"name": "marshellis.com", "released_stale_claim": True},
+                              "after": {"name": "marshellis.com"}}]
+    # What the adder can read back names nothing of the other tenant.
+    body = _c(owner).get("/api/events/setting-changes").content.decode().lower()
+    assert "marshellis.com" in body
+    assert "acme" not in body
 
 
 def test_a_stale_row_that_ses_says_verified_is_flipped_not_released(owner, ws, monkeypatch):
@@ -449,7 +459,7 @@ def test_a_stale_row_that_ses_says_verified_is_flipped_not_released(owner, ws, m
     r = _post(owner)
     assert r.status_code == 409 and r.json()["detail"] == "that domain is already registered"
     held.refresh_from_db()
-    assert held.status == "verified" and held.workspace.slug == "acme"
+    assert held.status == "verified" and held.workspace.slug == "acme-holdco"
     assert MailDomain.objects.count() == 1
 
 
@@ -492,3 +502,22 @@ def test_list_says_whether_the_caller_may_manage_even_with_no_domains(owner, ws)
     assert _c(owner).get("/api/mail/domains/marshellis").json()["can_manage"] is True
     body = _c(ed).get("/api/mail/domains/marshellis").json()
     assert body["items"] == [] and body["can_manage"] is False
+
+
+def test_re_adding_your_own_stale_claim_has_a_sensible_summary(owner, ws, monkeypatch, unverified):
+    from apps.events.models import SettingChange
+    stale = MailDomain.objects.create(workspace=ws, name="marshellis.com")
+    MailDomain.objects.filter(pk=stale.pk).update(created_at=timezone.now() - dt.timedelta(days=8))
+    assert _post(owner).status_code == 200
+    row = SettingChange.objects.get()
+    assert row.workspace == ws
+    assert row.summary == "added marshellis.com; released a stale unverified claim on it"
+
+
+def test_a_plain_add_keeps_the_default_audit_summary(owner, ws):
+    from apps.events.models import SettingChange
+    assert _post(owner).status_code == 200
+    row = SettingChange.objects.get()
+    assert row.changes == [{"scope": "mail.domain:marshellis.com", "before": None,
+                            "after": {"name": "marshellis.com"}}]
+    assert "released" not in row.summary
