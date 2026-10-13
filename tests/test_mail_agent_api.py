@@ -113,3 +113,76 @@ def test_send_starts_a_thread_and_lists_and_state(w):
     assert s.status_code == 200 and s.json()["archived"] is True
     assert len(c.get("/api/mail/threads/marshellis", {"agent": "mada"}).json()["items"]) == 1
     assert c.get("/api/mail/threads/marshellis/00000000-0000-0000-0000-000000000000").status_code == 404
+
+
+def _editor(w):
+    u = User.objects.create_user("ed", "ed@x.com", "pw")
+    WorkspaceMembership.objects.create(workspace=w.d.workspace, user=u, role="editor")
+    return u
+
+
+def test_editor_with_full_access_can_send(w):
+    assert _reply(w, {"text": "x"}, _editor(w)).status_code == 200
+
+
+def test_viewer_is_refused_on_every_write(w):
+    c = _c(w.viewer)
+    for url, body in [(f"/api/mail/threads/marshellis/{w.t.uuid}/reply", {"text": "x"}),
+                      ("/api/mail/send/marshellis", {"agent": "mada", "to": ["a@b.org"], "subject": "s", "text": "x"}),
+                      (f"/api/mail/threads/marshellis/{w.t.uuid}/state", {"archived": True})]:
+        assert c.post(url, body, content_type="application/json").status_code == 403
+
+
+def test_access_decide_denial_is_a_403_with_its_reason(w, monkeypatch):
+    from apps.agents import access
+    monkeypatch.setattr(access, "decide", lambda *a, **k: access.Decision(
+        "member", access.NONE, None, False, False, False, "refused", "ada offers nothing to you"))
+    for r in (_reply(w, {"text": "x"}),
+              _c(w.owner).post("/api/mail/send/marshellis",
+                               {"agent": "mada", "to": ["a@b.org"], "subject": "s", "text": "x"},
+                               content_type="application/json"),
+              _c(w.owner).post(f"/api/mail/threads/marshellis/{w.t.uuid}/state", {"archived": True},
+                               content_type="application/json")):
+        assert r.status_code == 403 and "offers nothing" in r.json()["detail"]
+    assert w.sent == []
+
+
+def test_provider_failure_leaves_nothing_behind(w, monkeypatch):
+    from botocore.exceptions import ClientError
+
+    def boom(**kw):
+        raise ClientError({"Error": {"Code": "MessageRejected"}}, "SendRawEmail")
+    monkeypatch.setattr(ses, "send_raw", boom)
+    r = _c(w.owner).post("/api/mail/send/marshellis", {"agent": "mada", "to": ["a@b.org"], "subject": "s",
+                                                       "text": "x"}, content_type="application/json")
+    assert r.status_code == 502 and "MessageRejected" in r.json()["detail"]
+    assert _reply(w, {"text": "x"}).status_code == 502
+    assert not MailMessage.objects.filter(direction="out").exists()
+    assert MailThread.objects.count() == 1
+
+    def off(**kw):
+        raise ses.MailOff()
+    monkeypatch.setattr(ses, "send_raw", off)
+    assert _reply(w, {"text": "x"}).status_code == 503
+
+
+def test_recipient_limits_and_ascii(w):
+    assert _reply(w, {"text": "x", "to": [f"u{i}@b.org" for i in range(51)]}).status_code == 422
+    assert _reply(w, {"text": "x", "to": ["josé@b.org"]}).status_code == 422
+
+
+def test_cap_counts_recipients(w):
+    assert _reply(w, {"text": "x", "to": ["a@b.org", "c@b.org"]}).status_code == 200
+    assert _reply(w, {"text": "x"}).status_code == 429
+
+
+def test_disabled_route_and_other_workspace_and_pending_domain(w):
+    MailRoute.objects.filter(pk=w.r.pk).update(enabled=False)
+    assert _reply(w, {"text": "x"}).status_code == 409
+    MailRoute.objects.filter(pk=w.r.pk).update(enabled=True)
+    other = User.objects.create_user("o", "o@o.com", "pw")
+    ws2 = Workspace.objects.create(slug="other", display_name="O", created_by=other)
+    WorkspaceMembership.objects.create(workspace=ws2, user=other, role="owner")
+    assert _c(other).get(f"/api/mail/threads/other/{w.t.uuid}").status_code == 404
+    MailDomain.objects.filter(pk=w.d.pk).update(status="pending")
+    assert _reply(w, {"text": "x"}).status_code == 409

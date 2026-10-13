@@ -14,6 +14,7 @@ from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
 
+from apps.agents import access
 from apps.api.auth import session_auth
 from apps.events import audit
 from apps.workspaces import permissions as perms
@@ -170,9 +171,25 @@ def _need(user, ws, cap):
         raise HttpError(403, "not allowed")
 
 
+def _agent_full(user, route) -> None:
+    """THE rule (`access.decide`) decides what a person may make this agent do; mail needs FULL."""
+    if not route.agent_id:
+        raise HttpError(409, "this address is not an agent mailbox")
+    d = access.decide(route.agent, user, verified=True, origin="email")
+    if d.access != access.FULL:
+        raise HttpError(403, d.reason or f"you may not act as {route.agent.slug}")
+
+
+def _presign(a) -> str:
+    try:
+        return ses.presign(a.s3_key, a.filename)
+    except ses.MailOff:
+        return ""
+
+
 def _msg_out(m) -> dict:
     atts = [{"filename": a.filename, "content_type": a.content_type, "size": a.size,
-             "url": ses.presign(a.s3_key, a.filename)} for a in m.attachments.all()]
+             "url": _presign(a)} for a in m.attachments.all()]
     return {"id": m.pk, "direction": m.direction, "message_id": m.message_id, "from_addr": m.from_addr,
             "from_name": m.from_name, "to": m.to, "cc": m.cc, "subject": m.subject, "text": m.text,
             "html": m.html, "delivery_status": m.delivery_status, "created_at": m.created_at.isoformat(),
@@ -217,6 +234,9 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
     ws = _ws(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
     t = _thread(ws, uuid)
+    if not t.route.enabled or t.route.kind != MailRoute.AGENT:
+        raise HttpError(409, "this address no longer routes to an agent")
+    _agent_full(request.user, t.route)
     to = payload.to or [m.from_addr for m in
                         t.messages.filter(direction=MailMessage.IN).order_by("-created_at", "-pk")[:1]
                         if m.from_addr]
@@ -237,6 +257,7 @@ def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict
                                      enabled=True).select_related("domain", "agent").first()
     if route is None:
         raise HttpError(404, f"agent {payload.agent!r} has no mail address here")
+    _agent_full(request.user, route)
     try:
         m = agent_mail.send(route, to=payload.to, cc=payload.cc, subject=payload.subject,
                             text=payload.text, html=payload.html)
@@ -250,6 +271,7 @@ def set_mail_thread_state(request: HttpRequest, workspace: str, uuid: str, paylo
     ws = _ws(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
     t = _thread(ws, uuid)
+    _agent_full(request.user, t.route)
     if payload.unread is not None:
         t.unread = payload.unread
     if payload.archived is not None:

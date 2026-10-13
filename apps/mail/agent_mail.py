@@ -6,6 +6,7 @@ import re
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 
+from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import F
@@ -104,6 +105,7 @@ class SendRefused(Exception):
         self.status = status
 
 
+MAX_RECIPIENTS = 50
 _ADDR_RE = re.compile(r"^[^\s@<>,;\"()\[\]\\]+@[^\s@<>,;\"()\[\]\\]+\.[^\s@<>,;\"()\[\]\\]+$")
 _LINE_BREAKS = re.compile(r"[\r\n\u2028\u2029\x0b\x0c\x85]+")
 
@@ -119,16 +121,19 @@ def _addresses(values, what: str) -> list[str]:
         a = (raw or "").strip().lower()
         if not a:
             continue
-        if len(a) > 320 or not _ADDR_RE.match(a):
+        if len(a) > 320 or not a.isascii() or not _ADDR_RE.match(a):
             raise SendRefused(422, f"{what} {_line(raw)[:80]!r} is not an email address")
         out.append(a)
     return out
 
 
 def _sent_today(domain) -> int:
+    """Recipients mailed from this domain in the last 24h (to + cc of each outbound message)."""
     since = timezone.now() - dt.timedelta(days=1)
-    return MailMessage.objects.filter(workspace=domain.workspace_id, direction=MailMessage.OUT,
-                                      mailbox__endswith="@" + domain.name, created_at__gte=since).count()
+    rows = MailMessage.objects.filter(workspace=domain.workspace_id, direction=MailMessage.OUT,
+                                      mailbox__endswith="@" + domain.name,
+                                      created_at__gte=since).values_list("to", "cc")
+    return sum(len(t or []) + len(c or []) for t, c in rows)
 
 
 def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachments=()) -> MailMessage:
@@ -144,7 +149,9 @@ def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachm
     own = route.address.lower()
     if own in to or own in cc:
         raise SendRefused(422, "an agent cannot send mail to its own address")
-    if _sent_today(domain) >= domain.daily_send_cap:
+    if len(to) + len(cc) > MAX_RECIPIENTS:
+        raise SendRefused(422, f"at most {MAX_RECIPIENTS} recipients per message")
+    if _sent_today(domain) + len(to) + len(cc) > domain.daily_send_cap:
         raise SendRefused(429, f"{domain.name} reached its daily send cap ({domain.daily_send_cap})")
     subject = _line(subject)
     msg = EmailMessage()
@@ -169,7 +176,15 @@ def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachm
         main, _, sub = (att.content_type or "application/octet-stream").partition("/")
         msg.add_attachment(att.data, maintype=main, subtype=sub or "octet-stream",
                            filename=_line(att.filename))
-    ses_id = ses.send_raw(from_addr=route.address, to=to + cc, raw=msg.as_bytes())
+    try:
+        ses_id = ses.send_raw(from_addr=route.address, to=to + cc, raw=msg.as_bytes())
+    except ses.MailOff:
+        raise SendRefused(503, "mail is turned off on this deployment") from None
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "error")
+        raise SendRefused(502, f"the mail provider refused: {code}") from None
+    except BotoCoreError as exc:
+        raise SendRefused(502, f"the mail provider refused: {type(exc).__name__}") from None
     with transaction.atomic():
         if thread is None:
             thread = MailThread.objects.create(workspace=domain.workspace, route=route, subject=subject[:998])
