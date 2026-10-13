@@ -32,18 +32,34 @@ def _resolve(name: str, rtype: str) -> list[str]:
         answer = dns.resolver.resolve(name, rtype, lifetime=4)
     except (dns.exception.DNSException, OSError):
         return []
-    return [r.to_text().strip('"') if rtype == "TXT" else r.to_text() for r in answer]
+    if rtype == "TXT":
+        # A TXT rdata is a list of <=255-byte strings; the value is their concatenation.
+        return [b"".join(r.strings).decode("utf-8", "replace") for r in answer]
+    return [r.to_text() for r in answer]
+
+
+_SPF_INCLUDE = "include:amazonses.com"
+_SPF_ALL = {"all", "+all", "-all", "~all", "?all"}
+
+
+def _is_spf(txt: str) -> bool:
+    parts = txt.split()
+    return bool(parts) and parts[0].lower() == "v=spf1"
+
+
+def _spf_has_ses(txt: str) -> bool:
+    return any(t.lower() == _SPF_INCLUDE for t in txt.split())
 
 
 def merged_spf(existing: str) -> str:
-    if not existing:
-        return "v=spf1 include:amazonses.com -all"
-    if "include:amazonses.com" in existing:
+    tokens = existing.split()
+    if not tokens:
+        return f"v=spf1 {_SPF_INCLUDE} -all"
+    if _spf_has_ses(existing):
         return existing
-    head, _, tail = existing.rpartition(" ")
-    if tail.endswith("all"):
-        return f"{head} include:amazonses.com {tail}"
-    return f"{existing} include:amazonses.com"
+    if tokens[-1].lower() in _SPF_ALL:
+        return " ".join([*tokens[:-1], _SPF_INCLUDE, tokens[-1]])
+    return f"{existing.strip()} {_SPF_INCLUDE}"
 
 
 def mx_provider(hosts: list[str]) -> str:
@@ -59,13 +75,14 @@ def expected_records(domain) -> list[DnsRecord]:
     name = domain.name
     region = settings.MAIL_SES_REGION
     mail_from = f"{domain.mail_from_subdomain}.{name}"
-    spf_now = next((t for t in _resolve(name, "TXT") if t.startswith("v=spf1")), "")
+    spf_all = [t for t in _resolve(name, "TXT") if _is_spf(t)]
+    spf_now = spf_all[0] if spf_all else ""
     recs = [DnsRecord(f"dkim-{i}", "CNAME", f"{tok}._domainkey.{name}", f"{tok}.dkim.amazonses.com")
             for i, tok in enumerate(domain.dkim_tokens, start=1)]
     recs += [
         DnsRecord("mail-from-mx", "MX", mail_from, f"feedback-smtp.{region}.amazonses.com", priority=10),
         DnsRecord("mail-from-spf", "TXT", mail_from, "v=spf1 include:amazonses.com -all"),
-        DnsRecord("spf", "TXT", name, merged_spf(spf_now)),
+        DnsRecord("spf", "TXT", name, merged_spf(spf_now), found=spf_all),
         DnsRecord("dmarc", "TXT", f"_dmarc.{name}", f"v=DMARC1; p=none; rua=mailto:dmarc@{name}"),
         DnsRecord("mx", "MX", name, settings.MAIL_INBOUND_MX, priority=10),
     ]
@@ -79,7 +96,7 @@ def _matches(rec: DnsRecord, found: list[str]) -> bool:
     if rec.purpose == "dmarc":
         return any(f.lower().startswith("v=dmarc1") for f in found)
     if rec.purpose in ("spf", "mail-from-spf"):
-        return any(f.startswith("v=spf1") and "include:amazonses.com" in f for f in found)
+        return any(_is_spf(f) and _spf_has_ses(f) for f in found)
     return any(f.rstrip(".").lower() == want for f in found)
 
 
