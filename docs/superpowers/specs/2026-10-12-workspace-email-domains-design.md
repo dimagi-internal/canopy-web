@@ -115,7 +115,7 @@ SES → S3 `incoming/<id>` + SNS → `POST /api/mail/ses/inbound/`:
    must be ours); handle `SubscriptionConfirmation` by fetching the SubscribeURL once.
    Verify before parsing anything else.
 2. Fetch the raw object, parse (stdlib `email`). Look up the domain of each recipient
-   (a subdomain resolves to its verified parent, so `x@mailtest.marshellis.com` uses
+   (a subdomain resolves to its verified parent, so `x@mail.marshellis.com` uses
    marshellis.com's routes); unknown or unverified domain → drop + log. Spam/virus verdict FAIL → drop + log
    (never forward or wake an agent on it).
 3. Resolve the route (exact → `*` → none = drop). Then:
@@ -197,7 +197,7 @@ Every write route is classified in `apps/api/route_gates.py` (domain/route write
   with `botocore.stub.Stubber` (no new dependency).
 - Contract: `test_architecture_boundary` (mail is product tier), route gates, guide
   coverage, regenerated `generated.ts`.
-- Live (runbook, not CI): `mailtest.marshellis.com` MX → SES first; send in, see the
+- Live (runbook, not CI): `mail.marshellis.com` MX → SES first; send in, see the
   forward arrive in jjackson@dimagi.com; route an address to a test agent and complete a
   reply round-trip; then cut the root MX over and retire Zoho.
 
