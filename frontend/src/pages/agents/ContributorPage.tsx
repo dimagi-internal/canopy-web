@@ -13,8 +13,7 @@ import { WorkbenchSkeleton } from 'canopy-ui'
 // their own words with links to where they said it, and their ideas — built so
 // far versus still open. An agent wrote the summary from their sessions; this
 // page only renders it. Read it before building on someone's idea, or against it.
-// Two doors, one page: inside the agent's console (`ContributorPage`) and from
-// the project's team view (`TeamContributorPage`, hal T82), which shows no ids.
+// Task numbers show only to whoever runs the work; a teammate gets no ids.
 
 const GROUPS: { stage: Stage; title: string; empty?: string }[] = [
   { stage: 'shipped', title: 'Built so far' },
@@ -23,28 +22,11 @@ const GROUPS: { stage: Stage; title: string; empty?: string }[] = [
   { stage: 'declined', title: 'Considered, not pursued' },
 ]
 
-/** On the agent's work board. */
 export function ContributorPage(): JSX.Element {
-  const { agent } = useOutletContext<AgentOutletContext>()
+  const { agent, canEdit } = useOutletContext<AgentOutletContext>()
   const { workspace = '', ref = '', person = '' } = useParams<{ workspace: string; ref: string; person: string }>()
   const base = `/w/${workspace}/agents/${agent.slug}/projects/${encodeURIComponent(ref)}`
-  return <ContributorPageView slug={agent.slug} projectRef={ref} person={person} base={base} showRefs />
-}
-
-/** From the project's team view: no agent console around it, and no ids. */
-export function TeamContributorPage(): JSX.Element {
-  const { workspace = '', agent = '', ref = '', person = '' } = useParams<{
-    workspace: string
-    agent: string
-    ref: string
-    person: string
-  }>()
-  const base = `/w/${workspace}/projects/${agent}/${encodeURIComponent(ref)}`
-  return (
-    <div className="mx-auto max-w-3xl pb-28">
-      <ContributorPageView slug={agent} projectRef={ref} person={person} base={base} showRefs={false} />
-    </div>
-  )
+  return <ContributorPageView slug={agent.slug} projectRef={ref} person={person} base={base} showRefs={canEdit} />
 }
 
 function ContributorPageView({

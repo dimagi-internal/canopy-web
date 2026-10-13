@@ -1,27 +1,43 @@
-import { useCallback, useEffect, useState, type FormEvent, type JSX } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useCallback, useEffect, useState, type FormEvent, type JSX, type ReactNode } from 'react'
 
 import { actOnTask, addIdea, AgentApiError, getProjectTeam, type IdeaOut, type ProjectTeamOut } from '@/api/agents'
 import { IdeaRow, PeopleList, StagePill } from '@/pages/agents/ideaParts'
 import { STAGE_LABEL, tally, type Stage } from '@/pages/agents/ideaStage'
 import { Section } from '@/pages/agents/sectionLayout'
+import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
-// A PROJECT'S TEAM VIEW (hal T82): the page to send a teammate. In order —
+// A PROJECT'S OVERVIEW — the top of its one page, and all a teammate needs:
 // what it is, where it stands, the ideas (with "Add your idea"), the people.
-// It is deliberately not the agent's work board: no task cards, no approve /
-// decline / nudge, no rationale or review logs, no task numbers and no agent
-// rail. Whoever may edit the work gets a link to the board, and the board
-// links back here.
+// No task cards, approve / decline / nudge, rationale or review logs here; the
+// agent's work on the project sits below it on the same page (AgentProjectPage).
+// There used to be a separate "team view" address carrying this alone; it now
+// redirects to the project page, so there is one place to go and one link to share.
 
 const ORDER: Stage[] = ['started', 'proposed', 'shipped', 'declined']
 
-export function TeamProjectPage(): JSX.Element {
-  const { workspace = '', agent = '', ref = '' } = useParams<{ workspace: string; agent: string; ref: string }>()
+export function ProjectOverview({
+  agent,
+  projectRef: ref,
+  pageHref,
+  showRefs = false,
+  details,
+}: {
+  agent: string
+  projectRef: string
+  /** A contributor's page on this project. */
+  pageHref: (personId: number) => string
+  /** Task numbers on the ideas, for whoever runs the work. */
+  showRefs?: boolean
+  /** The project's own fields under the header (status, Drive, repo). */
+  details?: ReactNode
+}): JSX.Element {
   const key = `${agent}/${ref}`
-  const [state, setState] = useState<{ key: string; data: ProjectTeamOut | null; error: string | null } | null>(
-    null,
-  )
+  const [state, setState] = useState<{
+    key: string
+    data: ProjectTeamOut | null
+    error: string | null
+  } | null>(null)
 
   const reload = useCallback(() => {
     let cancelled = false
@@ -43,31 +59,18 @@ export function TeamProjectPage(): JSX.Element {
   }, [agent, ref, key])
 
   useEffect(() => reload(), [reload])
+  // An idea is a task: one moving (here, on its card below, or by the agent) moves this.
+  useResource(TASK_RESOURCE, () => {
+    reload()
+  })
 
   const fresh = state?.key === key ? state : null
-  if (!fresh) {
-    return (
-      <div className="mx-auto max-w-3xl pb-28">
-        <WorkbenchSkeleton />
-      </div>
-    )
-  }
+  if (!fresh) return <WorkbenchSkeleton />
   const data = fresh.data
-  if (!data) {
-    return (
-      <div className="mx-auto max-w-3xl pb-28">
-        <p className="text-[13px] text-destructive">{fresh.error}</p>
-      </div>
-    )
-  }
-
-  const base = `/w/${workspace}/projects/${agent}/${encodeURIComponent(ref)}`
-  const pageHref = (personId: number) => `${base}/people/${personId}`
+  if (!data) return <p className="text-[13px] text-destructive">{fresh.error}</p>
 
   return (
-    // pb-28: room under the last section for the site-wide floating "Canopy AI"
-    // button, which otherwise covers the bottom of the page on a phone.
-    <div className="mx-auto max-w-3xl pb-28" data-testid="team-view">
+    <div data-testid="project-overview">
       {/* What it is */}
       <header className="mb-8 border-b border-border pb-5">
         <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Project</p>
@@ -94,20 +97,11 @@ export function TeamProjectPage(): JSX.Element {
           </ul>
         )}
         <p className="mt-3 text-[12px] text-muted-foreground">
-          {data.owner_name ? `Owned by ${data.owner_name}, built with ${data.agent_name}.` : `Built with ${data.agent_name}.`}
-          {data.may_edit && (
-            <>
-              {' '}
-              <Link
-                to={`/w/${workspace}/agents/${agent}/projects/${encodeURIComponent(ref)}`}
-                className="text-primary hover:underline"
-                data-testid="work-board-link"
-              >
-                Work board
-              </Link>
-            </>
-          )}
+          {data.owner_name
+            ? `Owned by ${data.owner_name}, built with ${data.agent_name}.`
+            : `Built with ${data.agent_name}.`}
         </p>
+        {details}
       </header>
 
       {/* Where it stands */}
@@ -171,6 +165,7 @@ export function TeamProjectPage(): JSX.Element {
                         key={idea.ext_id}
                         idea={idea}
                         pageHref={pageHref}
+                        showRefs={showRefs}
                         control={
                           // Its person, or whoever runs the work, calls it shipped.
                           (stage === 'proposed' || stage === 'started') &&
@@ -222,7 +217,15 @@ function MarkShipped({ agent, idea, onDone }: { agent: string; idea: IdeaOut; on
   )
 }
 
-function StandingList({ title, ideas, empty }: { title: string; ideas: readonly IdeaOut[]; empty?: string }): JSX.Element {
+function StandingList({
+  title,
+  ideas,
+  empty,
+}: {
+  title: string
+  ideas: readonly IdeaOut[]
+  empty?: string
+}): JSX.Element {
   return (
     <div>
       <h3 className="mb-1 text-[12px] font-medium text-muted-foreground">{title}</h3>
@@ -290,7 +293,11 @@ function AddIdea({
   return (
     <div>
       {done && (
-        <p role="status" className="mb-3 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-[13px] text-foreground" data-testid="idea-added">
+        <p
+          role="status"
+          className="mb-3 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-[13px] text-foreground"
+          data-testid="idea-added"
+        >
           {done}
         </p>
       )}
