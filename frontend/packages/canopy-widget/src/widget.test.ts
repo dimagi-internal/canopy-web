@@ -904,3 +904,45 @@ describe('the host hiding its launcher for a page', () => {
     expect(() => widget.setLauncherVisible(false)).not.toThrow()
   })
 })
+
+describe('ask', () => {
+  it('opens the panel and holds a question until the frame has started, then sends it after the page state', async () => {
+    const { widget, fromFrame, sent, posted } = widgetHarness()
+    widget.setPageState({ resource: 'labs-targeting://pmc' })
+
+    widget.ask('  Explain the answer on this page.  ')
+
+    expect(widget.isOpen()).toBe(true)
+    // Nothing is listening yet, so nothing is posted.
+    expect(sent('ask')).toHaveLength(0)
+
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    expect(sent('ask').map((p) => p.message.text)).toEqual(['Explain the answer on this page.'])
+    expect(sent('ask')[0].targetOrigin).toBe(CANOPY)
+    // init, then the view, then the question: the conversation it starts sees the page.
+    const order = posted.map((p) => p.message.type)
+    expect(order.indexOf('init')).toBeLessThan(order.indexOf('state'))
+    expect(order.indexOf('state')).toBeLessThan(order.indexOf('ask'))
+  })
+
+  it('sends at once to a frame that is already up, and only once', async () => {
+    const { widget, fromFrame, sent } = widgetHarness()
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    widget.ask('Why this schedule?')
+
+    expect(sent('ask').map((p) => p.message.text)).toEqual(['Why this schedule?'])
+  })
+
+  it('ignores an empty question and caps a long one', async () => {
+    const { widget, fromFrame, sent } = widgetHarness()
+    await fromFrame({ source: SOURCE, type: 'ready' })
+
+    widget.ask('   ')
+    widget.ask('x'.repeat(5000))
+
+    expect(sent('ask')).toHaveLength(1)
+    expect(String(sent('ask')[0].message.text)).toHaveLength(2000)
+  })
+})

@@ -42,6 +42,7 @@
 import { createChrome, type Chrome, type DisplayMode } from './chrome'
 import { normalizeTheme, type SafeTheme, type WidgetTheme } from './theme'
 import {
+  MAX_ASK_CHARS,
   SOURCE,
   isFrameMessage,
   originOf,
@@ -187,6 +188,12 @@ export interface CanopyWidget {
    *  VISITOR's choice and lasts the page load: this is the host's, and a host
    *  can reverse it on the next route. */
   setLauncherVisible(visible: boolean): void
+  /** Open the panel and ask the agent `text` as the visitor's first message of
+   *  a new conversation — for a page control such as "Explain this answer".
+   *  The visitor sees the question exactly as sent. Before the panel has
+   *  loaded, the question waits and is sent once it has. Text is trimmed and
+   *  capped at MAX_ASK_CHARS; an empty question does nothing. */
+  ask(text: string): void
   /** Remove the widget and stop listening. Idempotent. */
   destroy(): void
 }
@@ -222,6 +229,8 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
   // The frame answers `ready` when its listener is up and it is about to be
   // handed a token. Nothing is pushed to it before that.
   let frameReady = false
+  // A question asked before the frame could hear it; sent right after init.
+  let pendingAsk: string | null = null
   const actions = new Map<string, { fn: HostAction; spec: ActionSpec }>()
   let destroyed = false
 
@@ -334,6 +343,11 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
           // one message whose shape the frame validates strictly. The view is
           // a separate fact and rides its own frame.
           if (lastState) post({ source: SOURCE, type: 'state', state: lastState })
+          // Last: the conversation it starts should already see the page.
+          if (pendingAsk) {
+            post({ source: SOURCE, type: 'ask', text: pendingAsk })
+            pendingAsk = null
+          }
         } catch (error) {
           // The frame is up but unusable. Tell it so it can say so, rather than
           // sit on a spinner the user cannot interpret.
@@ -422,6 +436,13 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     dismiss: () => chrome.dismiss(),
     isDismissed: () => chrome.isDismissed(),
     setLauncherVisible: (visible: boolean) => chrome.setLauncherVisible(visible),
+    ask(text: string) {
+      const question = String(text ?? '').trim().slice(0, MAX_ASK_CHARS)
+      if (!question || destroyed) return
+      chrome.open()
+      if (frameReady) post({ source: SOURCE, type: 'ask', text: question })
+      else pendingAsk = question
+    },
     setTheme(next: WidgetTheme) {
       theme = normalizeTheme(next)
       chrome.setTheme(theme)

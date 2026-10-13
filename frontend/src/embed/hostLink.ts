@@ -26,7 +26,7 @@
 // copy of `ActionSpec` or `SOURCE` drifting from the loader's. Type-only for
 // ActionSpec, and the loader module has no dependencies, so importing it pulls
 // nothing extra into the frame's bundle.
-import { SOURCE, type ActionSpec } from '../../packages/canopy-widget/src/protocol'
+import { MAX_ASK_CHARS, SOURCE, type ActionSpec } from '../../packages/canopy-widget/src/protocol'
 
 export type { ActionSpec }
 
@@ -72,6 +72,10 @@ export interface HostLink {
   /** The host re-themed while the panel is up (its own light/dark toggle).
    *  The value is unvalidated, exactly as it arrived. */
   onThemeChanged(listener: (theme: unknown) => void): () => void
+  /** The page asked the agent a question for the visitor (`widget.ask`). One
+   *  that arrives before anything listens is held and handed to the first
+   *  listener, so a question sent at panel boot is not lost. */
+  onAsk(listener: (text: string) => void): () => void
   /** Tell the host that a resource its page is showing has changed. */
   invalidate(resource: string): void
   /** Ask the host to close the panel (our own close button). */
@@ -106,6 +110,8 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
 
   let actionSpecs: ActionSpec[] = []
   const actionListeners = new Set<(specs: ActionSpec[]) => void>()
+  const askListeners = new Set<(text: string) => void>()
+  let heldAsk: string | null = null
   // `null` until the host speaks, deliberately distinct from `{}`: a host that
   // never pushes must not be read as one declaring an empty screen.
   let latestState: Record<string, unknown> | null = null
@@ -215,6 +221,13 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
       case 'theme':
         themeListeners.forEach((l) => l(data.theme))
         return
+      case 'ask': {
+        const text = typeof data.text === 'string' ? data.text.trim().slice(0, MAX_ASK_CHARS) : ''
+        if (!text) return
+        if (askListeners.size) askListeners.forEach((l) => l(text))
+        else heldAsk = text
+        return
+      }
       default:
         return
     }
@@ -235,6 +248,15 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
     onActionsChanged(listener) {
       actionListeners.add(listener)
       return () => actionListeners.delete(listener)
+    },
+    onAsk(listener) {
+      askListeners.add(listener)
+      if (heldAsk !== null) {
+        const text = heldAsk
+        heldAsk = null
+        listener(text)
+      }
+      return () => askListeners.delete(listener)
     },
     pageState: () => latestState,
     onPageStateChanged(listener) {

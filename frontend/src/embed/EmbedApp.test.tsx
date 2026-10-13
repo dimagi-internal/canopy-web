@@ -32,6 +32,7 @@ function fakeLink(overrides: Partial<HostLink> = {}): HostLink {
     pageState: () => null,
     onPageStateChanged: () => () => undefined,
     onThemeChanged: () => () => undefined,
+    onAsk: () => () => undefined,
     invalidate: () => undefined,
     requestClose: () => undefined,
     requestHeight: () => undefined,
@@ -181,6 +182,56 @@ describe('starting a conversation', () => {
     expect(await screen.findByText('Echo')).toBeTruthy()
     expect(screen.getByText('Hal')).toBeTruthy()
     expect(created()).toBeUndefined()
+  })
+})
+
+describe('a question the page asks (widget.ask)', () => {
+  it('starts a conversation with it as the first message, without anyone typing', async () => {
+    let deliver: ((text: string) => void) | null = null
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
+          onAsk: (listener) => {
+            deliver = listener
+            return () => undefined
+          },
+        })}
+        app="canopy-web"
+      />,
+    )
+    await screen.findByPlaceholderText(/^Type a message/)
+    expect(created()).toBeUndefined()
+
+    deliver!('Explain the answer on this page.')
+
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/send'))).toBe(true))
+    expect(created()).toBeDefined()
+    const sent = calls.find((c) => c.url.includes('/send'))!
+    expect(JSON.parse(String(sent.init!.body)).text).toContain('Explain the answer on this page.')
+  })
+
+  it('waits for the agent to be known when it arrives during start-up', async () => {
+    let deliver: ((text: string) => void) | null = null
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
+          onAsk: (listener) => {
+            deliver = listener
+            // Delivered at once, as a held question would be.
+            listener('Why this schedule?')
+            return () => undefined
+          },
+        })}
+        app="canopy-web"
+      />,
+    )
+    expect(deliver).not.toBeNull()
+
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/send'))).toBe(true))
+    const sent = calls.find((c) => c.url.includes('/send'))!
+    expect(JSON.parse(String(sent.init!.body)).text).toContain('Why this schedule?')
   })
 })
 

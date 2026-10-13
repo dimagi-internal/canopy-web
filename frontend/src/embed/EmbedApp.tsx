@@ -332,6 +332,23 @@ export function EmbedApp({ link, app }: Props) {
     [client, link],
   )
 
+  // A question the PAGE asked for the visitor (`widget.ask`, e.g. "Explain this
+  // answer"). It starts a new conversation as soon as one can start — at once
+  // if the agent is known, after the visitor picks one if there are several —
+  // and is the visitor's first message, shown to them exactly as sent.
+  const [asked, setAsked] = useState<string | null>(null)
+  useEffect(() => link.onAsk(setAsked), [link])
+  useEffect(() => {
+    if (asked === null) return
+    if (phase.kind !== 'ready' && phase.kind !== 'chatting') return
+    const text = asked
+    setAsked(null)
+    void startConversation(phase.agent, text).catch(() => {
+      // Back to the start screen rather than a dead panel; the visitor can ask again.
+      setPhase({ kind: 'ready', agent: phase.agent })
+    })
+  }, [asked, phase, startConversation])
+
   if (phase.kind === 'connecting') {
     return <Centered>Starting&hellip;</Centered>
   }
