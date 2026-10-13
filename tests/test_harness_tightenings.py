@@ -23,6 +23,7 @@ from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.harness.models import Runner, Turn
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.testing import enrolled
 
 pytestmark = pytest.mark.django_db
 
@@ -122,6 +123,57 @@ def test_a_pinned_project_turn_on_a_declaring_runner_and_an_unpinned_one_still_w
     unpinned = _post(_as(editor), "/api/w/canopy/harness/turns/",
                      {"project": "never-declared", "origin": "manual", "idempotency_key": "p3"})
     assert unpinned.status_code == 201, unpinned.content
+
+
+def _division_world():
+    """The fleet's shape on labs: boxes live in the parent (`dimagi`), the agent
+    in a division below it (`connect`)."""
+    owner = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    parent = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=owner)
+    child = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner,
+                                     parent=parent)
+    for ws in (parent, child):
+        WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
+    Agent.objects.create(slug="ace", name="ACE", workspace=child, owner=owner,
+                         repo_url="https://github.com/dimagi/ace", repo_ref="main")
+    return owner, parent, child
+
+
+def _pin_ace(c, box, key):
+    return _post(c, "/api/w/connect/harness/turns/",
+                 {"agent_slug": "ace", "origin": "manual", "idempotency_key": key,
+                  "prompt": "Reply OK", "runner_id": str(box.id)})
+
+
+def test_a_runner_homed_in_the_parent_that_serves_the_division_can_be_pinned_there():
+    # #1447: claim hands this box connect's turns (owner may work there, its
+    # dimagi enrollment covers the division), so the pin and the list must too.
+    owner, parent, _child = _division_world()
+    box = enrolled(_runner(owner, parent, name="cloud-ec2-2"), parent)
+    c = _as(owner)
+    r = _pin_ace(c, box, "pin-1")
+    assert r.status_code == 201, r.content
+    assert Turn.objects.get(idempotency_key="pin-1").pinned_runner_id == box.id
+    listed = {row["id"] for row in c.get("/api/w/connect/harness/runners/").json()}
+    assert str(box.id) in listed
+
+
+def test_a_runner_that_does_not_serve_the_workspace_still_cannot_be_pinned_there():
+    owner, parent, _child = _division_world()
+    # Its owner edits the parent only — a parent's editors get nothing below it —
+    # so it may live in dimagi but works nowhere in connect.
+    other = User.objects.create_user("ot", "ot@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=other, workspace=parent, role=WorkspaceMembership.EDITOR)
+    strangers_box = enrolled(_runner(other, parent, name="not-here"), parent)
+    # Owned by a connect editor, but enrolled in an unrelated tree, so it serves nothing here.
+    elsewhere = Workspace.objects.create(slug="family", display_name="Family", created_by=owner)
+    WorkspaceMembership.objects.create(user=owner, workspace=elsewhere, role=WorkspaceMembership.OWNER)
+    unenrolled_box = enrolled(_runner(owner, elsewhere, name="family-box"), elsewhere)
+    for i, box in enumerate((strangers_box, unenrolled_box)):
+        r = _pin_ace(_as(owner), box, f"pin-x{i}")
+        assert r.status_code == 422, (box.name, r.content)
+        assert "unknown or retired runner" in r.json()["detail"]
+    assert not Turn.objects.exists()
 
 
 # --- 3. record-session -------------------------------------------------------------

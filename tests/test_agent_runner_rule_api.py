@@ -117,10 +117,11 @@ def test_the_wholesale_save_still_refuses_an_added_box(fleet):
             r["runners"].append({"runner_id": str(fleet["ec2_2"].id), "enabled": True})
     res = fleet["client"].put("/api/agents/ace/runner-rules", data={"rules": rules},
                               content_type="application/json")
-    # Sarvesh is not in `dimagi`, so to him that box is unknown, not forbidden: a
-    # refusal must not confirm that a runner exists.
-    assert res.status_code == 422
-    assert str(fleet["ec2_2"].id) in res.json()["detail"]
+    # Sarvesh is not in `dimagi`, but the box SERVES connect (its owner works
+    # there, its dimagi enrollment covers the division), so he can already see
+    # it in connect's fleet (#1447): forbidden by name, not "unknown".
+    assert res.status_code == 403
+    assert "cloud-ec2-2" in res.json()["detail"]
     assert _rules(fleet["ace"])[("ace_web", "stewari@dimagi.com")] == ["st-mbp"]
 
 
