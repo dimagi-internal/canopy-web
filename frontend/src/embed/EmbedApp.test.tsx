@@ -211,6 +211,84 @@ describe('a question the page asks (widget.ask)', () => {
     expect(JSON.parse(String(sent.init!.body)).text).toContain('Explain the answer on this page.')
   })
 
+  it('tries a failed start once more, and sends on the second try', async () => {
+    let failures = 1
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        if (String(url).includes('/api/embed/agents')) {
+          return { ok: true, status: 200, json: async () => AGENTS } as Response
+        }
+        if (init?.method === 'POST' && /canopy-sessions\/$/.test(String(url)) && failures-- > 0) {
+          return { ok: false, status: 403, json: async () => ({ detail: 'not yet' }) } as Response
+        }
+        return { ok: true, status: 200, json: async () => ({ id: 'sess-1' }) } as Response
+      }),
+    )
+    let deliver: ((text: string) => void) | null = null
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
+          onAsk: (listener) => {
+            deliver = listener
+            return () => undefined
+          },
+        })}
+        app="canopy-web"
+      />,
+    )
+    await screen.findByPlaceholderText(/^Type a message/)
+    deliver!('Explain the answer on this page.')
+
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/send'))).toBe(true), { timeout: 4000 })
+    const sent = calls.find((c) => c.url.includes('/send'))!
+    expect(JSON.parse(String(sent.init!.body)).text).toContain('Explain the answer on this page.')
+  })
+
+  it('leaves the question in the composer, with the reason, when it cannot start at all', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        if (String(url).includes('/api/embed/agents')) {
+          return { ok: true, status: 200, json: async () => AGENTS } as Response
+        }
+        if (init?.method === 'POST') {
+          return { ok: false, status: 403, json: async () => ({ detail: 'refused' }) } as Response
+        }
+        return { ok: true, status: 200, json: async () => [] } as Response
+      }),
+    )
+    let deliver: ((text: string) => void) | null = null
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [] }),
+          onAsk: (listener) => {
+            deliver = listener
+            return () => undefined
+          },
+        })}
+        app="canopy-web"
+      />,
+    )
+    await screen.findByPlaceholderText(/^Type a message/)
+    deliver!('Explain the answer on this page.')
+
+    const box = (await waitFor(
+      () => {
+        const b = screen.getByPlaceholderText(/^Type a message/) as HTMLTextAreaElement
+        expect(b.value).toBe('Explain the answer on this page.')
+        return b
+      },
+      { timeout: 4000 },
+    )) as HTMLTextAreaElement
+    expect(box).toBeTruthy()
+    expect(calls.some((c) => c.url.includes('/send'))).toBe(false)
+  })
+
   it('waits for the agent to be known when it arrives during start-up', async () => {
     let deliver: ((text: string) => void) | null = null
     render(
