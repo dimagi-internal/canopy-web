@@ -89,3 +89,19 @@ def test_focus_is_confirmed_immediately_before_every_keystroke_burst():
     assert "document.activeElement === ta" in focus
     ensure = src[src.index("const ensureFocus"):src.index("const readComposer")]
     assert "FOCUS_LOST" in ensure
+
+
+# ── 2026-10-14 (ACE, turn 50bfdf45, investigation 2): a long one-liner collapses ──
+
+def test_every_body_waits_before_enter():
+    """A long one-liner is read as a paste too, so the pause is unconditional."""
+    branch = _open_send_branch()
+    body = branch[branch.index("const submit = async"):]
+    before_enter = body.split("press('Enter')")[0]
+    assert "await page.waitForTimeout(PASTE_SETTLE_MS);" in before_enter
+    assert "if (/\\n/.test(body)) await page.waitForTimeout" not in before_enter
+
+
+def test_a_placeholder_then_our_tail_is_still_ours():
+    src = _still_ours_src()
+    assert "PASTED_LEAD" in src and "squash(body).includes(tail)" in src

@@ -392,3 +392,28 @@ def test_an_agent_turn_recovers_a_swallowed_enter(monkeypatch, transcript):
     assert out == "reused:t2"
     assert len(s.sends) == 1 and len(s.keys) == 1
     assert client.failed is None
+
+
+# ── 2026-10-14 (ACE, turn 50bfdf45, investigation 2): a long one-liner split ──
+
+LONG = ("Follow-up, still read-only, please only explain, don't create, edit or publish: "
+        "walk me through how to UPDATE an existing indicator definition safely: where to "
+        "edit, review/approval, validation and testing before it goes live.")
+
+
+def test_a_collapsed_paste_then_the_tail_of_our_one_liner_is_ours():
+    # claude collapsed the first chunk and the rest landed as typed text.
+    typed = "[Pasted text #1] to UPDATE an existing indicator definition safely: where to edit,"
+    assert delivery.recovery_action(_state(typed=typed), LONG) == (
+        delivery.SUBMIT, "composer_holds_message")
+
+
+def test_a_collapsed_paste_then_a_humans_words_is_left_alone():
+    typed = "[Pasted text #1] wait, actually hold off on that one"
+    assert delivery.recovery_action(_state(typed=typed), LONG) == (
+        delivery.LEAVE, "composer_holds_other_text")
+
+
+def test_a_collapsed_paste_then_our_tail_then_a_humans_words_is_left_alone():
+    typed = "[Pasted text #1] before it goes live. also ignore that"
+    assert delivery.recovery_action(_state(typed=typed), LONG)[0] == delivery.LEAVE

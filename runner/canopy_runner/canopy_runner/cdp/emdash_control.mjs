@@ -520,21 +520,32 @@ try {
     // Enter-and-return, so a swallowed Enter (a keystroke lost to a human's click,
     // or a TUI mid-redraw) left the message sitting in the composer with nobody the
     // wiser until the transcript check gave up (2026-10-07, ACE). There the match is
-    // by TEXT rather than emptiness: a one-liner is never collapsed, and a slash
+    // by TEXT rather than emptiness: a short one-liner is never collapsed, and a slash
     // command's first Enter can legitimately REPLACE the text with an autocomplete
     // pick — pressing again then would send something we never typed.
+    //
+    // A LONG one-liner is collapsed too, so it also waits before Enter. It reaches
+    // claude in more than one chunk: the first is read as a paste and collapsed,
+    // the rest lands as typed text, and the composer shows "[Pasted text #1] …the
+    // end of the message". The Enter was swallowed and the recheck, matching only
+    // the whole text or a lone placeholder, never pressed it again: ACE's chat
+    // follow-up sat unsent, twice (turn 50bfdf45, 2026-10-14, investigation 2).
     const PASTE_SETTLE_MS = 500;
     const squash = (s) => (s || '').replace(/[\s│|]+/g, '');
     const PASTED = /^\[Pasted text #\d+[^\]]*\]$/;
+    const PASTED_LEAD = /^(?:\[Pasted text #\d+[^\]]*\]\s*)+/;
     const stillOurs = (body, typed) => {
       if (isEmpty(typed)) return false;
       if (/\n/.test(body)) return true;           // only ever our paste (see below)
-      return squash(typed) === squash(body) || PASTED.test(typed.trim());
+      if (squash(typed) === squash(body) || PASTED.test(typed.trim())) return true;
+      const lead = typed.trim().match(PASTED_LEAD);
+      const tail = lead ? squash(typed.trim().slice(lead[0].length)) : '';
+      return !!tail && squash(body).includes(tail);
     };
     const submit = async (body) => {
       await ensureFocus(task);
       await page.keyboard.insertText(body);   // atomic commit, not char-by-char
-      if (/\n/.test(body)) await page.waitForTimeout(PASTE_SETTLE_MS);
+      await page.waitForTimeout(PASTE_SETTLE_MS);
       await page.keyboard.press('Enter');
       // Only ever called on a composer that was empty (or just cleared), so
       // anything typed in it now is this message — for a multi-line body matched by
