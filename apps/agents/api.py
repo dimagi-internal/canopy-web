@@ -6,6 +6,7 @@ import datetime as dt
 import logging
 from typing import Any
 
+import requests
 from django.db import transaction
 from django.db.models import Case, IntegerField, Q, When
 from django.http import HttpRequest
@@ -13,6 +14,14 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import (
+    TYPE_CONFLICT,
+    TYPE_FORBIDDEN,
+    TYPE_NOT_FOUND,
+    TYPE_UPSTREAM,
+    TYPE_VALIDATION,
+    ProblemError,
+)
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
@@ -20,6 +29,10 @@ from apps.workspaces import services as wsvc
 from . import delegations, services
 from . import skill_history as history
 from .schemas import (
+    AgentScaffoldIn,
+    AgentScaffoldOut,
+    AgentSetupStepOut,
+    RepoCheckOut,
     AgentInterfaceIn,
     AgentInterfaceOut,
     AgentAccessOut,
@@ -376,7 +389,12 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
                 "owner or one of its admins",
             )
 
-    agent = services.upsert_agent(payload, workspace=home)
+    # Whoever registers a NEW agent owns it — from the create wizard and from a terminal's
+    # `/canopy:create-agent` alike. An ownerless agent cannot be lent a GitHub identity
+    # (`delegations.set_github` is owner-only) and no box may hold it unless a workspace
+    # owner pairs one, so leaving it unset left every new agent stuck until someone ran
+    # `transfer_owner`. Applied on create only; an existing agent keeps its owner.
+    agent = services.upsert_agent(payload, workspace=home, owner=request.user)
     if explicit and agent.workspace_id != explicit:
         # Explicit home: may MOVE an already-homed agent. A missing workspace
         # and a non-member get the same 404 (no existence leak); moving also
@@ -396,6 +414,124 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # reading as though registration were a way to join a tenant. That shape is
     # exactly what `wsvc.creation_workspace`'s docstring is about.
     return Status(201, AgentOut.model_validate(agent))
+
+
+# ---- creating an agent from the browser (apps/agents/creation.py) ----
+# Two routes and then the ordinary upsert above: check the repo, push the scaffold,
+# register. Each is idempotent, so a wizard (or an MCP client) that stops halfway
+# just runs it again. Registered before the `/{slug}/…` routes so `scaffold` is
+# never read as a slug.
+
+#: A slug the SPA needs for itself: `/w/:ws/agents/new` is the create page.
+_RESERVED_SLUGS = {"new", "scaffold"}
+
+
+def _scaffold_slug(request: HttpRequest, workspace: str, raw_slug: str, repo: str) -> str:
+    """The normalised slug, after the same gate `upsert_agent` applies to a create:
+    a member (404 otherwise) with `agent.work` in the target workspace. A slug that
+    is taken is refused unless it is THIS caller's agent on THIS repo — a retry."""
+    from canopy_agent_factory import AgentFactoryError, normalize_slug
+
+    from .creation import repo_url
+
+    if not wsvc.is_member(request.user, workspace):
+        raise ProblemError(404, f"workspace '{workspace}' not found", type_=TYPE_NOT_FOUND)
+    if not _can(request, workspace, perms.AGENT_WORK):
+        raise ProblemError(403, "creating an agent requires the editor role or above",
+                           type_=TYPE_FORBIDDEN)
+    try:
+        slug = normalize_slug(raw_slug)
+    except AgentFactoryError as exc:
+        raise ProblemError(422, "That name cannot be an agent slug", type_=TYPE_VALIDATION,
+                           detail=str(exc)) from None
+    if slug in _RESERVED_SLUGS:
+        raise ProblemError(422, "That name cannot be an agent slug", type_=TYPE_VALIDATION,
+                           detail=f"'{slug}' is reserved; pick another")
+    existing = services.get_agent(slug)
+    if existing is not None and not (existing.is_admin(request.user)
+                                     and existing.repo_url in ("", repo_url(repo))):
+        # Slugs are global (they are Slack commands), so this cannot be avoided;
+        # it says no more than "taken", whichever tenant holds it.
+        raise ProblemError(409, f"The slug '{slug}' is taken", type_=TYPE_CONFLICT,
+                           detail="Agent slugs are unique across canopy. Pick another name.")
+    return slug
+
+
+def _github_token(request: HttpRequest) -> str:
+    from apps.tokens import github_app
+
+    try:
+        return github_app.access_token_for(request.user)
+    except github_app.GitHubNotConfigured:
+        raise ProblemError(409, "GitHub is not configured on this deployment",
+                           detail="Ask an administrator.") from None
+    except github_app.GitHubAuthError as exc:
+        raise ProblemError(409, "Connect GitHub first", detail=str(exc),
+                           extras={"fix_url": "/settings"}) from None
+
+
+@router.get("/scaffold/check", response=RepoCheckOut,
+            summary="Can a new agent's scaffold be pushed into this repository?")
+def check_scaffold_repo(request: HttpRequest, workspace: str, slug: str, repo: str) -> RepoCheckOut:
+    """Reads only. `ready` means empty and writable, `adopt` means it already holds this
+    agent's scaffold, `missing` means canopy cannot see it (not created yet, or not added
+    to canopy's GitHub access), `not_empty` means it has other commits."""
+    from . import creation
+
+    try:
+        full = creation.parse_repo(repo)
+    except creation.ScaffoldError as exc:
+        raise ProblemError(exc.status, str(exc), type_=TYPE_VALIDATION) from None
+    slug = _scaffold_slug(request, workspace, slug, full)
+    try:
+        state = creation.inspect_repo(_github_token(request), full, slug)
+    except requests.RequestException as exc:
+        raise ProblemError(502, "Could not reach GitHub", type_=TYPE_UPSTREAM, detail=str(exc)) from None
+    owner, name = full.split("/", 1)
+    return RepoCheckOut(repo=full, state=state.state, default_branch=state.default_branch,
+                        detail=state.detail, fix_url=state.fix_url,
+                        new_repo_url=creation.new_repo_url(owner, name))
+
+
+@router.post("/scaffold", response={201: AgentScaffoldOut},
+             summary="Push a new agent's scaffold into an empty repository")
+def scaffold_agent(request: HttpRequest, payload: AgentScaffoldIn) -> Status:
+    """Stamps the agent with the same factory `/canopy:create-agent` uses and pushes it,
+    as you, into an empty repository you created. Does not register the agent: follow
+    with `POST /api/agents/` (`upsert_agent`) carrying the returned `repo_url` and
+    `repo_ref`. Safe to repeat — a repository that already holds this scaffold is adopted."""
+    from canopy_agent_factory import AgentSpec
+
+    from . import creation
+
+    try:
+        full = creation.parse_repo(payload.repo)
+    except creation.ScaffoldError as exc:
+        raise ProblemError(exc.status, str(exc), type_=TYPE_VALIDATION) from None
+    slug = _scaffold_slug(request, payload.workspace, payload.slug, full)
+    token = _github_token(request)
+    try:
+        state = creation.inspect_repo(token, full, slug)
+        if state.state in ("missing", "not_empty"):
+            raise creation.ScaffoldError(state.detail, fix_url=state.fix_url)
+        files = 0
+        if state.state == "ready":
+            user = request.user
+            rendered = creation.render(AgentSpec(
+                slug=slug, display_name=payload.name.strip(), mandate=payload.mandate.strip(),
+                mailbox=payload.mailbox.strip(), stakeholders=payload.stakeholders.strip(),
+                author_name=user.get_full_name() or user.email, author_email=user.email,
+            ))
+            creation.push(token, state, rendered, slug=slug)
+            files = len(rendered)
+    except creation.ScaffoldError as exc:
+        raise ProblemError(exc.status, str(exc), type_=TYPE_CONFLICT if exc.status == 409 else TYPE_UPSTREAM,
+                           extras={"fix_url": exc.fix_url} if exc.fix_url else None) from None
+    except requests.RequestException as exc:
+        raise ProblemError(502, "Could not reach GitHub", type_=TYPE_UPSTREAM, detail=str(exc)) from None
+    return Status(201, AgentScaffoldOut(
+        repo=full, repo_url=creation.repo_url(full), repo_ref=state.default_branch,
+        adopted=state.state == "adopt", files=files))
 
 
 def _may_transfer_owner(request: HttpRequest, agent) -> bool:
@@ -2062,6 +2198,18 @@ def agent_readiness(request: HttpRequest, slug: str) -> list[BootstrapReportOut]
         )
         for r in services.bootstrap_reports(agent)
     ]
+
+
+@router.get("/{slug}/setup", response=list[AgentSetupStepOut],
+            summary="What is left before this agent can do its job")
+def agent_setup(request: HttpRequest, slug: str) -> list[AgentSetupStepOut]:
+    """The setup checklist, in order: repository, GitHub identity, mailbox, runner, its
+    first real skill (done in Claude Code — `command` starts that session), first turn.
+    Each step reads the same check the system runs for that thing."""
+    from .setup import setup_steps
+
+    agent = _get_agent_or_404(request, slug)
+    return [AgentSetupStepOut(**s) for s in setup_steps(agent)]
 
 
 @router.post("/{slug}/bootstrap-report", response=BootstrapReportOut,

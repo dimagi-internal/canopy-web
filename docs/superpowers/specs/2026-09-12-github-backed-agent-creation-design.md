@@ -1,12 +1,11 @@
 # GitHub-backed agent creation — "create agent" means a real repo, from a browser
 
 **Date:** 2026-09-12
-**Status:** The **GRANT is built and live** (PRs #765, #770, #771 — 2026-09-13); agent
-CREATION is not. The app is registered as `canopy-agents`, public, and `/settings` →
-Connect GitHub works end to end against real GitHub. What remains is the create-agent form
-and the push, which is why `canopy-agent-factory` 1.0.0 — on PyPI, declared here, pinned
-by `tests/test_agent_factory_contract.py` and watched by Dependabot — still has no
-consumer: nothing in `apps/` imports it yet.
+**Status:** Built. The grant shipped in PRs #765, #770, #771 (2026-09-13); the create
+page (`/w/:ws/agents/new`), the push (`apps/agents/creation.py`, the factory's first
+consumer in `apps/`) and the setup checklist (`GET /api/agents/{slug}/setup`) shipped
+2026-10-14. Registration stays the ordinary upsert rather than a combined route, so the
+web and `/canopy:create-agent` share one door — see `docs/architecture/api-surface.md`.
 
 **Two decisions below were REVERSED by building it.** §Decisions 1 and 6 are superseded —
 see "What building it changed". The permission set is narrower, the user creates the

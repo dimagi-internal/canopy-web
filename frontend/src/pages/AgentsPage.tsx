@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { WorkspaceBadge } from '@/components/WorkspaceBadge'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { agentHref } from './agentHref'
+import { roleAllows } from '@/lib/workspaceRoles'
+import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
 function formatDate(s: string): string {
   return new Date(s).toLocaleDateString(undefined, {
@@ -93,6 +95,8 @@ function toCardData(a: AgentOut): AgentCardData {
 }
 
 export function AgentsPage() {
+  const { workspace = '' } = useParams<{ workspace: string }>()
+  const canCreate = roleAllows(useWorkspaceRole(workspace), 'agent.work')
   const [agents, setAgents] = useState<AgentCardData[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -117,12 +121,22 @@ export function AgentsPage() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold text-foreground">Agents</h1>
-        <p className="text-[13px] text-muted-foreground mt-1">
-          Each agent's workspace — its projects, tasks, turns and skill catalog. Pick one to
-          open its workspace.
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold text-foreground">Agents</h1>
+          <p className="text-[13px] text-muted-foreground mt-1">
+            Each agent's workspace — its projects, tasks, turns and skill catalog. Pick one to
+            open its workspace.
+          </p>
+        </div>
+        {canCreate && (
+          <Link
+            to={`/w/${workspace}/agents/new`}
+            className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-[13px] font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            New agent
+          </Link>
+        )}
       </div>
 
       {error && (
@@ -163,12 +177,19 @@ export function AgentsPage() {
         <div className="rounded-lg border border-border bg-card p-4">
           <h2 className="text-sm font-semibold text-foreground">No agents in this workspace</h2>
           <p className="mt-2 text-[13px] leading-relaxed text-foreground-secondary">
-            An agent is a persona with its own git repo — skills, hooks and an identity. It is
-            not created here: run <code className="text-primary">/canopy:create-agent</code> in
-            Claude Code, which scaffolds the repo, then register it in this workspace for it
-            to appear in this list. That command needs the canopy plugin installed, which
-            needs a Personal Access Token — mint one from{' '}
-            <Link to="/settings" className="text-primary hover:underline">Settings</Link>.
+            An agent is a persona with its own git repo — skills, hooks and an identity.{' '}
+            {canCreate ? (
+              <>
+                <Link to={`/w/${workspace}/agents/new`} className="text-primary hover:underline">
+                  Create one
+                </Link>{' '}
+                here: canopy makes the repo from its agent template, registers it, and walks you
+                through the rest. Or run <code className="text-primary">/canopy:create-agent</code> in
+                Claude Code — same template.
+              </>
+            ) : (
+              'Creating one needs the editor role in this workspace.'
+            )}
           </p>
           <p className="mt-2 text-[12px] text-muted-foreground">
             You will also need a runner online to execute its turns.{' '}

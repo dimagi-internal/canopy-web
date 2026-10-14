@@ -2436,6 +2436,51 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/scaffold/check": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Can a new agent's scaffold be pushed into this repository?
+         * @description Reads only. `ready` means empty and writable, `adopt` means it already holds this
+         *     agent's scaffold, `missing` means canopy cannot see it (not created yet, or not added
+         *     to canopy's GitHub access), `not_empty` means it has other commits.
+         */
+        readonly get: operations["check_scaffold_repo"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/scaffold": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Push a new agent's scaffold into an empty repository
+         * @description Stamps the agent with the same factory `/canopy:create-agent` uses and pushes it,
+         *     as you, into an empty repository you created. Does not register the agent: follow
+         *     with `POST /api/agents/` (`upsert_agent`) carrying the returned `repo_url` and
+         *     `repo_ref`. Safe to repeat — a repository that already holds this scaffold is adopted.
+         */
+        readonly post: operations["scaffold_agent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/": {
         readonly parameters: {
             readonly query?: never;
@@ -3520,6 +3565,28 @@ export interface paths {
          *     turn"; `mailbox_ok` only says some client works.
          */
         readonly get: operations["agent_readiness"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/setup": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What is left before this agent can do its job
+         * @description The setup checklist, in order: repository, GitHub identity, mailbox, runner, its
+         *     first real skill (done in Claude Code — `command` starts that session), first turn.
+         *     Each step reads the same check the system runs for that thing.
+         */
+        readonly get: operations["agent_setup"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -12481,6 +12548,75 @@ export interface components {
             /** Runner Preference */
             readonly runner_preference?: readonly string[] | null;
         };
+        /** RepoCheckOut */
+        readonly RepoCheckOut: {
+            /** Repo */
+            readonly repo: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            readonly state: "ready" | "adopt" | "not_empty" | "missing";
+            /**
+             * Default Branch
+             * @default main
+             */
+            readonly default_branch: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /**
+             * Fix Url
+             * @default
+             */
+            readonly fix_url: string;
+            /**
+             * New Repo Url
+             * @default
+             */
+            readonly new_repo_url: string;
+        };
+        /** AgentScaffoldOut */
+        readonly AgentScaffoldOut: {
+            /** Repo */
+            readonly repo: string;
+            /** Repo Url */
+            readonly repo_url: string;
+            /** Repo Ref */
+            readonly repo_ref: string;
+            /** Adopted */
+            readonly adopted: boolean;
+            /** Files */
+            readonly files: number;
+        };
+        /**
+         * AgentScaffoldIn
+         * @description A new agent's repository, stamped by the agent factory and pushed into an empty repo.
+         */
+        readonly AgentScaffoldIn: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Mandate */
+            readonly mandate: string;
+            /**
+             * Mailbox
+             * @default
+             */
+            readonly mailbox: string;
+            /**
+             * Stakeholders
+             * @default
+             */
+            readonly stakeholders: string;
+            /** Repo */
+            readonly repo: string;
+        };
         /**
          * AgentDefinitionOut
          * @description What this instance RUNS, and who else runs it.
@@ -14714,6 +14850,35 @@ export interface components {
             readonly detail: string;
             /** Reported At */
             readonly reported_at?: string | null;
+        };
+        /** AgentSetupStepOut */
+        readonly AgentSetupStepOut: {
+            /** Key */
+            readonly key: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "done" | "todo" | "waiting" | "optional";
+            /** Detail */
+            readonly detail: string;
+            /**
+             * Where
+             * @enum {string}
+             */
+            readonly where: "web" | "claude-code";
+            /**
+             * Href
+             * @default
+             */
+            readonly href: string;
+            /**
+             * Command
+             * @default
+             */
+            readonly command: string;
         };
         /**
          * BootstrapReportIn
@@ -24905,6 +25070,54 @@ export interface operations {
             };
         };
     };
+    readonly check_scaffold_repo: {
+        readonly parameters: {
+            readonly query: {
+                readonly workspace: string;
+                readonly slug: string;
+                readonly repo: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RepoCheckOut"];
+                };
+            };
+        };
+    };
+    readonly scaffold_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentScaffoldIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentScaffoldOut"];
+                };
+            };
+        };
+    };
     readonly get_agent: {
         readonly parameters: {
             readonly query?: never;
@@ -26515,6 +26728,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["BootstrapReportOut"][];
+                };
+            };
+        };
+    };
+    readonly agent_setup: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentSetupStepOut"][];
                 };
             };
         };

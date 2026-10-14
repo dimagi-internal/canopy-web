@@ -1,7 +1,7 @@
-import { useState, type JSX } from 'react'
-import { Check, Copy } from 'lucide-react'
+import type { JSX } from 'react'
 import { Dialog, DialogContent, DialogTitle } from 'canopy-ui'
 
+import { CopyCommand } from './CopyCommand'
 import { cloneCommand, repoFolder } from './repoSetup'
 
 /** The steps that put an agent's repo on a laptop runner, prefilled. Nothing is
@@ -23,14 +23,6 @@ export function RepoSetupDialog({
   runners: readonly string[]
 }): JSX.Element {
   const command = cloneCommand(agentSlug, repoUrl)
-  const [copied, setCopied] = useState(false)
-  const copy = () => {
-    if (!command) return
-    void navigator.clipboard?.writeText(command).then(() => {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    })
-  }
   return (
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent className="w-[calc(100%-2rem)] max-w-lg bg-card" data-testid="repo-setup-dialog">
@@ -47,19 +39,7 @@ export function RepoSetupDialog({
         <ol className="m-0 flex list-decimal flex-col gap-2 pl-5 text-[13px] text-foreground-secondary">
           <li>
             {command ? (
-              <div className="mt-1 flex items-start gap-2 rounded-md border border-input bg-input p-2">
-                <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-foreground" data-testid="repo-setup-command">
-                  {command}
-                </code>
-                <button
-                  type="button"
-                  onClick={copy}
-                  className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-[12px] text-foreground hover:bg-muted"
-                >
-                  {copied ? <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
-              </div>
+              <CopyCommand command={command} testId="repo-setup-command" />
             ) : (
               <span className="text-destructive">
                 {agentName} has no repo set, so there is nothing to clone. Set it on the agent&rsquo;s Settings first.

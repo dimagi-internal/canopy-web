@@ -8,6 +8,7 @@ import { AgentRouting } from '@/components/agents/AgentRouting'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
+import { AgentSetupChecklist } from '@/components/agents/AgentSetupChecklist'
 import { Section, Setting } from '@/pages/agents/sectionLayout'
 import { AgentCanopyUserControl } from '@/components/agents/AgentCanopyUserControl'
 import { CountStat } from '@/components/agents/cards'
@@ -57,6 +58,12 @@ export function AgentSettingsSection() {
           </a>
         ))}
       </nav>
+
+      {/* What is left before it can work — computed server-side from the same
+          checks a turn meets. Gone once every required step is done. */}
+      <div id="setup" className="mb-10 scroll-mt-6">
+        <AgentSetupChecklist slug={agent.slug} hideWhenDone />
+      </div>
 
       {/* Persona + counts opened Overview. Overview is gone (Work is the
           landing page now) and this is where "what IS this agent" belongs. */}

@@ -53,6 +53,51 @@ class AgentIn(StrictModel):
     runner_preference: list[str] | None = None
 
 
+class AgentScaffoldIn(StrictModel):
+    """A new agent's repository, stamped by the agent factory and pushed into an empty repo."""
+
+    workspace: str = Field(min_length=1, max_length=64)
+    slug: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=120)
+    mandate: str = Field(min_length=1, max_length=500)
+    mailbox: str = Field(default="", max_length=254)
+    stakeholders: str = Field(default="", max_length=300)
+    # `owner/name`, or its github.com URL. The person creates it, empty; canopy only pushes.
+    repo: str = Field(min_length=3, max_length=200)
+
+
+class AgentScaffoldOut(StrictModel):
+    repo: str
+    repo_url: str
+    repo_ref: str
+    # True when the repo already held this agent's scaffold, so nothing was pushed.
+    adopted: bool
+    files: int
+
+
+class RepoCheckOut(StrictModel):
+    repo: str
+    # ready | adopt | not_empty | missing
+    state: Literal["ready", "adopt", "not_empty", "missing"]
+    default_branch: str = "main"
+    detail: str = ""
+    # Where the person fixes it, when there is something to fix.
+    fix_url: str = ""
+    # GitHub's new-repository form, filled in with this owner and name.
+    new_repo_url: str = ""
+
+
+class AgentSetupStepOut(StrictModel):
+    key: str
+    title: str
+    status: Literal["done", "todo", "waiting", "optional"]
+    detail: str
+    # web: `href` is the control that does it. claude-code: `command` starts the session.
+    where: Literal["web", "claude-code"]
+    href: str = ""
+    command: str = ""
+
+
 class RunnerPreferenceIn(StrictModel):
     """Set an agent's ordered runner-kind preference (the runner-order UI)."""
 

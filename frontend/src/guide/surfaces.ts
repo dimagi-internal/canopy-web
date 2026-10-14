@@ -281,7 +281,15 @@ export const SURFACES: SurfaceDescriptor[] = [
     audience: 'Anyone working with the fleet',
     what: 'The list of first-class AI agents registered in this workspace, each card showing its status-report and skill counts.',
     needsFirst: 'At least one agent registered in this workspace.',
-    actions: ['Open an agent\'s workspace'],
+    actions: ['Open an agent\'s workspace', 'Create a new agent'],
+  },
+  {
+    path: '/w/:workspace/agents/new',
+    title: 'New agent',
+    audience: 'Workspace editors creating an agent',
+    what: "Creates an agent's repository from canopy's agent template (the same one /canopy:create-agent uses), pushes it to an empty GitHub repo you made, registers the agent with you as owner, then opens its setup checklist. Its persona and first skill are written afterwards in Claude Code; the checklist gives you the command.",
+    needsFirst: 'GitHub connected in Settings, and an empty repository added to canopy\'s GitHub access.',
+    actions: ['Name the agent and its mandate', 'Check the repository canopy will push to', 'Create and register it'],
   },
   {
     path: '/w/:workspace/schedules',

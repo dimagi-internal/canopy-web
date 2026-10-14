@@ -269,7 +269,7 @@ def _exchange(payload: dict) -> dict:
 def _github_user(access_token: str) -> dict:
     resp = requests.get(
         f"{GITHUB_API}/user",
-        headers=_auth_headers(access_token),
+        headers=auth_headers(access_token),
         timeout=HTTP_TIMEOUT,
     )
     if resp.status_code == 401:
@@ -278,7 +278,7 @@ def _github_user(access_token: str) -> dict:
     return resp.json()
 
 
-def _auth_headers(access_token: str) -> dict:
+def auth_headers(access_token: str) -> dict:
     return {
         "Authorization": f"Bearer {access_token}",
         "Accept": "application/vnd.github+json",
@@ -471,7 +471,7 @@ def list_installations(user) -> list[Installation]:
     token = access_token_for(user)
     resp = requests.get(
         f"{GITHUB_API}/user/installations",
-        headers=_auth_headers(token),
+        headers=auth_headers(token),
         params={"per_page": 100},
         timeout=HTTP_TIMEOUT,
     )
@@ -516,7 +516,7 @@ def _installation_repositories(token: str, installation_id: int) -> tuple[tuple[
     try:
         resp = requests.get(
             f"{GITHUB_API}/user/installations/{installation_id}/repositories",
-            headers=_auth_headers(token),
+            headers=auth_headers(token),
             params={"per_page": 100},
             timeout=HTTP_TIMEOUT,
         )

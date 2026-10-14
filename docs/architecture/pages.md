@@ -58,7 +58,16 @@ Every browser-facing address canopy-web serves. The SPA route table is
   subtasks finishing never ship it — its owner or its person marks it done (the
   person may, on `act_on_task`). Every tally on every page is a count over
   `ideas.of_project` (top-level idea tasks), so the views cannot disagree.
-- **`/agents`** — the workspace's agents.
+- **`/agents`** — the workspace's agents; editors get **New agent**.
+- **`/agents/new`** — create an agent (`NewAgentPage`). Name, slug, mandate,
+  optional mailbox; then the GitHub owner + repo name, checked live
+  (`GET /api/agents/scaffold/check`) and re-checked on tab focus, with links to
+  create the empty repo and add it to canopy's GitHub access when canopy cannot
+  see it. **Create** pushes the `canopy-agent-factory` scaffold as the person
+  (`POST /api/agents/scaffold`), registers it through the ordinary upsert (the
+  creator becomes owner), and lands on Settings `#setup`. The web does the
+  plumbing; persona and first skill are Claude Code work, handed over as a command
+  by the checklist. Viewers see a note instead of the form.
 - **`/agents/:slug`** — the agent workspace: full-bleed rail + scrolling main
   on `canopy-ui`. Rail sections, in order:
   - **Projects** (landing; index redirects here) — one row per project `P<N>`,
