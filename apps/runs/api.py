@@ -7,21 +7,38 @@ narratives; changing or deleting them is the editor tier.
 """
 from __future__ import annotations
 
-from django.http import HttpRequest
-from ninja import Router, Status
+import uuid
+
+from django.conf import settings
+from django.http import HttpRequest, HttpResponse
+from ninja import File, Form, Router, Status
+from ninja.files import UploadedFile
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.errors import (
+    TYPE_DRIVE_NOT_CONFIGURED,
+    TYPE_DRIVE_UPLOAD_FAILED,
+    TYPE_FORBIDDEN,
+    TYPE_NOT_FOUND,
+    TYPE_PAYLOAD_TOO_LARGE,
+    TYPE_VALIDATION,
+    ProblemError,
+)
+from apps.walkthroughs import storage
+from apps.walkthroughs.drive_client import DriveNotConfigured
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import aggregate, delete
+from . import aggregate, delete, sources
 from .transfer import TransferError, apply_move, plan_move, public_plan
 from .schemas import (
     NarrativeDetailOut,
     NarrativeListItemOut,
     NarrativeMoveIn,
     NarrativeMoveOut,
+    NarrativeSourceOut,
+    NarrativeSourceRole,
+    NarrativeSourceUploadOut,
     NarrativeVisibilityIn,
     NarrativeVisibilityOut,
     RunPackageOut,
@@ -274,3 +291,103 @@ def move_narrative(request: HttpRequest, slug: str, payload: NarrativeMoveIn) ->
     except TransferError as exc:
         raise ProblemError(422, str(exc), type_=TYPE_VALIDATION)
     return {**result, "dry_run": False}
+
+
+# ---------------------------------------------------------------------------
+# Iteration sources
+#
+# The files a narrative needs to be iterated again from any machine — recipe,
+# master recording, capture report — pinned to the version they were made for
+# (apps/runs/sources.py). Members read them; an editor of the version's
+# workspace writes them.
+# ---------------------------------------------------------------------------
+
+
+def _versions_by_review(slug: str, workspace_slugs: set[str]) -> dict[str, int | None]:
+    data = aggregate.build_narrative(slug, workspace_slugs=workspace_slugs) or {}
+    return {
+        v["review_id"]: v.get("version")
+        for v in data.get("versions", [])
+        if v.get("review_id")
+    }
+
+
+@router.post(
+    "/narratives/{slug}/sources/",
+    response={201: NarrativeSourceUploadOut},
+    summary="Pin an iteration source (recipe, master, capture report) to a narrative version",
+)
+def upload_narrative_source(
+    request: HttpRequest,
+    slug: str,
+    file: UploadedFile = File(...),
+    role: NarrativeSourceRole = Form(...),
+    narrative_review_id: uuid.UUID = Form(...),
+) -> Status:
+    """Stores a file the narrative needs in order to be iterated again, so that
+    nothing required to keep iterating lives only on the machine that made the
+    render. Identical bytes already pinned to the version are reused; a changed
+    file replaces the version's previous one for that role."""
+    max_bytes = getattr(settings, "NARRATIVE_SOURCE_MAX_UPLOAD_BYTES", 150 * 1024 * 1024)
+    if file.size > max_bytes:
+        raise ProblemError(
+            413, "Payload too large", type_=TYPE_PAYLOAD_TOO_LARGE,
+            detail=f"A narrative source may be at most {max_bytes} bytes.",
+        )
+    review = sources.version_review(slug, narrative_review_id, _editor_slugs(request))
+    if review is None:
+        if sources.version_review(slug, narrative_review_id, _workspace_slugs(request)):
+            raise _forbidden("Adding a narrative source")
+        raise ProblemError(
+            404, "Narrative version not found", type_=TYPE_NOT_FOUND,
+            detail=f"{narrative_review_id} is not a version of narrative {slug!r}",
+        )
+    try:
+        src, reused = sources.store(
+            review=review, slug=slug, role=role, data=file.read(), owner=request.user,
+        )
+    except DriveNotConfigured as exc:
+        raise ProblemError(
+            500, "Drive not configured", type_=TYPE_DRIVE_NOT_CONFIGURED, detail=str(exc),
+        )
+    except Exception as exc:  # noqa: BLE001 — surfaced as a 502, row already rolled back
+        raise ProblemError(
+            502, "Drive upload failed", type_=TYPE_DRIVE_UPLOAD_FAILED, detail=str(exc),
+        )
+    payload = sources.detail_payload(src, {str(review.id): review.version})
+    return Status(201, NarrativeSourceUploadOut.model_validate({**payload, "reused": reused}))
+
+
+@router.get(
+    "/narratives/{slug}/sources/",
+    response=list[NarrativeSourceOut],
+    summary="List a narrative's iteration sources (newest first)",
+)
+def list_narrative_sources(request: HttpRequest, slug: str) -> list[NarrativeSourceOut]:
+    scope = _workspace_slugs(request)
+    rows = sources.for_slug(slug, scope)
+    versions = _versions_by_review(slug, scope)
+    return [NarrativeSourceOut.model_validate(sources.detail_payload(s, versions)) for s in rows]
+
+
+@router.get(
+    "/narratives/{slug}/sources/{source_id}/content",
+    summary="Download one iteration source's bytes",
+)
+def get_narrative_source_content(request: HttpRequest, slug: str, source_id: uuid.UUID):
+    src = next(
+        (s for s in sources.for_slug(slug, _workspace_slugs(request)) if s.id == source_id),
+        None,
+    )
+    if src is None or not src.drive_file_id:
+        raise ProblemError(404, "Narrative source not found", type_=TYPE_NOT_FOUND)
+    try:
+        data, _start, _end, _total = storage.download(file_id=src.drive_file_id)
+    except DriveNotConfigured as exc:
+        raise ProblemError(
+            500, "Drive not configured", type_=TYPE_DRIVE_NOT_CONFIGURED, detail=str(exc),
+        )
+    resp = HttpResponse(data, content_type=src.content_type)
+    resp["Content-Disposition"] = f'attachment; filename="{src.filename}"'
+    resp["X-Content-SHA256"] = src.sha256
+    return resp

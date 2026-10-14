@@ -16,7 +16,7 @@ import logging
 from apps.reviews.models import ReviewRequest
 from apps.walkthroughs import storage
 from apps.walkthroughs.drive_client import DriveNotConfigured
-from apps.walkthroughs.models import Walkthrough
+from apps.walkthroughs.models import NarrativeSource, Walkthrough
 
 from .aggregate import (
     _is_narrative_version,
@@ -51,6 +51,12 @@ def _drop_walkthrough(w: Walkthrough) -> None:
                 w.id,
             )
     w.delete()
+
+
+def _drop_source(src: NarrativeSource) -> None:
+    from .sources import drop  # sources imports aggregate, as this module does
+
+    drop(src)
 
 
 def delete_run(run_id: str, workspace_slugs: set[str] | None = None) -> dict | None:
@@ -100,6 +106,17 @@ def delete_version(
         and _is_narrative_version(r)
         and r.version == version
     ]
+    # The version's iteration sources go with it: they were made for this version.
+    srcs = list(
+        _scope(
+            NarrativeSource.objects.filter(
+                narrative_slug=slug, narrative_review_id__in=[r.id for r in version_revs]
+            ),
+            workspace_slugs,
+        )
+    )
+    for src in srcs:
+        _drop_source(src)
     for r in version_revs:
         r.delete()
 
@@ -120,10 +137,13 @@ def delete_narrative(
         for r in _scope(ReviewRequest.objects.all(), workspace_slugs)
         if narrative_of_review(r) == slug
     ]
-    if not wts and not revs:
+    srcs = list(_scope(NarrativeSource.objects.filter(narrative_slug=slug), workspace_slugs))
+    if not wts and not revs and not srcs:
         return None
     for w in wts:
         _drop_walkthrough(w)
+    for src in srcs:
+        _drop_source(src)
     n_rev = len(revs)
     for r in revs:
         r.delete()

@@ -2236,6 +2236,47 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/ddd/narratives/{slug}/sources/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List a narrative's iteration sources (newest first) */
+        readonly get: operations["list_narrative_sources"];
+        readonly put?: never;
+        /**
+         * Pin an iteration source (recipe, master, capture report) to a narrative version
+         * @description Stores a file the narrative needs in order to be iterated again, so that
+         *     nothing required to keep iterating lives only on the machine that made the
+         *     render. Identical bytes already pinned to the version are reused; a changed
+         *     file replaces the version's previous one for that role.
+         */
+        readonly post: operations["upload_narrative_source"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/ddd/narratives/{slug}/sources/{source_id}/content": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Download one iteration source's bytes */
+        readonly get: operations["get_narrative_source_content"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/shareouts/": {
         readonly parameters: {
             readonly query?: never;
@@ -11724,6 +11765,25 @@ export interface components {
              */
             readonly has_deck: boolean;
         };
+        /** NarrativeSourceRefOut */
+        readonly NarrativeSourceRefOut: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            readonly role: "recipe" | "intent" | "master" | "capture_report" | "capture_manifest";
+            /** Filename */
+            readonly filename: string;
+            /** Size Bytes */
+            readonly size_bytes: number;
+            /** Sha256 */
+            readonly sha256: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
         /**
          * NarrativeStoryOut
          * @description The current narrative version, for the narrative header + edit link.
@@ -11779,6 +11839,11 @@ export interface components {
              * @default []
              */
             readonly cuts: readonly components["schemas"]["NarrativeCutOut"][];
+            /**
+             * Sources
+             * @default []
+             */
+            readonly sources: readonly components["schemas"]["NarrativeSourceRefOut"][];
             /**
              * Runs
              * @default []
@@ -12050,6 +12115,90 @@ export interface components {
              * @default []
              */
             readonly also: readonly string[];
+        };
+        /** NarrativeSourceUploadOut */
+        readonly NarrativeSourceUploadOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            readonly role: "recipe" | "intent" | "master" | "capture_report" | "capture_manifest";
+            /** Filename */
+            readonly filename: string;
+            /** Content Type */
+            readonly content_type: string;
+            /** Size Bytes */
+            readonly size_bytes: number;
+            /** Sha256 */
+            readonly sha256: string;
+            /**
+             * Review Id
+             * Format: uuid
+             */
+            readonly review_id: string;
+            /** Version */
+            readonly version?: number | null;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Content Url */
+            readonly content_url: string;
+            /**
+             * Reused
+             * @default false
+             */
+            readonly reused: boolean;
+        };
+        /**
+         * NarrativeSourceOut
+         * @description A file the narrative needs in order to be iterated again (recipe, master
+         *     recording, capture report, ...), pinned to the version it was made for.
+         *     Download it from ``content_url`` as a workspace member.
+         */
+        readonly NarrativeSourceOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            readonly role: "recipe" | "intent" | "master" | "capture_report" | "capture_manifest";
+            /** Filename */
+            readonly filename: string;
+            /** Content Type */
+            readonly content_type: string;
+            /** Size Bytes */
+            readonly size_bytes: number;
+            /** Sha256 */
+            readonly sha256: string;
+            /**
+             * Review Id
+             * Format: uuid
+             */
+            readonly review_id: string;
+            /** Version */
+            readonly version?: number | null;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Content Url */
+            readonly content_url: string;
         };
         /** Page[ShareoutOut] */
         readonly Page_ShareoutOut_: {
@@ -25239,6 +25388,91 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["NarrativeMoveOut"];
                 };
+            };
+        };
+    };
+    readonly list_narrative_sources: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["NarrativeSourceOut"][];
+                };
+            };
+        };
+    };
+    readonly upload_narrative_source: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "multipart/form-data": {
+                    /**
+                     * File
+                     * Format: binary
+                     */
+                    readonly file: string;
+                    /**
+                     * Role
+                     * @enum {string}
+                     */
+                    readonly role: "recipe" | "intent" | "master" | "capture_report" | "capture_manifest";
+                    /**
+                     * Narrative Review Id
+                     * Format: uuid
+                     */
+                    readonly narrative_review_id: string;
+                };
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["NarrativeSourceUploadOut"];
+                };
+            };
+        };
+    };
+    readonly get_narrative_source_content: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly source_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

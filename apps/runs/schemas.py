@@ -50,6 +50,44 @@ class NarrativeCutOut(StrictModel):
     duration_sec: int | None = None
 
 
+NarrativeSourceRole = Literal[
+    "recipe", "intent", "master", "capture_report", "capture_manifest"
+]
+
+
+class NarrativeSourceOut(StrictModel):
+    """A file the narrative needs in order to be iterated again (recipe, master
+    recording, capture report, ...), pinned to the version it was made for.
+    Download it from ``content_url`` as a workspace member."""
+
+    id: uuid.UUID
+    role: NarrativeSourceRole
+    filename: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    review_id: uuid.UUID
+    # The narrative version number of ``review_id``; None if that version is gone.
+    version: int | None = None
+    workspace: str
+    created_at: dt.datetime
+    content_url: str
+
+
+class NarrativeSourceUploadOut(NarrativeSourceOut):
+    # True when identical bytes were already pinned to this version and role, so
+    # nothing was uploaded.
+    reused: bool = False
+
+
+class NarrativeSourceRefOut(StrictModel):
+    role: NarrativeSourceRole
+    filename: str
+    size_bytes: int
+    sha256: str
+    created_at: dt.datetime
+
+
 class NarrativeVersionOut(StrictModel):
     version: int | None = None
     review_id: str | None = None
@@ -69,6 +107,10 @@ class NarrativeVersionOut(StrictModel):
     video_viewer_url: str | None = None
     # A recorded narrative's per-cut videos; empty for an explainer.
     cuts: list[NarrativeCutOut] = []
+    # The files pinned to THIS version that let it be iterated from any machine
+    # (newest per role). Empty means this version can only be iterated from
+    # wherever its recipe and recordings were left.
+    sources: list[NarrativeSourceRefOut] = []
     runs: list[NarrativeRunOut] = []
 
 
