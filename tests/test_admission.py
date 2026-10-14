@@ -621,3 +621,75 @@ def test_an_auto_rule_cannot_be_about_refused_or_unclaimed_turns(fleet):
     with pytest.raises(ValidationError):
         AdmissionRule.objects.create(workspace=fleet["ws"], sender=AdmissionRule.BLOCKED,
                                      action=AdmissionRule.AUTO, reason="x")
+
+
+# --- a thread first handled manual on a laptop, then claimed by the cloud ---------
+# canopy-web#1474: the session rung kept every later turn manual and `auto_rule`
+# refused to raise it, so a cloud runner claimed the turn in manual, nobody could
+# approve the reply, and the turn ended `done` having sent nothing.
+
+def _owner_mail(fleet, **kw):
+    from allauth.account.models import EmailAddress
+
+    EmailAddress.objects.get_or_create(user=fleet["jj"], email="jj@dimagi.com",
+                                       defaults={"verified": True, "primary": True})
+    return _mail(fleet["hal"], sender="Jonathan Jackson <jj@dimagi.com>", **kw)
+
+
+def _thread_started_manual(turn):
+    """An earlier turn on the same email thread (its chat session) ran manual."""
+    assert turn.chat_session_id  # an email thread is one session
+    Turn.objects.create(chat_session_id=turn.chat_session_id, origin=Turn.ORIGIN_EMAIL,
+                        idempotency_key=f"first-{turn.pk}", status=Turn.DONE,
+                        turn_mode="manual")
+
+
+def test_a_verified_full_sender_on_a_thread_that_started_manual_is_raised_on_the_cloud(
+        fleet, django_capture_on_commit_callbacks):
+    rule = _auto_on_cloud(fleet)
+    _route(fleet["hal"], fleet["cloud"])
+    turn = _owner_mail(fleet)
+    assert not turn.capability  # the owner: the agent's whole profile
+    _thread_started_manual(turn)
+    claimed = _claim(fleet["cloud"], django_capture_on_commit_callbacks)
+    assert claimed is not None and claimed.pk == turn.pk
+    assert claimed.turn_mode == "auto" and f"admission rule {rule.pk}" in claimed.turn_mode_basis
+
+
+def test_on_a_laptop_the_thread_that_started_manual_stays_manual(
+        fleet, django_capture_on_commit_callbacks):
+    _auto_on_cloud(fleet)
+    _route(fleet["hal"], fleet["laptop"])
+    turn = _owner_mail(fleet)
+    _thread_started_manual(turn)
+    claimed = _claim(fleet["laptop"], django_capture_on_commit_callbacks)
+    assert claimed.pk == turn.pk
+    assert (claimed.turn_mode, claimed.turn_mode_basis) == ("manual", "session started manual")
+
+
+def test_an_unverified_message_on_a_thread_that_started_manual_is_not_raised(
+        fleet, django_capture_on_commit_callbacks):
+    rule = _auto_on_cloud(fleet)
+    _route(fleet["hal"], fleet["cloud"])
+    turn = _owner_mail(fleet, headers=[])  # unproven, so a contact, confined
+    _thread_started_manual(turn)
+    assert _claim(fleet["cloud"], django_capture_on_commit_callbacks) is None
+    turn.refresh_from_db()
+    # Not raised: it stays manual, so the confined-on-cloud rule rejects it out loud.
+    assert turn.status == Turn.CANCELLED and turn.turn_mode != "auto"
+    rule.refresh_from_db()
+    assert rule.fired_count == 0
+
+
+def test_a_confined_caller_on_a_thread_that_started_manual_is_not_raised(
+        fleet, django_capture_on_commit_callbacks):
+    rule = _auto_on_cloud(fleet)
+    _route(fleet["hal"], fleet["cloud"])
+    turn = _mail(fleet["hal"])  # VIKRAM: confined to `ask`
+    assert turn.capability == "ask"
+    _thread_started_manual(turn)
+    _claim(fleet["cloud"], django_capture_on_commit_callbacks)
+    turn.refresh_from_db()
+    assert turn.turn_mode != "auto"
+    rule.refresh_from_db()
+    assert rule.fired_count == 0

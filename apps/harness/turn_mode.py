@@ -53,7 +53,10 @@ dispatch waiting for approval, say — takes the mode of the session's first cla
 turn instead of being judged afresh. One-directional, so it can never raise
 autonomy: a session that started manual keeps every later turn manual, and one that
 started auto still runs each later turn through the rungs below, so an editor or an
-unverified sender posting into it stays manual (`session_started_manual`).
+unverified sender posting into it stays manual (`session_started_manual`). The carried
+manual stays RAISABLE by an admission `auto` rule when the turn's own rungs give the
+standing posture, the message is verified and the caller is not confined (`_carried`):
+the session's posture is kept, but which box may answer it is the admission rule's.
 
 Pure given the loaded rows, like `services.assignment_rows_for` — callable from
 the claim path (which has them) and from the envelope (which loads them).
@@ -75,8 +78,9 @@ class Resolved:
     basis: str
     # True only for the agent's STANDING posture (a routing rule or the agent's
     # switch). An admission `auto` rule may raise that; never a mode someone held
-    # back: an editor's cap, a dispatch that asked for manual, a session that
-    # started manual, or auto withheld from an unverified message.
+    # back: an editor's cap, a dispatch that asked for manual, auto withheld from
+    # an unverified message, or a session that started manual (unless `_carried`
+    # clears it for a verified, unconfined turn whose own posture is raisable).
     raisable: bool = field(default=False, compare=False)
 
 
@@ -208,7 +212,32 @@ def for_turn(turn, priorities: dict | None = None, *, fresh: bool = False) -> Re
         return None
     started = session_started_manual(turn)
     if started is not None:
+        return _carried(started, turn, agent, priorities)
+    return _own_posture(turn, agent, priorities)
+
+
+def _carried(started: Resolved, turn, agent, priorities: dict | None) -> Resolved:
+    """A session that started manual keeps this turn manual. That manual is still
+    RAISABLE by an admission `auto` rule when nothing about THIS turn holds it back:
+    its own rungs resolve to the agent's standing posture, the message is verified,
+    and the sender is not confined to one capability (Jonathan, 2026-10-14, option 3
+    of canopy-web#1474). Otherwise a thread first handled on a laptop in manual is
+    claimed by a cloud runner in manual, where nobody can approve its reply, and the
+    turn ends `done` having sent nothing."""
+    if getattr(turn, "capability", ""):
         return started
+    from .caller_context import _verified
+
+    if not _verified(turn):
+        return started
+    if not _own_posture(turn, agent, priorities).raisable:
+        return started
+    return Resolved(MANUAL, started.basis, raisable=True)
+
+
+def _own_posture(turn, agent, priorities: dict | None) -> Resolved:
+    """The ladder below the session rung: a dispatch's request, the editor cap,
+    then the routing rules and the agent's switch."""
     asked = requested(turn, agent)
     if asked is not None:
         return asked
