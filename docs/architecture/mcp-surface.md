@@ -29,6 +29,17 @@ invites, roles, an agent's interface, credentials and admins, vaults and Slack
 config all work over MCP under the caller's role. Don't add browser-only gates;
 they take from MCP the administration it is most useful for.
 
+**No agent tools.** This server is canopy the PRODUCT — board, sessions, turns,
+runners, schedules, mail, every REST route, page actions. It does not offer
+per-agent tools that run an agent remotely (no `<agent>__<capability>`, no
+`agent_reply`): a call like that ran as a turn on the agent OWNER's machine,
+under their credentials. To use an agent, install its plugin from the workspace
+marketplace (`/w/<ws>/marketplace.json`) into your own Claude Code and run it
+locally as yourself — see `/get-started`. A client still calling an old agent
+tool gets MCP's unknown-tool error. An agent's declared interface still confines
+the callers who DO reach it through canopy (web chat, Slack, email, embedded
+sites).
+
 A handful of **hand-written** tools remain for what is not a REST route
 (caller envelope, site gateway, per-agent capability tools, page tools, Slack
 share, session-noise audit). The implementation lives in `apps/mcp/`.
@@ -42,7 +53,6 @@ share, session-noise audit). The implementation lives in `apps/mcp/`.
 | `api_tools.py` | The generated API tools: `CanopyAPIProvider` (one tool per REST route), the in-process transport, `EXCLUDED` / `EXCLUDED_PREFIXES`. |
 | `tools/` | Hand-written static tools: `caller.py`, `site.py`, `conversations.py`, `page.py`, `slack.py`, `sessions.py`. |
 | `page_tools.py` | `PageActionProvider` — each open page's declared actions as per-caller tools. |
-| `agent_tools.py` | `AgentInterfaceProvider` — each agent's declared capabilities as `<agent>__<capability>` tools. |
 | `turn_scope.py` | `TurnScopeMiddleware` — a caller token sees only its capability's canopy tools. |
 | `chat_scope.py` | `current_chat_session()` — the chat an `X-Canopy-Chat-Key` header names, which narrows page tools to that one chat. |
 | `delegation.py` | canopy-web as a host of its own MCP: `gate()` (the SDK's `DPoPGate`, mounted in `config/asgi.py`), `access_token_for()` (a host-grant token → the visitor's `AccessToken`), and `DelegatedScopeMiddleware` (only the grant's scopes' tools). |
@@ -163,11 +173,9 @@ server token — every tool must run as a person.
 | `who_is_asking` | read | The caller envelope for a turn (`apps/harness/caller_context.py`): who asked, `verified` (about THIS message — a spoof of a once-verified address is not verified), `relationship` to the agent (owner/admin/member/contact/system; `caller` is read as `contact`), and the workspace's contact profile (`notes`, `attributes`, this-message vs best grade, `is_blocked`). The same document the claiming runner writes to `~/.canopy/caller/<turn_id>.json`; this is the mid-turn re-read, so a contact blocked or re-annotated since the claim shows as such. Gated like the REST twin `GET /api/harness/turns/{id}/caller-context`: tenant membership, unknown ⇒ "turn not found". |
 | `site_tools` | read, **caller-token only** | The tools of the Connected site the visitor is on that this turn may use (host grant contract v1): what the host lists AS THE VISITOR for their grant, narrowed by the capability's `ceiling` only when the owner set one (the page's `backing_tool` is a hint to the agent, not a filter). The turn is read from the caller token, never an argument. Refused — never a fallback to the agent's own credential — when the visitor holds no unexpired grant ("I need you back on the page"). |
 | `site_call` | write, **caller-token only** | Call one host tool as the visitor, through canopy (`apps/tokens/host_gateway.py`): canopy attaches the visitor's host-issued token as `Authorization: DPoP` with a fresh proof per request (`htm`/`htu`/`ath`/`iat`/`jti`) and `Canopy-Actor: <agent>`. Re-checks site, capability `sites:`, grant freshness, resource, DPoP key and the effective tool set on every call. Audited per call; the token never appears in a result, error, log or audit row, and never reaches a runner. Added to a confined profile automatically for any capability with `sites:`. |
-| `<agent>__<capability>` | write (rate-limited), **dynamic** | Each agent's DECLARED INTERFACE served as tools, computed per caller by `AgentInterfaceProvider` (`apps/mcp/agent_tools.py`), the sibling of `PageActionProvider`: `ace__ask`, `ace__summarise_opportunity`. Listed for agents in the caller's workspaces that have a declared interface (held on canopy-web) — every capability for the agent's owner and admins and for members matched by a `full:` rule, the ones naming their member class for other members, nothing for anyone else. A call is a TURN asked by the caller (initiator = their token's user, `via=mcp:<capability>`) in a conversation they own: full profile for owner/admins, confined to the capability for a member. Capability `input` fields become typed required parameters. Re-authorized on every call (listing is not permission). Waits up to `wait_seconds` (≤110) and returns `{conversation_id, turn_id, status, reply}`; `status: running` → call `agent_reply`; `waiting_on_you` carries the agent's `question`, answered by calling again with the `conversation_id`. |
 | `current_page` | read | The page(s) the caller is looking at (`apps/mcp/tools/page.py`), narrowed to one chat when the request carries an `X-Canopy-Chat-Key`. Its siblings `read_page_state` / `list_page_actions` / `invoke_page_action` are generated routes. |
 | `page_<action>` | write, **dynamic** | Each open page's declared actions (`registerAction` in the host page) as tools, computed per caller by `PageActionProvider` (`apps/mcp/page_tools.py`); executed by the browser tab through `apps/canopy_sessions/page_actions.py`. Static tools take precedence, so a page cannot capture a canopy tool. |
 | `audit_session_noise` / `purge_session_noise` | read / write | Find and purge noise rows in the caller's chat sessions (`apps/mcp/tools/sessions.py`). |
-| `agent_reply` | read | The latest turn of a conversation the CALLER started with an agent tool: status, reply so far, pending question. Nobody else's conversations. |
 | `share_session_to_slack` | write (rate-limited) | Post a session-written summary into a Slack channel: `broadcast` (one post) or `bind` (the thread becomes the session's own, exactly as if Slack had started it). Sharing an already-bound session posts an update into its thread instead; `channel` is then optional. Resolves "this session" by `claude_session_id` → `RunnerBinding.transcript_id`, else emdash task + project, else `session_id`, always inside what the caller can see. Backs the canopy plugin's `/canopy:share-to-slack`; rules live in `apps/slack/share.py`. Its undo, `detach_session_from_slack`, is NOT hand-written: it is the generated tool of `POST /api/canopy-sessions/slack/detach`. |
 
 ## Mount + lifespan (`config/asgi.py`)

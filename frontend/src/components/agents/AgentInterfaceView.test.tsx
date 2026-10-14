@@ -39,12 +39,14 @@ describe('AgentInterfaceView', () => {
     expect(screen.queryByRole('button', { name: /Set up|Edit/ })).toBeNull()
   })
 
-  it('shows domain-wide access, each capability, its MCP tool and inputs', async () => {
+  it('shows domain-wide access, each capability and its inputs, and no MCP tool', async () => {
     getAgentInterface.mockResolvedValue(PUBLISHED)
     render(<AgentInterfaceView agentSlug="ace" />)
     expect((await screen.findByTestId('interface-full')).textContent).toContain('contact@dimagi.com:verified')
     const row = screen.getByTestId('interface-capability')
-    expect(row.textContent).toContain('MCP: ace__ask (opportunity_id: integer)')
+    expect(row.textContent).toContain('Inputs: opportunity_id: integer')
+    // Agents are not tools on canopy's MCP: you install the agent's plugin.
+    expect(row.textContent).not.toContain('ace__ask')
     expect(row.textContent).toContain('canopy email read --repo . {thread_id}')
   })
 

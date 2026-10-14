@@ -27,8 +27,12 @@ so a private agent's existence does not leak. That includes an agent whose
 only outsider access is a `full:` rule: `full:` grants a whole working
 profile, which is not a skill and is not advertised. The public card lists
 only those outsider capabilities; the EXTENDED card adds what the requesting
-canopy user may invoke themselves (`interface.offered_to`, the same answer the
-MCP tool list gives them).
+canopy user may invoke themselves (`interface.offered_to`).
+
+**No MCP door.** canopy's MCP server is canopy the product, not a way to run an
+agent: a member uses an agent by installing its plugin into their own Claude
+Code (`/get-started`), or by chatting with it on canopy-web. Neither is an A2A
+binding, so the card lists only the outsider doors (contact sessions, email).
 
 **What never appears.** A capability's `tools`, `bash`, `read_paths`,
 `entry`, `pages` and `input` — the enforcement detail of its profile — and any
@@ -79,11 +83,6 @@ CONTACT = "canopyContactToken"
 # A2A messaging yet — so each is named by a URI, as spec §5.8 asks of a custom
 # binding. A client that only speaks the standard bindings will see no binding
 # it can use, which is the honest answer today.
-#
-# MCP: members call a capability as the tool `<slug>__<capability>` on
-# canopy's MCP server (apps/mcp/agent_tools.py). Unversioned because MCP
-# negotiates its own protocol version at `initialize`.
-MCP_BINDING = "https://modelcontextprotocol.io/specification/latest/basic/transports#streamable-http"
 # A contact holding a contact token opens a conversation at
 # `POST /api/contact/sessions` and sends into it (apps/tokens/contact_api.py).
 CONTACT_BINDING = "urn:dimagi:canopy:binding:contact-sessions:v1"
@@ -91,7 +90,6 @@ CONTACT_BINDING = "urn:dimagi:canopy:binding:contact-sessions:v1"
 EMAIL_BINDING = "urn:dimagi:canopy:binding:email:v1"
 
 TEXT = "text/plain"
-JSON_MODE = "application/json"
 
 
 def base_url() -> str:
@@ -168,21 +166,13 @@ def _requirement(*names: str) -> A2ASecurityRequirement:
     return A2ASecurityRequirement(schemes={n: A2AStringList(values=[]) for n in names})
 
 
-def _skill(agent, name: str, cap: dict, *, public: bool, invokable_by_user: bool) -> A2AAgentSkill:
-    security = []
-    if invokable_by_user:
-        security.append(_requirement(PAT))
-    if _contact_token_reaches(cap):
-        security.append(_requirement(CONTACT))
+def _skill(agent, name: str, cap: dict, *, public: bool) -> A2AAgentSkill:
+    security = [_requirement(CONTACT)] if _contact_token_reaches(cap) else []
     return A2AAgentSkill(
         id=name,
         name=name.replace("_", " ").capitalize(),
         description=(cap.get("description") or "").strip() or f"Ask {agent.name} ({name}).",
         tags=_tags(cap, outsiders_only=public),
-        # A capability with typed `input` fields takes them as JSON alongside
-        # the message (they are parameters of its MCP tool); their names and
-        # types are on that tool, not repeated here.
-        input_modes=[TEXT, JSON_MODE] if cap.get("input") else None,
         security_requirements=security or None,
     )
 
@@ -197,8 +187,9 @@ def _security_schemes() -> dict[str, A2ASecurityScheme]:
                 "A canopy Personal Access Token, sent as `Authorization: Bearer <token>`. "
                 "Minted by a signed-in member of the agent's workspace (Google sign-in, "
                 f"restricted to the deployment's allowed domains) at {base}/settings. "
-                f"Accepted by the MCP server at {base}/api/mcp/ and by this card's "
-                "extendedAgentCard endpoint."),
+                "Accepted by this card's extendedAgentCard endpoint, to read the "
+                "skills you may use. It invokes nothing: install the agent's plugin "
+                f"({base}/get-started) to use it."),
         )),
         SESSION: A2ASecurityScheme(api_key_security_scheme=A2AAPIKeySecurityScheme(
             location="cookie",
@@ -238,10 +229,10 @@ def _card(agent, skills: list[A2AAgentSkill], interfaces: list[A2AAgentInterface
         capabilities=A2AAgentCapabilities(streaming=False, push_notifications=False,
                                           extended_agent_card=True),
         security_schemes=_security_schemes(),
-        # Alternatives (any ONE suffices), each a door some skill uses. The
-        # session cookie is declared as a scheme but not listed: it fetches the
-        # extended card, and invokes nothing.
-        security_requirements=[_requirement(CONTACT), _requirement(PAT)],
+        # The one door a skill uses. The PAT and the session cookie are declared
+        # as schemes but not listed: they fetch the extended card, and invoke
+        # nothing.
+        security_requirements=[_requirement(CONTACT)],
         default_input_modes=[TEXT],
         default_output_modes=[TEXT],
         skills=skills,
@@ -249,10 +240,8 @@ def _card(agent, skills: list[A2AAgentSkill], interfaces: list[A2AAgentInterface
     )
 
 
-def _interfaces(agent, caps: dict, public_names: list[str], *, member_first: bool) -> list[A2AAgentInterface]:
+def _interfaces(agent, caps: dict, public_names: list[str]) -> list[A2AAgentInterface]:
     base = base_url()
-    mcp = A2AAgentInterface(url=f"{base}/api/mcp/", protocol_binding=MCP_BINDING,
-                            protocol_version=A2A_PROTOCOL_VERSION)
     outsider = []
     if any(_contact_token_reaches(caps[n]) for n in public_names):
         outsider.append(A2AAgentInterface(url=f"{base}/api/contact/sessions",
@@ -264,7 +253,7 @@ def _interfaces(agent, caps: dict, public_names: list[str], *, member_first: boo
         outsider.append(A2AAgentInterface(url=f"mailto:{agent.email}",
                                           protocol_binding=EMAIL_BINDING,
                                           protocol_version=A2A_PROTOCOL_VERSION))
-    return [mcp, *outsider] if member_first else [*outsider, mcp]
+    return outsider
 
 
 def public_card(agent) -> A2AAgentCardOut | None:
@@ -273,8 +262,8 @@ def public_card(agent) -> A2AAgentCardOut | None:
     if not names:
         return None
     caps = _capabilities(agent)
-    skills = [_skill(agent, n, caps[n], public=True, invokable_by_user=False) for n in names]
-    return _card(agent, skills, _interfaces(agent, caps, names, member_first=False))
+    skills = [_skill(agent, n, caps[n], public=True) for n in names]
+    return _card(agent, skills, _interfaces(agent, caps, names))
 
 
 def extended_card(agent, user) -> A2AAgentCardOut | None:
@@ -289,9 +278,8 @@ def extended_card(agent, user) -> A2AAgentCardOut | None:
     names = sorted(mine | set(public_names))
     if not names:
         return None
-    skills = [_skill(agent, n, caps[n], public=n not in mine, invokable_by_user=n in mine)
-              for n in names]
-    return _card(agent, skills, _interfaces(agent, caps, public_names, member_first=bool(mine)))
+    skills = [_skill(agent, n, caps[n], public=n not in mine) for n in names]
+    return _card(agent, skills, _interfaces(agent, caps, public_names))
 
 
 def dump(card: A2AAgentCardOut) -> dict:

@@ -225,7 +225,7 @@ email intake (after the existing sender triage: a blocked contact never reaches
 the rule; a member is recognised by mail only on THIS message's DMARC); the
 harness API also asks it up front to answer 403 with a reason; `turn_mode.for_turn`
 at every claim (the editor tier's `manual`); the caller envelope (`profile`,
-`granted_by`); the MCP capability tools (`offered_to`); the access roster and the
+`granted_by`); the extended A2A card (`offered_to`); the access roster and the
 agent topology.
 
 ## Turn mode
@@ -423,9 +423,11 @@ tool; and beside every delivered prompt — the runner leaves
 * **Default deny.** No published interface means only the agent's admins and its
   workspace's editors (manual) reach it; every viewer, contact or unidentified
   caller is refused (rows 5 and 7). The interface is live state on canopy-web —
-  never a file in the agent's repo; owner-or-admin edit it on the agent. Each
-  capability is also an MCP tool for callers (`<slug>__<capability>`, e.g.
-  `ace__ask`; `apps/mcp/agent_tools.py`).
+  never a file in the agent's repo; owner-or-admin edit it on the agent. It
+  confines callers who reach the agent through canopy (web chat, Slack, email,
+  embedded sites). canopy's MCP server offers NO per-agent tools: someone who
+  wants to use an agent installs its plugin and runs it in their own Claude
+  Code, as themselves (`/get-started`).
 * **An agent's own login is the agent.** `Agent.user` grades as `system`;
   another agent's login grades like any person, or agent A could steer all of B.
 * **Three layers, each failing closed.** (1) canopy stamps `Turn.capability` at
