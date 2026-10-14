@@ -107,3 +107,47 @@ def test_nudge_reports_the_platform_job_name(on_windows, monkeypatch, tmp_path, 
         assert update.nudge(cfg, "b" * 40, now=10_000.0) is True
 
     assert any(r"\Canopy\canopy-runner-updater" in m for m in caplog.messages)
+
+
+def test_process_account_on_windows_asks_the_os_not_pwd(on_windows, monkeypatch):
+    """Windows has no `pwd` and no `os.getuid()`; the account comes from
+    GetUserNameW (`os.getlogin()`), and LOGNAME cannot override it."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pwd", None)  # `import pwd` now raises
+    monkeypatch.delattr(platform_jobs.os, "getuid", raising=False)
+    monkeypatch.setattr(platform_jobs.os, "getlogin", lambda: "shayoni")
+    monkeypatch.setenv("LOGNAME", "root")
+    monkeypatch.setenv("USERNAME", "root")
+
+    assert platform_jobs.process_account() == "shayoni"
+
+
+def test_process_account_on_posix_comes_from_the_uid(on_posix, monkeypatch):
+    import types
+    import sys
+
+    fake_pwd = types.SimpleNamespace(getpwuid=lambda uid: types.SimpleNamespace(pw_name=f"u{uid}"))
+    monkeypatch.setitem(sys.modules, "pwd", fake_pwd)
+    monkeypatch.setenv("LOGNAME", "root")
+
+    assert platform_jobs.process_account() == "u501"
+
+
+def test_every_runner_module_imports_without_pwd():
+    """Every canopy-runner command died on Windows with `No module named 'pwd'`
+    because two modules imported it at top level (#1008). Import the whole
+    package in a fresh interpreter with `pwd` unavailable, so a POSIX-only
+    top-level import fails here, in CI on Linux, not on someone's Windows box."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, pkgutil, importlib\n"
+        "sys.modules['pwd'] = None\n"
+        "import canopy_runner\n"
+        "for m in pkgutil.walk_packages(canopy_runner.__path__, 'canopy_runner.'):\n"
+        "    importlib.import_module(m.name)\n"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
