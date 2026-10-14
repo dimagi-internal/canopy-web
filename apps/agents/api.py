@@ -396,6 +396,12 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # owner pairs one, so leaving it unset left every new agent stuck until someone ran
     # `transfer_owner`. Applied on create only; an existing agent keeps its owner.
     agent = services.upsert_agent(payload, workspace=home, owner=request.user)
+    if existing is None or (payload.repo_url is not None and payload.repo_url != existing.repo_url):
+        # A cloud box only learns of an agent (or its new repo) by re-running its
+        # bootstrap; ask the ones that will take its turns to do that now.
+        from .setup import request_setup
+
+        request_setup(agent)
     if explicit and agent.workspace_id != explicit:
         # Explicit home: may MOVE an already-homed agent. A missing workspace
         # and a non-member get the same 404 (no existence leak); moving also

@@ -62,7 +62,12 @@ def _mailbox(agent: Agent, settings: str) -> dict:
         href=f"{settings}#credentials", action="Connect the mailbox")
 
 
-def _runner(agent: Agent, settings: str) -> dict:
+def runner_takers(agent: Agent):
+    """(takers, inherited): the live-or-not boxes that would take this agent's
+    turns — its own default order, else the workspace order it follows, narrowed by
+    the claim's own predicates (tenant, `runner_may_hold_agent`) — and the
+    inherited order, for why a listed box was dropped. Shared by the checklist and
+    by registration, which asks these boxes to set a new agent up."""
     from apps.harness.models import Runner, RunnerAssignment
     from apps.harness.routing import inherited_orders, runner_tenant_slugs
     from .services import runner_may_hold_agent
@@ -73,10 +78,49 @@ def _runner(agent: Agent, settings: str) -> dict:
     listed = own or (inherited.runners if inherited else [])
     takers = [r for r in listed if r.status != Runner.RETIRED
               and agent.workspace_id in runner_tenant_slugs(r) and runner_may_hold_agent(r, agent)]
-    online = [r for r in takers if r.live_status == Runner.ONLINE]
+    return takers, inherited
+
+
+def request_setup(agent: Agent) -> list[str]:
+    """Ask each CLOUD box that would take this agent's turns to re-run its bootstrap,
+    which clones and provisions every registered agent — the only time a cloud box
+    learns of a new one. Without this a new agent's turns ran on the box with none
+    of its code (seen on labs 2026-10-14: the turn answered with the fleet's skills).
+    Durable (`request_refresh` sets a row the box reads off its heartbeat) and acted
+    on at the box's next idle moment. Laptops are not asked: their checkout is a
+    person's to make (`repoSetup.ts`)."""
+    from apps.harness.models import Runner
+    from apps.harness.runners import request_refresh
+
+    asked = []
+    for r in runner_takers(agent)[0]:
+        if r.kind == Runner.CLOUD:
+            request_refresh(r)
+            asked.append(r.name)
+    return asked
+
+
+def _runner(agent: Agent, settings: str) -> dict:
+    from apps.harness.models import Runner
+
+    from .models import AgentBootstrapReport
+
+    takers, inherited = runner_takers(agent)
+    # A cloud box serves an agent only once its bootstrap has cloned it, and every
+    # bootstrap reports per agent — so no report from that box means it has not yet.
+    reported = set(AgentBootstrapReport.objects.filter(agent=agent).values_list("runner_name", flat=True))
+    ready = [r for r in takers if r.kind != Runner.CLOUD or r.name in reported]
+    unset = [r for r in takers if r not in ready]
+    online = [r for r in ready if r.live_status == Runner.ONLINE]
     title = "Give it a runner"
     if online:
         return _step("runner", title, DONE, f"{online[0].name} takes its turns.",
+                     href=f"{settings}#running", action="See routing")
+    if unset:
+        names = ", ".join(r.name for r in unset)
+        return _step("runner", title, WAITING,
+                     f"{names} will take its turns once it has set {agent.name} up — it does that "
+                     "on its own at its next idle moment, usually within a few minutes.",
                      href=f"{settings}#running", action="See routing")
     if takers:
         names = ", ".join(r.name for r in takers)
@@ -125,8 +169,9 @@ def _first_turn(agent: Agent, base: str) -> dict:
     done = Turn.objects.filter(agent=agent, status=Turn.DONE).exists()
     return _step("first_turn", "Run its first turn", DONE if done else TODO,
                  "It has finished a turn." if done else
-                 "Ask it something from its Projects page and watch the turn finish.",
-                 href=f"{base}/turns" if done else base,
+                 "Give it something to do from its Tasks page and watch the turn finish.",
+                 # The prompt box (`QuickTurn`) is on Tasks, not the Projects landing page.
+                 href=f"{base}/turns" if done else f"{base}/tasks",
                  action="See its turns" if done else "Ask it something")
 
 
