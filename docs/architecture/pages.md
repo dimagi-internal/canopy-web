@@ -60,14 +60,17 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `ideas.of_project` (top-level idea tasks), so the views cannot disagree.
 - **`/agents`** — the workspace's agents; editors get **New agent**.
 - **`/agents/new`** — create an agent (`NewAgentPage`). Name, slug, mandate,
-  optional mailbox; then the GitHub owner + repo name, checked live
-  (`GET /api/agents/scaffold/check`) and re-checked on tab focus, with links to
-  create the empty repo and add it to canopy's GitHub access when canopy cannot
-  see it. **Create** pushes the `canopy-agent-factory` scaffold as the person
-  (`POST /api/agents/scaffold`), registers it through the ordinary upsert (the
-  creator becomes owner), and lands on Settings `#setup`. The web does the
-  plumbing; persona and first skill are Claude Code work, handed over as a command
-  by the checklist. Viewers see a note instead of the form.
+  optional mailbox; then the GitHub owner + repo name and a fine-grained token,
+  with links to GitHub's new-repo and new-token forms filled in (the token steps
+  are `GitHubTokenSteps`, shared with Credentials → GitHub). Checked live
+  (`POST /api/agents/scaffold/check`) and on tab focus. **Create** pushes the
+  `canopy-agent-factory` scaffold with that token, registers the agent through the
+  ordinary upsert (the creator becomes owner), saves the same token as its GitHub
+  identity, and lands on Settings `?created=<repo>#setup` with a confirmation.
+  Persona and first skill are Claude Code work, handed over as a command by the
+  checklist. Viewers see a note instead of the form.
+  An agent's Settings ends with **Delete** (editors and above, `DELETE /api/agents/{slug}/`):
+  type the slug to confirm; it removes the agent from canopy and leaves its repo alone.
 - **`/agents/:slug`** — the agent workspace: full-bleed rail + scrolling main
   on `canopy-ui`. Rail sections, in order:
   - **Projects** (landing; index redirects here) — one row per project `P<N>`,

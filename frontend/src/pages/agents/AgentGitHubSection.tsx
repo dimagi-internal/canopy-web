@@ -8,6 +8,7 @@ import {
   setAgentGitHub,
 } from '@/api/agents'
 import { useAuth } from '@/auth/AuthProvider'
+import { GitHubTokenSteps } from '@/components/agents/GitHubTokenSteps'
 import type { CredStatus } from '@/pages/agents/agentCredentials'
 
 // GitHub is the OWNER's identity, lent to this one agent — not a secret of the
@@ -145,24 +146,7 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
 
         {isOwner ? (
           <div className="mt-3 border-t border-border pt-2" data-testid="github-setup">
-            <ol className="mb-2 list-decimal space-y-0.5 pl-4 text-[11px] text-muted-foreground">
-              <li>
-                <a href={gh.create_url} target="_blank" rel="noreferrer" className="text-primary">
-                  Create the token on GitHub
-                </a>{' '}
-                — the form opens filled in.
-              </li>
-              <li>
-                Check <strong>Resource owner</strong> reads{' '}
-                <span className="font-mono">{gh.repo ? gh.repo.split('/')[0] : 'the repo’s org'}</span>.
-              </li>
-              <li>
-                Under <strong>Only select repositories</strong>, pick{' '}
-                {gh.repo ? <span className="font-mono">{gh.repo}</span> : 'this agent’s repo'}, plus any other repo
-                it ships to or installs a plugin from.
-              </li>
-              <li>Generate it, and paste it here.</li>
-            </ol>
+            <GitHubTokenSteps tokenUrl={gh.create_url} repo={gh.repo} />
             <div className="flex flex-wrap items-center gap-2">
               <input
                 type="password"

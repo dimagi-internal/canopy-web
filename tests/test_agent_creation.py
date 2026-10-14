@@ -56,7 +56,13 @@ class FakeGitHub:
         name = "/".join(tail.split("/")[:2])
         return name, self.repos.get(name), "/".join(tail.split("/")[2:])
 
-    def get(self, url, **_):
+    def get(self, url, headers=None, **_):
+        if headers and headers.get("Authorization") != "Bearer github_pat_olive":
+            return self._resp(401)
+        if url.endswith("/user"):
+            r = self._resp(200, {"login": "olive", "id": 7, "name": "Olive Owner"})
+            r.headers = {}
+            return r
         name, repo, rest = self._repo(url)
         if repo is None:
             return self._resp(404)
@@ -114,15 +120,10 @@ def _github(fake):
     return mock.patch.multiple(creation.requests, get=fake.get, request=fake.request)
 
 
-@pytest.fixture(autouse=True)
-def token():
-    with mock.patch("apps.tokens.github_app.access_token_for", return_value="ghu_test"):
-        yield
-
-
 def _scaffold(client, **over):
     body = {"workspace": "scouts", "slug": "scout", "name": "Scout", "repo": REPO,
-            "mandate": "Find good first issues for new contributors.", "mailbox": "scout@example.org"}
+            "mandate": "Find good first issues for new contributors.", "mailbox": "scout@example.org",
+            "token": "github_pat_olive"}
     body.update(over)
     return client.post("/api/agents/scaffold", body, content_type="application/json")
 
@@ -159,13 +160,19 @@ def test_running_it_again_adopts_the_scaffold_it_already_pushed(editor):
     assert fake.writes == []
 
 
-def test_a_repo_canopy_cannot_see_is_refused_with_where_to_fix_it(editor, settings):
-    settings.GITHUB_APP_SLUG = "canopy-agents"
+def test_a_repo_the_token_cannot_see_is_refused_and_says_why(editor):
     with _github(FakeGitHub(**{REPO: None})):
         resp = _scaffold(_client(editor))
     assert resp.status_code == 409
-    assert "add it to canopy's GitHub access" in resp.json()["title"]
-    assert resp.json()["extras"]["fix_url"] == "https://github.com/apps/canopy-agents/installations/new"
+    assert "token cannot see olive/scout" in resp.json()["title"]
+
+
+def test_a_rejected_token_is_a_422_not_a_push(editor):
+    fake = FakeGitHub(**{REPO: {}})
+    with _github(fake):
+        resp = _scaffold(_client(editor), token="github_pat_wrong")
+    assert resp.status_code == 422
+    assert fake.writes == []
 
 
 def test_a_repo_with_someone_elses_commits_is_never_pushed_into(editor):
@@ -179,13 +186,23 @@ def test_a_repo_with_someone_elses_commits_is_never_pushed_into(editor):
 def test_the_check_reports_each_state_without_writing(editor):
     fake = FakeGitHub(**{REPO: {}, "olive/other": None})
     c = _client(editor)
+
+    def check(repo, token="github_pat_olive"):
+        return c.post("/api/agents/scaffold/check", {"workspace": "scouts", "slug": "scout",
+                                                     "repo": repo, "token": token},
+                      content_type="application/json").json()
+
     with _github(fake):
-        ready = c.get("/api/agents/scaffold/check", {"workspace": "scouts", "slug": "scout", "repo": REPO})
-        missing = c.get("/api/agents/scaffold/check",
-                        {"workspace": "scouts", "slug": "scout", "repo": "https://github.com/olive/other.git"})
-    assert ready.json()["state"] == "ready"
-    assert missing.json()["state"] == "missing"
-    assert missing.json()["new_repo_url"].startswith("https://github.com/new?owner=olive&name=other")
+        ready = check(REPO)
+        missing = check("https://github.com/olive/other.git")
+        no_token = check(REPO, token="")
+    assert (ready["state"], ready["login"]) == ("ready", "olive")
+    assert missing["state"] == "missing"
+    assert missing["new_repo_url"].startswith("https://github.com/new?owner=olive&name=other")
+    # The links come back before there is a token, so the page can offer them first.
+    assert no_token["state"] == "no_token"
+    assert no_token["token_url"].startswith("https://github.com/settings/personal-access-tokens/new?")
+    assert "target_name=olive" in no_token["token_url"]
     assert fake.writes == []
 
 

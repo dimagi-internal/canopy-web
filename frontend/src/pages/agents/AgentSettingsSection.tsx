@@ -10,6 +10,7 @@ import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { AgentCredentialsPanel } from '@/pages/agents/AgentCredentialsPanel'
 import { AgentSetupChecklist } from '@/components/agents/AgentSetupChecklist'
+import { DeleteAgentControl } from '@/components/agents/DeleteAgentControl'
 import { Section, Setting } from '@/pages/agents/sectionLayout'
 import { AgentCanopyUserControl } from '@/components/agents/AgentCanopyUserControl'
 import { CountStat } from '@/components/agents/cards'
@@ -175,6 +176,13 @@ export function AgentSettingsSection() {
       <Section id="credentials" title="Credentials">
         <AgentCredentialsPanel agent={agent} canEdit={isAdmin} />
       </Section>
+
+      {/* Same gate as the route (delete_agent: agent.work), so only people who can. */}
+      {canRoute && (
+        <Section id="delete" title="Delete">
+          <DeleteAgentControl slug={agent.slug} name={agent.name} workspace={agent.workspace ?? ''} />
+        </Section>
+      )}
     </div>
   )
 }

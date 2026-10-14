@@ -3,35 +3,37 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 
-// Mocked at the api modules: the push, the GitHub reads and the gates are the
-// server's (tests/test_agent_creation.py). What is pinned here is the page's
-// order of operations — check, push, THEN register — and that it hands the
-// person the links to fix a repo canopy cannot see.
+// Mocked at the api modules: the push, the token checks and the gates are the
+// server's (tests/test_agent_creation.py, tests/test_agent_delegations.py).
+// What is pinned here is the page's order — check, push, register, THEN lend
+// the same token — and that a person without a repo or token is told how.
 vi.mock('@/api/agentCreation', async (orig) => ({
   ...(await orig<typeof import('@/api/agentCreation')>()),
   checkScaffoldRepo: vi.fn(),
   scaffoldAgent: vi.fn(),
   registerAgent: vi.fn(),
 }))
-vi.mock('@/api/github', () => ({
-  getGitHubConnection: vi.fn(async () => ({
-    configured: true, connected: true, github_login: 'olive', needs_reconnect: false, install_url: '',
-  })),
-  listGitHubInstallations: vi.fn(async () => [
-    { installation_id: 7, account_login: 'olive', account_type: 'User', is_org: false,
-      repository_selection: 'selected', repositories: [], repository_count: 0 },
-  ]),
-  gitHubConnectPath: () => '/auth/github/start/',
-}))
+vi.mock('@/api/agents', () => ({ setAgentGitHub: vi.fn() }))
 let role: string | null = 'editor'
 vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceRole: () => role }))
 
 import { checkScaffoldRepo, registerAgent, scaffoldAgent } from '@/api/agentCreation'
+import { setAgentGitHub } from '@/api/agents'
 import { NewAgentPage, suggestSlug } from './NewAgentPage'
 
 const check = checkScaffoldRepo as unknown as ReturnType<typeof vi.fn>
 const scaffold = scaffoldAgent as unknown as ReturnType<typeof vi.fn>
 const register = registerAgent as unknown as ReturnType<typeof vi.fn>
+const lend = setAgentGitHub as unknown as ReturnType<typeof vi.fn>
+
+const LINKS = {
+  new_repo_url: 'https://github.com/new?owner=olive&name=scout-bot',
+  token_url: 'https://github.com/settings/personal-access-tokens/new?target_name=olive',
+}
+
+function answer(state: string, over: Record<string, unknown> = {}) {
+  return { repo: 'olive/scout-bot', state, default_branch: 'main', detail: '', login: '', ...LINKS, ...over }
+}
 
 function Landed() {
   return <p data-testid="landed">{useLocation().search}</p>
@@ -48,15 +50,21 @@ function mount() {
   )
 }
 
-function fillAbout() {
+function fill() {
   fireEvent.change(screen.getByPlaceholderText('Scout'), { target: { value: 'Scout Bot' } })
   fireEvent.change(screen.getByPlaceholderText('Find good first issues for new contributors.'), {
     target: { value: 'Find good first issues.' },
   })
+  fireEvent.change(screen.getByPlaceholderText('dimagi-internal'), { target: { value: 'olive' } })
 }
 
 beforeEach(() => {
   role = 'editor'
+  try {
+    window.localStorage.removeItem('canopy:new-agent-owner')
+  } catch {
+    // no storage in this environment
+  }
 })
 
 afterEach(() => {
@@ -71,39 +79,46 @@ describe('suggestSlug', () => {
 })
 
 describe('NewAgentPage', () => {
-  it('checks the repo, pushes, then registers, and lands on the setup checklist', async () => {
-    check.mockResolvedValue({ repo: 'olive/scout-bot', state: 'ready', default_branch: 'main', detail: '', fix_url: '', new_repo_url: '' })
+  it('shows how to make the repo and token before there is a token', async () => {
+    check.mockResolvedValue(answer('no_token'))
+    mount()
+    expect(await screen.findByText(/Still needed: a name, a slug, a mandate, a GitHub token/)).toBeTruthy()
+    fill()
+    const create = await screen.findByRole('link', { name: 'Create olive/scout-bot on GitHub ↗' }, { timeout: 3000 })
+    expect(create.getAttribute('href')).toBe(LINKS.new_repo_url)
+    expect(screen.getByRole('link', { name: 'Create the token on GitHub' }).getAttribute('href')).toBe(LINKS.token_url)
+    expect(check).toHaveBeenLastCalledWith('scouts', 'scout-bot', 'olive/scout-bot', '')
+  })
+
+  it('checks with the token, pushes, registers, lends the same token, then lands on setup', async () => {
+    check.mockResolvedValue(answer('ready', { login: 'olive' }))
     scaffold.mockResolvedValue({ repo: 'olive/scout-bot', repo_url: 'https://github.com/olive/scout-bot', repo_ref: 'main', adopted: false, files: 21 })
     register.mockResolvedValue(undefined)
+    lend.mockResolvedValue({})
     mount()
-    // A disabled Create says what it is waiting for.
-    expect(await screen.findByText(/Still needed: a name, a slug, a mandate/)).toBeTruthy()
-    fillAbout()
-    await screen.findByText('olive/scout-bot is empty and canopy can push to it.', {}, { timeout: 3000 })
-    expect(check).toHaveBeenLastCalledWith('scouts', 'scout-bot', 'olive/scout-bot')
+    fill()
+    fireEvent.change(screen.getByPlaceholderText('github_pat_…'), { target: { value: 'github_pat_olive' } })
+    await screen.findByText('olive/scout-bot is empty; pushing as @olive.', {}, { timeout: 3000 })
+    expect(check).toHaveBeenLastCalledWith('scouts', 'scout-bot', 'olive/scout-bot', 'github_pat_olive')
 
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }))
     expect((await screen.findByTestId('landed')).textContent).toBe('?created=olive%2Fscout-bot')
     const sent = scaffold.mock.calls[0][0]
-    expect(sent).toMatchObject({ workspace: 'scouts', slug: 'scout-bot', name: 'Scout Bot', repo: 'olive/scout-bot' })
+    expect(sent).toMatchObject({ slug: 'scout-bot', repo: 'olive/scout-bot', token: 'github_pat_olive' })
     expect(register).toHaveBeenCalledWith(sent, expect.objectContaining({ repo_ref: 'main' }))
+    expect(lend).toHaveBeenCalledWith('scout-bot', 'github_pat_olive')
     expect(scaffold.mock.invocationCallOrder[0]).toBeLessThan(register.mock.invocationCallOrder[0])
+    expect(register.mock.invocationCallOrder[0]).toBeLessThan(lend.mock.invocationCallOrder[0])
   })
 
-  it('gives both fixes for a repo canopy cannot see, and will not create', async () => {
-    check.mockResolvedValue({
-      repo: 'olive/scout-bot', state: 'missing', default_branch: 'main', detail: 'canopy cannot see olive/scout-bot.',
-      fix_url: 'https://github.com/apps/canopy-agents/installations/new',
-      new_repo_url: 'https://github.com/new?owner=olive&name=scout-bot',
-    })
+  it('will not create when the token cannot see the repo, and says why', async () => {
+    check.mockResolvedValue(answer('missing', { detail: 'The token cannot see olive/scout-bot.' }))
     mount()
-    fillAbout()
-    const create = await screen.findByRole('link', { name: 'Create olive/scout-bot on GitHub ↗' }, { timeout: 3000 })
-    expect(create.getAttribute('href')).toBe('https://github.com/new?owner=olive&name=scout-bot')
-    expect(screen.getByRole('link', { name: 'Give canopy access to it ↗' }).getAttribute('href')).toBe(
-      'https://github.com/apps/canopy-agents/installations/new',
-    )
+    fill()
+    fireEvent.change(screen.getByPlaceholderText('github_pat_…'), { target: { value: 'github_pat_olive' } })
+    await screen.findByText(/The token cannot see olive\/scout-bot\./, {}, { timeout: 3000 })
     expect((screen.getByRole('button', { name: 'Create agent' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText(/a repository the token can push to/)).toBeTruthy()
   })
 
   it('tells a viewer it needs the editor role instead of offering a form', async () => {

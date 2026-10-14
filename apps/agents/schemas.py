@@ -64,6 +64,9 @@ class AgentScaffoldIn(StrictModel):
     stakeholders: str = Field(default="", max_length=300)
     # `owner/name`, or its github.com URL. The person creates it, empty; canopy only pushes.
     repo: str = Field(min_length=3, max_length=200)
+    # The person's fine-grained token for that repo — used for the push, never stored
+    # here. The same token becomes the agent's delegation via PUT …/github.
+    token: str = Field(min_length=1, max_length=400)
 
 
 class AgentScaffoldOut(StrictModel):
@@ -75,16 +78,24 @@ class AgentScaffoldOut(StrictModel):
     files: int
 
 
+class RepoCheckIn(StrictModel):
+    workspace: str = Field(min_length=1, max_length=64)
+    slug: str = Field(min_length=1, max_length=80)
+    repo: str = Field(min_length=3, max_length=200)
+    # Empty is allowed: the answer still carries the links to make the repo and token.
+    token: str = Field(default="", max_length=400)
+
+
 class RepoCheckOut(StrictModel):
     repo: str
-    # ready | adopt | not_empty | missing
-    state: Literal["ready", "adopt", "not_empty", "missing"]
+    state: Literal["ready", "adopt", "not_empty", "missing", "no_token"]
     default_branch: str = "main"
     detail: str = ""
-    # Where the person fixes it, when there is something to fix.
-    fix_url: str = ""
-    # GitHub's new-repository form, filled in with this owner and name.
+    # Who the token acts as on GitHub.
+    login: str = ""
+    # GitHub's new-repository form and its new-token form, filled in for this agent.
     new_repo_url: str = ""
+    token_url: str = ""
 
 
 class AgentSetupStepOut(StrictModel):

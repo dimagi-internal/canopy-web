@@ -44,7 +44,7 @@ def _github(agent: Agent, settings: str) -> dict:
     return _step(
         "github", "Lend it a GitHub identity",
         DONE if verdict in ("ok", "warn") else TODO,
-        detail if verdict != "fail" else
+        detail[:1].upper() + detail[1:] if verdict != "fail" else
         f"Its turns push code and open pull requests as its owner, {owner}. Only the owner "
         "can add that GitHub token.",
         href=f"{settings}#credentials", action="Add a GitHub token")

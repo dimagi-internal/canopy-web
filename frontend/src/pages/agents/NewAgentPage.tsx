@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type JSX, type ReactNode } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { CheckCircle2 } from 'lucide-react'
 import { Button, Input, Textarea } from 'canopy-ui/ui'
 import { WorkbenchSubHeader } from 'canopy-ui'
@@ -11,13 +11,8 @@ import {
   scaffoldAgent,
   type RepoCheckOut,
 } from '@/api/agentCreation'
-import {
-  getGitHubConnection,
-  gitHubConnectPath,
-  listGitHubInstallations,
-  type GitHubConnectionOut,
-  type GitHubInstallationOut,
-} from '@/api/github'
+import { setAgentGitHub } from '@/api/agents'
+import { GitHubTokenSteps } from '@/components/agents/GitHubTokenSteps'
 import { roleAllows } from '@/lib/workspaceRoles'
 import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 
@@ -32,10 +27,11 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
  * its first skill does — is a conversation, so it happens in Claude Code, and
  * the checklist hands over the command that starts it.
  *
- * Canopy cannot create the repository: its GitHub App deliberately holds no
- * Administration permission (apps/tokens/github_app.py). So the person makes a
- * blank repo and adds it to canopy's access; this page links both and re-checks
- * when they come back to the tab.
+ * GitHub access is the person's own fine-grained token — the credential every
+ * agent turn already uses (apps/agents/delegations.py). They make a blank repo
+ * and a token scoped to it; the token pushes the scaffold and then becomes the
+ * agent's GitHub identity, so one paste covers both and no app install (which on
+ * an org needs an org owner) is involved. Canopy never creates a repo.
  */
 export function NewAgentPage(): JSX.Element {
   const { workspace = '' } = useParams<{ workspace: string }>()
@@ -48,18 +44,18 @@ export function NewAgentPage(): JSX.Element {
   const [mandate, setMandate] = useState('')
   const [mailbox, setMailbox] = useState('')
   const [stakeholders, setStakeholders] = useState('')
-  const [owner, setOwner] = useState('')
+  const [owner, setOwnerState] = useState(rememberedOwner)
+  const setOwner = (o: string) => {
+    setOwnerState(o)
+    remember(o)
+  }
+  const [token, setToken] = useState('')
   const [repoName, setRepoName] = useState('')
   const [repoEdited, setRepoEdited] = useState(false)
 
   const effectiveSlug = slugEdited ? slug : suggestSlug(name)
   const effectiveRepo = repoEdited ? repoName : effectiveSlug
   const repo = owner && effectiveRepo ? `${owner}/${effectiveRepo}` : ''
-
-  const github = useGitHub()
-  useEffect(() => {
-    if (!owner && github.installs?.length) setOwner(github.installs[0].account_login)
-  }, [github.installs, owner])
 
   const [check, setCheck] = useState<RepoCheckOut | null>(null)
   const [checkError, setCheckError] = useState<CreationError | null>(null)
@@ -69,16 +65,16 @@ export function NewAgentPage(): JSX.Element {
     setChecking(true)
     setCheckError(null)
     try {
-      setCheck(await checkScaffoldRepo(workspace, effectiveSlug, repo))
+      setCheck(await checkScaffoldRepo(workspace, effectiveSlug, repo, token.trim()))
     } catch (e) {
       setCheck(null)
       setCheckError(e instanceof CreationError ? e : new CreationError(String(e)))
     } finally {
       setChecking(false)
     }
-  }, [repo, effectiveSlug, workspace])
-  // A changed name or owner makes the last answer about a different repo, so ask
-  // again once typing settles. Reads only; the answer carries the links to fix it.
+  }, [repo, effectiveSlug, workspace, token])
+  // A changed repo or token makes the last answer stale, so ask again once typing
+  // settles. Reads only; even with no token the answer carries the links to use.
   useEffect(() => {
     setCheck(null)
     setCheckError(null)
@@ -88,7 +84,7 @@ export function NewAgentPage(): JSX.Element {
   }, [repo, effectiveSlug, runCheck])
   // The fix for "missing" happens on GitHub in another tab; check again on return.
   useEffect(() => {
-    if (check?.state !== 'missing') return
+    if (check?.state !== 'missing' && check?.state !== 'not_empty') return
     const again = () => void runCheck()
     window.addEventListener('focus', again)
     return () => window.removeEventListener('focus', again)
@@ -103,13 +99,14 @@ export function NewAgentPage(): JSX.Element {
     !name.trim() && 'a name',
     !effectiveSlug && 'a slug',
     !mandate.trim() && 'a mandate',
-    !ready && 'a repository canopy can push to (step 2)',
+    !token.trim() && 'a GitHub token (step 2)',
+    token.trim() && !ready && 'a repository the token can push to (step 2)',
   ].filter((m): m is string => Boolean(m))
 
   const create = async () => {
     const agent = {
       workspace, slug: effectiveSlug, name: name.trim(), mandate: mandate.trim(),
-      mailbox: mailbox.trim(), stakeholders: stakeholders.trim(), repo,
+      mailbox: mailbox.trim(), stakeholders: stakeholders.trim(), repo, token: token.trim(),
     }
     setCreateError(null)
     try {
@@ -117,6 +114,10 @@ export function NewAgentPage(): JSX.Element {
       const pushed = await scaffoldAgent(agent)
       setCreating('Registering the agent…')
       await registerAgent(agent, pushed)
+      setCreating('Saving the token as its GitHub identity…')
+      // Not fatal: the agent exists now, and its setup checklist shows the GitHub
+      // step as still to do, with the same control, if this is refused.
+      await setAgentGitHub(agent.slug, agent.token).catch(() => undefined)
       navigate(`/w/${workspace}/agents/${agent.slug}/settings?created=${encodeURIComponent(pushed.repo)}#setup`)
     } catch (e) {
       setCreateError(e instanceof CreationError ? e : new CreationError(String(e)))
@@ -174,47 +175,48 @@ export function NewAgentPage(): JSX.Element {
       </Step>
 
       <Step n={2} title="Where its code lives" done={ready}>
-        <GitHubStatus github={github} />
-        {github.installs && github.installs.length > 0 && (
-          <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
-              <Field label="Owner">
-                <select
-                  value={owner}
-                  onChange={(e) => setOwner(e.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-input px-2 text-[13px] text-foreground"
-                >
-                  {github.installs.map((i) => (
-                    <option key={i.installation_id} value={i.account_login}>
-                      {i.account_login}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Repository name">
-                <Input
-                  value={effectiveRepo}
-                  onChange={(e) => {
-                    setRepoEdited(true)
-                    setRepoName(e.target.value)
-                  }}
-                />
-              </Field>
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-3">
-              <Button size="sm" variant="outline" onClick={() => void runCheck()} disabled={!repo || !effectiveSlug || checking}>
-                {checking ? 'Checking…' : 'Check again'}
-              </Button>
-            </div>
-            <RepoState check={check} error={checkError} />
-          </>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+          <Field label="Owner" hint="The GitHub account or org it lives under.">
+            <Input value={owner} onChange={(e) => setOwner(e.target.value.trim())} placeholder="dimagi-internal" />
+          </Field>
+          <Field label="Repository name">
+            <Input
+              value={effectiveRepo}
+              onChange={(e) => {
+                setRepoEdited(true)
+                setRepoName(e.target.value)
+              }}
+            />
+          </Field>
+        </div>
+        {check && (
+          <div className="text-[12px] text-foreground-secondary">
+            <p className="mb-1">
+              <a href={check.new_repo_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                Create {check.repo} on GitHub ↗
+              </a>{' '}
+              if it does not exist — leave it empty: no README, licence or .gitignore. Then give canopy a token
+              for it; the same token is what the agent works as on GitHub.
+            </p>
+            <GitHubTokenSteps tokenUrl={check.token_url} repo={check.repo} />
+          </div>
         )}
+        <Field label="GitHub token">
+          <Input
+            type="password"
+            autoComplete="off"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="github_pat_…"
+          />
+        </Field>
+        <RepoState check={check} error={checkError} checking={checking} />
       </Step>
 
       <Step n={3} title="Create it" done={false}>
         <p className="mb-3 text-[12px] text-muted-foreground">
-          Pushes the template as you, then registers the agent here with you as its owner. Safe to run again if it
-          stops partway.
+          Pushes the template with your token, registers the agent here with you as its owner, and saves the token
+          as its GitHub identity. Safe to run again if it stops partway.
         </p>
         <Button onClick={() => void create()} disabled={missing.length > 0 || Boolean(creating)}>
           {creating || 'Create agent'}
@@ -239,120 +241,53 @@ export function suggestSlug(name: string): string {
     .slice(0, 31)
 }
 
-interface GitHubState {
-  conn: GitHubConnectionOut | null
-  installs: GitHubInstallationOut[] | null
-  error: string
-  reload: () => void
-}
-
-/** The person's GitHub connection and where the app is installed, re-read when
- *  they come back from connecting in another tab. */
-function useGitHub(): GitHubState {
-  const [conn, setConn] = useState<GitHubConnectionOut | null>(null)
-  const [installs, setInstalls] = useState<GitHubInstallationOut[] | null>(null)
-  const [error, setError] = useState('')
-  const reload = useCallback(() => {
-    setError('')
-    getGitHubConnection()
-      .then((c) => {
-        setConn(c)
-        if (!c.connected || c.needs_reconnect) return setInstalls(null)
-        return listGitHubInstallations().then(setInstalls)
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [])
-  useEffect(() => {
-    reload()
-    window.addEventListener('focus', reload)
-    return () => window.removeEventListener('focus', reload)
-  }, [reload])
-  return { conn, installs, error, reload }
-}
-
-function GitHubStatus({ github }: { github: GitHubState }): JSX.Element | null {
-  const { conn, installs, error } = github
-  if (error) return <p className="text-[13px] text-destructive">{error}</p>
-  if (!conn) return <p className="text-[13px] text-muted-foreground">Checking your GitHub connection…</p>
-  if (!conn.configured) {
-    return <p className="text-[13px] text-muted-foreground">GitHub is not set up on this deployment. Ask an administrator.</p>
-  }
-  const connect = (
-    <a href={gitHubConnectPath()} target="_blank" rel="noreferrer" className="text-primary hover:underline">
-      {conn.connected && !conn.needs_reconnect ? 'Install it on an account ↗' : 'Connect GitHub ↗'}
-    </a>
-  )
-  if (!conn.connected || conn.needs_reconnect) {
-    return (
-      <p className="mb-3 text-[13px] text-foreground-secondary">
-        Canopy pushes the repo as you, through its GitHub app. {connect} — it opens in a new tab; come back here
-        when you are done.
-      </p>
-    )
-  }
-  if (installs && installs.length === 0) {
-    return (
-      <p className="mb-3 text-[13px] text-foreground-secondary">
-        Connected as @{conn.github_login}, but canopy&rsquo;s GitHub app is not installed on any account yet. {connect}
-      </p>
-    )
-  }
-  return installs ? (
-    <p className="mb-3 text-[12px] text-muted-foreground">Pushing as @{conn.github_login}.</p>
-  ) : null
-}
-
-function RepoState({ check, error }: { check: RepoCheckOut | null; error: CreationError | null }): JSX.Element | null {
+function RepoState({
+  check,
+  error,
+  checking,
+}: {
+  check: RepoCheckOut | null
+  error: CreationError | null
+  checking: boolean
+}): JSX.Element | null {
   if (error) return <Problem error={error} />
-  if (!check) return null
+  if (checking) return <p className="text-[12px] text-muted-foreground">Checking…</p>
+  if (!check || check.state === 'no_token') return null
   if (check.state === 'ready' || check.state === 'adopt') {
     return (
-      <p className="mt-3 flex items-center gap-1.5 text-[13px] text-success">
+      <p className="flex items-center gap-1.5 text-[13px] text-success">
         <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-        {check.state === 'ready' ? `${check.repo} is empty and canopy can push to it.` : check.detail}
+        {check.state === 'ready' ? `${check.repo} is empty; pushing as @${check.login}.` : check.detail}
       </p>
     )
   }
   return (
-    <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-[13px] text-foreground">
-      <p>{check.detail}</p>
-      {check.state === 'missing' && (
-        <ol className="mt-2 list-decimal pl-5 text-[12px] text-foreground-secondary">
-          <li>
-            <a href={check.new_repo_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
-              Create {check.repo} on GitHub ↗
-            </a>{' '}
-            — leave it empty.
-          </li>
-          <li>
-            <a href={check.fix_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
-              Give canopy access to it ↗
-            </a>{' '}
-            — pick the account, then add the repository.
-          </li>
-          <li>Come back to this tab; it checks again on its own.</li>
-        </ol>
-      )}
-    </div>
+    <p className="rounded-md border border-warning/40 bg-warning/10 p-3 text-[13px] text-foreground">
+      {check.detail} This checks again when you come back to the tab.
+    </p>
   )
 }
 
 function Problem({ error }: { error: CreationError }): JSX.Element {
-  return (
-    <p className="mt-3 text-[13px] text-destructive">
-      {error.message}
-      {error.fixUrl &&
-        (error.fixUrl.startsWith('http') ? (
-          <a href={error.fixUrl} target="_blank" rel="noreferrer" className="ml-2 text-primary hover:underline">
-            Fix it ↗
-          </a>
-        ) : (
-          <Link to={error.fixUrl} className="ml-2 text-primary hover:underline">
-            Fix it
-          </Link>
-        ))}
-    </p>
-  )
+  return <p className="mt-3 text-[13px] text-destructive">{error.message}</p>
+}
+
+/** The owner last typed, per browser — a convenience only, so a blocked storage
+ *  read is just an empty field. */
+const OWNER_KEY = 'canopy:new-agent-owner'
+function rememberedOwner(): string {
+  try {
+    return window.localStorage.getItem(OWNER_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+function remember(owner: string): void {
+  try {
+    window.localStorage.setItem(OWNER_KEY, owner)
+  } catch {
+    // storage blocked; nothing to keep
+  }
 }
 
 function Step({ n, title, done, children }: { n: number; title: string; done: boolean; children: ReactNode }) {

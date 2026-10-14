@@ -2443,15 +2443,16 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /**
-         * Can a new agent's scaffold be pushed into this repository?
-         * @description Reads only. `ready` means empty and writable, `adopt` means it already holds this
-         *     agent's scaffold, `missing` means canopy cannot see it (not created yet, or not added
-         *     to canopy's GitHub access), `not_empty` means it has other commits.
-         */
-        readonly get: operations["check_scaffold_repo"];
+        readonly get?: never;
         readonly put?: never;
-        readonly post?: never;
+        /**
+         * Can a new agent's scaffold be pushed into this repository with this token?
+         * @description Reads only, and stores nothing. `ready` means empty and the token can see it,
+         *     `adopt` means it already holds this agent's scaffold, `missing` means the token
+         *     cannot see it (not created yet, or not in the token's repositories), `not_empty`
+         *     means it has other commits. `token_url` is GitHub's token form, filled in.
+         */
+        readonly post: operations["check_scaffold_repo"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -2469,10 +2470,11 @@ export interface paths {
         readonly put?: never;
         /**
          * Push a new agent's scaffold into an empty repository
-         * @description Stamps the agent with the same factory `/canopy:create-agent` uses and pushes it,
-         *     as you, into an empty repository you created. Does not register the agent: follow
-         *     with `POST /api/agents/` (`upsert_agent`) carrying the returned `repo_url` and
-         *     `repo_ref`. Safe to repeat — a repository that already holds this scaffold is adopted.
+         * @description Stamps the agent with the same factory `/canopy:create-agent` uses and pushes it into
+         *     an empty repository you created, with your fine-grained token. Stores nothing: follow
+         *     with `POST /api/agents/` (`upsert_agent`) carrying the returned `repo_url`/`repo_ref`,
+         *     then `PUT /api/agents/{slug}/github` with the same token so its turns use it too.
+         *     Safe to repeat — a repository that already holds this scaffold is adopted.
          */
         readonly post: operations["scaffold_agent"];
         readonly delete?: never;
@@ -12769,7 +12771,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            readonly state: "ready" | "adopt" | "not_empty" | "missing";
+            readonly state: "ready" | "adopt" | "not_empty" | "missing" | "no_token";
             /**
              * Default Branch
              * @default main
@@ -12781,15 +12783,34 @@ export interface components {
              */
             readonly detail: string;
             /**
-             * Fix Url
+             * Login
              * @default
              */
-            readonly fix_url: string;
+            readonly login: string;
             /**
              * New Repo Url
              * @default
              */
             readonly new_repo_url: string;
+            /**
+             * Token Url
+             * @default
+             */
+            readonly token_url: string;
+        };
+        /** RepoCheckIn */
+        readonly RepoCheckIn: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Slug */
+            readonly slug: string;
+            /** Repo */
+            readonly repo: string;
+            /**
+             * Token
+             * @default
+             */
+            readonly token: string;
         };
         /** AgentScaffoldOut */
         readonly AgentScaffoldOut: {
@@ -12829,6 +12850,8 @@ export interface components {
             readonly stakeholders: string;
             /** Repo */
             readonly repo: string;
+            /** Token */
+            readonly token: string;
         };
         /**
          * AgentDefinitionOut
@@ -25616,16 +25639,16 @@ export interface operations {
     };
     readonly check_scaffold_repo: {
         readonly parameters: {
-            readonly query: {
-                readonly workspace: string;
-                readonly slug: string;
-                readonly repo: string;
-            };
+            readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly requestBody?: never;
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RepoCheckIn"];
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {

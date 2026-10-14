@@ -765,3 +765,13 @@ export async function unpublishAgentInterface(slug: string): Promise<AgentInterf
   const res = await apiV2.DELETE('/api/agents/{slug}/interface', { params: { path: { slug } } })
   return unwrap(res, 'unpublishAgentInterface') as unknown as AgentInterfaceOut
 }
+
+/** Remove an agent and everything hanging off it (editor and above). Its GitHub
+ *  repository is not touched. */
+export async function deleteAgent(slug: string): Promise<void> {
+  const res = await apiV2.DELETE('/api/agents/{slug}/', { params: { path: { slug } } })
+  if (!res.response.ok) {
+    const detail = (res.error as { detail?: unknown } | undefined)?.detail
+    throw new Error(typeof detail === 'string' && detail ? detail : 'Deleting the agent failed')
+  }
+}

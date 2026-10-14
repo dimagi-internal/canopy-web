@@ -1,8 +1,9 @@
 // Creating an agent from the browser, and what is left before it can work.
 //
-// Three calls, each safe to repeat (apps/agents/creation.py): check the repo,
-// push the factory's scaffold into it, then register through the SAME upsert the
-// plugin uses (`POST /api/agents/`). The checklist is `GET …/setup`, computed
+// Each call is safe to repeat (apps/agents/creation.py): check the repo, push
+// the factory's scaffold into it with the person's token, register through the
+// SAME upsert the plugin uses (`POST /api/agents/`), then lend the agent that
+// same token through the existing `PUT …/github` (`setAgentGitHub`). The checklist is `GET …/setup`, computed
 // server-side from the system's own checks so this page never keeps a copy.
 import { apiV2 } from './client.v2'
 import { problemMessage } from './problem'
@@ -13,25 +14,22 @@ export type RepoCheckOut = Schemas['RepoCheckOut']
 export type AgentScaffoldOut = Schemas['AgentScaffoldOut']
 export type AgentSetupStepOut = Schemas['AgentSetupStepOut']
 
-/** A refusal the person can fix, with where to fix it when the server knows. */
-export class CreationError extends Error {
-  fixUrl: string
-  constructor(message: string, fixUrl = '') {
-    super(message)
-    this.fixUrl = fixUrl
-  }
-}
+/** A refusal the person can fix; the server's message says how. */
+export class CreationError extends Error {}
 
 function fail(error: unknown, fallback: string): never {
-  const extras = (error as { extras?: { fix_url?: unknown } } | undefined)?.extras
-  const fixUrl = typeof extras?.fix_url === 'string' ? extras.fix_url : ''
-  throw new CreationError(problemMessage(error, fallback), fixUrl)
+  throw new CreationError(problemMessage(error, fallback))
 }
 
-export async function checkScaffoldRepo(workspace: string, slug: string, repo: string): Promise<RepoCheckOut> {
-  const res = await apiV2.GET('/api/agents/scaffold/check', {
-    params: { query: { workspace, slug, repo } },
-  })
+/** POST only to keep the token out of a URL; it writes nothing. An empty token
+ *  still answers, with the links to make the repo and the token. */
+export async function checkScaffoldRepo(
+  workspace: string,
+  slug: string,
+  repo: string,
+  token: string,
+): Promise<RepoCheckOut> {
+  const res = await apiV2.POST('/api/agents/scaffold/check', { body: { workspace, slug, repo, token } })
   if (!res.response.ok || !res.data) fail(res.error, 'Could not check the repository.')
   return res.data
 }
@@ -44,6 +42,8 @@ export interface NewAgent {
   mailbox: string
   stakeholders: string
   repo: string
+  /** The person's fine-grained token: pushes the scaffold, then becomes the agent's GitHub identity. */
+  token: string
 }
 
 export async function scaffoldAgent(body: NewAgent): Promise<AgentScaffoldOut> {
