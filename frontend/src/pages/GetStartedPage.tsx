@@ -1,8 +1,7 @@
 import { useEffect, useState, type JSX, type ReactNode } from 'react'
 import { useAuth } from '@/auth/AuthProvider'
-import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { CopyCommand } from '@/components/agents/CopyCommand'
-import { catalogName, loadCatalogs, type WorkspaceCatalog } from './getStarted'
+import { listAgents } from '@/api/agents'
 
 /**
  * /get-started — how a person starts using canopy agents: install canopy,
@@ -10,17 +9,22 @@ import { catalogName, loadCatalogs, type WorkspaceCatalog } from './getStarted'
  * Code with their own logins, not remotely through canopy-web's MCP connector.
  *
  * Public (an exact-match allowlist entry in apps/common/middleware.py, beside
- * /about): step 1 is useful before someone has an account. Signed in, steps 2
- * and 3 list the agents each of the person's workspaces actually offers, read
- * from that workspace's plugin marketplace (/w/<ws>/marketplace.json,
- * apps/plugins) — the catalog Claude Code installs from. Catalogs are per
- * workspace (`canopy-<workspace>`, no child workspaces), so an agent's install
- * line names ITS workspace, not whichever one the reader has open. Signed out,
- * or when nothing loads, the page shows the ACE example (ACE lives in connect).
+ * /about): step 1 is useful before someone has an account. There is ONE agent
+ * catalog per person, `canopy-agents`, which `/canopy:setup` registers; every
+ * agent installs as `<slug>@canopy-agents`. Signed in, steps 2 and 3 list the
+ * agents in all of the reader's workspaces (the existing GET /api/agents/,
+ * which, read off a non-tenant URL, spans every workspace the reader can see).
+ * Signed out, or when nothing loads, the page shows the ACE example.
  */
 
+const CATALOG = 'canopy-agents'
 const EXAMPLE_AGENT = 'ace'
-const EXAMPLE_CATALOG = catalogName('connect')
+
+interface ListedAgent {
+  slug: string
+  name: string
+  description: string
+}
 
 function InlineCode({ children }: { children: ReactNode }) {
   return <code className="rounded bg-muted px-1 py-0.5 font-mono text-[12px] text-foreground">{children}</code>
@@ -63,30 +67,32 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
 
 export function GetStartedPage(): JSX.Element {
   const auth = useAuth()
-  const { workspaces } = useWorkspace()
   const authed = auth.status === 'authenticated'
-  const slugs = authed ? workspaces.map((w) => w.slug) : []
-  const slugKey = slugs.join(',')
-  // Keyed on the workspace list it was loaded for, so a stale result is never
-  // shown for a different list.
-  const [loaded, setLoaded] = useState<{ key: string; catalogs: WorkspaceCatalog[] } | null>(null)
-  const catalogs = loaded && loaded.key === slugKey ? loaded.catalogs : null
+  const [agents, setAgents] = useState<ListedAgent[] | null>(null)
 
   useEffect(() => {
-    if (!slugKey) return
+    if (!authed) return
     let cancelled = false
-    void loadCatalogs(slugKey.split(',')).then((found) => {
-      if (!cancelled) setLoaded({ key: slugKey, catalogs: found })
-    })
+    listAgents({ limit: 200 })
+      .then((page) => {
+        if (cancelled) return
+        const seen = new Set<string>()
+        setAgents(
+          page.items
+            .filter((a) => !seen.has(a.slug) && seen.add(a.slug))
+            .map((a) => ({ slug: a.slug, name: a.name || a.slug, description: a.description })),
+        )
+      })
+      .catch(() => {
+        // The example below stands in; the page is still complete without the list.
+      })
     return () => {
       cancelled = true
     }
-  }, [slugKey])
+  }, [authed])
 
-  const listed = catalogs && catalogs.length > 0 ? catalogs : null
-  const setupPlugins = listed
-    ? [...new Set(listed.flatMap((c) => c.agents.map((a) => a.plugin)))]
-    : [EXAMPLE_AGENT]
+  const listed = authed && agents && agents.length > 0 ? agents : null
+  const setupSlugs = listed ? listed.map((a) => a.slug) : [EXAMPLE_AGENT]
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
@@ -108,8 +114,10 @@ export function GetStartedPage(): JSX.Element {
         <Panel title="Before you start">
           You need <strong className="text-foreground">Claude Code</strong> and a{' '}
           <strong className="text-foreground">canopy account that belongs to a workspace</strong> (at Dimagi,{' '}
-          <InlineCode>dimagi</InlineCode> or <InlineCode>connect</InlineCode>). If you don&apos;t have one, ask a
-          workspace admin to invite you. You don&apos;t need a GitHub account, 1Password, or a runner.
+          <InlineCode>dimagi</InlineCode> or <InlineCode>connect</InlineCode>), and{' '}
+          <strong className="text-foreground">read access to each agent&apos;s GitHub repo</strong> (ACE&apos;s
+          is public; the others are private and need access granted on GitHub). If you don&apos;t have an
+          account, ask a workspace admin to invite you. You don&apos;t need 1Password or a runner.
         </Panel>
       </div>
 
@@ -130,59 +138,48 @@ export function GetStartedPage(): JSX.Element {
               with your canopy account.
             </li>
             <li>
-              Setup then adds a private agent catalog for each workspace you belong to, named{' '}
-              <InlineCode>canopy-&lt;workspace&gt;</InlineCode>, and lists the agents you can install.
+              Setup then adds your agent catalog, <InlineCode>{CATALOG}</InlineCode>, which lists every agent in
+              the workspaces you belong to, and prints the install line for each.
             </li>
             <li>Setup doesn&apos;t install any agents. You choose them in step 2.</li>
           </Notes>
         </Step>
 
         <Step n={2} title="Install an agent">
+          <p className="mt-1 text-[13px] leading-relaxed text-foreground-secondary">
+            {listed
+              ? 'Install the agents you want from your catalog. These are the agents in your workspaces; every one installs the same way:'
+              : 'Install the agents you want from your catalog. Every agent installs the same way:'}
+          </p>
           {listed ? (
-            <>
-              <p className="mt-1 text-[13px] leading-relaxed text-foreground-secondary">
-                Install the agents you want. Each one installs from its own workspace&apos;s catalog; these
-                are the agents your workspaces offer right now.
-              </p>
-              {listed.map((c) => (
-                <section key={c.workspace} className="mt-4" aria-label={`Agents in ${c.catalog}`}>
-                  <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {c.catalog}
-                  </h3>
-                  <ul className="mt-2 space-y-3">
-                    {c.agents.map((a) => (
-                      <li key={a.plugin}>
-                        <p className="text-[13px] font-medium text-foreground">
-                          {a.plugin}
-                          {a.description ? (
-                            <span className="font-normal text-muted-foreground"> — {a.description}</span>
-                          ) : null}
-                        </p>
-                        <CopyCommand command={`/plugin install ${a.plugin}@${c.catalog}`} />
-                      </li>
-                    ))}
-                  </ul>
-                </section>
+            <ul className="mt-3 space-y-3" aria-label="Agents you can install">
+              {listed.map((a) => (
+                <li key={a.slug}>
+                  <p className="text-[13px] font-medium text-foreground">
+                    {a.name}
+                    {a.description ? (
+                      <span className="font-normal text-muted-foreground"> — {a.description}</span>
+                    ) : null}
+                  </p>
+                  <CopyCommand command={`/plugin install ${a.slug}@${CATALOG}`} />
+                </li>
               ))}
-            </>
+            </ul>
           ) : (
-            <>
-              <p className="mt-1 text-[13px] leading-relaxed text-foreground-secondary">
-                Install the agents you want from your workspace&apos;s catalog. The example installs ACE,
-                which lives in the <InlineCode>connect</InlineCode> workspace.
-              </p>
-              <div className="mt-3">
-                <CopyCommand command={`/plugin install ${EXAMPLE_AGENT}@${EXAMPLE_CATALOG}`} />
-              </div>
-            </>
+            <div className="mt-3">
+              <CopyCommand command={`/plugin install ${EXAMPLE_AGENT}@${CATALOG}`} />
+            </div>
           )}
           <div className="mt-2">
             <CopyCommand command="/reload-plugins" />
           </div>
           <Notes>
             <li>
-              Or browse the agents in <InlineCode>/plugin</InlineCode> → Marketplaces →{' '}
-              <InlineCode>canopy-&lt;workspace&gt;</InlineCode>.
+              Or browse them in <InlineCode>/plugin</InlineCode> → Marketplaces → <InlineCode>{CATALOG}</InlineCode>.
+            </li>
+            <li>
+              The plugin downloads from the agent&apos;s GitHub repo with your own GitHub access. If the install
+              fails with a GitHub error, ask the agent&apos;s owner for repo access.
             </li>
             <li>Agents update themselves whenever their team ships a change.</li>
           </Notes>
@@ -194,7 +191,7 @@ export function GetStartedPage(): JSX.Element {
             you which of your own logins unlock the rest.
           </p>
           <div className="mt-3 space-y-2">
-            {setupPlugins.map((p) => (
+            {setupSlugs.map((p) => (
               <CopyCommand key={p} command={`/${p}:setup`} />
             ))}
           </div>

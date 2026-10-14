@@ -4,9 +4,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter } from 'react-router-dom'
 
 const authState = vi.hoisted(() => ({ value: { status: 'anonymous', user: null } as { status: string; user: unknown } }))
-const workspaceState = vi.hoisted(() => ({ value: { workspaces: [] as Array<{ slug: string }>, active: null as string | null } }))
+const listAgents = vi.hoisted(() => vi.fn())
 vi.mock('@/auth/AuthProvider', () => ({ useAuth: () => authState.value }))
-vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspace: () => workspaceState.value }))
+vi.mock('@/api/agents', () => ({ listAgents }))
 
 const { GetStartedPage } = await import('./GetStartedPage')
 
@@ -20,13 +20,13 @@ function renderPage() {
 
 const commands = () => screen.getAllByRole('code').map((c) => c.textContent)
 
-function marketplace(plugins: Array<{ name: string; description?: string }>) {
-  return { ok: true, json: async () => ({ name: 'x', plugins }) } as Response
+function agent(slug: string, workspace: string, description = '') {
+  return { slug, name: slug.toUpperCase(), description, workspace }
 }
 
 beforeEach(() => {
   authState.value = { status: 'anonymous', user: null }
-  workspaceState.value = { workspaces: [], active: null }
+  listAgents.mockReset()
 })
 
 afterEach(() => {
@@ -49,53 +49,44 @@ describe('GetStartedPage', () => {
     expect(screen.getByText('The canopy-web connector is separate')).toBeTruthy()
   })
 
-  it('signed out, shows the canopy install and the ACE / connect example', () => {
-    const fetchSpy = vi.fn()
-    vi.stubGlobal('fetch', fetchSpy)
+  it('signed out, shows the canopy install and the ACE example from canopy-agents', () => {
     renderPage()
     expect(commands()).toEqual(
       expect.arrayContaining([
         '/plugin marketplace add dimagi-internal/canopy',
         '/plugin install canopy@canopy',
         '/canopy:setup',
-        '/plugin install ace@canopy-connect',
+        '/plugin install ace@canopy-agents',
         '/ace:setup',
       ]),
     )
-    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(listAgents).not.toHaveBeenCalled()
+    expect(screen.getByText(/read access to each agent's GitHub repo/)).toBeTruthy()
   })
 
-  it("signed in, lists each workspace's agents under that workspace's catalog", async () => {
+  it('signed in, lists the agents of every workspace, all from canopy-agents', async () => {
     authState.value = { status: 'authenticated', user: { email: 'a@dimagi.com' } }
-    workspaceState.value = { workspaces: [{ slug: 'dimagi' }, { slug: 'connect' }, { slug: 'empty' }], active: 'dimagi' }
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string) => {
-        if (url.endsWith('/w/dimagi/marketplace.json')) return marketplace([{ name: 'eva', description: 'Chief of staff' }])
-        if (url.endsWith('/w/connect/marketplace.json')) return marketplace([{ name: 'ace' }, { name: 'echo' }])
-        return marketplace([])
-      }),
-    )
+    listAgents.mockResolvedValue({
+      items: [agent('eva', 'dimagi', 'Chief of staff'), agent('ace', 'connect'), agent('echo', 'connect')],
+      total: 3, offset: 0, limit: 200,
+    })
     renderPage()
-    const connect = await screen.findByRole('region', { name: 'Agents in canopy-connect' })
-    expect(within(connect).getAllByRole('code').map((c) => c.textContent)).toEqual([
-      '/plugin install ace@canopy-connect',
-      '/plugin install echo@canopy-connect',
+    const list = await screen.findByRole('list', { name: 'Agents you can install' })
+    expect(within(list).getAllByRole('code').map((c) => c.textContent)).toEqual([
+      '/plugin install eva@canopy-agents',
+      '/plugin install ace@canopy-agents',
+      '/plugin install echo@canopy-agents',
     ])
-    const dimagi = screen.getByRole('region', { name: 'Agents in canopy-dimagi' })
-    expect(within(dimagi).getByRole('code').textContent).toBe('/plugin install eva@canopy-dimagi')
-    expect(screen.queryByRole('region', { name: 'Agents in canopy-empty' })).toBeNull()
     expect(commands()).toEqual(expect.arrayContaining(['/eva:setup', '/ace:setup', '/echo:setup']))
+    expect(commands().some((c) => c?.includes('canopy-dimagi') || c?.includes('canopy-connect'))).toBe(false)
   })
 
-  it('signed in, falls back to the example when no catalog can be read', async () => {
+  it('signed in, falls back to the example when the agents cannot be read', async () => {
     authState.value = { status: 'authenticated', user: { email: 'a@dimagi.com' } }
-    workspaceState.value = { workspaces: [{ slug: 'dimagi' }], active: 'dimagi' }
-    const fetchSpy = vi.fn(async () => ({ ok: false, json: async () => ({}) }) as Response)
-    vi.stubGlobal('fetch', fetchSpy)
+    listAgents.mockRejectedValue(new Error('offline'))
     renderPage()
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalled())
-    expect(commands()).toContain('/plugin install ace@canopy-connect')
+    await waitFor(() => expect(listAgents).toHaveBeenCalled())
+    expect(commands()).toContain('/plugin install ace@canopy-agents')
   })
 
   it('the Copy button puts the command on the clipboard and says Copied', async () => {
