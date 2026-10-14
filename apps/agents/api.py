@@ -32,6 +32,7 @@ from .schemas import (
     AgentScaffoldIn,
     AgentScaffoldOut,
     AgentSetupStepOut,
+    RepoCheckIn,
     RepoCheckOut,
     AgentInterfaceIn,
     AgentInterfaceOut,
@@ -457,78 +458,87 @@ def _scaffold_slug(request: HttpRequest, workspace: str, raw_slug: str, repo: st
     return slug
 
 
-def _github_token(request: HttpRequest) -> str:
-    from apps.tokens import github_app
-
-    try:
-        return github_app.access_token_for(request.user)
-    except github_app.GitHubNotConfigured:
-        raise ProblemError(409, "GitHub is not configured on this deployment",
-                           detail="Ask an administrator.") from None
-    except github_app.GitHubAuthError as exc:
-        raise ProblemError(409, "Connect GitHub first", detail=str(exc),
-                           extras={"fix_url": "/settings"}) from None
-
-
-@router.get("/scaffold/check", response=RepoCheckOut,
-            summary="Can a new agent's scaffold be pushed into this repository?")
-def check_scaffold_repo(request: HttpRequest, workspace: str, slug: str, repo: str) -> RepoCheckOut:
-    """Reads only. `ready` means empty and writable, `adopt` means it already holds this
-    agent's scaffold, `missing` means canopy cannot see it (not created yet, or not added
-    to canopy's GitHub access), `not_empty` means it has other commits."""
+def _scaffold_target(request: HttpRequest, workspace: str, raw_slug: str, raw_repo: str):
+    """(slug, owner/name) after the create gate, or a 4xx problem."""
     from . import creation
 
     try:
-        full = creation.parse_repo(repo)
+        full = creation.parse_repo(raw_repo)
     except creation.ScaffoldError as exc:
         raise ProblemError(exc.status, str(exc), type_=TYPE_VALIDATION) from None
-    slug = _scaffold_slug(request, workspace, slug, full)
+    return _scaffold_slug(request, workspace, raw_slug, full), full
+
+
+def _inspect(token: str, full: str, slug: str):
+    """Who the token is and what the repo looks like through it, or a problem."""
+    from . import creation
+
     try:
-        state = creation.inspect_repo(_github_token(request), full, slug)
+        who = delegations.inspect_github(token)
+        return who, creation.inspect_repo(token, full, slug)
+    except delegations.DelegationError as exc:
+        raise ProblemError(422, str(exc), type_=TYPE_VALIDATION) from None
+    except creation.ScaffoldError as exc:
+        raise ProblemError(exc.status, str(exc), type_=TYPE_VALIDATION) from None
     except requests.RequestException as exc:
         raise ProblemError(502, "Could not reach GitHub", type_=TYPE_UPSTREAM, detail=str(exc)) from None
+
+
+# POST, though it writes nothing: it carries a token, which does not belong in a URL.
+@router.post("/scaffold/check", response=RepoCheckOut,
+             summary="Can a new agent's scaffold be pushed into this repository with this token?")
+def check_scaffold_repo(request: HttpRequest, payload: RepoCheckIn) -> RepoCheckOut:
+    """Reads only, and stores nothing. `ready` means empty and the token can see it,
+    `adopt` means it already holds this agent's scaffold, `missing` means the token
+    cannot see it (not created yet, or not in the token's repositories), `not_empty`
+    means it has other commits. `token_url` is GitHub's token form, filled in."""
+    from . import creation
+
+    slug, full = _scaffold_target(request, payload.workspace, payload.slug, payload.repo)
     owner, name = full.split("/", 1)
+    links = {"new_repo_url": creation.new_repo_url(owner, name),
+             "token_url": delegations.token_form_url(slug, full)}
+    if not payload.token.strip():
+        return RepoCheckOut(repo=full, state="no_token", detail="Paste a token to check the repository.",
+                            **links)
+    who, state = _inspect(payload.token.strip(), full, slug)
     return RepoCheckOut(repo=full, state=state.state, default_branch=state.default_branch,
-                        detail=state.detail, fix_url=state.fix_url,
-                        new_repo_url=creation.new_repo_url(owner, name))
+                        detail=state.detail, login=who["login"], **links)
 
 
 @router.post("/scaffold", response={201: AgentScaffoldOut},
              summary="Push a new agent's scaffold into an empty repository")
 def scaffold_agent(request: HttpRequest, payload: AgentScaffoldIn) -> Status:
-    """Stamps the agent with the same factory `/canopy:create-agent` uses and pushes it,
-    as you, into an empty repository you created. Does not register the agent: follow
-    with `POST /api/agents/` (`upsert_agent`) carrying the returned `repo_url` and
-    `repo_ref`. Safe to repeat — a repository that already holds this scaffold is adopted."""
+    """Stamps the agent with the same factory `/canopy:create-agent` uses and pushes it into
+    an empty repository you created, with your fine-grained token. Stores nothing: follow
+    with `POST /api/agents/` (`upsert_agent`) carrying the returned `repo_url`/`repo_ref`,
+    then `PUT /api/agents/{slug}/github` with the same token so its turns use it too.
+    Safe to repeat — a repository that already holds this scaffold is adopted."""
     from canopy_agent_factory import AgentSpec
 
     from . import creation
 
-    try:
-        full = creation.parse_repo(payload.repo)
-    except creation.ScaffoldError as exc:
-        raise ProblemError(exc.status, str(exc), type_=TYPE_VALIDATION) from None
-    slug = _scaffold_slug(request, payload.workspace, payload.slug, full)
-    token = _github_token(request)
-    try:
-        state = creation.inspect_repo(token, full, slug)
-        if state.state in ("missing", "not_empty"):
-            raise creation.ScaffoldError(state.detail, fix_url=state.fix_url)
-        files = 0
-        if state.state == "ready":
-            user = request.user
-            rendered = creation.render(AgentSpec(
-                slug=slug, display_name=payload.name.strip(), mandate=payload.mandate.strip(),
-                mailbox=payload.mailbox.strip(), stakeholders=payload.stakeholders.strip(),
-                author_name=user.get_full_name() or user.email, author_email=user.email,
-            ))
+    slug, full = _scaffold_target(request, payload.workspace, payload.slug, payload.repo)
+    token = payload.token.strip()
+    _, state = _inspect(token, full, slug)
+    if state.state in ("missing", "not_empty"):
+        raise ProblemError(409, state.detail, type_=TYPE_CONFLICT)
+    files = 0
+    if state.state == "ready":
+        user = request.user
+        rendered = creation.render(AgentSpec(
+            slug=slug, display_name=payload.name.strip(), mandate=payload.mandate.strip(),
+            mailbox=payload.mailbox.strip(), stakeholders=payload.stakeholders.strip(),
+            author_name=user.get_full_name() or user.email, author_email=user.email,
+        ))
+        try:
             creation.push(token, state, rendered, slug=slug)
-            files = len(rendered)
-    except creation.ScaffoldError as exc:
-        raise ProblemError(exc.status, str(exc), type_=TYPE_CONFLICT if exc.status == 409 else TYPE_UPSTREAM,
-                           extras={"fix_url": exc.fix_url} if exc.fix_url else None) from None
-    except requests.RequestException as exc:
-        raise ProblemError(502, "Could not reach GitHub", type_=TYPE_UPSTREAM, detail=str(exc)) from None
+        except creation.ScaffoldError as exc:
+            raise ProblemError(exc.status, str(exc),
+                               type_=TYPE_CONFLICT if exc.status == 409 else TYPE_UPSTREAM) from None
+        except requests.RequestException as exc:
+            raise ProblemError(502, "Could not reach GitHub", type_=TYPE_UPSTREAM, detail=str(exc)) from None
+        files = len(rendered)
     return Status(201, AgentScaffoldOut(
         repo=full, repo_url=creation.repo_url(full), repo_ref=state.default_branch,
         adopted=state.state == "adopt", files=files))

@@ -6,6 +6,10 @@ page (`/w/:ws/agents/new`), the push (`apps/agents/creation.py`, the factory's f
 consumer in `apps/`) and the setup checklist (`GET /api/agents/{slug}/setup`) shipped
 2026-10-14. Registration stays the ordinary upsert rather than a combined route, so the
 web and `/canopy:create-agent` share one door — see `docs/architecture/api-surface.md`.
+**The credential changed on the way:** the push uses the person's fine-grained token
+(the agent-delegation model, `2026-09-24-agent-github-delegation-design.md`), not this
+spec's GitHub App grant. One token scoped to the new repo does the push and becomes the
+agent's GitHub identity, and nothing needs an org owner to approve an app install.
 
 **Two decisions below were REVERSED by building it.** §Decisions 1 and 6 are superseded —
 see "What building it changed". The permission set is narrower, the user creates the

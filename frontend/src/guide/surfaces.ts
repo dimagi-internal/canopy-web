@@ -287,8 +287,8 @@ export const SURFACES: SurfaceDescriptor[] = [
     path: '/w/:workspace/agents/new',
     title: 'New agent',
     audience: 'Workspace editors creating an agent',
-    what: "Creates an agent's repository from canopy's agent template (the same one /canopy:create-agent uses), pushes it to an empty GitHub repo you made, registers the agent with you as owner, then opens its setup checklist. Its persona and first skill are written afterwards in Claude Code; the checklist gives you the command.",
-    needsFirst: 'GitHub connected in Settings, and an empty repository added to canopy\'s GitHub access.',
+    what: "Creates an agent's repository from canopy's agent template (the same one /canopy:create-agent uses), pushes it to an empty GitHub repo you made with your fine-grained token, registers the agent with you as owner, saves the token as its GitHub identity, then opens its setup checklist. Its persona and first skill are written afterwards in Claude Code; the checklist gives you the command.",
+    needsFirst: 'An empty GitHub repository, and a fine-grained token that can push to it (the page links both forms, filled in).',
     actions: ['Name the agent and its mandate', 'Check the repository canopy will push to', 'Create and register it'],
   },
   {

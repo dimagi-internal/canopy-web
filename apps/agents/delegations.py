@@ -87,10 +87,16 @@ def create_url(agent: Agent) -> str:
     `set_github` refuses a token that cannot reach the agent's repo rather than
     trusting the form.
     """
-    repo = agent_repo(agent)
+    return token_form_url(agent.slug, agent_repo(agent))
+
+
+def token_form_url(slug: str, repo: str) -> str:
+    """`create_url` for an agent that may not exist yet — the create page asks for
+    this token before there is an `Agent` row, and the same token becomes its
+    delegation."""
     params = {
-        "name": f"canopy {agent.slug}"[:40],
-        "description": f"canopy-web agent '{agent.slug}' acting as you on GitHub",
+        "name": f"canopy {slug}"[:40],
+        "description": f"canopy-web agent '{slug}' acting as you on GitHub",
         "expires_in": "366",
         "contents": "write",
         "pull_requests": "write",
@@ -104,7 +110,7 @@ def create_url(agent: Agent) -> str:
 
 # ---- talking to GitHub -------------------------------------------------------
 
-def _headers(token: str) -> dict:
+def github_headers(token: str) -> dict:
     return {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
@@ -127,7 +133,7 @@ def inspect_github(token: str) -> dict:
     """Who a token acts as, and when it expires. Raises DelegationError when
     GitHub rejects it outright."""
     try:
-        resp = requests.get(f"{GITHUB_API}/user", headers=_headers(token), timeout=HTTP_TIMEOUT)
+        resp = requests.get(f"{GITHUB_API}/user", headers=github_headers(token), timeout=HTTP_TIMEOUT)
     except requests.RequestException as exc:
         raise DelegationError(f"could not reach GitHub to check the token: {exc}") from exc
     if resp.status_code == 401:
@@ -150,7 +156,7 @@ def probe_pull_request(token: str, repo: str) -> dict:
     try:
         resp = requests.post(
             f"{GITHUB_API}/repos/{repo}/pulls",
-            headers=_headers(token),
+            headers=github_headers(token),
             json={"title": "canopy permission probe", "head": _PROBE_HEAD, "base": "main"},
             timeout=HTTP_TIMEOUT,
         )
@@ -173,7 +179,7 @@ def probe_push(token: str, repo: str) -> dict:
     try:
         resp = requests.post(
             f"{GITHUB_API}/repos/{repo}/git/refs",
-            headers=_headers(token),
+            headers=github_headers(token),
             json={"ref": f"refs/heads/{_PROBE_HEAD}", "sha": _PROBE_SHA},
             timeout=HTTP_TIMEOUT,
         )
