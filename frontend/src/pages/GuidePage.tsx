@@ -44,8 +44,7 @@ export function GuidePage() {
       >
         <span className="text-sm font-semibold text-foreground">New here? Get started →</span>
         <span className="mt-1 block text-[13px] text-foreground-secondary">
-          Install canopy, install an agent, set up the agent. Agents run in your own Claude Code with
-          your own logins.
+          Install canopy, install an agent, set up the agent. Agents run in your own Claude Code.
         </span>
       </Link>
 

@@ -62,6 +62,8 @@ describe('GetStartedPage', () => {
     )
     expect(listAgents).not.toHaveBeenCalled()
     expect(screen.getByText(/read access to each agent's GitHub repo/)).toBeTruthy()
+    expect(screen.getByText(/access to the agent's vault/)).toBeTruthy()
+    expect(screen.queryByText(/with no logins/)).toBeNull()
   })
 
   it('signed in, lists the agents of every workspace, all from canopy-agents', async () => {
