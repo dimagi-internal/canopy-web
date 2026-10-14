@@ -119,8 +119,9 @@ def _runner(agent: Agent, settings: str) -> dict:
     if unset:
         names = ", ".join(r.name for r in unset)
         return _step("runner", title, WAITING,
-                     f"{names} will take its turns once it has set {agent.name} up — it does that "
-                     "on its own at its next idle moment, usually within a few minutes.",
+                     f"{names} will take its turns once it has set {agent.name} up. It does that on "
+                     "its own when it next has no turn running, which can take a while if it is "
+                     "busy; this ticks when it reports back.",
                      href=f"{settings}#running", action="See routing")
     if takers:
         names = ", ".join(r.name for r in takers)
