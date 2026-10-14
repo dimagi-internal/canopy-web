@@ -100,7 +100,10 @@ The stack is an instance of canopy's shared template,
 That template is the "shared repo it points at". An agent may write its own instead, as long
 as the stack exposes the same contract.
 
-- **Outputs:** `LaunchTemplateId`, `ArtifactsBucketName`, `InstanceRoleArn`, `Capability`.
+- **Outputs:** `LaunchTemplateId`, `ArtifactsBucketName`, `InstanceRoleArn`, `Capability`,
+  plus `Owner` (must equal the publishing agent's slug) and `InstanceRoleId` (the role's
+  RoleId, not its ARN, which names each instance's S3 prefix; see the image below). A publish
+  resolves all six and refuses a stack missing any of them.
 - **Tagging:** the launch template tags instances `canopy:capability=<name>` and
   `canopy:owner=<agent>`.
 - **AMI pointer:** the AMI is resolved from SSM parameter `/canopy/capabilities/<agent>/<name>/ami`.
@@ -119,13 +122,17 @@ as the stack exposes the same contract.
   The agent's stack is what lets canopy-web act, and only on that agent's machines.
 - **The image** must:
   - read user-data JSON `{"lease_id", "params", "max_lifetime_s", "bucket"}`;
-  - when ready, write `s3://<bucket>/vm/<instance-id>/ready.json`
-    (`{"ok": bool, "reason"?, "timings"?, "cli_version"?}`);
+  - when ready, write `s3://<bucket>/vm/<role-id>:<instance-id>/ready.json`
+    (`{"ok": bool, "reason"?, "timings"?, "cli_version"?}`). The prefix is the instance's
+    `aws:userid` (`aws sts get-caller-identity --query UserId`). The broker computes the same
+    key from the stack's `InstanceRoleId` output;
   - halt at `max_lifetime_s`;
   - put every allow-listed CLI on `PATH`.
 
-  The instance role may only write `vm/${aws:userid}/*`. An instance role can't see its own
-  tags, so the scoping is by instance id.
+  The instance role may only write `vm/${aws:userid}/*` (for an instance-profile session,
+  `aws:userid` is `<role-id>:<instance-id>`). It may also read `leases/*/in/*` and write
+  `leases/*/out/*` and `leases/*/exec/*`, which is where SSM's agent uploads command output.
+  An instance role can't see its own tags, so the scoping is by session.
 
 ### 3. Allowing: canopy-web
 

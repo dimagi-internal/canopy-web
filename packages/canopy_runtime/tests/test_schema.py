@@ -88,3 +88,35 @@ def test_secret_requires_a_name():
 def test_load_rejects_non_mapping_top_level():
     with pytest.raises(ValueError):
         load_runtime_yaml("- just\n- a\n- list\n")
+
+
+# Real agents' runtime.yaml, copied verbatim (ACE's from ace#2908, echo's from its
+# repo). A schema that rejects the files agents actually ship is a schema nobody can
+# use: ACE's failed with 48 errors on `op`, `value`, `local_only` and tool `optional`.
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+@pytest.mark.parametrize("name", ["ace-runtime.yaml", "echo-runtime.yaml"])
+def test_real_agent_runtime_yaml_validates(name):
+    spec = load_runtime_yaml((FIXTURES / name).read_text())
+    assert spec.secrets
+
+
+def test_ace_runtime_carries_its_sources_capabilities_and_optional_tools():
+    spec = load_runtime_yaml((FIXTURES / "ace-runtime.yaml").read_text())
+    by = {s.name: s for s in spec.secrets}
+    assert by["canopy-pat"].op == "op://Agent-Ace/canopy-pat/credential"
+    assert by["connect-base-url"].value == "https://connect.dimagi.com"
+    assert by["ace-web-pat-token"].local_only is True
+    assert {t.name for t in spec.tools if t.optional} == {"java", "adb", "maestro"}
+    assert [c.manifest for c in spec.capabilities] == ["infra/capabilities/android-emulator/capability.yaml"]
+
+
+@pytest.mark.parametrize("secret", [
+    {"name": "x", "op": "op://A/b/c", "value": "v"},       # one source, not two
+    {"name": "x", "op": "Agent-Ace/b/c"},                   # op is an op:// reference
+    {"name": "x", "local_only": True, "op": "op://A/b/c"},  # local_only has no shared source
+])
+def test_secret_source_rules(secret):
+    with pytest.raises(ValidationError):
+        RuntimeSpec.model_validate({"secrets": [secret]})

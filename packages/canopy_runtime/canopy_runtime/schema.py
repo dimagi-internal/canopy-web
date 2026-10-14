@@ -54,6 +54,9 @@ class ToolRef(_Strict):
     """A CLI tool / binary the runtime requires on PATH (e.g. `gh`, `claude`)."""
 
     name: str = Field(min_length=1)
+    # If true, absence is fine (reported, not a gap): a tool only some turns use
+    # (ACE's adb/maestro for local device walks, java for one QA gate).
+    optional: bool = False
 
 
 class PreflightCheck(_Strict):
@@ -84,6 +87,26 @@ class SecretRef(_Strict):
     path: str = ""
     # If true, absence is fine (skipped) rather than a "needs bootstrap" gap.
     optional: bool = False
+    # WHERE the value comes from (canopy-web mirrors these as Agent.runtime_sources):
+    # `op` is a 1Password reference (op://Vault/Item/field) — a pointer, not a value;
+    # `value` is a NON-sensitive literal that varies per environment (a base URL, a
+    # folder id) and so is declared as a reference rather than under `env:`.
+    # At most one of the two. Neither → resolved by name from the env's store.
+    op: str = ""
+    value: str = ""
+    # Never in a shared store: minted per human/machine and kept only locally
+    # (ACE's ACE_WEB_PAT_TOKEN). The reconciler does not try to resolve it.
+    local_only: bool = False
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "SecretRef":
+        if self.op and self.value:
+            raise ValueError(f"secret {self.name!r}: give `op` or `value`, not both")
+        if self.op and not self.op.startswith("op://"):
+            raise ValueError(f"secret {self.name!r}: `op` is a 1Password reference (op://…), got {self.op!r}")
+        if self.local_only and (self.op or self.value):
+            raise ValueError(f"secret {self.name!r}: a local_only secret has no shared source")
+        return self
 
     @field_validator("name")
     @classmethod
