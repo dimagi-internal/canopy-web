@@ -87,15 +87,14 @@ urlpatterns = [
         views_walkthrough_content,
         name="walkthrough-content",
     ),
-    # Each workspace's agent plugins as a Claude Code marketplace
-    # (canopy-web#1376, docs/plugin-marketplace.md). Bare views: Claude Code
-    # fetches these exact addresses, and they self-enforce auth (401 / 404).
-    path("w/<str:ws>/marketplace.json", plugin_views.marketplace_json, name="plugin-marketplace"),
-    path(
-        "w/<str:ws>/plugins/<str:agent>/<str:version>.zip",
-        plugin_views.plugin_archive,
-        name="plugin-archive",
-    ),
+    # One personal catalog of agent plugins for Claude Code, `canopy-agents`
+    # (docs/architecture/plugin-marketplace.md). Bare view: Claude Code fetches
+    # this exact address, and it self-enforces auth (401). Not under /agents/,
+    # which is the SPA's /agents/* tenant redirect.
+    path("plugins/marketplace.json", plugin_views.marketplace_json, name="plugin-marketplace"),
+    # The retired per-workspace marketplace + archive URLs: 410 naming the new one.
+    path("w/<str:ws>/marketplace.json", plugin_views.moved, name="plugin-marketplace-moved"),
+    re_path(r"^w/[^/]+/plugins/", plugin_views.moved, name="plugin-archive-moved"),
     # The flat artifact addresses — /walkthrough/…, /review/…, /share/… — and
     # the pre-tenancy /w/<uuid>/… ones are GONE (owner decision, 2026-10-08;
     # canopy-web#1337): one URL per artifact, under its workspace, and nothing

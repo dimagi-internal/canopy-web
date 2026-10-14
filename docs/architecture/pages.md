@@ -27,7 +27,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   review,share,storyboard,narrative,ddd-release}/…` plus the walkthrough
   content stream (`apps/common/middleware.py::_SCOPED_VIEWER` — the trailing
   slash keeps the plural list pages `/walkthroughs`, `/storyboards` behind
-  login), the plugin marketplace (self-enforced 401), and the flat-artifact 404.
+  login), the plugin catalog (self-enforced 401; old per-workspace URLs 410), and the flat-artifact 404.
   Every other `/w/` path is the authed tenant shell. Each viewer passes `ws` so
   the API 404s a row from another workspace.
 - **Adding a page:** add it to `routeTable`, give it a descriptor in
@@ -204,10 +204,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/ddd`** (+ `/:narrative`, `/:narrative/:runId`) — the DDD operator
   console: narrative → version → run → package (video + deck + narrative +
   links).
-- **`/marketplace.json`** (+ `/plugins/:agent/:sha.zip`) — server views, not
-  SPA: the workspace's agents as a Claude Code plugin marketplace
-  (`apps/plugins`, bearer canopy token, member-only, 401 never a sign-in
-  redirect). [`plugin-marketplace.md`](plugin-marketplace.md).
+- **`/marketplace.json`** (+ `/plugins/…`) — retired server views: **410**
+  naming the one personal catalog, `/plugins/marketplace.json`
+  ([`plugin-marketplace.md`](plugin-marketplace.md)).
 
 ### Scoped public viewers (anonymous with a token)
 
@@ -306,6 +305,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - `/embed/chat`, `/embed/widget.js` — the one framable page and the widget
   loader ([`embedding-a-canopy-agent.md`](embedding-a-canopy-agent.md)).
 - `/w/<ws>/walkthrough/<id>/content`, `/w/<ws>/marketplace.json`,
-  `/w/<ws>/plugins/…` — see above.
+  `/w/<ws>/plugins/…` (410) — see above.
+- `/plugins/marketplace.json` — your agent catalog for Claude Code, marketplace
+  `canopy-agents` (`apps/plugins`, bearer canopy token, 401 never a sign-in
+  redirect). [`plugin-marketplace.md`](plugin-marketplace.md).
 - `assets/` is deliberately NOT served by the SPA catch-all: a missing hashed
   bundle must 404, not return `index.html` as `200 text/html`.

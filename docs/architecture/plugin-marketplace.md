@@ -1,54 +1,90 @@
-# A workspace's agents as a Claude Code plugin marketplace
+# Your canopy agents as one Claude Code plugin catalog
 
-canopy-web#1376. Code: `apps/plugins/` (services, views, model). Tests:
-`tests/test_plugin_marketplace.py`.
+Code: `apps/plugins/` (services, views). Tests: `tests/test_plugin_marketplace.py`.
+Replaces the per-workspace marketplaces of canopy-web#1376 (owner decision,
+Jonathan Jackson, 2026-10-14).
 
-Every workspace serves its agents' plugins as a Claude Code marketplace, so a
-member can install them **without a GitHub account**. Agent repos are private
-`dimagi-internal` repos, and a `github` plugin source is fetched with the user's
-own `git`, so before this only people with GitHub access could install an agent.
-An `archive` source is a zip over HTTPS, pinned by `sha256`, fetched with the
-caller's canopy token.
+Every signed-in person gets **one** catalog, the marketplace **`canopy-agents`**,
+listing the agent plugins of every workspace they are a member of, at any role,
+across all their organisations. The install name never depends on which
+workspace an agent lives in: `/plugin install ace@canopy-agents`, whether ACE is
+in `connect` or anywhere else, and it keeps working if the agent moves.
 
-The **canopy** plugin itself is not served here. It stays publicly installable
-from GitHub, because it is what gives a new user the token this marketplace
-needs.
+The **canopy** plugin itself is not listed here. It stays publicly installable
+from GitHub, because it is what gives a new user the token this catalog needs.
+
+## Two rules
+
+1. **One catalog per person, not per workspace.** Membership decides what is
+   *listed*: direct membership of a workspace at any role, plus the descendants
+   of a workspace you own (the only access the workspace tree grants). A person
+   with no memberships gets a valid, empty catalog.
+2. **canopy never lends GitHub access.** Every entry is a **`github` plugin
+   source** on the agent's repo, which Claude Code fetches with the installing
+   person's **own** git credentials. To install an agent you need your own read
+   access to its GitHub repo (ada, eva, echo, hal and ace are private
+   `dimagi-internal` repos). canopy builds no archives and holds no plugin
+   bytes. The one GitHub read canopy makes is **anonymous**: it fetches
+   `.claude-plugin/plugin.json` from `raw.githubusercontent.com` for the entry's
+   name (cached 1 hour). That works for a public repo; a private one falls back
+   to the repo name.
+
+## Plugins, not instances
+
+The catalog lists **code**. An `Agent` row is an *instance*: an agent running in
+one workspace, with its own vault and config. Two workspaces could each run an
+instance of the same agent (two rows, different slugs, the same repo + ref).
+They are **one plugin**; installing it twice would load the same skills and MCP
+servers twice under one `plugin.json` name. So:
+
+- entries are keyed by the plugin source, `(repo, ref)`; several instances of
+  one repo give **one** entry, and its `metadata.instances` lists the
+  `{agent, workspace}` pairs you can see;
+- the entry is named from the plugin's own `plugin.json` `name`, else the repo
+  name, never from `Agent.slug`, so the install name is `ace@canopy-agents`
+  whichever instance you can see;
+- two *different* sources that share a plugin name (a fork, or another ref):
+  the source of the oldest instance keeps the name, and each other one is
+  listed as `<name>--<owner>-<repo>[--<ref>]` and logged. Nothing is dropped.
+
+Choosing **which** instance you work with (workspace, 1Password vault, config)
+is the agent's own setup command's job, not the catalog's. Today every agent has
+exactly one instance.
+
+`Agent` has no plugin-subdirectory field, so a plugin must sit at its repo's
+root (`.claude-plugin/plugin.json`); every fleet agent's does. A plugin nested
+in a subdirectory would need a stored path and a `git-subdir` source.
 
 ## URLs
 
 | URL | What it returns |
 | --- | --- |
-| `GET https://canopy.dimagi.com/w/<ws>/marketplace.json` | The marketplace: `name` = `canopy-<ws>`, one `archive` entry per agent in `<ws>` that has a github.com repo |
-| `GET https://canopy.dimagi.com/w/<ws>/plugins/<agent-slug>/<short-sha>.zip` | One agent's plugin at one commit. The bytes never change for a URL (`Cache-Control: immutable`) |
+| `GET https://canopy.dimagi.com/plugins/marketplace.json` | Your catalog: `name` = `canopy-agents`, one `github` entry per plugin |
+| `GET /w/<ws>/marketplace.json`, `GET /w/<ws>/plugins/…` | **410 Gone** (retired), JSON `detail`: "Agent plugins moved to one catalog: register https://canopy.dimagi.com/plugins/marketplace.json (re-run /canopy:setup).", plus `url` and `marketplace` |
 
-Both URLs need a canopy identity and membership of `<ws>`, at any role, viewer
-included:
+The catalog is not at `/agents/marketplace.json` because `/agents/*` is the
+SPA's redirect to `/w/<ws>/agents` (and allowlisted for the PWA shell).
 
-- no identity: **401** with `WWW-Authenticate: Bearer`. This is never a sign-in
-  redirect, because Claude Code can't follow one.
-- not a member, or no such workspace: **404**. The two cases look the same, so
-  the response doesn't reveal whether a workspace exists.
-- an agent that isn't in `<ws>`, or a version that was never built: **404**.
+Auth: no canopy identity is a **401** with `WWW-Authenticate: Bearer`, never a
+sign-in redirect, because Claude Code can't follow one. The 410s answer anyone,
+signed in or not, and reveal nothing.
 
 ## The auth header contract
 
-Send **`Authorization: Bearer <canopy token>`**. This is the same header and token
-(a PAT from `/canopy:canopy-web-pat-mint`, at `~/.claude/canopy/workbench-token`)
-that the canopy plugin's `scripts/canopy-web-mcp-headers.js` already sends to
-`/api/mcp/`. `BearerTokenAuthMiddleware` resolves it, as it does for every other
-route. A delegated token also works, because it resolves to a user. A contact
-token does not, because it has no user, so it gets a 401.
+Send **`Authorization: Bearer <canopy token>`**: the same header and token (a
+PAT from `/canopy:canopy-web-pat-mint`, at `~/.claude/canopy/workbench-token`)
+that the canopy plugin's `scripts/canopy-web-mcp-headers.js` sends to
+`/api/mcp/`. `BearerTokenAuthMiddleware` resolves it, as for every other route.
+A delegated token also works (it resolves to a user). A contact token, or a
+confined session's `cct_…` caller token, has no user and gets a 401.
 
-Claude Code attaches headers to a hosted marketplace in only one way: a
-`headersHelper` (or a static `headers` map) on a **`url` marketplace source
-declared in settings**. A helper declared there runs before every fetch of
-`marketplace.json` **and** before every archive download on the same origin.
-Claude Code reuses its output for up to 60 seconds. Every archive URL is on
-canopy's own origin (`CANOPY_PUBLIC_BASE_URL`), so one helper covers both. The
-entries deliberately set no per-entry `headersHelper`. Claude Code would ask the
-user to approve one on each install, and it would require `"strict": false`.
+The header is needed for `marketplace.json` only. The plugins themselves come
+from GitHub, authenticated by the user's git (SSH key in `ssh-agent`, or a
+stored HTTPS credential, e.g. `gh auth login && gh auth setup-git`). Users with
+no GitHub SSH key should set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1`: installs from
+`/plugin` and plugin updates don't fall back to HTTPS on their own.
 
-### Registering it (what a user, or the canopy plugin's setup, writes)
+### Registering it (what `/canopy:setup` writes)
 
 In `~/.claude/settings.json` (user settings, so the helper runs without a
 prompt):
@@ -56,10 +92,10 @@ prompt):
 ```json
 {
   "extraKnownMarketplaces": {
-    "canopy-<ws>": {
+    "canopy-agents": {
       "source": {
         "source": "url",
-        "url": "https://canopy.dimagi.com/w/<ws>/marketplace.json",
+        "url": "https://canopy.dimagi.com/plugins/marketplace.json",
         "headersHelper": "node /ABSOLUTE/PATH/canopy-web-mcp-headers.js"
       }
     }
@@ -70,103 +106,80 @@ prompt):
 Then, in a session:
 
 ```
-/plugin install <agent>@canopy-<ws>        e.g. /plugin install echo@canopy-family
-/plugin marketplace update canopy-<ws>     pick up merges (or turn on auto-update under /plugin → Marketplaces)
+/plugin install <plugin>@canopy-agents     e.g. /plugin install echo@canopy-agents
+/plugin marketplace update canopy-agents   pick up new agents and updates (or enable auto-update)
 ```
 
-`/plugin marketplace add https://canopy.dimagi.com/w/<ws>/marketplace.json` on
-its own has no way to attach a header, so it gets a 401. Use the settings entry
-above, which registers the marketplace with no `add` step.
+`/plugin marketplace add https://canopy.dimagi.com/plugins/marketplace.json`
+alone can't attach a header, so it gets a 401. Use the settings entry. Old
+`canopy-<ws>` entries should be removed; their URL now answers 410.
 
-### What the helper must do (the canopy-side contract)
-
-Wiring this into the canopy plugin is canopy's job, not canopy-web's. These are
-the constraints it has to meet:
+### What the helper must do
 
 - **Print** exactly one JSON object on stdout, `{"Authorization": "Bearer <token>"}`,
-  and exit 0 within 10 seconds. `canopy-web-mcp-headers.js` already does this.
-- **Use an absolute path.** Settings have no `${CLAUDE_PLUGIN_ROOT}`, and the
-  helper's working directory is `~/.claude`. The plugin cache path changes with
-  each canopy version, so the canopy setup should install the helper at a
-  stable path, or expose it as a stable CLI such as
-  `canopy marketplace-headers`, and write that path into the settings entry.
-- **An empty or missing token is a 401 here.** On `/api/mcp/`, emitting no
-  header is a working state, because the 401 leads to the MCP OAuth sign-in.
-  A marketplace has no OAuth fallback, so the person must mint a PAT first.
-- **Confined sessions** (`cct_…` caller tokens) resolve to no user and get a
-  401, which is correct: a caller's session should not install the owner's
-  agents.
-- Credential-looking environment variables are stripped only for helpers
-  declared in a `marketplace.json` entry or in project settings. A helper in
-  user settings keeps its environment. Read the token from the file anyway,
-  as the existing helper does.
+  and exit 0 within 10 seconds.
+- **Use an absolute path.** Settings have no `${CLAUDE_PLUGIN_ROOT}` and the
+  helper's working directory is `~/.claude`; the canopy setup installs the
+  helper at a stable path and writes that path into the entry.
+- **An empty or missing token is a 401.** A marketplace has no OAuth fallback,
+  so the person must mint a PAT first.
 
 ## Sample `marketplace.json`
 
+For someone who is a member of `dimagi` and `connect`:
+
 ```json
 {
-  "name": "canopy-family",
-  "owner": { "name": "Family", "url": "https://canopy.dimagi.com/w/family/agents" },
-  "description": "The agents of the Family workspace on canopy, as Claude Code plugins.",
+  "name": "canopy-agents",
+  "owner": { "name": "canopy", "url": "https://canopy.dimagi.com/" },
+  "description": "The canopy agents in your workspaces, as Claude Code plugins. Installing one needs your own read access to its GitHub repo.",
   "plugins": [
     {
-      "name": "echo",
-      "description": "Echo tells stories",
-      "version": "1.2.0+aaaaaaaaaaaa",
-      "source": {
-        "source": "archive",
-        "url": "https://canopy.dimagi.com/w/family/plugins/echo/aaaaaaaaaaaa.zip",
-        "sha256": "6bfa50e3d2e00c052b46abe51fff89346ac803e45771f76dcf6df1ab74cca5e1"
-      },
-      "metadata": {
-        "agent": "echo",
-        "repo": "dimagi-internal/echo",
-        "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      }
+      "name": "ace",
+      "description": "ACE runs Connect opportunities end to end",
+      "source": { "source": "github", "repo": "dimagi-internal/ace" },
+      "metadata": { "instances": [{ "agent": "ace", "workspace": "connect" }] }
+    },
+    {
+      "name": "ada",
+      "description": "Conducts the canopy agent fleet",
+      "source": { "source": "github", "repo": "dimagi-internal/ada" },
+      "metadata": { "instances": [{ "agent": "ada", "workspace": "dimagi" }] }
     }
   ]
 }
 ```
 
+An agent whose `Agent.repo_ref` is set and isn't `main` gets `"ref": "<ref>"` in
+its source. `main` and blank omit `ref`, so Claude Code follows the repo's
+default branch.
+
 ## How a merge reaches users
 
-GitHub stays the source of truth. Agents keep shipping branch → PR → merge, and
-canopy-web never edits a plugin.
+GitHub is the source of truth and canopy-web is out of the path: Claude Code
+clones the repo at the ref itself. It computes an installed plugin's version
+from `plugin.json`'s `version`, else the entry's `version`, else the **commit
+sha**, and fetches a new copy only when that computed version changes. Entries
+deliberately carry no `version`.
 
-1. A marketplace read resolves each agent's `repo_url` @ `repo_ref` (default
-   `main`) to a commit sha. It caches the result for **5 minutes**
-   (`HEAD_TTL`), so a merge is visible to users within that window.
-2. If no archive exists for that commit, canopy builds one. It downloads
-   GitHub's zipball **as the agent's owner**: the owner's GitHub delegation
-   (Settings → Credentials → GitHub), else the owner's GitHub App connection,
-   else anonymously, which works for a public repo. The person reading the
-   marketplace never lends a GitHub identity.
-3. The build repackages the zipball so the **plugin root is the zip root**. It
-   finds the root at `.claude-plugin/plugin.json`, or, in a marketplace repo, at
-   the single local-source plugin, or the one named after the agent. Every file
-   gets the same fixed timestamp. The build rewrites `plugin.json`'s `version` to
-   **`<repo version>+<12-char sha>`**. Claude Code updates an installed plugin
-   only when its version changes, and `plugin.json` wins over the marketplace
-   entry. Without this rewrite, a merge that didn't bump the version would leave
-   every user on their old copy.
-4. The bytes are stored in `plugins_pluginarchive`, one immutable row per
-   (repo, commit), and the entry pins their `sha256`. GitHub doesn't promise a
-   byte-stable zipball, so the stored row is what keeps the pin true.
+So **an agent must bump `plugin.json`'s `version` on every merge** it wants users
+to receive (the fleet agents' auto-bump workflows do this). An agent that merges
+without bumping leaves users on their cached copy until it next bumps. An agent
+that drops `version` from `plugin.json` is tracked by commit sha instead, and
+every merge is an update. (The retired archive path rewrote the version to
+`<version>+<sha>` to hide this; with `github` sources canopy no longer touches
+the plugin.)
 
-Claude Code allows a `marketplace.json` fetch **10 seconds**. A read builds new
-archives for up to 6 seconds (`BUILD_BUDGET_SECONDS`). After that, an agent
-whose new head isn't built yet is listed at its **last built version**, and the
-next read builds it. When GitHub fails, the last built version is listed too.
-An agent that has never built successfully is left out. To see why an agent is
-missing, run `manage.py build_plugin_archives [--workspace <slug>]`: it builds
-every head now and prints each failure's reason. It is also a way to pre-warm
-after a burst of merges.
+Users receive updates with `/plugin marketplace update canopy-agents`, or by
+turning on auto-update for the marketplace under `/plugin` → Marketplaces.
+Background auto-update uses the user's stored git credentials and never
+prompts; a credential helper that would need to prompt makes the update fail
+quietly, leaving the installed copy in place.
 
 ## Known limits
 
-- Two agents in one workspace whose repos declare the same plugin name: the
-  first agent by slug is listed, and the second is not.
-- The marketplace follows `Agent.repo_ref`. An agent pinned to a branch serves
-  that branch.
-- Old archive rows are never deleted. Each one is a few MB, and an installed
-  user's URL keeps working.
+- Plugins in a repo subdirectory are not supported (no stored path; see above).
+- A private repo's entry is named after the repo, because canopy reads
+  `plugin.json` anonymously. Keep the plugin name equal to the repo name.
+- Being listed is not being able to install: someone listed an agent whose repo
+  they can't read gets a git error at install. That is the intended boundary.

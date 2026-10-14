@@ -33,8 +33,9 @@ they take from MCP the administration it is most useful for.
 runners, schedules, mail, every REST route, page actions. It does not offer
 per-agent tools that run an agent remotely (no `<agent>__<capability>`, no
 `agent_reply`): a call like that ran as a turn on the agent OWNER's machine,
-under their credentials. To use an agent, install its plugin from the workspace
-marketplace (`/w/<ws>/marketplace.json`) into your own Claude Code and run it
+under their credentials. To use an agent, install its plugin from your agent
+catalog (`/plugins/marketplace.json`, marketplace `canopy-agents`; see
+`plugin-marketplace.md`) into your own Claude Code and run it
 locally as yourself — see `/get-started`. A client still calling an old agent
 tool gets MCP's unknown-tool error. An agent's declared interface still confines
 the callers who DO reach it through canopy (web chat, Slack, email, embedded
