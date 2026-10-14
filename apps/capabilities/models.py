@@ -118,6 +118,9 @@ class CapabilityLease(models.Model):
     last_heartbeat_at = models.DateTimeField()
     #: The machine's ready.json, once read.
     ready_info = models.JSONField(default=dict, blank=True)
+    #: Every exec this lease sent: {SSM CommandId: ISO sent-at}. How exec status
+    #: tells "SSM has not materialised it yet" (Pending) from "not this lease's".
+    execs = models.JSONField(default=dict, blank=True)
     #: Why it ended (or why a launch is being retried).
     reason = models.CharField(max_length=500, blank=True, default="")
 

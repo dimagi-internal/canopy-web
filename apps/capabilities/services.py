@@ -53,6 +53,8 @@ SWEEP_CACHE_KEY = "capabilities:sweep:last"
 PRESIGN_TTL_S = 3600
 STDOUT_TAIL = 4000
 MAX_EXEC_TIMEOUT_S = 172800
+#: How long after SendCommand an invocation SSM cannot see yet still reads as Pending.
+INVOCATION_GRACE_S = 120
 MAX_UPLOADS = 50
 MAX_ARTIFACTS = 1000
 _PATH = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
@@ -481,7 +483,12 @@ def exec_(lease: CapabilityLease, argv: list[str], timeout_s: int) -> tuple[str,
                                                         output_prefix=f"{_lease_prefix(lease)}/exec")
     except aws.ERRORS as e:
         raise CapabilityError(502, f"could not send the command: {e}") from e
-    CapabilityLease.objects.filter(pk=lease.pk).update(last_heartbeat_at=timezone.now())
+    now = timezone.now()
+    with transaction.atomic():
+        row = CapabilityLease.objects.select_for_update().get(pk=lease.pk)
+        row.execs = {**(row.execs or {}), command_id: now.isoformat()}
+        row.last_heartbeat_at = now
+        row.save(update_fields=["execs", "last_heartbeat_at"])
     _event(lease, "exec.sent", f"{lease.agent.slug}/{lease.capability.name}: {argv[0]} {argv[1:2]}",
            exec_id=command_id, argv=argv[:20], timeout_s=timeout_s)
     return command_id, timeout_s
@@ -506,7 +513,8 @@ def exec_status(lease: CapabilityLease, exec_id: str) -> ExecStatus:
         uuid.UUID(exec_id)
     except ValueError:
         raise CapabilityError(404, f"no exec {exec_id} on lease {lease.pk}") from None
-    if not lease.instance_id:
+    sent_at = (lease.execs or {}).get(exec_id)
+    if not lease.instance_id or sent_at is None:
         raise CapabilityError(404, f"no exec {exec_id} on lease {lease.pk}")
     cap = lease.capability
     b, t = broker(cap), target(cap)
@@ -515,7 +523,19 @@ def exec_status(lease: CapabilityLease, exec_id: str) -> ExecStatus:
     except aws.ERRORS as e:
         raise CapabilityError(502, f"could not read the command: {e}") from e
     if inv is None:
-        raise CapabilityError(404, f"no exec {exec_id} on lease {lease.pk}")
+        # SSM's GetCommandInvocation answers InvocationDoesNotExist for a few
+        # seconds after SendCommand (eventual consistency). An exec THIS lease
+        # sent that SSM cannot see yet is pending, not missing — the first ACE
+        # turn on a cloud runner polled inside that window and failed
+        # (turn f51078e3, 2026-10-14). Past the grace window it really is lost.
+        age = (timezone.now() - dt.datetime.fromisoformat(sent_at)).total_seconds()
+        if age > INVOCATION_GRACE_S:
+            raise CapabilityError(404, (f"exec {exec_id} on lease {lease.pk} was sent {int(age)}s ago "
+                                        "but SSM has no invocation for it"))
+        if lease.is_live:
+            CapabilityLease.objects.filter(pk=lease.pk).update(last_heartbeat_at=timezone.now())
+        return ExecStatus(exec_id=exec_id, status="Pending", done=False, exit_code=None,
+                          stdout_tail="", stderr_tail="", stdout_url=None, stderr_url=None)
     if lease.is_live:
         CapabilityLease.objects.filter(pk=lease.pk).update(last_heartbeat_at=timezone.now())
     urls: dict[str, str | None] = {"stdout": None, "stderr": None}

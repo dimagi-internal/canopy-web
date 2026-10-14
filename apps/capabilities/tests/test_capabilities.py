@@ -465,6 +465,38 @@ def test_an_exec_id_from_another_lease_is_not_found(ready_to_lease, ready_lease)
     assert r.status_code == 404
 
 
+def test_an_exec_ssm_has_not_materialised_yet_is_pending_not_missing(ready_to_lease, ready_lease, world):
+    """SSM answers InvocationDoesNotExist for a few seconds after SendCommand;
+    the first cloud-runner turn polled inside that window (turn f51078e3)."""
+    lid, iid = ready_lease["lease_id"], ready_lease["instance_id"]
+    exec_id = _json(ready_to_lease, "post", f"/api/capabilities/leases/{lid}/exec",
+                    {"argv": ["ace-mobile", "ui-dump"]}).json()["exec_id"]
+    del world.invocations[(exec_id, iid)]  # SSM has not caught up
+    r = _json(ready_to_lease, "get", f"/api/capabilities/leases/{lid}/exec/{exec_id}")
+    assert r.status_code == 200, r.content
+    assert (r.json()["status"], r.json()["done"]) == ("Pending", False)
+
+
+def test_an_exec_ssm_never_materialises_is_lost_after_the_grace_window(ready_to_lease, ready_lease, world):
+    lid, iid = ready_lease["lease_id"], ready_lease["instance_id"]
+    exec_id = _json(ready_to_lease, "post", f"/api/capabilities/leases/{lid}/exec",
+                    {"argv": ["ace-mobile", "ui-dump"]}).json()["exec_id"]
+    del world.invocations[(exec_id, iid)]
+    old = (timezone.now() - dt.timedelta(seconds=services.INVOCATION_GRACE_S + 5)).isoformat()
+    CapabilityLease.objects.filter(pk=lid).update(execs={exec_id: old})
+    r = _json(ready_to_lease, "get", f"/api/capabilities/leases/{lid}/exec/{exec_id}")
+    assert r.status_code == 404 and "SSM has no invocation" in r.json()["detail"]
+
+
+def test_an_exec_id_ssm_knows_but_this_lease_never_sent_is_not_found(ready_to_lease, ready_lease, world):
+    lid, iid = ready_lease["lease_id"], ready_lease["instance_id"]
+    from canopy_sdk.ondemand import Invocation
+    foreign = "00000000-0000-4000-8000-777777777777"
+    world.invocations[(foreign, iid)] = Invocation(foreign, iid, "Success", 0, "secret", "")
+    r = _json(ready_to_lease, "get", f"/api/capabilities/leases/{lid}/exec/{foreign}")
+    assert r.status_code == 404
+
+
 def test_uploads_presign_under_in_and_artifacts_under_out(ready_to_lease, ready_lease, world):
     lid = ready_lease["lease_id"]
     r = _json(ready_to_lease, "post", f"/api/capabilities/leases/{lid}/uploads",
