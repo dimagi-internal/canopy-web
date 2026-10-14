@@ -97,9 +97,39 @@ def test_the_clones_ignored_state_is_linked_in_and_stays_ignored(box):
     assert _git("status", "--porcelain", cwd=wt) == ""
 
 
-def test_an_agent_with_no_clone_keeps_the_scratch_dir(box):
+def test_an_agent_whose_bootstrap_cannot_clone_it_keeps_the_scratch_dir(box, monkeypatch):
     mod, _, _, tmp = box
+    tried = []
+    monkeypatch.setattr(mod, "bootstrap_agent_fleet", lambda: tried.append(1))
+    monkeypatch.setattr(mod, "_LAZY_BOOTSTRAP_TRIED", {})
     assert mod._turn_cwd(_turn("ada"), "aaaaaaaa-1") == tmp / "work" / "aaaaaaaa"
+    # Tried once, and not again on its next turn: a broken clone must not make
+    # every turn wait out a full bootstrap.
+    mod._turn_cwd(_turn("ada"), "aaaaaaab-1")
+    assert tried == [1]
+
+
+def test_a_new_agent_is_set_up_before_its_first_turn_runs(box, monkeypatch):
+    """Labs 2026-10-14: a just-created agent's turn ran in a bare scratch dir —
+    none of its code — because the box had not bootstrapped since it was made."""
+    mod, origin, _, tmp = box
+    agents = tmp / "agents"
+
+    def bootstrap():
+        _git("clone", "-q", str(origin), str(agents / "scout"), cwd=tmp)
+
+    monkeypatch.setattr(mod, "bootstrap_agent_fleet", bootstrap)
+    monkeypatch.setattr(mod, "_LAZY_BOOTSTRAP_TRIED", {})
+    cwd = mod._turn_cwd(_turn("scout"), "bbbbbbbb-1")
+    assert (cwd / "CLAUDE.md").read_text() == "You are Hal.\n"
+    assert cwd != tmp / "work" / "bbbbbbbb"
+
+
+def test_an_agent_already_on_the_box_is_never_re_bootstrapped(box, monkeypatch):
+    mod, _, _, _ = box
+    monkeypatch.setattr(mod, "bootstrap_agent_fleet",
+                        lambda: (_ for _ in ()).throw(AssertionError("bootstrapped")))
+    mod._turn_cwd(_turn("hal"), "cccccccc-1")
 
 
 def test_no_worktree_falls_back_to_the_shared_clone(box, monkeypatch):
