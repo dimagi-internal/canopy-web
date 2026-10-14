@@ -98,10 +98,10 @@ PUBLIC_PATH_PREFIXES = (
     "/api/slack/",            # Slack webhooks — self-enforce via the Slack signing secret (apps/slack/views.py)
     "/api/system/public-stats",  # auth=None — aggregates only, no names/ids (public explainer)
     "/api/beta-requests",        # auth=None — the public site's request-access form; grants nothing
-    # NOTE: "/about" is NOT here. Every other entry above ends in "/" (or is a
-    # full path), so prefix-matching it is safe; "/about" alone would also
-    # admit any future "/about-billing" or "/aboutus" route as a side effect.
-    # See `_is_about` below for the exact-match version.
+    # NOTE: "/about" and "/get-started" are NOT here. Every other entry above
+    # ends in "/" (or is a full path), so prefix-matching it is safe; "/about"
+    # alone would also admit any future "/about-billing" or "/aboutus" route as
+    # a side effect. See `_is_public_page` below for the exact-match version.
 )
 
 
@@ -209,12 +209,17 @@ def _is_storyboard_link(request) -> bool:
     return request.path.startswith("/api/storyboards/")
 
 
-def _is_about(path: str) -> bool:
-    # The public explainer page shell. Exact match ONLY — its stats API is
-    # allowlisted separately in PUBLIC_PATH_PREFIXES — so a future route that
-    # merely begins "/about" (e.g. "/about-billing", "/aboutus") does not
-    # silently become public too.
-    return path == "/about"
+# Public SPA page shells: the explainer (/about) and the getting-started guide
+# (/get-started — step 1, installing canopy, is useful before someone has an
+# account). Exact match ONLY — /about's stats API is allowlisted separately in
+# PUBLIC_PATH_PREFIXES, and /get-started reads nothing anonymously — so a
+# future route that merely begins "/about" (e.g. "/about-billing", "/aboutus")
+# does not silently become public too.
+_PUBLIC_PAGES = frozenset({"/about", "/get-started"})
+
+
+def _is_public_page(path: str) -> bool:
+    return path in _PUBLIC_PAGES
 
 
 def _is_ddd_release_link(request) -> bool:
@@ -253,7 +258,7 @@ class LoginRequiredMiddleware:
             or (getattr(request, "hcp_access", None) is not None
                 and request.path.startswith("/api/hcp/v1/"))
             or _is_public(request.path)
-            or _is_about(request.path)
+            or _is_public_page(request.path)
             or public_site.is_public_path(request.path)
             or _is_artifact_api(request)
             or _is_scoped_viewer(request.path)

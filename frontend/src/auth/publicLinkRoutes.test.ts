@@ -34,7 +34,7 @@ describe('isPublicLinkRoute', () => {
 
   it('covers every chrome-less public surface', () => {
     const prefixes = publicPrefixes(clientSrc)
-    for (const route of ['/invite/', '/about']) {
+    for (const route of ['/invite/', '/about', '/get-started']) {
       expect(prefixes).toContain(route)
     }
     // The artifact viewers — the shared arc, its narratives and a run's release

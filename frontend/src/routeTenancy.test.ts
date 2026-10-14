@@ -36,6 +36,7 @@ const FLAT_ALLOWED: Record<string, string> = {
   '/beta-requests': 'personal/global: requests for access to Canopy itself name no workspace',
   '/beta-requests/:requestId': 'personal/global: one request for access to Canopy itself',
   '/about': 'personal/global: the public explainer',
+  '/get-started': 'personal/global: the public getting-started guide (personalised when signed in)',
 
   // --- pre-tenant ---
   '/invite/:token': 'pre-tenant: an invitee has no membership yet, so there is no tenant to scope it under',

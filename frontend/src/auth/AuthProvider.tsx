@@ -35,6 +35,7 @@ function isPublicLinkRoute(): boolean {
   return (
     path.startsWith('/invite/') ||
     path === '/about' ||
+    path === '/get-started' ||
     isScopedViewerPath(path)
   )
 }

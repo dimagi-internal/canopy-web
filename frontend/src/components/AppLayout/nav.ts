@@ -84,6 +84,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { path: 'settings', label: 'Settings', tenant: true },
       { path: '/system', label: 'System', tenant: false },
       { path: '/guide', label: 'Guide', tenant: false },
+      { path: '/get-started', label: 'Get started', tenant: false },
     ],
   },
 ]

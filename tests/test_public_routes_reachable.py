@@ -23,12 +23,12 @@ from __future__ import annotations
 import pytest
 
 from apps.common.middleware import (
-    _is_about,
     _is_artifact_api,
     _is_ddd_release_link,
     _is_flat_artifact,
     _is_invite_link,
     _is_public,
+    _is_public_page,
     _is_scoped_viewer,
     _is_storyboard_link,
 )
@@ -47,7 +47,7 @@ def _allowlisted(path: str, method: str = "GET") -> bool:
     request = _Req(path, method)
     return (
         _is_public(path)
-        or _is_about(path)
+        or _is_public_page(path)
         or _is_artifact_api(request)
         or _is_scoped_viewer(path)
         or _is_flat_artifact(path)
@@ -80,6 +80,7 @@ PUBLIC_PATHS = [
     "/api/storyboards/ecf-supply/narratives/verified-monitoring",
     "/api/storyboards/ecf-supply/feedback",
     "/about",
+    "/get-started",
     "/api/system/public-stats",
 ]
 
@@ -113,6 +114,8 @@ GATED_PATHS = [
     # begins "/about" must not become public as a side effect (C8).
     "/about-billing",
     "/aboutus",
+    "/get-started-now",
+    "/get-started/x",
 ]
 
 

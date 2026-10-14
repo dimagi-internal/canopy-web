@@ -38,6 +38,17 @@ export function GuidePage() {
         it cannot quietly miss a page.
       </p>
 
+      <Link
+        to="/get-started"
+        className="mt-6 block rounded-lg border border-primary/40 bg-primary/5 p-4 hover:bg-primary/10"
+      >
+        <span className="text-sm font-semibold text-foreground">New here? Get started →</span>
+        <span className="mt-1 block text-[13px] text-foreground-secondary">
+          Install canopy, install an agent, set up the agent. Agents run in your own Claude Code with
+          your own logins.
+        </span>
+      </Link>
+
       <section className="mt-8">
         <h2 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Four roles — find yours
