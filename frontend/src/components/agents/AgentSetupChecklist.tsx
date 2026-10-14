@@ -65,7 +65,7 @@ export function AgentSetupChecklist({
               <p className="text-[12px] text-foreground-secondary">{step.detail}</p>
               {step.status !== 'done' && step.command && <CopyCommand command={step.command} />}
             </div>
-            {step.status !== 'done' && step.href && <StepLink href={step.href} />}
+            {step.status !== 'done' && step.href && <StepLink href={step.href} label={step.action || 'Open'} />}
           </li>
         ))}
       </ol>
@@ -73,15 +73,15 @@ export function AgentSetupChecklist({
   )
 }
 
-function StepLink({ href }: { href: string }): JSX.Element {
-  const cls = 'shrink-0 self-start text-[12px] text-primary hover:underline'
+function StepLink({ href, label }: { href: string; label: string }): JSX.Element {
+  const cls = 'shrink-0 self-start text-right text-[12px] text-primary hover:underline'
   return href.startsWith('http') ? (
     <a href={href} target="_blank" rel="noreferrer" className={cls}>
-      Open ↗
+      {label} ↗
     </a>
   ) : (
     <Link to={href} className={cls}>
-      Open
+      {label}
     </Link>
   )
 }
