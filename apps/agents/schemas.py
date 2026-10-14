@@ -73,8 +73,9 @@ class AgentScaffoldOut(StrictModel):
     repo: str
     repo_url: str
     repo_ref: str
-    # True when the repo already held this agent's scaffold, so nothing was pushed.
+    # True when the repo already held this agent's whole scaffold, so nothing was pushed.
     adopted: bool
+    # How many files were written (all of them for an empty repo; the missing ones otherwise).
     files: int
 
 
@@ -88,11 +89,15 @@ class RepoCheckIn(StrictModel):
 
 class RepoCheckOut(StrictModel):
     repo: str
-    state: Literal["ready", "adopt", "not_empty", "missing", "no_token"]
+    state: Literal["ready", "update", "adopt", "name_mismatch", "not_empty", "missing", "no_token"]
     default_branch: str = "main"
     detail: str = ""
     # Who the token acts as on GitHub.
     login: str = ""
+    # `update`: how many template files the repo lacks (only those are written).
+    files_to_add: int = 0
+    # `name_mismatch`: the slug this repo already names its agent.
+    suggested_slug: str = ""
     # GitHub's new-repository form and its new-token form, filled in for this agent.
     new_repo_url: str = ""
     token_url: str = ""

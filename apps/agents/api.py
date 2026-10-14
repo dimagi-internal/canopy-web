@@ -503,9 +503,11 @@ def _inspect(token: str, full: str, slug: str):
              summary="Can a new agent's scaffold be pushed into this repository with this token?")
 def check_scaffold_repo(request: HttpRequest, payload: RepoCheckIn) -> RepoCheckOut:
     """Reads only, and stores nothing. `ready` means empty and the token can see it,
-    `adopt` means it already holds this agent's scaffold, `missing` means the token
-    cannot see it (not created yet, or not in the token's repositories), `not_empty`
-    means it has other commits. `token_url` is GitHub's token form, filled in."""
+    `update` means it already holds this agent's scaffold (or only GitHub's starter
+    files) and `files_to_add` template files are missing — only those are added, nothing
+    is overwritten; `adopt` means nothing is missing; `name_mismatch` means it is a
+    different agent (`suggested_slug`); `missing` means the token cannot see it;
+    `not_empty` means it is not an agent repository. `token_url` is GitHub's token form."""
     from . import creation
 
     slug, full = _scaffold_target(request, payload.workspace, payload.slug, payload.repo)
@@ -517,14 +519,16 @@ def check_scaffold_repo(request: HttpRequest, payload: RepoCheckIn) -> RepoCheck
                             **links)
     who, state = _inspect(payload.token.strip(), full, slug)
     return RepoCheckOut(repo=full, state=state.state, default_branch=state.default_branch,
-                        detail=state.detail, login=who["login"], **links)
+                        detail=state.detail, login=who["login"], files_to_add=len(state.missing),
+                        suggested_slug=state.suggested_slug, **links)
 
 
 @router.post("/scaffold", response={201: AgentScaffoldOut},
              summary="Push a new agent's scaffold into an empty repository")
 def scaffold_agent(request: HttpRequest, payload: AgentScaffoldIn) -> Status:
     """Stamps the agent with the same factory `/canopy:create-agent` uses and pushes it into
-    an empty repository you created, with your fine-grained token. Stores nothing: follow
+    an empty repository you created (or adds just the missing files to one that already
+    holds this agent's scaffold, overwriting nothing), with your fine-grained token. Stores nothing: follow
     with `POST /api/agents/` (`upsert_agent`) carrying the returned `repo_url`/`repo_ref`,
     then `PUT /api/agents/{slug}/github` with the same token so its turns use it too.
     Safe to repeat — a repository that already holds this scaffold is adopted."""
@@ -535,10 +539,10 @@ def scaffold_agent(request: HttpRequest, payload: AgentScaffoldIn) -> Status:
     slug, full = _scaffold_target(request, payload.workspace, payload.slug, payload.repo)
     token = payload.token.strip()
     _, state = _inspect(token, full, slug)
-    if state.state in ("missing", "not_empty"):
+    if state.state in ("missing", "not_empty", "name_mismatch"):
         raise ProblemError(409, state.detail, type_=TYPE_CONFLICT)
     files = 0
-    if state.state == "ready":
+    if state.state in ("ready", "update"):
         user = request.user
         rendered = creation.render(AgentSpec(
             slug=slug, display_name=payload.name.strip(), mandate=payload.mandate.strip(),
@@ -546,13 +550,12 @@ def scaffold_agent(request: HttpRequest, payload: AgentScaffoldIn) -> Status:
             author_name=user.get_full_name() or user.email, author_email=user.email,
         ))
         try:
-            creation.push(token, state, rendered, slug=slug)
+            files = creation.push(token, state, rendered, slug=slug)
         except creation.ScaffoldError as exc:
             raise ProblemError(exc.status, str(exc),
                                type_=TYPE_CONFLICT if exc.status == 409 else TYPE_UPSTREAM) from None
         except requests.RequestException as exc:
             raise ProblemError(502, "Could not reach GitHub", type_=TYPE_UPSTREAM, detail=str(exc)) from None
-        files = len(rendered)
     return Status(201, AgentScaffoldOut(
         repo=full, repo_url=creation.repo_url(full), repo_ref=state.default_branch,
         adopted=state.state == "adopt", files=files))
