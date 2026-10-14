@@ -90,6 +90,9 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/agents/api.py
     "list_agents": ("member",),
     "upsert_agent": ("agent.work", "agent-admin"),  # editor in target ws; a MOVE also needs agent admin
+    "check_scaffold_repo": ("agent.work",),  # editor in the target ws; reads GitHub with the caller's own grant
+    "scaffold_agent": ("agent.work", "agent-admin"),  # editor in target ws; re-pushing a taken slug needs its admin
+    "agent_setup": ("member",),
     "get_agent": ("member",),
     "link_canopy_user": ("agent-admin",),
     "transfer_owner": ("agent-owner",),  # leaving it ownerless needs OWN
@@ -736,6 +739,7 @@ NOT_SETTINGS: dict[str, str] = {
     "create_sync": "content", "delete_sync": "content", "replace_skills": "content",
     "sync_skill_history": "content", "create_tasks": "content", "patch_task": "content",
     "create_idea": "content",  # an idea is a task with kind=idea
+    "scaffold_agent": "content",  # pushes code into the caller's own repo; registering is upsert_agent (a setting)
     "act_on_task": "content", "patch_contact": "content",
     "delete_narrative": "content", "move_narrative": "content", "delete_version": "content",
     "delete_run": "content", "upsert_issue": "content", "delete_issue": "content",

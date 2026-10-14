@@ -37,7 +37,7 @@ DEFINITION_FIELDS = ("repo_url", "repo_ref", "runtime_engine", "runtime_secrets"
                      "runtime_sources")
 
 
-def upsert_agent(data, *, workspace) -> Agent:
+def upsert_agent(data, *, workspace, owner=None) -> Agent:
     """Create or update an agent by slug.
 
     `workspace` is REQUIRED and keyword-only: `Agent.workspace` is NOT NULL
@@ -48,7 +48,8 @@ def upsert_agent(data, *, workspace) -> Agent:
 
     It is applied on CREATE only (`create_defaults`), never on update: an
     upsert must not silently move an existing agent between tenants. Moving one
-    is an explicit, membership-gated action in the view.
+    is an explicit, membership-gated action in the view. `owner` likewise: it
+    homes a new agent with an owner, and never transfers an existing one.
     """
     defaults = {
         "name": data.name,
@@ -67,7 +68,7 @@ def upsert_agent(data, *, workspace) -> Agent:
         if value is not None:
             defaults[field] = value
     agent, _ = Agent.objects.update_or_create(
-        slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace}
+        slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace, "owner": owner}
     )
     return agent
 

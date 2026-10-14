@@ -65,6 +65,9 @@ const lazySection: typeof lazy = (load) => lazy(lazyRoute(load))
 
 // Agent Workspace sections are lazy-loaded — each owns its data fetch and only
 // the active section's bundle is pulled in.
+const NewAgentPage = lazySection(() =>
+  import('./pages/agents/NewAgentPage').then((m) => ({ default: m.NewAgentPage })),
+)
 const AgentProjectsSection = lazySection(() =>
   import('./pages/agents/AgentProjectsSection').then((m) => ({ default: m.AgentProjectsSection })),
 )
@@ -300,6 +303,8 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/walkthroughs', element: <WalkthroughsPage /> },
       { path: '/w/:workspace/storyboards', element: <StoryboardsPage /> },
       { path: '/w/:workspace/agents', element: <AgentsPage /> },
+      // Static, so it outranks `agents/:slug`; the server reserves the slug `new`.
+      { path: '/w/:workspace/agents/new', element: <LazySection><NewAgentPage /></LazySection> },
       // The retired workbench Projects page. Agent projects/tasks replaced it.
       { path: '/w/:workspace/projects', element: <WorkspaceIndex /> },
       // The old team-view address (hal T82) — a second page about the same

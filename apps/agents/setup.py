@@ -1,0 +1,143 @@
+"""What is left before an agent can do its job — THE list, computed from real state.
+
+One definition for every door: the agent's Settings page renders it, the create wizard
+lands on it, and because every route is an MCP tool (`agent_setup`), a Claude Code session
+finishing `/canopy:create-agent` can ask the same question instead of keeping its own copy.
+
+Each step reads the predicate the system itself uses for that thing, never a second
+opinion: GitHub is `delegations.readiness` (what a box's health check says), the runner is
+the routing module's own order + `runner_may_hold_agent` + `runner_tenant_slugs` (what the
+claim does), the mailbox is the stored `gog-token` credential. A step that disagreed with
+the real check would be the "screen says fine, turn fails" bug this exists to prevent.
+
+`where` says which tool does it: "web" steps are a link to the control that does it;
+"claude-code" steps are judgment work — a persona, the first real skill — that happens in a
+session in the agent's repo, so the step carries the prompt that starts one.
+"""
+from __future__ import annotations
+
+from . import delegations
+from .models import Agent, AgentCredential
+from .oauth_api import GOG_TOKEN_REF
+
+DONE, TODO, WAITING, OPTIONAL = "done", "todo", "waiting", "optional"
+
+
+def scaffold_skill_names() -> set[str]:
+    """Skills every factory-stamped agent ships with — from the factory's own stamp table,
+    so a skill the factory adds later never reads as "the agent has a job"."""
+    from canopy_agent_factory import templates
+
+    return {p.split("/")[1] for p in templates() if p.startswith("skills/") and p.endswith("/SKILL.md")}
+
+
+def _step(key, title, status, detail, *, where="web", href="", command=""):
+    return {"key": key, "title": title, "status": status, "detail": detail,
+            "where": where, "href": href, "command": command}
+
+
+def _github(agent: Agent, settings: str) -> dict:
+    verdict, detail = delegations.readiness(agent)
+    owner = agent.owner.email if agent.owner_id else "its owner"
+    return _step(
+        "github", "Lend it a GitHub identity",
+        DONE if verdict in ("ok", "warn") else TODO,
+        detail if verdict != "fail" else
+        f"Its turns push and open pull requests as {owner}, with a token only they can add.",
+        href=f"{settings}#credentials")
+
+
+def _mailbox(agent: Agent, settings: str) -> dict:
+    if not agent.email:
+        return _step("mailbox", "Connect its mailbox", OPTIONAL,
+                     "No mailbox set. Email is optional; add one later if it should send or read mail.")
+    has = AgentCredential.objects.filter(agent=agent, name=GOG_TOKEN_REF).exists()
+    return _step(
+        "mailbox", "Connect its mailbox", DONE if has else TODO,
+        f"Signed in as {agent.email}." if has else
+        f"Sign {agent.email} in with Google so it can send and read mail.",
+        href=f"{settings}#credentials")
+
+
+def _runner(agent: Agent, settings: str) -> dict:
+    from apps.harness.models import Runner, RunnerAssignment
+    from apps.harness.routing import inherited_orders, runner_tenant_slugs
+    from .services import runner_may_hold_agent
+
+    own = [a.runner for a in RunnerAssignment.objects.filter(agent=agent, source="", enabled=True)
+           .select_related("runner", "runner__owner")]
+    inherited = inherited_orders([agent.id]).get(agent.id)
+    listed = own or (inherited.runners if inherited else [])
+    takers = [r for r in listed if r.status != Runner.RETIRED
+              and agent.workspace_id in runner_tenant_slugs(r) and runner_may_hold_agent(r, agent)]
+    online = [r for r in takers if r.live_status == Runner.ONLINE]
+    title = "Give it a runner"
+    if online:
+        return _step("runner", title, DONE, f"{online[0].name} takes its turns.",
+                     href=f"{settings}#running")
+    if takers:
+        names = ", ".join(r.name for r in takers)
+        return _step("runner", title, WAITING, f"{names} would take its turns, but none is online.",
+                     href=f"{settings}#running")
+    why = []
+    if inherited and inherited.missing_repo:
+        why.append(f"{', '.join(r.name for r in inherited.missing_repo)} does not have its repo "
+                   "checked out yet")
+    if inherited and inherited.cannot_hold:
+        why.append(f"{', '.join(r.name for r in inherited.cannot_hold)} belongs to someone who is "
+                   "not one of its admins")
+    detail = ("; ".join(why).capitalize() + "." if why else
+              "No runner is set to take its work. Pick one, or pair a runner of your own first.")
+    return _step("runner", title, TODO, detail, href=f"{settings}#running")
+
+
+#: Where a laptop runner expects an agent's checkout (runner/canopy_runner/README.md;
+#: the frontend's `repoSetup.ts` hands out the same path). Cloning there for the
+#: persona session means the same checkout is the one a laptop runner later runs.
+def _checkout(slug: str) -> str:
+    return f"~/emdash-projects/{slug}"
+
+
+def _job(agent: Agent) -> dict:
+    custom = set(agent.skills.values_list("name", flat=True)) - scaffold_skill_names()
+    folder = _checkout(agent.slug)
+    command = (
+        f"git clone {agent.repo_url} {folder} && cd {folder} && claude \"Continue "
+        f"/canopy:create-agent for {agent.slug} from Step 3 (Make it real): fill in persona.md "
+        "with me, write its first domain skill, add a deny rail for each outbound action, then "
+        "run canopy agent doctor and publish it.\""
+    ) if agent.repo_url else ""
+    return _step(
+        "job", "Give it a job", DONE if custom else TODO,
+        f"Skills: {', '.join(sorted(custom))}." if custom else
+        "A persona and its first real skill. This is judgment work, done with Claude Code in "
+        "the agent's repo — the scaffold only has the operating model.",
+        where="claude-code", command=command)
+
+
+def _first_turn(agent: Agent, base: str) -> dict:
+    from apps.harness.models import Turn
+
+    done = Turn.objects.filter(agent=agent, status=Turn.DONE).exists()
+    return _step("first_turn", "Run its first turn", DONE if done else TODO,
+                 "It has finished a turn." if done else
+                 "Ask it something from its Projects page and watch the turn finish.",
+                 href=f"{base}/turns" if done else base)
+
+
+def setup_steps(agent: Agent) -> list[dict]:
+    """The ordered checklist. Links are paths inside the agent's workspace."""
+    base = f"/w/{agent.workspace_id}/agents/{agent.slug}"
+    settings = f"{base}/settings"
+    repo = delegations.agent_repo(agent)
+    return [
+        _step("repo", "Create its repository", DONE if agent.repo_url else TODO,
+              f"Code lives in {repo or agent.repo_url}." if agent.repo_url else
+              "It has no repository, so a runner has nothing to run.",
+              href=agent.repo_url or f"/w/{agent.workspace_id}/agents/new"),
+        _github(agent, settings),
+        _mailbox(agent, settings),
+        _runner(agent, settings),
+        _job(agent),
+        _first_turn(agent, base),
+    ]

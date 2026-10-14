@@ -21,6 +21,7 @@ vi.mock('@/components/agents/AgentOwnerControl', () => ({ AgentOwnerControl: () 
 vi.mock('@/components/agents/AgentAccessRoster', () => ({ AgentAccessRoster: () => <div>access-roster</div> }))
 vi.mock('@/components/agents/AgentInterfaceView', () => ({ AgentInterfaceView: () => <div>interface-view</div> }))
 vi.mock('@/pages/agents/AgentVaultSection', () => ({ AgentVaultSection: () => null }))
+vi.mock('@/components/agents/AgentSetupChecklist', () => ({ AgentSetupChecklist: () => null }))
 let agentOverride: Record<string, unknown> = {}
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),

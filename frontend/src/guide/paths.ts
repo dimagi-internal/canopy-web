@@ -82,7 +82,7 @@ export const USER_ROLES: UserRole[] = [
     enforcement:
       'Editor. Enforced on agents, schedules, turns and on every product surface — ' +
       'walkthroughs, shareouts, reviews, storyboards.',
-    startHere: 'Run /canopy:create-agent, then register the agent in your workspace.',
+    startHere: 'Open Agents → New agent (or run /canopy:create-agent in Claude Code), then follow its setup checklist.',
     surfaces: ['/w/:workspace/agents', '/w/:workspace/schedules', '/system'],
     note:
       'Create and edit agents, run turns, record project links, edit schedules, assign ' +
