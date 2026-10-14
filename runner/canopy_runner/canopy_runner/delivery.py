@@ -139,6 +139,12 @@ OURS_MIN_CHARS = 20
 
 _PASTED = re.compile(r"^\[Pasted text #\d+[^\]]*\]$")
 _PASTED_ANY = re.compile(r"\[Pasted text #\d+")
+#: One or more paste placeholders at the START of the composer, then the rest. A
+#: long ONE-line message arrives in more than one chunk; claude reads the first as
+#: a paste and collapses it, and the rest lands as typed text, so the composer
+#: shows "[Pasted text #1] …the end of our message" (turn 50bfdf45, 2026-10-14,
+#: failure investigation 2: ACE's chat follow-up sat there unsent, twice).
+_PASTED_LEAD = re.compile(r"^(?:\[Pasted text #\d+[^\]]*\]\s*)+")
 _PLACEHOLDER = re.compile(r"^(Try |Ask |/ for |\? for )", re.I)
 
 
@@ -161,12 +167,20 @@ def composer_is_ours(typed: str, prompt: str) -> bool:
     not ours, because pressing Enter on it sends their half-thought. Ours means the
     composer is (a prefix of / a slice of) our message, or the paste placeholder a
     multi-line message collapses to — the composer was empty when we typed, so a
-    lone placeholder there can only be our paste."""
+    lone placeholder there can only be our paste — or a placeholder followed by a
+    slice of our message (a long one-liner split into a collapsed paste and a
+    typed tail, see `_PASTED_LEAD`)."""
     typed = (typed or "").strip()
     if not typed or _PLACEHOLDER.match(typed):
         return False
     if _PASTED.match(typed):
         return _collapses(prompt)
+    lead = _PASTED_LEAD.match(typed)
+    if lead:
+        # The placeholder came first, into an empty composer, so it is ours; the
+        # tail must be ours too, or Enter sends a human's words along with it.
+        tail, p = _squash(typed[lead.end():]), _squash(prompt)
+        return len(tail) >= min(OURS_MIN_CHARS, len(p)) and tail in p
     t, p = _squash(typed), _squash(prompt)
     if not t or not p:
         return False
