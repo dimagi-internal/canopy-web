@@ -34,12 +34,13 @@ describe('AgentSetupChecklist', () => {
   it('links a web step and hands over the command for the Claude Code step', async () => {
     setupMock.mockResolvedValue([
       step('repo', 'done', { href: 'https://github.com/olive/scout' }),
-      step('github', 'todo', { href: '/w/scouts/agents/scout/settings#credentials' }),
+      step('github', 'todo', { href: '/w/scouts/agents/scout/settings#credentials', action: 'Add a GitHub token' }),
       step('job', 'todo', { where: 'claude-code', command: 'git clone x && claude "go"' }),
     ])
     mount()
     expect(await screen.findByText('2 of 3 steps left.', { exact: false })).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Open' }).getAttribute('href')).toBe(
+    // The link says what it does, not a bare "Open".
+    expect(screen.getByRole('link', { name: 'Add a GitHub token' }).getAttribute('href')).toBe(
       '/w/scouts/agents/scout/settings#credentials',
     )
     // A finished step offers nothing to click.

@@ -98,6 +98,13 @@ export function NewAgentPage(): JSX.Element {
   const [createError, setCreateError] = useState<CreationError | null>(null)
   const ready = check?.state === 'ready' || check?.state === 'adopt'
   const aboutDone = Boolean(name.trim() && effectiveSlug && mandate.trim())
+  // Said under a disabled Create, so it never looks broken for no reason.
+  const missing = [
+    !name.trim() && 'a name',
+    !effectiveSlug && 'a slug',
+    !mandate.trim() && 'a mandate',
+    !ready && 'a repository canopy can push to (step 2)',
+  ].filter((m): m is string => Boolean(m))
 
   const create = async () => {
     const agent = {
@@ -110,7 +117,7 @@ export function NewAgentPage(): JSX.Element {
       const pushed = await scaffoldAgent(agent)
       setCreating('Registering the agent…')
       await registerAgent(agent, pushed)
-      navigate(`/w/${workspace}/agents/${agent.slug}/settings#setup`)
+      navigate(`/w/${workspace}/agents/${agent.slug}/settings?created=${encodeURIComponent(pushed.repo)}#setup`)
     } catch (e) {
       setCreateError(e instanceof CreationError ? e : new CreationError(String(e)))
     } finally {
@@ -133,9 +140,7 @@ export function NewAgentPage(): JSX.Element {
     <div className="max-w-3xl px-6 py-8">
       <WorkbenchSubHeader title="New agent" />
       <p className="-mt-2 mb-6 text-[13px] text-foreground-secondary">
-        This page creates the agent&rsquo;s repository from canopy&rsquo;s agent template, registers it here, and
-        then shows what is left to set up. Giving it a personality and a job happens afterwards in Claude Code,
-        where you can talk it through — the next screen gives you the command.
+        Makes its GitHub repository and registers it here. Its persona and first skill come after, in Claude Code.
       </p>
 
       <Step n={1} title="Who it is" done={aboutDone}>
@@ -211,9 +216,12 @@ export function NewAgentPage(): JSX.Element {
           Pushes the template as you, then registers the agent here with you as its owner. Safe to run again if it
           stops partway.
         </p>
-        <Button onClick={() => void create()} disabled={!aboutDone || !ready || Boolean(creating)}>
+        <Button onClick={() => void create()} disabled={missing.length > 0 || Boolean(creating)}>
           {creating || 'Create agent'}
         </Button>
+        {missing.length > 0 && !creating && (
+          <p className="text-[12px] text-muted-foreground">Still needed: {missing.join(', ')}.</p>
+        )}
         {createError && <Problem error={createError} />}
       </Step>
     </div>

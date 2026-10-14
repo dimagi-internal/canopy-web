@@ -15088,6 +15088,11 @@ export interface components {
              */
             readonly href: string;
             /**
+             * Action
+             * @default
+             */
+            readonly action: string;
+            /**
              * Command
              * @default
              */

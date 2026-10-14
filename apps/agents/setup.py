@@ -31,9 +31,11 @@ def scaffold_skill_names() -> set[str]:
     return {p.split("/")[1] for p in templates() if p.startswith("skills/") and p.endswith("/SKILL.md")}
 
 
-def _step(key, title, status, detail, *, where="web", href="", command=""):
+def _step(key, title, status, detail, *, where="web", href="", action="", command=""):
+    """`action` names what `href` does ("Add a GitHub token"): several steps link to
+    the same Settings section, and a bare "Open" left a newcomer guessing."""
     return {"key": key, "title": title, "status": status, "detail": detail,
-            "where": where, "href": href, "command": command}
+            "where": where, "href": href, "action": action, "command": command}
 
 
 def _github(agent: Agent, settings: str) -> dict:
@@ -43,8 +45,9 @@ def _github(agent: Agent, settings: str) -> dict:
         "github", "Lend it a GitHub identity",
         DONE if verdict in ("ok", "warn") else TODO,
         detail if verdict != "fail" else
-        f"Its turns push and open pull requests as {owner}, with a token only they can add.",
-        href=f"{settings}#credentials")
+        f"Its turns push code and open pull requests as its owner, {owner}. Only the owner "
+        "can add that GitHub token.",
+        href=f"{settings}#credentials", action="Add a GitHub token")
 
 
 def _mailbox(agent: Agent, settings: str) -> dict:
@@ -56,7 +59,7 @@ def _mailbox(agent: Agent, settings: str) -> dict:
         "mailbox", "Connect its mailbox", DONE if has else TODO,
         f"Signed in as {agent.email}." if has else
         f"Sign {agent.email} in with Google so it can send and read mail.",
-        href=f"{settings}#credentials")
+        href=f"{settings}#credentials", action="Connect the mailbox")
 
 
 def _runner(agent: Agent, settings: str) -> dict:
@@ -74,11 +77,11 @@ def _runner(agent: Agent, settings: str) -> dict:
     title = "Give it a runner"
     if online:
         return _step("runner", title, DONE, f"{online[0].name} takes its turns.",
-                     href=f"{settings}#running")
+                     href=f"{settings}#running", action="See routing")
     if takers:
         names = ", ".join(r.name for r in takers)
         return _step("runner", title, WAITING, f"{names} would take its turns, but none is online.",
-                     href=f"{settings}#running")
+                     href=f"{settings}#running", action="See routing")
     why = []
     if inherited and inherited.missing_repo:
         why.append(f"{', '.join(r.name for r in inherited.missing_repo)} does not have its repo "
@@ -87,8 +90,9 @@ def _runner(agent: Agent, settings: str) -> dict:
         why.append(f"{', '.join(r.name for r in inherited.cannot_hold)} belongs to someone who is "
                    "not one of its admins")
     detail = ("; ".join(why).capitalize() + "." if why else
-              "No runner is set to take its work. Pick one, or pair a runner of your own first.")
-    return _step("runner", title, TODO, detail, href=f"{settings}#running")
+              "A runner is the computer that runs its turns, and none is set to take its work. "
+              "Pick one, or pair a runner of your own first.")
+    return _step("runner", title, TODO, detail, href=f"{settings}#running", action="Pick a runner")
 
 
 #: Where a laptop runner expects an agent's checkout (runner/canopy_runner/README.md;
@@ -122,7 +126,8 @@ def _first_turn(agent: Agent, base: str) -> dict:
     return _step("first_turn", "Run its first turn", DONE if done else TODO,
                  "It has finished a turn." if done else
                  "Ask it something from its Projects page and watch the turn finish.",
-                 href=f"{base}/turns" if done else base)
+                 href=f"{base}/turns" if done else base,
+                 action="See its turns" if done else "Ask it something")
 
 
 def setup_steps(agent: Agent) -> list[dict]:
@@ -134,7 +139,8 @@ def setup_steps(agent: Agent) -> list[dict]:
         _step("repo", "Create its repository", DONE if agent.repo_url else TODO,
               f"Code lives in {repo or agent.repo_url}." if agent.repo_url else
               "It has no repository, so a runner has nothing to run.",
-              href=agent.repo_url or f"/w/{agent.workspace_id}/agents/new"),
+              href=agent.repo_url or f"/w/{agent.workspace_id}/agents/new",
+              action="Open on GitHub" if agent.repo_url else "Create it"),
         _github(agent, settings),
         _mailbox(agent, settings),
         _runner(agent, settings),
