@@ -76,6 +76,8 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
       # Trusted Publishing + provenance need npm >= 11.5.1. npm@latest is now v12
       # (requires node >= 22), so pin the major and keep node new enough for it.
       - name: Upgrade npm
