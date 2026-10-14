@@ -37,6 +37,7 @@ describe('navigate-fallback ownership', () => {
       `/w/connect/walkthrough/${UUID}`, // viewer shell (no /content)
       '/about', // public explainer
       '/guide', // self-documenting descriptor registry
+      '/get-started', // public getting-started guide
       '/new-workspace', // FirstRunPage's alwaysOfferForm route
     ]
     for (const p of spaPaths) {
@@ -142,6 +143,7 @@ describe('the matcher workbox inlines into the SW', () => {
     `/w/connect/walkthrough/${UUID}`,
     '/about',
     '/guide',
+    '/get-started',
     '/new-workspace',
     '/api/ddd/runs/x',
     '/accounts/google/login/',

@@ -71,6 +71,7 @@ export const NAVIGATE_FALLBACK_ALLOWLIST: RegExp[] = [
   /^\/(canopy\/)?invite\//, // /invite/:token accept page
   /^\/(canopy\/)?about/, // /about public explainer (chrome-less, anonymous)
   /^\/(canopy\/)?guide/, // /guide — self-documenting descriptor registry
+  /^\/(canopy\/)?get-started(\?|$)/, // /get-started — public getting-started guide
   /^\/(canopy\/)?new-workspace/, // /new-workspace — FirstRunPage's alwaysOfferForm route
 ]
 

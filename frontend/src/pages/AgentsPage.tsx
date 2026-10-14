@@ -126,7 +126,11 @@ export function AgentsPage() {
           <h1 className="text-xl font-semibold text-foreground">Agents</h1>
           <p className="text-[13px] text-muted-foreground mt-1">
             Each agent's workspace — its projects, tasks, turns and skill catalog. Pick one to
-            open its workspace.
+            open its workspace. To use one in your own Claude Code,{' '}
+            <Link to="/get-started" className="text-primary hover:underline">
+              get started
+            </Link>
+            .
           </p>
         </div>
         {canCreate && (

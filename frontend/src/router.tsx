@@ -7,6 +7,7 @@ import { AppLayout } from './components/AppLayout/AppLayout'
 import { RouteErrorBoundary } from './components/RouteErrorBoundary'
 import { NotFound } from './components/NotFound'
 import { GuidePage } from './pages/GuidePage'
+import { GetStartedPage } from './pages/GetStartedPage'
 import { ShareRouteErrorBoundary } from './components/ShareRouteErrorBoundary'
 import { lazyRoute } from './pwa/staleChunk'
 import { CredentialsRedirect } from './pages/agents/CredentialsRedirect'
@@ -238,6 +239,12 @@ export const routeTable: RouteObject[] = [
       // --- Personal / global (not tenant-scoped) ---
       { path: '/system', element: <SystemPage /> },
       { path: '/guide', element: <GuidePage /> },
+      // How to start using agents in your own Claude Code. Public (exact-match,
+      // like /about — AuthProvider, client.v2 and the server middleware all
+      // list it): step 1 is useful before someone has an account. Inside the
+      // app shell so a signed-in reader keeps the nav and gets their own
+      // workspace's commands; an anonymous one sees just the wordmark.
+      { path: '/get-started', element: <GetStartedPage /> },
       { path: '/sessions', element: <SessionsPage /> },
       { path: '/people/me', element: <PeopleMePage /> },
       { path: '/hcp-clients', element: <HcpClientsPage /> },

@@ -39,6 +39,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Find the page you need', 'See what a surface needs before it works'],
   },
   {
+    path: '/get-started',
+    title: 'Get started',
+    audience: 'Anyone starting with canopy agents, including people with no account yet',
+    what: "The three steps to use a canopy agent: install canopy, install an agent, set up the agent. Agents run in your own Claude Code, not through canopy-web's connector; setting one up needs the 1Password CLI with access to the agent's vault. Signed in, it lists every agent in your workspaces, each with its install and setup command.",
+    actions: ['Copy the install commands', "See your workspaces' agents", "Copy each agent's setup command"],
+  },
+  {
     path: '/sessions',
     title: 'Shared transcripts',
     audience: 'Anyone who wants to hand someone a transcript link',
