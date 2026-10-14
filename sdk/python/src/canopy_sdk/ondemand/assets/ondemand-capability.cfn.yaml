@@ -1,25 +1,56 @@
-# One on-demand capability: a dedicated EC2 instance that is stopped when idle
-# and started by its consumer (canopy_sdk.ondemand.OnDemandInstance), plus the
-# IAM policy that lets the consumer drive it. Generalised from ace-web's
-# deploy/aws/ace-mobile.cfn.yaml.
+# One on-demand capability, in one of two modes (parameter Mode):
 #
-# One instance, one bucket, one alarm, one role. No SSH key, no inbound
-# security-group rule: the consumer reaches the instance only through SSM.
+# persistent (the default) — a dedicated EC2 instance that is stopped when idle
+#   and started by its consumer (canopy_sdk.ondemand.OnDemandInstance), plus the
+#   IAM policy that lets the consumer drive it. Generalised from ace-web's
+#   deploy/aws/ace-mobile.cfn.yaml. Existing stacks (labs-emod) deploy exactly the
+#   resources they always had: every ephemeral-only change below is behind a
+#   condition, and tests/ondemand/test_template_modes.py renders this mode
+#   against the pre-mode template and requires the two to be identical.
 #
-# Idle shutdown has three layers:
+# ephemeral — NO instance. A launch template a broker (canopy-web's capability
+#   leases, canopy_sdk.ondemand.EphemeralInstance) launches a fresh instance from
+#   per lease and terminates after. The contract is
+#   docs/architecture/capabilities.md in canopy-web; in short:
+#     - Outputs LaunchTemplateId, ArtifactsBucketName, InstanceRoleArn, Capability
+#       (plus Owner and InstanceRoleId, which the broker also reads);
+#     - instances are tagged canopy:capability=<Capability>, canopy:owner=<Owner>;
+#     - the AMI is resolved AT LAUNCH from the SSM parameter
+#       /canopy/capabilities/<Owner>/<Capability>/ami, so a rebake writes that
+#       parameter and nothing is ever re-pinned;
+#     - a halt terminates the instance (InstanceInitiatedShutdownBehavior);
+#     - BrokerPolicy, attached to BrokerRoleName, is everything the broker may do,
+#       and only to instances carrying this capability's and owner's tags.
+#   There is no CloudWatch idle alarm in this mode: an alarm names one
+#   InstanceId, and these instances do not exist when the stack is deployed.
+#   The machine-side guards are the image's halt at max_lifetime_s and its idle
+#   watchdog, both of which terminate (shutdown behaviour), plus the broker's own
+#   sweep, which terminates any tagged instance without a live lease.
+#
+# Either mode: no SSH key, no inbound security-group rule — the instance is
+# reached only through SSM.
+#
+# Idle shutdown (persistent) has three layers:
 #   1. the consumer stops the instance when it is done (OnDemandInstance.stop);
 #   2. the in-VM watchdog (idle-shutdown.sh + ondemand-idle-shutdown.timer,
 #      baked into the AMI) halts it once /var/run/<Capability>/last-activity is
 #      older than IDLE_SECONDS; InstanceInitiatedShutdownBehavior=stop turns that
 #      halt into a stop;
 #   3. IdleStopAlarm below stops it after 5 minutes of <5% max CPU.
-# Nothing here ever terminates the instance.
+# Nothing in persistent mode ever terminates the instance.
 #
 # Deploy (needs CAPABILITY_NAMED_IAM, for the named role and policy):
 #   aws cloudformation deploy --stack-name ondemand-<capability> \
 #     --template-file ondemand-capability.cfn.yaml --capabilities CAPABILITY_NAMED_IAM \
 #     --parameter-overrides Capability=<capability> OwnerTag=<owner> AmiId=ami-... \
 #       InstanceType=... VpcId=vpc-... SubnetId=subnet-... ConsumerTaskRoleName=<role>
+#
+#   ephemeral:
+#   aws cloudformation deploy --stack-name canopy-cap-<owner>-<capability> \
+#     --template-file ondemand-capability.cfn.yaml --capabilities CAPABILITY_NAMED_IAM \
+#     --parameter-overrides Mode=ephemeral Capability=<capability> Owner=<agent-slug> \
+#       OwnerTag=<who-to-ask> InstanceType=... VpcId=vpc-... SubnetId=subnet-... \
+#       BrokerRoleName=<the broker's role, e.g. labs-jj-ecs-task-role>
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   An on-demand capability runner (canopy_sdk.ondemand): a stopped-when-idle EC2
@@ -27,7 +58,24 @@ Description: >
   S3 artifacts bucket, a CloudWatch idle-stop alarm, and the consumer's IAM
   policy, scoped by the instance's capability tag.
 
+# AmiId defaults to "" (ephemeral stacks take their AMI from SSM), so cfn-lint's
+# W1030 sees an empty ImageId on the persistent branch. The
+# PersistentNeedsAnAmiAndAConsumer rule refuses that at deploy; cfn-lint does
+# not evaluate Rules.
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks: [W1030]
+
 Parameters:
+  Mode:
+    Type: String
+    Description: >
+      persistent: one stopped-when-idle instance (OnDemandInstance). ephemeral: no
+      instance; a launch template a broker launches per lease and terminates after
+      (EphemeralInstance).
+    AllowedValues: [persistent, ephemeral]
+    Default: persistent
   Capability:
     Type: String
     Description: >
@@ -41,12 +89,25 @@ Parameters:
     Type: String
     Description: Value of the `owner` tag on every resource (who to ask about it).
     MinLength: 1
-  AmiId:
-    Type: AWS::EC2::Image::Id
+  Owner:
+    Type: String
     Description: >
-      The capability's AMI, in the stack's region. It must run the SSM agent,
-      install the idle watchdog units, and create the ready file when the
-      capability is up. The root volume is mapped at /dev/sda1 (Ubuntu HVM).
+      ephemeral only: the agent that owns the capability (its canopy slug). Tags
+      instances canopy:owner and names the AMI parameter
+      /canopy/capabilities/<Owner>/<Capability>/ami.
+    AllowedPattern: "^([a-z0-9][a-z0-9_-]{0,39})?$"
+    ConstraintDescription: empty, or 1-40 lowercase letters, digits, hyphens or underscores.
+    Default: ""
+  AmiId:
+    Type: String
+    Description: >
+      persistent only: the capability's AMI, in the stack's region. It must run the
+      SSM agent, install the idle watchdog units, and create the ready file when
+      the capability is up. The root volume is mapped at /dev/sda1 (Ubuntu HVM).
+      Ephemeral stacks leave it empty: their AMI comes from the SSM parameter.
+    AllowedPattern: "^(ami-[0-9a-f]{8,17})?$"
+    ConstraintDescription: empty, or an AMI id (ami-...).
+    Default: ""
   InstanceType:
     Type: String
     Description: EC2 instance type. Nested virtualization needs an m8i/c8i/r8i-class type.
@@ -59,9 +120,16 @@ Parameters:
   ConsumerTaskRoleName:
     Type: String
     Description: >
-      Name of the consumer's existing IAM role (e.g. its ECS task role). This
-      stack does not own it; it only attaches ConsumerPolicy to it.
-    MinLength: 1
+      persistent only: name of the consumer's existing IAM role (e.g. its ECS task
+      role). This stack does not own it; it only attaches ConsumerPolicy to it.
+    Default: ""
+  BrokerRoleName:
+    Type: String
+    Description: >
+      ephemeral only: name of the broker's existing IAM role (for canopy-web,
+      labs-jj-ecs-task-role). This stack does not own it; it only attaches
+      BrokerPolicy to it.
+    Default: ""
   UserData:
     Type: String
     Description: Base64-encoded EC2 user data for the launch template. Empty for none.
@@ -79,15 +147,33 @@ Parameters:
   IdleStopMinutes:
     Type: Number
     Description: >-
-      Minutes of max CPU below 5% before the CloudWatch backstop stops the
-      instance. Matches the in-VM watchdog's 3600 s default, so a box stays warm
-      between interactive requests.
+      persistent only: minutes of max CPU below 5% before the CloudWatch backstop
+      stops the instance. Matches the in-VM watchdog's 3600 s default, so a box
+      stays warm between interactive requests.
     MinValue: 5
     Default: 60
+
+Rules:
+  PersistentNeedsAnAmiAndAConsumer:
+    RuleCondition: !Equals [!Ref Mode, persistent]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref AmiId, ""]]
+        AssertDescription: persistent mode needs AmiId.
+      - Assert: !Not [!Equals [!Ref ConsumerTaskRoleName, ""]]
+        AssertDescription: persistent mode needs ConsumerTaskRoleName.
+  EphemeralNeedsAnOwnerAndABroker:
+    RuleCondition: !Equals [!Ref Mode, ephemeral]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref Owner, ""]]
+        AssertDescription: ephemeral mode needs Owner (the agent's slug).
+      - Assert: !Not [!Equals [!Ref BrokerRoleName, ""]]
+        AssertDescription: ephemeral mode needs BrokerRoleName.
 
 Conditions:
   WantsNestedVirtualization: !Equals [!Ref NestedVirtualization, "true"]
   HasUserData: !Not [!Equals [!Ref UserData, ""]]
+  IsEphemeral: !Equals [!Ref Mode, ephemeral]
+  IsPersistent: !Not [!Equals [!Ref Mode, ephemeral]]
 
 Resources:
   # No ingress rules. Access is via SSM only.
@@ -99,7 +185,9 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      GroupName: !Sub "ondemand-${Capability}"
+      # Ephemeral: a generated name, so two owners' stacks for one capability
+      # name can live in one account.
+      GroupName: !If [IsEphemeral, !Ref "AWS::NoValue", !Sub "ondemand-${Capability}"]
       GroupDescription: !Sub "Egress-only SG for the ${Capability} on-demand runner. SSM only - no inbound."
       VpcId: !Ref VpcId
       SecurityGroupEgress:
@@ -134,7 +222,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      RoleName: !Sub "ondemand-${Capability}-instance"
+      RoleName: !If [IsEphemeral, !Ref "AWS::NoValue", !Sub "ondemand-${Capability}-instance"]
       Description: !Sub "EC2 instance role for the ${Capability} on-demand runner."
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -145,24 +233,56 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
-      Policies:
-        - PolicyName: artifacts-put
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Sid: ArtifactsPutObject
-                Effect: Allow
-                Action: [s3:PutObject, s3:AbortMultipartUpload]
-                Resource: !Sub "${ArtifactsBucket.Arn}/*"
-              # The box reads what the consumer stages (requests, worker files).
-              - Sid: ArtifactsGetObject
-                Effect: Allow
-                Action: [s3:GetObject]
-                Resource: !Sub "${ArtifactsBucket.Arn}/*"
-              - Sid: ArtifactsListBucket
-                Effect: Allow
-                Action: [s3:ListBucket, s3:GetBucketLocation]
-                Resource: !GetAtt ArtifactsBucket.Arn
+      Policies: !If
+        - IsEphemeral
+        # Ephemeral: each instance writes only under its OWN prefix. An instance
+        # role cannot read its instance's tags, so the scope is the session:
+        # ${aws:userid} for an instance-profile session is
+        # "<role id>:<instance id>", and the broker reads ready.json at
+        # vm/<InstanceRoleId>:<instance id>/ready.json. Under leases/ the
+        # instance reads what the broker staged (in/), writes what it produced
+        # (out/), and the SSM agent writes each command's streams (exec/).
+        - - PolicyName: lease-artifacts
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Sid: OwnPrefixWrite
+                  Effect: Allow
+                  Action: [s3:PutObject, s3:AbortMultipartUpload]
+                  Resource: !Sub "${ArtifactsBucket.Arn}/vm/${!aws:userid}/*"
+                - Sid: LeaseInputsRead
+                  Effect: Allow
+                  Action: [s3:GetObject]
+                  Resource: !Sub "${ArtifactsBucket.Arn}/leases/*/in/*"
+                - Sid: LeaseOutputsWrite
+                  Effect: Allow
+                  Action: [s3:PutObject, s3:AbortMultipartUpload]
+                  Resource:
+                    - !Sub "${ArtifactsBucket.Arn}/leases/*/out/*"
+                    - !Sub "${ArtifactsBucket.Arn}/leases/*/exec/*"
+                # The SSM agent checks the bucket's encryption before it uploads
+                # a command's output.
+                - Sid: BucketMetadata
+                  Effect: Allow
+                  Action: [s3:GetEncryptionConfiguration, s3:GetBucketLocation]
+                  Resource: !GetAtt ArtifactsBucket.Arn
+        - - PolicyName: artifacts-put
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Sid: ArtifactsPutObject
+                  Effect: Allow
+                  Action: [s3:PutObject, s3:AbortMultipartUpload]
+                  Resource: !Sub "${ArtifactsBucket.Arn}/*"
+                # The box reads what the consumer stages (requests, worker files).
+                - Sid: ArtifactsGetObject
+                  Effect: Allow
+                  Action: [s3:GetObject]
+                  Resource: !Sub "${ArtifactsBucket.Arn}/*"
+                - Sid: ArtifactsListBucket
+                  Effect: Allow
+                  Action: [s3:ListBucket, s3:GetBucketLocation]
+                  Resource: !GetAtt ArtifactsBucket.Arn
       Tags:
         - { Key: owner, Value: !Ref OwnerTag }
         - { Key: capability, Value: !Ref Capability }
@@ -176,14 +296,17 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      InstanceProfileName: !Sub "ondemand-${Capability}-instance"
+      InstanceProfileName: !If [IsEphemeral, !Ref "AWS::NoValue", !Sub "ondemand-${Capability}-instance"]
       Roles:
         - !Ref InstanceRole
 
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: !Sub "ondemand-${Capability}"
+      LaunchTemplateName: !If
+        - IsEphemeral
+        - !Sub "canopy-cap-${Owner}-${Capability}"
+        - !Sub "ondemand-${Capability}"
       # Tags the launch template itself. (AWS::IAM::ManagedPolicy and
       # AWS::IAM::InstanceProfile have no Tags property in CloudFormation, so
       # ConsumerPolicy and InstanceProfile are the only untagged resources.)
@@ -193,16 +316,38 @@ Resources:
             - { Key: owner, Value: !Ref OwnerTag }
             - { Key: capability, Value: !Ref Capability }
             - { Key: managed-by, Value: cloudformation }
-      VersionDescription: !Sub "${Capability} on-demand runner - SSM-only, stops on shutdown."
+      VersionDescription: !If
+        - IsEphemeral
+        - !Sub "${Capability} capability (${Owner}) - one instance per lease, SSM-only, terminates on shutdown."
+        - !Sub "${Capability} on-demand runner - SSM-only, stops on shutdown."
       LaunchTemplateData:
-        ImageId: !Ref AmiId
+        # Ephemeral: EC2 resolves the parameter at EVERY launch, so a rebake
+        # (which writes it) takes effect on the next lease with no stack update.
+        ImageId: !If
+          - IsEphemeral
+          - !Sub "resolve:ssm:/canopy/capabilities/${Owner}/${Capability}/ami"
+          - !Ref AmiId
         InstanceType: !Ref InstanceType
         IamInstanceProfile:
           Arn: !GetAtt InstanceProfile.Arn
-        SecurityGroupIds:
-          - !GetAtt SecurityGroup.GroupId
-        # A halt (the in-VM watchdog's `shutdown -h now`) STOPS the instance.
-        InstanceInitiatedShutdownBehavior: stop
+        # Persistent puts the subnet on the Instance resource; ephemeral has no
+        # Instance resource, so the subnet travels in the launch template, and a
+        # launch-template network interface carries its own security groups.
+        SecurityGroupIds: !If
+          - IsEphemeral
+          - !Ref "AWS::NoValue"
+          - - !GetAtt SecurityGroup.GroupId
+        NetworkInterfaces: !If
+          - IsEphemeral
+          - - DeviceIndex: 0
+              SubnetId: !Ref SubnetId
+              Groups:
+                - !GetAtt SecurityGroup.GroupId
+              DeleteOnTermination: true
+          - !Ref "AWS::NoValue"
+        # A halt (the in-VM watchdog's `shutdown -h now`) STOPS a persistent
+        # instance and TERMINATES an ephemeral one.
+        InstanceInitiatedShutdownBehavior: !If [IsEphemeral, terminate, stop]
         # Detailed (1-minute) monitoring. Basic monitoring publishes CPU only
         # every 5 minutes, which IdleStopAlarm's 60 s periods would see as
         # missing data (notBreaching) and never fire on.
@@ -224,17 +369,37 @@ Resources:
           HttpEndpoint: enabled
           HttpTokens: required # IMDSv2 only
           HttpPutResponseHopLimit: 2
-        TagSpecifications:
-          - ResourceType: volume
-            Tags:
-              - { Key: owner, Value: !Ref OwnerTag }
-              - { Key: capability, Value: !Ref Capability }
-              - { Key: managed-by, Value: cloudformation }
-              - { Key: Name, Value: !Sub "ondemand-${Capability}-root" }
+        TagSpecifications: !If
+          - IsEphemeral
+          # The broker's RunInstances also sends canopy:capability, canopy:owner
+          # and canopy:lease (BrokerPolicy requires the first two on the request).
+          - - ResourceType: instance
+              Tags:
+                - { Key: "canopy:capability", Value: !Ref Capability }
+                - { Key: "canopy:owner", Value: !Ref Owner }
+                - { Key: owner, Value: !Ref OwnerTag }
+                - { Key: capability, Value: !Ref Capability }
+                - { Key: managed-by, Value: canopy-capabilities }
+                - { Key: Name, Value: !Sub "canopy-cap-${Owner}-${Capability}" }
+            - ResourceType: volume
+              Tags:
+                - { Key: "canopy:capability", Value: !Ref Capability }
+                - { Key: "canopy:owner", Value: !Ref Owner }
+                - { Key: owner, Value: !Ref OwnerTag }
+                - { Key: capability, Value: !Ref Capability }
+                - { Key: managed-by, Value: canopy-capabilities }
+                - { Key: Name, Value: !Sub "canopy-cap-${Owner}-${Capability}-root" }
+          - - ResourceType: volume
+              Tags:
+                - { Key: owner, Value: !Ref OwnerTag }
+                - { Key: capability, Value: !Ref Capability }
+                - { Key: managed-by, Value: cloudformation }
+                - { Key: Name, Value: !Sub "ondemand-${Capability}-root" }
 
   # Retained: a stack delete must never take the runner (and its disk) with it.
   Instance:
     Type: AWS::EC2::Instance
+    Condition: IsPersistent
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -277,20 +442,34 @@ Resources:
           - ObjectOwnership: BucketOwnerEnforced
       # Only per-request traffic expires. Anything else (worker files, caches)
       # is durable: expiring it would break a reinstall or a replaced instance.
+      # Ephemeral: everything is per-lease (leases/) or per-instance (vm/).
       LifecycleConfiguration:
-        Rules:
-          - Id: expire-requests-after-7-days
-            Status: Enabled
-            Prefix: requests/
-            ExpirationInDays: 7
-          - Id: expire-results-after-7-days
-            Status: Enabled
-            Prefix: results/
-            ExpirationInDays: 7
-          - Id: abort-incomplete-multipart
-            Status: Enabled
-            AbortIncompleteMultipartUpload:
-              DaysAfterInitiation: 1
+        Rules: !If
+          - IsEphemeral
+          - - Id: expire-leases-after-7-days
+              Status: Enabled
+              Prefix: leases/
+              ExpirationInDays: 7
+            - Id: expire-vm-after-7-days
+              Status: Enabled
+              Prefix: vm/
+              ExpirationInDays: 7
+            - Id: abort-incomplete-multipart
+              Status: Enabled
+              AbortIncompleteMultipartUpload:
+                DaysAfterInitiation: 1
+          - - Id: expire-requests-after-7-days
+              Status: Enabled
+              Prefix: requests/
+              ExpirationInDays: 7
+            - Id: expire-results-after-7-days
+              Status: Enabled
+              Prefix: results/
+              ExpirationInDays: 7
+            - Id: abort-incomplete-multipart
+              Status: Enabled
+              AbortIncompleteMultipartUpload:
+                DaysAfterInitiation: 1
       Tags:
         - { Key: owner, Value: !Ref OwnerTag }
         - { Key: capability, Value: !Ref Capability }
@@ -301,6 +480,7 @@ Resources:
   # AWS-builtin EC2 stop action: no Lambda or SNS in the loop.
   IdleStopAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: IsPersistent
     Properties:
       AlarmName: !Sub "ondemand-${Capability}-idle-stop"
       AlarmDescription: !Sub "Stop the ${Capability} on-demand runner after ${IdleStopMinutes} min of <5% CPU."
@@ -329,6 +509,7 @@ Resources:
   # conditions and are read-only; the SSM document carries no tags.
   ConsumerPolicy:
     Type: AWS::IAM::ManagedPolicy
+    Condition: IsPersistent
     Properties:
       ManagedPolicyName: !Sub "ondemand-${Capability}-consumer"
       Description: !Sub "Lets the consumer start, stop and command the ${Capability} on-demand runner."
@@ -374,10 +555,130 @@ Resources:
             Action: [s3:PutObject]
             Resource: !Sub "${ArtifactsBucket.Arn}/requests/*"
 
+  # Everything the broker (canopy-web) may do, attached to the broker's own
+  # role: launch from THIS launch template only, with this capability's and
+  # owner's tags on the request; terminate and command only instances carrying
+  # both tags; pass only this stack's instance role; read and write only this
+  # stack's bucket; read only this stack. Describe and GetCommandInvocation take
+  # no resource conditions and are read-only.
+  BrokerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: IsEphemeral
+    Properties:
+      Description: !Sub "Lets the canopy capability broker lease ${Owner}'s ${Capability} instances."
+      Roles:
+        - !Ref BrokerRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: RunFromThisLaunchTemplate
+            Effect: Allow
+            Action: [ec2:RunInstances]
+            Resource:
+              - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/${LaunchTemplate}"
+              - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+              - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+              - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+              - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*"
+              - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}::image/*"
+            Condition:
+              ArnLike:
+                "ec2:LaunchTemplate": !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/${LaunchTemplate}"
+          - Sid: RunTaggedInstancesFromThisLaunchTemplate
+            Effect: Allow
+            Action: [ec2:RunInstances]
+            Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+            Condition:
+              ArnLike:
+                "ec2:LaunchTemplate": !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/${LaunchTemplate}"
+              StringEquals:
+                "aws:RequestTag/canopy:capability": !Ref Capability
+                "aws:RequestTag/canopy:owner": !Ref Owner
+          - Sid: TagOnLaunchOnly
+            Effect: Allow
+            Action: [ec2:CreateTags]
+            Resource:
+              - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+              - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+              - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"
+            Condition:
+              StringEquals:
+                "ec2:CreateAction": RunInstances
+          - Sid: TerminateTaggedInstances
+            Effect: Allow
+            Action: [ec2:TerminateInstances]
+            Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+            Condition:
+              StringEquals:
+                "aws:ResourceTag/canopy:capability": !Ref Capability
+                "aws:ResourceTag/canopy:owner": !Ref Owner
+          - Sid: EC2Describe
+            Effect: Allow
+            Action: [ec2:DescribeInstances, ec2:DescribeInstanceStatus]
+            Resource: "*"
+          - Sid: SSMSendCommandToTaggedInstances
+            Effect: Allow
+            Action: [ssm:SendCommand]
+            Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+            Condition:
+              StringEquals:
+                "aws:ResourceTag/canopy:capability": !Ref Capability
+                "aws:ResourceTag/canopy:owner": !Ref Owner
+          - Sid: SSMSendCommandDocument
+            Effect: Allow
+            Action: [ssm:SendCommand]
+            Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}::document/AWS-RunShellScript"
+          - Sid: SSMReadCommandResults
+            Effect: Allow
+            Action: [ssm:GetCommandInvocation]
+            Resource: "*"
+          - Sid: PassTheInstanceRoleToEC2
+            Effect: Allow
+            Action: [iam:PassRole]
+            Resource: !GetAtt InstanceRole.Arn
+            Condition:
+              StringEquals:
+                "iam:PassedToService": ec2.amazonaws.com
+          - Sid: S3Bucket
+            Effect: Allow
+            Action: [s3:ListBucket, s3:GetBucketLocation]
+            Resource: !GetAtt ArtifactsBucket.Arn
+          - Sid: S3Objects
+            Effect: Allow
+            Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:AbortMultipartUpload]
+            Resource: !Sub "${ArtifactsBucket.Arn}/*"
+          - Sid: ReadThisStack
+            Effect: Allow
+            Action: [cloudformation:DescribeStacks]
+            Resource: !Ref "AWS::StackId"
+
 Outputs:
   InstanceId:
+    Condition: IsPersistent
     Description: The runner's instance id (the consumer's OnDemandInstance(instance_id=...)).
     Value: !Ref Instance
   ArtifactsBucketName:
     Description: The artifacts bucket the instance uploads to and the consumer reads from.
     Value: !Ref ArtifactsBucket
+  LaunchTemplateId:
+    Condition: IsEphemeral
+    Description: The launch template the broker launches one instance per lease from.
+    Value: !Ref LaunchTemplate
+  InstanceRoleArn:
+    Condition: IsEphemeral
+    Description: The instances' role (what the broker passes at launch).
+    Value: !GetAtt InstanceRole.Arn
+  InstanceRoleId:
+    Condition: IsEphemeral
+    Description: >-
+      The instances' role id. An instance's S3 prefix is vm/<InstanceRoleId>:<instance-id>/
+      (its aws:userid), so this is how the broker finds ready.json.
+    Value: !GetAtt InstanceRole.RoleId
+  Capability:
+    Condition: IsEphemeral
+    Description: The capability's name, as the instances are tagged (canopy:capability).
+    Value: !Ref Capability
+  Owner:
+    Condition: IsEphemeral
+    Description: The owning agent's slug, as the instances are tagged (canopy:owner).
+    Value: !Ref Owner

@@ -127,12 +127,12 @@ def _is_scoped_viewer(path: str) -> bool:
     return bool(_SCOPED_VIEWER.match(path))
 
 
-# The plugin marketplace (apps/plugins/views.py): Claude Code fetches these with
-# a bearer token, and a signed-out request must get the view's 401 — this
+# The agent catalog (apps/plugins/views.py): Claude Code fetches it with a
+# bearer token, and a signed-out request must get the view's 401 — this
 # middleware's fallback is a 302 to Google sign-in, which Claude Code would
-# follow and fail on. The views self-enforce: 401 without an identity, 404 for
-# a non-member.
-_PLUGIN_MARKETPLACE = re.compile(r"^/w/[^/]+/(marketplace\.json$|plugins/)")
+# follow and fail on. The retired per-workspace addresses are admitted too, so
+# a stale registration gets their 410 naming the new URL, not a redirect.
+_PLUGIN_MARKETPLACE = re.compile(r"^(/plugins/marketplace\.json$|/w/[^/]+/(marketplace\.json$|plugins/))")
 
 
 def _is_plugin_marketplace(path: str) -> bool:

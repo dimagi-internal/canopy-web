@@ -242,6 +242,7 @@ def test_a_new_agent_has_everything_but_its_repo_left_to_do(editor, ws):
         "job": "todo", "first_turn": "todo"}
     job = next(s for s in steps if s["key"] == "job")
     assert job["where"] == "claude-code"
+    assert next(s for s in steps if s["key"] == "github")["action"] == "Add a GitHub token"
     assert job["command"].startswith(
         f"git clone https://github.com/{REPO} ~/emdash-projects/scout && cd ~/emdash-projects/scout && claude ")
 

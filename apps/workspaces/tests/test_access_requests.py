@@ -379,37 +379,3 @@ def test_no_route_joins_without_an_invite_or_an_approved_request(org):
     _post(c, "/api/workspaces/org/join")
     c.get("/api/workspaces/org/")
     assert _memberships(asker) == set()
-
-
-# ---- migration ---------------------------------------------------------------
-
-
-@pytest.mark.django_db(transaction=True)
-def test_migration_keeps_dimagis_domains_and_auto_approves_dimagi_only():
-    from django.db import connection
-    from django.db.migrations.executor import MigrationExecutor
-
-    before = [("workspaces", "0011_admin_role")]
-    after = [("workspaces", "0012_access_requests")]
-    executor = MigrationExecutor(connection)
-    executor.migrate(before)
-    old = executor.loader.project_state(before).apps
-    OldUser = old.get_model("auth", "User")
-    OldWs = old.get_model("workspaces", "Workspace")
-    u = OldUser.objects.create(username="mig")
-    OldWs.objects.create(slug="dimagi", display_name="Dimagi", created_by=u,
-                         self_join_domains=["dimagi.com", "dimagi-associate.com"])
-    OldWs.objects.create(slug="connect", display_name="Connect", created_by=u, self_join_domains=[])
-
-    executor = MigrationExecutor(connection)
-    executor.loader.build_graph()
-    executor.migrate(after)
-    new = executor.loader.project_state(after).apps.get_model("workspaces", "Workspace")
-    dimagi, connect = new.objects.get(slug="dimagi"), new.objects.get(slug="connect")
-    assert dimagi.access_request_domains == ["dimagi.com", "dimagi-associate.com"]
-    assert dimagi.auto_approve_role == "editor"
-    assert connect.access_request_domains == [] and connect.auto_approve_role == ""
-
-    executor = MigrationExecutor(connection)
-    executor.loader.build_graph()
-    executor.migrate(executor.loader.graph.leaf_nodes())

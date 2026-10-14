@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 
 // Mocked at the api modules: the push, the GitHub reads and the gates are the
 // server's (tests/test_agent_creation.py). What is pinned here is the page's
@@ -33,12 +33,16 @@ const check = checkScaffoldRepo as unknown as ReturnType<typeof vi.fn>
 const scaffold = scaffoldAgent as unknown as ReturnType<typeof vi.fn>
 const register = registerAgent as unknown as ReturnType<typeof vi.fn>
 
+function Landed() {
+  return <p data-testid="landed">{useLocation().search}</p>
+}
+
 function mount() {
   return render(
     <MemoryRouter initialEntries={['/w/scouts/agents/new']}>
       <Routes>
         <Route path="/w/:workspace/agents/new" element={<NewAgentPage />} />
-        <Route path="/w/:workspace/agents/:slug/settings" element={<p>settings page</p>} />
+        <Route path="/w/:workspace/agents/:slug/settings" element={<Landed />} />
       </Routes>
     </MemoryRouter>,
   )
@@ -72,12 +76,14 @@ describe('NewAgentPage', () => {
     scaffold.mockResolvedValue({ repo: 'olive/scout-bot', repo_url: 'https://github.com/olive/scout-bot', repo_ref: 'main', adopted: false, files: 21 })
     register.mockResolvedValue(undefined)
     mount()
+    // A disabled Create says what it is waiting for.
+    expect(await screen.findByText(/Still needed: a name, a slug, a mandate/)).toBeTruthy()
     fillAbout()
     await screen.findByText('olive/scout-bot is empty and canopy can push to it.', {}, { timeout: 3000 })
     expect(check).toHaveBeenLastCalledWith('scouts', 'scout-bot', 'olive/scout-bot')
 
     fireEvent.click(screen.getByRole('button', { name: 'Create agent' }))
-    await screen.findByText('settings page')
+    expect((await screen.findByTestId('landed')).textContent).toBe('?created=olive%2Fscout-bot')
     const sent = scaffold.mock.calls[0][0]
     expect(sent).toMatchObject({ workspace: 'scouts', slug: 'scout-bot', name: 'Scout Bot', repo: 'olive/scout-bot' })
     expect(register).toHaveBeenCalledWith(sent, expect.objectContaining({ repo_ref: 'main' }))

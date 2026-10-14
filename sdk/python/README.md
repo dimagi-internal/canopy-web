@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.7.2#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.8.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.7.2/dimagi_canopy-0.7.2-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.8.0/dimagi_canopy-0.8.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -47,7 +47,7 @@ library, address-pinned.
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
 | `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `{% canopy_panel %}` |
-| `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `run_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
+| `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `EphemeralInstance`, `run_command`, `send_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
 | `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
 
 ## A Django host in five steps
@@ -277,6 +277,31 @@ terminating the instance, then deleting those four resources and the bucket by
 hand. The launch template, alarm and `ConsumerPolicy` go with the stack.
 
 Outputs: **`InstanceId`** and **`ArtifactsBucketName`** — the consumer's settings.
+
+### Ephemeral mode (`Mode=ephemeral`)
+
+The same template with `Mode=ephemeral` creates **no instance**: a launch template a
+broker launches one fresh instance from per lease (`EphemeralInstance.launch`, with
+`ClientToken=<lease id>` so a retry never starts a second one) and terminates after.
+canopy-web's cloud capabilities are the broker; the whole contract — parameters
+(`Owner`, `BrokerRoleName`; `AmiId`, `ConsumerTaskRoleName`, `IdleStopMinutes` unused),
+the outputs, the SSM AMI parameter `/canopy/capabilities/<Owner>/<Capability>/ami`, the
+broker and instance-role scopes, and what the image must do — is
+`docs/architecture/capabilities.md` in canopy-web. There is no idle alarm in this mode
+(an alarm names one instance); a halt terminates the instance.
+
+```python
+from canopy_sdk.ondemand import EphemeralInstance
+
+vm = EphemeralInstance(region="us-east-1", launch_template_id="lt-…",
+                       capability="android-emulator", owner="ace")
+iid = vm.launch(lease_id=lease_id, user_data={"lease_id": lease_id, "params": {}, ...})
+cid = vm.run_async(iid, ["ace-mobile diagnose"], timeout_s=300,
+                   output_bucket=bucket, output_prefix=f"leases/{lease_id}/exec")
+vm.invocation(cid, iid)            # read back from SSM, from any process
+vm.list_tagged()                   # every live instance of this capability + owner
+vm.terminate(iid)
+```
 
 ### Consumer usage
 

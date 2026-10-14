@@ -107,16 +107,52 @@ def _send_with_retry(
     timeout_seconds: int,
 ) -> str:
     """Call ``send_command`` with one retry on throttling."""
+    return send_command(ssm_client, instance_id, commands=commands, timeout_seconds=timeout_seconds)
+
+
+def send_command(
+    ssm_client: Any,
+    instance_id: str,
+    *,
+    commands: list[str],
+    timeout_seconds: int = 600,
+    execution_timeout_s: int | None = None,
+    output_bucket: str | None = None,
+    output_prefix: str | None = None,
+    comment: str | None = None,
+) -> str:
+    """Send ``AWS-RunShellScript`` to ``instance_id`` and return the CommandId at once.
+
+    The fire-and-forget half of ``run_command``: nothing is polled, so the
+    command's state lives in SSM and a caller that restarts can read it back
+    with ``get_command_invocation``. One retry on ``ThrottlingException``.
+
+    ``execution_timeout_s`` bounds the script on the instance (the document's
+    ``executionTimeout``); ``timeout_seconds`` is SSM's delivery timeout.
+    With ``output_bucket``, SSM's agent also writes the full stdout and stderr
+    to ``s3://<output_bucket>/<output_prefix>/<CommandId>/<instance-id>/...``
+    (the instance role needs ``s3:PutObject`` there).
+    """
+    params: dict[str, list[str]] = {"commands": commands}
+    if execution_timeout_s is not None:
+        params["executionTimeout"] = [str(max(1, int(execution_timeout_s)))]
+    kwargs: dict[str, Any] = {
+        "InstanceIds": [instance_id],
+        "DocumentName": "AWS-RunShellScript",
+        "Parameters": params,
+        "TimeoutSeconds": max(30, min(timeout_seconds, 2592000)),
+    }
+    if output_bucket:
+        kwargs["OutputS3BucketName"] = output_bucket
+        if output_prefix:
+            kwargs["OutputS3KeyPrefix"] = output_prefix.strip("/")
+    if comment:
+        kwargs["Comment"] = comment[:100]
     attempts = 0
     while True:
         attempts += 1
         try:
-            resp = ssm_client.send_command(
-                InstanceIds=[instance_id],
-                DocumentName="AWS-RunShellScript",
-                Parameters={"commands": commands},
-                TimeoutSeconds=max(30, min(timeout_seconds, 2592000)),
-            )
+            resp = ssm_client.send_command(**kwargs)
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "")
             if code == "ThrottlingException" and attempts == 1:

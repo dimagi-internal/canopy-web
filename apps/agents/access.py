@@ -97,7 +97,7 @@ def _refusal(agent, iface: dict, classes: set[str], requested: str | None) -> st
     if offered:
         doors = ", ".join(f"'{n}'" for n in offered)
         return (f"{agent.slug} offers {what} to you; you may use capability {doors} "
-                "(e.g. on a thread, or its MCP tool)")
+                "(e.g. on a thread)")
     hint = ""
     if "contact:verified" in classes:
         # A verified sender nobody listed is, far more often than a stranger, an
@@ -115,7 +115,7 @@ def decide(agent, who=None, *, verified: bool, origin: str = "", capability: str
 
     `verified` is about THIS message (a signed-in request always is). `origin`
     is the channel (for the record; the rule does not vary by it). `capability`
-    is a capability the asker named (an MCP tool), else the free-form door.
+    is a capability the asker named (e.g. a storyboard's), else the free-form door.
     `turn`, when given, supplies what only a turn knows: its initiator kind
     (canopy itself, another agent), the conversation it continues
     (`session_writer`) and the page or site it is held on (which door applies).

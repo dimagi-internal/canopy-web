@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { useLocation, useOutletContext } from 'react-router-dom'
+import { useLocation, useOutletContext, useSearchParams } from 'react-router-dom'
+import { CheckCircle2 } from 'lucide-react'
 
 import { AgentAccessRoster } from '@/components/agents/AgentAccessRoster'
 import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
@@ -41,6 +42,8 @@ export function AgentSettingsSection() {
   // and it was the old Credentials page's address twice over. The router does
   // not scroll to a hash by itself.
   const { hash } = useLocation()
+  // Set by the New agent page on its way here, so the person sees it worked.
+  const created = useSearchParams()[0].get('created')
   useEffect(() => {
     if (!hash) return
     const el = document.getElementById(decodeURIComponent(hash.slice(1)))
@@ -62,7 +65,13 @@ export function AgentSettingsSection() {
       {/* What is left before it can work — computed server-side from the same
           checks a turn meets. Gone once every required step is done. */}
       <div id="setup" className="mb-10 scroll-mt-6">
-        <AgentSetupChecklist slug={agent.slug} hideWhenDone />
+        {created && (
+          <p className="mb-3 flex items-center gap-1.5 text-[13px] text-success" data-testid="agent-created">
+            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+            {agent.name} is created. Its code is in {created}; finish the steps below.
+          </p>
+        )}
+        <AgentSetupChecklist slug={agent.slug} hideWhenDone={!created} />
       </div>
 
       {/* Persona + counts opened Overview. Overview is gone (Work is the

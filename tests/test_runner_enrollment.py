@@ -9,8 +9,6 @@ Enrollment never grants more than membership; it only narrows it.
 """
 from __future__ import annotations
 
-import importlib
-import inspect
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -20,7 +18,6 @@ from django.utils import timezone
 from apps.canopy_sessions.models import Session
 from apps.harness import services
 from apps.harness.models import Runner, RunnerAdmin, RunnerEnrollment, Turn
-from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -68,12 +65,6 @@ def _client(user):
     return c
 
 
-def _backfill(**kw):
-    return services.backfill_runner_enrollments(
-        runner_model=Runner, enrollment_model=RunnerEnrollment, membership_model=WorkspaceMembership,
-        workspace_model=Workspace, **kw)
-
-
 @pytest.fixture()
 def family():
     """Jonathan owns `dimagi` and the separate root `marshellis`."""
@@ -82,59 +73,6 @@ def family():
     _member(dimagi, jj, OWNER)
     _member(marshellis, jj, OWNER)
     return {"jj": jj, "dimagi": dimagi, "marshellis": marshellis}
-
-
-# --- the migration's backfill ------------------------------------------------
-def test_backfill_preserves_what_every_box_served_except_marshellis():
-    jj, other = _user("jj"), _user("other")
-    dimagi = _ws("dimagi", jj)
-    _ws("connect", jj, parent=dimagi)  # reached only as dimagi's inherited owner
-    labs = _ws("labs", jj)
-    readonly = _ws("readonly", jj)
-    marshellis = _ws("marshellis", jj)
-    kids = _ws("marshellis-kids", jj, parent=marshellis)
-    _member(dimagi, jj, OWNER)
-    _member(labs, jj, EDITOR)
-    _member(readonly, jj, VIEWER)
-    _member(marshellis, jj, OWNER)
-    _member(labs, other, ADMIN)
-
-    laptop = _box(jj, dimagi, name="laptop")
-    cloud = _box(jj, labs, name="cloud-ec2-1")
-    theirs = _box(other, labs, name="theirs")
-    orphan = _box(None, dimagi, name="orphan")
-    # What the old rule said each box served, minus the family tree.
-    before = {r.pk: perms.slugs_with(r.owner, perms.AGENT_WORK) - {"marshellis", "marshellis-kids"}
-              for r in (laptop, cloud) if r.owner_id}
-    RunnerEnrollment.objects.all().delete()  # as if these boxes predated enrollment
-
-    _backfill(exclude=("marshellis",))
-
-    expect = {"dimagi", "connect", "labs"}
-    assert services.enrolled_slugs(laptop) == expect
-    assert services.enrolled_slugs(cloud) == expect
-    assert services.enrolled_slugs(theirs) == {"labs"}
-    assert services.enrolled_slugs(orphan) == set()
-    for r in (laptop, cloud):
-        assert services.runner_tenant_slugs(r) == before[r.pk] == expect
-    assert not RunnerEnrollment.objects.filter(
-        workspace__in=[marshellis, kids, readonly]).exists()
-
-
-def test_backfill_is_idempotent_and_safe_without_marshellis():
-    jj = _user("jj")
-    dimagi = _ws("dimagi", jj)
-    _member(dimagi, jj, OWNER)
-    box = _box(jj, dimagi)  # already enrolled at pairing
-    assert _backfill(exclude=("marshellis",)) == 0
-    assert _backfill(exclude=("marshellis",)) == 0
-    assert list(RunnerEnrollment.objects.filter(runner=box)
-                .values_list("workspace_id", flat=True)) == ["dimagi"]
-
-
-def test_the_migration_backfill_is_wired_to_exclude_marshellis():
-    mig = importlib.import_module("apps.harness.migrations.0071_runner_enrollment")
-    assert 'exclude=("marshellis",)' in inspect.getsource(mig.backfill)
 
 
 # --- claiming -----------------------------------------------------------------

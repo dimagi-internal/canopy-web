@@ -2,6 +2,28 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.8.0 — 2026-10-14
+
+`canopy_sdk.ondemand`: ephemeral capabilities — one fresh instance per lease, terminated after.
+
+- `EphemeralInstance(region=, launch_template_id=, capability=, owner=)`: `launch` (RunInstances
+  from the launch template with `ClientToken=lease_id`, so a retry returns the same instance;
+  user data is JSON; instances tagged `canopy:capability`, `canopy:owner`, `canopy:lease`),
+  `describe`, `run_async` (SSM `SendCommand`, returns the CommandId at once, full output to S3),
+  `invocation` (read a command back from SSM), `terminate`, `list_tagged`. `LaunchFailed.transient`
+  says whether a retry can help. `OnDemandInstance` is unchanged.
+- `send_command`: the fire-and-forget half of `run_command`, with `executionTimeout` and S3 output.
+- `ondemand-capability.cfn.yaml` gains `Mode: persistent | ephemeral` (default `persistent`).
+  Persistent renders exactly the resources and outputs 0.7.2 did (a test compares the two), so
+  existing stacks update to a no-op. `AmiId` and `ConsumerTaskRoleName` now default to `""`
+  (Rules require them in persistent mode); new parameters `Mode`, `Owner`, `BrokerRoleName` all
+  have defaults. Ephemeral mode: no Instance and no idle alarm; the launch template resolves its
+  AMI from `/canopy/capabilities/<Owner>/<Capability>/ami` at every launch, terminates on halt and
+  tags instances `canopy:capability` / `canopy:owner`; `BrokerPolicy` grants the broker exactly the
+  lease lifecycle on those tags; the instance role writes only `vm/${aws:userid}/*` and the lease
+  `out/` and `exec/` prefixes and reads `in/`. Outputs `LaunchTemplateId`, `ArtifactsBucketName`,
+  `InstanceRoleArn`, `InstanceRoleId`, `Capability`, `Owner`.
+
 ## 0.7.2 — 2026-10-08
 
 `canopy_sdk.ondemand`: three public methods, so consumers stop reaching into private ones.

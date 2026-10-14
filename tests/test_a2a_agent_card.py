@@ -123,8 +123,10 @@ def test_public_card_is_a_well_formed_a2a_card(w):
     assert body["capabilities"] == {"streaming": False, "pushNotifications": False,
                                     "extendedAgentCard": True}
     ifaces = body["supportedInterfaces"]
+    # No MCP door: canopy's MCP server does not run agents (install the plugin).
     assert [i["url"] for i in ifaces] == [f"{BASE}/api/contact/sessions",
-                                          "mailto:ace@dimagi-ai.com", f"{BASE}/api/mcp/"]
+                                          "mailto:ace@dimagi-ai.com"]
+    assert body["securityRequirements"] == [{"schemes": {"canopyContactToken": {"list": []}}}]
     assert all(i["protocolVersion"] == "1.0" and i["protocolBinding"] for i in ifaces)
     schemes = body["securitySchemes"]
     assert schemes["canopyPersonalAccessToken"]["httpAuthSecurityScheme"]["scheme"] == "bearer"
@@ -186,12 +188,11 @@ def test_a_member_sees_public_plus_their_own(w):
     assert r.status_code == 200, r.content
     skills = _skills(r.json())
     assert set(skills) == {"ask", "marketplace", "summarise_opportunity"}
-    assert skills["summarise_opportunity"]["securityRequirements"] == [
-        {"schemes": {"canopyPersonalAccessToken": {"list": []}}}]
-    assert skills["summarise_opportunity"]["inputModes"] == ["text/plain", "application/json"]
+    # A member-only skill has no A2A door: members use the agent's plugin.
+    assert "securityRequirements" not in skills["summarise_opportunity"]
+    assert "inputModes" not in skills["summarise_opportunity"]
     assert skills["ask"]["tags"] == ["caller:contact", "caller:member"]
-    # Members are sent to MCP first.
-    assert r.json()["supportedInterfaces"][0]["url"].endswith("/api/mcp/")
+    assert not any(i["url"].endswith("/api/mcp/") for i in r.json()["supportedInterfaces"])
     assert r["Cache-Control"] == "private, max-age=60"
     assert "Authorization" in r["Vary"]
     text = r.content.decode()

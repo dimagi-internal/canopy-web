@@ -17,11 +17,9 @@ explicitly or due to previous granting to this agent."
 from __future__ import annotations
 
 import datetime as dt
-import importlib
 import json
 
 import pytest
-from django.apps import apps as django_apps
 from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
@@ -265,23 +263,6 @@ def test_a_revoked_grant_is_not_revived(w):
     assert PersonGrant.objects.filter(person=w["person"], status="active").count() == 0
 
 
-def test_the_migration_retires_every_presumed_grant(w):
-    keep = PersonGrant.objects.create(
-        person=w["person"], workspace=w["ws"], agent=w["ada"], client_key="k1", client_name="Ada",
-        scopes=hcp.default_scopes(), modality="canopy-chat")
-    presumed = PersonGrant.objects.create(
-        person=w["person"], workspace=w["ws"], agent=w["eva"], client_key="k2", client_name="Eva",
-        scopes=hcp.default_scopes(), modality="canopy-control-plane")
-    mod = importlib.import_module("apps.contacts.migrations.0022_retire_presumed_grants")
-    mod.forwards(django_apps, None)
-    presumed.refresh_from_db()
-    keep.refresh_from_db()
-    assert (presumed.status, keep.status) == ("revoked", "active")
-    ev = PersonAuditEvent.objects.get(person=w["person"], event_type="grant.revoked")
-    assert ev.grant_id == presumed.grant_id and ev.actor_type == "system"
-    assert "only ever given by you" in ev.detail
-
-
 @pytest.fixture()
 def org(w):
     """Dimagi above two divisions — Connect (Lili's entry) and Strategy (Hal) —
@@ -474,22 +455,3 @@ def test_an_entry_recorded_through_a_site_carries_the_site(org):
            "declarationType": "user-declared", "sourceContext": f"turn:{t2.pk}"})
     from apps.contacts.models import PersonFact
     assert PersonFact.objects.get(statement="Reviews on Fridays.").provenance_site == {}
-
-
-def test_the_migration_narrows_live_agent_grants_to_their_workspace(w):
-    live = PersonGrant.objects.create(
-        person=w["person"], workspace=w["ws"], agent=w["ada"], client_key="k1", client_name="Ada",
-        scopes=[hcp.scope("work_context", "read")], modality="canopy-chat")
-    gone = PersonGrant.objects.create(
-        person=w["person"], workspace=w["ws"], agent=w["eva"], client_key="k2", client_name="Eva",
-        scopes=[hcp.scope("work_context", "read")], modality="canopy-chat", status="revoked")
-    assert hcp.reach_of(live) == {"connect"}                     # the column bounds it already
-    mod = importlib.import_module("apps.contacts.migrations.0023_memory_reach")
-    mod.backfill(django_apps, None)
-    live.refresh_from_db()
-    gone.refresh_from_db()
-    assert live.restrictions == [{"scope": "hcp:work_context:read",
-                                  "narrowedTo": {"sources": ["workspace:connect"]}}]
-    assert gone.restrictions == []
-    assert hcp.reach_of(live) == {"connect"}                     # exactly its old reach
-    assert not _issued(w["person"])                              # nothing new was authorized

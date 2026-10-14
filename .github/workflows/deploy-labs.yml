@@ -41,6 +41,11 @@ on:
         type: boolean
         required: false
         default: false
+      force:
+        description: 'Re-deploy even if this commit is already live (rolls the service again).'
+        type: boolean
+        required: false
+        default: false
 
 # Deploys are serialized (one at a time, never cancelled mid-flight). That makes a
 # hung job everyone's problem: it holds this lock and every later deploy queues
@@ -70,6 +75,8 @@ jobs:
     name: Enforce main-only deploys
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      already_live: ${{ steps.live.outputs.already_live }}
     steps:
       - name: Check ref is refs/heads/main
         run: |
@@ -95,11 +102,54 @@ jobs:
           fi
           echo "Deploying main tip $TIP."
 
+      # A deploy of the commit that is ALREADY serving is a no-op that still costs
+      # a full build + migrate + CloudFormation rollout (minutes, and a task
+      # replacement). Those happen — a second dispatch after a merge someone else
+      # already deployed, a retry of a run that actually succeeded — so skip them:
+      # the run ends green with build and deploy SKIPPED. `force: true` is the way
+      # to roll the live commit again on purpose (e.g. to pick up a changed secret).
+      #
+      # Fails OPEN: if the live image cannot be read for any reason, deploy as
+      # before. A guard that could block deploys would be worse than the waste.
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        if: ${{ inputs.force != true }}
+        continue-on-error: true
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Skip if this commit is already live
+        id: live
+        if: ${{ inputs.force != true }}
+        run: |
+          TD=$(aws ecs describe-services --cluster "${{ env.ECS_CLUSTER }}" --services "${{ env.ECS_SERVICE }}" \
+            --query 'services[0].deployments[?status==`PRIMARY`].taskDefinition | [0]' --output text 2>/dev/null) || true
+          LIVE=""
+          if [ -n "$TD" ] && [ "$TD" != "None" ]; then
+            IMAGE=$(aws ecs describe-task-definition --task-definition "$TD" \
+              --query "taskDefinition.containerDefinitions[?name=='${{ env.CONTAINER_NAME }}'].image | [0]" \
+              --output text 2>/dev/null) || true
+            LIVE="${IMAGE##*:}"
+          fi
+          if [ "$LIVE" = "${{ github.sha }}" ]; then
+            echo "already_live=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ github.sha }} is already live — skipping build and deploy. Dispatch with force=true to roll it again."
+            {
+              echo "### Skipped: already live"
+              echo "\`${{ github.sha }}\` is already serving on \`${{ env.ECS_SERVICE }}\`. Nothing was built or rolled."
+              echo "Re-run with \`force: true\` to deploy it again."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "already_live=false" >> "$GITHUB_OUTPUT"
+            echo "Live is '${LIVE:-<unknown>}'; deploying ${{ github.sha }}."
+          fi
+
   build:
     name: Build & push image
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: guard
+    if: ${{ needs.guard.outputs.already_live != 'true' }}
     steps:
       - uses: actions/checkout@v7
         with:

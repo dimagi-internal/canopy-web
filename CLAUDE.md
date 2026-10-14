@@ -67,13 +67,14 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 - `huddles` (+ `/:id`), `threads/:id` — agent huddles; a bounded agent-to-agent thread
 - `schedules`, `activity`, `timeline` — schedule calendar, turn log, team activity feed
 - `shareouts` (+ `/:period`), `walkthroughs`, `storyboards`, `ddd` (+ `/:narrative/:runId`) — briefings, demos, storyboard index, DDD operator console
-- `marketplace.json`, `plugins/:agent/:sha.zip` — server views: agents as a Claude Code plugin marketplace
+- `marketplace.json`, `plugins/…` — retired (410); the agent catalog is `/plugins/marketplace.json` (root, below)
 - Public with a token (the only `/w/` pages anonymous visitors reach, `apps/common/middleware.py::_SCOPED_VIEWER`): `walkthrough/:id` (+ `/content`), `review/:id`, `share/:token`, `storyboard/:slug`, `narrative/:slug?b=`, `ddd-release/:narrative/:runId`
 
 **Root:**
 - `/` — public product site (Astro, `site/`, `config/public_site.py`) for everyone; `/app` — the door into the app (`LOGIN_REDIRECT_URL`); `/about` — public explainer
 - `/supervisor` — cross-fleet Feed, Waiting on you, Sessions, Agents, Runners (phone PWA + menubar)
 - `/activity`, `/schedules` — turn log and schedules across your workspaces
+- `/plugins/marketplace.json` — your agents as ONE Claude Code catalog, `canopy-agents` (github sources, your own GitHub access; `docs/architecture/plugin-marketplace.md`)
 - `/settings` — your account (runners you administer, GitHub, connected apps, tokens)
 - `/sessions` — your shared transcripts; `/system` — capability catalog; `/guide` — in-app guide
 - `/people/me` — what agents know about you; `/hcp-clients` — HCP client registry (superusers); `/beta-requests` — requests for access to Canopy
@@ -130,6 +131,7 @@ Each is enforced or load-bearing across the codebase; the pointer says where.
 - Blocked-agent dialogs/menus (hook, transcript, screen parser, ACP permission requests, Notification markers), answering from a phone or Slack, `send-keys`, `pending-menus.json`, the composer lock → `docs/architecture/blocked-agent-menus.md`
 - MCP tools/auth → `docs/architecture/mcp-surface.md`. The embedded widget, canopy-ui/canopy-client/dimagi-canopy packaging, MCP Apps Views, the host-grant live probe, `scripts/e2e_embed_widget.py` → `docs/architecture/embedding-internals.md`. Host-facing embedding guide + page contract → `docs/architecture/embedding-a-canopy-agent.md`; host grant wire contract → `sdk/python/README.md`
 - Deploys, CI/merge queue, AWS/IAM, the old address, Postgres hosting → `docs/architecture/deploy.md`. Styling, themes, `canopy-ui`, the service worker/PWA, static caching → `docs/architecture/frontend.md`
+- Cloud capabilities — an agent leasing its own ephemeral EC2 machine (`capability.yaml`, `canopy-runtime publish-capabilities`, the `Mode=ephemeral` stack contract, grants, leases, exec, the claim-tick sweep) → `docs/architecture/capabilities.md`
 - Who changed which setting, through what (`SettingChange`, `route_gates.SETTINGS`, `audit.note_change`) → `docs/architecture/settings-audit.md`
 - Workspace email domains (`apps/mail`: SES receive/send, routes, forwarding, agent mail turns, the `canopy-web-mail` stack, rip-out list) → `docs/architecture/mail.md`; setup → `docs/runbooks/mail-domain-onboarding.md`
 - Pages and what each does → `docs/architecture/pages.md`. Every API route → `docs/architecture/api-surface.md`. The plugin marketplace → `docs/architecture/plugin-marketplace.md`

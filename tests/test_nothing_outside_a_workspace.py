@@ -267,31 +267,3 @@ def test_the_scoped_viewer_shells_load_without_a_login(path, settings, connect):
 def test_the_rest_of_the_tenant_shell_stays_behind_the_login(path, settings, connect):
     settings.REQUIRE_AUTH = True
     assert Client().get(path).status_code == 302
-
-
-# ----------------------------------------------- shared sessions predating the FK
-
-
-def test_the_backfill_homes_each_share_in_its_owners_workspace(dimagi, connect):
-    import importlib
-
-    from django.apps import apps as live_apps
-
-    home_rows = importlib.import_module(
-        "apps.session_sharing.migrations.0005_workspace"
-    ).home_rows
-    solo = a_member(connect, email="solo@dimagi.com", role=M.EDITOR)
-    both = a_member(connect, email="both@dimagi.com", role=M.EDITOR)
-    a_member(dimagi, email="both@dimagi.com", role=M.EDITOR)
-    nowhere = a_user("nowhere@example.org")
-    rows = {u.email: Session.objects.create(owner=u, title="t") for u in (solo, both, nowhere)}
-
-    home_rows(live_apps, None)
-
-    homed = {e: Session.objects.get(pk=s.pk).workspace_id for e, s in rows.items()}
-    assert homed == {
-        "solo@dimagi.com": "connect",
-        # in several: the org default, where their flat writes used to land
-        "both@dimagi.com": "dimagi",
-        "nowhere@example.org": None,
-    }

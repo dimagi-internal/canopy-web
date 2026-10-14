@@ -1,0 +1,95 @@
+# Echo's declarative runtime — what a box needs to run an Echo turn, anywhere.
+#
+# Read by the canopy reconciler (Agent Runtime Registry): it resolves the secret
+# REFERENCES below from the env's store (1Password: Agent-Echo, then Canopy-Shared),
+# ensures the plugins/tools, injects the env, runs the preflight, then runs the turn.
+# NEVER contains a secret value — only reference names + where each value lands.
+#
+# Migration note: this supersedes config/secrets.yaml's imperative `canopy provision`
+# for the RUNTIME layer. Echo's Google token is under one of the fleet's two interchangeable
+# gog clients — `canopy` (Canopy-Shared/gog-oauth-client) or `canopy-web`
+# (Canopy-Shared/gog-oauth-client-web). Which one a box holds is per-machine, so no client is
+# named here: every gog call asks `canopy email client --repo .`. Echo's old private `echo`
+# client (Agent-Echo/gog-oauth-client) was retired 2026-09-28 and removed.
+
+version: 1
+
+# Echo runs headless on the cloud runner via `claude -p`; on your laptop emdash can
+# still drive it. "any" lets the runner pick; pin to cloud_p to force headless.
+engine: any
+
+plugins:
+  - name: canopy
+    source: https://github.com/dimagi-internal/canopy        # canopy@canopy marketplace
+  - name: echo
+    source: https://github.com/dimagi-internal/echo          # this repo (echo@echo)
+  - name: chrome-sales
+    source: https://github.com/dimagi-internal/chrome-sales  # Salesforce + gdrive for sales work
+
+tools:
+  - name: claude
+  - name: gog
+  - name: git
+  - name: op
+
+# TRUE literals only — values that do not vary by environment. Drive/doc ids used to
+# live here; they are environment-varying, so they moved into `secrets:` below as
+# Agent-Echo references (canopy agent-core/agent-runtime.md).
+# (ECHO_GMAIL_CLIENT used to be here. It typed a client name, which is wrong on any box whose
+# mailbox was connected under the other fleet client — the client is asked, never declared.)
+env: {}
+
+# The Claude/AI credential is deliberately NOT here. It is a RUNNER-level login
+# owned by the runner environment and shared across every agent + every user who
+# fires a turn — the runner daemon injects CLAUDE_CODE_OAUTH_TOKEN when it launches
+# claude. The agent brings its identity, not its AI subscription.
+
+secrets:
+  # --- Agent identity -----------------------------------------------------
+  - name: canopy-pat                   # pairs the runner + posts turns as Echo (required)
+    env: CANOPY_PAT
+
+  # --- Echo's Google identity (optional: only turns that do Google work) ---
+  # The OAuth CLIENT is not Echo's: both fleet clients live in Canopy-Shared, and bootstrap
+  # takes the client from the token itself. Only Echo's own token is listed.
+  - name: gog-token                   # Echo's long-lived gog refresh token
+    optional: true
+  - name: echo-gmail-account          # echo@dimagi-ai.com (the mailbox it reads/replies from)
+    env: ECHO_GMAIL_ACCOUNT
+    optional: true
+  - name: echo-gmail-password
+    env: ECHO_GMAIL_PASSWORD
+    optional: true
+  - name: echo-tasks-sheet-id         # the task-tracker Sheet id
+    env: ECHO_TASKS_SHEET_ID
+    optional: true
+
+  # --- Drive ids: not sensitive, but they vary per environment -------------
+  - name: gdrive-root-folder          # Echo's OWN root (location = vault value)
+    env: GDRIVE_ROOT_FOLDER
+    optional: true
+  - name: echo-drive-folder-id        # legacy duplicate of gdrive-root-folder
+    env: ECHO_DRIVE_FOLDER_ID
+    optional: true
+  - name: echo-ideas-backlog-doc-id
+    env: ECHO_IDEAS_BACKLOG_DOC_ID
+    optional: true
+  - name: echo-slides-bridge-script-id
+    env: ECHO_SLIDES_BRIDGE_SCRIPT_ID
+    optional: true
+  - name: echo-slides-bridge-deployment-id
+    env: ECHO_SLIDES_BRIDGE_DEPLOYMENT_ID
+    optional: true
+
+# chrome-sales (Salesforce + gdrive) creds are deliberately NOT here: they are
+# PER-USER — chrome-sales acts on behalf of the logged-in human, not on echo's
+# identity — so they must be resolved from the dispatching user's context, never
+# baked into the shared agent vault. (Agent-<Slug> holds only agent-IDENTITY
+# secrets.) Resolving per-user secrets is a separate registry concern (TODO).
+
+preflight:
+  - name: claude-present
+    run: claude --version
+  - name: canopy-pat-present
+    run: 'test -n "$CANOPY_PAT" && echo ok'
+    expect: ok

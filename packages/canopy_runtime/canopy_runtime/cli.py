@@ -10,6 +10,10 @@ cloud runner (RS3). It builds the vault list from the agent slug
     --exec CMD…   run CMD with the resolved env merged in (only if ready)
 
 Exit codes: 0 ready · 3 gaps remain (needs bootstrap) · 2 usage/spec error.
+
+Also the ``canopy-runtime`` console script, whose one subcommand is
+``publish-capabilities`` (``canopy_runtime.publish``); with no subcommand it is
+the reconciler above.
 """
 from __future__ import annotations
 
@@ -46,6 +50,11 @@ def _report(result, *, stream=sys.stderr) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "publish-capabilities":
+        from canopy_runtime.publish import main as publish_main
+
+        return publish_main(argv[1:])
     ap = argparse.ArgumentParser(prog="canopy-reconcile")
     ap.add_argument("--spec", required=True, help="path to the agent's runtime.yaml")
     ap.add_argument("--agent", required=True, help="agent slug (selects Agent-<Slug> vault)")
