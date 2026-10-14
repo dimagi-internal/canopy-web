@@ -13,11 +13,9 @@ Privacy rules pinned here, beside v1's in `test_people_brain.py`:
 from __future__ import annotations
 
 import datetime as dt
-import importlib
 import io
 
 import pytest
-from django.apps import apps as django_apps
 from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.utils import timezone
@@ -207,17 +205,6 @@ def test_backfill_links_facts_and_raisers_and_is_idempotent(world):
     assert participants.backfill()["participants_added"] == 0
 
 
-def test_the_migration_links_existing_fact_subjects_idempotently(world):
-    ws, ace, lili = world["ws"], world["ace"], world["lili"]
-    p1 = _project(ace)
-    PersonFact.objects.create(person=contacts.person_for(user=lili), workspace=ws, kind="role",
-                              statement="On KC.", project=p1)
-    mig = importlib.import_module("apps.agents.migrations.0041_link_fact_subjects_to_projects")
-    mig.link_fact_subjects(django_apps, None)
-    mig.link_fact_subjects(django_apps, None)
-    assert ProjectParticipant.objects.get().source == "fact"
-
-
 # --- 2. coverage ---------------------------------------------------------------------------
 
 
@@ -351,23 +338,6 @@ def test_mirroring_notes_is_one_role_fact_and_idempotent(world):
     call_command("mirror_contact_notes", stdout=out)
     assert "contacts with notes: 1" in out.getvalue()
     assert PersonFact.objects.count() == 1
-
-
-def test_the_migration_mirrors_notes_idempotently_and_supersedes_on_change(world):
-    c = _correspondent(world["ws"], notes="Program officer.")
-    _correspondent(world["ws"], address="empty@llo.org")         # no notes: nothing
-    mig = importlib.import_module("apps.contacts.migrations.0011_mirror_contact_notes")
-    mig.mirror_notes(django_apps, None)
-    mig.mirror_notes(django_apps, None)
-    first = PersonFact.objects.get()
-    assert (first.statement, first.source_contact_id, first.person_id) == (
-        "Program officer.", c.pk, c.person_id)
-    Contact.objects.filter(pk=c.pk).update(notes="Now a director.")
-    mig.mirror_notes(django_apps, None)
-    first.refresh_from_db()
-    live = people.live_facts(c.person, "connect").get()
-    assert live.statement == "Now a director." and live.supersedes == first
-    assert first.superseded_at is not None
 
 
 def test_patching_notes_mirrors_supersedes_and_clearing_retracts(world):

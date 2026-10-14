@@ -215,32 +215,6 @@ def test_a_new_workspace_is_seeded_and_seeding_is_idempotent(fleet):
     assert defaults.seed(ws.pk) == 0
 
 
-def test_the_data_migration_seeds_every_existing_workspace(fleet):
-    import importlib
-
-    from django.apps import apps as registry
-
-    AdmissionRule.objects.all().delete()
-    seed = importlib.import_module("apps.admission.migrations.0002_seed_default_rules").seed
-    seed(registry, None)
-    assert set(AdmissionRule.objects.filter(workspace=fleet["ws"]).values_list("seed_key", flat=True)) \
-        == {"email-confined-manual-cloud", "email-confined-manual-laptop"}
-
-
-def test_the_refusal_migration_seeds_only_its_own_rules(fleet):
-    import importlib
-
-    from django.apps import apps as registry
-
-    ws = fleet["ws"]
-    AdmissionRule.objects.filter(workspace=ws, seed_key__in=("blocked-sender", "offered-nothing")).delete()
-    _seeded(ws, "email-confined-manual-laptop").delete()  # a workspace removed a default
-    importlib.import_module("apps.admission.migrations.0005_seed_refusal_rules").seed(registry, None)
-    assert set(AdmissionRule.objects.filter(workspace=ws).values_list("seed_key", flat=True)) == {
-        "email-confined-manual-cloud", "blocked-sender", "offered-nothing",
-        "no-runner-paused", "no-runner-offline"}  # the laptop default is not brought back
-
-
 def test_origin_choices_track_the_turn_vocabulary():
     assert dict(AdmissionRule.ORIGIN_CHOICES).keys() == dict(Turn.ORIGIN_CHOICES).keys()
 

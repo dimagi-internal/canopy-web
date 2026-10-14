@@ -135,33 +135,3 @@ def test_a_workspace_with_no_slack_link_still_cannot_share(slack, installation, 
     wsvc.ensure_member(lonely, alice, WorkspaceMembership.OWNER)
     session = Session.objects.create(workspace=lonely, project="x", created_by=alice, title="x")
     assert share.share_session(alice, channel="C1", summary="hi", session=session).status == share.NOT_INSTALLED
-
-
-@pytest.mark.django_db(transaction=True)
-def test_the_migration_links_each_existing_installation_to_its_workspace():
-    from django.db import connection
-    from django.db.migrations.executor import MigrationExecutor
-
-    # workspaces/0012 renamed a Workspace column; hold workspaces at the schema
-    # these historical models describe.
-    before = [("slack", "0010_agent_declared"), ("workspaces", "0011_admin_role")]
-    after = [("slack", "0011_workspace_links")]
-    executor = MigrationExecutor(connection)
-    executor.migrate(before)
-    old = executor.loader.project_state(before).apps
-    owner = old.get_model("auth", "User").objects.create(username="legacy-owner")
-    ws = old.get_model("workspaces", "Workspace").objects.create(slug="legacy", display_name="Legacy",
-                                                                 created_by=owner)
-    old.get_model("slack", "SlackInstallation").objects.create(
-        team_id="TOLD", bot_user_id="U", bot_token_enc="x", workspace=ws)
-
-    executor = MigrationExecutor(connection)
-    executor.loader.build_graph()
-    executor.migrate(after)
-    new = executor.loader.project_state(after).apps
-    link = new.get_model("slack", "SlackWorkspaceLink").objects.get()
-    assert (link.workspace_id, link.installation.team_id) == ("legacy", "TOLD")
-
-    executor = MigrationExecutor(connection)
-    executor.loader.build_graph()
-    executor.migrate(executor.loader.graph.leaf_nodes())

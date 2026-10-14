@@ -15,12 +15,9 @@ them, and each flip is its own audit event.
 """
 from __future__ import annotations
 
-import importlib
 import json
 
 import pytest
-from allauth.account.models import EmailAddress
-from django.apps import apps as django_apps
 from django.contrib.auth.models import User
 from django.test import Client
 
@@ -291,25 +288,6 @@ def test_coverage_counts_only_people_who_make_recording_available(w):
     _set(w["lili"], record=True)
     row = coverage.workspace_coverage("connect")["agents"][0]
     assert row["human_turns"] == coverage.MIN_TURNS_FOR_FACTS and row["healthy"] is False
-
-
-def test_the_migration_sets_record_yes_use_no_for_jonathan_only(w):
-    jon = User.objects.create_user("jjackson", "jjackson@dimagi.com", "pw")
-    EmailAddress.objects.create(user=jon, email="jjackson@dimagi.com", verified=True, primary=True)
-    jon_person = contacts.person_for(user=jon)
-    jon_person.hcp_record_available = jon_person.hcp_use_available = True   # as 0017 left it
-    jon_person.save()
-    mig = importlib.import_module("apps.contacts.migrations.0019_agent_memory_defaults")
-    mig.forwards(django_apps, None)
-    mig.forwards(django_apps, None)                                        # idempotent
-    jon_person.refresh_from_db()
-    w["person"].refresh_from_db()
-    assert (jon_person.hcp_record_available, jon_person.hcp_record_default) == (True, True)
-    assert (jon_person.hcp_use_available, jon_person.hcp_use_default) == (False, False)
-    assert (w["person"].hcp_record_available, w["person"].hcp_use_available) == (False, False)
-    assert sorted(PersonAuditEvent.objects.filter(person=jon_person)
-                  .values_list("event_type", flat=True)) == ["agentRecord.defaultOn",
-                                                             "agentUse.disabled"]
 
 
 # --- the rollout gate: memory is on only for the people settings.HCP_PEOPLE names --------

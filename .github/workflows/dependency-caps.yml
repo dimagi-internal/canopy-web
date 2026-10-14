@@ -23,6 +23,12 @@ on:
 permissions:
   contents: read
 
+# A new push to the same PR supersedes the run in flight; scheduled and manual
+# runs are never cancelled.
+concurrency:
+  group: dependency-caps-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   caps:
     name: Caps admit the latest release
