@@ -12702,6 +12702,28 @@ export interface components {
              * @enum {string}
              */
             readonly credential_source: "1password" | "canopy-web";
+            /**
+             * Op Vault
+             * @default
+             */
+            readonly op_vault: string;
+            readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
+        };
+        /**
+         * AgentPluginOut
+         * @description The plugin (code) an agent instance runs: its repo and catalog name.
+         */
+        readonly AgentPluginOut: {
+            /**
+             * Repo
+             * @description `owner/repo` on github.com.
+             */
+            readonly repo: string;
+            /**
+             * Name
+             * @description The plugin's name in the `canopy-agents` catalog.
+             */
+            readonly name: string;
         };
         /** Page[AgentOut] */
         readonly Page_AgentOut_: {
@@ -12931,6 +12953,12 @@ export interface components {
              * @enum {string}
              */
             readonly credential_source: "1password" | "canopy-web";
+            /**
+             * Op Vault
+             * @default
+             */
+            readonly op_vault: string;
+            readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             readonly owner?: components["schemas"]["AgentOwnerOut"] | null;
             readonly canopy_user?: components["schemas"]["AgentOwnerOut"] | null;

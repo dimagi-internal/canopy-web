@@ -14,6 +14,8 @@ What these pin:
   listed under a qualified name, never dropped;
 - no identity is a 401 naming the header (never a sign-in redirect); a user
   with no memberships gets a valid, empty catalog;
+- each instance carries its 1Password vault NAME (`vault`), never the
+  service-account token;
 - the retired per-workspace marketplace and archive URLs answer 410 with the
   new address.
 """
@@ -61,7 +63,7 @@ class RawGitHub:
 def raw():
     cache.clear()
     fake = RawGitHub()
-    with mock.patch.object(services.requests, "get", fake.get):
+    with mock.patch.object(services, "_raw_get", fake.get):
         yield fake
     cache.clear()
 
@@ -84,7 +86,8 @@ def fleet():
     dimagi = a_workspace("dimagi")
     connect = a_workspace("connect", parent=dimagi)
     family = a_workspace("family")
-    agent("ada", dimagi, description="Conducts the fleet")
+    agent("ada", dimagi, description="Conducts the fleet", op_vault="Agent-Ada",
+          op_sa_token_enc="ENCRYPTED-SA-TOKEN")
     agent("ace", connect)
     agent("echo", family)
     agent("nogit", dimagi, repo="")                                   # no repo: not listed
@@ -140,7 +143,7 @@ def test_entries_are_github_sources_fetched_with_the_users_own_git(fleet, raw):
         "name": "ada",
         "description": "Conducts the fleet",
         "source": {"source": "github", "repo": "dimagi-internal/ada"},
-        "metadata": {"instances": [{"agent": "ada", "workspace": "dimagi"}]},
+        "metadata": {"instances": [{"agent": "ada", "workspace": "dimagi", "vault": "Agent-Ada"}]},
     }
     assert plugins["ace"]["description"] == "Ace"   # falls back to the agent's name
     # No archive, no sha256, no entry version: Claude Code tracks the repo.
@@ -160,8 +163,8 @@ def test_two_instances_of_one_repo_are_one_plugin(raw):
     assert only["name"] == "ace"                      # the repo name, not a slug
     assert only["source"] == {"source": "github", "repo": "dimagi-internal/ace"}
     assert only["metadata"]["instances"] == [
-        {"agent": "ace", "workspace": "dimagi"},
-        {"agent": "ace-family", "workspace": "family"},
+        {"agent": "ace", "workspace": "dimagi", "vault": ""},
+        {"agent": "ace-family", "workspace": "family", "vault": ""},
     ]
 
 
@@ -177,7 +180,7 @@ def test_the_name_comes_from_plugin_json_whichever_instance_you_see(raw):
 def test_the_plugin_name_is_cached_and_a_github_failure_falls_back(raw):
     ws = a_workspace("dimagi")
     a = agent("hal", ws)
-    with mock.patch.object(services.requests, "get", side_effect=requests.ConnectionError):
+    with mock.patch.object(services, "_raw_get", side_effect=requests.ConnectionError):
         assert services.plugin_name(a) == "hal"
     raw.names["dimagi-internal/hal"] = "hal-renamed"
     assert services.plugin_name(a) == "hal"           # the miss is cached too
@@ -254,3 +257,14 @@ def test_the_retired_per_workspace_urls_are_410_naming_the_new_catalog(fleet, pa
     assert body["url"].endswith("/plugins/marketplace.json")
     assert body["marketplace"] == "canopy-agents"
     assert "moved to one catalog" in body["detail"] and "/canopy:setup" in body["detail"]
+
+
+def test_an_instance_carries_its_vault_name_and_never_the_token(fleet):
+    dimagi, _, _ = fleet
+    pat = User.objects.create_user("pat", "pat@dimagi.com", "pw")
+    wsvc.ensure_member(dimagi, pat, WorkspaceMembership.VIEWER)
+    resp = bearer(pat).get(URL)
+    [ada] = [p for p in resp.json()["plugins"] if p["name"] == "ada"]
+    assert ada["metadata"]["instances"] == [{"agent": "ada", "workspace": "dimagi", "vault": "Agent-Ada"}]
+    body = resp.content.decode()
+    assert "op_sa_token" not in body and "ENCRYPTED-SA-TOKEN" not in body

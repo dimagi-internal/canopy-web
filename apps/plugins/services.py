@@ -98,6 +98,12 @@ def _safe_name(name: str) -> str:
     return _UNSAFE.sub("-", name).strip("-.")
 
 
+def _raw_get(url: str):
+    """The one GitHub read canopy makes: anonymous, short. A seam so the test
+    suite never reaches GitHub (conftest `_no_live_plugin_json`)."""
+    return requests.get(url, timeout=NAME_TIMEOUT)
+
+
 def plugin_name(agent: Agent) -> str:
     """The plugin's own `plugin.json` name, read anonymously and cached; else the
     repo name."""
@@ -110,7 +116,7 @@ def plugin_name(agent: Agent) -> str:
         return cached or fallback
     name = ""
     try:
-        resp = requests.get(RAW_URL.format(repo=repo, ref=ref), timeout=NAME_TIMEOUT)
+        resp = _raw_get(RAW_URL.format(repo=repo, ref=ref))
         if resp.status_code == 200:
             data = resp.json()
             if isinstance(data, dict):
@@ -167,10 +173,32 @@ def entry(plugin: _Plugin) -> dict:
         "description": agent.description or agent.name,
         "source": plugin_source(agent),
         "metadata": {
-            "instances": [{"agent": a.slug, "workspace": a.workspace_id}
+            # An INSTANCE is canopy-web's Agent row: identity, workspace, and the
+            # 1Password vault its setup reads from. `vault` is the vault NAME
+            # only (never the service-account token); 1Password decides who can
+            # read it. "" when the agent has none recorded.
+            "instances": [{"agent": a.slug, "workspace": a.workspace_id, "vault": a.op_vault or ""}
                           for a in sorted(plugin.instances, key=lambda a: a.slug)],
         },
     }
+
+
+def plugin_refs(user) -> dict[int, dict]:
+    """`{agent id: {"repo", "name"}}` for every agent in the user's catalog —
+    the SAME names the catalog lists (fork qualification included), so the
+    agents API and `marketplace.json` cannot disagree on what to install."""
+    return {a.id: {"repo": agent_repo(p.first), "name": p.name}
+            for p in plugins_for(user) for a in p.instances}
+
+
+def plugin_ref(agent: Agent, refs: dict[int, dict] | None = None) -> dict | None:
+    """The plugin `agent` is an instance of, as its caller's catalog names it,
+    or None when it has no github.com repo (it is not in any catalog)."""
+    if refs is not None and agent.id in refs:
+        return refs[agent.id]
+    if not agent.repo_url or not agent_repo(agent):
+        return None
+    return {"repo": agent_repo(agent), "name": plugin_name(agent)}
 
 
 def catalog(user) -> dict:

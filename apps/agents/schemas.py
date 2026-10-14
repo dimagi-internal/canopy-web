@@ -337,6 +337,13 @@ class AgentRuntimeOut(StrictModel):
     workspace: str | None
 
 
+class AgentPluginOut(StrictModel):
+    """The plugin (code) an agent instance runs: its repo and catalog name."""
+
+    repo: str = Field(description="`owner/repo` on github.com.")
+    name: str = Field(description="The plugin's name in the `canopy-agents` catalog.")
+
+
 class AgentOut(StrictModel):
     id: int
     slug: str
@@ -381,6 +388,17 @@ class AgentOut(StrictModel):
     # Owner/admin-set via PATCH /credential-source; absent from AgentIn so the
     # self-publish upsert cannot move an agent's secrets.
     credential_source: Literal["1password", "canopy-web"] = "1password"
+    # The INSTANCE's 1Password vault NAME (e.g. "Agent-Ace") — what a local
+    # install bound to this instance sets itself up from. A name, not a secret:
+    # the vault's service-account token (`op_sa_token_enc`) is never on this
+    # schema, and 1Password itself decides who can read the vault. "" = none
+    # recorded. Same visibility as the row (members of the agent's workspace).
+    op_vault: str = ""
+    # The PLUGIN this instance runs, named exactly as the caller's
+    # `canopy-agents` catalog names it (apps/plugins/services.py), so
+    # `/plugin install <name>@canopy-agents` and `/<name>:setup` are right.
+    # None when the agent has no github.com repo (it is in no catalog).
+    plugin: AgentPluginOut | None = None
 
 
 class AgentDefinitionOut(StrictModel):

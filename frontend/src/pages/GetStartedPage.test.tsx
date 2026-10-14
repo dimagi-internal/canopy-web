@@ -20,8 +20,11 @@ function renderPage() {
 
 const commands = () => screen.getAllByRole('code').map((c) => c.textContent)
 
-function agent(slug: string, workspace: string, description = '') {
-  return { slug, name: slug.toUpperCase(), description, workspace }
+function agent(slug: string, workspace: string, description = '', plugin: string | null = slug) {
+  return {
+    slug, name: slug.toUpperCase(), description, workspace,
+    plugin: plugin ? { repo: `dimagi-internal/${plugin}`, name: plugin } : null,
+  }
 }
 
 beforeEach(() => {
@@ -81,6 +84,32 @@ describe('GetStartedPage', () => {
     ])
     expect(commands()).toEqual(expect.arrayContaining(['/eva:setup', '/ace:setup', '/echo:setup']))
     expect(commands().some((c) => c?.includes('canopy-dimagi') || c?.includes('canopy-connect'))).toBe(false)
+  })
+
+  it('installs by plugin name, once per plugin, and skips agents with no plugin', async () => {
+    authState.value = { status: 'authenticated', user: { email: 'a@dimagi.com' } }
+    listAgents.mockResolvedValue({
+      items: [
+        agent('ace', 'connect', 'Connect opportunities', 'connect-ace'),
+        agent('ace-family', 'family', '', 'connect-ace'),
+        agent('local', 'dimagi', '', null),
+      ],
+      total: 3, offset: 0, limit: 200,
+    })
+    renderPage()
+    const list = await screen.findByRole('list', { name: 'Agents you can install' })
+    expect(within(list).getAllByRole('code').map((c) => c.textContent)).toEqual([
+      '/plugin install connect-ace@canopy-agents',
+    ])
+    expect(commands()).toContain('/connect-ace:setup')
+    expect(commands().filter((c) => c?.endsWith(':setup') && c !== '/canopy:setup')).toEqual(['/connect-ace:setup'])
+    expect(commands().some((c) => c?.includes('local') || c?.includes('ace-family'))).toBe(false)
+  })
+
+  it('says agents run on your machine, set up from the agent vault', () => {
+    renderPage()
+    expect(screen.getByText(/run on your machine, in your own Claude Code, set up from the agent's 1Password vault/)).toBeTruthy()
+    expect(screen.queryByText(/with your own logins/)).toBeNull()
   })
 
   it('signed in, falls back to the example when the agents cannot be read', async () => {

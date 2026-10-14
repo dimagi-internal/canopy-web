@@ -39,7 +39,7 @@ servers twice under one `plugin.json` name. So:
 
 - entries are keyed by the plugin source, `(repo, ref)`; several instances of
   one repo give **one** entry, and its `metadata.instances` lists the
-  `{agent, workspace}` pairs you can see;
+  `{agent, workspace, vault}` instances you can see;
 - the entry is named from the plugin's own `plugin.json` `name`, else the repo
   name, never from `Agent.slug`, so the install name is `ace@canopy-agents`
   whichever instance you can see;
@@ -47,9 +47,24 @@ servers twice under one `plugin.json` name. So:
   the source of the oldest instance keeps the name, and each other one is
   listed as `<name>--<owner>-<repo>[--<ref>]` and logged. Nothing is dropped.
 
-Choosing **which** instance you work with (workspace, 1Password vault, config)
-is the agent's own setup command's job, not the catalog's. Today every agent has
-exactly one instance.
+**A plugin is code; an instance is canopy-web's `Agent` record** (identity,
+workspace, 1Password vault). A local install is bound to **exactly one**
+instance, chosen once at setup (Jonathan, 2026-10-14). Choosing it is the
+agent's own setup command's job (`/<plugin>:setup`, via the shared canopy setup
+step), not the catalog's. The setup reads the instance's vault from canopy-web
+rather than hardcoding `op://Agent-<Name>/…` or deriving it by convention:
+
+- each catalog instance carries **`vault`**: `Agent.op_vault`, the 1Password
+  vault **name** (e.g. `Agent-Ace`), or `""` when none is recorded;
+- `GET /api/agents/` and `GET /api/agents/{slug}/` carry the same name as
+  `op_vault`, plus `plugin: {repo, name}` (the name this catalog uses; `null`
+  with no github.com repo), so a client can go agent → plugin and
+  plugin → instance → vault with the same names.
+
+The vault name is not a secret: its visibility is the agent row's (members of
+the agent's workspace), and 1Password itself decides who can read the vault.
+The vault's service-account token (`op_sa_token_enc`) is never in either
+response. Today every agent has exactly one instance.
 
 `Agent` has no plugin-subdirectory field, so a plugin must sit at its repo's
 root (`.claude-plugin/plugin.json`); every fleet agent's does. A plugin nested
@@ -138,13 +153,13 @@ For someone who is a member of `dimagi` and `connect`:
       "name": "ace",
       "description": "ACE runs Connect opportunities end to end",
       "source": { "source": "github", "repo": "dimagi-internal/ace" },
-      "metadata": { "instances": [{ "agent": "ace", "workspace": "connect" }] }
+      "metadata": { "instances": [{ "agent": "ace", "workspace": "connect", "vault": "Agent-Ace" }] }
     },
     {
       "name": "ada",
       "description": "Conducts the canopy agent fleet",
       "source": { "source": "github", "repo": "dimagi-internal/ada" },
-      "metadata": { "instances": [{ "agent": "ada", "workspace": "dimagi" }] }
+      "metadata": { "instances": [{ "agent": "ada", "workspace": "dimagi", "vault": "Agent-Ada" }] }
     }
   ]
 }

@@ -6,22 +6,26 @@ import { listAgents } from '@/api/agents'
 /**
  * /get-started — how a person starts using canopy agents: install canopy,
  * install an agent, set the agent up. Agents run in the person's OWN Claude
- * Code with their own logins, not remotely through canopy-web's MCP connector.
+ * Code, set up from the agent's 1Password vault, not remotely through
+ * canopy-web's MCP connector.
  *
  * Public (an exact-match allowlist entry in apps/common/middleware.py, beside
  * /about): step 1 is useful before someone has an account. There is ONE agent
- * catalog per person, `canopy-agents`, which `/canopy:setup` registers; every
- * agent installs as `<slug>@canopy-agents`. Signed in, steps 2 and 3 list the
- * agents in all of the reader's workspaces (the existing GET /api/agents/,
- * which, read off a non-tenant URL, spans every workspace the reader can see).
- * Signed out, or when nothing loads, the page shows the ACE example.
+ * catalog per person, `canopy-agents`, which `/canopy:setup` registers. It lists
+ * PLUGINS (code), not instances: an agent installs as
+ * `<plugin.name>@canopy-agents` and sets up with `/<plugin.name>:setup`, where
+ * `plugin` comes from GET /api/agents/ (named exactly as the catalog names it).
+ * Signed in, steps 2 and 3 list the agents in all of the reader's workspaces
+ * that have a plugin, one line per plugin (two instances of one plugin install
+ * once). Signed out, or when nothing loads, the page shows the ACE example.
  */
 
 const CATALOG = 'canopy-agents'
 const EXAMPLE_AGENT = 'ace'
 
-interface ListedAgent {
-  slug: string
+interface ListedPlugin {
+  /** The plugin's name in the canopy-agents catalog. */
+  plugin: string
   name: string
   description: string
 }
@@ -68,7 +72,7 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
 export function GetStartedPage(): JSX.Element {
   const auth = useAuth()
   const authed = auth.status === 'authenticated'
-  const [agents, setAgents] = useState<ListedAgent[] | null>(null)
+  const [agents, setAgents] = useState<ListedPlugin[] | null>(null)
 
   useEffect(() => {
     if (!authed) return
@@ -77,11 +81,15 @@ export function GetStartedPage(): JSX.Element {
       .then((page) => {
         if (cancelled) return
         const seen = new Set<string>()
-        setAgents(
-          page.items
-            .filter((a) => !seen.has(a.slug) && seen.add(a.slug))
-            .map((a) => ({ slug: a.slug, name: a.name || a.slug, description: a.description })),
-        )
+        const listed: ListedPlugin[] = []
+        for (const a of page.items) {
+          const plugin = a.plugin?.name
+          // No plugin = no github.com repo: it is in no catalog, so nothing to install.
+          if (!plugin || seen.has(plugin)) continue
+          seen.add(plugin)
+          listed.push({ plugin, name: a.name || plugin, description: a.description })
+        }
+        setAgents(listed)
       })
       .catch(() => {
         // The example below stands in; the page is still complete without the list.
@@ -92,15 +100,15 @@ export function GetStartedPage(): JSX.Element {
   }, [authed])
 
   const listed = authed && agents && agents.length > 0 ? agents : null
-  const setupSlugs = listed ? listed.map((a) => a.slug) : [EXAMPLE_AGENT]
+  const setupPlugins = listed ? listed.map((a) => a.plugin) : [EXAMPLE_AGENT]
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <p className="text-[11px] font-semibold uppercase tracking-wider text-primary">Getting started</p>
       <h1 className="mt-1 text-2xl font-semibold text-foreground">Use a canopy agent in your own Claude Code</h1>
       <p className="mt-3 text-[15px] leading-relaxed text-foreground-secondary">
-        Agents like ACE are Claude Code plugins. You install them into your own Claude Code and they run
-        there, with your own logins. Three steps, about ten minutes.
+        Agents like ACE are Claude Code plugins. They run on your machine, in your own Claude Code, set up
+        from the agent&apos;s 1Password vault. Three steps, about ten minutes.
       </p>
       <ol aria-label="The three steps" className="mt-4 flex flex-wrap gap-2">
         {['install canopy', 'install an agent', 'set up the agent'].map((label, i) => (
@@ -156,14 +164,14 @@ export function GetStartedPage(): JSX.Element {
           {listed ? (
             <ul className="mt-3 space-y-3" aria-label="Agents you can install">
               {listed.map((a) => (
-                <li key={a.slug}>
+                <li key={a.plugin}>
                   <p className="text-[13px] font-medium text-foreground">
                     {a.name}
                     {a.description ? (
                       <span className="font-normal text-muted-foreground"> — {a.description}</span>
                     ) : null}
                   </p>
-                  <CopyCommand command={`/plugin install ${a.slug}@${CATALOG}`} />
+                  <CopyCommand command={`/plugin install ${a.plugin}@${CATALOG}`} />
                 </li>
               ))}
             </ul>
@@ -193,7 +201,7 @@ export function GetStartedPage(): JSX.Element {
             agent&apos;s 1Password vault, then checks everything works.
           </p>
           <div className="mt-3 space-y-2">
-            {setupSlugs.map((p) => (
+            {setupPlugins.map((p) => (
               <CopyCommand key={p} command={`/${p}:setup`} />
             ))}
           </div>
