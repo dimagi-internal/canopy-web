@@ -67,13 +67,14 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 - `huddles` (+ `/:id`), `threads/:id` — agent huddles; a bounded agent-to-agent thread
 - `schedules`, `activity`, `timeline` — schedule calendar, turn log, team activity feed
 - `shareouts` (+ `/:period`), `walkthroughs`, `storyboards`, `ddd` (+ `/:narrative/:runId`) — briefings, demos, storyboard index, DDD operator console
-- `marketplace.json`, `plugins/:agent/:sha.zip` — server views: agents as a Claude Code plugin marketplace
+- `marketplace.json`, `plugins/…` — retired (410); the agent catalog is `/plugins/marketplace.json` (root, below)
 - Public with a token (the only `/w/` pages anonymous visitors reach, `apps/common/middleware.py::_SCOPED_VIEWER`): `walkthrough/:id` (+ `/content`), `review/:id`, `share/:token`, `storyboard/:slug`, `narrative/:slug?b=`, `ddd-release/:narrative/:runId`
 
 **Root:**
 - `/` — public product site (Astro, `site/`, `config/public_site.py`) for everyone; `/app` — the door into the app (`LOGIN_REDIRECT_URL`); `/about` — public explainer
 - `/supervisor` — cross-fleet Feed, Waiting on you, Sessions, Agents, Runners (phone PWA + menubar)
 - `/activity`, `/schedules` — turn log and schedules across your workspaces
+- `/plugins/marketplace.json` — your agents as ONE Claude Code catalog, `canopy-agents` (github sources, your own GitHub access; `docs/architecture/plugin-marketplace.md`)
 - `/settings` — your account (runners you administer, GitHub, connected apps, tokens)
 - `/sessions` — your shared transcripts; `/system` — capability catalog; `/guide` — in-app guide
 - `/people/me` — what agents know about you; `/hcp-clients` — HCP client registry (superusers); `/beta-requests` — requests for access to Canopy

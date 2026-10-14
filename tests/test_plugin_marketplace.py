@@ -1,40 +1,34 @@
-"""A workspace's agent plugins, served as a Claude Code marketplace (canopy-web#1376).
+"""The personal agent catalog, `canopy-agents` (docs/architecture/plugin-marketplace.md).
 
 What these pin:
 
-- `/w/<ws>/marketplace.json` lists one `archive` entry per agent of the
-  workspace that has a GitHub repo, each pinned by the sha256 of the bytes its
-  URL serves — and the URL serves exactly those bytes;
-- the archive's root is the plugin root, and its plugin.json version carries the
-  commit, so a merge is always a version change Claude Code sees;
-- a merge moves the head and the next read (after the head TTL) lists the new
-  version, while the old URL keeps serving the old bytes;
-- GitHub is asked with the agent OWNER's delegated credential;
-- no canopy identity is a 401 (never a sign-in redirect), a non-member a 404,
-  an agent of another workspace a 404;
-- a build that fails, or that the time budget does not allow, falls back to the
-  last built version rather than failing the marketplace.
-
-GitHub is never called: `requests.get` is replaced by a fake repo host.
+- `/plugins/marketplace.json` lists every agent with a github.com repo in every
+  workspace the caller belongs to — any role, any organisation — and nothing
+  from a workspace they don't;
+- each entry is a `github` source on the agent's repo (with `ref` only when the
+  agent follows a non-default ref), so Claude Code fetches it with the user's
+  OWN git credentials: canopy lends no GitHub access (its one GitHub read, the
+  plugin.json name, is anonymous);
+- entries are PLUGINS, not instances: agents sharing a repo + ref are one entry,
+  named from plugin.json (else the repo name); a fork that reuses a name is
+  listed under a qualified name, never dropped;
+- no identity is a 401 naming the header (never a sign-in redirect); a user
+  with no memberships gets a valid, empty catalog;
+- the retired per-workspace marketplace and archive URLs answer 410 with the
+  new address.
 """
 from __future__ import annotations
 
-import hashlib
-import io
-import json
-import zipfile
 from unittest import mock
 
 import pytest
+import requests
 from django.contrib.auth.models import User
 from django.core.cache import cache
-from django.core.management import call_command
 from django.test import Client, override_settings
 
-from apps.agents.models import Agent, AgentDelegation
-from apps.common.encryption import encrypt_secret
+from apps.agents.models import Agent
 from apps.plugins import services
-from apps.plugins.models import PluginArchive
 from apps.tokens.models import PersonalToken
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
@@ -42,83 +36,34 @@ from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
 
-SHA1 = "a" * 40
-SHA2 = "b" * 40
+URL = "/plugins/marketplace.json"
 
 
-def zipball(top: str, files: dict[str, str]) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr(f"{top}/", b"")
-        for name, body in files.items():
-            z.writestr(f"{top}/{name}", body)
-    return buf.getvalue()
+class RawGitHub:
+    """Anonymous raw.githubusercontent.com: plugin.json names for PUBLIC repos."""
 
-
-def plugin_files(name="echo", version="1.2.0", desc="Echo tells stories"):
-    return {
-        ".claude-plugin/plugin.json": json.dumps({"name": name, "version": version, "description": desc}),
-        "skills/turn/SKILL.md": "# turn\n",
-        "README.md": "hi\n",
-    }
-
-
-class FakeGitHub:
     def __init__(self):
-        self.heads: dict[str, str] = {}         # "owner/repo@ref" -> sha
-        self.zips: dict[str, bytes] = {}        # "owner/repo@sha" -> zipball
-        self.calls: list[tuple[str, str]] = []  # (url, Authorization)
-        self.fail = False
+        self.names: dict[str, str] = {}   # "owner/repo" -> plugin.json name
+        self.calls: list[tuple[str, dict]] = []
 
     def get(self, url, headers=None, **_):
-        self.calls.append((url, (headers or {}).get("Authorization", "")))
-        path = url.split("/repos/", 1)[1]
+        self.calls.append((url, headers or {}))
+        repo = "/".join(url.split("raw.githubusercontent.com/", 1)[1].split("/")[:2])
         r = mock.Mock()
-        if self.fail:
-            r.status_code = 502
-            return r
-        if "/commits/" in path:
-            repo, ref = path.split("/commits/")
-            sha = self.heads.get(f"{repo}@{ref}")
-            r.status_code, r.text = (200, sha) if sha else (404, "")
-            return r
-        repo, sha = path.split("/zipball/")
-        body = self.zips.get(f"{repo}@{sha}")
-        r.status_code = 200 if body else 404
-        r.iter_content = lambda n: [body] if body else []
+        if repo in self.names:
+            r.status_code, r.json = 200, (lambda: {"name": self.names[repo], "version": "1.0.0"})
+        else:
+            r.status_code = 404     # a private repo, to an anonymous reader
         return r
 
 
-@pytest.fixture
-def github():
+@pytest.fixture(autouse=True)
+def raw():
     cache.clear()
-    fake = FakeGitHub()
+    fake = RawGitHub()
     with mock.patch.object(services.requests, "get", fake.get):
         yield fake
     cache.clear()
-
-
-@pytest.fixture
-def owner():
-    return User.objects.create_user("olive", "olive@dimagi.com", "pw")
-
-
-@pytest.fixture
-def ws(owner):
-    w = a_workspace("family")
-    wsvc.ensure_member(w, owner, WorkspaceMembership.OWNER)
-    return w
-
-
-@pytest.fixture
-def echo(ws, owner, github):
-    agent = Agent.objects.create(slug="echo", name="Echo", workspace=ws, owner=owner,
-                                 repo_url="git@github.com:dimagi-internal/echo.git")
-    AgentDelegation.objects.create(user=owner, agent=agent, service=AgentDelegation.GITHUB,
-                                   secret_enc=encrypt_secret("github_pat_olive"), meta={})
-    github.heads["dimagi-internal/echo@main"] = SHA1
-    github.zips[f"dimagi-internal/echo@{SHA1}"] = zipball("dimagi-internal-echo-aaaaaaa", plugin_files())
-    return agent
 
 
 def bearer(user) -> Client:
@@ -126,161 +71,186 @@ def bearer(user) -> Client:
     return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
 
 
-def a_viewer(ws, email="vee@example.org"):
-    u = User.objects.create_user(email, email, "pw")
-    wsvc.ensure_member(ws, u, WorkspaceMembership.VIEWER)
-    return u
+def agent(slug, ws, *, repo=None, ref="main", **kw) -> Agent:
+    return Agent.objects.create(
+        slug=slug, name=slug.title(), workspace=ws,
+        repo_url=f"git@github.com:dimagi-internal/{slug}.git" if repo is None else repo,
+        repo_ref=ref, **kw)
 
 
-# ---- the catalog ------------------------------------------------------------------
+@pytest.fixture
+def fleet():
+    """Two organisations: dimagi (with its connect division) and family."""
+    dimagi = a_workspace("dimagi")
+    connect = a_workspace("connect", parent=dimagi)
+    family = a_workspace("family")
+    agent("ada", dimagi, description="Conducts the fleet")
+    agent("ace", connect)
+    agent("echo", family)
+    agent("nogit", dimagi, repo="")                                   # no repo: not listed
+    agent("gitlab", dimagi, repo="https://gitlab.com/x/gitlab.git")  # not github.com
+    return dimagi, connect, family
 
-def test_marketplace_lists_each_agent_as_a_pinned_archive(ws, echo, github):
-    c = bearer(a_viewer(ws))  # a viewer, with no GitHub of their own
-    resp = c.get("/w/family/marketplace.json")
+
+def names(resp) -> list[str]:
+    return [p["name"] for p in resp.json()["plugins"]]
+
+
+def test_lists_agents_from_every_workspace_the_caller_belongs_to(fleet):
+    dimagi, connect, family = fleet
+    pat = User.objects.create_user("pat", "pat@dimagi.com", "pw")
+    wsvc.ensure_member(dimagi, pat, WorkspaceMembership.VIEWER)
+    wsvc.ensure_member(connect, pat, WorkspaceMembership.EDITOR)
+    resp = bearer(pat).get(URL)
     assert resp.status_code == 200
     body = resp.json()
-    assert body["name"] == "canopy-family"
-    assert body["owner"]["name"] == "Family"
-    [entry] = body["plugins"]
-    assert entry["name"] == "echo"
-    assert entry["version"] == f"1.2.0+{SHA1[:12]}"
-    assert entry["description"] == "Echo tells stories"
-    src = entry["source"]
-    assert src["source"] == "archive"
-    assert src["url"].endswith(f"/w/family/plugins/echo/{SHA1[:12]}.zip")
-    assert src["url"].startswith("https://") or src["url"].startswith("http")
-    assert entry["metadata"] == {"agent": "echo", "repo": "dimagi-internal/echo", "commit": SHA1}
-
-    # The URL serves exactly the bytes the sha256 pins.
-    path = src["url"].split("://", 1)[1].split("/", 1)[1]
-    zresp = c.get("/" + path)
-    assert zresp.status_code == 200
-    assert zresp["Content-Type"] == "application/zip"
-    assert hashlib.sha256(zresp.content).hexdigest() == src["sha256"]
+    assert body["name"] == "canopy-agents"
+    assert names(resp) == ["ace", "ada"]          # sorted by slug; family's echo is not his
 
 
-def test_github_is_asked_as_the_agent_owner(ws, echo, github):
-    bearer(a_viewer(ws)).get("/w/family/marketplace.json")
-    assert github.calls and all(auth == "Bearer github_pat_olive" for _, auth in github.calls)
+def test_spans_organisations(fleet):
+    dimagi, _, family = fleet
+    pat = User.objects.create_user("pat", "pat@dimagi.com", "pw")
+    wsvc.ensure_member(dimagi, pat, WorkspaceMembership.VIEWER)
+    wsvc.ensure_member(family, pat, WorkspaceMembership.VIEWER)
+    assert names(bearer(pat).get(URL)) == ["ada", "echo"]
 
 
-def test_the_archive_root_is_the_plugin_root_and_its_version_carries_the_commit(ws, echo, github):
-    archive = PluginArchive.objects.get(pk=services.build(echo, SHA1).pk)
-    z = zipfile.ZipFile(io.BytesIO(bytes(archive.content)))
-    names = set(z.namelist())
-    assert ".claude-plugin/plugin.json" in names
-    assert "skills/turn/SKILL.md" in names
-    assert not any(n.startswith("dimagi-internal-echo") for n in names)
-    manifest = json.loads(z.read(".claude-plugin/plugin.json"))
-    assert manifest["version"] == f"1.2.0+{SHA1[:12]}"
-    assert manifest["name"] == "echo"
+def test_a_viewer_of_the_org_does_not_get_its_divisions_agents(fleet):
+    dimagi, _, _ = fleet
+    pat = User.objects.create_user("pat", "pat@dimagi.com", "pw")
+    wsvc.ensure_member(dimagi, pat, WorkspaceMembership.VIEWER)
+    assert names(bearer(pat).get(URL)) == ["ada"]
 
 
-def test_a_plugin_in_a_marketplace_subdirectory_is_found():
-    files = {
-        ".claude-plugin/marketplace.json": json.dumps(
-            {"name": "x", "plugins": [{"name": "hal", "source": "./plugins/hal"}]}),
-        "plugins/hal/.claude-plugin/plugin.json": json.dumps({"name": "hal"}),
-        "plugins/hal/skills/a/SKILL.md": "a",
-        "docs/other.md": "not in the plugin",
+def test_an_org_owner_gets_its_divisions_agents(fleet):
+    dimagi, _, _ = fleet
+    olive = User.objects.create_user("olive", "olive@dimagi.com", "pw")
+    wsvc.ensure_member(dimagi, olive, WorkspaceMembership.OWNER)
+    assert names(bearer(olive).get(URL)) == ["ace", "ada"]
+
+
+def test_entries_are_github_sources_fetched_with_the_users_own_git(fleet, raw):
+    dimagi, connect, _ = fleet
+    pat = User.objects.create_user("pat", "pat@dimagi.com", "pw")
+    wsvc.ensure_member(dimagi, pat, WorkspaceMembership.VIEWER)
+    wsvc.ensure_member(connect, pat, WorkspaceMembership.VIEWER)
+    plugins = {p["name"]: p for p in bearer(pat).get(URL).json()["plugins"]}
+    assert plugins["ada"] == {
+        "name": "ada",
+        "description": "Conducts the fleet",
+        "source": {"source": "github", "repo": "dimagi-internal/ada"},
+        "metadata": {"instances": [{"agent": "ada", "workspace": "dimagi"}]},
     }
-    built = services.repackage(zipball("org-hal-123", files), SHA1, "hal")
-    names = set(zipfile.ZipFile(io.BytesIO(built.content)).namelist())
-    assert names >= {".claude-plugin/plugin.json", "skills/a/SKILL.md"}
-    assert "docs/other.md" not in names
-    assert built.subdir == "plugins/hal"
-    assert built.version == f"0.0.0+{SHA1[:12]}"
+    assert plugins["ace"]["description"] == "Ace"   # falls back to the agent's name
+    # No archive, no sha256, no entry version: Claude Code tracks the repo.
+    assert all("version" not in p for p in plugins.values())
+    # canopy's only GitHub read is anonymous: it lends nobody's credential.
+    assert raw.calls and all("Authorization" not in h for _, h in raw.calls)
 
 
-def test_a_repo_with_no_plugin_is_a_build_error():
-    with pytest.raises(services.BuildError, match="plugin.json"):
-        services.repackage(zipball("org-x-1", {"README.md": "x"}), SHA1, "x")
+def test_two_instances_of_one_repo_are_one_plugin(raw):
+    dimagi, family = a_workspace("dimagi"), a_workspace("family")
+    agent("ace", dimagi, repo="git@github.com:dimagi-internal/ace.git")
+    agent("ace-family", family, repo="https://github.com/dimagi-internal/ace")
+    pat = User.objects.create_user("pat", "pat@dimagi.com", "pw")
+    wsvc.ensure_member(dimagi, pat, WorkspaceMembership.VIEWER)
+    wsvc.ensure_member(family, pat, WorkspaceMembership.VIEWER)
+    [only] = bearer(pat).get(URL).json()["plugins"]
+    assert only["name"] == "ace"                      # the repo name, not a slug
+    assert only["source"] == {"source": "github", "repo": "dimagi-internal/ace"}
+    assert only["metadata"]["instances"] == [
+        {"agent": "ace", "workspace": "dimagi"},
+        {"agent": "ace-family", "workspace": "family"},
+    ]
 
 
-def test_a_merge_lists_the_new_version_and_the_old_url_still_serves(ws, echo, github):
-    c = bearer(a_viewer(ws))
-    first = c.get("/w/family/marketplace.json").json()["plugins"][0]
-    github.heads["dimagi-internal/echo@main"] = SHA2
-    github.zips[f"dimagi-internal/echo@{SHA2}"] = zipball(
-        "dimagi-internal-echo-bbbbbbb", plugin_files(desc="Echo, improved"))
-
-    # Within the head TTL the marketplace does not ask GitHub again.
-    assert c.get("/w/family/marketplace.json").json()["plugins"][0]["version"] == first["version"]
-
-    cache.clear()  # the TTL passes
-    second = c.get("/w/family/marketplace.json").json()["plugins"][0]
-    assert second["version"] == f"1.2.0+{SHA2[:12]}"
-    assert second["source"]["sha256"] != first["source"]["sha256"]
-    assert second["description"] == "Echo, improved"
-    old_path = first["source"]["url"].split("/w/", 1)[1]
-    assert c.get(f"/w/{old_path}").status_code == 200
+def test_the_name_comes_from_plugin_json_whichever_instance_you_see(raw):
+    raw.names["dimagi-internal/connect-ace"] = "ace"
+    family = a_workspace("family")
+    agent("family-helper", family, repo="git@github.com:dimagi-internal/connect-ace.git")
+    pat = User.objects.create_user("pat", "pat@dimagi.com", "pw")
+    wsvc.ensure_member(family, pat, WorkspaceMembership.VIEWER)
+    assert names(bearer(pat).get(URL)) == ["ace"]
 
 
-def test_a_failed_build_falls_back_to_the_last_built_version(ws, echo, github):
-    c = bearer(a_viewer(ws))
-    first = c.get("/w/family/marketplace.json").json()["plugins"][0]
+def test_the_plugin_name_is_cached_and_a_github_failure_falls_back(raw):
+    ws = a_workspace("dimagi")
+    a = agent("hal", ws)
+    with mock.patch.object(services.requests, "get", side_effect=requests.ConnectionError):
+        assert services.plugin_name(a) == "hal"
+    raw.names["dimagi-internal/hal"] = "hal-renamed"
+    assert services.plugin_name(a) == "hal"           # the miss is cached too
     cache.clear()
-    github.fail = True
-    assert c.get("/w/family/marketplace.json").json()["plugins"] == [first]
+    assert services.plugin_name(a) == "hal-renamed"
 
 
-def test_past_the_budget_an_unbuilt_head_is_served_at_its_last_version(ws, echo, github):
-    services.build(echo, SHA1)
-    github.heads["dimagi-internal/echo@main"] = SHA2
-    github.zips[f"dimagi-internal/echo@{SHA2}"] = zipball("e-b", plugin_files())
-    body = services.marketplace(ws, budget=0)
-    assert body["plugins"][0]["metadata"]["commit"] == SHA1
-    assert not PluginArchive.objects.filter(commit_sha=SHA2).exists()
+def test_a_fork_reusing_a_name_is_listed_under_a_qualified_name(raw, caplog):
+    raw.names["someone/ace"] = "ace"
+    dimagi, family = a_workspace("dimagi"), a_workspace("family")
+    agent("ace", dimagi)
+    agent("ace-fork", family, repo="git@github.com:someone/ace.git")
+    agent("ace-beta", dimagi, repo="git@github.com:dimagi-internal/ace.git", ref="beta")
+    pat = User.objects.create_user("pat", "pat@dimagi.com", "pw")
+    wsvc.ensure_member(dimagi, pat, WorkspaceMembership.VIEWER)
+    wsvc.ensure_member(family, pat, WorkspaceMembership.VIEWER)
+    plugins = {p["name"]: p["source"] for p in bearer(pat).get(URL).json()["plugins"]}
+    assert plugins == {
+        "ace": {"source": "github", "repo": "dimagi-internal/ace"},     # oldest instance
+        "ace--someone-ace": {"source": "github", "repo": "someone/ace"},
+        "ace--dimagi-internal-ace--beta":
+            {"source": "github", "repo": "dimagi-internal/ace", "ref": "beta"},
+    }
+    assert "ace--someone-ace" in caplog.text
 
 
-def test_agents_without_a_github_repo_are_left_out(ws, owner, echo, github):
-    Agent.objects.create(slug="local", name="Local", workspace=ws, owner=owner, repo_url="")
-    Agent.objects.create(slug="gl", name="GL", workspace=ws, owner=owner,
-                         repo_url="https://gitlab.com/x/y")
-    names = [p["name"] for p in services.marketplace(ws)["plugins"]]
-    assert names == ["echo"]
+@pytest.mark.parametrize("ref,expected", [
+    ("main", {"source": "github", "repo": "dimagi-internal/hal"}),
+    ("", {"source": "github", "repo": "dimagi-internal/hal"}),
+    ("stable", {"source": "github", "repo": "dimagi-internal/hal", "ref": "stable"}),
+])
+def test_ref_only_when_the_agent_follows_a_non_default_ref(ref, expected):
+    ws = a_workspace("dimagi")
+    assert services.plugin_source(agent("hal", ws, ref=ref)) == expected
 
 
-def test_a_management_command_prewarms(ws, echo, github, capsys):
-    call_command("build_plugin_archives", "--workspace", "family")
-    assert PluginArchive.objects.filter(repo="dimagi-internal/echo", commit_sha=SHA1).exists()
-    assert "family/echo: echo 1.2.0+" in capsys.readouterr().out
+def test_any_github_url_spelling_becomes_owner_repo():
+    ws = a_workspace("dimagi")
+    a = agent("eva", ws, repo="https://github.com/dimagi-internal/eva")
+    assert services.plugin_source(a)["repo"] == "dimagi-internal/eva"
 
 
-# ---- who may read it ------------------------------------------------------------------
+def test_no_memberships_is_a_valid_empty_catalog(fleet):
+    loner = User.objects.create_user("lee", "lee@dimagi.com", "pw")
+    resp = bearer(loner).get(URL)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "canopy-agents" and body["owner"]["name"] and body["plugins"] == []
+    assert resp["Cache-Control"] == "private, no-cache"
+
 
 @override_settings(REQUIRE_AUTH=True)
-@pytest.mark.parametrize("path", [
-    "/w/family/marketplace.json",
-    f"/w/family/plugins/echo/{SHA1[:12]}.zip",
-])
-def test_no_identity_is_a_401_that_names_the_header_not_a_sign_in_redirect(ws, echo, path):
-    resp = Client().get(path)
+def test_no_identity_is_a_401_that_names_the_header_not_a_sign_in_redirect(fleet):
+    resp = Client().get(URL)
     assert resp.status_code == 401
     assert resp["WWW-Authenticate"].startswith("Bearer")
     assert "Authorization: Bearer" in resp.json()["detail"]
 
 
 @override_settings(REQUIRE_AUTH=True)
-def test_a_non_member_gets_the_same_404_as_no_such_workspace(ws, echo, github):
-    stranger = User.objects.create_user("sam", "sam@dimagi.com", "pw")
-    c = bearer(stranger)
-    services.build(echo, SHA1)
-    assert c.get("/w/family/marketplace.json").status_code == 404
-    assert c.get(f"/w/family/plugins/echo/{SHA1[:12]}.zip").status_code == 404
-    assert c.get("/w/nope/marketplace.json").status_code == 404
-
-
-def test_an_agent_of_another_workspace_is_not_served_under_this_one(ws, echo, github, owner):
-    services.build(echo, SHA1)
-    other = a_workspace("other")
-    wsvc.ensure_member(other, owner, WorkspaceMembership.OWNER)
-    c = bearer(owner)
-    assert c.get(f"/w/other/plugins/echo/{SHA1[:12]}.zip").status_code == 404
-    assert c.get(f"/w/family/plugins/echo/{SHA1[:12]}.zip").status_code == 200
-
-
-@pytest.mark.parametrize("version", ["abc", "g123456789", "ZZZZZZZZ", SHA2[:12]])
-def test_a_bad_or_unknown_version_is_a_404(ws, echo, github, owner, version):
-    services.build(echo, SHA1)
-    assert bearer(owner).get(f"/w/family/plugins/echo/{version}.zip").status_code == 404
+@pytest.mark.parametrize("path", [
+    "/w/family/marketplace.json",
+    "/w/connect/plugins/ace/aaaaaaaaaaaa.zip",
+    "/w/nope/marketplace.json",
+])
+@pytest.mark.parametrize("signed_in", [False, True])
+def test_the_retired_per_workspace_urls_are_410_naming_the_new_catalog(fleet, path, signed_in):
+    c = Client()
+    if signed_in:
+        c = bearer(User.objects.create_user("pat", "pat@dimagi.com", "pw"))
+    resp = c.get(path)
+    assert resp.status_code == 410
+    body = resp.json()
+    assert body["url"].endswith("/plugins/marketplace.json")
+    assert body["marketplace"] == "canopy-agents"
+    assert "moved to one catalog" in body["detail"] and "/canopy:setup" in body["detail"]
