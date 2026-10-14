@@ -275,3 +275,36 @@ def test_a_stranger_cannot_swap_someone_elses_logins(runner):
     c = Client()
     c.force_login(stranger)
     assert _post(c, f"/api/harness/runners/{runner.id}/credential/swap").status_code == 404
+
+
+# ── a full login kept on the box (the `box` slot) ──────────────────────────
+# The one login that carries claude.ai connectors. Its refresh token rotates, so
+# it never leaves the runner: success is a flag, and nothing lands in a slot.
+
+def test_a_box_sign_in_finishes_on_logged_in_and_stores_nothing(client, runner):
+    r = _post(client, _base(runner), {"slot": "box"})
+    assert r.json()["slot"] == "box"
+    claim = client.get(f"{_base(runner)}/claim").json()
+    assert claim["mint"]["slot"] == "box", "the runner must know which CLI to run"
+    _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
+    _post(client, f"{_base(runner)}/code", {"code": "c"})
+    client.get(f"{_base(runner)}/claim")
+    r = _post(client, f"{_base(runner)}/result", {"logged_in": True})
+    assert r.json()["status"] == RunnerMint.DONE
+    status = client.get(f"/api/harness/runners/{runner.id}/credential/status").json()
+    assert status["has_claude_token"] is False
+
+
+def test_a_box_sign_in_ignores_a_stray_token(client, runner):
+    _post(client, _base(runner), {"slot": "box"})
+    r = _post(client, f"{_base(runner)}/result", {"token": "sk-ant-oat01-x"})
+    assert r.json()["status"] == RunnerMint.FAILED
+    cred = client.get(f"/api/harness/runners/{runner.id}/credential").json()
+    assert not cred.get("claude_token")
+
+
+def test_a_box_sign_in_that_did_not_log_in_fails_with_the_reason(client, runner):
+    _post(client, _base(runner), {"slot": "box"})
+    r = _post(client, f"{_base(runner)}/result", {"detail": "OAuth error: invalid code"})
+    assert r.json()["status"] == RunnerMint.FAILED
+    assert "invalid code" in r.json()["detail"]

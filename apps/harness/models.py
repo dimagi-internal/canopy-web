@@ -1078,7 +1078,12 @@ class RunnerMint(models.Model):
     #: unconditionally, so "add a fallback" silently overwrote the working login.
     PRIMARY = "primary"
     SECONDARY = "secondary"
-    SLOT_CHOICES = [(PRIMARY, "primary"), (SECONDARY, "secondary")]
+    #: Not a bundle slot: a FULL `claude auth login` the box keeps for itself.
+    #: The only login that carries claude.ai connectors (a setup-token is
+    #: inference-only), and its refresh token rotates, so no value ever comes
+    #: back here — the runner reports `logged_in` and puts it first.
+    BOX = "box"
+    SLOT_CHOICES = [(PRIMARY, "primary"), (SECONDARY, "secondary"), (BOX, "box")]
 
     # UUID pk like Runner/Turn: a mint id travels in URLs and logs, and a
     # sequential one would leak how many sign-ins the fleet has needed.
