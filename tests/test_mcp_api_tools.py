@@ -329,3 +329,32 @@ def test_a_script_prefix_is_not_part_of_a_tool_path():
     assert paths and all(p.startswith("/api/") for p in paths)
     spec = api_tools.tool_spec({"paths": paths})
     assert not any(p.startswith(("/api/contact/", "/api/embed/")) for p in spec["paths"])
+
+
+def test_an_explicit_null_clears_a_field_like_rest_does(tenancy):
+    """FastMCP drops `None` arguments, so `patch_task(waiting_on_email=null)`
+    reached the route without the key and the field stayed set, while the same
+    body sent to REST cleared it (ace T24, 2026-10-14). `NullKeepingDirector`
+    sends it; an OMITTED field must still be left alone."""
+    from apps.agents.models import AgentTask
+
+    hal = Agent.objects.get(slug="hal")
+    task = AgentTask.objects.create(agent=hal, ext_id="T1", title="t",
+                                    next_action="keep me", waiting_on_user=tenancy["jj"])
+    with as_user(tenancy["jj"]):
+        out = _call("patch_task", {"slug": "hal", "ref": "T1", "waiting_on_email": None})
+    assert out["waiting_on_email"] is None
+    task.refresh_from_db()
+    assert task.waiting_on_user_id is None
+    assert task.next_action == "keep me"
+
+
+def test_an_omitted_body_field_is_not_sent_as_null(tenancy):
+    from apps.agents.models import AgentTask
+
+    hal = Agent.objects.get(slug="hal")
+    AgentTask.objects.create(agent=hal, ext_id="T1", title="t", waiting_on_user=tenancy["jj"])
+    with as_user(tenancy["jj"]):
+        out = _call("patch_task", {"slug": "hal", "ref": "T1", "next_action": "go"})
+    assert out["waiting_on_email"] == "jj@dimagi.com"
+    assert out["next_action"] == "go"

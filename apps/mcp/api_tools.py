@@ -46,6 +46,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_access_token, get_http_headers
 from fastmcp.server.providers.openapi import OpenAPIProvider
 from fastmcp.server.providers.openapi.components import OpenAPITool
+from fastmcp.utilities.openapi.director import RequestDirector
 from mcp.types import ToolAnnotations
 
 from .audit import write_audit
@@ -456,8 +457,40 @@ WORKSPACE_ARG_DESCRIPTION = (
 )
 
 
+class NullKeepingDirector(RequestDirector):
+    """FastMCP's director, except an explicit `null` for a JSON body field is SENT.
+
+    FastMCP skips every `None` argument (`_unflatten_arguments`: "Skip None
+    values for optional parameters"), which is right for a path or query
+    parameter but erases the one way a PATCH clears a field. So a tool call
+    `patch_task(waiting_on_email=null)` reached the route with no
+    `waiting_on_email` key at all, the route left the field alone, and the call
+    answered 200 with the old value still set — while the same body sent to
+    REST cleared it (ace T24, 2026-10-14). A body field the caller passed as
+    `null` is put back, so the route sees exactly what REST would."""
+
+    def _unflatten_arguments(self, route, flat_args):
+        path, query, header, cookie, body = super()._unflatten_arguments(route, flat_args)
+        mapping = getattr(route, "parameter_map", None) or {}
+        nulls = {
+            mapping[name]["openapi_name"]: None
+            for name, value in flat_args.items()
+            if value is None and mapping.get(name, {}).get("location") == "body"
+        }
+        if nulls and (body is None or isinstance(body, dict)):
+            body = {**(body or {}), **nulls}
+        return path, query, header, cookie, body
+
+
 class CanopyAPIProvider(OpenAPIProvider):
     """`OpenAPIProvider` over canopy's own schema, building `CanopyAPITool`s."""
+
+    def _null_keeping_director(self) -> NullKeepingDirector:
+        # Tools are built inside `OpenAPIProvider.__init__`, after it sets
+        # `_spec` — so the director is made here, on first use, not in ours.
+        if not isinstance(getattr(self, "_canopy_director", None), NullKeepingDirector):
+            self._canopy_director = NullKeepingDirector(self._spec)
+        return self._canopy_director
 
     def _create_openapi_tool(self, route, name, tags) -> None:
         super()._create_openapi_tool(route, name, tags)
@@ -480,7 +513,7 @@ class CanopyAPIProvider(OpenAPIProvider):
             output_schema = {**output_schema, "properties": {"result": {}}}
         description = f"`{route.method.upper()} {route.path}`\n\n{generic.description or ''}".strip()
         tool = CanopyAPITool(
-            client=self._client, route=route, director=self._director,
+            client=self._client, route=route, director=self._null_keeping_director(),
             name=generic.name, description=description, parameters=params,
             output_schema=output_schema, tags=generic.tags,
             annotations=_annotations(route.method),
