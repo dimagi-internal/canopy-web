@@ -33,7 +33,8 @@ def box(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner, "_AGENT_OP", {})
     monkeypatch.setattr(cloud_runner, "_AGENT_ENV_AT", {})
     monkeypatch.setattr(cloud_runner, "_api",
-                        lambda m, p, *a, **k: (200, {"op_sa_token": "ACE-KEY"}))
+                        lambda m, p, *a, **k: (200, {"op_sa_token": "ACE-KEY",
+                                                     "op_vault": "Agent-Ace"}))
     state = {"calls": [], "value": "new-root", "rc": 0, "stderr": "", "raise": None,
              "version": 7, "probe_rc": 0, "probe_stderr": ""}
 
@@ -126,7 +127,8 @@ def test_a_key_from_the_wrong_account_says_which_account(cloud_runner, box, monk
     header = base64.urlsafe_b64encode(
         json.dumps({"signInAddress": "someone-else.1password.com"}).encode()).decode().rstrip("=")
     monkeypatch.setattr(cloud_runner, "_api",
-                        lambda m, p, *a, **k: (200, {"op_sa_token": "ops_" + header}))
+                        lambda m, p, *a, **k: (200, {"op_sa_token": "ops_" + header,
+                                                     "op_vault": "Agent-Ace"}))
     box["probe_rc"] = 1
     box["probe_stderr"] = "[ERROR] Signin credentials are not compatible with the provided user auth from server"
     env = cloud_runner._agent_env("ace")
@@ -176,3 +178,52 @@ def test_every_check_is_stamped_for_the_sessions_own_hook(cloud_runner, box):
     cloud_runner._agent_env("ace")
     after = json.loads((box["home"] / ".ace" / ".env.stamp").read_text())
     assert after["fingerprint"] == stamp["fingerprint"] and after["checked_at"] >= stamp["checked_at"]
+
+
+# 2026-10-14, canopy#899: agent templates name their vault as `${AGENT_VAULT}`, not
+# a hardcoded `Agent-<Slug>`. The runner supplies the instance's recorded vault.
+
+def _templated(box, tmp_path, monkeypatch, cloud_runner, vault="Ace-Prod"):
+    tpl = tmp_path / "agents" / "ace" / ".env.tpl"
+    tpl.write_text("GDRIVE_ROOT_FOLDER=op://${AGENT_VAULT}/drive/root\n"
+                   "CANOPY_WEB_PAT=op://$AGENT_VAULT/canopy-pat/credential\n")
+    monkeypatch.setattr(cloud_runner, "_api",
+                        lambda m, p, *a, **k: (200, {"op_sa_token": "ACE-KEY", "op_vault": vault}))
+
+
+def test_the_inject_carries_the_instances_recorded_vault(cloud_runner, box, tmp_path, monkeypatch):
+    _templated(box, tmp_path, monkeypatch, cloud_runner)
+    env = cloud_runner._agent_env("ace")
+    assert env["GDRIVE_ROOT_FOLDER"] == "new-root"
+    (inject_env,) = [e for a, e in box["calls"] if a[:2] == ["op", "inject"]]
+    assert inject_env["AGENT_VAULT"] == "Ace-Prod" and inject_env["AGENT_SLUG"] == "ace"
+    # ...and the turn itself, for anything in it that injects a template.
+    assert env["AGENT_VAULT"] == "Ace-Prod" and env["AGENT_SLUG"] == "ace"
+
+
+def test_the_fingerprint_probes_the_expanded_vault_not_the_variable(
+        cloud_runner, box, tmp_path, monkeypatch):
+    _templated(box, tmp_path, monkeypatch, cloud_runner)
+    cloud_runner._agent_env("ace")
+    probes = [a[3] for a, _ in box["calls"] if a[:3] == ["op", "vault", "get"]]
+    assert probes == ["Ace-Prod"]          # once: both spellings name one vault
+
+
+def test_a_rebound_vault_moves_the_fingerprint(cloud_runner, box, tmp_path, monkeypatch):
+    _templated(box, tmp_path, monkeypatch, cloud_runner)
+    cloud_runner._agent_env("ace")
+    cloud_runner._AGENT_ENV_AT["ace"] = 0.0
+    cloud_runner._AGENT_OP.clear()
+    _templated(box, tmp_path, monkeypatch, cloud_runner, vault="Ace-Staging")
+    cloud_runner._agent_env("ace")
+    assert len(_injects(box)) == 2
+
+
+def test_no_recorded_vault_refreshes_nothing_and_says_so(cloud_runner, box, tmp_path, monkeypatch):
+    """Never derive `Agent-<Slug>`: a key with no recorded vault is unconfigured."""
+    _templated(box, tmp_path, monkeypatch, cloud_runner, vault="")
+    env = cloud_runner._agent_env("ace")
+    assert box["calls"] == []
+    assert env["GDRIVE_ROOT_FOLDER"] == "old-root" and "AGENT_VAULT" not in env
+    check = _check(cloud_runner)
+    assert check["status"] == "warn" and "no 1Password vault" in check["detail"]

@@ -605,7 +605,7 @@ if v:
 # the agent OWNER's GitHub token for this agent (an AgentDelegation — the owner's
 # identity lent to this agent, not the agent's own), used below for this agent's
 # private clones and nothing else. The shared pair is separate because a per-agent key reads
-# Agent-<Slug> and nothing else by design, so it cannot reach the shared gog
+# its own agent vault and nothing else by design, so it cannot reach the shared gog
 # OAuth clients — see ensure_client_creds. All four are blank-safe; a
 # deployment that serves none behaves exactly as it did before this existed.
 agent_vault_config() {  # <slug> -> "<vault>\x1f<token>\x1f<shared-vault>\x1f<shared-token>\x1f<github-token>\x1f<mailbox>"
@@ -1288,8 +1288,14 @@ inject_agent_env() {  # <slug> <agent-clone> <agent-vault> <agent-key>
   # two weeks with no stated reason — cloud-ec2-1, 2026-09-22). op names the
   # reference it could not resolve, never a resolved value, so it is safe to log
   # and to report. --account isn't needed with a service-account token.
+  # AGENT_VAULT / AGENT_SLUG: agent templates name their vault as
+  # `op://${AGENT_VAULT}/...` (never a hardcoded `Agent-<Slug>`), and `op inject`
+  # expands it from its environment. $vault is THIS instance's recorded
+  # Agent.op_vault from canopy-web — refused above when empty, never derived
+  # (2026-10-14, canopy#899).
   local inject_err
-  if inject_err="$(OP_SERVICE_ACCOUNT_TOKEN="$token" op inject -i "$env_tpl" -o "$env_out" -f 2>&1 >/dev/null)"; then
+  if inject_err="$(OP_SERVICE_ACCOUNT_TOKEN="$token" AGENT_VAULT="$vault" AGENT_SLUG="$slug" \
+        op inject -i "$env_tpl" -o "$env_out" -f 2>&1 >/dev/null)"; then
     chmod 0600 "$env_out"
     mark ENV_OK "$slug" 1
     ok "$slug: op inject .env.tpl -> $env_out"
