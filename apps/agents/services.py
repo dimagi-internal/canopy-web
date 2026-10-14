@@ -180,6 +180,7 @@ def agent_detail(agent: Agent) -> dict:
         "turn_mode": agent.turn_mode,
         "slack_enabled": agent.slack_enabled,
         "credential_source": agent.credential_source,
+        "op_vault": agent.op_vault or "",
         "created_at": agent.created_at,
         "updated_at": agent.updated_at,
         "sync_count": agent.syncs.count(),

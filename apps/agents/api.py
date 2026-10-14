@@ -23,6 +23,7 @@ from apps.api.errors import (
     ProblemError,
 )
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.plugins import services as plugin_services
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -50,6 +51,7 @@ from .schemas import (
     AgentDetailOut,
     AgentIn,
     AgentOut,
+    AgentPluginOut,
     AgentOwnerIn,
     AgentActorRouteIn,
     AgentActorRouteOut,
@@ -293,14 +295,20 @@ def _agent_for_admin(request: HttpRequest, slug: str):
     return agent
 
 
+def _plugin_out(agent, refs: dict[int, dict]) -> AgentPluginOut | None:
+    ref = plugin_services.plugin_ref(agent, refs)
+    return AgentPluginOut(**ref) if ref else None
+
+
 @router.get("/", response=Page[AgentOut], summary="List agents",)
 def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
     limit = clamp_limit(limit)
     visible = _listed_agent_workspace_ids(request)
+    agents = [a for a in services.list_agents() if a.workspace_id in visible]
+    refs = plugin_services.plugin_refs(request.user) if agents else {}
     items = [
-        AgentOut.model_validate(a)
-        for a in services.list_agents()
-        if a.workspace_id in visible
+        AgentOut.model_validate(a).model_copy(update={"plugin": _plugin_out(a, refs)})
+        for a in agents
     ]
     return paginate(items, offset=0, limit=limit)
 
@@ -569,6 +577,7 @@ def _detail(request: HttpRequest, agent) -> AgentDetailOut:
         "can_transfer_owner": _may_transfer_owner(request, agent),
         "is_admin": agent.is_admin(request.user),
         "can_manage_admins": _may_manage_admins(request, agent),
+        "plugin": plugin_services.plugin_ref(agent, plugin_services.plugin_refs(request.user)),
     })
 
 

@@ -54,6 +54,23 @@ def _no_live_dns(monkeypatch):
     monkeypatch.setattr(mail_dns, "_resolve", lambda name, rtype: [])
 
 
+@pytest.fixture(autouse=True)
+def _no_live_plugin_json(monkeypatch):
+    """No test reaches GitHub for a plugin.json name (apps/plugins/services.py):
+    the agents API names each agent's plugin, so every agent list would. Here
+    every repo reads as private (404 -> the repo name). The catalog tests patch
+    `_raw_get` themselves."""
+    try:
+        from apps.plugins import services as plugin_services
+    except Exception:
+        return
+
+    class _NotFound:
+        status_code = 404
+
+    monkeypatch.setattr(plugin_services, "_raw_get", lambda url: _NotFound())
+
+
 @pytest.fixture()
 def agent_memory_on():
     """Every Person created while this is active starts with BOTH agent-memory
