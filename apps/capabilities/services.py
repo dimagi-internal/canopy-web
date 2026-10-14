@@ -443,6 +443,11 @@ def _lease_prefix(lease: CapabilityLease) -> str:
     return f"leases/{lease.pk}"
 
 
+def out_prefix(lease: CapabilityLease) -> str:
+    """s3://<bucket>/leases/<id>/out/ — CANOPY_LEASE_OUT, as a literal for argv."""
+    return f"s3://{target(lease.capability).bucket}/{_lease_prefix(lease)}/out/"
+
+
 def exec_(lease: CapabilityLease, argv: list[str], timeout_s: int) -> tuple[str, int]:
     """Send `argv` to the lease's machine; return (the SSM CommandId, the timeout used).
 
@@ -468,7 +473,7 @@ def exec_(lease: CapabilityLease, argv: list[str], timeout_s: int) -> tuple[str,
     script = [
         f"export CANOPY_LEASE_ID={shlex.quote(str(lease.pk))}",
         f"export CANOPY_LEASE_IN={shlex.quote(base + '/in/')}",
-        f"export CANOPY_LEASE_OUT={shlex.quote(base + '/out/')}",
+        f"export CANOPY_LEASE_OUT={shlex.quote(out_prefix(lease))}",
         "exec " + shlex.join(argv),
     ]
     try:

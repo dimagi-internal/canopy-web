@@ -150,7 +150,9 @@ it (a laptop session). PAT-authenticated; every route is also an MCP tool.
 
 A **lease** is `{lease_id, agent, capability, status, ready, position, instance_id,
 params, turn_id, created_at, provisioning_at, ready_at, ended_at, expires_at,
-last_heartbeat_at, idle_release_s, reason, ready_info}`.
+last_heartbeat_at, idle_release_s, reason, ready_info, out_prefix}`. `out_prefix` is
+`s3://<bucket>/leases/<id>/out/`, the same value as `CANOPY_LEASE_OUT`, for a CLI that
+needs `--out` as a literal (argv is shell-quoted, so `$CANOPY_LEASE_OUT` is not expanded).
 
 - **States:** `queued → provisioning → ready → released`; failure exits `failed`
   (launch refused, not ready in time, `ok: false`, the machine died) and `expired`

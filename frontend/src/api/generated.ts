@@ -16468,6 +16468,8 @@ export interface components {
             readonly ready_info: {
                 readonly [key: string]: unknown;
             };
+            /** Out Prefix */
+            readonly out_prefix: string;
         };
         /**
          * AgentCapabilitiesIn

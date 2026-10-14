@@ -106,6 +106,7 @@ def _lease_out(lease: CapabilityLease) -> CapabilityLeaseOut:
         created_at=lease.created_at, provisioning_at=lease.provisioning_at, ready_at=lease.ready_at,
         ended_at=lease.ended_at, expires_at=lease.expires_at, last_heartbeat_at=lease.last_heartbeat_at,
         idle_release_s=lease.idle_release_s, reason=lease.reason, ready_info=lease.ready_info or {},
+        out_prefix=services.out_prefix(lease),
     )
 
 

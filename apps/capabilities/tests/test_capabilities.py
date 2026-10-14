@@ -218,6 +218,7 @@ def test_acquire_launches_with_the_lease_as_client_token(ready_to_lease, world):
                                  "max_lifetime_s": 14400, "bucket": "cap-bucket"}
     assert lease["instance_id"] == world.tokens[lease["lease_id"]]
     assert lease["expires_at"] is not None
+    assert lease["out_prefix"] == f"s3://cap-bucket/leases/{lease['lease_id']}/out/"
 
 
 def test_acquire_refuses_an_undeclared_capability_and_bad_params(ready_to_lease):

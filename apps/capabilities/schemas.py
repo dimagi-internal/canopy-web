@@ -59,6 +59,9 @@ class CapabilityLeaseOut(StrictModel):
     reason: str
     #: The machine's ready.json once read: {"ok", "reason"?, "timings"?, "cli_version"?}.
     ready_info: dict[str, Any]
+    #: s3://<bucket>/leases/<id>/out/ — where the machine writes artifacts (the same
+    #: value as CANOPY_LEASE_OUT in an exec), for an argv that needs it literally.
+    out_prefix: str
 
 
 class AgentCapabilityOut(StrictModel):
