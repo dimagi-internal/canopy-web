@@ -1240,8 +1240,9 @@ class RunnerMintOut(Schema):
 
     id: uuid.UUID
     status: str
-    #: Which subscription login the new token will replace.
-    slot: Literal["primary", "secondary"] = "primary"
+    #: Which subscription login the new token will replace — or `box`, a full
+    #: login the runner keeps on the box (carries claude.ai connectors).
+    slot: Literal["primary", "secondary", "box"] = "primary"
     authorize_url: str
     detail: str
     created_at: dt.datetime
@@ -1249,7 +1250,7 @@ class RunnerMintOut(Schema):
 
 
 class RunnerMintStartIn(Schema):
-    slot: Literal["primary", "secondary"] = "primary"
+    slot: Literal["primary", "secondary", "box"] = "primary"
 
 
 class RunnerMintClaimOut(Schema):
@@ -1276,6 +1277,9 @@ class RunnerMintResultIn(Schema):
     # human who is sitting there waiting for it.
     token: str = ""
     detail: str = ""
+    # A `box` sign-in delivers no token — the login stays on the runner — so
+    # success is this flag instead.
+    logged_in: bool = False
 
 
 class SignInRequestIn(Schema):

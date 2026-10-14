@@ -806,7 +806,8 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
     mint = services.current_runner_mint(runner)
     if mint is None:
         raise HttpError(409, "no sign-in is in progress for this runner")
-    return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail)
+    return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail,
+                                       logged_in=payload.logged_in)
 
 
 @router.post("/runners/{runner_id}/sign-in-request", response=SignInRequestOut,

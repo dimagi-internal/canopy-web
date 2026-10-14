@@ -285,6 +285,25 @@ after the delegation) call `access_token_for(user)`; no route hands it to a runn
 Spec: `docs/superpowers/specs/2026-09-12-github-backed-agent-creation-design.md`
 (`tests/test_github_connect.py`).
 
+## A cloud runner's Claude login (setup-token vs. full login)
+
+A cloud runner's bundle holds `claude setup-token` tokens (`subscription-1`,
+`subscription-2`) and an API key, tried in that order. A setup-token is
+**inference-only**: the CLI never loads claude.ai connectors (Claude Docs and the
+rest) for it — `[claudeai-mcp] Missing user:mcp_servers scope`. So a turn on one
+cannot read a Claude Doc however the doc is shared.
+
+The `box` sign-in slot fixes that. It runs `claude auth login --claudeai` on the
+box through the same browser relay (`RunnerMint`, URL out, code back), and the
+login **stays on the box** in `~/.claude/.credentials.json` — its refresh token
+rotates, so a copy anywhere else would break both. The runner reports only
+`logged_in`; nothing lands in the bundle. When the box holds a login with the
+`user:mcp_servers` scope, the cascade puts `box-login` FIRST and selecting it
+clears both auth env vars, so the CLI uses its stored login; a cap or a dead login
+falls through to the subscriptions as before. Settings → the runner's credentials
+→ **Full login on the box**. Tests: `runner/ec2/tests/test_box_login.py`,
+`tests/test_runner_mint.py`.
+
 ## The runner software
 
 A runner is an installed package, never a checkout, and updates itself to what is deployed.

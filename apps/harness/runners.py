@@ -405,7 +405,7 @@ def take_mint_code(mint) -> str:
     return code
 
 
-def finish_runner_mint(mint, *, token: str = "", detail: str = ""):
+def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bool = False):
     """The runner reports the outcome; on success the token lands in the bundle,
     in the slot the human chose.
 
@@ -419,6 +419,16 @@ def finish_runner_mint(mint, *, token: str = "", detail: str = ""):
     """
     from .models import RunnerMint
 
+    if mint.slot == RunnerMint.BOX:
+        # A full login the runner keeps on the box: nothing to store here, and a
+        # token arriving anyway is ignored rather than written into a bundle
+        # slot nobody asked to replace.
+        mint.status = RunnerMint.DONE if logged_in else RunnerMint.FAILED
+        mint.detail = detail or ("signed in on the box" if logged_in
+                                 else "the runner did not complete the sign-in")
+        mint.code = ""
+        mint.save(update_fields=["status", "detail", "code", "updated_at"])
+        return mint
     if token:
         key = ("claude_token_secondary" if mint.slot == RunnerMint.SECONDARY
                else "claude_token")

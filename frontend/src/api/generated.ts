@@ -18572,7 +18572,7 @@ export interface components {
              * @default primary
              * @enum {string}
              */
-            readonly slot: "primary" | "secondary";
+            readonly slot: "primary" | "secondary" | "box";
             /** Authorize Url */
             readonly authorize_url: string;
             /** Detail */
@@ -18595,7 +18595,7 @@ export interface components {
              * @default primary
              * @enum {string}
              */
-            readonly slot: "primary" | "secondary";
+            readonly slot: "primary" | "secondary" | "box";
         };
         /**
          * RunnerMintClaimOut
@@ -18634,6 +18634,11 @@ export interface components {
              * @default
              */
             readonly detail: string;
+            /**
+             * Logged In
+             * @default false
+             */
+            readonly logged_in: boolean;
         };
         /** SignInRequestOut */
         readonly SignInRequestOut: {

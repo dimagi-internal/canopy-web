@@ -199,6 +199,21 @@ export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Eleme
         </p>
       )}
 
+      {/* Not a bundle slot: a FULL `claude auth login` the runner keeps on the
+          box. It is the only login that carries claude.ai connectors (Claude
+          Docs and the rest) — a setup-token is inference-only — and its refresh
+          token rotates, so it never comes back here. The runner tries it first. */}
+      <div className="flex flex-col gap-1.5 rounded-md border border-border p-2" data-testid="cred-slot-box">
+        <div className="flex items-center gap-2 text-[12px] text-foreground">
+          <span className="font-medium">Full login on the box</span>
+          <span className="text-[11px] text-foreground-subtle">claude.ai connectors (Claude Docs)</span>
+        </div>
+        <RunnerReauth runnerId={runnerId} slot="box" onSignedIn={load} />
+        <span className="text-[11px] text-foreground-subtle">
+          Kept on the runner, never stored here. Sign in as the account whose claude.ai the agents should see.
+        </span>
+      </div>
+
       {SLOTS.filter((s) => s.login).map((slot, i) => {
         const login = slot.login!
         const isSet = status?.[slot.statusKey] ?? false

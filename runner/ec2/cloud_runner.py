@@ -2972,6 +2972,70 @@ _CLAUDE_CRED_I = 0
 _CLAUDE_CRED_RUNNER_ID = ""   # set at staging; lets an exhausted cascade re-read
 _CLAUDE_AUTH_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 
+#: The box's OWN full Claude login — `claude auth login`, kept in the CLI's
+#: credentials file on this box. It is the only kind of login that carries the
+#: claude.ai connectors (Claude Docs and the rest): a setup-token is
+#: inference-only by design (the CLI says so — "Long-lived tokens … are limited
+#: to inference-only"), so a turn running on one cannot see a connector at all,
+#: however the doc is shared. Read out of `claude` 2.1.300, 2026-10-14: the
+#: connector loader refuses with "Missing user:mcp_servers scope".
+#:
+#: It is NOT a value in the bundle. The entry carries no env var; selecting it
+#: CLEARS both auth vars, so the CLI falls through to its stored login. Its
+#: refresh token rotates on every refresh, so it lives on exactly this box and
+#: never travels to canopy-web — a copied rotating token breaks both copies.
+BOX_LOGIN_LABEL = "box-login"
+_BOX_LOGIN_SCOPE = "user:mcp_servers"
+_BUNDLE_SLOTS = (
+    ("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token"),
+    ("subscription-2", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token_secondary"),
+    ("api-key", "ANTHROPIC_API_KEY", "claude_api_key"),
+)
+
+
+def _claude_credentials_file() -> pathlib.Path:
+    """Where the CLI keeps a stored login on Linux (no keychain on the box)."""
+    root = os.environ.get("CLAUDE_CONFIG_DIR") or str(pathlib.Path.home() / ".claude")
+    return pathlib.Path(root) / ".credentials.json"
+
+
+def box_login_ready(path: pathlib.Path | None = None) -> bool:
+    """True when this box holds a full Claude login that carries the connectors.
+
+    Both halves matter: a refresh token (so it survives its first hour) and the
+    connector scope (an older or narrower login would sit first in the cascade
+    and still not see Claude Docs, which is the only reason it is first).
+    """
+    try:
+        data = json.loads((path or _claude_credentials_file()).read_text())
+    except (OSError, ValueError):
+        return False
+    oauth = data.get("claudeAiOauth") if isinstance(data, dict) else None
+    if not isinstance(oauth, dict) or not oauth.get("refreshToken"):
+        return False
+    return _BOX_LOGIN_SCOPE in (oauth.get("scopes") or [])
+
+
+def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
+    """The ordered credential list: the box's own full login first when it has
+    one (it is the only entry that sees claude.ai connectors), then the bundle."""
+    out: list[tuple[str, str, str]] = (
+        [(BOX_LOGIN_LABEL, "", "")] if box_login_ready() else [])
+    for label, var, key in _BUNDLE_SLOTS:
+        if (cred or {}).get(key):
+            out.append((label, var, cred[key]))
+    return out
+
+
+def _adopt_box_login() -> bool:
+    """Put a freshly signed-in box login at the head of the live cascade."""
+    if not box_login_ready():
+        return False
+    if not any(c[0] == BOX_LOGIN_LABEL for c in _CLAUDE_CREDS):
+        _CLAUDE_CREDS.insert(0, (BOX_LOGIN_LABEL, "", ""))
+    _apply_claude_credential(0)
+    return True
+
 #: A usage cap, matched by SHAPE rather than by phrase.
 #:
 #: Anthropic ships session (5-hour), daily and weekly caps and words each one a
@@ -3097,8 +3161,9 @@ def _apply_claude_credential(index: int) -> None:
     label, var, value = _CLAUDE_CREDS[index]
     for other in _CLAUDE_AUTH_VARS:
         os.environ.pop(other, None)
-    os.environ[var] = value
-    _log(f"claude credential: using {label} ({var})")
+    if var:
+        os.environ[var] = value
+    _log(f"claude credential: using {label} ({var or 'the stored login on this box'})")
 
 
 def _advance_claude_credential(*, turn_id: str = "") -> bool:
@@ -3131,9 +3196,13 @@ def _promote_working_subscription(turn_id: str = "") -> None:
 
     Subscriptions only. The API key is last on purpose and never promoted.
     """
-    if not _CLAUDE_CRED_RUNNER_ID or _CLAUDE_CRED_I != 1 or len(_CLAUDE_CREDS) < 2:
+    # A box login at the head shifts the subscriptions down one place.
+    base = 1 if _CLAUDE_CREDS and _CLAUDE_CREDS[0][0] == BOX_LOGIN_LABEL else 0
+    if (not _CLAUDE_CRED_RUNNER_ID or _CLAUDE_CRED_I != base + 1
+            or len(_CLAUDE_CREDS) < base + 2):
         return
-    if (_CLAUDE_CREDS[0][0], _CLAUDE_CREDS[1][0]) != ("subscription-1", "subscription-2"):
+    if ((_CLAUDE_CREDS[base][0], _CLAUDE_CREDS[base + 1][0])
+            != ("subscription-1", "subscription-2")):
         return
     try:
         status, _ = _api("POST", f"/runners/{_CLAUDE_CRED_RUNNER_ID}/credential/swap")
@@ -3145,9 +3214,9 @@ def _promote_working_subscription(turn_id: str = "") -> None:
         return
     # Mirror the swap locally so the periodic re-read sees no change (and does
     # not reset to index 0, which would now be the capped login again).
-    (l1, v1, t1), (l2, v2, t2) = _CLAUDE_CREDS[0], _CLAUDE_CREDS[1]
-    _CLAUDE_CREDS[0], _CLAUDE_CREDS[1] = (l1, v1, t2), (l2, v2, t1)
-    _apply_claude_credential(0)
+    (l1, v1, t1), (l2, v2, t2) = _CLAUDE_CREDS[base], _CLAUDE_CREDS[base + 1]
+    _CLAUDE_CREDS[base], _CLAUDE_CREDS[base + 1] = (l1, v1, t2), (l2, v2, t1)
+    _apply_claude_credential(base)
     _log(f"turn {turn_id[:8]}: the fallback login worked while the primary is capped "
          "— swapped them on canopy-web")
 
@@ -3225,7 +3294,7 @@ def _reload_claude_credentials() -> bool:
     """
     if not _CLAUDE_CRED_RUNNER_ID:
         return False
-    before = [c[2] for c in _CLAUDE_CREDS]
+    before = [(c[0], c[2]) for c in _CLAUDE_CREDS]
     try:
         status, cred = _api("GET", f"/runners/{_CLAUDE_CRED_RUNNER_ID}/credential")
     except Exception as exc:  # noqa: BLE001 — a failed reload must not mask the cap
@@ -3233,13 +3302,8 @@ def _reload_claude_credentials() -> bool:
         return False
     if status != 200 or not cred:
         return False
-    fresh = [(label, var, cred[key])
-             for label, var, key in (
-                 ("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token"),
-                 ("subscription-2", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token_secondary"),
-                 ("api-key", "ANTHROPIC_API_KEY", "claude_api_key"))
-             if cred.get(key)]
-    if not fresh or [c[2] for c in fresh] == before:
+    fresh = _cascade_from(cred)
+    if not fresh or [(c[0], c[2]) for c in fresh] == before:
         return False
     _CLAUDE_CREDS.clear()
     _CLAUDE_CREDS.extend(fresh)
@@ -3257,17 +3321,12 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
     """
     while not _stop:
         status, cred = _api("GET", f"/runners/{runner_id}/credential")
-        if status == 200 and cred and (cred.get("claude_token") or cred.get("claude_api_key")):
+        if status == 200 and (box_login_ready() or (cred and (
+                cred.get("claude_token") or cred.get("claude_api_key")))):
             global _CLAUDE_CRED_RUNNER_ID
             _CLAUDE_CRED_RUNNER_ID = runner_id
             _CLAUDE_CREDS.clear()
-            for label, var, key in (
-                ("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token"),
-                ("subscription-2", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token_secondary"),
-                ("api-key", "ANTHROPIC_API_KEY", "claude_api_key"),
-            ):
-                if cred.get(key):
-                    _CLAUDE_CREDS.append((label, var, cred[key]))
+            _CLAUDE_CREDS.extend(_cascade_from(cred))
             _apply_claude_credential(0)
             _log(f"claude credential cascade: {', '.join(c[0] for c in _CLAUDE_CREDS)}")
             if len(_CLAUDE_CREDS) == 1:
@@ -3633,6 +3692,68 @@ class MintSession:
         return extract(self._buf)
 
 
+#: `claude auth login` — the FULL login (`--claudeai` = the subscription, not a
+#: Console API key). Same authorize URL shape as setup-token and the same "Paste
+#: code here if prompted" prompt under a pty (checked against `claude` 2.1.300,
+#: 2026-10-14), so `MintSession` drives it unchanged up to the code; only what
+#: success LOOKS like differs.
+LOGIN_ARGV = ("claude", "auth", "login", "--claudeai")
+_LOGIN_OK = re.compile(r"Login\s*successful", re.I)
+
+
+def _login_env() -> dict[str, str]:
+    """The environment for `claude auth login`: no inherited Claude identity.
+
+    Either auth var set here would make the CLI treat itself as already signed
+    in by that credential, and the inherited session markers would make it
+    behave as a child of whatever started the runner.
+    """
+    env = _child_safe_env()
+    for var in _CLAUDE_AUTH_VARS:
+        env.pop(var, None)
+    return env
+
+
+class LoginSession(MintSession):
+    """A `claude auth login` run: the box keeps the credential it produces.
+
+    The opposite contract from a setup-token mint, on purpose. A setup-token is
+    a value we carry to canopy-web; this login's refresh token ROTATES each time
+    the CLI refreshes it, so a copy anywhere else goes stale on first use and
+    takes the box's own copy down with it. So nothing is read out of the
+    terminal: success is the CLI saying so AND the credentials file now holding
+    a login with the connector scope.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(argv=LOGIN_ARGV, env=_login_env())
+
+    def submit_code(self, code: str, timeout: float = 90.0) -> str:
+        if self._fd is None:
+            raise MintTimeout("this sign-in session is not running")
+        os.write(self._fd, code.strip().encode())
+        time.sleep(_PASTE_SETTLE_SECONDS)
+        os.write(self._fd, b"\r")
+        said_ok = self._pump(
+            timeout, lambda buf: True if _LOGIN_OK.search(strip_terminal(buf)) else None)
+        tail = _diagnostic_tail(self._buf)
+        # The CLI prints its verdict after writing the file, but give the write
+        # a moment rather than racing it.
+        deadline = time.time() + 10
+        while said_ok and not box_login_ready() and time.time() < deadline:
+            time.sleep(0.5)
+        self.close()
+        if not said_ok:
+            raise MintTimeout(
+                "claude auth login did not finish. What it said: " + (tail or "(nothing)"))
+        if not box_login_ready():
+            raise MintTimeout(
+                "claude auth login said it succeeded, but this box has no stored "
+                "login with the claude.ai connector scope (user:mcp_servers) — "
+                "check which account signed in. What it said: " + (tail or "(nothing)"))
+        return ""
+
+
 #: The sign-in in flight on this box, if any. One at a time by construction —
 #: canopy-web supersedes an unfinished mint when a new one is requested, so a
 #: second concurrent pty would only be a leak.
@@ -3688,8 +3809,10 @@ def _drain_mint(runner_id: str) -> None:
         if state == "requested":
             if _MINT_SESSION is not None:
                 _MINT_SESSION.close()
-            _log(f"mint {mint_id[:8]}: starting claude setup-token")
-            _MINT_SESSION, _MINT_ID = MintSession(), mint_id
+            box = mint.get("slot") == "box"
+            _log(f"mint {mint_id[:8]}: starting "
+                 f"{'claude auth login (full login, kept on this box)' if box else 'claude setup-token'}")
+            _MINT_SESSION, _MINT_ID = (LoginSession() if box else MintSession()), mint_id
             try:
                 url = _MINT_SESSION.start()
             except Exception as exc:  # noqa: BLE001 — always tell the waiting human
@@ -3721,6 +3844,17 @@ def _drain_mint(runner_id: str) -> None:
                 _api("POST", f"/runners/{runner_id}/mint/result",
                      {"detail": str(exc)[:900]})
             else:
+                if isinstance(_MINT_SESSION, LoginSession):
+                    # Nothing to deliver: the login stays on this box (see
+                    # LoginSession). Report success, then put it first.
+                    _api("POST", f"/runners/{runner_id}/mint/result",
+                         {"logged_in": True,
+                          "detail": "signed in on the box — full claude.ai login, "
+                                    "claude.ai connectors available to turns here"})
+                    _log(f"mint {mint_id[:8]}: full login stored on this box")
+                    if _adopt_box_login():
+                        _log("box login is now first in the credential cascade")
+                    return
                 # The token goes straight to canopy-web, which writes it into the
                 # encrypted bundle — it never touches the browser, so the only
                 # secret a human handled was the single-use code.
