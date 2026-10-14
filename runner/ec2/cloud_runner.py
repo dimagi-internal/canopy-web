@@ -873,6 +873,14 @@ _AGENT_OP: dict[str, tuple[float, str]] = {}
 _AGENT_OP_TTL_SECONDS = float(os.environ.get("AGENT_OP_TTL_SECONDS", "300"))
 
 
+#: The 1Password vault each agent INSTANCE is bound to (`Agent.op_vault`), from
+#: the same resolve call as its key and cached with it. Agent `.env.tpl`s name it
+#: as `op://${AGENT_VAULT}/...` rather than hardcoding `Agent-<Slug>`, so an
+#: install binds to the instance's recorded vault (2026-10-14, canopy#899).
+#: Never derived from the slug: an agent with no recorded vault is unconfigured.
+_AGENT_VAULT: dict[str, str] = {}
+
+
 #: The chrome-sales Salesforce credential each agent BORROWS (canopy-web#1291),
 #: fetched on the same resolve call as its 1Password key and cached with it.
 _AGENT_SF: dict[str, str] = {}
@@ -919,6 +927,7 @@ def _agent_op_token(slug: str) -> str:
         status, payload = _api("GET", f"/{slug}/credentials/resolve", prefix="/api/agents")
         if status == 200 and isinstance(payload, dict):
             token = str(payload.get("op_sa_token") or "")
+            _AGENT_VAULT[slug] = str(payload.get("op_vault") or "").strip()
             _AGENT_SF[slug] = str(payload.get("salesforce_creds") or "")
     except Exception as exc:  # noqa: BLE001
         _log(f"warn: could not resolve {slug}'s 1Password key ({exc}); the turn runs without one")
@@ -945,6 +954,8 @@ _AGENT_ENV_TIMEOUT_SECONDS = float(os.environ.get("AGENT_ENV_TIMEOUT_SECONDS", "
 _AGENT_ENV_LOCKS: dict[str, threading.Lock] = {}
 _AGENT_ENV_LOCKS_GUARD = threading.Lock()
 _OP_REF_VAULT = re.compile(r"op://([^/\s]+)/")
+#: `$VAR` / `${VAR}` as `op inject` expands them in a secret reference.
+_OP_REF_VAR = re.compile(r"\$\{(\w+)\}|\$(\w+)")
 
 #: Only the agent's key decides whose vault is read — never a personal `op`
 #: session or Connect server that happens to be in this process's environment.
@@ -983,7 +994,12 @@ def _vault_fingerprint(tpl: pathlib.Path, env: dict, op_token: str) -> tuple[str
     import hashlib  # noqa: PLC0415
     text = tpl.read_text()
     parts = [hashlib.sha256(text.encode()).hexdigest()]
-    for vault in sorted(set(_OP_REF_VAULT.findall(text))):
+    # Expand the variables `op inject` will expand (from the same env) BEFORE
+    # reading vault names, or a `op://${AGENT_VAULT}/...` template probes a vault
+    # literally named "${AGENT_VAULT}" (2026-10-14, canopy#899). An unset
+    # variable is left as written, so the probe fails and names it.
+    refs = _OP_REF_VAR.sub(lambda m: env.get(m.group(1) or m.group(2), m.group(0)), text)
+    for vault in sorted(set(_OP_REF_VAULT.findall(refs))):
         res = subprocess.run(["op", "vault", "get", vault, "--format", "json"], env=env,
                              capture_output=True, text=True, timeout=_AGENT_ENV_TIMEOUT_SECONDS)
         if res.returncode != 0:
@@ -998,7 +1014,7 @@ def _vault_fingerprint(tpl: pathlib.Path, env: dict, op_token: str) -> tuple[str
     return "|".join(parts), ""
 
 
-def _refresh_agent_env(slug: str, op_token: str) -> None:
+def _refresh_agent_env(slug: str, op_token: str, vault: str = "") -> None:
     """Bring `~/.<slug>/.env` up to date with the agent's vault, cheaply.
 
     At most once per `_AGENT_ENV_TTL_SECONDS` per agent, timed from the last
@@ -1012,6 +1028,14 @@ def _refresh_agent_env(slug: str, op_token: str) -> None:
     tpl = pathlib.Path(AGENT_ROOT) / slug / ".env.tpl"
     if not op_token or not tpl.is_file():
         return  # bootstrap already reports an unregistered or tpl-less agent
+    if not vault:
+        # A key with no recorded vault: the template's `${AGENT_VAULT}` has nothing
+        # to expand to, and deriving `Agent-<Slug>` is the fallback we removed
+        # (2026-10-14, canopy#899). Keep the last good file and say why.
+        _set_check(f"env.{slug}", "warn",
+                   f"canopy-web records no 1Password vault for {slug} "
+                   f"(PUT /api/agents/{slug}/vault) — .env not refreshed")
+        return
     with _AGENT_ENV_LOCKS_GUARD:
         lock = _AGENT_ENV_LOCKS.setdefault(slug, threading.Lock())
     with lock:  # two turns of one agent claimed together probe once
@@ -1025,6 +1049,11 @@ def _refresh_agent_env(slug: str, op_token: str) -> None:
         env = {k: v for k, v in _child_safe_env().items()
                if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
         env["OP_SERVICE_ACCOUNT_TOKEN"] = op_token
+        # The instance's recorded vault and slug, which agent templates reference
+        # as `op://${AGENT_VAULT}/...` and `op inject` expands from this env
+        # (2026-10-14, canopy#899). Same names `canopy agent env` / `cred sync` export.
+        env["AGENT_VAULT"] = vault
+        env["AGENT_SLUG"] = slug
         try:
             prior = json.loads(stamp.read_text())
             prior = prior if isinstance(prior, dict) else {}
@@ -1118,6 +1147,15 @@ def _agent_env(slug: str | None) -> dict:
         env["OP_SERVICE_ACCOUNT_TOKEN"] = op_token
     else:
         env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
+    # The instance's recorded vault, for anything in the turn that `op inject`s
+    # an agent template itself (2026-10-14, canopy#899). Not a secret. Unset,
+    # never derived, when canopy-web records none.
+    vault = _AGENT_VAULT.get(slug, "") if op_token else ""
+    env["AGENT_SLUG"] = slug
+    if vault:
+        env["AGENT_VAULT"] = vault
+    else:
+        env.pop("AGENT_VAULT", None)
     # chrome-sales in an agent turn acts in Salesforce only as the identity this
     # agent BORROWS (canopy-web#1291), never as whatever sits in the box's
     # ~/.chrome-sales/. No loan → no CHROME_SALES_HOME, and chrome-sales finds no
@@ -1127,7 +1165,7 @@ def _agent_env(slug: str | None) -> dict:
     if sf_home is not None:
         env["CHROME_SALES_HOME"] = str(sf_home)
     # The vault, not this box's last bootstrap, decides what the turn reads.
-    _refresh_agent_env(slug, op_token)
+    _refresh_agent_env(slug, op_token, vault)
     env_file = pathlib.Path.home() / f".{slug}" / ".env"
     try:
         raw = env_file.read_text()

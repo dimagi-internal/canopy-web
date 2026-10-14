@@ -32,7 +32,8 @@ def _run(tmp_path, *, op_exit: int, op_stderr: str = "", tpl: bool = True,
     op.write_text(
         "#!/usr/bin/env bash\n"
         f'printf "OP_SERVICE_ACCOUNT_TOKEN=%s\\n" "${{OP_SERVICE_ACCOUNT_TOKEN:-<unset>}}" >> {tmp_path}/op.env\n'
-        
+        f'printf "AGENT_VAULT=%s\\n" "${{AGENT_VAULT:-<unset>}}" >> {tmp_path}/op.env\n'
+        f'printf "AGENT_SLUG=%s\\n" "${{AGENT_SLUG:-<unset>}}" >> {tmp_path}/op.env\n'
         f"printf %s {shlex.quote(op_stderr)} >&2\n"
         f'[ {op_exit} -eq 0 ] && for a; do [ "$prev" = -o ] && echo K=v > "$a"; prev="$a"; done\n'
         f"exit {op_exit}\n"
@@ -94,4 +95,15 @@ def test_an_unregistered_agent_injects_nothing_and_names_the_remedy(tmp_path):
 def test_the_inject_runs_under_the_agents_own_key(tmp_path):
     out = _run(tmp_path, op_exit=0)
     assert "OP_SERVICE_ACCOUNT_TOKEN=AGENT-KEY" in (tmp_path / "op.env").read_text()
+    assert "ENV_OK=1" in out
+
+
+def test_the_inject_names_the_instances_recorded_vault(tmp_path):
+    """Templates say `op://${AGENT_VAULT}/...`; `op inject` expands it from its
+    env, so the inject must carry the vault canopy-web recorded for this
+    instance (2026-10-14, canopy#899)."""
+    out = _run(tmp_path, op_exit=0)
+    seen = (tmp_path / "op.env").read_text()
+    assert "AGENT_VAULT=Agent-Ace" in seen
+    assert "AGENT_SLUG=ace" in seen
     assert "ENV_OK=1" in out
