@@ -74,11 +74,10 @@ from .api_tools import build_provider as _build_api_provider  # noqa: E402
 
 mcp.add_provider(_build_api_provider())
 
-# Dynamic tools: each agent's declared interface (`ace__ask`, …), for whoever
-# is asking. See `apps/mcp/agent_tools.py`.
-from .agent_tools import AgentInterfaceProvider  # noqa: E402
-
-mcp.add_provider(AgentInterfaceProvider())
+# No per-agent tools. This server is canopy the PRODUCT (board, sessions,
+# turns, runners, mail, every REST route, page actions). It never runs an
+# agent on someone's behalf: to use an agent, install its plugin from the
+# workspace marketplace and run it in your own Claude Code (`/get-started`).
 
 
 def build_http_app():

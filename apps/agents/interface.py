@@ -138,10 +138,11 @@ _CALLER = re.compile(r"^(?P<base>member|contact|unknown)"
                      r"(?:@(?P<domain>[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}))?"
                      r"(?::(?P<verified>verified))?$")
 
-#: What a capability's `input` fields may be — each becomes a typed, required
-#: parameter of the capability's MCP tool (apps/mcp/agent_tools.py).
+#: What a capability's `input` fields may be. Declared and shown, but no door
+#: passes typed inputs today: the MCP capability tools that did were removed
+#: (agents are used through their plugin, not canopy's MCP).
 INPUT_TYPES = {"string": "string", "integer": "integer", "number": "number", "boolean": "boolean"}
-#: Parameters every capability tool already has; an `input` field may not shadow one.
+#: Names an `input` field may not take (the message envelope's own fields).
 _RESERVED_INPUTS = frozenset({"message", "conversation_id", "wait_seconds"})
 _NAME = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
 _MAX_ITEMS = 100
@@ -522,7 +523,7 @@ def granted_by(turn, agent) -> str:
 
 
 def offered_to(user, agent) -> list[str]:
-    """The capabilities `user` may invoke on `agent` directly — the MCP tool list.
+    """The capabilities `user` may invoke on `agent` directly — their extended A2A card.
 
     Everything for anyone whose turns run in the whole agent anyway: the owner,
     admins, a workspace editor, a member lifted by a `full:` rule. For any other
