@@ -92,7 +92,8 @@ export function NewAgentPage(): JSX.Element {
 
   const [creating, setCreating] = useState('')
   const [createError, setCreateError] = useState<CreationError | null>(null)
-  const ready = check?.state === 'ready' || check?.state === 'adopt'
+  // `update`: an earlier attempt (or GitHub's README) is there; only missing files are added.
+  const ready = check?.state === 'ready' || check?.state === 'update' || check?.state === 'adopt'
   const aboutDone = Boolean(name.trim() && effectiveSlug && mandate.trim())
   // Said under a disabled Create, so it never looks broken for no reason.
   const missing = [
@@ -110,7 +111,10 @@ export function NewAgentPage(): JSX.Element {
     }
     setCreateError(null)
     try {
-      setCreating(check?.state === 'adopt' ? 'Adopting the repository…' : 'Pushing the scaffold…')
+      setCreating(
+        check?.state === 'adopt' ? 'Adopting the repository…'
+          : check?.state === 'update' ? 'Adding the missing files…' : 'Pushing the scaffold…',
+      )
       const pushed = await scaffoldAgent(agent)
       setCreating('Registering the agent…')
       await registerAgent(agent, pushed)
@@ -210,7 +214,15 @@ export function NewAgentPage(): JSX.Element {
             placeholder="github_pat_…"
           />
         </Field>
-        <RepoState check={check} error={checkError} checking={checking} />
+        <RepoState
+          check={check}
+          error={checkError}
+          checking={checking}
+          onUseSlug={(s) => {
+            setSlugEdited(true)
+            setSlug(s)
+          }}
+        />
       </Step>
 
       <Step n={3} title="Create it" done={false}>
@@ -245,20 +257,33 @@ function RepoState({
   check,
   error,
   checking,
+  onUseSlug,
 }: {
   check: RepoCheckOut | null
   error: CreationError | null
   checking: boolean
+  /** For a repo that already holds another agent: take that agent's slug. */
+  onUseSlug: (slug: string) => void
 }): JSX.Element | null {
   if (error) return <Problem error={error} />
   if (checking) return <p className="text-[12px] text-muted-foreground">Checking…</p>
   if (!check || check.state === 'no_token') return null
-  if (check.state === 'ready' || check.state === 'adopt') {
+  if (check.state === 'ready' || check.state === 'update' || check.state === 'adopt') {
     return (
       <p className="flex items-center gap-1.5 text-[13px] text-success">
-        <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+        <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
         {check.state === 'ready' ? `${check.repo} is empty; pushing as @${check.login}.` : check.detail}
       </p>
+    )
+  }
+  if (check.state === 'name_mismatch' && check.suggested_slug) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-[13px] text-foreground">
+        <span>{check.detail}</span>
+        <Button size="sm" variant="outline" onClick={() => onUseSlug(check.suggested_slug)}>
+          Use “{check.suggested_slug}”
+        </Button>
+      </div>
     )
   }
   return (

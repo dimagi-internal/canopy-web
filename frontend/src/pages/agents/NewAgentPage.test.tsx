@@ -32,7 +32,7 @@ const LINKS = {
 }
 
 function answer(state: string, over: Record<string, unknown> = {}) {
-  return { repo: 'olive/scout-bot', state, default_branch: 'main', detail: '', login: '', ...LINKS, ...over }
+  return { repo: 'olive/scout-bot', state, default_branch: 'main', detail: '', login: '', files_to_add: 0, suggested_slug: '', ...LINKS, ...over }
 }
 
 function Landed() {
@@ -119,6 +119,24 @@ describe('NewAgentPage', () => {
     await screen.findByText(/The token cannot see olive\/scout-bot\./, {}, { timeout: 3000 })
     expect((screen.getByRole('button', { name: 'Create agent' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByText(/a repository the token can push to/)).toBeTruthy()
+  })
+
+  it('lets an earlier attempt be finished: a repo with some files counts as ready', async () => {
+    check.mockResolvedValue(answer('update', { detail: 'olive/scout-bot already has 3 file(s). Canopy will add the 17 template file(s) it lacks…', files_to_add: 17 }))
+    mount()
+    fill()
+    fireEvent.change(screen.getByPlaceholderText('github_pat_…'), { target: { value: 'github_pat_olive' } })
+    await screen.findByText(/Canopy will add the 17 template file/, {}, { timeout: 3000 })
+    expect((screen.getByRole('button', { name: 'Create agent' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it("offers the slug a repo already names its agent, and takes it on click", async () => {
+    check.mockResolvedValue(answer('name_mismatch', { detail: "olive/scout-bot already holds the agent 'ranger'.", suggested_slug: 'ranger' }))
+    mount()
+    fill()
+    fireEvent.change(screen.getByPlaceholderText('github_pat_…'), { target: { value: 'github_pat_olive' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Use “ranger”' }, { timeout: 3000 }))
+    expect((screen.getByPlaceholderText('scout') as HTMLInputElement).value).toBe('ranger')
   })
 
   it('tells a viewer it needs the editor role instead of offering a form', async () => {

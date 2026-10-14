@@ -44,6 +44,7 @@ class FakeGitHub:
         self.repos = {name: (state if state is None else {"files": {}, "modes": {}, **state})
                       for name, state in repos.items()}
         self.writes: list[str] = []
+        self.commits: list[dict] = []
 
     def _resp(self, status, body=None):
         r = mock.Mock(status_code=status, ok=200 <= status < 300, text=json.dumps(body or {}))
@@ -69,7 +70,11 @@ class FakeGitHub:
         if rest == "":
             return self._resp(200, {"default_branch": "main"})
         if rest.startswith("commits"):
-            return self._resp(200, [{}]) if repo["files"] else self._resp(409, {"message": "Git Repository is empty."})
+            if not repo["files"]:
+                return self._resp(409, {"message": "Git Repository is empty."})
+            return self._resp(200, [{"sha": "h1", "commit": {"tree": {"sha": "t0"}}}])
+        if rest.startswith("git/trees/t0"):
+            return self._resp(200, {"tree": [{"path": p, "type": "blob"} for p in repo["files"]]})
         path = rest.removeprefix("contents/")
         if path in repo["files"]:
             return self._resp(200, {"content": base64.b64encode(repo["files"][path].encode()).decode()})
@@ -87,7 +92,7 @@ class FakeGitHub:
             self._tree = json["tree"]
             return self._resp(201, {"sha": "t2"})
         if rest == "git/commits":
-            assert json["parents"] == ["c1"]
+            self.commits.append(json)
             return self._resp(201, {"sha": "c2"})
         if rest == "git/refs/heads/main":
             for entry in self._tree:
@@ -175,10 +180,60 @@ def test_a_rejected_token_is_a_422_not_a_push(editor):
     assert fake.writes == []
 
 
-def test_a_repo_with_someone_elses_commits_is_never_pushed_into(editor):
-    fake = FakeGitHub(**{REPO: {"files": {"README.md": "# mine"}}})
+def test_a_repo_that_is_not_an_agent_is_never_written_into(editor):
+    fake = FakeGitHub(**{REPO: {"files": {"README.md": "# mine", "src/app.py": "print(1)"}}})
     with _github(fake):
         resp = _scaffold(_client(editor))
+    assert resp.status_code == 409
+    assert "not an agent repository" in resp.json()["title"]
+    assert fake.writes == []
+
+
+def test_a_repo_made_with_a_readme_is_filled_in_and_keeps_its_readme(editor):
+    """Ticking GitHub's "Add a README" is the commonest way a repo stops being empty."""
+    fake = FakeGitHub(**{REPO: {"files": {"README.md": "# Scout, by Olive"}}})
+    with _github(fake):
+        resp = _scaffold(_client(editor))
+    assert resp.status_code == 201, resp.content
+    files = fake.repos[REPO]["files"]
+    assert files["README.md"] == "# Scout, by Olive"
+    assert set(files) == {p.replace("{{AGENT_SLUG}}", "scout") for p in templates()}
+    assert resp.json()["files"] == len(templates()) - 1
+    # One commit on top of what was there; the Contents API is only for empty repos.
+    assert [c["parents"] for c in fake.commits] == [["h1"]]
+    assert not any(w.startswith("PUT contents/") for w in fake.writes)
+
+
+def test_an_earlier_attempt_is_completed_and_nothing_it_wrote_is_overwritten(editor):
+    """Someone ran /canopy:create-agent (or this page) before and stopped partway, or
+    already wrote a persona: only the missing template files are added."""
+    earlier = {".claude-plugin/plugin.json": json.dumps({"name": "scout"}),
+               "persona.md": "Scout is curious and terse.", "skills/find-issues/SKILL.md": "x"}
+    fake = FakeGitHub(**{REPO: {"files": dict(earlier)}})
+    c = _client(editor)
+    with _github(fake):
+        check = c.post("/api/agents/scaffold/check", {"workspace": "scouts", "slug": "scout",
+                                                      "repo": REPO, "token": "github_pat_olive"},
+                       content_type="application/json").json()
+        resp = _scaffold(c)
+    assert check["state"] == "update"
+    assert check["files_to_add"] == len(templates()) - 2
+    assert resp.status_code == 201, resp.content
+    files = fake.repos[REPO]["files"]
+    for path, text in earlier.items():
+        assert files[path] == text  # kept exactly
+    assert "hooks/gating_guard.py" in files and fake.repos[REPO]["modes"]["hooks/gating_guard.py"] == "100755"
+
+
+def test_another_agents_repo_is_refused_and_names_its_slug(editor):
+    fake = FakeGitHub(**{REPO: {"files": {".claude-plugin/plugin.json": json.dumps({"name": "ranger"})}}})
+    c = _client(editor)
+    with _github(fake):
+        check = c.post("/api/agents/scaffold/check", {"workspace": "scouts", "slug": "scout",
+                                                      "repo": REPO, "token": "github_pat_olive"},
+                       content_type="application/json").json()
+        resp = _scaffold(c)
+    assert (check["state"], check["suggested_slug"]) == ("name_mismatch", "ranger")
     assert resp.status_code == 409
     assert fake.writes == []
 

@@ -2448,9 +2448,11 @@ export interface paths {
         /**
          * Can a new agent's scaffold be pushed into this repository with this token?
          * @description Reads only, and stores nothing. `ready` means empty and the token can see it,
-         *     `adopt` means it already holds this agent's scaffold, `missing` means the token
-         *     cannot see it (not created yet, or not in the token's repositories), `not_empty`
-         *     means it has other commits. `token_url` is GitHub's token form, filled in.
+         *     `update` means it already holds this agent's scaffold (or only GitHub's starter
+         *     files) and `files_to_add` template files are missing — only those are added, nothing
+         *     is overwritten; `adopt` means nothing is missing; `name_mismatch` means it is a
+         *     different agent (`suggested_slug`); `missing` means the token cannot see it;
+         *     `not_empty` means it is not an agent repository. `token_url` is GitHub's token form.
          */
         readonly post: operations["check_scaffold_repo"];
         readonly delete?: never;
@@ -2471,7 +2473,8 @@ export interface paths {
         /**
          * Push a new agent's scaffold into an empty repository
          * @description Stamps the agent with the same factory `/canopy:create-agent` uses and pushes it into
-         *     an empty repository you created, with your fine-grained token. Stores nothing: follow
+         *     an empty repository you created (or adds just the missing files to one that already
+         *     holds this agent's scaffold, overwriting nothing), with your fine-grained token. Stores nothing: follow
          *     with `POST /api/agents/` (`upsert_agent`) carrying the returned `repo_url`/`repo_ref`,
          *     then `PUT /api/agents/{slug}/github` with the same token so its turns use it too.
          *     Safe to repeat — a repository that already holds this scaffold is adopted.
@@ -12793,7 +12796,7 @@ export interface components {
              * State
              * @enum {string}
              */
-            readonly state: "ready" | "adopt" | "not_empty" | "missing" | "no_token";
+            readonly state: "ready" | "update" | "adopt" | "name_mismatch" | "not_empty" | "missing" | "no_token";
             /**
              * Default Branch
              * @default main
@@ -12809,6 +12812,16 @@ export interface components {
              * @default
              */
             readonly login: string;
+            /**
+             * Files To Add
+             * @default 0
+             */
+            readonly files_to_add: number;
+            /**
+             * Suggested Slug
+             * @default
+             */
+            readonly suggested_slug: string;
             /**
              * New Repo Url
              * @default
