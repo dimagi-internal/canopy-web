@@ -159,6 +159,12 @@ def test_broker_policy_is_exactly_the_contract(ephemeral):
                                    "Action": ["cloudformation:DescribeStacks"],
                                    "Resource": {"Ref": "AWS::StackId"}}
     assert st["TagOnLaunchOnly"]["Condition"] == {"StringEquals": {"ec2:CreateAction": "RunInstances"}}
+    # The launch template's ImageId is resolve:ssm:, which EC2 resolves AS THE
+    # RunInstances caller — without read on exactly that parameter every launch
+    # is SsmAccessDenied (first live lease, 2026-10-14).
+    ami = st["ResolveTheAmiParameter"]
+    assert set(ami["Action"]) == {"ssm:GetParameters", "ssm:GetParameter"}
+    assert ami["Resource"] == {"Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/canopy/capabilities/${Owner}/${Capability}/ami"}
 
     # Nothing else in it can mutate EC2 or SSM.
     mutating = {a for s in st.values() for a in s["Action"]
