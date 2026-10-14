@@ -80,6 +80,11 @@ dependencies = [
     # arrival + redemption code — so the two sides a host and canopy each
     # implement cannot drift. Editable path dep via [tool.uv.sources] below.
     "dimagi-canopy",
+    # The agent runtime.yaml schema (packages/canopy_runtime). apps/capabilities
+    # validates a published capability.yaml with the SAME CapabilityManifest the
+    # agent's `canopy-runtime publish-capabilities` validated it with, so the two
+    # sides cannot disagree about what a manifest is. Editable path dep below.
+    "canopy-runtime",
     "pywebpush>=2.3.0",
     "canopy-agent-factory>=1,<2",
     "pyyaml>=6.0.3",
@@ -137,6 +142,8 @@ canopy-transcript = { path = "packages/canopy_transcript", editable = true }
 # The canopy SDK (Python half): in-repo, standalone, installable, released on its
 # own tag (`dimagi-canopy-v<version>`) for hosts to pin.
 dimagi-canopy = { path = "sdk/python", editable = true }
+# The runtime.yaml / capability.yaml schema: in-repo, standalone, Django-free.
+canopy-runtime = { path = "packages/canopy_runtime", editable = true }
 # Test-only (see the dev extra): the cross-seam menu test imports it.
 canopy-runner = { path = "runner/canopy_runner", editable = true }
 

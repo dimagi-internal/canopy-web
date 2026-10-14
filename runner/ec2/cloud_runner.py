@@ -4806,6 +4806,10 @@ def _lineage_env(turn: dict) -> dict:
     session creates work that looks like its owner typed it. Nothing
     runner-specific: the server reads this runner off the parent turn.
 
+    CANOPY_TURN_ID is also what binds a cloud-capability lease to this turn
+    (`POST /api/capabilities/leases {turn_id}`), so canopy-web releases the
+    machine when the turn ends. Every turn gets it — full and confined alike.
+
     Not secrets — ids. Only well-formed values are exported."""
     out = {}
     turn_id = str(turn.get("id") or "")

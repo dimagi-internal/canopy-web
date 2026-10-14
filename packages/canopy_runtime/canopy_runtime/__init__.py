@@ -14,6 +14,12 @@ from canopy_runtime.reconcile import (
     reconcile,
 )
 from canopy_runtime.schema import (
+    CapabilityAws,
+    CapabilityExec,
+    CapabilityLimits,
+    CapabilityManifest,
+    CapabilityParam,
+    CapabilityRef,
     Engine,
     McpRef,
     PluginRef,
@@ -21,6 +27,7 @@ from canopy_runtime.schema import (
     RuntimeSpec,
     SecretRef,
     ToolRef,
+    load_capability_manifest,
     load_runtime_yaml,
 )
 from canopy_runtime.stores import (
@@ -34,6 +41,12 @@ from canopy_runtime.stores import (
 
 __all__ = [
     # schema
+    "CapabilityAws",
+    "CapabilityExec",
+    "CapabilityLimits",
+    "CapabilityManifest",
+    "CapabilityParam",
+    "CapabilityRef",
     "Engine",
     "McpRef",
     "PluginRef",
@@ -41,6 +54,7 @@ __all__ = [
     "RuntimeSpec",
     "SecretRef",
     "ToolRef",
+    "load_capability_manifest",
     "load_runtime_yaml",
     # stores
     "CREDENTIAL_FIELD",

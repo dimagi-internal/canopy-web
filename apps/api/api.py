@@ -226,6 +226,8 @@ from apps.contacts.people_api import router as people_router  # noqa: E402
 from apps.tokens.connected_apps_api import connected_apps_router  # noqa: E402
 from apps.tokens.contact_api import contact_router, contact_token_router  # noqa: E402
 from apps.tokens.embed_api import embed_router
+from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
+from apps.capabilities.api import router as capabilities_router  # noqa: E402
 
 api.add_router("/issues", issues_router)
 api.add_router("", common_router)
@@ -267,6 +269,8 @@ api.add_router("/agents", agent_google_router)  # start the Google mailbox mint
 api.add_router("/oauth", google_oauth_router)
 api.add_router("/agents", schedules_router)  # recurring turns, under the agents namespace
 api.add_router("/agents", contributors_router)  # ideas + contributor pages on a project (hal T69)
+api.add_router("/agents", agent_capabilities_router)  # what an agent declares it can lease
+api.add_router("/capabilities", capabilities_router)  # grants + leases (cloud capabilities)
 # Fleet-wide task and project lists (/api/tasks/, /api/projects/) — the
 # per-agent filters across every agent the caller can see.
 api.add_router("", fleet_tasks_router)
