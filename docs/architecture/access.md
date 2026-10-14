@@ -286,8 +286,12 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
   log gets `admission.auto` once the claim lands. It raises only the agent's
   STANDING posture (`turn_mode.Resolved.raisable`: a routing rule or
   `Agent.turn_mode`). It never raises an editor's cap, a dispatch that asked for
-  manual, a session that started manual, or auto withheld from an unverified
-  message. It cannot be about refused or unclaimed turns. The use: `ace,
+  manual, or auto withheld from an unverified message. A session that started
+  manual is raised only when nothing about THIS turn holds it back: its own rungs
+  resolve to the standing posture, the message is verified, and the caller is not
+  confined (`turn_mode._carried`). Otherwise a thread first answered manually on a
+  laptop runs manual on the cloud, where nobody can approve its reply. It cannot
+  be about refused or unclaimed turns. The use: `ace,
   cloud → auto`. A runner list puts the laptops first, so the cloud only takes
   the turn when no watched laptop is free, and there it runs instead of waiting
   for an approval nobody will give.

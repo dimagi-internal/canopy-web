@@ -232,7 +232,8 @@ def auto_rule(turn, runner, mode) -> AdmissionRule | None:
     """The enabled `auto` rule under which this runner claims `turn` in AUTO, or
     None. Only a MANUAL that is the agent's standing posture can be raised
     (`turn_mode.Resolved.raisable`): never an editor's cap, a dispatch that asked
-    for manual, a session that started manual, or auto withheld from an
+    for manual, a session that started manual unless `turn_mode._carried` cleared
+    it for this turn, or auto withheld from an
     unverified message. Pure; `record_auto` records it once the claim lands."""
     from apps.harness import turn_mode as modes
 
