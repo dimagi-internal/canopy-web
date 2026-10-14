@@ -436,6 +436,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "delete_version": ("content.write",),
     "delete_narrative": ("content.write",),
     "move_narrative": ("content.write",),  # editor on source AND destination
+    "upload_narrative_source": ("content.write",),  # editor of the pinned version's workspace
+    "list_narrative_sources": ("member",),
+    "get_narrative_source_content": ("member",),
     # --- apps/shareouts/api.py
     "list_shareouts": ("member",),
     "create_shareouts": ("content.write",),  # replaces only the caller's own rows
@@ -761,6 +764,7 @@ NOT_SETTINGS: dict[str, str] = {
     "scaffold_agent": "content",  # pushes code into the caller's own repo; registering is upsert_agent (a setting)
     "act_on_task": "content", "patch_contact": "content",
     "delete_narrative": "content", "move_narrative": "content", "delete_version": "content",
+    "upload_narrative_source": "content",
     "delete_run": "content", "upsert_issue": "content", "delete_issue": "content",
     "create_review": "content", "delete_review": "content", "submit_review": "content",
     "suggest_review": "content", "create_arc": "content", "patch_arc": "content", "delete_arc": "content",

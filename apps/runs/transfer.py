@@ -28,7 +28,7 @@ from django.db import transaction
 from apps.reviews.models import ReviewRequest
 from apps.runs.aggregate import narrative_of_review, narrative_of_walkthrough
 from apps.storyboards.models import Entry, Storyboard
-from apps.walkthroughs.models import Walkthrough
+from apps.walkthroughs.models import NarrativeSource, Walkthrough
 
 
 class TransferError(Exception):
@@ -44,6 +44,7 @@ def plan_move(slugs: set[str], target: str) -> dict:
     """
     reviews = [r for r in ReviewRequest.objects.all() if narrative_of_review(r) in slugs]
     walkthroughs = [w for w in Walkthrough.objects.all() if narrative_of_walkthrough(w) in slugs]
+    narrative_sources = list(NarrativeSource.objects.filter(narrative_slug__in=slugs))
 
     # A storyboard resolves its entries against ITS OWN workspace, so a board
     # left behind after its narratives move renders nothing but placeholders —
@@ -84,6 +85,7 @@ def plan_move(slugs: set[str], target: str) -> dict:
             {str(r.workspace_id) for r in reviews if str(r.workspace_id) != target}
             | {str(w.workspace_id) for w in walkthroughs if str(w.workspace_id) != target}
             | {str(b.workspace_id) for b in boards if str(b.workspace_id) != target}
+            | {str(x.workspace_id) for x in narrative_sources if str(x.workspace_id) != target}
         ),
         "reviews_to_move": sum(1 for r in reviews if str(r.workspace_id) != target),
         "walkthroughs_to_move": sum(1 for w in walkthroughs if str(w.workspace_id) != target),
@@ -91,6 +93,7 @@ def plan_move(slugs: set[str], target: str) -> dict:
         "_reviews": reviews,
         "_walkthroughs": walkthroughs,
         "_boards": boards,
+        "_sources": narrative_sources,
     }
 
 
@@ -116,6 +119,10 @@ def apply_move(slugs: set[str], target: str) -> dict:
         if str(w.workspace_id) != target:
             w.workspace_id = target
             w.save(update_fields=["workspace"])
+    for x in plan["_sources"]:
+        if str(x.workspace_id) != target:
+            x.workspace_id = target
+            x.save(update_fields=["workspace"])
     for b in plan["_boards"]:
         if str(b.workspace_id) != target:
             b.workspace_id = target

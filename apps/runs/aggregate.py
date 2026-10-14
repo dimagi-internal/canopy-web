@@ -971,6 +971,12 @@ def build_narrative(
     def _sorted_runs(rs):
         return sorted(rs, key=lambda it: it["latest_at"] or datetime.min, reverse=True)
 
+    from . import sources as narrative_sources  # sources imports this module
+
+    sources_by_review = narrative_sources.latest_by_review(
+        narrative_sources.for_slug(slug, workspace_slugs)
+    )
+
     versions_payload = []
     for r in reversed(versions):  # newest version first
         np = _narrative_payload(r)
@@ -989,6 +995,10 @@ def build_narrative(
                 "video_url": _content_url(vid) if vid else None,
                 "video_viewer_url": _viewer_url(vid) if vid else None,
                 "cuts": [_cut_payload(w) for w in pv.cuts],
+                "sources": [
+                    narrative_sources.ref_payload(src)
+                    for src in sources_by_review.get(str(r.id), [])
+                ],
                 "runs": _sorted_runs(buckets.get(str(r.id), [])),
             }
         )
