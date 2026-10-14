@@ -26,7 +26,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents import creation
-from apps.agents.models import Agent, AgentSkill
+from apps.agents.models import Agent, AgentBootstrapReport, AgentSkill
 from apps.agents.setup import scaffold_skill_names, setup_steps
 from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces.models import WorkspaceMembership
@@ -260,6 +260,8 @@ def test_a_new_agent_has_everything_but_its_repo_left_to_do(editor, ws):
     job = next(s for s in steps if s["key"] == "job")
     assert job["where"] == "claude-code"
     assert next(s for s in steps if s["key"] == "github")["action"] == "Add a GitHub token"
+    # Where the prompt box actually is.
+    assert next(s for s in steps if s["key"] == "first_turn")["href"].endswith("/agents/scout/tasks")
     assert job["command"].startswith(
         f"git clone https://github.com/{REPO} ~/emdash-projects/scout && cd ~/emdash-projects/scout && claude ")
 
@@ -285,6 +287,9 @@ def test_the_runner_step_follows_routing_and_who_may_hold_the_agent(editor, ws):
                                          status=Runner.ONLINE, last_heartbeat_at=timezone.now()), ws)
     assert _status(agent)["runner"] == "todo"  # nothing routes to it yet
     RunnerAssignment.objects.create(agent=agent, runner=box, rank=0)
+    # Routed, but a cloud box has not cloned it until its bootstrap reports so.
+    assert _status(agent)["runner"] == "waiting"
+    AgentBootstrapReport.objects.create(agent=agent, runner_name="olive-cloud")
     assert _status(agent)["runner"] == "done"
 
     # A box whose owner is not one of the agent's admins cannot hold it, routed or not.
@@ -299,3 +304,20 @@ def test_the_setup_route_is_readable_by_any_member(editor, ws):
     resp = _client(viewer).get("/api/agents/scout/setup")
     assert resp.status_code == 200
     assert resp.json()[0]["key"] == "repo"
+
+
+def test_registering_a_new_agent_asks_its_cloud_box_to_set_it_up(editor, ws):
+    """A cloud box learns of an agent only by re-running its bootstrap; without
+    this ask, a new agent's first turn ran on the box with none of its code."""
+    box = enrolled(Runner.objects.create(name="olive-cloud", kind=Runner.CLOUD, owner=editor,
+                                         status=Runner.ONLINE, last_heartbeat_at=timezone.now()), ws)
+    from apps.harness.models import WorkspaceRunnerOrder
+
+    WorkspaceRunnerOrder.objects.create(workspace=ws, runner=box, rank=0, enabled=True)
+    assert box.refresh_requested_at is None
+    resp = _client(editor).post("/api/agents/", {"slug": "scout", "name": "Scout", "workspace": "scouts",
+                                                 "repo_url": f"https://github.com/{REPO}"},
+                                content_type="application/json")
+    assert resp.status_code == 201, resp.content
+    box.refresh_from_db()
+    assert box.refresh_requested_at is not None
