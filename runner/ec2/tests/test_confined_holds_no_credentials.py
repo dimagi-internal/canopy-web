@@ -147,3 +147,17 @@ def test_the_scrub_does_not_outlive_the_confined_turn(cr):
     mod._run_turn("r-1", _turn(None, caller_context={"profile": "full"}))
     assert calls["env"]["GH_TOKEN"] == "owner-gh"
     assert mod._TURN_ENV.confined is None
+
+
+@pytest.mark.parametrize("caller_context", [
+    {"profile": "full"},
+    {"profile": "confined", "capability": CONNECT, "conversation": {"thread_id": "18c9"}},
+])
+def test_every_turn_process_carries_its_turn_id(cr, caller_context):
+    """CANOPY_TURN_ID reaches the turn's PROCESS env on every turn, full or
+    confined: a cloud-capability lease acquired with it is released when the
+    turn ends (canopy-web apps/capabilities), so a turn that lacked it would
+    hold its machine until the idle timeout instead."""
+    mod, calls = cr
+    mod._run_turn("r-1", _turn(None, caller_context=caller_context))
+    assert calls["env"]["CANOPY_TURN_ID"] == TID

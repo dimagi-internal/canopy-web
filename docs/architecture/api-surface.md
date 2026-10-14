@@ -308,6 +308,21 @@ Framework tier, generic over its producer (`source` + `kind` strings). Where an 
 - `GET /api/events/mcp-calls?tool=&failed=&since_minutes=&limit=` — The MCP audit log (`MCPAuditLog`), newest first: every call in workspaces where you are admin+, plus your own calls anywhere. `tool` is a prefix; `failed` keeps errors.
 - No mutation route. Retention: `manage.py prune_events --older-than-days 30` (anchored on `last_seen_at`).
 
+### Capabilities (`apps/capabilities`) — machines an agent leases
+Framework tier. The agent declares `capability.yaml`s (published by `canopy-runtime publish-capabilities`), a workspace admin grants them, and canopy-web leases one fresh EC2 instance per lease with the permissions the agent's stack grants it. Contract and JSON shapes: `docs/architecture/capabilities.md`.
+- `GET /api/agents/{slug}/capabilities` — Declared capabilities with their stack Outputs, grant, effective limits and live leases, plus `retired` names (member, or the agent's own login).
+- `PUT /api/agents/{slug}/capabilities` — Publish the WHOLE list `{capabilities: [CapabilityManifest]}`; each stack's Outputs are read (DescribeStacks) and must meet the `ec2-ephemeral` contract (422 naming what is missing); a capability left out is retired and its live leases released. Agent owner/admins or the agent's own login. A setting.
+- `GET /api/capabilities/grants?agent=` — Grants in your workspaces.
+- `PUT /api/capabilities/grants` — Upsert `{agent, capability, max_concurrent?, max_lease_s?}` (`integrations`); limits may only lower the manifest's. A setting.
+- `DELETE /api/capabilities/grants/{id}` — Revoke; releases the live leases it allowed (`integrations`). A setting.
+- `POST /api/capabilities/leases` — Acquire `{agent, capability, params?, turn_id?}` → `provisioning` (RunInstances, `ClientToken=lease_id`) or `queued` with `position`. 422 undeclared / bad param; 403 no grant (names the grant). Editor+ or the agent's own login, as are all lease routes.
+- `GET /api/capabilities/leases/{id}` — Read + heartbeat; while provisioning, reads the machine's `ready.json`.
+- `DELETE /api/capabilities/leases/{id}` — Release (terminate). Idempotent.
+- `POST /api/capabilities/leases/{id}/exec` — `{argv[], timeout_s}`; `argv[0]` must be on `exec.allow` (422); shell-quoted, sent over SSM with output to `leases/<id>/exec/`; returns the CommandId as `exec_id`. 409 unless ready.
+- `GET /api/capabilities/leases/{id}/exec/{exec_id}` — Read back from SSM: `{status, done, exit_code, stdout_tail, stderr_tail, stdout_url, stderr_url}`.
+- `POST /api/capabilities/leases/{id}/uploads` — Presigned PUTs under `leases/<id>/in/` plus their `s3_uri`s.
+- `GET /api/capabilities/leases/{id}/artifacts?prefix=` — Presigned GETs (1 h) for `leases/<id>/out/<prefix>…`.
+
 ### Inbound push (`apps/inbound`) — the doorbell
 Framework tier. Gmail push turns new mail into a turn in seconds instead of on the runner's 300s poll.
 - `POST /api/inbound/gmail/{workspace}/` — Gmail Pub/Sub push. `auth=None`, allowlisted in `apps/common/middleware.py`, self-enforcing on a Google-signed OIDC JWT checked against **that workspace's** `InboundPushConfig` (the tenant is in the path, so it is known before the body is decoded and one tenant's signer can never satisfy another's). Unverified → **404** (no enumeration); verified but not actionable → **200** (a 4xx makes Pub/Sub redeliver forever).

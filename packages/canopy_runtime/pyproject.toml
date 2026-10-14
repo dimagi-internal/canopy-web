@@ -1,6 +1,6 @@
 [project]
 name = "canopy-runtime"
-version = "0.1.0"
+version = "0.2.0"
 description = "Django-free schema for an agent's declarative runtime spec (runtime.yaml): the plugins, MCP servers, tools, engine, secret REFERENCES, and preflight that define 'ready to run this agent'. Lives in the agent's repo; read + validated by the reconciler."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,6 +11,11 @@ dependencies = [
     "pydantic>=2.6,<3.0",
     "pyyaml>=6.0,<7.0",
 ]
+
+[project.scripts]
+# `canopy-runtime publish-capabilities --spec runtime.yaml --agent <slug>`; with no
+# subcommand, the reconciler (`python -m canopy_runtime.cli`).
+canopy-runtime = "canopy_runtime.cli:main"
 
 [build-system]
 requires = ["hatchling"]

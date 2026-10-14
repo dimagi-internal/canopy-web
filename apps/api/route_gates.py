@@ -47,6 +47,8 @@ Vocabulary (closed — add to it deliberately, never in passing):
   ``AgentAdmin``).
 * ``agent-owner`` — the agent's owner or a workspace owner (transfer, admin
   grants).
+* ``agent-login`` — the agent's OWN canopy login (``Agent.user``), i.e. the
+  agent calling with its own PAT, whatever its workspace role.
 * ``session-acl`` — ``apps/canopy_sessions/access.py`` (read/write/share per chat).
 * ``turn-content`` — ``apps/harness/turn_access.can_read_turn_content``.
 * ``runner`` — the runner protocol: the runner's owner, or the box
@@ -80,7 +82,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "content.write", "agent.work", "session.drive", "events.write", "logs.read",
     "members.manage", "integrations", "runners.route", "retention.manage",
     "admission.manage", "own",
-    "agent-admin", "agent-owner", "session-acl", "turn-content",
+    "agent-admin", "agent-owner", "agent-login", "session-acl", "turn-content",
     "runner", "runner-admin", "runner-holds-agent",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
     "hcp-grant",
@@ -620,6 +622,20 @@ GATES: dict[str, tuple[str, ...]] = {
     "delete_admission_rule": ("admission.manage",),
     "set_admission_settings": ("admission.manage",),
     "set_runner_order": ("runners.route",),  # admin+; routes agents in every division below too; each runner's owner must be a member (422 otherwise)
+    # --- apps/capabilities/api.py (cloud capabilities: declare, grant, lease)
+    "get_agent_capabilities": ("member", "agent-login"),
+    "put_agent_capabilities": ("agent-admin", "agent-login"),  # the agent's deploy publishes
+    "list_capability_grants": ("member",),
+    "set_capability_grant": ("integrations",),
+    "delete_capability_grant": ("integrations",),
+    # Leasing spends money: editor+ in the agent's workspace, or the agent itself.
+    "acquire_capability_lease": ("agent.work", "agent-login"),
+    "get_capability_lease": ("agent.work", "agent-login"),  # also the heartbeat
+    "release_capability_lease": ("agent.work", "agent-login"),
+    "exec_capability_lease": ("agent.work", "agent-login"),
+    "get_capability_exec": ("agent.work", "agent-login"),
+    "create_capability_uploads": ("agent.work", "agent-login"),
+    "list_capability_artifacts": ("agent.work", "agent-login"),
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
 }
@@ -693,6 +709,8 @@ SETTINGS: frozenset[str] = frozenset({
     "set_admission_settings",
     "create_retention_rule", "update_retention_rule", "delete_retention_rule",
     "set_runner_order", "set_shared_vault",
+    # cloud capabilities: what an agent declares, and who may lease it
+    "put_agent_capabilities", "set_capability_grant", "delete_capability_grant",
     # workspaces: integrations
     "connect_app", "update_connected_app", "tokens_connected_apps_disconnect_app",
     "set_push_config", "create_mailbox", "update_mailbox", "delete_mailbox",
@@ -788,6 +806,9 @@ NOT_SETTINGS: dict[str, str] = {
     "run_schedule_now": "action", "start_runner_drill": "action", "start_runner_mint": "action",
     "post_runner_mint_code": "action", "refresh_runner": "action", "test_connected_app": "action",
     "sync": "action", "hcp_searchPreferences": "action",
+    # cloud capabilities: a lease is a machine for one use, not configuration
+    "acquire_capability_lease": "action", "release_capability_lease": "action",
+    "exec_capability_lease": "action", "create_capability_uploads": "ephemeral-credential",
     # person-data
     "add_person_fact": "person-data", "retract_person_fact": "person-data",
     "hcp_createEntry": "person-data", "hcp_addPreference": "person-data",

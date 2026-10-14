@@ -4,34 +4,24 @@ import subprocess
 import time
 
 import pytest
-import yaml
 
 from canopy_sdk.ondemand.assets import asset_path
+
+from .cfn import load, render
 
 TEMPLATE = "ondemand-capability.cfn.yaml"
 SCRIPT = "idle-shutdown.sh"
 
 
-class _CfnLoader(yaml.SafeLoader):
-    """Keeps CloudFormation short-form intrinsics as {"Fn": value} so the tree stays inspectable."""
-
-
-def _intrinsic(loader, tag_suffix, node):
-    if isinstance(node, yaml.ScalarNode):
-        value = loader.construct_scalar(node)
-    elif isinstance(node, yaml.SequenceNode):
-        value = loader.construct_sequence(node, deep=True)
-    else:
-        value = loader.construct_mapping(node, deep=True)
-    return {tag_suffix: value}
-
-
-_CfnLoader.add_multi_constructor("!", _intrinsic)
+@pytest.fixture(scope="module")
+def template():
+    return load(asset_path(TEMPLATE).read_text())
 
 
 @pytest.fixture(scope="module")
-def template():
-    return yaml.load(asset_path(TEMPLATE).read_text(), Loader=_CfnLoader)
+def persistent(template):
+    """The template as a default (Mode: persistent) stack deploys it."""
+    return render(template)
 
 
 def test_every_asset_ships():
@@ -65,20 +55,21 @@ def test_instance_is_tagged_with_owner_and_capability(template):
     assert tags["capability"] == {"Ref": "Capability"}
 
 
-def test_launch_template_stops_on_shutdown_and_passes_user_data(template):
-    data = template["Resources"]["LaunchTemplate"]["Properties"]["LaunchTemplateData"]
+def test_launch_template_stops_on_shutdown_and_passes_user_data(template, persistent):
+    data = persistent["Resources"]["LaunchTemplate"]["Properties"]["LaunchTemplateData"]
     assert data["InstanceInitiatedShutdownBehavior"] == "stop"
     assert data["MetadataOptions"]["HttpTokens"] == "required"
     ebs = data["BlockDeviceMappings"][0]["Ebs"]
     assert ebs["Encrypted"] is True and ebs["VolumeType"] == "gp3"
     assert ebs["VolumeSize"] == {"Ref": "RootVolumeGb"}
-    assert data["UserData"] == {"If": ["HasUserData", {"Ref": "UserData"}, {"Ref": "AWS::NoValue"}]}
+    raw = template["Resources"]["LaunchTemplate"]["Properties"]["LaunchTemplateData"]
+    assert raw["UserData"] == {"If": ["HasUserData", {"Ref": "UserData"}, {"Ref": "AWS::NoValue"}]}
     # Detailed (1-minute) monitoring: basic monitoring publishes CPU every 5 min,
     # which the 60 s IdleStopAlarm would read as missing data and never fire on.
     assert data["Monitoring"] == {"Enabled": True}
     # The nested-virt CPU option is only added when the parameter is "true".
     assert "WantsNestedVirtualization" in template["Conditions"]
-    assert "WantsNestedVirtualization" in str(data["CpuOptions"])
+    assert "WantsNestedVirtualization" in str(raw["CpuOptions"])
 
 
 def test_launch_template_resource_is_tagged(template):
@@ -192,7 +183,7 @@ def test_instance_pins_a_launch_template_version_number(template):
     }
 
 
-def test_only_per_request_prefixes_expire(template):
-    rules = template["Resources"]["ArtifactsBucket"]["Properties"]["LifecycleConfiguration"]["Rules"]
+def test_only_per_request_prefixes_expire(persistent):
+    rules = persistent["Resources"]["ArtifactsBucket"]["Properties"]["LifecycleConfiguration"]["Rules"]
     expiring = {r.get("Prefix") for r in rules if "ExpirationInDays" in r}
     assert expiring == {"requests/", "results/"}

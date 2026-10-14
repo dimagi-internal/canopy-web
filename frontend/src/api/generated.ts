@@ -4027,6 +4027,219 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/capabilities": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An agent's declared capabilities, grants and live leases
+         * @description What the agent declares (each capability's manifest and the stack Outputs
+         *     resolved when it was published), whether its workspace grants each one, the
+         *     limits an acquire gets now, and the leases holding or waiting for a machine.
+         */
+        readonly get: operations["get_agent_capabilities"];
+        /**
+         * Publish an agent's declared capabilities (its whole list)
+         * @description The agent's deploy calls this (`canopy-runtime publish-capabilities`) with
+         *     every capability its runtime.yaml declares. Each stack's Outputs are read
+         *     now and must meet the ec2-ephemeral contract (422 naming what is missing).
+         *     Idempotent; a capability left out is retired and its live leases released.
+         *     For the agent's owner and admins, or the agent's own login.
+         */
+        readonly put: operations["put_agent_capabilities"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/capabilities/grants": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List capability grants
+         * @description The grants in the caller's workspaces, optionally for one agent.
+         */
+        readonly get: operations["list_capability_grants"];
+        /**
+         * Grant an agent a capability (upsert)
+         * @description A workspace admin ALLOWS the agent to lease the capability in the agent's
+         *     workspace, optionally lowering its limits (a grant may never raise them).
+         *     Without a grant an acquire is refused with 403.
+         */
+        readonly put: operations["set_capability_grant"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/capabilities/grants/{grant_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Revoke a capability grant
+         * @description Revokes the grant and releases every live lease it allowed.
+         */
+        readonly delete: operations["delete_capability_grant"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/capabilities/leases": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Acquire a capability lease
+         * @description Returns at once. Under the cap the machine is launched (`provisioning`;
+         *     the launch's ClientToken is the lease id, so a retry never launches twice);
+         *     over it the lease waits its turn (`queued`, with `position`). Poll
+         *     GET /leases/{id} until `ready`. 422 for an undeclared capability or a bad
+         *     param; 403 naming the grant to ask for when the workspace has not granted it.
+         */
+        readonly post: operations["acquire_capability_lease"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/capabilities/leases/{lease_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read (and heartbeat) a lease
+         * @description The heartbeat: a lease nobody reads for `idle_release_s` is released.
+         *     While provisioning, it checks the machine's ready.json (an S3 read; no SSM).
+         */
+        readonly get: operations["get_capability_lease"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Release a lease
+         * @description Terminates the machine → `released`. Idempotent: an ended lease is returned as it is.
+         */
+        readonly delete: operations["release_capability_lease"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/capabilities/leases/{lease_id}/exec": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Run an allowed command on a lease
+         * @description `argv[0]` must be on the capability's `exec.allow` (422 otherwise); the
+         *     argv is shell-quoted and sent over SSM with its full output going to
+         *     s3://…/leases/<id>/exec/. Returns the SSM CommandId as `exec_id` at once.
+         *     The command sees CANOPY_LEASE_ID, CANOPY_LEASE_IN and CANOPY_LEASE_OUT.
+         */
+        readonly post: operations["exec_capability_lease"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/capabilities/leases/{lease_id}/exec/{exec_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read an exec's status and output
+         * @description Read back from SSM every time (nothing is held in a web process), so an
+         *     exec survives a canopy-web deploy. Full streams are presigned once done.
+         */
+        readonly get: operations["get_capability_exec"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/capabilities/leases/{lease_id}/uploads": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Presign uploads for a lease's machine
+         * @description Presigned PUT URLs (1 h) under s3://…/leases/<id>/in/, and the s3:// URI of
+         *     each, to pass in an exec's argv. The machine may read in/ and nothing else
+         *     of the lease's inputs.
+         */
+        readonly post: operations["create_capability_uploads"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/capabilities/leases/{lease_id}/artifacts": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List a lease's artifacts as presigned links
+         * @description Presigned GETs (1 h) for everything the machine wrote under
+         *     s3://…/leases/<id>/out/<prefix>. Readable after the lease ends, until the
+         *     bucket expires it (7 days).
+         */
+        readonly get: operations["list_capability_artifacts"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/tasks/": {
         readonly parameters: {
             readonly query?: never;
@@ -16135,6 +16348,330 @@ export interface components {
              */
             readonly basis: string;
         };
+        /** AgentCapabilitiesOut */
+        readonly AgentCapabilitiesOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Capabilities */
+            readonly capabilities: readonly components["schemas"]["AgentCapabilityOut"][];
+            /** Retired */
+            readonly retired: readonly string[];
+        };
+        /** AgentCapabilityOut */
+        readonly AgentCapabilityOut: {
+            /** Name */
+            readonly name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Description */
+            readonly description: string;
+            /** Region */
+            readonly region: string;
+            /** Stack */
+            readonly stack: string;
+            /** Manifest */
+            readonly manifest: {
+                readonly [key: string]: unknown;
+            };
+            /** Stack Outputs */
+            readonly stack_outputs: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Published At
+             * Format: date-time
+             */
+            readonly published_at: string;
+            readonly grant: components["schemas"]["CapabilityGrantOut"] | null;
+            /** Limits */
+            readonly limits: {
+                readonly [key: string]: number;
+            };
+            /** Live Leases */
+            readonly live_leases: readonly components["schemas"]["CapabilityLeaseOut"][];
+        };
+        /** CapabilityGrantOut */
+        readonly CapabilityGrantOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace */
+            readonly workspace: string;
+            /** Agent */
+            readonly agent: string;
+            /** Capability */
+            readonly capability: string;
+            /** Max Concurrent */
+            readonly max_concurrent: number | null;
+            /** Max Lease S */
+            readonly max_lease_s: number | null;
+            /** Created By */
+            readonly created_by: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** CapabilityLeaseOut */
+        readonly CapabilityLeaseOut: {
+            /** Lease Id */
+            readonly lease_id: string;
+            /** Agent */
+            readonly agent: string;
+            /** Capability */
+            readonly capability: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "queued" | "provisioning" | "ready" | "released" | "failed" | "expired";
+            /** Ready */
+            readonly ready: boolean;
+            /** Position */
+            readonly position: number | null;
+            /** Instance Id */
+            readonly instance_id: string | null;
+            /** Params */
+            readonly params: {
+                readonly [key: string]: unknown;
+            };
+            /** Turn Id */
+            readonly turn_id: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Provisioning At */
+            readonly provisioning_at: string | null;
+            /** Ready At */
+            readonly ready_at: string | null;
+            /** Ended At */
+            readonly ended_at: string | null;
+            /** Expires At */
+            readonly expires_at: string | null;
+            /**
+             * Last Heartbeat At
+             * Format: date-time
+             */
+            readonly last_heartbeat_at: string;
+            /** Idle Release S */
+            readonly idle_release_s: number;
+            /** Reason */
+            readonly reason: string;
+            /** Ready Info */
+            readonly ready_info: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * AgentCapabilitiesIn
+         * @description The agent's WHOLE declared list: a capability left out is retired.
+         */
+        readonly AgentCapabilitiesIn: {
+            /** Capabilities */
+            readonly capabilities: readonly components["schemas"]["CapabilityManifest"][];
+        };
+        /** CapabilityAws */
+        readonly CapabilityAws: {
+            /** Region */
+            readonly region: string;
+            /** Stack */
+            readonly stack: string;
+        };
+        /** CapabilityExec */
+        readonly CapabilityExec: {
+            /** Allow */
+            readonly allow: readonly string[];
+        };
+        /**
+         * CapabilityLimits
+         * @description Ceilings. A workspace admin's grant may only LOWER them.
+         */
+        readonly CapabilityLimits: {
+            /**
+             * Max Concurrent
+             * @default 1
+             */
+            readonly max_concurrent: number;
+            /**
+             * Max Lease S
+             * @default 3600
+             */
+            readonly max_lease_s: number;
+            /**
+             * Idle Release S
+             * @default 900
+             */
+            readonly idle_release_s: number;
+            /**
+             * Ready Timeout S
+             * @default 900
+             */
+            readonly ready_timeout_s: number;
+        };
+        /**
+         * CapabilityManifest
+         * @description `capability.yaml`, version 1 — what canopy-web brokers for the agent.
+         */
+        readonly CapabilityManifest: {
+            /**
+             * Version
+             * @default 1
+             * @constant
+             */
+            readonly version: 1;
+            /** Name */
+            readonly name: string;
+            /**
+             * Kind
+             * @constant
+             */
+            readonly kind: "ec2-ephemeral";
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            readonly aws: components["schemas"]["CapabilityAws"];
+            readonly limits?: components["schemas"]["CapabilityLimits"];
+            /** Params */
+            readonly params?: {
+                readonly [key: string]: components["schemas"]["CapabilityParam"];
+            };
+            readonly exec: components["schemas"]["CapabilityExec"];
+        };
+        /**
+         * CapabilityParam
+         * @description One parameter an acquire may pass; delivered to the machine as user-data.
+         */
+        readonly CapabilityParam: {
+            /**
+             * Type
+             * @default string
+             * @enum {string}
+             */
+            readonly type: "string" | "integer" | "number" | "boolean";
+            /** Default */
+            readonly default?: unknown;
+            /** Enum */
+            readonly enum?: readonly unknown[] | null;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+        };
+        /** CapabilityGrantIn */
+        readonly CapabilityGrantIn: {
+            /** Agent */
+            readonly agent: string;
+            /** Capability */
+            readonly capability: string;
+            /** Max Concurrent */
+            readonly max_concurrent?: number | null;
+            /** Max Lease S */
+            readonly max_lease_s?: number | null;
+        };
+        /** CapabilityLeaseIn */
+        readonly CapabilityLeaseIn: {
+            /** Agent */
+            readonly agent: string;
+            /** Capability */
+            readonly capability: string;
+            /** Params */
+            readonly params?: {
+                readonly [key: string]: unknown;
+            };
+            /** Turn Id */
+            readonly turn_id?: string | null;
+        };
+        /** CapabilityExecOut */
+        readonly CapabilityExecOut: {
+            /** Lease Id */
+            readonly lease_id: string;
+            /** Exec Id */
+            readonly exec_id: string;
+            /** Timeout S */
+            readonly timeout_s: number;
+        };
+        /** CapabilityExecIn */
+        readonly CapabilityExecIn: {
+            /** Argv */
+            readonly argv: readonly string[];
+            /**
+             * Timeout S
+             * @default 600
+             */
+            readonly timeout_s: number;
+        };
+        /** CapabilityExecStatusOut */
+        readonly CapabilityExecStatusOut: {
+            /** Exec Id */
+            readonly exec_id: string;
+            /** Status */
+            readonly status: string;
+            /** Done */
+            readonly done: boolean;
+            /** Exit Code */
+            readonly exit_code: number | null;
+            /** Stdout Tail */
+            readonly stdout_tail: string;
+            /** Stderr Tail */
+            readonly stderr_tail: string;
+            /** Stdout Url */
+            readonly stdout_url: string | null;
+            /** Stderr Url */
+            readonly stderr_url: string | null;
+        };
+        /** CapabilityUploadOut */
+        readonly CapabilityUploadOut: {
+            /** Name */
+            readonly name: string;
+            /** Put Url */
+            readonly put_url: string;
+            /** S3 Uri */
+            readonly s3_uri: string;
+        };
+        /** CapabilityUploadsOut */
+        readonly CapabilityUploadsOut: {
+            /** Lease Id */
+            readonly lease_id: string;
+            /** Uploads */
+            readonly uploads: readonly components["schemas"]["CapabilityUploadOut"][];
+            /** Expires In S */
+            readonly expires_in_s: number;
+        };
+        /** CapabilityUploadsIn */
+        readonly CapabilityUploadsIn: {
+            /** Names */
+            readonly names: readonly string[];
+        };
+        /** CapabilityArtifactOut */
+        readonly CapabilityArtifactOut: {
+            /** Path */
+            readonly path: string;
+            /** Size */
+            readonly size: number;
+            /** Url */
+            readonly url: string;
+        };
+        /** CapabilityArtifactsOut */
+        readonly CapabilityArtifactsOut: {
+            /** Lease Id */
+            readonly lease_id: string;
+            /** Prefix */
+            readonly prefix: string;
+            /** Artifacts */
+            readonly artifacts: readonly components["schemas"]["CapabilityArtifactOut"][];
+            /** Expires In S */
+            readonly expires_in_s: number;
+        };
         /** WorkspaceOut */
         readonly WorkspaceOut: {
             /** Slug */
@@ -27241,6 +27778,287 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly get_agent_capabilities: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentCapabilitiesOut"];
+                };
+            };
+        };
+    };
+    readonly put_agent_capabilities: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentCapabilitiesIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentCapabilitiesOut"];
+                };
+            };
+        };
+    };
+    readonly list_capability_grants: {
+        readonly parameters: {
+            readonly query?: {
+                readonly agent?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["CapabilityGrantOut"][];
+                };
+            };
+        };
+    };
+    readonly set_capability_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CapabilityGrantIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityGrantOut"];
+                };
+            };
+        };
+    };
+    readonly delete_capability_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly acquire_capability_lease: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CapabilityLeaseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityLeaseOut"];
+                };
+            };
+        };
+    };
+    readonly get_capability_lease: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly lease_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityLeaseOut"];
+                };
+            };
+        };
+    };
+    readonly release_capability_lease: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly lease_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityLeaseOut"];
+                };
+            };
+        };
+    };
+    readonly exec_capability_lease: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly lease_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CapabilityExecIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityExecOut"];
+                };
+            };
+        };
+    };
+    readonly get_capability_exec: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly lease_id: string;
+                readonly exec_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityExecStatusOut"];
+                };
+            };
+        };
+    };
+    readonly create_capability_uploads: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly lease_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CapabilityUploadsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityUploadsOut"];
+                };
+            };
+        };
+    };
+    readonly list_capability_artifacts: {
+        readonly parameters: {
+            readonly query?: {
+                readonly prefix?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly lease_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityArtifactsOut"];
+                };
             };
         };
     };
