@@ -2589,6 +2589,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/canopy-token": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Mint the agent's own canopy-web token (shown once)
+         * @description For the agent's own login, creating it when the agent has none. See
+         *     `services.mint_agent_canopy_token` for who may, and why it never adopts an
+         *     existing account.
+         */
+        readonly post: operations["mint_agent_canopy_token"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/owner": {
         readonly parameters: {
             readonly query?: never;
@@ -13382,6 +13404,32 @@ export interface components {
             /** User Id */
             readonly user_id: number | null;
         };
+        /** AgentCanopyTokenOut */
+        readonly AgentCanopyTokenOut: {
+            /** Raw */
+            readonly raw: string;
+            /** Token Id */
+            readonly token_id: number;
+            /** Label */
+            readonly label: string;
+            /** User Email */
+            readonly user_email: string;
+            /** Created User */
+            readonly created_user: boolean;
+        };
+        /** AgentCanopyTokenIn */
+        readonly AgentCanopyTokenIn: {
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+        };
         /** AgentOwnerIn */
         readonly AgentOwnerIn: {
             /** User Id */
@@ -15494,7 +15542,7 @@ export interface components {
              * Where
              * @enum {string}
              */
-            readonly where: "web" | "claude-code";
+            readonly where: "web" | "claude-code" | "terminal";
             /**
              * Href
              * @default
@@ -26376,6 +26424,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
+    readonly mint_agent_canopy_token: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentCanopyTokenIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentCanopyTokenOut"];
                 };
             };
         };

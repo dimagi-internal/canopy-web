@@ -121,8 +121,7 @@ except Exception:
 # The shared vault's name when canopy-web serves none for this tenant. Was
 # compiled into ensure_client_creds, which is correct for exactly one tenant;
 # canopy-web now serves it per workspace and this is only the fallback.
-# $CANOPY_SHARED_VAULT is the same override wire.sh and
-# deploy/secrets/bootstrap_1password.sh take — one name across all three.
+# $CANOPY_SHARED_VAULT is the same override wire.sh takes — one name across both.
 
 gog_config_dir() {
   if [[ -n "${GOG_HOME:-}" ]]; then

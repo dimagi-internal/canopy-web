@@ -109,7 +109,9 @@ class AgentSetupStepOut(StrictModel):
     status: Literal["done", "todo", "waiting", "optional"]
     detail: str
     # web: `href` is the control that does it. claude-code: `command` starts the session.
-    where: Literal["web", "claude-code"]
+    # terminal: `command` is a shell command a person runs (one that needs their own
+    # access, e.g. 1Password rights) — not a Claude Code session.
+    where: Literal["web", "claude-code", "terminal"]
     href: str = ""
     # What following `href` does, as a button label: "Add a GitHub token".
     action: str = ""
@@ -547,6 +549,23 @@ class AgentInterfaceOut(StrictModel):
 class AgentCanopyUserIn(StrictModel):
     # None unlinks.
     user_id: int | None
+
+
+class AgentCanopyTokenIn(StrictModel):
+    # The agent's mailbox address, used only to CREATE its login when it has none
+    # and the agent's own `email` is blank. Ignored otherwise.
+    email: str = ""
+    label: str = ""
+
+
+class AgentCanopyTokenOut(StrictModel):
+    # Shown once and never stored here in the clear (PersonalToken keeps a hash).
+    # The caller writes it to the agent's vault; it must not reach a transcript.
+    raw: str
+    token_id: int
+    label: str
+    user_email: str
+    created_user: bool
 
 
 class AgentOwnerIn(StrictModel):

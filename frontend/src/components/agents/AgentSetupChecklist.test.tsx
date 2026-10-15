@@ -49,6 +49,16 @@ describe('AgentSetupChecklist', () => {
     expect(screen.getByText('in Claude Code')).toBeTruthy()
   })
 
+  it('labels a terminal step and hands over its command', async () => {
+    setupMock.mockResolvedValue([
+      step('vault', 'todo', { where: 'terminal', command: 'canopy agent vault --slug scout --workspace scouts' }),
+    ])
+    mount()
+    expect(await screen.findByText('canopy agent vault --slug scout --workspace scouts')).toBeTruthy()
+    expect(screen.getByText('in a terminal')).toBeTruthy()
+    expect(screen.queryByText('in Claude Code')).toBeNull()
+  })
+
   it('disappears from Settings once nothing required is left', async () => {
     setupMock.mockResolvedValue([step('repo', 'done'), step('mailbox', 'optional')])
     const { container } = mount(true)

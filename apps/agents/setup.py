@@ -12,7 +12,9 @@ the real check would be the "screen says fine, turn fails" bug this exists to pr
 
 `where` says which tool does it: "web" steps are a link to the control that does it;
 "claude-code" steps are judgment work — a persona, the first real skill — that happens in a
-session in the agent's repo, so the step carries the prompt that starts one.
+session in the agent's repo, so the step carries the prompt that starts one; "terminal"
+steps need a person's own access that canopy-web does not hold (the vault: 1Password
+rights), so the step carries the one command that does it.
 """
 from __future__ import annotations
 
@@ -60,6 +62,42 @@ def _mailbox(agent: Agent, settings: str) -> dict:
         f"Signed in as {agent.email}." if has else
         f"Sign {agent.email} in with Google so it can send and read mail.",
         href=f"{settings}#credentials", action="Connect the mailbox")
+
+
+def _vault(agent: Agent, settings: str) -> dict:
+    """The agent's 1Password vault and the key a runner reads it with — and, once a box
+    has used them, whether its secrets actually materialized (`env_ok`, the box's own
+    `op inject`). Recorded-but-broken reads as todo with the box's reason: a key that is
+    stored but cannot read the vault is the 2026-09-22 "four agents, two weeks, only in
+    journald" failure.
+
+    Creating a vault and minting its key need a PERSON's 1Password rights, which neither
+    canopy-web nor a box has, so this step is a terminal command, not a link. One command
+    does all of it and is safe to re-run: `canopy agent vault` (canopy repo)."""
+    from .models import AgentBootstrapReport
+
+    command = f"canopy agent vault --slug {agent.slug} --workspace {agent.workspace_id}"
+    title = "Give it a vault"
+    if not agent.op_vault or not agent.op_sa_token_enc:
+        state = (f"Its vault, {agent.op_vault}, has no key stored here, so no runner can read it."
+                 if agent.op_vault else "It has no 1Password vault yet.")
+        return _step(
+            "vault", title, TODO,
+            f"{state} Someone with 1Password rights runs this once: it creates the vault, mints "
+            "what can be minted, asks for what only a person knows, and stores a read-only key "
+            "here for its runners.",
+            where="terminal", command=command)
+    failed = list(AgentBootstrapReport.objects.filter(agent=agent, env_ok=False)
+                  .values_list("runner_name", "detail"))
+    if failed:
+        name, why = failed[0]
+        return _step(
+            "vault", title, TODO,
+            f"{name} could not read its secrets from {agent.op_vault}"
+            + (f": {why}" if why else "") + ". Re-run the command to check every value.",
+            where="terminal", command=command)
+    return _step("vault", title, DONE, f"Secrets in {agent.op_vault}; its runners hold a key for it.",
+                 where="terminal", command=command)
 
 
 def runner_takers(agent: Agent):
@@ -189,6 +227,7 @@ def setup_steps(agent: Agent) -> list[dict]:
               action="Open on GitHub" if agent.repo_url else "Create it"),
         _github(agent, settings),
         _mailbox(agent, settings),
+        _vault(agent, settings),
         _runner(agent, settings),
         _job(agent),
         _first_turn(agent, base),

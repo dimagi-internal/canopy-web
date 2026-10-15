@@ -175,7 +175,7 @@ if not isinstance(agent, dict) or not agent.get("slug"):
 vault = load("vault")
 if not vault.get("vault") or not vault.get("key_set"):
     problems.append(f"no agent vault/key registered — {base}/w/{ws}/agents/{slug}/settings (Credentials), "
-                    f"or Ada's bin/ada-vault-provision --slug {slug}")
+                    f"or run `canopy agent vault --slug {slug} --workspace {ws}` (needs 1Password rights)")
 gh = load("github")
 if not gh.get("set"):
     problems.append(f"no GitHub delegation — the owner sets it at {base}/w/{ws}/agents/{slug}/settings (Credentials → GitHub)")

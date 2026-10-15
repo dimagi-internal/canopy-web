@@ -41,9 +41,10 @@ outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.m
 
 Nothing is automatic: there is no self-join and no domain auto-join. People at a
 listed domain may only **request an invitation**. A person becomes a member in
-exactly three ways, and the only code that may create a `WorkspaceMembership` is
-`services._grant` (the first two), `services.ensure_member` (the default-workspace
-bootstrap) and workspace creation — `apps/workspaces/tests/test_access_requests.py`
+exactly three ways — and an agent's own login in a fourth — and the only code that may
+create a `WorkspaceMembership` is `services._grant` (the first two),
+`services.ensure_member` (the default-workspace bootstrap, and the agent-login door
+below) and workspace creation — `apps/workspaces/tests/test_access_requests.py`
 fails on a fourth door, and `tests/test_no_implicit_enrolment.py` pins
 `ensure_member`'s callers:
 
@@ -66,6 +67,12 @@ fails on a fourth door, and `tests/test_no_implicit_enrolment.py` pins
   never fails the request — it is stored on the request (`notify_result`) and
   written to the event log (`source=workspaces.access`, `warn`).
 * **Creating a workspace** makes you its **owner**.
+* **An agent's own login** (not a person). `POST /api/agents/{slug}/canopy-token`, run by
+  `canopy agent vault`, creates the login an agent signs in to canopy as when it has none:
+  a brand-new, password-less **editor** from the agent's mailbox address, linked to that
+  one agent. Only a workspace **admin** or **owner** may — who could have invited it — and
+  an address that is already a canopy user is refused, never adopted
+  (`apps/agents/agent_login.py`).
 
 **Auto-approve** (`Workspace.auto_approve_role`, owner-set at
 `PUT /api/workspaces/{slug}/access-settings`): blank is off, and every request
