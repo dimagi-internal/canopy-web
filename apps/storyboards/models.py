@@ -242,3 +242,63 @@ class Entry(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"entry:{self.act_id}:{self.position}:{self.narrative_slug}"
+
+
+class StoryboardDecision(models.Model):
+    """One default the set is built on (spec B). Assumption, open ask and ruling
+    are the same row in different states — never three tables.
+
+    A row, not a key in ``Storyboard.brief``: several reviewers edit rows at
+    once during a round, and a JSON blob would make every confirm a
+    read-modify-write of the whole brief (a lost update is the expected case).
+    """
+
+    storyboard = models.ForeignKey(Storyboard, on_delete=models.CASCADE, related_name="decisions")
+    key = models.SlugField(max_length=120)
+    """The row's stable id — the API calls it ``id``. Reused across versions; it
+    is how a ruling binds the next run."""
+    scope = models.CharField(max_length=200, blank=True, default="")
+    """Blank = the whole set; else the ``narrative_slug`` it is about."""
+    position = models.IntegerField(default=0)
+
+    question = models.TextField()
+    plain_question = models.TextField(blank=True, default="")
+    options = models.JSONField(default=list, blank=True)
+    recommended = models.CharField(max_length=300, blank=True, default="")
+    override = models.CharField(max_length=300, blank=True, default="")
+    reasoning = models.TextField(blank=True, default="")
+    override_reasoning = models.TextField(blank=True, default="")
+    source = models.TextField(blank=True, default="")
+    evidence_basis = models.CharField(max_length=16, default="inferred")
+    conflict_signals = models.JSONField(default=list, blank=True)
+
+    status = models.CharField(max_length=16, default="ai-default")
+    revisit_when = models.TextField(blank=True, default="")
+    review_ask = models.CharField(max_length=32, blank=True, default="")
+    needed_by = models.CharField(max_length=32, blank=True, default="")
+    confirm_reason = models.TextField(blank=True, default="")
+
+    decided_by = models.ForeignKey(
+        "auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    decided_by_name = models.CharField(max_length=200, blank=True, default="")
+    decided_by_verified = models.BooleanField(default=False)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    confirmed = models.BooleanField(default=False)
+    history = models.JSONField(default=list, blank=True)
+    """Newest-first snapshots of the person-owned fields before each edit."""
+
+    supersedes = models.CharField(max_length=120, blank=True, default="")
+    superseded_by = models.CharField(max_length=120, blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["storyboard", "key"], name="uniq_decision_storyboard_key"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"decision:{self.storyboard_id}:{self.key}"
