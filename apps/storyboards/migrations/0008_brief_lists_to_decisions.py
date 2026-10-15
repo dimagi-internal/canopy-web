@@ -14,7 +14,9 @@ def forwards(apps, schema_editor):
     Storyboard = apps.get_model("storyboards", "Storyboard")
     Decision = apps.get_model("storyboards", "StoryboardDecision")
     for board in Storyboard.objects.all():
-        brief = dict(board.brief or {})
+        if not isinstance(board.brief, dict):
+            continue
+        brief = dict(board.brief)
         if not any(brief.get(k) for k in LEGACY_BRIEF_KEYS):
             continue
         taken = set(Decision.objects.filter(storyboard=board).values_list("key", flat=True))

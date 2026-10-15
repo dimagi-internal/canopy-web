@@ -329,3 +329,43 @@ def test_narrative_caveats_become_read_only_scoped_rows():
     )
     assert rows[0]["scope"] == "supply-rutf"
     assert rows[0]["id"].startswith("supply-rutf--assumption-")
+
+
+def test_from_legacy_brief_survives_malformed_values():
+    rows = dsvc.from_legacy_brief(
+        {"divergences": [{"script": ["x"]}, {"resolution": 5}, 7, None], "assumptions": [3, None]}
+    )
+    assert rows == []
+
+
+def test_from_legacy_brief_keeps_divergence_without_script_and_bare_strings():
+    rows = dsvc.from_legacy_brief(
+        {
+            "divergences": [{"data": "Three in tender"}, {"resolution": "Cut it"}, "Script and data differ"],
+            "assumptions": "free text",
+            "open_questions": "Is this fine?",
+        }
+    )
+    kinds = [r["id"].split("-")[0] for r in rows]
+    assert kinds.count("divergence") == 3 and kinds.count("assumption") == 1 and kinds.count("question") == 1
+    assert next(r for r in rows if r["id"].startswith("assumption"))["question"] == "free text"
+    for r in rows:
+        dsvc.validate(r)
+
+
+def test_long_resolution_is_still_the_recommendation_and_columns_hold():
+    long = "word " * 200
+    rows = dsvc.from_legacy_brief(
+        {
+            "assumptions": ["a" * 400],
+            "divergences": [{"script": "S" * 500, "resolution": long, "narrative_slug": "n" * 300}],
+        },
+        prefix="p" * 90,
+    )
+    a, d = rows
+    assert a["options"] == [] and a["recommended"] == ""
+    assert d["options"] == [] and d["recommended"] == long.strip()[:300] and d["reasoning"] == long.strip()
+    assert len(d["scope"]) <= 200
+    assert all(len(r["id"]) <= 120 for r in rows)
+    for r in rows:
+        dsvc.validate(r)

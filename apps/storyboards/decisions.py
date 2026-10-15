@@ -346,29 +346,79 @@ def serialize(row, *, editable: bool = True) -> dict:
 LEGACY_BRIEF_KEYS = ("assumptions", "divergences", "open_questions")
 
 
+_KEY_MAX = 120  # StoryboardDecision.key
+_RECOMMENDED_MAX = 300  # StoryboardDecision.recommended
+_SCOPE_MAX = 200  # StoryboardDecision.scope
+_OPTION_MAX_CHARS = 120
+
+
 def _key(prefix: str, text: str, taken: set[str]) -> str:
-    base = f"{prefix}-{slugify(text)[:60]}".rstrip("-") or prefix
+    base = (f"{prefix}-{slugify(text)[:60]}".rstrip("-") or prefix)[:_KEY_MAX]
     key, n = base, 2
     while key in taken:
-        key, n = f"{base}-{n}", n + 1
+        suffix = f"-{n}"
+        key, n = f"{base[: _KEY_MAX - len(suffix)]}{suffix}", n + 1
     taken.add(key)
     return key
 
 
 def _short_option(text: str) -> list[str]:
-    """A statement is its own single option when it fits the 1-8 word rule;
-    a longer one carries no options (an over-long label would fail validate,
-    and a migration must not fail on production prose)."""
-    return [text] if 0 < len(text.split()) <= _MAX_OPTION_WORDS else []
+    """A statement is its own single option when it fits the 1-8 word rule and
+    a sane length; otherwise it carries no options (an over-long label would
+    fail validate or overflow the column, and a migration must not fail on
+    production prose)."""
+    ok = 0 < len(text.split()) <= _MAX_OPTION_WORDS and len(text) <= _OPTION_MAX_CHARS
+    return [text] if ok else []
+
+
+def _s(v) -> str:
+    return v.strip() if isinstance(v, str) else ""
 
 
 def _texts(items) -> list[str]:
-    return [t.strip() for t in (items or []) if isinstance(t, str) and t.strip()]
+    # A bare string is one item, never iterated per character.
+    if isinstance(items, str):
+        items = [items]
+    if not isinstance(items, list):
+        return []
+    return [t.strip() for t in items if isinstance(t, str) and t.strip()]
+
+
+def _divergences(items) -> list[dict]:
+    if isinstance(items, (str, dict)):
+        items = [items]
+    if not isinstance(items, list):
+        return []
+    out = []
+    for d in items:
+        if isinstance(d, str):
+            d = {"script": d}
+        if not isinstance(d, dict):
+            continue
+        script, data, resolution = _s(d.get("script")), _s(d.get("data")), _s(d.get("resolution"))
+        # Nothing is dropped for lack of a script: derive it from what is there.
+        head = script or data or resolution
+        if not head:
+            continue
+        out.append(
+            {
+                "head": head,
+                "script": script,
+                "data": data,
+                "resolution": resolution,
+                "scope": _s(d.get("narrative_slug"))[:_SCOPE_MAX],
+            }
+        )
+    return out
 
 
 def from_legacy_brief(brief: dict, *, taken: set[str] | None = None, prefix: str = "") -> list[dict]:
-    """The old brief lists (#1501) as decision rows (spec B, "Migration from the brief")."""
+    """The old brief lists (#1501) as decision rows (spec B, "Migration from the brief").
+
+    Total over malformed input: it never raises and never drops content it was
+    given (the migration strips the lists afterwards)."""
     taken = set() if taken is None else taken
+    brief = brief if isinstance(brief, dict) else {}
     rows: list[dict] = []
     for text in _texts(brief.get("assumptions")):
         opts = _short_option(text)
@@ -384,29 +434,32 @@ def from_legacy_brief(brief: dict, *, taken: set[str] | None = None, prefix: str
                 "review_ask": "",
             }
         )
-    for d in brief.get("divergences") or []:
-        if not isinstance(d, dict):
-            continue
-        script = (d.get("script") or "").strip()
-        if not script:
-            continue
-        data = (d.get("data") or "").strip()
-        resolution = (d.get("resolution") or "").strip()
+    for d in _divergences(brief.get("divergences")):
+        script, data, resolution = d["script"], d["data"], d["resolution"]
         opts = _short_option(resolution)
+        parts = []
+        if script:
+            parts.append(f"The script says: {script}.")
+        if data:
+            parts.append(f"The data shows: {data}.")
+        if not parts:
+            parts.append(d["head"])
         rows.append(
             {
-                "id": _key(f"{prefix}divergence", script, taken),
-                "scope": (d.get("narrative_slug") or "").strip(),
-                "question": f"The script says: {script}. The data shows: {data}."
-                if data
-                else f"The script says: {script}.",
-                "plain_question": f"The script and the data disagree: {script}",
+                "id": _key(f"{prefix}divergence", d["head"], taken),
+                "scope": d["scope"],
+                "question": " ".join(parts),
+                "plain_question": f"The script and the data disagree: {d['head']}",
                 "options": opts,
-                "recommended": opts[0] if opts else "",
-                # A resolution too long to be an option label is kept as the reasoning.
+                # Spec: a divergence's recommended is its resolution. Too long
+                # for an option label, it is still the recommendation (free text
+                # is allowed when options is empty), cut to the column.
+                "recommended": opts[0] if opts else resolution[:_RECOMMENDED_MAX],
                 "reasoning": resolution if not opts else "",
                 "evidence_basis": "conflicting",
-                "conflict_signals": [s for s in (f"Script: {script}", f"Data: {data}" if data else "") if s],
+                "conflict_signals": [
+                    s for s in (f"Script: {script}" if script else "", f"Data: {data}" if data else "") if s
+                ],
                 "status": "ai-default",
                 "review_ask": "recommended-confirmation",
             }
