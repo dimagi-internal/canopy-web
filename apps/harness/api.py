@@ -1,6 +1,7 @@
 """Django Ninja router for /api/harness — runner registry + turn lifecycle."""
 from __future__ import annotations
 
+import logging
 import uuid
 
 from django.conf import settings
@@ -95,6 +96,8 @@ from .schemas import (
     TurnOut,
     TurnStartIn,
 )
+
+logger = logging.getLogger(__name__)
 
 router = Router(auth=session_auth, tags=["harness"])
 
@@ -1453,6 +1456,25 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
     """Upsert the durable link and point its live-session hint at THIS runner/host,
     after a session was created or reused for the thread. Returns the fresh resolution."""
     runner = _runner_or_404(request, runner_id)
+    try:
+        return _record_session(request, runner, payload)
+    except HttpError:
+        raise
+    except Exception:
+        # Failure investigation 3 (2026-10-15, turn 282f825e): a transferred chat
+        # turn (ace, haldimagi-mbp-cdp) 500'd here on all four attempts, and the
+        # response is the generic problem body with nothing to tell which line
+        # raised. Name the inputs that pick the branch, then re-raise unchanged.
+        logger.exception(
+            "record-session failed: runner=%s agent=%s project=%r thread_key=%r "
+            "session_key=%r turn_id=%s",
+            runner.pk, payload.agent_slug, payload.project, payload.thread_key,
+            payload.session_key, payload.turn_id,
+        )
+        raise
+
+
+def _record_session(request: HttpRequest, runner: Runner, payload: RecordSessionIn):
     if payload.project:
         ws = _project_workspace_or_404(request, payload.workspace)
         try:
