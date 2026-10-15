@@ -142,6 +142,18 @@ def validate(raw: dict) -> dict:
     return row
 
 
+def publishable(row) -> dict:
+    """A stored row back in publisher shape, so a brief-only write can carry the
+    existing set through publish() unchanged."""
+    return {
+        "id": row.key,
+        **{k: getattr(row, k) for k in _PUBLISHABLE if k != "id"},
+        "status": row.status if row.status not in HUMAN_STATUSES else "ai-default",
+        "recommended": value_of(row) if _is_ruled(row) else row.recommended,
+        "override": "",
+    }
+
+
 def _is_ruled(row) -> bool:
     return row.status in HUMAN_STATUSES or row.confirmed
 

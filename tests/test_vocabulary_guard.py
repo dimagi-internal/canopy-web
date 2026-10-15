@@ -22,6 +22,12 @@ ALLOWED: dict[str, str] = {
     "SlackCommandsOut": "slack: the Slack app's slash commands",
     "Decision": "DDD runs: an entry in a run's auditable decisions log",
     "GateDecisionIn": "agent runs: closing a gate on a run step",
+    "DecisionIn": "storyboards: a decision row a reviewer rules on (the ace-web pattern), not the task-system noun",
+    "DecisionOut": "storyboards: a decision row as read",
+    "DecisionEditIn": "storyboards: one person's edit to a decision row",
+    "DecisionHistoryOut": "storyboards: one earlier state of a decision row",
+    "/api/storyboards/{slug}/decisions/{key}/edit": "storyboards: edit one decision row",
+    "edit_storyboard_decision": "storyboards: edit one decision row",
     "TransferDecisionIn": "canopy sessions: approving or declining a session transfer",
 }
 

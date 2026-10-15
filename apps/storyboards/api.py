@@ -23,20 +23,24 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.common.csrf import csrf_rejected
 from apps.feedback import reactions
 from apps.feedback import services as feedback_services
 from apps.harness import artifact_origin
+from apps.storyboards import decisions as decision_rows
 from apps.storyboards import services
 from apps.storyboards.act_keys import act_key
 from apps.storyboards.models import Act, Entry, Storyboard
 from apps.storyboards.schemas import (
     AnonFeedbackIn,
+    DecisionEditIn,
+    DecisionOut,
+    NarrativeReadOut,
     NotesOut,
     ShareTokenOut,
     StoryboardIn,
     StoryboardListOut,
     StoryboardOut,
-    NarrativeReadOut,
     StoryboardPatchIn,
 )
 from apps.workspaces import permissions as perms
@@ -164,6 +168,28 @@ def _replace_acts(board: Storyboard, acts) -> None:
             )
 
 
+def _write_decisions(board: Storyboard, payload) -> None:
+    """The brief, minus its legacy lists, plus the decision set.
+
+    The three #1501 lists are still accepted for one release and converted to
+    rows, so a publisher that has not moved yet keeps working (spec B)."""
+    rows = [d.model_dump() for d in payload.decisions] if payload.decisions is not None else None
+    if payload.brief is not None:
+        brief_in = payload.brief.model_dump(exclude_defaults=True)
+        legacy = decision_rows.from_legacy_brief(brief_in)
+        if legacy:
+            if rows is None:  # keep what is on the board, add the converted lists
+                rows = [decision_rows.publishable(d) for d in board.decisions.all()]
+            # A publisher that re-sends the same lists must not collide with the
+            # rows they became on the first write (ids are deterministic).
+            have = {r["id"] for r in rows}
+            rows = rows + [r for r in legacy if r["id"] not in have]
+        board.brief = {k: v for k, v in brief_in.items() if k not in decision_rows.LEGACY_BRIEF_KEYS}
+        board.save(update_fields=["brief", "updated_at"])
+    if rows is not None:
+        decision_rows.publish(board, rows)
+
+
 # --------------------------------------------------------------------- routes
 
 
@@ -247,18 +273,24 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
         request, session=payload.session_id or "", turn=payload.turn_id or "",
         agent_project=payload.agent_project or "",
     )
-    with transaction.atomic():
-        board = Storyboard.objects.create(
-            **origin,
-            slug=payload.slug,
-            title=payload.title,
-            lede=payload.lede,
-            brief=payload.brief.model_dump(exclude_defaults=True) if payload.brief else {},
-            capability=payload.capability,
-            layout=payload.layout,
-            workspace_id=workspace_slug,
-        )
-        _replace_acts(board, payload.acts)
+    try:
+        with transaction.atomic():
+            board = Storyboard.objects.create(
+                **origin,
+                slug=payload.slug,
+                title=payload.title,
+                lede=payload.lede,
+                brief={},
+                capability=payload.capability,
+                layout=payload.layout,
+                workspace_id=workspace_slug,
+            )
+            _replace_acts(board, payload.acts)
+            _write_decisions(board, payload)
+    except decision_rows.DecisionInvalid as e:
+        raise HttpError(422, str(e))
+    except decision_rows.DecisionConflict as e:
+        raise HttpError(409, str(e))
     return services.resolve_board(board, is_member=True)
 
 
@@ -279,20 +311,23 @@ def get_storyboard(request: HttpRequest, slug: str, ws: str = "") -> dict:
 @router.patch("/{slug}", response=StoryboardOut, auth=session_auth, summary="Edit a storyboard")
 def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn) -> dict:
     board = _editable_or_404(request, slug)
-    with transaction.atomic():
-        fields = []
-        for name in ("title", "lede", "capability", "layout"):
-            value = getattr(payload, name)
-            if value is not None:
-                setattr(board, name, value)
-                fields.append(name)
-        if payload.brief is not None:
-            board.brief = payload.brief.model_dump(exclude_defaults=True)
-            fields.append("brief")
-        if fields:
-            board.save(update_fields=[*fields, "updated_at"])
-        if payload.acts is not None:
-            _replace_acts(board, payload.acts)
+    try:
+        with transaction.atomic():
+            fields = []
+            for name in ("title", "lede", "capability", "layout"):
+                value = getattr(payload, name)
+                if value is not None:
+                    setattr(board, name, value)
+                    fields.append(name)
+            if fields:
+                board.save(update_fields=[*fields, "updated_at"])
+            if payload.acts is not None:
+                _replace_acts(board, payload.acts)
+            _write_decisions(board, payload)
+    except decision_rows.DecisionInvalid as e:
+        raise HttpError(422, str(e))
+    except decision_rows.DecisionConflict as e:
+        raise HttpError(409, str(e))
     return services.resolve_board(board, is_member=True)
 
 
@@ -372,6 +407,40 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
         workspace=board.workspace,
         submitted_by=request.user if request.user.is_authenticated else None,
     )
+
+
+@router.post(
+    "/{slug}/decisions/{key}/edit",
+    response=DecisionOut,
+    auth=None,
+    summary="Confirm, change, write in or undo one decision (public via ?t=<share_token>)",
+)
+def edit_storyboard_decision(
+    request: HttpRequest, slug: str, key: str, payload: DecisionEditIn, ws: str = ""
+) -> dict:
+    # Self-enforcing like the read: a wrong token 404s. A member's edit applies
+    # immediately, attributed and undoable; a link holder may edit only inside
+    # an open feedback round, where it is staged (plan C).
+    board = _readable_or_404(request, slug, ws)
+    row = board.decisions.filter(key=key).first()
+    if row is None:
+        raise HttpError(404, "no such decision on this storyboard")
+    # Plan C replaces this refusal with staging inside an open round.
+    if not _is_member(request, board):
+        raise HttpError(403, "only a member can change a decision outside a feedback round")
+    # auth=None skips Ninja's cookie-auth CSRF check, so a session caller re-runs it.
+    if not request.GET.get("t") and csrf_rejected(request):
+        raise HttpError(403, "CSRF verification failed")
+    try:
+        row = decision_rows.apply_edit(
+            row, action=payload.action, value=payload.value,
+            reasoning=payload.reasoning, by_user=request.user,
+        )
+    except decision_rows.DecisionInvalid as e:
+        raise HttpError(422, str(e))
+    except decision_rows.DecisionConflict as e:
+        raise HttpError(409, str(e))
+    return decision_rows.serialize(row)
 
 
 @router.get(

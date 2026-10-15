@@ -298,7 +298,8 @@ def test_create_converts_brief_lists_to_rows_and_strips_them(ws, owner):
     )
     assert resp.status_code == 200, resp.content
     body = resp.json()
-    assert "assumptions" not in body["brief"] or body["brief"]["assumptions"] == []
+    for k in dsvc.LEGACY_BRIEF_KEYS:
+        assert not body["brief"].get(k)
     assert len(body["decisions"]) == 3
     assert Storyboard.objects.get(slug="s1").brief == {"audience": "Edesia and OES"}
 
@@ -369,3 +370,92 @@ def test_long_resolution_is_still_the_recommendation_and_columns_hold():
     assert all(len(r["id"]) <= 120 for r in rows)
     for r in rows:
         dsvc.validate(r)
+
+
+from django.test import Client  # noqa: E402
+
+
+@pytest.fixture()
+def member(owner):
+    c = Client()
+    c.force_login(owner)
+    return c
+
+
+def test_create_with_decisions_round_trips(ws, member):
+    resp = member.post("/api/w/connect/storyboards/",
+                       {"slug": "s2", "title": "S2", "decisions": [_row()]},
+                       content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    (d,) = resp.json()["decisions"]
+    assert d["id"] == "banner" and d["value"] == "Rename and re-record" and d["editable"] is True
+
+
+def test_invalid_decision_is_422(ws, member):
+    resp = member.post("/api/w/connect/storyboards/",
+                       {"slug": "s3", "title": "S3", "decisions": [_row(recommended="nope")]},
+                       content_type="application/json")
+    assert resp.status_code == 422
+    assert not Storyboard.objects.filter(slug="s3").exists()
+
+
+def test_patch_that_resets_a_ruling_is_409(board, member, owner):
+    (row,) = dsvc.publish(board, [_row()])
+    dsvc.apply_edit(row, action="pick", value="Keep as is", by_user=owner)
+    resp = member.patch(f"/api/w/connect/storyboards/{board.slug}", {"decisions": [_row()]},
+                        content_type="application/json")
+    assert resp.status_code == 409
+    assert "banner" in resp.json()["detail"]
+
+
+def test_member_edit_applies_immediately(board, member):
+    dsvc.publish(board, [_row()])
+    resp = member.post(f"/api/storyboards/{board.slug}/decisions/banner/edit",
+                       {"action": "pick", "value": "Keep as is", "reasoning": "fine"},
+                       content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["value"] == "Keep as is" and resp.json()["decided_by"] == "Jonathan"
+
+
+def test_non_member_edit_is_refused(board):
+    dsvc.publish(board, [_row()])
+    token = board.ensure_share_token()
+    resp = Client().post(f"/api/storyboards/{board.slug}/decisions/banner/edit?t={token}",
+                         {"action": "confirm", "author_name": "Lily"},
+                         content_type="application/json")
+    assert resp.status_code == 403
+
+
+def test_edit_unknown_row_is_404(board, member):
+    resp = member.post(f"/api/storyboards/{board.slug}/decisions/nope/edit",
+                       {"action": "confirm"}, content_type="application/json")
+    assert resp.status_code == 404
+
+
+def test_member_edit_without_csrf_token_is_403(board, owner):
+    dsvc.publish(board, [_row()])
+    c = Client(enforce_csrf_checks=True)
+    c.force_login(owner)
+    resp = c.post(f"/api/storyboards/{board.slug}/decisions/banner/edit",
+                  {"action": "confirm"}, content_type="application/json")
+    assert resp.status_code == 403
+
+
+def test_brief_only_patch_keeps_existing_rows(board, member):
+    dsvc.publish(board, [_row()])
+    resp = member.patch(f"/api/w/connect/storyboards/{board.slug}",
+                        {"brief": {"audience": "X", "assumptions": ["Y holds."]}},
+                        content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    ids = [d["id"] for d in resp.json()["decisions"]]
+    assert "banner" in ids and len(ids) == 2
+
+
+def test_board_read_includes_narrative_caveats_read_only(board, member, monkeypatch):
+    from apps.storyboards import services
+
+    monkeypatch.setattr(services, "_narrative_caveat_rows",
+                        lambda b: [dsvc.from_narrative_caveats({"assumptions": ["X holds."]}, "n1")[0]])
+    body = member.get(f"/api/w/connect/storyboards/{board.slug}").json()
+    (d,) = body["decisions"]
+    assert d["scope"] == "n1" and d["editable"] is False

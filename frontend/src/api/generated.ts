@@ -1087,6 +1087,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/storyboards/{slug}/decisions/{key}/edit": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Confirm, change, write in or undo one decision (public via ?t=<share_token>) */
+        readonly post: operations["edit_storyboard_decision"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/{slug}/notes": {
         readonly parameters: {
             readonly query?: never;
@@ -10598,6 +10615,72 @@ export interface components {
             /** Text */
             readonly text: string;
         };
+        /** DecisionHistoryOut */
+        readonly DecisionHistoryOut: {
+            /** Status */
+            readonly status: string;
+            /** Value */
+            readonly value: string;
+            /** Decided By */
+            readonly decided_by: string;
+            /** At */
+            readonly at: string;
+        };
+        /** DecisionOut */
+        readonly DecisionOut: {
+            /** Id */
+            readonly id: string;
+            /** Scope */
+            readonly scope: string;
+            /** Question */
+            readonly question: string;
+            /** Plain Question */
+            readonly plain_question: string;
+            /** Options */
+            readonly options: readonly string[];
+            /** Recommended */
+            readonly recommended: string;
+            /** Override */
+            readonly override: string;
+            /** Value */
+            readonly value: string;
+            /** Reasoning */
+            readonly reasoning: string;
+            /** Override Reasoning */
+            readonly override_reasoning: string;
+            /** Source */
+            readonly source: string;
+            /** Evidence Basis */
+            readonly evidence_basis: string;
+            /** Conflict Signals */
+            readonly conflict_signals: readonly string[];
+            /** Status */
+            readonly status: string;
+            /** Revisit When */
+            readonly revisit_when: string;
+            /** Review Ask */
+            readonly review_ask: string;
+            /** Needed By */
+            readonly needed_by: string;
+            /** Confirm Reason */
+            readonly confirm_reason: string;
+            /** Decided By */
+            readonly decided_by: string;
+            /** Decided By Verified */
+            readonly decided_by_verified: boolean;
+            /** Decided At */
+            readonly decided_at: string | null;
+            /** Confirmed */
+            readonly confirmed: boolean;
+            /** History */
+            readonly history: readonly components["schemas"]["DecisionHistoryOut"][];
+            /** Supersedes */
+            readonly supersedes: string;
+            /** Superseded By */
+            readonly superseded_by: string;
+            /** Editable */
+            readonly editable: boolean;
+        };
         /**
          * Divergence
          * @description A place where what the script says and what the data shows disagree.
@@ -10796,6 +10879,11 @@ export interface components {
              *     }
              */
             readonly brief: components["schemas"]["StoryboardBrief"];
+            /**
+             * Decisions
+             * @default []
+             */
+            readonly decisions: readonly components["schemas"]["DecisionOut"][];
             /** Capability */
             readonly capability: string;
             /** Layout */
@@ -10827,6 +10915,96 @@ export interface components {
              * @default []
              */
             readonly entries: readonly components["schemas"]["EntryIn"][];
+        };
+        /**
+         * DecisionIn
+         * @description One decision row as a publisher sends it (spec B). Person-owned fields —
+         *     decided_by, confirmed, history — are not accepted: the server sets them.
+         */
+        readonly DecisionIn: {
+            /** Id */
+            readonly id: string;
+            /**
+             * Scope
+             * @default
+             */
+            readonly scope: string;
+            /** Question */
+            readonly question: string;
+            /**
+             * Plain Question
+             * @default
+             */
+            readonly plain_question: string;
+            /**
+             * Options
+             * @default []
+             */
+            readonly options: readonly string[];
+            /**
+             * Recommended
+             * @default
+             */
+            readonly recommended: string;
+            /**
+             * Override
+             * @default
+             */
+            readonly override: string;
+            /**
+             * Reasoning
+             * @default
+             */
+            readonly reasoning: string;
+            /**
+             * Source
+             * @default
+             */
+            readonly source: string;
+            /**
+             * Evidence Basis
+             * @default inferred
+             * @enum {string}
+             */
+            readonly evidence_basis: "stated" | "inferred" | "conflicting";
+            /**
+             * Conflict Signals
+             * @default []
+             */
+            readonly conflict_signals: readonly string[];
+            /**
+             * Status
+             * @default ai-default
+             * @enum {string}
+             */
+            readonly status: "ai-default" | "deferred";
+            /**
+             * Revisit When
+             * @default
+             */
+            readonly revisit_when: string;
+            /**
+             * Review Ask
+             * @default
+             * @enum {string}
+             */
+            readonly review_ask: "" | "recommended-confirmation" | "required-before";
+            /**
+             * Needed By
+             * @default
+             * @enum {string}
+             */
+            readonly needed_by: "" | "external-share" | "next-run";
+            /**
+             * Confirm Reason
+             * @default
+             */
+            readonly confirm_reason: string;
+            /**
+             * Supersedes
+             * @default
+             */
+            readonly supersedes: string;
         };
         /** EntryIn */
         readonly EntryIn: {
@@ -10860,6 +11038,8 @@ export interface components {
              */
             readonly lede: string;
             readonly brief?: components["schemas"]["StoryboardBrief"] | null;
+            /** Decisions */
+            readonly decisions?: readonly components["schemas"]["DecisionIn"][] | null;
             /**
              * Capability
              * @default read
@@ -10894,6 +11074,8 @@ export interface components {
             /** Lede */
             readonly lede?: string | null;
             readonly brief?: components["schemas"]["StoryboardBrief"] | null;
+            /** Decisions */
+            readonly decisions?: readonly components["schemas"]["DecisionIn"][] | null;
             /** Capability */
             readonly capability?: ("read" | "comment" | "suggest") | null;
             /** Layout */
@@ -10954,6 +11136,29 @@ export interface components {
              * @default
              */
             readonly author_email: string;
+        };
+        /** DecisionEditIn */
+        readonly DecisionEditIn: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            readonly action: "confirm" | "pick" | "write_in" | "undo";
+            /**
+             * Value
+             * @default
+             */
+            readonly value: string;
+            /**
+             * Reasoning
+             * @default
+             */
+            readonly reasoning: string;
+            /**
+             * Author Name
+             * @default
+             */
+            readonly author_name: string;
         };
         /**
          * NoteOut
@@ -24762,6 +24967,35 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    readonly edit_storyboard_decision: {
+        readonly parameters: {
+            readonly query?: {
+                readonly ws?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DecisionEditIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DecisionOut"];
                 };
             };
         };

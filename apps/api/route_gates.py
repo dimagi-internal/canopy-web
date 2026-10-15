@@ -456,6 +456,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_storyboard": ("token-link",),  # auth=None; member or ?t=
     "patch_storyboard": ("content.write",),
     "storyboards_rotate_token": ("content.write",),
+    "edit_storyboard_decision": ("token-link", "member"),  # members apply immediately; a token holder only inside an open round (plan C)
     "ensure_token": ("content.write",),
     "leave_feedback": ("token-link", "member"),  # ?t= with comment/suggest grant; ANY member bypasses the grant
     "list_notes": ("member",),  # members only; token holder 404s
@@ -678,6 +679,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
     "put_contributor_summary": "an agent's login is a member, and that is who writes a contributor page — only while the person lets agents learn about them and has granted that agent; otherwise only the person themself",
     "add_person_fact": "an agent's login is a member, and that is who writes facts (contract canopy#804); a fact is append-only, attributed, visible to its subject and retractable by them",
     "refresh_mail_domain": "re-checks DNS and SES verification and caches the answer; changes no configuration",
+    "edit_storyboard_decision": "a member's ruling on a demo-set default is the reader-tier act the decision log exists for; it is attributed and undoable (owner decision 2026-10-15)",
     "leave_feedback": "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may do",
 }
 
@@ -787,6 +789,7 @@ NOT_SETTINGS: dict[str, str] = {
     "upload_session": "content", "patch_session": "content", "delete_session": "content",
     "create_shareouts": "content", "clear_shareouts": "content",
     "create_storyboard": "content", "patch_storyboard": "content", "leave_feedback": "content",
+    "edit_storyboard_decision": "content",
     "upload_walkthrough": "content", "patch_walkthrough": "content", "delete_walkthrough": "content",
     "ingest_feedback": "content", "resolve_feedback": "content",
     "open_thread": "content", "close_thread": "content",
