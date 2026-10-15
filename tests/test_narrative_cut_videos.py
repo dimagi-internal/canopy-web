@@ -273,3 +273,58 @@ def test_a_deck_cannot_be_a_cut(uploader):
         format="multipart",
     )
     assert resp.status_code == 422, resp.content
+
+
+@override_settings(**_DDD_SETTINGS)
+@pytest.mark.parametrize("sent,stored", [("23.6", 24), ("31", 31), ("", None), ("abc", None)])
+def test_upload_records_the_measured_duration(uploader, sent, stored):
+    """A cut's length is the first thing a reviewer timing a demo needs, and the
+    review page read null for every cut because nothing could send it."""
+    resp = _upload(uploader, narrative_review_id=str(uuid.uuid4()), cut_id="register",
+                   duration_sec=sent)
+    assert resp.status_code == 201, resp.content
+    assert Walkthrough.objects.get(pk=resp.json()["id"]).duration_sec == stored
+
+
+def test_the_review_link_carries_the_cut_duration():
+    u = make_user()
+    v = _version(u)
+    _cut(u, v, "register", ["c1-a"], at=_t(1), visibility="link", share_token="t", duration_sec=24)
+    assert Client().get(f"/api/reviews/{v.id}/").json()["cut_videos"][0]["duration_sec"] == 24
+
+
+# ---------------------------------------------------------------------------
+# The demo brief: optional framing a publisher sends in request_json, so the
+# review link reads without a companion doc. The server stores it verbatim; the
+# page renders whatever is present.
+# ---------------------------------------------------------------------------
+
+BRIEF = {
+    "title": "Part 1 — RUTF stock at scale",
+    "audience": "Edesia / OES",
+    "purpose": "One set of screens answers where every sachet is.",
+    "data_disclosure": "All on-screen data is synthetic. Source: Labs programme 10112.",
+    "running_order": ["register", "decide"],
+    "short_version": {"label": "3-minute version", "cut_ids": ["register"]},
+    "cuts": [{"id": "register", "screen_notes": "Overview page, cursor on the tender row.",
+              "audience_note": "For Edesia: their order is the one on the road.",
+              "duration_sec": 21}],
+    "assumptions": ["Programme 10112 stands in for the real programme."],
+    "divergences": [{"script": "four suppliers", "data": "three suppliers", "resolution": "re-record"}],
+    "open_questions": ["Does OES want the forecast cut?"],
+    "series": {"title": "Connect Supply demos", "url": "https://canopy.dimagi.com/w/connect/storyboard/x?t=y",
+               "part": 1, "total": 3},
+}
+
+
+def test_the_demo_brief_round_trips_and_names_the_review():
+    u = make_user()
+    v = make_review(
+        u, run_id=RUN, gate="concept_change", narrative_slug=SLUG, version=1, visibility="link",
+        request_json={"run_id": RUN, "gate": "concept_change", "narrative": "Story.",
+                      "narration": NARRATION, **BRIEF},
+    )
+    body = Client().get(f"/api/reviews/{v.id}/").json()
+    assert body["title"] == "Part 1 — RUTF stock at scale"  # not "Chlorine"
+    for key, value in BRIEF.items():
+        assert body["request_json"][key] == value

@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { withBase } from '@/lib/basePath'
+import { CutPlayer, countWords, fmtDuration } from './CutPlayer'
 
 /** One cut of a recorded narrative and the video pinned to it (canopy-web#1288).
  *  The narrative page and the review link both pass their own payload's cuts,
@@ -19,6 +21,18 @@ export interface CutScene {
   id: string
   title: string
   text: string
+  /** Where the scene's on-screen data comes from. */
+  provenance?: string
+}
+
+/** What the publisher wrote about one cut (request_json.cuts[], keyed by id). */
+export interface CutMeta {
+  title?: string
+  screen_notes?: string
+  audience_note?: string
+  provenance?: string
+  poster_url?: string
+  duration_sec?: number
 }
 
 /**
@@ -75,35 +89,54 @@ export function cutRows(cuts: CutVideo[], scenes: CutScene[]): Row[] {
   return rows.map((r, i) => [r, i] as const).sort((a, b) => a[0].pos - b[0].pos || a[1] - b[1]).map(([r]) => r)
 }
 
-function fmtDuration(sec?: number | null): string | null {
-  if (sec == null || sec <= 0) return null
-  return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`
-}
-
 /**
  * A recorded narrative's cuts — "here are the short videos and what each says".
  * Each cut is its video beside the words it speaks. Shared by the narrative page
  * and the review link's Cuts tab so the two cannot show different things.
  */
-export function CutVideoList({ cuts, scenes }: { cuts: CutVideo[]; scenes: CutScene[] }) {
+export function CutVideoList({
+  cuts,
+  scenes,
+  meta = {},
+}: {
+  cuts: CutVideo[]
+  scenes: CutScene[]
+  /** Optional per-cut words from the publisher, keyed by cut id. */
+  meta?: Record<string, CutMeta>
+}) {
   const rows = cutRows(cuts, scenes)
+  // The upload may not have recorded a length; the video itself knows it.
+  const [measured, setMeasured] = useState<Record<string, number>>({})
   return (
     <ol className="space-y-6">
       {rows.map((row, i) => {
-        const duration = row.kind === 'video' ? fmtDuration(row.cut.duration_sec) : null
-        const optional = /optional/i.test(row.title)
+        const m: CutMeta = row.kind === 'video' ? (meta[row.cut.cut_id] ?? {}) : {}
+        const duration =
+          row.kind === 'video'
+            ? fmtDuration(row.cut.duration_sec ?? m.duration_sec ?? measured[row.cut.cut_id])
+            : null
+        const words = row.words.reduce((n, s) => n + countWords(s.text), 0)
+        const provenance =
+          m.provenance ||
+          [...new Set(row.words.map((s) => s.provenance).filter((p): p is string => !!p))].join('; ')
+        const title = m.title || row.title
+        const optional = /optional/i.test(title)
         return (
           <li key={row.kind === 'video' ? row.cut.cut_id : `missing-${row.title}`}>
-            <section aria-label={row.title}>
+            <section aria-label={title}>
               <h3 className="mb-2 flex flex-wrap items-baseline gap-x-2 text-sm font-semibold text-foreground">
                 <span className="tabular-nums text-muted-foreground">{i + 1}.</span>
-                <span>{row.title}</span>
+                <span>{title}</span>
                 {optional && (
                   <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
                     optional
                   </span>
                 )}
-                {duration && <span className="text-xs font-normal text-muted-foreground">{duration}</span>}
+                {(duration || words > 0) && (
+                  <span className="text-xs font-normal tabular-nums text-muted-foreground">
+                    {[duration, words > 0 ? `${words} words` : null].filter(Boolean).join(' · ')}
+                  </span>
+                )}
                 {row.kind === 'video' && row.cut.video_url && row.cut.video_viewer_url && (
                   <a
                     href={withBase(row.cut.video_viewer_url)}
@@ -116,11 +149,14 @@ export function CutVideoList({ cuts, scenes }: { cuts: CutVideo[]; scenes: CutSc
               <div className="grid gap-4 md:grid-cols-[3fr_2fr]">
                 <div className="overflow-hidden rounded-lg border border-input bg-black">
                   {row.kind === 'video' && row.cut.video_url ? (
-                    <video
-                      src={withBase(row.cut.video_url)}
-                      controls
-                      preload="metadata"
-                      className="max-h-[50vh] w-full bg-black"
+                    <CutPlayer
+                      src={row.cut.video_url}
+                      poster={m.poster_url}
+                      label={title}
+                      onDuration={(sec) => {
+                        const id = row.cut.cut_id
+                        setMeasured((prev) => (prev[id] === sec ? prev : { ...prev, [id]: sec }))
+                      }}
                     />
                   ) : (
                     <div className="flex h-40 items-center justify-center bg-card px-4 text-center text-sm text-muted-foreground">
@@ -138,10 +174,26 @@ export function CutVideoList({ cuts, scenes }: { cuts: CutVideo[]; scenes: CutSc
                   )}
                 </div>
               </div>
+              {(m.screen_notes || m.audience_note || provenance) && (
+                <dl className="mt-3 grid gap-1.5 text-[13px]">
+                  {m.screen_notes && <CutDetail label="On screen">{m.screen_notes}</CutDetail>}
+                  {m.audience_note && <CutDetail label="Why it matters">{m.audience_note}</CutDetail>}
+                  {provenance && <CutDetail label="Data from">{provenance}</CutDetail>}
+                </dl>
+              )}
             </section>
           </li>
         )
       })}
     </ol>
+  )
+}
+
+function CutDetail({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-0.5 sm:grid-cols-[7.5rem_1fr] sm:gap-3">
+      <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground sm:pt-0.5">{label}</dt>
+      <dd className="text-foreground">{children}</dd>
+    </div>
   )
 }

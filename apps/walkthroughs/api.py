@@ -257,6 +257,7 @@ def upload_walkthrough(
     narrative_review_id: str = Form(""),
     cut_id: str = Form(""),
     cut_scene_ids: str = Form(""),
+    duration_sec: str = Form(""),
     session_id: str = Form(""),
     turn_id: str = Form(""),
     agent_project: str = Form(""),
@@ -287,6 +288,16 @@ def upload_walkthrough(
     if resolved_run_id and not resolved_narrative_slug:
         resolved_narrative_slug = narrative_slug_from_run_id(resolved_run_id)
     resolved_role = role.strip() or None
+    # The video's measured length, in seconds (the uploader probes the file —
+    # ffprobe). Optional, and ignored when malformed rather than 422'd: it is
+    # display metadata. Without it every cut read "duration unknown" on the
+    # review page, which is the first thing a reviewer timing a demo needs.
+    resolved_duration = None
+    if duration_sec.strip():
+        try:
+            resolved_duration = max(0, round(float(duration_sec.strip())))
+        except ValueError:
+            resolved_duration = None
     # The narrative version (ReviewRequest.id) this run rendered. Ignore a
     # malformed value rather than 500 — it's optional grouping metadata.
     resolved_review_id = None
@@ -387,6 +398,7 @@ def upload_walkthrough(
         narrative_review_id=resolved_review_id,
         cut_id=resolved_cut_id,
         cut_scene_ids=resolved_cut_scene_ids,
+        duration_sec=resolved_duration,
         drive_file_id="",
         drive_folder_id="",
         content_type=content_type,

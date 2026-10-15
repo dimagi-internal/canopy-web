@@ -140,7 +140,7 @@ describe('ReviewPage — a guest with the share link', () => {
 
   it('asks for suggestions, not approval, and offers no approve control', async () => {
     renderAt('/w/connect/review/r1/?t=tok')
-    expect(await screen.findByRole('heading', { level: 1, name: /suggest edits/i })).toBeTruthy()
+    expect(await screen.findByText(/suggest edits to this demo story/i)).toBeTruthy()
     expect(screen.queryByText(/approve the story before we build it/i)).toBeNull()
     expect(screen.queryByRole('button', { name: /approve & continue/i })).toBeNull()
     expect(screen.queryByText(/then approve or send back/i)).toBeNull()
@@ -149,7 +149,7 @@ describe('ReviewPage — a guest with the share link', () => {
 
   it('shows none of the build scaffolding (#1267)', async () => {
     renderAt('/w/connect/review/r1/?t=tok')
-    await screen.findByRole('heading', { level: 1, name: /suggest edits/i })
+    await screen.findByText(/suggest edits to this demo story/i)
     expect(screen.queryByRole('button', { name: /delete scene/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /add scene/i })).toBeNull()
     expect(screen.queryByText(/build sequence/i)).toBeNull()
@@ -192,7 +192,7 @@ describe('ReviewPage — signed in, but not allowed to decide (#1268)', () => {
     auth.status = 'authenticated'
     review.current = detail({ can_decide: false })
     renderAt('/w/connect/review/r1/?t=tok')
-    expect(await screen.findByRole('heading', { level: 1, name: /suggest edits/i })).toBeTruthy()
+    expect(await screen.findByText(/suggest edits to this demo story/i)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /submit — approve & build/i })).toBeNull()
     expect(screen.getByRole('button', { name: /send suggestions/i })).toBeTruthy()
   })
@@ -202,7 +202,8 @@ describe('ReviewPage — the demo and its name (#1270, #1271)', () => {
   it('names the narrative, not the run id', async () => {
     auth.status = 'anonymous'
     renderAt('/w/connect/review/r1/?t=tok')
-    expect(await screen.findByText('Chlorine Dispenser Walkthroughs')).toBeTruthy()
+    // The demo's name is the heading; what we ask of you sits above it.
+    expect(await screen.findByRole('heading', { level: 1, name: 'Chlorine Dispenser Walkthroughs' })).toBeTruthy()
     expect(screen.queryByText('chlorine-dispenser-walkthroughs-2026-10-07-002')).toBeNull()
   })
 
@@ -276,5 +277,91 @@ describe('ReviewPage — the Cuts tab of a recorded narrative (canopy-web#1288)'
     const { container } = renderAt('/w/connect/review/r1/?t=tok&tab=cuts')
     await waitFor(() => expect(container.querySelector('video')).toBeTruthy())
     expect(container.querySelector('video')?.getAttribute('src')).toContain('/w/connect/walkthrough/w9/content?t=h')
+  })
+})
+
+describe('ReviewPage — reads without a companion doc', () => {
+  const rutf = (over: Record<string, unknown> = {}, detailOver: Partial<ReviewDetail> = {}) =>
+    detail({
+      title: 'Part 1 — RUTF stock at scale',
+      request_json: {
+        ...(detail().request_json as object),
+        narration: [
+          { scene: 1, id: 'a', title: 'Every procurement in one place', text: 'Each line is a tender.', provenance: 'overview, programme 10112' },
+          { scene: 2, id: 'b', title: "The tender's suppliers", text: 'We asked four suppliers.', provenance: 'tender 356' },
+          { scene: 3, id: 'c', title: 'Comparing quotes', text: 'A landed price per carton.', provenance: 'tender 356' },
+        ],
+        ...over,
+      },
+      ...detailOver,
+    } as Partial<ReviewDetail>)
+
+  it('shows one titled block per scene when nothing names a cut', async () => {
+    auth.status = 'anonymous'
+    review.current = rutf()
+    renderAt('/w/connect/review/r1/?t=tok')
+    expect(await screen.findByText('Every procurement in one place', { selector: 'p' })).toBeTruthy()
+    expect(screen.getByText("The tender's suppliers", { selector: 'p' })).toBeTruthy()
+    expect(screen.getByText('Comparing quotes', { selector: 'p' })).toBeTruthy()
+  })
+
+  it('groups the demo by the recorded cut that plays each scene', async () => {
+    auth.status = 'anonymous'
+    review.current = rutf({}, {
+      cut_videos: [
+        { cut_id: 'proc', title: 'Every procurement', scene_ids: ['a'], walkthrough_id: 'w1', video_url: '/v1?t=x' },
+        { cut_id: 'buy', title: 'Buying RUTF', scene_ids: ['b', 'c'], walkthrough_id: 'w2', video_url: '/v2?t=x' },
+      ],
+    } as Partial<ReviewDetail>)
+    renderAt('/w/connect/review/r1/?t=tok')
+    expect(await screen.findByText('Buying RUTF')).toBeTruthy()
+    expect(screen.getByText('Every procurement')).toBeTruthy()
+  })
+
+  it('says who it is for, what the data is, and the set it belongs to', async () => {
+    auth.status = 'anonymous'
+    review.current = rutf({
+      audience: 'Edesia and OES',
+      purpose: 'Every sachet, accounted for.',
+      data_disclosure: 'All on-screen data is synthetic (Labs programme 10112).',
+      storyboard_url: 'https://canopy.dimagi.com/w/connect/storyboard/supply?t=x',
+      storyboard_title: 'Connect Supply demos',
+    })
+    renderAt('/w/connect/review/r1/?t=tok')
+    const about = await screen.findByRole('region', { name: 'About this demo' })
+    expect(about.textContent).toContain('Edesia and OES')
+    expect(about.textContent).toContain('synthetic')
+    expect(screen.getByRole('link', { name: /Connect Supply demos/ }).getAttribute('href')).toContain('/storyboard/supply')
+    expect(screen.getByText('Every sachet, accounted for.')).toBeTruthy()
+  })
+
+  it('gives each cut its words, what is on screen, and where the data comes from', async () => {
+    auth.status = 'anonymous'
+    review.current = rutf(
+      { cuts: [{ id: 'buy', screen_notes: 'Tender 356, then compare.', audience_note: 'For Edesia: their quote.' }] },
+      {
+        cut_videos: [
+          { cut_id: 'buy', title: 'Buying RUTF', scene_ids: ['b', 'c'], walkthrough_id: 'w2', video_url: '/v2?t=x', duration_sec: 44 },
+        ],
+      } as Partial<ReviewDetail>,
+    )
+    renderAt('/w/connect/review/r1/?t=tok&tab=cuts')
+    const cut = await screen.findByRole('region', { name: 'Buying RUTF' })
+    expect(cut.textContent).toContain('0:44 · 9 words')
+    expect(cut.textContent).toContain('Tender 356, then compare.')
+    expect(cut.textContent).toContain('For Edesia')
+    expect(cut.textContent).toContain('tender 356')
+  })
+
+  it('lists the assumptions and where the script and data disagree', async () => {
+    auth.status = 'anonymous'
+    review.current = rutf({
+      assumptions: ['Stock counts are weekly.'],
+      divergences: [{ script: 'four suppliers', data: 'three suppliers' }],
+    })
+    renderAt('/w/connect/review/r1/?t=tok')
+    const caveats = await screen.findByRole('region', { name: 'Caveats' })
+    expect(caveats.textContent).toContain('Stock counts are weekly.')
+    expect(caveats.textContent).toContain('three suppliers')
   })
 })

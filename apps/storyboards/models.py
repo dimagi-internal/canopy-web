@@ -37,6 +37,17 @@ class Storyboard(models.Model):
     lede = models.TextField(blank=True, default="")
     """One paragraph under the title — what the whole arc is for."""
 
+    brief = models.JSONField(blank=True, default=dict)
+    """The framing a reviewer needs and the lede cannot carry, all optional:
+    who the demos are for, the point to land, the synthetic-data disclosure, a
+    short version (a subset of cuts), and the assumptions / script-vs-data
+    divergences / open questions. Shape: ``schemas.StoryboardBrief``.
+
+    Why it lives here: a set of demos (Parts 1–3 of a programme) needed a
+    companion Google Doc to carry exactly this, because the board had only a
+    title and a lede. The board is the one link a reviewer is sent, so the
+    framing belongs on it — validated on the way in, rendered when present."""
+
     workspace = models.ForeignKey(
         "workspaces.Workspace",
         on_delete=models.CASCADE,

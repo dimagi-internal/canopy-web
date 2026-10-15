@@ -119,6 +119,31 @@ export interface ReviewRequestJson {
    * defaults to the narration order.
    */
   build_order?: string[] | null
+  // --- Optional demo framing (all additive; rendered when present) ---------
+  /** The narrative's human name ("Part 1 — RUTF stock at scale"). */
+  title?: string
+  /** Who the demo is for ("Edesia and OES"). */
+  audience?: string
+  /** The one point the demo must land. */
+  purpose?: string
+  /** What a reader must know about the on-screen data. */
+  data_disclosure?: string
+  /** The storyboard this demo is part of — the set's one link. */
+  storyboard_url?: string
+  storyboard_title?: string
+  /** Per-cut words, keyed by the recipe's cuts[].id. */
+  cuts?: Array<{
+    id: string
+    title?: string
+    screen_notes?: string
+    audience_note?: string
+    provenance?: string
+    poster_url?: string
+    duration_sec?: number
+  }>
+  assumptions?: string[]
+  divergences?: Array<{ script: string; data?: string; resolution?: string }>
+  open_questions?: string[]
 }
 
 // ---------------------------------------------------------------------------

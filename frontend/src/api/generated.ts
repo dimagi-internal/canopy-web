@@ -10486,6 +10486,106 @@ export interface components {
             /** Turn Ids */
             readonly turn_ids?: readonly string[];
         };
+        /**
+         * CutRef
+         * @description One cut of one narrative on the board — what a short version lists.
+         */
+        readonly CutRef: {
+            /** Narrative Slug */
+            readonly narrative_slug: string;
+            /**
+             * Cut Id
+             * @default
+             */
+            readonly cut_id: string;
+        };
+        /** CutSceneOut */
+        readonly CutSceneOut: {
+            /** Id */
+            readonly id: string;
+            /** Title */
+            readonly title: string;
+            /** Text */
+            readonly text: string;
+        };
+        /**
+         * Divergence
+         * @description A place where what the script says and what the data shows disagree.
+         */
+        readonly Divergence: {
+            /** Script */
+            readonly script: string;
+            /**
+             * Data
+             * @default
+             */
+            readonly data: string;
+            /**
+             * Resolution
+             * @default
+             */
+            readonly resolution: string;
+            /**
+             * Narrative Slug
+             * @default
+             */
+            readonly narrative_slug: string;
+        };
+        /**
+         * EntryCutOut
+         * @description One recorded cut of an entry's current version, with what a reviewer
+         *     needs to judge it without a companion doc. Built from the cut's uploaded
+         *     video plus the optional ``cuts[]`` the publisher sent in the version's
+         *     request_json (``apps.storyboards.cuts``).
+         */
+        readonly EntryCutOut: {
+            /** Cut Id */
+            readonly cut_id: string;
+            /** Anchor Id */
+            readonly anchor_id: string;
+            /** Title */
+            readonly title: string;
+            /** Recorded */
+            readonly recorded: boolean;
+            /** Video Url */
+            readonly video_url?: string | null;
+            /** Video Viewer Url */
+            readonly video_viewer_url?: string | null;
+            /** Poster Url */
+            readonly poster_url?: string | null;
+            /** Duration Sec */
+            readonly duration_sec?: number | null;
+            /**
+             * Word Count
+             * @default 0
+             */
+            readonly word_count: number;
+            /**
+             * Scenes
+             * @default []
+             */
+            readonly scenes: readonly components["schemas"]["CutSceneOut"][];
+            /**
+             * Screen Notes
+             * @default
+             */
+            readonly screen_notes: string;
+            /**
+             * Audience Note
+             * @default
+             */
+            readonly audience_note: string;
+            /**
+             * Provenance
+             * @default
+             */
+            readonly provenance: string;
+            /**
+             * Optional
+             * @default false
+             */
+            readonly optional: boolean;
+        };
         /** EntryOut */
         readonly EntryOut: {
             /** Narrative Slug */
@@ -10502,6 +10602,84 @@ export interface components {
             readonly video_viewer_url: string | null;
             /** Published */
             readonly published: boolean;
+            /**
+             * Cuts
+             * @default []
+             */
+            readonly cuts: readonly components["schemas"]["EntryCutOut"][];
+            /**
+             * Assumptions
+             * @default []
+             */
+            readonly assumptions: readonly string[];
+            /**
+             * Divergences
+             * @default []
+             */
+            readonly divergences: readonly components["schemas"]["Divergence"][];
+            /**
+             * Open Questions
+             * @default []
+             */
+            readonly open_questions: readonly string[];
+        };
+        /**
+         * ShortVersion
+         * @description A subset of the arc for when there is less time ("the 3-minute version").
+         */
+        readonly ShortVersion: {
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            /**
+             * Items
+             * @default []
+             */
+            readonly items: readonly components["schemas"]["CutRef"][];
+        };
+        /**
+         * StoryboardBrief
+         * @description Optional framing for the whole set. Every field may be absent.
+         */
+        readonly StoryboardBrief: {
+            /**
+             * Audience
+             * @default
+             */
+            readonly audience: string;
+            /**
+             * Purpose
+             * @default
+             */
+            readonly purpose: string;
+            /**
+             * Data Disclosure
+             * @default
+             */
+            readonly data_disclosure: string;
+            readonly short_version?: components["schemas"]["ShortVersion"] | null;
+            /**
+             * Assumptions
+             * @default []
+             */
+            readonly assumptions: readonly string[];
+            /**
+             * Divergences
+             * @default []
+             */
+            readonly divergences: readonly components["schemas"]["Divergence"][];
+            /**
+             * Open Questions
+             * @default []
+             */
+            readonly open_questions: readonly string[];
         };
         /** StoryboardOut */
         readonly StoryboardOut: {
@@ -10511,6 +10689,18 @@ export interface components {
             readonly title: string;
             /** Lede */
             readonly lede: string;
+            /**
+             * @default {
+             *       "audience": "",
+             *       "purpose": "",
+             *       "data_disclosure": "",
+             *       "short_version": null,
+             *       "assumptions": [],
+             *       "divergences": [],
+             *       "open_questions": []
+             *     }
+             */
+            readonly brief: components["schemas"]["StoryboardBrief"];
             /** Capability */
             readonly capability: string;
             /** Layout */
@@ -10574,6 +10764,7 @@ export interface components {
              * @default
              */
             readonly lede: string;
+            readonly brief?: components["schemas"]["StoryboardBrief"] | null;
             /**
              * Capability
              * @default read
@@ -10607,6 +10798,7 @@ export interface components {
             readonly title?: string | null;
             /** Lede */
             readonly lede?: string | null;
+            readonly brief?: components["schemas"]["StoryboardBrief"] | null;
             /** Capability */
             readonly capability?: ("read" | "comment" | "suggest") | null;
             /** Layout */
@@ -23012,6 +23204,11 @@ export interface operations {
                      * @default
                      */
                     readonly cut_scene_ids?: string;
+                    /**
+                     * Duration Sec
+                     * @default
+                     */
+                    readonly duration_sec?: string;
                     /**
                      * Session Id
                      * @default

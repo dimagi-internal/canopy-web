@@ -12,6 +12,38 @@ export type Capability = 'read' | 'comment' | 'suggest'
 export type Layout = 'review' | 'reel'
 export type FeedbackKind = 'comment' | 'suggestion'
 
+/** A place where what the script says and what the data shows disagree. */
+export interface Divergence {
+  script: string
+  data: string
+  resolution: string
+  /** Set when it belongs to one narrative rather than the whole set. */
+  narrative_slug: string
+}
+
+/** One recorded cut of an entry, with what a reviewer needs to judge it. */
+export interface EntryCut {
+  cut_id: string
+  /** What a note on this cut anchors to: `cut:<cut_id>`. */
+  anchor_id: string
+  title: string
+  /** False for a cut declared by the publisher that has no video yet. */
+  recorded: boolean
+  video_url: string | null
+  video_viewer_url: string | null
+  poster_url: string | null
+  duration_sec: number | null
+  word_count: number
+  scenes: { id: string; title: string; text: string }[]
+  /** What is on screen and where the cursor goes. */
+  screen_notes: string
+  /** Why this cut matters to the board's audience. */
+  audience_note: string
+  /** Where the on-screen data comes from. */
+  provenance: string
+  optional: boolean
+}
+
 export interface StoryboardEntry {
   narrative_slug: string
   title: string
@@ -20,6 +52,26 @@ export interface StoryboardEntry {
   video_url: string | null
   video_viewer_url: string | null
   published: boolean
+  /** A recorded narrative's cuts, in running order. Empty for an explainer. */
+  cuts?: EntryCut[]
+  assumptions?: string[]
+  divergences?: Divergence[]
+  open_questions?: string[]
+}
+
+/** Framing for the whole set — every field optional. */
+export interface StoryboardBrief {
+  audience?: string
+  purpose?: string
+  data_disclosure?: string
+  short_version?: {
+    label?: string
+    note?: string
+    items: { narrative_slug: string; cut_id?: string }[]
+  } | null
+  assumptions?: string[]
+  divergences?: Divergence[]
+  open_questions?: string[]
 }
 
 export interface StoryboardAct {
@@ -34,6 +86,9 @@ export interface Storyboard {
   slug: string
   title: string
   lede: string
+  /** Who it is for, the point to land, the data disclosure, the short version,
+   *  and the caveats. Absent on boards created before it existed. */
+  brief?: StoryboardBrief
   capability: Capability
   /** `reel` = the finished product: videos, one line each, nothing else. */
   layout: Layout
