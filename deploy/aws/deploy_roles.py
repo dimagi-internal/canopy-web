@@ -237,14 +237,17 @@ def policy_for(app: str, cfg: dict) -> dict:
             ],
             "Resource": "*",
         })
+    # An app with its own task role(s) passes those instead of the shared task
+    # role: canopy-web moved to canopy-web-task-role on 2026-10-15, so its
+    # pipeline must not be able to put it back on the role every labs app shares.
+    shared = [f"arn:aws:iam::{ACCT}:role/labs-jj-ecs-task-execution-role"]
+    if not cfg.get("task_roles"):
+        shared.append(f"arn:aws:iam::{ACCT}:role/labs-jj-ecs-task-role")
     st.append({
         "Sid": "PassSharedTaskRolesToEcs",
         "Effect": "Allow",
         "Action": "iam:PassRole",
-        "Resource": [
-            f"arn:aws:iam::{ACCT}:role/labs-jj-ecs-task-execution-role",
-            f"arn:aws:iam::{ACCT}:role/labs-jj-ecs-task-role",
-        ],
+        "Resource": shared,
     })
     if cfg.get("task_roles"):
         st.append({

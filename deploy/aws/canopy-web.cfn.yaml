@@ -31,17 +31,12 @@ Parameters:
     Type: String
     Default: arn:aws:iam::858923557655:role/labs-jj-ecs-task-execution-role
   # canopy-web's own role, canopy-web-task-role (canopy-web-task-role.cfn.yaml),
-  # replaces the shared labs one. The default stays the shared role until the
-  # cutover, because a default naming a role that does not exist yet would break
-  # a fresh stack. The live stack is unaffected by the default either way: the
-  # pipeline's `aws cloudformation deploy` carries the stack's CURRENT value
-  # forward, so the switch is one admin deploy with
-  # TaskRoleArn=arn:aws:iam::858923557655:role/canopy-web-task-role, and every
-  # later pipeline deploy keeps it. Order: docs/architecture/deploy.md
-  # § canopy-web's own task role.
+  # not the shared labs-jj-ecs-task-role every labs app runs as. Cut over
+  # 2026-10-15 (docs/architecture/deploy.md § canopy-web's own task role); the
+  # deploy role can no longer pass the shared task role.
   TaskRoleArn:
     Type: String
-    Default: arn:aws:iam::858923557655:role/labs-jj-ecs-task-role
+    Default: arn:aws:iam::858923557655:role/canopy-web-task-role
   ContainerPort:
     Type: Number
     Default: 8000

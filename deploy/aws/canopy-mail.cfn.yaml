@@ -37,11 +37,11 @@ AWSTemplateFormatVersion: '2010-09-09'
 Parameters:
   TaskRoleName:
     Type: CommaDelimitedList
-    Default: labs-jj-ecs-task-role
+    Default: canopy-web-task-role
     Description: >-
-      The ECS task role(s) canopy-web runs as, comma-separated. Two during the move
-      to canopy-web-task-role (docs/architecture/deploy.md § canopy-web's own task
-      role), then canopy-web-task-role alone.
+      The ECS task role(s) canopy-web runs as, comma-separated. canopy-web-task-role
+      since the 2026-10-15 cutover (docs/architecture/deploy.md § canopy-web's own
+      task role).
   CanopyBaseUrl:
     Type: String
     Default: https://canopy.dimagi.com
