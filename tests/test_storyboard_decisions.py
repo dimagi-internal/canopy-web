@@ -226,3 +226,14 @@ def test_serialize_derives_value_and_hides_user_ids(board, owner):
     assert out["id"] == "banner" and out["value"] == "Keep as is"
     assert out["decided_by"] == "Jonathan" and "decided_by_id" not in out
     assert out["editable"] is True
+
+
+def test_edits_and_undo_on_a_superseded_row_are_409(board, owner):
+    (row,) = dsvc.publish(board, [_row()])
+    dsvc.apply_edit(row, action="confirm", by_user=owner)
+    dsvc.publish(board, [_row(), _row(id="banner-v2", supersedes="banner", recommended="Keep as is")])
+    old = board.decisions.get(key="banner")
+    with pytest.raises(dsvc.DecisionConflict, match="banner-v2"):
+        dsvc.apply_edit(old, action="undo", by_user=owner)
+    with pytest.raises(dsvc.DecisionConflict, match="banner-v2"):
+        dsvc.apply_edit(old, action="pick", value="Keep as is", by_user=owner)

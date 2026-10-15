@@ -256,6 +256,8 @@ def apply_edit(row, *, action: str, value: str = "", reasoning: str = "", by_use
 
     with transaction.atomic():
         row = StoryboardDecision.objects.select_for_update().get(pk=row.pk)
+        if row.superseded_by:
+            raise DecisionConflict(f"{row.key}: this row was replaced by {row.superseded_by}; edit that one")
         if action == "undo":
             if not row.history:
                 raise DecisionConflict(f"{row.key}: nothing to undo")
