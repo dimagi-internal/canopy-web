@@ -84,6 +84,45 @@ export interface StoryboardAct {
   entries: StoryboardEntry[]
 }
 
+/** One default the set is built on — ace-web's decision row (spec B). */
+export interface Decision {
+  id: string
+  scope: string
+  question: string
+  plain_question: string
+  options: readonly string[]
+  recommended: string
+  override: string
+  /** Derived: `override` if set, else `recommended`. */
+  value: string
+  reasoning: string
+  override_reasoning: string
+  source: string
+  evidence_basis: 'stated' | 'inferred' | 'conflicting' | string
+  conflict_signals: readonly string[]
+  status: 'ai-default' | 'human-decided' | 'overridden' | 'deferred' | string
+  revisit_when: string
+  review_ask: '' | 'recommended-confirmation' | 'required-before' | string
+  needed_by: '' | 'external-share' | 'next-run' | string
+  confirm_reason: string
+  decided_by: string
+  decided_by_verified: boolean
+  decided_at: string | null
+  confirmed: boolean
+  history: readonly { status: string; value: string; decided_by: string; at: string }[]
+  supersedes: string
+  superseded_by: string
+  /** False for a narrative's read-time caveat — shown, not yet a stored row. */
+  editable: boolean
+}
+
+export type DecisionEdit = {
+  action: 'confirm' | 'pick' | 'write_in' | 'undo'
+  value?: string
+  reasoning?: string
+  author_name?: string
+}
+
 export interface Storyboard {
   slug: string
   title: string
@@ -97,6 +136,8 @@ export interface Storyboard {
   /** True for the people who SENT the link — the only ones shown the notes. */
   is_member: boolean
   acts: StoryboardAct[]
+  /** The set's decision log. Absent on an older response. */
+  decisions?: Decision[]
 }
 
 export interface Note {
@@ -149,6 +190,25 @@ async function getJson<T>(url: string): Promise<T> {
   return resp.json() as Promise<T>
 }
 
+async function postJson<T>(url: string, body: unknown, fallback: string): Promise<T> {
+  const resp = await fetch(apiUrl(url), {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() ?? '' },
+    body: JSON.stringify(body),
+  })
+  if (!resp.ok) {
+    let detail = ''
+    try {
+      detail = (await resp.json())?.detail ?? ''
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail || `${fallback} (${resp.status})`)
+  }
+  return resp.json() as Promise<T>
+}
+
 export function getStoryboard(
   slug: string,
   token?: string | null,
@@ -169,25 +229,30 @@ export async function leaveFeedback(
   token?: string | null,
   ws?: string | null,
 ): Promise<{ created: number }> {
-  const resp = await fetch(
-    apiUrl(withToken(`/api/storyboards/${encodeURIComponent(slug)}/feedback`, token, ws)),
-    {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() ?? '' },
-      body: JSON.stringify(payload),
-    },
+  return postJson(
+    withToken(`/api/storyboards/${encodeURIComponent(slug)}/feedback`, token, ws),
+    payload,
+    'Couldn’t save that note',
   )
-  if (!resp.ok) {
-    let detail = ''
-    try {
-      detail = (await resp.json())?.detail ?? ''
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `Couldn’t save that note (${resp.status})`)
-  }
-  return resp.json()
+}
+
+/** Confirm, pick, write in or undo one decision. Members only; returns the updated row. */
+export function editDecision(
+  slug: string,
+  key: string,
+  body: DecisionEdit,
+  token?: string | null,
+  ws?: string | null,
+): Promise<Decision> {
+  return postJson(
+    withToken(
+      `/api/storyboards/${encodeURIComponent(slug)}/decisions/${encodeURIComponent(key)}/edit`,
+      token,
+      ws,
+    ),
+    body,
+    'That did not save',
+  )
 }
 
 /** One row of the index — what a member sees before opening a board. */

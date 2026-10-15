@@ -230,7 +230,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
   never "acts" (storage groups entries under an `Act` for curated title, prose
   and order; one composer per narrative). Follows each narrative's current
   release, so an emailed link does not go stale; acts are numbered; a narrative
-  with nothing published shows "Being built".
+  with nothing published shows "Being built". Ends with the set's decision
+  log: what must be answered before sharing, what to confirm, and what the
+  agent assumed — one row per decision, each with a recommended option, who
+  decided, and undo. Members' edits apply immediately.
 - **`/narrative/:slug?b=<storyboard>`** — the reviewer surface, one narrative
   scene by scene, gated by the storyboard's token (`b=`). Clean by default; a
   toggle by the version pill shows before/after on changed scenes and brings
