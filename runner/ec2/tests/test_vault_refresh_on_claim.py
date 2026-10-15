@@ -227,3 +227,38 @@ def test_no_recorded_vault_refreshes_nothing_and_says_so(cloud_runner, box, tmp_
     assert env["GDRIVE_ROOT_FOLDER"] == "old-root" and "AGENT_VAULT" not in env
     check = _check(cloud_runner)
     assert check["status"] == "warn" and "no 1Password vault" in check["detail"]
+
+
+# ── PREPARE_ENGINE=canopy: the same refresh, through canopy's ONE implementation ──────
+# canopy's `cred sync` (orchestrator/cred_cli.sync_env) is what every agent session's start
+# hook runs: same fingerprint, same .env.stamp. With the canopy engine the box calls it
+# instead of keeping this copy (canopy docs/architecture/agent-setup-lifecycle.md).
+
+def test_the_canopy_engine_refreshes_through_cred_sync(cloud_runner, box, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "PREPARE_ENGINE", "canopy")
+    monkeypatch.setattr(cloud_runner, "_canopy_cli", lambda: "/u/.local/bin/canopy")
+    monkeypatch.setenv("OP_SESSION_dimagi", "personal-session")
+    seen = []
+
+    def fake_run(argv, *, env, **kw):
+        seen.append((argv, env, kw.get("cwd")))
+        return subprocess.CompletedProcess(argv, 0, "", "[canopy cred] ace: re-injected")
+
+    monkeypatch.setattr(cloud_runner.subprocess, "run", fake_run)
+    cloud_runner._refresh_agent_env("ace", "ACE-KEY", "Agent-Ace")
+    (argv, env, cwd), = seen
+    assert argv == ["/u/.local/bin/canopy", "cred", "sync", "--agent", "ace", "--ttl", "0"]
+    assert (env["OP_SERVICE_ACCOUNT_TOKEN"], env["AGENT_VAULT"], env["AGENT_SLUG"]) == (
+        "ACE-KEY", "Agent-Ace", "ace")
+    assert "OP_SESSION_dimagi" not in env
+    assert cwd.endswith("/agents/ace")
+    assert _check(cloud_runner)["status"] == "ok" and "re-injected" in _check(cloud_runner)["detail"]
+
+
+def test_a_failed_canopy_refresh_keeps_the_turn_and_says_why(cloud_runner, box, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "PREPARE_ENGINE", "canopy")
+    monkeypatch.setattr(cloud_runner.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(
+        argv, 1, "", "[canopy cred] ace: op vault get Agent-Ace: 403"))
+    env = cloud_runner._agent_env("ace")
+    assert env["GDRIVE_ROOT_FOLDER"] == "old-root"          # the last good file
+    assert _check(cloud_runner)["status"] == "warn" and "403" in _check(cloud_runner)["detail"]
