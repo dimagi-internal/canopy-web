@@ -32,13 +32,16 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from .platform_jobs import app_data_dir
+
 logger = logging.getLogger("canopy_runner")
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 WATCH_URL = "https://gmail.googleapis.com/gmail/v1/users/me/watch"
 
-#: gog's config dir, where credentials-<client>.json lives.
-GOG_CONFIG_DIR = Path.home() / "Library" / "Application Support" / "gogcli"
+#: gog's config dir, where credentials-<client>.json lives (Go's UserConfigDir:
+#: `%APPDATA%\gogcli` on Windows, `~/Library/Application Support/gogcli` on macOS).
+GOG_CONFIG_DIR = app_data_dir(Path.home()) / "gogcli"
 
 #: Re-arm this far ahead of expiry. Google's ceiling is 7 days, so a day of slack
 #: leaves six chances to succeed before push actually lapses — and the server

@@ -2,6 +2,7 @@
 emdash on the debug port — validated separately)."""
 import json
 import urllib.error
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -264,7 +265,9 @@ def test_ensure_sidecar_deps_installs_next_to_the_sidecar(monkeypatch):
     monkeypatch.setattr(cdp_control.subprocess, "run", fake_run)
     cdp_control.ensure_sidecar_deps()
 
-    assert calls["cmd"][:2] == ["npm", "install"]
+    # npm is resolved through PATH (npm.cmd on Windows), so argv[0] may be a full path.
+    assert Path(calls["cmd"][0]).stem == "npm"
+    assert calls["cmd"][1] == "install"
     assert calls["cwd"] == str(cdp_control.SIDECAR.parent)
 
 

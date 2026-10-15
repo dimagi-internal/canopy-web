@@ -1171,7 +1171,22 @@ def make_control_handler(cfg: Config, waker, client=None):
     return _on_control
 
 
+def _tolerant_console(streams=None) -> None:
+    """Never let an unencodable character crash a print.
+
+    The CLI marks results with ✓/✗. A Windows console on cp1252 cannot encode
+    them, so `print(f"✗ {exc}")` raised UnicodeEncodeError and buried the real
+    error under it (2026-10-15). Keep the console's encoding; only stop it raising.
+    """
+    for stream in streams or (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass  # not a TextIOWrapper (a test capture, a pipe wrapper) — leave it
+
+
 def main() -> None:
+    _tolerant_console()
     parser = _build_parser()
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
