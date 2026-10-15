@@ -399,3 +399,38 @@ def test_the_naming_modules_thread_key_matches_executes():
         _turn(id="t-1", origin_ref={}),
     ):
         assert session_naming._thread_key(turn, "hal") == execute._thread_key(turn)
+
+
+def test_create_for_an_agent_this_box_has_no_project_for(monkeypatch):
+    """2026-10-15, turn f60e3ab4 (failure investigation 4): `fizzy` was claimed by a
+    runner whose emdash had no `fizzy` project. The turn must fail with what to fix,
+    never reach the sidebar, and never mark the whole runner not-ready."""
+    from canopy_runner import readiness
+    cfg = _cfg()
+    db = Path(cfg.state_path).with_name("emdash4.db")
+    db.write_text("")
+    cfg.emdash_db = str(db)
+    monkeypatch.setattr(emdash, "list_projects", lambda path: ["ace", "ada"])
+    def never(*a, **k):
+        raise AssertionError("create_task must not run")
+    monkeypatch.setattr(cdp_control, "create_task", never)
+    marked = []
+    monkeypatch.setattr(readiness, "mark_failed", lambda c, note: marked.append(note))
+    client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
+    result = execute.execute_turn(cfg, client, "r-1", _turn())
+    assert result == "failed:t-1"
+    assert client.failed and "is not an emdash project on this runner" in client.failed[0][1]
+    assert marked == []
+
+
+def test_create_proceeds_when_the_project_list_cannot_be_read(monkeypatch):
+    cfg = _cfg()
+    db = Path(cfg.state_path).with_name("emdash4.db")
+    db.write_text("")
+    cfg.emdash_db = str(db)
+    def unreadable(path):
+        raise emdash.EmdashReadError("drift")
+    monkeypatch.setattr(emdash, "list_projects", unreadable)
+    monkeypatch.setattr(cdp_control, "create_task", lambda *a, **k: {"task": "fresh"})
+    client = FakeClient({"reuse": False, "new_thread": True, "summary": ""})
+    assert execute.execute_turn(cfg, client, "r-1", _turn()).startswith("created:")
