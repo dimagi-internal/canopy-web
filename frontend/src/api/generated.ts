@@ -17450,6 +17450,10 @@ export interface components {
         /**
          * CapabilityManifest
          * @description `capability.yaml`, version 1 — what canopy-web brokers for the agent.
+         *
+         *     `ec2-ephemeral` needs `aws` and `exec` and takes no `slots`. `pool` needs
+         *     `slots` (1-50 unique names) and takes no `aws`, `exec` or `params`; its
+         *     `limits.max_concurrent` defaults to `len(slots)` and may only lower it.
          */
         readonly CapabilityManifest: {
             /**
@@ -17462,21 +17466,23 @@ export interface components {
             readonly name: string;
             /**
              * Kind
-             * @constant
+             * @enum {string}
              */
-            readonly kind: "ec2-ephemeral";
+            readonly kind: "ec2-ephemeral" | "pool";
             /**
              * Description
              * @default
              */
             readonly description: string;
-            readonly aws: components["schemas"]["CapabilityAws"];
+            readonly aws?: components["schemas"]["CapabilityAws"] | null;
             readonly limits?: components["schemas"]["CapabilityLimits"];
             /** Params */
             readonly params?: {
                 readonly [key: string]: components["schemas"]["CapabilityParam"];
             };
-            readonly exec: components["schemas"]["CapabilityExec"];
+            readonly exec?: components["schemas"]["CapabilityExec"] | null;
+            /** Slots */
+            readonly slots?: readonly string[] | null;
         };
         /**
          * CapabilityParam
