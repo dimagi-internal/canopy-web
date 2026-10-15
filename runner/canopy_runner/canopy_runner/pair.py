@@ -30,7 +30,7 @@ import urllib.request
 from pathlib import Path
 
 from .client import Client
-from .platform_jobs import process_account
+from .platform_jobs import app_data_dir, process_account
 
 DEFAULT_BASE_URL = "https://canopy.dimagi.com"
 DEFAULT_TOKEN_REF = "@~/.claude/canopy/workbench-token"
@@ -159,7 +159,7 @@ def emdash_live_cdp_port(home: Path, *, is_up=None) -> int | None:
     only while something actually answers DevTools on that port.
     """
     is_up = is_up or cdp_up
-    support = home / "Library" / "Application Support"
+    support = app_data_dir(home)
     try:
         names = sorted(os.listdir(support))
     except OSError:
@@ -187,9 +187,10 @@ def find_emdash_db(home: Path) -> Path:
 
     Older installs used `Emdash`, newer ones `emdash` (the fleet has both). macOS's
     default filesystem is case-insensitive, so `exists()` says yes to either spelling
-    — only a directory listing reveals which one is actually there.
+    — only a directory listing reveals which one is actually there. On Windows the
+    parent is `%APPDATA%`, not `~/Library/Application Support` (`app_data_dir`).
     """
-    support = home / "Library" / "Application Support"
+    support = app_data_dir(home)
     try:
         names = sorted(os.listdir(support))
     except OSError:

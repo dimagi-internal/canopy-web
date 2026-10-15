@@ -8,6 +8,7 @@ supersedes DB injection + app patching. This module shells out to
 from __future__ import annotations
 
 import json
+import shutil
 import socket
 import subprocess
 import urllib.error
@@ -54,9 +55,13 @@ def ensure_sidecar_deps(*, timeout: int = 300) -> None:
     """
     if sidecar_deps_installed():
         return
+    # Resolve npm through PATH + PATHEXT first: on Windows npm is `npm.cmd`, and
+    # CreateProcess does not apply PATHEXT to a bare "npm", so with Node installed it
+    # still raised "npm not found" (2026-10-15, the first real Windows runner).
+    npm = shutil.which("npm") or "npm"
     try:
         proc = subprocess.run(
-            ["npm", "install", "--omit=dev", "--no-audit", "--no-fund"],
+            [npm, "install", "--omit=dev", "--no-audit", "--no-fund"],
             cwd=str(SIDECAR.parent), capture_output=True, text=True, timeout=timeout,
         )
     except FileNotFoundError as exc:

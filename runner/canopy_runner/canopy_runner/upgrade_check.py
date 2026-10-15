@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import emdash
+from . import platform_jobs
 
 # Where macOS keeps the version string. Read from the app bundle rather than asked of
 # a running emdash: the check must work with emdash closed, and — more usefully — the
@@ -76,8 +77,47 @@ class Check:
     skipped: bool = False
 
 
-def installed_version() -> str | None:
-    """emdash's `CFBundleShortVersionString`, or None if it isn't installed here."""
+_UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+
+
+def _windows_uninstall_entries():
+    """(DisplayName, DisplayVersion) for every program the Windows installer
+    registered, per-user first. emdash's NSIS installer writes one; there is no
+    Info.plist to read on Windows."""
+    import winreg  # Windows-only module: imported here so the module loads anywhere
+
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            root = winreg.OpenKey(hive, _UNINSTALL_KEY)
+        except OSError:
+            continue
+        with root:
+            for i in range(winreg.QueryInfoKey(root)[0]):
+                try:
+                    with winreg.OpenKey(root, winreg.EnumKey(root, i)) as sub:
+                        name = winreg.QueryValueEx(sub, "DisplayName")[0]
+                        version = winreg.QueryValueEx(sub, "DisplayVersion")[0]
+                except OSError:
+                    continue
+                yield str(name), str(version)
+
+
+def installed_version(*, windows: bool | None = None, entries=None) -> str | None:
+    """emdash's installed version, or None if it isn't installed here.
+
+    macOS reads `CFBundleShortVersionString` from the bundle. Windows reads the
+    installer's Uninstall entry: before this, the check looked only in
+    /Applications and so was skipped on every Windows box (2026-10-15)."""
+    if windows is None:
+        windows = platform_jobs.is_windows()
+    if windows:
+        try:
+            for name, version in (entries or _windows_uninstall_entries)():
+                if name.lower().startswith("emdash") and version:
+                    return version
+        except OSError:
+            pass
+        return None
     try:
         with _INFO_PLIST.open("rb") as fh:
             return plistlib.load(fh).get("CFBundleShortVersionString")
@@ -107,7 +147,8 @@ def record_verified(version: str | None) -> None:
 def check_version() -> Check:
     version = installed_version()
     if version is None:
-        return Check("version", True, "emdash not installed at /Applications — skipping",
+        where = "in the Windows installer registry" if platform_jobs.is_windows() else "at /Applications"
+        return Check("version", True, f"emdash not installed {where} — skipping",
                      skipped=True)
     last = _last_verified()
     if last == version:

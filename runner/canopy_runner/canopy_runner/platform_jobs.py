@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
 
 #: launchd labels (macOS). Also the filenames of the two plist templates.
 UPDATER_LABEL = "com.canopy.runner.updater"
@@ -65,6 +66,23 @@ def process_account() -> str:
     import pwd
 
     return pwd.getpwuid(os.getuid()).pw_name
+
+
+def app_data_dir(home: Path, *, env=None) -> Path:
+    """Where per-user apps keep their data on THIS box: emdash (Electron's
+    `appData`) and gog (Go's `os.UserConfigDir`) both resolve here.
+
+    macOS is `~/Library/Application Support`; Windows is `%APPDATA%` (Roaming).
+    Every other caller wrote the macOS path inline, so on Windows `pair` wrote a
+    runner.json pointing at a database that could not exist and the gmail watch
+    looked for gog credentials in a directory nobody creates (2026-10-15, the first
+    real Windows runner). Non-Windows keeps the macOS layout, unchanged.
+    """
+    env = os.environ if env is None else env
+    if is_windows():
+        appdata = env.get("APPDATA")
+        return Path(appdata) if appdata else home / "AppData" / "Roaming"
+    return home / "Library" / "Application Support"
 
 
 def updater_job_name() -> str:
