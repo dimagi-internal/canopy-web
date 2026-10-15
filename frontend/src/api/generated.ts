@@ -699,6 +699,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/mail/domains/{workspace}/{domain_id}/shares": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Share a domain with a workspace and everything below it (superuser) */
+        readonly put: operations["share_mail_domain"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/mail/domains/{workspace}/{domain_id}/shares/{share_workspace}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Stop sharing a domain with a workspace (superuser) */
+        readonly delete: operations["unshare_mail_domain"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/mail/resolve": {
         readonly parameters: {
             readonly query?: never;
@@ -10092,6 +10126,33 @@ export interface components {
             readonly routes: readonly components["schemas"]["MailRouteOut"][];
             /** Can Manage */
             readonly can_manage: boolean;
+            /**
+             * Owned
+             * @default true
+             */
+            readonly owned: boolean;
+            /**
+             * Owner Workspace
+             * @default
+             */
+            readonly owner_workspace: string;
+            /**
+             * Can Share
+             * @default false
+             */
+            readonly can_share: boolean;
+            /**
+             * Shares
+             * @default []
+             */
+            readonly shares: readonly components["schemas"]["MailDomainShareOut"][];
+        };
+        /** MailDomainShareOut */
+        readonly MailDomainShareOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Daily Send Cap */
+            readonly daily_send_cap: number;
         };
         /** MailRouteOut */
         readonly MailRouteOut: {
@@ -10151,6 +10212,13 @@ export interface components {
              * @default true
              */
             readonly enabled: boolean;
+        };
+        /** MailDomainShareIn */
+        readonly MailDomainShareIn: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Daily Send Cap */
+            readonly daily_send_cap?: number | null;
         };
         /** MailResolveOut */
         readonly MailResolveOut: {
@@ -24049,6 +24117,57 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly share_mail_domain: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly domain_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MailDomainShareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailDomainOut"];
+                };
+            };
+        };
+    };
+    readonly unshare_mail_domain: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly domain_id: number;
+                readonly share_workspace: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MailDomainOut"];
+                };
             };
         };
     };

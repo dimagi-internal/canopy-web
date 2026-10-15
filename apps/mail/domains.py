@@ -17,12 +17,15 @@ from apps.agents.models import Agent
 from apps.workspaces import services as wsvc
 
 from . import dns, ses
-from .models import MailDomain, MailRoute
+from .models import MailDomain, MailDomainShare, MailRoute
 
 _DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$")
 _LOCAL_RE = re.compile(r"^(\*|[a-z0-9!#$%&'+/=?^_`{|}~-]+(\.[a-z0-9!#$%&'+/=?^_`{|}~-]+)*)$")
 _LOCAL_MAX = 64
+# Addresses only the domain's own workspace may route: the catch-all, the DMARC report
+# address, and the role addresses (RFC 2142) a mail provider or registrar writes to.
+_OWNER_ONLY = {MailRoute.CATCH_ALL, "postmaster", "abuse", "hostmaster", "webmaster", "security"}
 
 
 log = logging.getLogger(__name__)
@@ -214,30 +217,90 @@ def remove_domain(domain: MailDomain) -> None:
     domain.delete()  # routes go with it; their threads and messages stay (route → NULL)
 
 
+def share_for(domain: MailDomain, workspace) -> MailDomainShare | None:
+    """The grant that lets `workspace` use `domain`: one on the workspace itself, else on
+    its nearest ancestor. None for the domain's own workspace and for anyone not covered."""
+    if domain.workspace_id == workspace.pk:
+        return None
+    chain = [workspace.pk, *workspace.ancestor_slugs()]
+    by_ws = {s.workspace_id: s for s in domain.shares.filter(workspace_id__in=chain)}
+    return next((by_ws[w] for w in chain if w in by_ws), None)
+
+
+def may_use(domain: MailDomain, workspace) -> bool:
+    return domain.workspace_id == workspace.pk or share_for(domain, workspace) is not None
+
+
+def usable_domains(workspace) -> list[MailDomain]:
+    """The workspace's own domains, then the domains shared with it (or an ancestor)."""
+    chain = [workspace.pk, *workspace.ancestor_slugs()]
+    own = list(workspace.mail_domains.all())
+    shared = (MailDomain.objects.filter(shares__workspace_id__in=chain)
+              .exclude(workspace=workspace).select_related("workspace").distinct())
+    return own + list(shared)
+
+
+def route_is_live(route: MailRoute) -> bool:
+    """A route on a shared domain stops working the moment its workspace loses the share."""
+    return route.workspace_id == route.domain.workspace_id or share_for(route.domain, route.workspace) is not None
+
+
 def save_route(domain: MailDomain, *, local_part: str, kind: str, agent_slug: str = "",
-               forward_to_user_id: int | None = None, enabled: bool = True) -> MailRoute:
+               forward_to_user_id: int | None = None, enabled: bool = True,
+               workspace=None) -> MailRoute:
+    """Create or replace one address's route, held by `workspace` (default: the domain's).
+
+    On a shared domain the local part is first come, first served across every workspace
+    using it: an address another workspace holds is 409 and never replaced or named."""
+    workspace = workspace or domain.workspace
+    owner = workspace.pk == domain.workspace_id
+    if not owner and not may_use(domain, workspace):
+        raise DomainError(404, "no such domain")
     local = (local_part or "").strip().lower()
     if len(local) > _LOCAL_MAX or not _LOCAL_RE.match(local):
         raise DomainError(422, "that is not a valid address before the @")
     if local == settings.MAIL_FORWARDER_LOCAL_PART:
         raise DomainError(422, f"{local}@ is reserved for forwarded mail")
+    if not owner and (local in _OWNER_ONLY or local == settings.MAIL_DMARC_LOCAL_PART):
+        raise DomainError(422, f"{local}@ on a shared domain is kept for the domain's own workspace")
+    held = MailRoute.objects.filter(domain=domain, local_part=local).first()
+    if held is not None and held.workspace_id != workspace.pk:
+        raise DomainError(409, "that address is already taken")
     agent = forward_to = None
     if kind == MailRoute.AGENT:
         if local == MailRoute.CATCH_ALL:
             raise DomainError(422, "the catch-all can forward or drop, not belong to an agent")
-        agent = Agent.objects.filter(slug=agent_slug, workspace=domain.workspace).first()
+        agent = Agent.objects.filter(slug=agent_slug, workspace=workspace).first()
         if agent is None:
             raise DomainError(422, f"no agent {agent_slug!r} in this workspace")
     elif kind == MailRoute.FORWARD:
         forward_to = get_user_model().objects.filter(pk=forward_to_user_id).first()
-        if forward_to is None or not wsvc.is_member(forward_to, domain.workspace_id):
+        if forward_to is None or not wsvc.is_member(forward_to, workspace.pk):
             raise DomainError(422, "mail can only be forwarded to a member of this workspace")
     elif kind != MailRoute.DROP:
         raise DomainError(422, "kind must be agent, forward or drop")
-    route, _ = MailRoute.objects.update_or_create(
-        domain=domain, local_part=local,
-        defaults={"kind": kind, "agent": agent, "forward_to": forward_to, "enabled": enabled})
+    try:
+        with transaction.atomic():
+            route, _ = MailRoute.objects.update_or_create(
+                domain=domain, local_part=local, workspace=workspace,
+                defaults={"kind": kind, "agent": agent, "forward_to": forward_to, "enabled": enabled})
+    except IntegrityError:  # another workspace took it between the check and the write
+        raise DomainError(409, "that address is already taken") from None
     return route
+
+
+def set_share(domain: MailDomain, workspace, *, daily_send_cap: int | None = None, by=None) -> MailDomainShare:
+    if workspace.pk == domain.workspace_id:
+        raise DomainError(422, "a domain is always usable by its own workspace")
+    if daily_send_cap is not None and not 1 <= daily_send_cap <= 5000:
+        raise DomainError(422, "daily_send_cap must be between 1 and 5000")
+    share, created = MailDomainShare.objects.get_or_create(
+        domain=domain, workspace=workspace,
+        defaults={"daily_send_cap": daily_send_cap or 200, "created_by": by})
+    if not created and daily_send_cap is not None and share.daily_send_cap != daily_send_cap:
+        share.daily_send_cap = daily_send_cap
+        share.save(update_fields=["daily_send_cap"])
+    return share
 
 
 def _domain_for(host: str) -> MailDomain | None:
@@ -260,8 +323,12 @@ def resolve(address: str) -> tuple[MailDomain | None, MailRoute | None]:
     if not domain.routes_live or local == settings.MAIL_FORWARDER_LOCAL_PART:
         return domain, None
     routes = {r.local_part: r for r in domain.routes.filter(
-        local_part__in=[local, MailRoute.CATCH_ALL], enabled=True).select_related("agent", "forward_to")}
+        local_part__in=[local, MailRoute.CATCH_ALL], enabled=True).select_related(
+            "agent", "forward_to", "workspace", "domain")}
+    exact = routes.get(local)
+    if exact is not None and not route_is_live(exact):
+        exact = None  # its workspace lost the share: the address falls to the catch-all
     if local == settings.MAIL_DMARC_LOCAL_PART:
         # DMARC aggregate reports: never swept up by the catch-all and forwarded to a person.
-        return domain, routes.get(local)
-    return domain, routes.get(local) or routes.get(MailRoute.CATCH_ALL)
+        return domain, exact
+    return domain, exact or routes.get(MailRoute.CATCH_ALL)

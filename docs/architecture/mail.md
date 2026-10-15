@@ -2,6 +2,8 @@
 
 A workspace admin brings their own domain; canopy-web runs its email through Amazon SES. **Agent addresses** (`ada@domain`) turn incoming mail into the agent's email turn and send as that address. **Every other address** is forwarded to a canopy user's login email (a catch-all route catches the rest). Setup is Settings → Email (`/w/:workspace/settings/email`); the operator steps are `docs/runbooks/mail-domain-onboarding.md`.
 
+A superuser can **share** a domain with other workspaces (below), so one domain — dimagi.ai — serves as a sitewide address space instead of every workspace bringing its own.
+
 Not here: human inboxes/IMAP/webmail, replying to forwarded mail *as* the domain, automatic DNS writes, bulk mail.
 
 ## Tier and removability
@@ -22,12 +24,23 @@ The canopy CLI's SES backend (canopy repo) may stay: `GET /api/mail/resolve` 404
 ## Model
 
 - **`MailDomain`** — workspace FK, `name` (globally unique: SES identities are account-wide; a row still `pending` after `MAIL_PENDING_DOMAIN_TTL_DAYS` no longer holds it), `status` `pending` → `verified` → `suspended`, `receiving` (live MX check), `mail_from_subdomain` (`bounce`), `dkim_tokens`, `suspended_reason`, `daily_send_cap` (200). Routing is inert until `verified`; DKIM verifying is the proof of DNS control.
-- **`MailRoute`** — `local_part` (`*` = catch-all; unique per domain), `kind` `agent` | `forward` | `drop`, `agent` FK, `forward_to` **User FK** (must be a workspace member), `enabled`. Exact local part beats `*`. The catch-all can forward or drop, never belong to an agent (422); an agent's own address is its non-catch-all route, the first by domain then local part. `canopy-forwarder` (the From of forwarded mail) cannot be routed. `dmarc` (the `rua` address of the DMARC record canopy asks for) is never taken by the catch-all — DMARC aggregate reports are dropped unless `dmarc@` has its own route.
+- **`MailDomainShare`** — a superuser's grant: `domain`, `workspace`, `daily_send_cap` (200). It covers the named workspace **and every workspace below it** (nearest grant wins, `domains.share_for`). Unique per (domain, workspace).
+- **`MailRoute`** — `workspace` (the workspace that HOLDS the address: the domain's own, or one the domain is shared with; defaults to the domain's), `local_part` (`*` = catch-all; unique per domain), `kind` `agent` | `forward` | `drop`, `agent` FK, `forward_to` **User FK** (must be a workspace member), `enabled`. Exact local part beats `*`. The catch-all can forward or drop, never belong to an agent (422); an agent's own address is its non-catch-all route, the first by domain then local part. `canopy-forwarder` (the From of forwarded mail) cannot be routed. `dmarc` (the `rua` address of the DMARC record canopy asks for) is never taken by the catch-all — DMARC aggregate reports are dropped unless `dmarc@` has its own route.
 - **`MailThread`** / **`MailMessage`** / **`MailAttachment`** — a thread has a public `uuid` (the `thread_id` agents and turns carry) and an `address` and `agent_slug` snapshotted from its route at creation (an agent's thread list filters on `agent_slug`, so it keeps threads whose route was removed). Its `route` is `SET_NULL`: removing a route or a domain stops the address receiving mail but keeps every thread and message (reads use `address`; a reply on a thread whose route is gone or disabled is 409 "this address no longer exists"). Messages dedupe on `message_id` per workspace + mailbox. An inbound message stores `reply_to` (its Reply-To addresses, at most 50); a reply with no `to` uses it only when every address is on the sender's domain or a subdomain (malformed and own-address entries dropped), else the sender — the thread detail shows the result as `default_reply_to`. It also stores `verdicts` (the SES receipt's spf/dkim/dmarc/spam/virus statuses, lowercase name → status; only agent mail is stored, so forwarded mail has none). Raw MIME for agent mail is copied to `kept/` in S3. Parsing strips NUL bytes from every stored field (Postgres text cannot hold them).
 - **`MailForwardLog`** — one row per forwarded message (`forwarded` / `dropped` / an in-flight `sending` claim), metadata only; the body is never stored.
 - **`MailEvent`** — one SES sending event; unique on the SNS envelope `MessageId` (`sns_message_id`) when set, so an SNS redelivery counts once while several notifications for one multi-recipient send (same SES message id) each count. Each recorded event prunes its domain's rows older than 8 days (the window plus a day).
 
 Threading: an inbound message joins the thread whose messages' ids appear in its `In-Reply-To`/`References`, else starts one; replies set both headers.
+
+## Shared domains
+
+One domain, many workspaces. The domain's own workspace keeps everything domain-wide: DNS records, Re-check, Remove, the catch-all, the role addresses (`postmaster`, `abuse`, `hostmaster`, `webmaster`, `security`, `dmarc`), the domain-wide `daily_send_cap` and lifting a suspension. A workspace the domain is shared with sees it on its Email page as "Shared from <owner>" and only adds routes for **its own** agents and members.
+
+- **Who:** sharing is `PUT/DELETE /api/mail/domains/{workspace}/{id}/shares` — `superuser` only (not a workspace setting: it lets one tenant hold addresses on another tenant's domain). The Email page shows the "Shared with" panel only when the domain answers `can_share`.
+- **Addresses are first come, first served** across every workspace on the domain: a local part another workspace holds is 409 "that address is already taken", never replaced and never naming the holder.
+- **Each workspace sees only its own addresses**, the owner included (`_domain_out` filters routes by workspace); threads, messages, attachments and forwards belong to the route's workspace.
+- **Two caps on a send:** the domain-wide cap counts every workspace's sends; a shared workspace also has its grant's `daily_send_cap`, counted for that workspace alone. A bounce or complaint anywhere counts toward the one domain's reputation and a suspension stops every workspace on it — that is the cost of sharing, and why the per-workspace cap exists.
+- **Revoking** a grant deletes no route, thread or message: the routes go inert (`domains.route_is_live`: inbound falls through to the owner's catch-all, a send is 409 "no longer shared") and re-sharing revives them.
 
 ## AWS side (`deploy/aws/canopy-mail.cfn.yaml`, stack `canopy-web-mail`, labs account, us-east-1)
 

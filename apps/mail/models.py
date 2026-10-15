@@ -47,12 +47,38 @@ class MailDomain(models.Model):
         return self.status in (self.VERIFIED, self.SUSPENDED)
 
 
+class MailDomainShare(models.Model):
+    """A superuser's grant letting another workspace hold addresses on a domain.
+
+    Covers the named workspace AND every workspace below it. The domain's own workspace
+    keeps DNS, the domain-wide cap and suspension; a sharing workspace only adds routes
+    for its own agents and members, under its own `daily_send_cap`."""
+    domain = models.ForeignKey(MailDomain, on_delete=models.CASCADE, related_name="shares")
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="mail_domain_shares")
+    daily_send_cap = models.PositiveIntegerField(default=200)
+    """Recipients per 24 h for each workspace this grant covers (counted per workspace)."""
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                   on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        ordering = ["domain__name", "workspace_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["domain", "workspace"], name="mail_domain_share_once"),
+        ]
+
+
 class MailRoute(models.Model):
     AGENT, FORWARD, DROP = "agent", "forward", "drop"
     KIND_CHOICES = [(AGENT, "Agent mailbox"), (FORWARD, "Forward to a member"), (DROP, "Drop")]
     CATCH_ALL = "*"
 
     domain = models.ForeignKey(MailDomain, on_delete=models.CASCADE, related_name="routes")
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="mail_routes")
+    """The workspace that holds this address: the domain's own, or one it is shared with.
+    Its threads, messages, agent and forward destination all belong to this workspace."""
     local_part = models.CharField(max_length=64)
     """Lowercased; `*` is the catch-all. Exact match wins over `*`."""
     kind = models.CharField(max_length=8, choices=KIND_CHOICES)
@@ -81,6 +107,11 @@ class MailRoute(models.Model):
     @property
     def address(self) -> str:
         return f"{self.local_part}@{self.domain.name}"
+
+    def save(self, *args, **kwargs):
+        if self.workspace_id is None and self.domain_id:
+            self.workspace_id = self.domain.workspace_id
+        super().save(*args, **kwargs)
 
 
 class MailThread(models.Model):

@@ -29,6 +29,7 @@ from . import agent_mail, domains, inbound, reputation, ses, sns
 from .models import MailDomain, MailMessage, MailRoute, MailThread
 from .schemas import (
     MailDomainIn,
+    MailDomainShareIn,
     MailDomainListOut,
     MailDomainOut,
     MailDomainPatchIn,
@@ -69,6 +70,19 @@ def _domain(ws, domain_id: int) -> MailDomain:
     return d
 
 
+def _usable_domain(ws, domain_id: int) -> MailDomain:
+    """A domain this workspace may hold addresses on: its own, or one shared with it."""
+    d = MailDomain.objects.filter(pk=domain_id).select_related("workspace").first()
+    if d is None or not domains.may_use(d, ws):
+        raise HttpError(404, "no such domain")
+    return d
+
+
+def _superuser(user) -> None:
+    if not user.is_superuser:
+        raise HttpError(403, "only a superuser may share a mail domain")
+
+
 def _route_out(r: MailRoute) -> dict:
     return {"id": r.pk, "local_part": r.local_part, "address": r.address, "kind": r.kind,
             "agent_slug": r.agent.slug if r.agent_id else "",
@@ -77,13 +91,28 @@ def _route_out(r: MailRoute) -> dict:
             "enabled": r.enabled}
 
 
-def _domain_out(d: MailDomain, user) -> dict:
-    return {"id": d.pk, "name": d.name, "status": d.status, "receiving": d.receiving,
-            "mx_provider": d.mx_provider, "suspended_reason": d.suspended_reason,
-            "daily_send_cap": d.daily_send_cap,
-            "records": [asdict(r) for r in domains.records(d)],
-            "routes": [_route_out(r) for r in d.routes.select_related("agent", "forward_to")],
-            "can_manage": perms.can(user, d.workspace, perms.INTEGRATIONS)}
+def _domain_out(d: MailDomain, user, ws=None) -> dict:
+    """One domain as `ws` sees it (default: its own workspace).
+
+    Each workspace sees only its own addresses — on a shared domain the others belong to
+    other tenants. DNS records and the domain-wide controls are the owner's; a workspace
+    the domain is shared with sees its own send cap instead."""
+    ws = ws or d.workspace
+    owned = ws.pk == d.workspace_id
+    share = None if owned else domains.share_for(d, ws)
+    routes = d.routes.filter(workspace=ws).select_related("agent", "forward_to", "domain")
+    out = {"id": d.pk, "name": d.name, "status": d.status, "receiving": d.receiving,
+           "mx_provider": d.mx_provider, "suspended_reason": d.suspended_reason,
+           "daily_send_cap": d.daily_send_cap if owned else share.daily_send_cap,
+           "records": [asdict(r) for r in domains.records(d)] if owned else [],
+           "routes": [_route_out(r) for r in routes],
+           "can_manage": perms.can(user, ws, perms.INTEGRATIONS),
+           "owned": owned, "owner_workspace": d.workspace_id,
+           "can_share": owned and user.is_superuser, "shares": []}
+    if user.is_superuser:
+        out["shares"] = [{"workspace": s.workspace_id, "daily_send_cap": s.daily_send_cap}
+                         for s in d.shares.all()]
+    return out
 
 
 def _raise(exc: domains.DomainError):
@@ -101,7 +130,8 @@ def _refuse_keeping(request, exc: domains.DomainError):
 @router.get("/domains/{workspace}", response=MailDomainListOut, summary="List mail domains")
 def list_mail_domains(request: HttpRequest, workspace: str) -> dict:
     ws = _ws(request.user, workspace)
-    items = [_domain_out(domains.refresh(d), request.user) for d in ws.mail_domains.all()]
+    items = [_domain_out(domains.refresh(d) if d.workspace_id == ws.pk else d, request.user, ws)
+             for d in domains.usable_domains(ws)]
     return {"enabled": settings.MAIL_ENABLED, "items": items,
             "can_manage": perms.can(request.user, ws, perms.INTEGRATIONS)}
 
@@ -171,12 +201,13 @@ def remove_mail_domain(request: HttpRequest, workspace: str, domain_id: int):
             summary="Create or replace the route for one address (admin or owner)")
 def save_mail_route(request: HttpRequest, workspace: str, domain_id: int, payload: MailRouteIn) -> dict:
     ws = _admin_ws(request.user, workspace)
-    d = _domain(ws, domain_id)
-    prior = d.routes.filter(local_part=payload.local_part.strip().lower()).first()
+    d = _usable_domain(ws, domain_id)
+    prior = d.routes.filter(local_part=payload.local_part.strip().lower(), workspace=ws).first()
     try:
         r = domains.save_route(d, local_part=payload.local_part, kind=payload.kind,
                                agent_slug=payload.agent_slug,
-                               forward_to_user_id=payload.forward_to_user_id, enabled=payload.enabled)
+                               forward_to_user_id=payload.forward_to_user_id, enabled=payload.enabled,
+                               workspace=ws)
     except domains.DomainError as exc:
         _raise(exc)
     audit.note_change(scope=f"mail.route:{r.address}",
@@ -188,12 +219,55 @@ def save_mail_route(request: HttpRequest, workspace: str, domain_id: int, payloa
                summary="Remove an address's route (admin or owner)")
 def delete_mail_route(request: HttpRequest, workspace: str, domain_id: int, route_id: int):
     ws = _admin_ws(request.user, workspace)
-    r = _domain(ws, domain_id).routes.filter(pk=route_id).first()
+    r = _usable_domain(ws, domain_id).routes.filter(pk=route_id, workspace=ws).first()
     if r is None:
         raise HttpError(404, "no such route")
     audit.note_change(scope=f"mail.route:{r.address}", before=_route_out(r), after=None)
     r.delete()
     return 204, None
+
+
+# Sharing is a superuser decision, not a workspace setting: it lets one tenant hold addresses
+# on another tenant's domain. The path names the domain's own workspace; the superuser need
+# not be a member of it.
+def _owned_domain(workspace: str, domain_id: int) -> MailDomain:
+    d = MailDomain.objects.filter(pk=domain_id, workspace_id=workspace).select_related("workspace").first()
+    if d is None:
+        raise HttpError(404, "no such domain")
+    return d
+
+
+@router.put("/domains/{workspace}/{domain_id}/shares", response=MailDomainOut,
+            summary="Share a domain with a workspace and everything below it (superuser)")
+def share_mail_domain(request: HttpRequest, workspace: str, domain_id: int, payload: MailDomainShareIn) -> dict:
+    _superuser(request.user)
+    d = _owned_domain(workspace, domain_id)
+    target = Workspace.objects.filter(slug=payload.workspace).first()
+    if target is None:
+        raise HttpError(404, "no such workspace")
+    prior = d.shares.filter(workspace=target).first()
+    try:
+        s = domains.set_share(d, target, daily_send_cap=payload.daily_send_cap, by=request.user)
+    except domains.DomainError as exc:
+        _raise(exc)
+    audit.note_change(scope=f"mail.share:{d.name}:{target.pk}",
+                      before={"daily_send_cap": prior.daily_send_cap} if prior else None,
+                      after={"daily_send_cap": s.daily_send_cap})
+    return _domain_out(d, request.user)
+
+
+@router.delete("/domains/{workspace}/{domain_id}/shares/{share_workspace}", response=MailDomainOut,
+               summary="Stop sharing a domain with a workspace (superuser)")
+def unshare_mail_domain(request: HttpRequest, workspace: str, domain_id: int, share_workspace: str) -> dict:
+    _superuser(request.user)
+    d = _owned_domain(workspace, domain_id)
+    s = d.shares.filter(workspace_id=share_workspace).first()
+    if s is None:
+        raise HttpError(404, "that domain is not shared with that workspace")
+    audit.note_change(scope=f"mail.share:{d.name}:{share_workspace}",
+                      before={"daily_send_cap": s.daily_send_cap}, after=None)
+    s.delete()  # its routes stay but go inert (domains.route_is_live); re-sharing revives them
+    return _domain_out(d, request.user)
 
 
 def _thread(ws, uuid: str) -> MailThread:
@@ -262,7 +336,7 @@ def _counterpart(direction, from_addr, to) -> str:
 
 def _agent_route(ws, slug: str) -> MailRoute | None:
     """The agent's own address here: never the catch-all, and the same one every time."""
-    return (MailRoute.objects.filter(domain__workspace=ws, kind=MailRoute.AGENT, agent__slug=slug,
+    return (MailRoute.objects.filter(workspace=ws, kind=MailRoute.AGENT, agent__slug=slug,
                                      enabled=True)
             .exclude(local_part=MailRoute.CATCH_ALL)
             .select_related("domain", "agent").order_by("domain__name", "local_part").first())
@@ -272,9 +346,9 @@ def _agent_route(ws, slug: str) -> MailRoute | None:
 def resolve_mail_address(request: HttpRequest, address: str) -> dict:
     domain, route = domains.resolve(address)
     if (route is None or route.kind != MailRoute.AGENT
-            or domain.workspace_id not in wsvc.user_workspace_slugs(request.user)):
+            or route.workspace_id not in wsvc.user_workspace_slugs(request.user)):
         raise HttpError(404, "not an SES mailbox")
-    return {"backend": "ses", "workspace": domain.workspace_id, "agent": route.agent.slug}
+    return {"backend": "ses", "workspace": route.workspace_id, "agent": route.agent.slug}
 
 
 @router.get("/threads/{workspace}", response=MailThreadListOut, summary="List mail threads")

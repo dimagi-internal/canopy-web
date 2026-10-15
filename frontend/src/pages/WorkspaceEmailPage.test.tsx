@@ -10,6 +10,7 @@ import * as workspacesApi from '@/api/workspaces'
 const domain = {
   id: 1, name: 'marshellis.com', status: 'pending', receiving: false, mx_provider: 'Zoho',
   suspended_reason: '', daily_send_cap: 200, can_manage: true,
+  owned: true, owner_workspace: 'marshellis', can_share: false, shares: [] as { workspace: string; daily_send_cap: number }[],
   records: [
     { purpose: 'spf', type: 'TXT', name: 'marshellis.com',
       value: 'v=spf1 include:zohomail.com include:amazonses.com -all', priority: null, ok: false, found: [] },
@@ -26,6 +27,7 @@ vi.mock('@/api/mail', async (orig) => ({
   saveMailRoute: vi.fn(async () => domain.routes[0]),
   deleteMailRoute: vi.fn(async () => undefined),
   removeMailDomain: vi.fn(async () => undefined),
+  shareMailDomain: vi.fn(async () => domain),
 }))
 vi.mock('@/api/agents', () => ({ listAgents: vi.fn(async () => ({ items: [{ slug: 'hal', name: 'Hal', workspace: 'marshellis' }] })) }))
 vi.mock('@/api/workspaces', async (orig) => ({
@@ -177,5 +179,36 @@ describe('WorkspaceEmailPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save address' }))
     await vi.waitFor(() => expect(mail.saveMailRoute).toHaveBeenCalledWith('marshellis', 1, {
       local_part: 'new', kind: 'forward', agent_slug: '', forward_to_user_id: 1, enabled: true }))
+  })
+  it('a shared domain shows its owner and only this workspace\'s addresses, no DNS or domain controls', async () => {
+    vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
+      enabled: true, can_manage: true,
+      items: [{ ...domain, name: 'dimagi.ai', status: 'verified', owned: false, owner_workspace: 'dimagi',
+                records: [], routes: [], daily_send_cap: 50 }],
+    })
+    renderPage()
+    expect(await screen.findByText('Shared from dimagi')).toBeTruthy()
+    expect(screen.queryByTestId('mail-records')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Remove domain' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Re-check' })).toBeNull()
+    expect(screen.getByText('This workspace may send to 50 recipients a day from dimagi.ai.')).toBeTruthy()
+    // a shared domain is not this workspace's own, so it can still add one
+    expect(screen.getByRole('button', { name: 'Add domain' })).toBeTruthy()
+  })
+  it('a superuser shares an owned domain with a workspace', async () => {
+    vi.mocked(mail.listMailDomains).mockResolvedValueOnce({
+      enabled: true, can_manage: true,
+      items: [{ ...domain, can_share: true, shares: [{ workspace: 'connect', daily_send_cap: 200 }] }],
+    })
+    renderPage()
+    expect(await screen.findByText('200/day each')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Share with workspace'), { target: { value: 'dimagi' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }))
+    await vi.waitFor(() => expect(mail.shareMailDomain).toHaveBeenCalledWith('marshellis', 1, 'dimagi'))
+  })
+  it('no sharing controls without can_share', async () => {
+    renderPage()
+    await screen.findByText('*@marshellis.com')
+    expect(screen.queryByTestId('mail-shares')).toBeNull()
   })
 })
