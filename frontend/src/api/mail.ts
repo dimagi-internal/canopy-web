@@ -72,6 +72,25 @@ export async function deleteMailRoute(workspace: string, domainId: number, route
   if (!res.response.ok) fail(res, 'Failed to remove the route')
 }
 
+// Superuser only: let `shareWith` and every workspace below it hold addresses on a
+// domain owned by `workspace`.
+export async function shareMailDomain(workspace: string, domainId: number,
+  shareWith: string, dailySendCap?: number): Promise<MailDomainOut> {
+  const res = await apiV2.PUT('/api/mail/domains/{workspace}/{domain_id}/shares', {
+    params: { path: { workspace, domain_id: domainId } },
+    body: { workspace: shareWith, daily_send_cap: dailySendCap ?? null } })
+  if (!res.response.ok) fail(res, 'Failed to share the domain')
+  return res.data as MailDomainOut
+}
+
+export async function unshareMailDomain(workspace: string, domainId: number,
+  shareWorkspace: string): Promise<MailDomainOut> {
+  const res = await apiV2.DELETE('/api/mail/domains/{workspace}/{domain_id}/shares/{share_workspace}', {
+    params: { path: { workspace, domain_id: domainId, share_workspace: shareWorkspace } } })
+  if (!res.response.ok) fail(res, 'Failed to stop sharing the domain')
+  return res.data as MailDomainOut
+}
+
 export type MailThreadList = { items: MailThreadOut[]; agent_address: string }
 
 // The agent's threads plus its own address here ('' when it has none).

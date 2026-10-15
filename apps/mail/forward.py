@@ -72,7 +72,7 @@ def _is_loop(email: str, domain: str) -> bool:
 def forward(route, parsed, raw: bytes, recipient: str) -> str:
     user = route.forward_to
     drop = None
-    if user is None or not wsvc.is_member(user, route.domain.workspace_id):
+    if user is None or not wsvc.is_member(user, route.workspace_id):
         drop = ("dropped:not-a-member", "destination is no longer a member of this workspace")
     elif not (user.email or "").strip():
         drop = ("dropped:no-email", "destination has no email address")

@@ -8,6 +8,8 @@ import {
   refreshMailDomain,
   removeMailDomain,
   saveMailRoute,
+  shareMailDomain,
+  unshareMailDomain,
   updateMailDomain,
   listMailDomains,
   type MailDomainListOut,
@@ -20,6 +22,11 @@ import { listMembers, type MemberOut } from '@/api/workspaces'
 // can read it; the server answers `can_manage` for the list and per domain, so this
 // page never guesses at a role. Forwards go only to workspace members, so there is
 // deliberately no free-text email field anywhere here.
+//
+// A domain is either the workspace's own (`owned`: DNS, catch-all, domain-wide cap) or
+// shared with it by a superuser from another workspace (`owner_workspace`): then this
+// workspace only adds its own addresses, under its own send cap. A superuser sees
+// `can_share` on an owned domain and picks which workspaces (and their children) share it.
 
 const field =
   'min-h-11 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground sm:min-h-0'
@@ -85,6 +92,8 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
   const [enabled, setEnabled] = useState(true)
   const [cap, setCap] = useState(String(domain.daily_send_cap))
   const manage = domain.can_manage
+  const owned = domain.owned
+  const [shareWith, setShareWith] = useState('')
   const status = STATUS[domain.status] ?? { label: domain.status, cls: 'text-muted-foreground' }
   const spfMany = domain.records.some((r) => r.purpose === 'spf' && manyFound(r.found))
 
@@ -133,11 +142,18 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         <h3 className="text-[14px] font-semibold text-foreground">{domain.name}</h3>
         <span className={status.cls}>{status.label}</span>
         <span className="text-muted-foreground">Receiving: {domain.receiving ? 'live' : 'not yet'}</span>
-        <button type="button" className={secondary} disabled={busy}
-          onClick={() => void run(async () => onChange(await refreshMailDomain(workspace, domain.id)), 'Could not re-check')}>
-          Re-check
-        </button>
-        {manage && (
+        {!owned && (
+          <span className="text-muted-foreground" data-testid="mail-shared-from">
+            Shared from {domain.owner_workspace}
+          </span>
+        )}
+        {owned && (
+          <button type="button" className={secondary} disabled={busy}
+            onClick={() => void run(async () => onChange(await refreshMailDomain(workspace, domain.id)), 'Could not re-check')}>
+            Re-check
+          </button>
+        )}
+        {manage && owned && (
           <button type="button" className="px-2 text-[12px] text-destructive hover:underline" disabled={busy}
             onClick={() => {
               if (!window.confirm(`Remove ${domain.name}? Its addresses stop receiving mail. Existing threads are kept.`)) return
@@ -148,7 +164,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         )}
       </div>
 
-      {!domain.receiving && domain.mx_provider && (
+      {owned && !domain.receiving && domain.mx_provider && (
         <p className="text-[12px] text-warning">
           {`${domain.mx_provider} currently receives mail for this domain — switching MX moves all of it here.`}
         </p>
@@ -161,7 +177,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
       {domain.status === 'suspended' && (
         <p className="flex items-center gap-2 text-[12px] text-destructive">
           Sending suspended{domain.suspended_reason ? `: ${domain.suspended_reason}` : ''}
-          {manage && (
+          {manage && owned && (
             <button type="button" className={secondary} disabled={busy}
               onClick={() => void run(async () => onChange(await updateMailDomain(workspace, domain.id, { unsuspend: true })), 'Could not lift the suspension')}>
               Lift suspension
@@ -170,7 +186,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         </p>
       )}
 
-      <div>
+      {owned && <div>
         <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">DNS records</h4>
         <table className="mt-1 w-full text-[12px]" data-testid="mail-records">
           <thead className="text-left text-muted-foreground">
@@ -204,7 +220,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
             ))}
           </tbody>
         </table>
-      </div>
+      </div>}
 
       <div>
         <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Addresses</h4>
@@ -258,7 +274,7 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
 
         {manage && (
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <input aria-label="Local part" placeholder="jjackson, or * for everything else" value={local}
+            <input aria-label="Local part" placeholder={owned ? 'jjackson, or * for everything else' : 'jjackson'} value={local}
               onChange={(e) => setLocal(e.target.value)} className={`${field} w-56`} />
             <select aria-label="Route kind" className={field} value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
               <option value="agent">Agent</option>
@@ -289,7 +305,46 @@ function DomainSection({ workspace, domain, agents, members, onChange, onRemoved
         )}
       </div>
 
-      {manage && (
+      {!owned && (
+        <p className="text-[12px] text-muted-foreground">
+          {`This workspace may send to ${domain.daily_send_cap} recipients a day from ${domain.name}.`}
+        </p>
+      )}
+
+      {domain.can_share && (
+        <div data-testid="mail-shares">
+          <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Shared with</h4>
+          <p className="mt-1 text-[12px] text-muted-foreground">
+            Each workspace listed, and every workspace below it, can add its own addresses here.
+          </p>
+          {(domain.shares ?? []).map((sh) => (
+            <p key={sh.workspace} className="mt-1 flex items-center gap-2 text-[12px] text-foreground">
+              {sh.workspace}
+              <span className="text-muted-foreground">{`${sh.daily_send_cap}/day each`}</span>
+              <button type="button" className="px-2 text-destructive hover:underline" disabled={busy}
+                onClick={() => {
+                  if (!window.confirm(`Stop sharing ${domain.name} with ${sh.workspace}? Its addresses stop working; nothing is deleted.`)) return
+                  void run(async () => onChange(await unshareMailDomain(workspace, domain.id, sh.workspace)), 'Could not stop sharing')
+                }}>
+                Stop sharing
+              </button>
+            </p>
+          ))}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input aria-label="Share with workspace" placeholder="workspace slug" value={shareWith}
+              onChange={(e) => setShareWith(e.target.value)} className={`${field} w-48`} />
+            <button type="button" className={secondary} disabled={busy || shareWith.trim() === ''}
+              onClick={() => void run(async () => {
+                onChange(await shareMailDomain(workspace, domain.id, shareWith.trim()))
+                setShareWith('')
+              }, 'Could not share the domain')}>
+              Share
+            </button>
+          </div>
+        </div>
+      )}
+
+      {manage && owned && (
         <label className="flex items-center gap-2 text-[12px] text-muted-foreground">
           Daily send cap
           <input type="number" min={0} aria-label="Daily send cap" value={cap}
@@ -369,7 +424,7 @@ export function WorkspaceEmailPage(): JSX.Element {
           {lookupError && (
             <p className="text-[12px] text-destructive" data-testid="mail-lookup-error">{lookupError}</p>
           )}
-          {list.items.length === 0 && list.can_manage && (
+          {!list.items.some((d) => d.owned) && list.can_manage && (
             <div className="flex flex-wrap items-center gap-2">
               <input aria-label="Domain" placeholder="example.com" value={name}
                 onChange={(e) => setName(e.target.value)} className={`${field} w-64`} />

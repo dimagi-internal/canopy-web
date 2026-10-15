@@ -15,7 +15,7 @@ from django.utils import timezone
 from apps.harness import services as harness
 from apps.harness.models import Turn
 
-from . import ses, threads
+from . import domains, ses, threads
 from .models import MailAttachment, MailDomain, MailMessage, MailThread
 
 
@@ -52,7 +52,7 @@ def _turn_key(agent, thread, msg) -> str:
 
 
 def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None) -> str:
-    ws = route.domain.workspace
+    ws = route.workspace
     existing = (MailMessage.objects.filter(workspace=ws, mailbox=route.address,
                                            message_id=parsed.message_id)
                 .select_related("thread").first())
@@ -128,13 +128,15 @@ def _addresses(values, what: str) -> list[str]:
     return out
 
 
-def _sent_today(domain) -> int:
-    """Recipients mailed from this domain in the last 24h (to + cc of each outbound message)."""
+def _sent_today(domain, workspace_id=None) -> int:
+    """Recipients mailed from this domain in the last 24h (to + cc of each outbound message),
+    by every workspace using it, or by one when `workspace_id` is given."""
     since = timezone.now() - dt.timedelta(days=1)
-    rows = MailMessage.objects.filter(workspace=domain.workspace_id, direction=MailMessage.OUT,
-                                      mailbox__endswith="@" + domain.name,
-                                      created_at__gte=since).values_list("to", "cc")
-    return sum(len(t or []) + len(c or []) for t, c in rows)
+    rows = MailMessage.objects.filter(direction=MailMessage.OUT, mailbox__endswith="@" + domain.name,
+                                      created_at__gte=since)
+    if workspace_id is not None:
+        rows = rows.filter(workspace=workspace_id)
+    return sum(len(t or []) + len(c or []) for t, c in rows.values_list("to", "cc"))
 
 
 def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachments=()) -> MailMessage:
@@ -163,8 +165,15 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
         raise SendRefused(422, "an agent cannot send mail to its own address")
     if len(to) + len(cc) > MAX_RECIPIENTS:
         raise SendRefused(422, f"at most {MAX_RECIPIENTS} recipients per message")
+    share = None
+    if route.workspace_id != domain.workspace_id:
+        share = domains.share_for(domain, route.workspace)
+        if share is None:
+            raise SendRefused(409, f"{domain.name} is no longer shared with this workspace")
     if _sent_today(domain) + len(to) + len(cc) > domain.daily_send_cap:
         raise SendRefused(429, f"{domain.name} reached its daily send cap ({domain.daily_send_cap})")
+    if share is not None and _sent_today(domain, route.workspace_id) + len(to) + len(cc) > share.daily_send_cap:
+        raise SendRefused(429, f"this workspace reached its daily send cap on {domain.name} ({share.daily_send_cap})")
     subject = _line(subject)
     msg = EmailMessage()
     msg["From"] = formataddr((_line(route.agent.name) if route.agent_id else "", route.address))
@@ -198,9 +207,9 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
     except BotoCoreError as exc:
         raise SendRefused(502, f"the mail provider refused: {type(exc).__name__}") from None
     if thread is None:
-        thread = MailThread.objects.create(workspace=domain.workspace, route=route, subject=subject[:998])
+        thread = MailThread.objects.create(workspace=route.workspace, route=route, subject=subject[:998])
     out = MailMessage.objects.create(
-        thread=thread, workspace=domain.workspace, direction=MailMessage.OUT, mailbox=route.address,
+        thread=thread, workspace=route.workspace, direction=MailMessage.OUT, mailbox=route.address,
         message_id=msg["Message-ID"], in_reply_to=msg.get("In-Reply-To", ""),
         references=msg.get("References", ""), from_addr=route.address, to=to, cc=cc,
         subject=subject[:998], text=text, html=html, ses_message_id=ses_id,

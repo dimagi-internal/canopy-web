@@ -25,6 +25,11 @@ class MailRouteOut(Schema):
     enabled: bool
 
 
+class MailDomainShareOut(Schema):
+    workspace: str
+    daily_send_cap: int
+
+
 class MailDomainOut(Schema):
     id: int
     name: str
@@ -36,6 +41,10 @@ class MailDomainOut(Schema):
     records: list[DnsRecordOut]
     routes: list[MailRouteOut]
     can_manage: bool
+    owned: bool = True
+    owner_workspace: str = ""
+    can_share: bool = False
+    shares: list[MailDomainShareOut] = []
 
 
 class MailDomainListOut(Schema):
@@ -51,6 +60,11 @@ class MailDomainIn(Schema):
 class MailDomainPatchIn(Schema):
     daily_send_cap: int | None = None
     unsuspend: bool = False
+
+
+class MailDomainShareIn(Schema):
+    workspace: str
+    daily_send_cap: int | None = None
 
 
 class MailRouteIn(Schema):

@@ -556,6 +556,8 @@ GATES: dict[str, tuple[str, ...]] = {
     "remove_mail_domain": ("integrations",),
     "save_mail_route": ("integrations",),
     "delete_mail_route": ("integrations",),
+    "share_mail_domain": ("superuser",),
+    "unshare_mail_domain": ("superuser",),
     "resolve_mail_address": ("authenticated",),  # 404 unless the caller is a member of the address's workspace
     "list_mail_threads": ("member",),
     "get_mail_thread": ("member",),
@@ -696,6 +698,7 @@ VIEWER_MAY_MUTATE: dict[str, str] = {
 SETTINGS: frozenset[str] = frozenset({
     # mail: workspace email domains and their routes
     "add_mail_domain", "update_mail_domain", "remove_mail_domain", "save_mail_route", "delete_mail_route",
+    "share_mail_domain", "unshare_mail_domain",
     # agents: identity, ownership, access, integrations, credentials
     "upsert_agent", "delete_agent", "transfer_owner", "link_canopy_user", "mint_agent_canopy_token",
     "grant_admin", "revoke_admin",
