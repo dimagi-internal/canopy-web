@@ -227,3 +227,26 @@ def test_the_health_check_warns_on_backup_tokens_alone(cr):
     assert cr._HEALTH["claude.credentials"]["status"] == "ok"
     assert cr._HEALTH["claude.login"]["status"] == "warn"
     assert "Sign in with Claude" in cr._HEALTH["claude.login"]["detail"]
+
+
+# ── which account the box signed in as ─────────────────────────────────────
+
+def test_the_box_reports_the_account_it_signed_in_as(cr, tmp_path):
+    (tmp_path / ".claude.json").write_text(json.dumps(
+        {"oauthAccount": {"emailAddress": "ace@dimagi-ai.com"}}))
+    assert cr.box_login_account() == "ace@dimagi-ai.com"
+
+
+def test_no_recorded_account_is_empty_not_an_error(cr, tmp_path):
+    assert cr.box_login_account() == ""
+    (tmp_path / ".claude.json").write_text("not json")
+    assert cr.box_login_account() == ""
+
+
+def test_the_health_check_names_the_account(cr, tmp_path):
+    _store_login(tmp_path)
+    (tmp_path / ".claude.json").write_text(json.dumps(
+        {"oauthAccount": {"emailAddress": "ace@dimagi-ai.com"}}))
+    cr._adopt_box_login()
+    cr._credential_check()
+    assert "as ace@dimagi-ai.com" in cr._HEALTH["claude.login"]["detail"]

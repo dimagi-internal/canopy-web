@@ -113,12 +113,23 @@ export function credentialSummary(s: CredentialStatus, signedIn: boolean | null 
   return { claudeFallback: fallback, warning, unset }
 }
 
-export function RunnerCredentials({ runnerId, signedIn = null }: {
+/** The account the box's own login belongs to, read out of its `claude.login`
+ *  health check ("signed in on this box as <email> — …"). The box knows who it
+ *  signed in as, so the sign-in row shows THAT rather than a name someone types:
+ *  a hand-typed label is how a row came to name one account while holding
+ *  another (2026-10-14). Empty for an older runner that does not say. */
+export function boxLoginAccount(detail: string | undefined): string {
+  return detail?.match(/signed in on this box as (\S+@\S+)/)?.[1] ?? ''
+}
+
+export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '' }: {
   runnerId: string
   /** Whether the box reports a full Claude sign-in (its `claude.login` health
    *  check). Null when the runner has not said — an older runner, or no
    *  heartbeat yet. */
   signedIn?: boolean | null
+  /** Which account that sign-in is (see boxLoginAccount); '' when unknown. */
+  signedInAs?: string
 }): JSX.Element {
   const [status, setStatus] = useState<CredentialStatus | null>(null)
   const [apiKey, setApiKey] = useState('')
@@ -177,6 +188,15 @@ export function RunnerCredentials({ runnerId, signedIn = null }: {
     write(() => setRunnerCredential(runnerId, { [labelKey]: name.trim() }), 'Failed to rename')
 
   const swap = () => write(() => swapRunnerLogins(runnerId), 'Failed to swap')
+
+  // Deleting a backup token: an empty value clears its slot (the API stores
+  // nothing for an empty secret) and the name goes with it. Confirmed first,
+  // because a token is write-only — once removed, only a person holding it can
+  // put it back.
+  const remove = (key: SlotKey, labelKey: LabelKey, label: string) => {
+    if (!window.confirm(`Remove ${label}? The runner stops using it within a few minutes.`)) return
+    return write(() => setRunnerCredential(runnerId, { [key]: '', [labelKey]: '' }), 'Failed to remove')
+  }
   const canSwap = !busy && !!status
     && (status.has_claude_token || status.has_claude_token_secondary)
 
@@ -220,7 +240,9 @@ export function RunnerCredentials({ runnerId, signedIn = null }: {
           )}
           <span className="font-medium">Claude sign-in</span>
           <span className="text-[11px] text-foreground-subtle" data-testid="cred-box-state">
-            {signedIn === null ? '' : signedIn ? 'signed in on this runner' : 'not signed in'}
+            {signedIn === null ? '' : signedIn
+              ? (signedInAs ? `signed in as ${signedInAs}` : 'signed in on this runner')
+              : 'not signed in'}
           </span>
         </div>
         <RunnerReauth runnerId={runnerId} slot="box" isSet={!!signedIn} onSignedIn={load} />
@@ -300,6 +322,17 @@ export function RunnerCredentials({ runnerId, signedIn = null }: {
                   onSave={(name) => saveName(login.labelKey, name)}
                 />
                 {!isSet && <span className="text-[11px] text-foreground-subtle">not set</span>}
+                {isSet && (
+                  <button
+                    type="button"
+                    onClick={() => void remove(slot.key, login.labelKey, slot.label)}
+                    disabled={busy}
+                    data-testid={`cred-remove-${slot.key}`}
+                    className="ml-auto rounded-md px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
               <span className="text-[11px] text-foreground-subtle">{slot.hint}</span>
             </div>

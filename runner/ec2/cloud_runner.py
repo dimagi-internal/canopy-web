@@ -472,7 +472,10 @@ def _credential_check() -> None:
     # and still none that sees a claude.ai connector. The credentials page reads
     # this one check to say whether the runner is signed in.
     if any(c[0] == BOX_LOGIN_LABEL for c in _CLAUDE_CREDS):
-        _set_check("claude.login", "ok", "signed in on this box — claude.ai connectors available")
+        who = box_login_account()
+        _set_check("claude.login", "ok",
+                   f"signed in on this box as {who} — claude.ai connectors available" if who
+                   else "signed in on this box — claude.ai connectors available")
     else:
         _set_check("claude.login", "warn",
                    "not signed in on this box: turns run on backup tokens, which cannot use "
@@ -3065,6 +3068,30 @@ def box_login_ready(path: pathlib.Path | None = None) -> bool:
     if not isinstance(oauth, dict) or not oauth.get("refreshToken"):
         return False
     return _BOX_LOGIN_SCOPE in (oauth.get("scopes") or [])
+
+
+def _claude_state_file() -> pathlib.Path:
+    """The CLI's state file: `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`
+    (beside `~/.claude/`, not in it)."""
+    root = os.environ.get("CLAUDE_CONFIG_DIR")
+    return pathlib.Path(root) / ".claude.json" if root else pathlib.Path.home() / ".claude.json"
+
+
+def box_login_account(path: pathlib.Path | None = None) -> str:
+    """The account the box's own login belongs to, as `claude auth login` recorded it.
+
+    This is what the credentials page shows on the sign-in row INSTEAD of a name
+    an operator types: the box knows who it signed in as, and a hand-typed label
+    is exactly how a row came to say one account while holding another
+    (2026-10-14). Empty when the CLI has not recorded one.
+    """
+    try:
+        data = json.loads((path or _claude_state_file()).read_text())
+    except (OSError, ValueError):
+        return ""
+    acct = data.get("oauthAccount") if isinstance(data, dict) else None
+    email = acct.get("emailAddress") if isinstance(acct, dict) else None
+    return email.strip() if isinstance(email, str) else ""
 
 
 def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
