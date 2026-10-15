@@ -26,7 +26,7 @@ wire.
 - `seed.py` — builds the first-boot seed (manifest + ≤60 KB parts, sha256-checked on the box).
 - `prune_caches.py` — bootstrap step 4b: drops plugin-cache versions nothing has installed, and npm/uv download caches.
 - `update_runner.sh` — the auto-updater: installs the DEPLOYED runner sha when this box is behind and idle. Run on a 30-minute systemd timer via a thin `/usr/local/bin/canopy-runner-update` shim, and read from the canopy-web clone so it ships by deploy like everything else.
-- `bootstrap_agents.sh` — idempotent agent-fleet bootstrap (tooling, gog, per-agent clones + secrets, claude plugins, Claude Code itself). Runs ON the box, from the runner's own `canopy-web` clone (`RUNNER_SRC_DIR`) — not baked into the template. See "Bootstrap" below.
+- `bootstrap_agents.sh` — idempotent bootstrap of the BOX (tooling, gog's keyring, the canopy plugin + CLI, Claude Code itself, caches); each agent is prepared by canopy's `canopy agent prepare --runner`. Runs ON the box, from the runner's own `canopy-web` clone (`RUNNER_SRC_DIR`) — not baked into the template. See "Bootstrap" below.
 - `secrets.sh` — put/update this runner's secrets in Secrets Manager (values read from a file/stdin, never shell history).
 - `up.sh` — preflight every one-time prerequisite, publish the seed, `cloudformation deploy` (updates via a reviewed change set); pulls the private key from SSM for SSH.
 - `wire.sh` — operator-side: stage the fresh runner's credential bundle, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else. Run this after `up.sh`.
@@ -220,28 +220,33 @@ use; one with local changes, or on a branch, is left alone.
 **after** `fetch_and_stage_credential()` has staged this runner's credential bundle (the box holds
 no 1Password key and no GitHub token — those come per agent from canopy-web; see the docstring on
 `bootstrap_agent_fleet()` for exactly why the ordering has to be this way round, not
-a cloud-init `ExecStartPre`). The script is idempotent — each of its five steps is
-`OK`-skipped when already satisfied — and best-effort per agent: one agent's
-manifest being broken logs loudly but does not stop the other four from bootstrapping,
-and does not block the runner from starting up and claiming turns.
+a cloud-init `ExecStartPre`). The script is idempotent — each step is `OK`-skipped when
+already satisfied — and best-effort per agent: one agent's problems log loudly but do not
+stop the others, and do not block the runner from starting up and claiming turns.
 
-Steps: (1) install/verify `uv`, the `canopy` CLI (a `uv tool`), `gog` (latest Linux
-release, no version pin), `op`/`gh`/`claude`/`git`; (2) set gog's keyring backend to
-`file` (headless Linux has no OS keychain); (3) per agent in `AGENT_SLUGS` (default
-`ace,ada,echo,eva,hal`): clone/pull `github.com/dimagi-internal/<slug>` into
-`/opt/agents/<slug>`, `op inject` its `.env.tpl` with the agent's own vault key
-(`env_ok`), materialize the fleet gog client(s) from the workspace's shared vault
-(`client_creds_ok`), and — only when no fleet client (`canopy`, then `canopy-web`)
-can already read the mailbox — import the NEWER of the vault's `gog-token` and
-canopy-web's stored one (by the token's own `created_at`), then verify with a real
-gmail call (`mailbox_ok`, `turn_ready`, posted to `GET /api/agents/<slug>/readiness`); (4)
-add + install the `canopy` Claude plugin; (5) print a per-agent readiness summary.
+**The script prepares the BOX; canopy prepares each AGENT** (canopy
+`docs/architecture/agent-setup-lifecycle.md`). Steps: (1) install/verify `uv`, the
+`canopy` CLI (a `uv tool`), `gog` (latest Linux release), `op`/`gh`/`claude`/`git`;
+(2) gog's keyring backend = `file` (headless Linux has no OS keychain) and the roster
+from canopy-web (`AGENT_SLUGS` only offline); (4) the `canopy` Claude plugin, Claude Code
+and the CLI brought current — BEFORE (3), because the CLI is what prepares the agents;
+(3) per agent, `canopy agent prepare --runner --slug <s>` — the ONE implementation,
+shared with laptops: credentials from canopy-web (`/credentials/resolve`, with this box's
+token), clone/pull the repo canopy-web records into `/opt/agents/<slug>`, `op inject`
+its `.env.tpl` with the agent's own key (`env_ok`), its plugin and required plugins
+(node deps, key files), `bin/<slug>-setup`, the Gmail client and the NEWEST of the
+vault's and canopy-web's token, a real gmail call (`mailbox_ok`, `turn_ready`), then the
+readiness report (`GET /api/agents/<slug>/readiness`); (4b) prune caches; (5) summary.
+Drilled on a standby (cloud-ec2-prep, 2026-10-15) — readiness matched the old bash agent
+for agent before that bash was removed.
 
 Bootstrap is the FIRST writer of `~/.<slug>/.env`, not the only one: when a turn is
-claimed, the runner re-runs the same `op inject` with the agent's own key (at most
-once per `AGENT_ENV_TTL_SECONDS`, default 300, per agent), so a value changed in the
-agent's vault reaches its next turn without a restart. A failed refresh keeps the
-last good file and reports `env.<slug>` on the runner's health.
+claimed, the runner runs `canopy cred sync` for that agent (its own key, the vault
+canopy-web records; at most once per `AGENT_ENV_TTL_SECONDS`, default 300) — the same
+command an agent session runs at start — so a value changed in the agent's vault
+reaches its next turn without a restart. A failed refresh keeps the last good file and
+reports `env.<slug>` on the runner's health. An agent this box has never seen is
+prepared on its first claim, alone (`prepare_agent`).
 
 **Agent turns run in their own worktree of the agent's clone.** A turn whose target
 resolves to an agent with a clone under `/opt/agents/<slug>` runs `claude -p` in a

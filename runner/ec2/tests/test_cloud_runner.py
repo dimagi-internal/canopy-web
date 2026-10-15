@@ -1869,7 +1869,7 @@ def test_the_turn_unregisters_before_the_connection_closes(cloud_runner):
 #   gmail.push.missed x18 — "the 300s poll found mail that push never rang for"
 #
 # The credentials were never the gap (bootstrap runs step2_gog_config +
-# refresh_gmail_token per agent, and a live `gog gmail search` succeeds here);
+# canopy agent prepare per agent, and a live `gog gmail search` succeeds here);
 # only the code was.
 
 def test_the_inbox_reader_is_the_laptops_not_a_copy(cloud_runner):

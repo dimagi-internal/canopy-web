@@ -19,7 +19,7 @@ from collections import namedtuple
 
 import pytest
 
-from test_readiness_is_observed import BASH, _fn
+from _bash import BASH, _fn
 
 EC2 = pathlib.Path(__file__).resolve().parent.parent
 
@@ -113,10 +113,11 @@ def test_bootstrap_prunes_after_the_plugin_updates_and_only_on_a_full_run(tmp_pa
         for name in ("step1_tooling", "step2_gog_config", "step3_agents",
                      "step4_claude_plugins", "step4b_prune_caches", "step5_summary",
                      "reinstall_cli_from_marketplace_clone", "log"))
-    for flag, expected in ((0, ["step1_tooling", "step2_gog_config", "step3_agents",
-                                "step4_claude_plugins", "step4b_prune_caches", "step5_summary"]),
-                           (1, ["step2_gog_config", "step3_agents",
-                                "reinstall_cli_from_marketplace_clone"])):
+    # Step 4 (the CLI) before step 3: `canopy agent prepare` IS the CLI.
+    for flag, expected in ((0, ["step1_tooling", "step2_gog_config", "step4_claude_plugins",
+                                "step3_agents", "step4b_prune_caches", "step5_summary"]),
+                           (1, ["step2_gog_config", "reinstall_cli_from_marketplace_clone",
+                                "step3_agents"])):
         log.write_text("")
         script = f"{stubs}\nCREDENTIALS_ONLY={flag}\n{_fn('main')}\nmain\n"
         subprocess.run([BASH, "-c", script], check=True, timeout=30)

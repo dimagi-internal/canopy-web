@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from test_readiness_is_observed import BASH, _fn
+from _bash import BASH, _fn
 
 pytestmark = pytest.mark.skipif(BASH is None, reason="needs bash 4+")
 
