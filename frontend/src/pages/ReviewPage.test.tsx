@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { ThemeProvider } from '@/theme/ThemeProvider'
 import { ReviewPage, groupScenesByCut } from './ReviewPage'
@@ -267,6 +267,24 @@ describe('ReviewPage — the Cuts tab of a recorded narrative (canopy-web#1288)'
     expect(decide.textContent).toContain('Decide where dispensers go.')
     expect(container.querySelectorAll('video')).toHaveLength(1)
     expect(screen.queryByText('No cut available yet')).toBeNull()
+  })
+
+  it('links each cut to the product screen it films, even when the video is private', async () => {
+    auth.status = 'anonymous'
+    review.current = detail({
+      cut_videos: [
+        cut({ app_links: [{ label: 'Waterpoint register', url: 'https://labs.connect.dimagi.com/chlorine/register/' }] }),
+        cut({ cut_id: 'decide', title: 'Cut 2 · Decide', scene_ids: ['s3'], walkthrough_id: 'w2', video_url: null,
+              app_links: [{ label: 'Dispenser plan', url: 'https://example.org/plan/' }] }),
+      ],
+    } as Partial<ReviewDetail>)
+    renderAt('/w/connect/review/r1/?t=tok&tab=cuts')
+    const register = await screen.findByRole('region', { name: 'Cut 1 · Register' })
+    const live = within(register).getByRole('link', { name: /Open Waterpoint register in Labs/ })
+    expect(live.getAttribute('href')).toBe('https://labs.connect.dimagi.com/chlorine/register/')
+    expect(live.getAttribute('target')).toBe('_blank')
+    const decide = screen.getByRole('region', { name: 'Cut 2 · Decide' })
+    expect(within(decide).getByRole('link', { name: /Open Dispenser plan in example\.org/ })).toBeTruthy()
   })
 
   it("falls back to the version's own video when there are no cuts", async () => {

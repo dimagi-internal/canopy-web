@@ -270,3 +270,24 @@ def test_word_count_comes_from_the_narration_not_the_publisher():
         playable=lambda url: True,
     )
     assert rows[0]["word_count"] == 8
+
+
+def test_each_cut_on_the_board_links_to_the_product_screen_it_films(ws, owner, board):
+    v = _version(ws, owner)
+    _cut(ws, owner, v, "procurements", ["overview"], links=[
+        {"label": "Supply overview", "url": "https://labs.example/supply/overview/?program_id=1",
+         "kind": "reference"},
+        {"label": "Deck", "url": "https://canopy.example/w/x/walkthrough/1", "kind": "companion"},
+    ])
+    _cut(ws, owner, v, "buying", ["suppliers"], public=False, links=[
+        {"label": "Tender 356", "url": "https://labs.example/supply/tenders/356/", "kind": "reference"},
+    ])
+    _, entry = _entry(Client(), board)
+    first, second = entry["cuts"]
+    assert first["app_links"] == [
+        {"label": "Supply overview", "url": "https://labs.example/supply/overview/?program_id=1"}
+    ]
+    assert second["video_url"] is None, "the private video stays withheld"
+    assert second["app_links"] == [
+        {"label": "Tender 356", "url": "https://labs.example/supply/tenders/356/"}
+    ], "the screen it films is still named"

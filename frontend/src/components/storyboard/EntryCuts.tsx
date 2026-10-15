@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { EntryCut, LeaveFeedbackIn, Note, Storyboard, StoryboardEntry } from '@/api/storyboards'
+import { AppLinks } from '@/components/ddd/AppLinks'
 import { CutPlayer, fmtDuration } from '@/components/ddd/CutPlayer'
 import { NoteComposer } from '@/components/storyboard/NoteComposer'
 import { NotesReturned } from '@/components/storyboard/NotesReturned'
@@ -110,13 +111,18 @@ function CutBlock({
         )}
       </div>
 
-      {!reel && (cut.screen_notes || cut.audience_note || cut.provenance) && (
+      {!reel && (cut.screen_notes || cut.audience_note || cut.provenance || cut.app_links?.length) ? (
         <dl className="grid gap-1.5 text-[13px]">
+          {cut.app_links?.length ? (
+            <Detail label="Try it live">
+              <AppLinks links={cut.app_links} />
+            </Detail>
+          ) : null}
           {cut.screen_notes && <Detail label="On screen">{cut.screen_notes}</Detail>}
           {cut.audience_note && <Detail label="Why it matters">{cut.audience_note}</Detail>}
           {cut.provenance && <Detail label="Data from">{cut.provenance}</Detail>}
         </dl>
-      )}
+      ) : null}
 
       {!reel ? (
         <>

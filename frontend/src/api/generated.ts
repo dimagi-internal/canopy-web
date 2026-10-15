@@ -10566,6 +10566,17 @@ export interface components {
             readonly turn_ids?: readonly string[];
         };
         /**
+         * CutAppLinkOut
+         * @description A live product screen a cut films (one of its ``reference`` links),
+         *     for the reviewer to open themselves (``pinned.app_links``).
+         */
+        readonly CutAppLinkOut: {
+            /** Label */
+            readonly label: string;
+            /** Url */
+            readonly url: string;
+        };
+        /**
          * CutRef
          * @description One cut of one narrative on the board — what a short version lists.
          */
@@ -10659,6 +10670,11 @@ export interface components {
              * @default
              */
             readonly provenance: string;
+            /**
+             * App Links
+             * @default []
+             */
+            readonly app_links: readonly components["schemas"]["CutAppLinkOut"][];
             /**
              * Optional
              * @default false
@@ -11972,6 +11988,11 @@ export interface components {
             readonly video_viewer_url?: string | null;
             /** Duration Sec */
             readonly duration_sec?: number | null;
+            /**
+             * App Links
+             * @default []
+             */
+            readonly app_links: readonly components["schemas"]["CutAppLinkOut"][];
         };
         /**
          * ReviewRequestOut
@@ -12185,6 +12206,11 @@ export interface components {
             readonly video_viewer_url: string;
             /** Duration Sec */
             readonly duration_sec?: number | null;
+            /**
+             * App Links
+             * @default []
+             */
+            readonly app_links: readonly components["schemas"]["CutAppLinkOut"][];
         };
         /** NarrativeDetailOut */
         readonly NarrativeDetailOut: {
@@ -17424,10 +17450,6 @@ export interface components {
         /**
          * CapabilityManifest
          * @description `capability.yaml`, version 1 — what canopy-web brokers for the agent.
-         *
-         *     `ec2-ephemeral` needs `aws` and `exec` and takes no `slots`. `pool` needs
-         *     `slots` (1-50 unique names) and takes no `aws`, `exec` or `params`; its
-         *     `limits.max_concurrent` defaults to `len(slots)` and may only lower it.
          */
         readonly CapabilityManifest: {
             /**
@@ -17440,23 +17462,21 @@ export interface components {
             readonly name: string;
             /**
              * Kind
-             * @enum {string}
+             * @constant
              */
-            readonly kind: "ec2-ephemeral" | "pool";
+            readonly kind: "ec2-ephemeral";
             /**
              * Description
              * @default
              */
             readonly description: string;
-            readonly aws?: components["schemas"]["CapabilityAws"] | null;
+            readonly aws: components["schemas"]["CapabilityAws"];
             readonly limits?: components["schemas"]["CapabilityLimits"];
             /** Params */
             readonly params?: {
                 readonly [key: string]: components["schemas"]["CapabilityParam"];
             };
-            readonly exec?: components["schemas"]["CapabilityExec"] | null;
-            /** Slots */
-            readonly slots?: readonly string[] | null;
+            readonly exec: components["schemas"]["CapabilityExec"];
         };
         /**
          * CapabilityParam

@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from apps.common.schemas import StrictModel
 from apps.feedback.schemas import ArtifactSignalsOut
-from apps.walkthroughs.schemas import WalkthroughKind, WalkthroughLink
+from apps.walkthroughs.schemas import CutAppLinkOut, WalkthroughKind, WalkthroughLink
 
 
 class NarrativeListItemOut(ArtifactSignalsOut):
@@ -48,6 +48,8 @@ class NarrativeCutOut(StrictModel):
     video_url: str
     video_viewer_url: str
     duration_sec: int | None = None
+    # The live product screens this cut films: ``[{label, url}]``.
+    app_links: list[CutAppLinkOut] = []
 
 
 NarrativeSourceRole = Literal[

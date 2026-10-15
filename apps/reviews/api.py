@@ -165,6 +165,8 @@ def _pinned_video(w: Walkthrough, member_slugs: set[str]) -> dict:
         "video_url": url,
         "video_viewer_url": viewer,
         "duration_sec": w.duration_sec,
+        # The product screens the cut films: plain URLs, safe for any reader.
+        "app_links": pinned.app_links(w),
     }
 
 

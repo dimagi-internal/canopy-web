@@ -143,6 +143,24 @@ describe('Storyboard as a demo set', () => {
     expect(missing.textContent).toContain('Not recorded yet')
   })
 
+  it('links each cut to the live product screen it films, in a new tab', async () => {
+    const b = board()
+    b.acts[0].entries[0].cuts![0] = {
+      ...b.acts[0].entries[0].cuts![0],
+      app_links: [{ label: 'Supply overview', url: 'https://labs.connect.dimagi.com/supply/overview/?program_id=10112' }],
+    }
+    getStoryboard.mockResolvedValue(b)
+    renderAt()
+    const c = await screen.findByRole('region', { name: 'Every procurement in one place' })
+    const link = within(c).getByRole('link', { name: /Open Supply overview in Labs/ })
+    expect(link.getAttribute('href')).toBe('https://labs.connect.dimagi.com/supply/overview/?program_id=10112')
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toContain('noopener')
+    // A cut with no product screen recorded offers no dead link.
+    const missing = screen.getByRole('region', { name: 'Buying RUTF' })
+    expect(within(missing).queryByText(/Try it live/)).toBeNull()
+  })
+
   it('takes a comment on a cut as a whole, anchored to that cut', async () => {
     getStoryboard.mockResolvedValue(board())
     renderAt()
