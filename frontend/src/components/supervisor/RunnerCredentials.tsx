@@ -51,15 +51,15 @@ export const SLOTS: readonly Slot[] = [
   {
     key: 'claude_token',
     statusKey: 'has_claude_token',
-    label: 'Primary login',
-    hint: 'Used first. When it hits its cap the runner moves to the fallback, and the two swap places, so the one that works is always on top.',
+    label: 'Backup token 1',
+    hint: 'An older token, used only when the sign-in above is at its usage cap. It cannot use claude.ai connectors such as Claude Docs, and it is no longer signed in from here.',
     login: { slot: 'primary', labelKey: 'claude_token_label' },
   },
   {
     key: 'claude_token_secondary',
     statusKey: 'has_claude_token_secondary',
-    label: 'Fallback login',
-    hint: 'A second subscription. Without one, a weekly cap on the primary stops every agent on this box.',
+    label: 'Backup token 2',
+    hint: 'Tried after backup token 1. Same limits: no claude.ai connectors.',
     login: { slot: 'secondary', labelKey: 'claude_token_secondary_label' },
   },
   {
@@ -90,7 +90,7 @@ export interface Summary {
   unset: SlotKey[]
 }
 
-export function credentialSummary(s: CredentialStatus): Summary {
+export function credentialSummary(s: CredentialStatus, signedIn: boolean | null = null): Summary {
   const unset = SLOTS.filter((slot) => !s[slot.statusKey]).map((slot) => slot.key)
   const fallback: Summary['claudeFallback'] = s.has_claude_token_secondary
     ? 'secondary'
@@ -107,13 +107,19 @@ export function credentialSummary(s: CredentialStatus): Summary {
   //
   // `claudeFallback` is still computed; a caller that wants to say something
   // about fallbacks can, at a moment when it is actually the subject.
-  const warning: string | null = s.has_claude_token
+  const warning: string | null = s.has_claude_token || signedIn
     ? null
     : 'No Claude credential at all — this runner cannot execute any turn.'
   return { claudeFallback: fallback, warning, unset }
 }
 
-export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Element {
+export function RunnerCredentials({ runnerId, signedIn = null }: {
+  runnerId: string
+  /** Whether the box reports a full Claude sign-in (its `claude.login` health
+   *  check). Null when the runner has not said — an older runner, or no
+   *  heartbeat yet. */
+  signedIn?: boolean | null
+}): JSX.Element {
   const [status, setStatus] = useState<CredentialStatus | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [dragging, setDragging] = useState<LoginSlot | null>(null)
@@ -178,7 +184,7 @@ export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Eleme
     return <div className="h-6 w-48 animate-pulse rounded-md bg-muted" data-testid="runner-credentials-loading" />
   }
 
-  const summary = status ? credentialSummary(status) : null
+  const summary = status ? credentialSummary(status, signedIn) : null
   const apiSlot = SLOTS.find((s) => !s.login)!
   const apiKeySet = status?.has_claude_api_key ?? false
 
@@ -199,18 +205,27 @@ export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Eleme
         </p>
       )}
 
-      {/* Not a bundle slot: a FULL `claude auth login` the runner keeps on the
-          box. It is the only login that carries claude.ai connectors (Claude
-          Docs and the rest) — a setup-token is inference-only — and its refresh
-          token rotates, so it never comes back here. The runner tries it first. */}
+      {/* THE way to sign a runner in to Claude: a full `claude auth login`
+          the runner keeps on the box. The only kind of login that carries
+          claude.ai connectors (Claude Docs and the rest) — a setup-token is
+          inference-only — and its refresh token rotates, so it never comes back
+          here. It used to sit beside two "Sign in with Claude" buttons that
+          made setup-tokens; an operator signed in on one of those, believing
+          it was this, and the box still could not read a doc (2026-10-14). So
+          there is exactly one sign-in button now, and it is this one. */}
       <div className="flex flex-col gap-1.5 rounded-md border border-border p-2" data-testid="cred-slot-box">
         <div className="flex items-center gap-2 text-[12px] text-foreground">
-          <span className="font-medium">Full login on the box</span>
-          <span className="text-[11px] text-foreground-subtle">claude.ai connectors (Claude Docs)</span>
+          {signedIn !== null && (
+            <span className={signedIn ? 'text-success' : 'text-muted-foreground'}>{signedIn ? '●' : '○'}</span>
+          )}
+          <span className="font-medium">Claude sign-in</span>
+          <span className="text-[11px] text-foreground-subtle" data-testid="cred-box-state">
+            {signedIn === null ? '' : signedIn ? 'signed in on this runner' : 'not signed in'}
+          </span>
         </div>
-        <RunnerReauth runnerId={runnerId} slot="box" onSignedIn={load} />
+        <RunnerReauth runnerId={runnerId} slot="box" isSet={!!signedIn} onSignedIn={load} />
         <span className="text-[11px] text-foreground-subtle">
-          Kept on the runner, never stored here. Sign in as the account whose claude.ai the agents should see.
+          Sign in as the account whose Claude the agents should use, including its claude.ai connectors (Claude Docs). The login stays on the runner and is never stored here.
         </span>
       </div>
 
@@ -286,7 +301,6 @@ export function RunnerCredentials({ runnerId }: { runnerId: string }): JSX.Eleme
                 />
                 {!isSet && <span className="text-[11px] text-foreground-subtle">not set</span>}
               </div>
-              <RunnerReauth runnerId={runnerId} slot={login.slot} isSet={isSet} onSignedIn={load} />
               <span className="text-[11px] text-foreground-subtle">{slot.hint}</span>
             </div>
           </div>

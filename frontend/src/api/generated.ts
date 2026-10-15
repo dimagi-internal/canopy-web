@@ -5489,8 +5489,12 @@ export interface paths {
          *     Supersedes any unfinished mint rather than refusing — a stalled sign-in (a
          *     closed tab, a runner restart mid-flow) must not block every later attempt.
          *
-         *     `slot` names which login the new token replaces — `primary` (the default)
-         *     or `secondary`, the fallback subscription.
+         *     There is ONE way to sign a runner in: `box` (the default), a full
+         *     `claude auth login` the runner keeps for itself — the only kind of login
+         *     that carries claude.ai connectors. The old setup-token sign-ins into the
+         *     `primary`/`secondary` slots are refused: offered side by side with this one
+         *     they were indistinguishable, and an operator signed in on the wrong one
+         *     (2026-10-14). Tokens already in those slots stay, as cap backups.
          */
         readonly post: operations["start_runner_mint"];
         readonly delete?: never;
@@ -18754,7 +18758,7 @@ export interface components {
         readonly RunnerMintStartIn: {
             /**
              * Slot
-             * @default primary
+             * @default box
              * @enum {string}
              */
             readonly slot: "primary" | "secondary" | "box";
