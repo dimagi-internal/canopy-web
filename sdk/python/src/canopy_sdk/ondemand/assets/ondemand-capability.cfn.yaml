@@ -176,6 +176,37 @@ Parameters:
     Description: Root volume size in GiB (encrypted gp3).
     MinValue: 8
     Default: 30
+  RootVolumeIops:
+    Type: String
+    Description: >
+      Provisioned IOPS for the gp3 root volume (3000-80000). Empty or 0 leaves it
+      unset (gp3's baseline, 3000). Throughput above 750 MiB/s needs more IOPS
+      (gp3 allows at most 0.25 MiB/s per IOPS).
+    AllowedPattern: "^(|0|[3-9][0-9]{3}|[1-7][0-9]{4}|80000)$"
+    ConstraintDescription: empty, 0, or 3000-80000.
+    Default: ""
+  RootVolumeThroughput:
+    Type: String
+    Description: >
+      Provisioned throughput for the gp3 root volume, MiB/s (125-2000). Empty or 0
+      leaves it unset (gp3's baseline, 125).
+    AllowedPattern: "^(|0|12[5-9]|1[3-9][0-9]|[2-9][0-9]{2}|1[0-9]{3}|2000)$"
+    ConstraintDescription: empty, 0, or 125-2000.
+    Default: ""
+  RootVolumeInitializationRate:
+    Type: String
+    Description: >
+      EBS Provisioned Rate for Volume Initialization of the root volume, MiB/s
+      (100-300): how fast the AMI's snapshot blocks are pulled from S3 into a
+      fresh volume. A new volume is otherwise lazily hydrated, so first reads of
+      the image are slow; ephemeral instances start from a cold volume on every
+      lease, which is where this pays (measured on the Android emulator image:
+      300 here with RootVolumeThroughput 500 and RootVolumeIops 6000 cut
+      boot_completed from ~50 s to ~37 s). Billed per GiB initialized. Empty or 0
+      leaves it unset (the default rate).
+    AllowedPattern: "^(|0|1[0-9]{2}|2[0-9]{2}|300)$"
+    ConstraintDescription: empty, 0, or 100-300.
+    Default: ""
   IdleStopMinutes:
     Type: Number
     Description: >-
@@ -208,6 +239,10 @@ Conditions:
   HasUserData: !Not [!Equals [!Ref UserData, ""]]
   IsEphemeral: !Equals [!Ref Mode, ephemeral]
   IsPersistent: !Not [!Equals [!Ref Mode, ephemeral]]
+  # Root-volume performance: each is set only when given (empty or 0 = unset).
+  HasRootVolumeIops: !Not [!Or [!Equals [!Ref RootVolumeIops, ""], !Equals [!Ref RootVolumeIops, "0"]]]
+  HasRootVolumeThroughput: !Not [!Or [!Equals [!Ref RootVolumeThroughput, ""], !Equals [!Ref RootVolumeThroughput, "0"]]]
+  HasRootVolumeInitializationRate: !Not [!Or [!Equals [!Ref RootVolumeInitializationRate, ""], !Equals [!Ref RootVolumeInitializationRate, "0"]]]
 
 Resources:
   # No ingress rules. Access is via SSM only.
@@ -448,6 +483,12 @@ Resources:
               VolumeType: gp3
               DeleteOnTermination: true
               Encrypted: true
+              Iops: !If [HasRootVolumeIops, !Ref RootVolumeIops, !Ref "AWS::NoValue"]
+              Throughput: !If [HasRootVolumeThroughput, !Ref RootVolumeThroughput, !Ref "AWS::NoValue"]
+              VolumeInitializationRate: !If
+                - HasRootVolumeInitializationRate
+                - !Ref RootVolumeInitializationRate
+                - !Ref "AWS::NoValue"
         MetadataOptions:
           HttpEndpoint: enabled
           HttpTokens: required # IMDSv2 only

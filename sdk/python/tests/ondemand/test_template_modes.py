@@ -231,3 +231,58 @@ def test_broker_policy_is_exactly_the_contract(ephemeral):
 def test_ephemeral_bucket_expires_leases_and_vm_prefixes(ephemeral):
     rules = ephemeral["Resources"]["ArtifactsBucket"]["Properties"]["LifecycleConfiguration"]["Rules"]
     assert {r.get("Prefix") for r in rules if "ExpirationInDays" in r} == {"leases/", "vm/"}
+
+
+# ---- root-volume performance ---------------------------------------------------
+
+PERF = ("RootVolumeIops", "RootVolumeThroughput", "RootVolumeInitializationRate")
+
+
+def _root_ebs(rendered):
+    data = rendered["Resources"]["LaunchTemplate"]["Properties"]["LaunchTemplateData"]
+    (root,) = data["BlockDeviceMappings"]
+    return root["Ebs"]
+
+
+@pytest.mark.parametrize("unset", ["", "0"])
+def test_root_volume_perf_is_unset_unless_given(template, unset):
+    for mode in ("persistent", "ephemeral"):
+        params = {**(EPHEMERAL if mode == "ephemeral" else {"Mode": mode}),
+                  **{p: unset for p in PERF}}
+        ebs = _root_ebs(render(template, **params))
+        assert not {"Iops", "Throughput", "VolumeInitializationRate"} & set(ebs), (mode, ebs)
+    # ...and unset is the default, so the persistent render still equals 0.7.2's.
+    for p in PERF:
+        assert template["Parameters"][p]["Default"] == ""
+
+
+def test_root_volume_perf_reaches_the_launch_template(template):
+    ebs = _root_ebs(render(template, **EPHEMERAL, RootVolumeIops="6000",
+                           RootVolumeThroughput="500", RootVolumeInitializationRate="300"))
+    assert ebs["Iops"] == {"Ref": "RootVolumeIops"}
+    assert ebs["Throughput"] == {"Ref": "RootVolumeThroughput"}
+    assert ebs["VolumeInitializationRate"] == {"Ref": "RootVolumeInitializationRate"}
+    assert ebs["VolumeType"] == "gp3" and ebs["Encrypted"] is True
+    # Each is independent.
+    ebs = _root_ebs(render(template, **EPHEMERAL, RootVolumeInitializationRate="300"))
+    assert set(ebs) & {"Iops", "Throughput", "VolumeInitializationRate"} == {"VolumeInitializationRate"}
+
+
+@pytest.mark.parametrize("param,good,bad", [
+    ("RootVolumeIops", ["", "0", "3000", "6000", "16000", "80000"],
+     ["1", "2999", "80001", "100000", "6k", "-1"]),
+    ("RootVolumeThroughput", ["", "0", "125", "500", "999", "1000", "2000"],
+     ["1", "124", "2001", "50", "5000"]),
+    ("RootVolumeInitializationRate", ["", "0", "100", "199", "250", "300"],
+     ["1", "99", "301", "500", "1000"]),
+])
+def test_root_volume_perf_ranges_are_refused_at_deploy(template, param, good, bad):
+    # CloudFormation checks AllowedPattern before creating anything, so an
+    # out-of-range value fails the deploy rather than every later RunInstances.
+    import re
+
+    pattern = re.compile(template["Parameters"][param]["AllowedPattern"])
+    for v in good:
+        assert pattern.fullmatch(v), (param, v)
+    for v in bad:
+        assert not pattern.fullmatch(v), (param, v)

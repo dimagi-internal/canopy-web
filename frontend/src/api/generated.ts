@@ -4126,6 +4126,53 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/capabilities/{name}/refresh": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Re-read a capability's stack Outputs
+         * @description Reads the capability's stack Outputs again (DescribeStacks) and checks them
+         *     against the contract, as a publish would; the sweep also does this about every
+         *     15 minutes. Use it right after updating the stack. 422 naming what is wrong if
+         *     the stack no longer meets the contract (the old Outputs are kept). For the
+         *     agent's owner and admins, or the agent's own login.
+         */
+        readonly post: operations["refresh_agent_capability"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/capabilities/{name}/terminate-orphans": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Terminate a capability's orphaned instances now
+         * @description Runs the sweep's machine pass for one capability at once: terminates every
+         *     instance tagged with it (and launched by this deployment) that has no live
+         *     lease, and ends every ready lease whose machine is gone. For a workspace admin
+         *     or the agent's admins. 502 when EC2 cannot be asked.
+         */
+        readonly post: operations["terminate_capability_orphans"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/capabilities/grants": {
         readonly parameters: {
             readonly query?: never;
@@ -4179,7 +4226,14 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * List capability leases
+         * @description Leases in the caller's workspaces (or of the agent whose own login the
+         *     caller is), newest first. `status` is one status or a comma-separated list
+         *     (`live` for queued,provisioning,ready); `since` filters on `created_at`. A
+         *     read: no heartbeat.
+         */
+        readonly get: operations["list_capability_leases"];
         readonly put?: never;
         /**
          * Acquire a capability lease
@@ -4196,6 +4250,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/capabilities/spend": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Machine time by agent and capability
+         * @description Machine-seconds per agent and capability over [since, until) (default: the
+         *     last 7 days), in the caller's workspaces. A lease counts from its launch
+         *     (`provisioning_at`) to `ended_at`, or now while it still holds a machine,
+         *     clipped to the window; time spent queued costs nothing.
+         */
+        readonly get: operations["capability_spend"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/capabilities/leases/{lease_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -4205,8 +4282,13 @@ export interface paths {
         };
         /**
          * Read (and heartbeat) a lease
-         * @description The heartbeat: a lease nobody reads for `idle_release_s` is released.
-         *     While provisioning, it checks the machine's ready.json (an S3 read; no SSM).
+         * @description The heartbeat: a lease nobody reads for `idle_release_s` (and that runs no
+         *     exec) is released. While provisioning, it reads the machine's ready.json (one
+         *     S3 read, plus one DescribeInstances while it is absent; no SSM).
+         *
+         *     `wait_s` (0-20) long-polls: the request returns as soon as the lease leaves
+         *     the status it had on arrival (queued → provisioning, provisioning → ready or
+         *     failed), re-reading ready.json about once a second, else after `wait_s`.
          */
         readonly get: operations["get_capability_lease"];
         readonly put?: never;
@@ -4216,6 +4298,29 @@ export interface paths {
          * @description Terminates the machine → `released`. Idempotent: an ended lease is returned as it is.
          */
         readonly delete: operations["release_capability_lease"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/capabilities/leases/{lease_id}/force-release": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Force-release a lease (admin)
+         * @description A workspace admin's (or the agent's admins') release: ends the lease if it
+         *     is live and terminates its machine — EVEN IF the lease already ended, for a
+         *     machine a failed terminate left behind. `reason` lands in the lease's reason
+         *     and the event log.
+         */
+        readonly post: operations["force_release_capability_lease"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -4232,10 +4337,13 @@ export interface paths {
         readonly put?: never;
         /**
          * Run an allowed command on a lease
-         * @description `argv[0]` must be on the capability's `exec.allow` (422 otherwise); the
-         *     argv is shell-quoted and sent over SSM with its full output going to
-         *     s3://…/leases/<id>/exec/. Returns the SSM CommandId as `exec_id` at once.
-         *     The command sees CANOPY_LEASE_ID, CANOPY_LEASE_IN and CANOPY_LEASE_OUT.
+         * @description `argv[0]` must be on the capability's `exec.allow` (422 otherwise). The
+         *     argv is sent over SSM through the capability stack's own exec document, which
+         *     runs it only if argv[0] is also on the stack's allow list (a stack from before
+         *     0.9.0: shell-quoted into AWS-RunShellScript), with its full output going to
+         *     the lease's exec/ prefix. Returns the SSM CommandId as `exec_id` at once. The
+         *     command sees CANOPY_LEASE_ID, CANOPY_LEASE_IN and CANOPY_LEASE_OUT. A
+         *     running exec keeps the lease from idling out until its timeout.
          */
         readonly post: operations["exec_capability_lease"];
         readonly delete?: never;
@@ -4255,6 +4363,9 @@ export interface paths {
          * Read an exec's status and output
          * @description Read back from SSM every time (nothing is held in a web process), so an
          *     exec survives a canopy-web deploy. Full streams are presigned once done.
+         *
+         *     `wait_s` (0-20) long-polls: the request returns as soon as the exec is done,
+         *     re-reading SSM about once a second, else after `wait_s`.
          */
         readonly get: operations["get_capability_exec"];
         readonly put?: never;
@@ -4276,9 +4387,10 @@ export interface paths {
         readonly put?: never;
         /**
          * Presign uploads for a lease's machine
-         * @description Presigned PUT URLs (1 h) under s3://…/leases/<id>/in/, and the s3:// URI of
-         *     each, to pass in an exec's argv. The machine may read in/ and nothing else
-         *     of the lease's inputs.
+         * @description Presigned PUT URLs (valid `expires_in_s`, up to 1 h) under the lease's in/,
+         *     and the s3:// URI of each, to pass in an exec's argv. On a current stack in/
+         *     is under the machine's own prefix, which no other machine can read — so
+         *     uploads need the machine launched (409 while `instance_id` is unset).
          */
         readonly post: operations["create_capability_uploads"];
         readonly delete?: never;
@@ -4296,9 +4408,9 @@ export interface paths {
         };
         /**
          * List a lease's artifacts as presigned links
-         * @description Presigned GETs (1 h) for everything the machine wrote under
-         *     s3://…/leases/<id>/out/<prefix>. Readable after the lease ends, until the
-         *     bucket expires it (7 days).
+         * @description Presigned GETs (valid `expires_in_s`, up to 1 h) for everything the machine
+         *     wrote under the lease's out/<prefix> (`out_prefix`). Readable after the lease
+         *     ends, until the bucket expires it (7 days).
          */
         readonly get: operations["list_capability_artifacts"];
         readonly put?: never;
@@ -16790,6 +16902,17 @@ export interface components {
              */
             readonly description: string;
         };
+        /** CapabilityOrphansOut */
+        readonly CapabilityOrphansOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Capability */
+            readonly capability: string;
+            /** Orphans */
+            readonly orphans: number;
+            /** Gone */
+            readonly gone: number;
+        };
         /** CapabilityGrantIn */
         readonly CapabilityGrantIn: {
             /** Agent */
@@ -16813,6 +16936,51 @@ export interface components {
             };
             /** Turn Id */
             readonly turn_id?: string | null;
+        };
+        /** CapabilityLeaseListOut */
+        readonly CapabilityLeaseListOut: {
+            /** Leases */
+            readonly leases: readonly components["schemas"]["CapabilityLeaseOut"][];
+            /** Truncated */
+            readonly truncated: boolean;
+        };
+        /** CapabilitySpendOut */
+        readonly CapabilitySpendOut: {
+            /**
+             * Since
+             * Format: date-time
+             */
+            readonly since: string;
+            /**
+             * Until
+             * Format: date-time
+             */
+            readonly until: string;
+            /** Rows */
+            readonly rows: readonly components["schemas"]["CapabilitySpendRow"][];
+            /** Total Machine Seconds */
+            readonly total_machine_seconds: number;
+        };
+        /** CapabilitySpendRow */
+        readonly CapabilitySpendRow: {
+            /** Agent */
+            readonly agent: string;
+            /** Capability */
+            readonly capability: string;
+            /** Leases */
+            readonly leases: number;
+            /** Machine Seconds */
+            readonly machine_seconds: number;
+            /** Live */
+            readonly live: number;
+        };
+        /** CapabilityForceReleaseIn */
+        readonly CapabilityForceReleaseIn: {
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
         };
         /** CapabilityExecOut */
         readonly CapabilityExecOut: {
@@ -28127,6 +28295,52 @@ export interface operations {
             };
         };
     };
+    readonly refresh_agent_capability: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentCapabilityOut"];
+                };
+            };
+        };
+    };
+    readonly terminate_capability_orphans: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityOrphansOut"];
+                };
+            };
+        };
+    };
     readonly list_capability_grants: {
         readonly parameters: {
             readonly query?: {
@@ -28193,6 +28407,32 @@ export interface operations {
             };
         };
     };
+    readonly list_capability_leases: {
+        readonly parameters: {
+            readonly query?: {
+                readonly agent?: string | null;
+                readonly capability?: string | null;
+                readonly status?: string | null;
+                readonly since?: string | null;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityLeaseListOut"];
+                };
+            };
+        };
+    };
     readonly acquire_capability_lease: {
         readonly parameters: {
             readonly query?: never;
@@ -28217,9 +28457,36 @@ export interface operations {
             };
         };
     };
+    readonly capability_spend: {
+        readonly parameters: {
+            readonly query?: {
+                readonly since?: string | null;
+                readonly until?: string | null;
+                readonly agent?: string | null;
+                readonly capability?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilitySpendOut"];
+                };
+            };
+        };
+    };
     readonly get_capability_lease: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly wait_s?: number;
+            };
             readonly header?: never;
             readonly path: {
                 readonly lease_id: string;
@@ -28261,6 +28528,32 @@ export interface operations {
             };
         };
     };
+    readonly force_release_capability_lease: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly lease_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CapabilityForceReleaseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilityLeaseOut"];
+                };
+            };
+        };
+    };
     readonly exec_capability_lease: {
         readonly parameters: {
             readonly query?: never;
@@ -28289,7 +28582,9 @@ export interface operations {
     };
     readonly get_capability_exec: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly wait_s?: number;
+            };
             readonly header?: never;
             readonly path: {
                 readonly lease_id: string;

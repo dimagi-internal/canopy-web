@@ -43,7 +43,7 @@ def test_launch_uses_the_lease_as_client_token_and_tags_the_request():
     user_data = {"lease_id": LEASE, "params": {"state": "cc-2.63.0"}, "max_lifetime_s": 3600,
                  "bucket": "b"}
     expected = {
-        "LaunchTemplate": {"LaunchTemplateId": LT, "Version": "$Default"},
+        "LaunchTemplate": {"LaunchTemplateId": LT, "Version": "$Latest"},
         "MinCount": 1, "MaxCount": 1, "ClientToken": LEASE,
         "TagSpecifications": [{"ResourceType": "instance", "Tags": _tags()},
                               {"ResourceType": "volume", "Tags": _tags()}],

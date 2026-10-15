@@ -3,7 +3,7 @@ intrinsics, then RENDER the template for given parameters the way CloudFormation
 would before creating anything — conditions evaluated, `Fn::If` resolved,
 `AWS::NoValue` dropped, conditional resources and outputs removed.
 
-Only what the capability template uses (Equals, Not, If, NoValue): anything else
+Only what the capability template uses (Equals, Not, Or, And, If, NoValue): anything else
 is left as it is, so a test comparing two renders still sees it.
 """
 from __future__ import annotations
@@ -54,6 +54,10 @@ def _condition(expr, params, conds, raw):
             return str(a) == str(b)
         if fn == "Not":
             return not _condition(arg[0], params, conds, raw)
+        if fn == "Or":
+            return any(_condition(a, params, conds, raw) for a in arg)
+        if fn == "And":
+            return all(_condition(a, params, conds, raw) for a in arg)
         if fn == "Condition":
             return _named(arg, params, conds, raw)
     raise ValueError(f"unsupported condition {expr!r}")

@@ -30,6 +30,19 @@ The import name is `canopy_sdk` and does not change with the distribution name.
 - `TAG_BROKER` (`canopy:broker`): the broker's deployment id, which canopy-web now tags on every
   launch (`launch(tags=...)` already took extra tags); `BrokerPolicy` allows it.
 
+- **Root-volume performance parameters** (both modes; empty or `0` = unset, which is the old
+  behaviour): `RootVolumeIops` (gp3, 3000–80000), `RootVolumeThroughput` (gp3 MiB/s, 125–2000)
+  and `RootVolumeInitializationRate` (EBS Provisioned Rate for Volume Initialization, MiB/s,
+  100–300 — how fast a fresh volume pulls the AMI's snapshot blocks instead of hydrating them
+  lazily on first read). An ephemeral machine starts from a cold volume on every lease; on the
+  Android emulator image `300` / `500` / `6000` cut `boot_completed` from ~50 s to ~37 s.
+  Setting any of them on a persistent stack edits the launch template, which replaces its
+  instance.
+- **`EphemeralInstance.launch()` defaults to the launch template's `$Latest` version**, not
+  `$Default`. A stack update adds a version, and `$Default` (which a template cannot set) need not
+  follow it — a launch could keep using the stack's first version and silently ignore an update.
+  Only the stack writes versions (`BrokerPolicy` cannot), so `$Latest` is what it last deployed.
+
 Upgrading an ephemeral stack needs `ExecAllow=<the manifest's exec.allow, comma-separated>`.
 Update it while no lease is live: a lease running under the old layout loses its `leases/`
 grants the moment the stack updates.

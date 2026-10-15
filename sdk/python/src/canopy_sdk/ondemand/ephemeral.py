@@ -123,8 +123,16 @@ class EphemeralInstance:
                 **(extra or {})}
 
     def launch(self, *, lease_id: str, user_data: dict | None = None,
-               tags: dict[str, str] | None = None, version: str = "$Default") -> str:
+               tags: dict[str, str] | None = None, version: str = "$Latest") -> str:
         """``RunInstances`` from the launch template; returns the instance id.
+
+        ``version`` defaults to ``$Latest``: CloudFormation adds a launch-template
+        version on every stack update, and nothing documents it moving
+        ``$Default`` (which cannot be set in a template), so ``$Default`` could
+        keep launching the stack's FIRST version after an update — new volume
+        settings, user data or instance type silently ignored. Only the stack
+        writes versions (the broker's policy has no CreateLaunchTemplateVersion),
+        so ``$Latest`` is exactly what the stack last deployed.
 
         ``ClientToken=lease_id`` makes this idempotent: calling it again with the
         same lease (after a crash, a timeout, a retry) returns the instance the

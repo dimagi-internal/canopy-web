@@ -96,6 +96,7 @@ aws cloudformation deploy --stack-name canopy-cap-<agent>-<capability> \
 | `BrokerRoleName` | the broker's IAM role; for canopy-web, `canopy-web-task-role` |
 | `ExecAllow` | **required** (0.9.0+): the manifest's `exec.allow`, comma-separated; the exec document runs nothing else |
 | `MaxInstanceLifetimeSeconds` | 0.9.0+, default 16200 (4 h + 30 min): the backstop terminates any of the capability's instances older than this. Keep it above `max_lease_s` |
+| `RootVolumeIops`, `RootVolumeThroughput`, `RootVolumeInitializationRate` | 0.9.0+, default empty (= unset; `0` too): gp3 IOPS (3000–80000), gp3 throughput MiB/s (125–2000), and the EBS volume initialization rate MiB/s (100–300) at which a fresh root volume pulls the AMI snapshot instead of hydrating lazily. Every lease starts from a cold volume, so this is the boot-time lever: `6000` / `500` / `300` took the Android emulator's `boot_completed` from ~50 s to ~37 s |
 | `InstanceType`, `VpcId`, `SubnetId`, `NestedVirtualization`, `RootVolumeGb`, `UserData` | as for persistent |
 | `AmiId`, `ConsumerTaskRoleName`, `IdleStopMinutes` | persistent only; leave empty |
 
@@ -107,6 +108,9 @@ What the stack must provide:
   `LeaseObjectScope` (`instance`), `ExecDocumentName`, `ExecAllow`,
   `MaxInstanceLifetimeSeconds` and `BackstopFunctionName`; without them the broker uses the
   pre-0.9.0 contract (`leases/<id>/` objects, `AWS-RunShellScript`).
+- **Launch template:** the broker launches its `$Latest` version (SDK 0.9.0+), so a stack
+  update — new volume settings, instance type, user data — applies from the next lease.
+  Only the stack writes versions; `BrokerPolicy` cannot.
 - **Tags:** instances are tagged `canopy:capability=<name>` and `canopy:owner=<agent>`
   (the launch template sets them; canopy-web also sends them, plus `canopy:lease=<id>` and
   `canopy:broker=<deployment>` — `CAPABILITY_BROKER_ID`, by default the host of

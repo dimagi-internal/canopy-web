@@ -256,6 +256,9 @@ aws cloudformation deploy --stack-name ondemand-<capability> \
 | `UserData` | `""` | base64 user data for the launch template |
 | `NestedVirtualization` | `"false"` | `"true"` adds `CpuOptions.NestedVirtualization: enabled` (KVM in the instance) |
 | `RootVolumeGb` | `30` | encrypted gp3 root volume |
+| `RootVolumeIops` | `""` | gp3 provisioned IOPS, 3000–80000; empty or `0` = unset (gp3 baseline 3000) |
+| `RootVolumeThroughput` | `""` | gp3 throughput in MiB/s, 125–2000; empty or `0` = unset (baseline 125). Above 750 needs more IOPS (≤ 0.25 MiB/s per IOPS) |
+| `RootVolumeInitializationRate` | `""` | EBS volume initialization rate, MiB/s, 100–300: pulls the AMI snapshot into a fresh volume at that rate instead of lazily on first read (billed per GiB). Empty or `0` = unset. Pays most in ephemeral mode, where every lease starts from a cold volume |
 
 Resources: an egress-only security group (443, DNS); an instance role with
 `AmazonSSMManagedInstanceCore` plus get/put on the artifacts bucket, and its
