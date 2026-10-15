@@ -2369,7 +2369,7 @@ def _ensure_agent_clone(slug: str) -> None:
             return
         _LAZY_BOOTSTRAP_TRIED[slug] = time.time()
         _log(f"agent {slug}: no clone on this box yet — bootstrapping before its turn runs")
-        _LAZY_BOOTSTRAPPER()
+        _LAZY_BOOTSTRAPPER(slug)
 
 
 def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path:
@@ -2887,9 +2887,51 @@ def bootstrap_agent_fleet() -> None:
         _HEALTH_SLOW_AT = 0.0
 
 
-#: What `_ensure_agent_clone` runs. A name of its own so the test loader can swap
-#: in a no-op: no test may start a real bootstrap (it clones private repos).
-_LAZY_BOOTSTRAPPER = bootstrap_agent_fleet
+#: Which implementation prepares an agent on this box (docs: canopy
+#: docs/architecture/agent-setup-lifecycle.md, phase 2). "canopy" runs canopy's
+#: `canopy agent prepare --runner` — ONE implementation, shared with laptops, called
+#: per agent; "bash" is bootstrap_agents.sh's own per-agent half. Set per box from
+#: runner.cfn.yaml's PrepareEngine so a standby can be drilled before the default moves;
+#: moving the default here then reaches every box through auto-update, no stack change.
+PREPARE_ENGINE = (os.environ.get("PREPARE_ENGINE") or "bash").strip().lower()
+
+
+def _canopy_cli() -> str:
+    """The canopy CLI bootstrap installs with `uv tool` (~/.local/bin), even when the
+    service's PATH does not carry that directory."""
+    local = str(pathlib.Path.home() / ".local" / "bin")
+    path = os.environ.get("PATH", "")
+    return shutil.which("canopy", path=f"{path}:{local}" if path else local) or f"{local}/canopy"
+
+
+def prepare_agent(slug: str) -> None:
+    """Prepare ONE agent with `canopy agent prepare --runner` — the lazy path for an agent
+    this box has never seen. Only that agent, not the fleet: a new agent's first turn waits
+    for itself, not for every other agent's clone, plugins and Gmail check. Best-effort,
+    like the fleet bootstrap; the agent's readiness report says what it could do."""
+    env = dict(os.environ)
+    env.setdefault("AGENT_ROOT", AGENT_ROOT)
+    try:
+        rc, tail = _run_teed([_canopy_cli(), "agent", "prepare", "--runner", "--slug", slug],
+                             env=env, timeout=900)
+        _set_check(f"prepare.{slug}", "ok" if rc == 0 else "warn",
+                   "" if rc == 0 else f"canopy agent prepare exited {rc}: " + " | ".join(tail))
+    except Exception as exc:  # noqa: BLE001 — never block the claim loop
+        _log(f"warn: canopy agent prepare {slug} did not run: {exc}")
+        _set_check(f"prepare.{slug}", "fail", f"canopy agent prepare did not run: {exc}")
+
+
+def _lazy_prepare(slug: str) -> None:
+    if PREPARE_ENGINE == "canopy":
+        prepare_agent(slug)
+    else:
+        bootstrap_agent_fleet()
+
+
+#: What `_ensure_agent_clone` runs, given the agent's slug. A name of its own so the
+#: test loader can swap in a no-op: no test may start a real bootstrap (it clones
+#: private repos).
+_LAZY_BOOTSTRAPPER = _lazy_prepare
 
 
 #: This box's runner id, once paired — for the few calls made outside a loop
