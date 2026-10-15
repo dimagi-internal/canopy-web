@@ -2,6 +2,18 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.10.0 — 2026-10-15
+
+Ships `canopy-runtime` 0.3.0 at this tag: the capability manifest schema gains `kind: pool`.
+
+- **`kind: pool`** (canopy-web#1509): a capability that leases a NAMED SLOT instead of a machine.
+  `slots` is required (1–50 unique names); `aws`, `exec` and `params` are refused. Concurrency is
+  the slot count. The broker hands each lease one free slot (`params.slot`, `ready_info.slot`) or
+  queues it; the database refuses two live leases on one slot. First user: ACE's `test-worker`
+  pool of Connect test workers (dimagi-internal/ace#2955).
+- `canopy-runtime publish-capabilities` omits null fields, so `ec2-ephemeral` manifests publish
+  unchanged to a broker that predates pools.
+
 ## 0.9.0 — 2026-10-14
 
 `canopy_sdk.ondemand`, ephemeral capabilities: the stack guards itself, independent of the broker.
