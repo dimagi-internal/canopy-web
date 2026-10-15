@@ -65,14 +65,17 @@ def get_runner_credential(runner) -> dict:
     """Decrypt a runner's bundle for the runner to consume. Empty when unset."""
     from apps.common.encryption import decrypt_secret
 
+    logins = [{"key": login.key, "account": login.account}
+              for login in runner.logins.all()]
     cred = getattr(runner, "credential", None)
     if cred is None:
         return {"claude_token": "", "claude_token_secondary": "", "claude_api_key": "",
-                "updated_at": None}
+                "logins": logins, "updated_at": None}
     return {
         "claude_token": decrypt_secret(cred.claude_token_enc),
         "claude_token_secondary": decrypt_secret(cred.claude_token_secondary_enc),
         "claude_api_key": decrypt_secret(cred.claude_api_key_enc),
+        "logins": logins,
         "updated_at": cred.updated_at,
     }
 
@@ -80,12 +83,15 @@ def get_runner_credential(runner) -> dict:
 def runner_credential_status(runner) -> dict:
     """Masked view — which tokens are set, never their values. Labels are names,
     not secrets, so they ride along."""
+    logins = [{"key": login.key, "account": login.account, "signed_in": login.signed_in,
+               "reported_at": login.reported_at} for login in runner.logins.all()]
     cred = getattr(runner, "credential", None)
     if cred is None:
         return {"has_claude_token": False, "has_claude_token_secondary": False,
                 "has_claude_api_key": False, "claude_token_label": "",
-                "claude_token_secondary_label": "", "updated_at": None}
+                "claude_token_secondary_label": "", "logins": logins, "updated_at": None}
     return {
+        "logins": logins,
         "has_claude_token": bool(cred.claude_token_enc),
         "has_claude_token_secondary": bool(cred.claude_token_secondary_enc),
         "has_claude_api_key": bool(cred.claude_api_key_enc),
@@ -118,6 +124,90 @@ def swap_runner_logins(runner, *, updated_by=None):
             cred.updated_by = updated_by
         cred.save()
     return cred
+# ---- Full Claude logins on the box (RunnerLogin) ---------------------------
+class LoginOrderRefused(ValueError):
+    """An order that is not exactly the runner's current logins, rearranged."""
+
+
+def _renumber(runner) -> None:
+    for i, login in enumerate(runner.logins.all()):
+        if login.position != i:
+            login.position = i
+            login.save(update_fields=["position"])
+
+
+def add_runner_login(runner, *, by=None):
+    """Add a login at the END of the cascade and start signing it in.
+
+    The row exists from the start rather than on success: a sign-in that is
+    abandoned leaves a row saying "not signed in", with Sign in and Remove next
+    to it, instead of a login that silently never appeared.
+    """
+    import secrets
+
+    from .models import RunnerLogin
+
+    with transaction.atomic():
+        Runner.objects.select_for_update().filter(pk=runner.pk).first()
+        last = runner.logins.order_by("-position").first()
+        login = RunnerLogin.objects.create(
+            runner=runner, key=secrets.token_hex(4), created_by=by,
+            position=(last.position + 1) if last else 0)
+    start_runner_mint(runner, requested_by=by, slot="box", login_key=login.key)
+    return login
+
+
+def remove_runner_login(runner, key: str) -> bool:
+    """Drop a login from the list. The box signs it out (deletes its directory)
+    the next time it re-reads its bundle — within a few minutes."""
+    with transaction.atomic():
+        deleted, _ = runner.logins.filter(key=key).delete()
+        _renumber(runner)
+    return bool(deleted)
+
+
+def order_runner_logins(runner, keys: list[str]) -> None:
+    """Make the cascade order exactly `keys` — every current login, once each.
+
+    Refused rather than partially applied: an order that names a login twice or
+    leaves one out is a stale page, and guessing where the rest go would put a
+    login somewhere nobody chose.
+    """
+    with transaction.atomic():
+        logins = {login.key: login for login in runner.logins.select_for_update()}
+        if sorted(keys) != sorted(logins):
+            raise LoginOrderRefused(
+                "the order must name every login on this runner exactly once — "
+                "reload the page and try again")
+        for i, key in enumerate(keys):
+            if logins[key].position != i:
+                logins[key].position = i
+                logins[key].save(update_fields=["position"])
+
+
+def report_runner_logins(runner, reports: list[dict], *, adopt_default: bool = False) -> None:
+    """The box says which of its logins are signed in, and as whom.
+
+    `adopt_default`: the box found a login in the CLI's own directory that this
+    list has never held — one signed in before there was a list, or by hand on
+    the box. It goes FIRST, where that login always was.
+    """
+    from .models import RunnerLogin
+
+    now = timezone.now()
+    with transaction.atomic():
+        Runner.objects.select_for_update().filter(pk=runner.pk).first()
+        if adopt_default and not runner.logins.filter(key=RunnerLogin.DEFAULT).exists():
+            for login in runner.logins.all():
+                login.position += 1
+                login.save(update_fields=["position"])
+            RunnerLogin.objects.create(runner=runner, key=RunnerLogin.DEFAULT, position=0)
+        for r in reports:
+            runner.logins.filter(key=r.get("key", "")).update(
+                signed_in=bool(r.get("signed_in")),
+                account=(r.get("account") or "")[:254], reported_at=now)
+
+
 # ---- Runner administrators (administer a box without speaking for it) -----
 def request_refresh(runner: Runner) -> Runner:
     """Ask a box to refresh itself — re-run its bootstrap (plugins, the canopy
@@ -327,7 +417,7 @@ def _expire_if_stale(mint):
     return mint
 
 
-def start_runner_mint(runner, *, requested_by=None, slot="box"):
+def start_runner_mint(runner, *, requested_by=None, slot="box", login_key=""):
     """Ask a runner to begin a browser sign-in, superseding any unfinished one.
 
     Superseding rather than refusing: a mint that stalled (the operator closed
@@ -340,7 +430,8 @@ def start_runner_mint(runner, *, requested_by=None, slot="box"):
     RunnerMint.objects.filter(runner=runner).exclude(
         status__in=RunnerMint.FINISHED
     ).update(status=RunnerMint.FAILED, detail="superseded by a newer request")
-    return RunnerMint.objects.create(runner=runner, requested_by=requested_by, slot=slot)
+    return RunnerMint.objects.create(runner=runner, requested_by=requested_by, slot=slot,
+                                     login_key=login_key)
 
 
 def current_runner_mint(runner):
@@ -405,7 +496,8 @@ def take_mint_code(mint) -> str:
     return code
 
 
-def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bool = False):
+def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bool = False,
+                       account: str = ""):
     """The runner reports the outcome; on success the token lands in the bundle,
     in the slot the human chose.
 
@@ -424,6 +516,8 @@ def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bo
         # token arriving anyway is ignored rather than written into a bundle
         # slot nobody asked to replace.
         mint.status = RunnerMint.DONE if logged_in else RunnerMint.FAILED
+        if logged_in:
+            _record_signed_in(mint.runner, mint.login_key, account)
         mint.detail = detail or ("signed in on the box" if logged_in
                                  else "the runner did not complete the sign-in")
         mint.code = ""
@@ -441,3 +535,19 @@ def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bo
     mint.code = ""
     mint.save(update_fields=["status", "detail", "code", "updated_at"])
     return mint
+
+
+def _record_signed_in(runner, login_key: str, account: str) -> None:
+    """A box sign-in finished: mark its login signed in, as the account the box
+    read back. A mint with no login (an older runner, or one started before
+    there was a list) signed in the box's default login — which joins the list
+    first, where it always sat in the cascade."""
+    from .models import RunnerLogin
+
+    key = login_key or RunnerLogin.DEFAULT
+    if not runner.logins.filter(key=key).exists():
+        if key != RunnerLogin.DEFAULT:
+            return  # removed while the sign-in was in flight; the box drops it
+        report_runner_logins(runner, [], adopt_default=True)
+    runner.logins.filter(key=key).update(
+        signed_in=True, account=account[:254], reported_at=timezone.now())

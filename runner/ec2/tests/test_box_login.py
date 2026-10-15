@@ -24,8 +24,10 @@ _FIXTURE = _HERE / "fixtures" / "auth_login_pty.bin"
 
 
 @pytest.fixture()
-def cr(cloud_runner, monkeypatch, tmp_path):
+def cr(cloud_runner, monkeypatch, tmp_path, tmp_path_factory):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    cloud_runner._BASE_CONFIG_DIR = str(tmp_path)
+    cloud_runner._LOGINS_ROOT = tmp_path_factory.mktemp("logins")
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cloud_runner._CLAUDE_CREDS.clear()
@@ -127,7 +129,7 @@ def test_promotion_still_swaps_the_subscriptions_behind_a_box_login(cr, tmp_path
         {"claude_token": "tok-1", "claude_token_secondary": "tok-2"}))
     cr._apply_claude_credential(2)          # subscription-2 just worked
     cr._promote_working_subscription()
-    assert [c[2] for c in cr._CLAUDE_CREDS] == ["", "tok-2", "tok-1"]
+    assert [c[2] for c in cr._CLAUDE_CREDS] == [str(tmp_path), "tok-2", "tok-1"]
 
 
 # ── the sign-in itself ────────────────────────────────────────────────────
@@ -250,3 +252,122 @@ def test_the_health_check_names_the_account(cr, tmp_path):
     cr._adopt_box_login()
     cr._credential_check()
     assert "as ace@dimagi-ai.com" in cr._HEALTH["claude.login"]["detail"]
+
+
+# ── several logins, in the order a person set ─────────────────────────────
+
+def _store_login_in(cr, key, *, account=""):
+    d = cr._prepare_login_dir(key)
+    _store_login(d)
+    if account:
+        state = cr._claude_state_file(key)
+        data = json.loads(state.read_text()) if state.exists() else {}
+        data["oauthAccount"] = {"emailAddress": account}
+        state.write_text(json.dumps(data))
+    return d
+
+
+def test_each_login_gets_its_own_directory_sharing_the_rest(cr, tmp_path):
+    (tmp_path / "settings.json").write_text("{}")
+    (tmp_path / ".claude.json").write_text(json.dumps(
+        {"hasCompletedOnboarding": True, "oauthAccount": {"emailAddress": "a@x.com"}}))
+    d = cr._prepare_login_dir("ab12")
+    assert d.parent == cr._LOGINS_ROOT
+    assert (d / "projects").resolve() == (tmp_path / "projects").resolve(), \
+        "transcripts must land where the runner reads them, whichever login ran"
+    assert (d / "settings.json").is_symlink()
+    state = json.loads((d / ".claude.json").read_text())
+    assert state["hasCompletedOnboarding"] is True
+    assert "oauthAccount" not in state, "a new login must not claim the default's account"
+
+
+def test_the_cascade_follows_the_lists_order(cr, tmp_path):
+    _store_login(tmp_path)
+    _store_login_in(cr, "bb")
+    _store_login_in(cr, "cc")
+    (cr._LOGINS_ROOT / ".default-adopted").touch()
+    cascade = cr._cascade_from({"logins": [{"key": "cc"}, {"key": "default"}, {"key": "bb"}],
+                                "claude_token": "tok-1"})
+    assert [c[0] for c in cascade] == [
+        "box-login:cc", "box-login", "box-login:bb", "subscription-1"]
+
+
+def test_a_listed_login_not_yet_signed_in_is_skipped(cr):
+    cascade = cr._cascade_from({"logins": [{"key": "bb"}], "claude_token": "tok-1"})
+    assert [c[0] for c in cascade] == ["subscription-1"]
+
+
+def test_selecting_a_login_points_the_cli_at_its_directory(cr, tmp_path):
+    d = _store_login_in(cr, "bb")
+    cr._CLAUDE_CREDS.extend(cr._cascade_from(
+        {"logins": [{"key": "bb"}], "claude_token": "tok-1"}))
+    cr._apply_claude_credential(0)
+    assert os.environ["CLAUDE_CONFIG_DIR"] == str(d)
+    cr._apply_claude_credential(1)
+    assert os.environ["CLAUDE_CONFIG_DIR"] == str(tmp_path), "a token runs in the CLI's own dir"
+    assert os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == "tok-1"
+
+
+def test_a_capped_login_falls_through_to_the_next_login(cr):
+    _store_login_in(cr, "bb")
+    _store_login_in(cr, "cc")
+    cr._CLAUDE_CREDS.extend(cr._cascade_from({"logins": [{"key": "bb"}, {"key": "cc"}]}))
+    cr._apply_claude_credential(0)
+    assert cr._advance_claude_credential() is True
+    assert cr._claude_cred_label() == "box-login:cc"
+
+
+def test_the_login_env_signs_in_to_that_logins_directory(cr):
+    d = cr._prepare_login_dir("bb")
+    assert cr._login_env("bb")["CLAUDE_CONFIG_DIR"] == str(d)
+
+
+def _reconcile(cr, monkeypatch, cred):
+    posts = []
+    monkeypatch.setattr(cr, "_api", lambda m, path, body=None, **k: (posts.append((path, body)), (200, {}))[1])
+    cr._reconcile_logins("rid", cred)
+    return posts
+
+
+def test_a_removed_login_is_signed_out_of_the_box(cr, monkeypatch):
+    gone = _store_login_in(cr, "bb")
+    kept = _store_login_in(cr, "cc")
+    _reconcile(cr, monkeypatch, {"logins": [{"key": "cc"}]})
+    assert not gone.exists() and kept.exists()
+
+
+def test_removing_the_default_login_signs_it_out_but_keeps_its_directory(cr, tmp_path, monkeypatch):
+    _store_login(tmp_path)
+    (cr._LOGINS_ROOT / ".default-adopted").touch()
+    _reconcile(cr, monkeypatch, {"logins": []})
+    assert not (tmp_path / ".credentials.json").exists()
+    assert tmp_path.exists()
+
+
+def test_a_login_from_before_the_list_is_reported_for_adoption_not_removed(cr, tmp_path, monkeypatch):
+    _store_login(tmp_path)
+    (tmp_path / ".claude.json").write_text(json.dumps({"oauthAccount": {"emailAddress": "a@x.com"}}))
+    posts = _reconcile(cr, monkeypatch, {"logins": []})
+    assert (tmp_path / ".credentials.json").exists()
+    (path, body), = posts
+    assert path == "/runners/rid/logins/report" and body["adopt_default"] is True
+    assert body["logins"] == [{"key": "default", "signed_in": True, "account": "a@x.com"}]
+    assert (cr._LOGINS_ROOT / ".default-adopted").exists()
+    # Until the list holds it, it stays first in the cascade.
+    assert [c[0] for c in cr._cascade_from({"logins": []})] == []
+    assert [c[0] for c in cr._cascade_from({"logins": [{"key": "default"}]})] == ["box-login"]
+
+
+def test_an_unchanged_state_is_reported_once(cr, monkeypatch):
+    _store_login_in(cr, "bb", account="b@x.com")
+    cred = {"logins": [{"key": "bb"}]}
+    assert len(_reconcile(cr, monkeypatch, cred)) == 1
+    assert _reconcile(cr, monkeypatch, cred) == []
+
+
+def test_an_older_canopy_web_with_no_list_changes_nothing(cr, tmp_path, monkeypatch):
+    _store_login(tmp_path)
+    (cr._LOGINS_ROOT / ".default-adopted").touch()
+    assert _reconcile(cr, monkeypatch, {"claude_token": "tok-1"}) == []
+    assert (tmp_path / ".credentials.json").exists()
+    assert [c[0] for c in cr._cascade_from({"claude_token": "tok-1"})][0] == "box-login"

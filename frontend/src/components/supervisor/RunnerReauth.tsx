@@ -46,10 +46,12 @@ const POLL_MS = 3_000
  * of. So an outcome shows only when it happened in front of you, in this visit.
  */
 
-export function RunnerReauth({ runnerId, slot = 'box', isSet = false, onSignedIn }: {
+export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = false, onSignedIn }: {
   runnerId: string
   /** The login this sign-in fills. */
   slot?: LoginSlot
+  /** For a `box` sign-in, WHICH of the box's logins ('' = its default one). */
+  loginKey?: string
   /** Whether that login already holds a token — only changes the button's words. */
   isSet?: boolean
   /** Lets the parent refresh its masked credential status once a token lands. */
@@ -60,7 +62,10 @@ export function RunnerReauth({ runnerId, slot = 'box', isSet = false, onSignedIn
   // other slot's row must not show its link or its outcome — that would invite
   // pasting the fallback's code under the primary. A row older than the slot
   // field has none, and was always the primary.
-  const mint = latest && (latest.slot ?? 'primary') === slot ? latest : null
+  // Likewise each of the box's logins: one row must not show another's link.
+  const sameLogin = slot !== 'box'
+    || (latest?.login_key || 'default') === (loginKey || 'default')
+  const mint = latest && (latest.slot ?? 'primary') === slot && sameLogin ? latest : null
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -136,7 +141,7 @@ export function RunnerReauth({ runnerId, slot = 'box', isSet = false, onSignedIn
     setCode('')
     setWaitedOut(false)
     startedWaiting.current = null
-    return startRunnerMint(runnerId, slot)
+    return startRunnerMint(runnerId, slot, loginKey)
   })
 
   const submit = () => run(async () => {
@@ -157,7 +162,7 @@ export function RunnerReauth({ runnerId, slot = 'box', isSet = false, onSignedIn
   const idle = !mint || settled
 
   return (
-    <div data-testid={`runner-reauth-${slot}`}>
+    <div data-testid={`runner-reauth-${slot}${loginKey ? `-${loginKey}` : ''}`}>
       <div className="flex items-center gap-2">
         {/* ALWAYS offered, not only when idle. A link is good for minutes, so a
             sign-in left half-done is the ordinary case — and with the button

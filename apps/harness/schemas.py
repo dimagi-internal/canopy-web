@@ -1167,13 +1167,50 @@ class RunnerCredentialIn(Schema):
     claude_token_secondary_label: str | None = Field(default=None, max_length=200)
 
 
+class RunnerLoginRef(Schema):
+    """One full Claude login the box should keep, in cascade order."""
+
+    key: str
+    account: str = ""
+
+
 class RunnerCredentialOut(Schema):
     """The runner's own fetch — actual token values (HTTPS + PAT-authed, owner-gated)."""
 
     claude_token: str = ""
     claude_token_secondary: str = ""
     claude_api_key: str = ""
+    #: The full logins this box should keep, first to last. Any login on the
+    #: box that is not listed here is one a person removed.
+    logins: list[RunnerLoginRef] = []
     updated_at: dt.datetime | None = None
+
+
+class RunnerLoginOut(Schema):
+    """A full Claude login on the box, as the box last reported it."""
+
+    key: str
+    #: The account the box says this login belongs to; "" until it has said.
+    account: str = ""
+    signed_in: bool = False
+    reported_at: dt.datetime | None = None
+
+
+class RunnerLoginOrderIn(Schema):
+    #: Every login key on the runner, first to last.
+    keys: list[str]
+
+
+class RunnerLoginReportItem(Schema):
+    key: str
+    signed_in: bool = False
+    account: str = Field(default="", max_length=254)
+
+
+class RunnerLoginReportIn(Schema):
+    logins: list[RunnerLoginReportItem] = []
+    #: The CLI's own directory holds a login this list has never had.
+    adopt_default: bool = False
 
 
 class DroppedRouteOut(Schema):
@@ -1243,6 +1280,8 @@ class RunnerMintOut(Schema):
     #: Which subscription login the new token will replace — or `box`, a full
     #: login the runner keeps on the box (carries claude.ai connectors).
     slot: Literal["primary", "secondary", "box"] = "primary"
+    #: For a `box` sign-in, the login it signs in ("" = the box's default login).
+    login_key: str = ""
     authorize_url: str
     detail: str
     created_at: dt.datetime
@@ -1254,6 +1293,8 @@ class RunnerMintStartIn(Schema):
     # mints) are still named so a request for one gets a clear refusal rather
     # than a validation error — see api.start_runner_mint.
     slot: Literal["primary", "secondary", "box"] = "box"
+    #: Which login to sign in again; "" = the box's default login.
+    login_key: str = ""
 
 
 class RunnerMintClaimOut(Schema):
@@ -1283,6 +1324,8 @@ class RunnerMintResultIn(Schema):
     # A `box` sign-in delivers no token — the login stays on the runner — so
     # success is this flag instead.
     logged_in: bool = False
+    #: The account a `box` sign-in signed in as, read back off the box.
+    account: str = Field(default="", max_length=254)
 
 
 class SignInRequestIn(Schema):
@@ -1310,6 +1353,8 @@ class RunnerCredentialStatusOut(Schema):
     has_claude_api_key: bool = False
     claude_token_label: str = ""
     claude_token_secondary_label: str = ""
+    #: The full logins on the box, in the order it falls through them.
+    logins: list[RunnerLoginOut] = []
     updated_at: dt.datetime | None = None
 
 

@@ -150,6 +150,11 @@ from .runners import (
     submit_mint_code,  # noqa: F401
     swap_runner_logins,  # noqa: F401
     take_mint_code,  # noqa: F401
+    add_runner_login,  # noqa: F401
+    LoginOrderRefused,  # noqa: F401
+    order_runner_logins,  # noqa: F401
+    remove_runner_login,  # noqa: F401
+    report_runner_logins,  # noqa: F401
 )
 from .drills import (
     _drill_github_check,  # noqa: F401

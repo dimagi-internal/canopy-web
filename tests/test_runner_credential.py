@@ -67,7 +67,7 @@ def test_set_then_runner_fetches_actual_values(client, runner):
     # The runner's own fetch returns the real values.
     got = client.get(_cred_url(runner)).json()
     assert got == {"claude_token": "CLAUDE", "claude_token_secondary": "",
-                   "claude_api_key": "KEY", "updated_at": got["updated_at"]}
+                   "claude_api_key": "KEY", "logins": [], "updated_at": got["updated_at"]}
 
 
 def test_set_is_non_clobbering_per_field(client, runner):
@@ -77,7 +77,7 @@ def test_set_is_non_clobbering_per_field(client, runner):
     # Re-fetch fresh (the fixture instance cached its reverse credential relation).
     v = services.get_runner_credential(Runner.objects.get(pk=runner.pk))
     assert v == {"claude_token": "C2", "claude_token_secondary": "",
-                 "claude_api_key": "K", "updated_at": v["updated_at"]}
+                 "claude_api_key": "K", "logins": [], "updated_at": v["updated_at"]}
 
 
 def test_fetch_when_unset_is_empty(client, runner):

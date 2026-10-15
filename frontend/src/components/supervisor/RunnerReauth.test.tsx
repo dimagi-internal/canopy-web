@@ -188,7 +188,19 @@ describe('RunnerReauth', () => {
     api.startRunnerMint.mockResolvedValue(mint({ slot: 'secondary' }))
     await act(async () => { await Promise.resolve() })
     await act(async () => { fireEvent.click(screen.getByTestId('reauth-start')) })
-    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'secondary')
+    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'secondary', '')
+  })
+
+  it("shows a box login's link only on that login's row", async () => {
+    api.getRunnerMint.mockResolvedValue(
+      mint({ status: 'awaiting_code', authorize_url: URL_, login_key: 'bb' }))
+    render(<RunnerReauth runnerId="r1" loginKey="cc" />)
+    await waitFor(() => expect(api.getRunnerMint).toHaveBeenCalled())
+    await act(async () => { await Promise.resolve() })
+    expect(screen.queryByTestId('reauth-url')).toBeNull()
+    cleanup()
+    render(<RunnerReauth runnerId="r1" loginKey="bb" />)
+    await waitFor(() => expect(screen.getByTestId('reauth-url')).toBeTruthy())
   })
 
   it('never renders a token', async () => {
