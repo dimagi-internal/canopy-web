@@ -56,11 +56,21 @@ def _mailbox(agent: Agent, settings: str) -> dict:
     if not agent.email:
         return _step("mailbox", "Connect its mailbox", OPTIONAL,
                      "No mailbox set. Email is optional; add one later if it should send or read mail.")
+    from .models import AgentBootstrapReport
+
+    # Done when canopy-web holds the token (Connect Google mailbox) OR a box has proved the
+    # mailbox works for turns — the box's verdict is the system's own check. Before this,
+    # only the first counted, so ada/hal/eva/echo (tokens from a laptop `gog login`, in the
+    # vault) read "todo" while cloud-ec2-2 reported turn_ready for every one (2026-10-15),
+    # and anything built on this list (canopy agent doctor) would have cried wolf.
+    proved = (AgentBootstrapReport.objects.filter(agent=agent, turn_ready=True)
+              .values_list("runner_name", flat=True).first())
     has = AgentCredential.objects.filter(agent=agent, name=GOG_TOKEN_REF).exists()
+    done = has or bool(proved)
     return _step(
-        "mailbox", "Connect its mailbox", DONE if has else TODO,
-        f"Signed in as {agent.email}." if has else
-        f"Sign {agent.email} in with Google so it can send and read mail.",
+        "mailbox", "Connect its mailbox", DONE if done else TODO,
+        (f"Signed in as {agent.email}" + (f"; {proved} reads it for turns." if proved else ".")
+         ) if done else f"Sign {agent.email} in with Google so it can send and read mail.",
         href=f"{settings}#credentials", action="Connect the mailbox")
 
 
