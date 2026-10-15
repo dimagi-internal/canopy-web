@@ -94,3 +94,25 @@ def test_a_limit_mentioned_in_passing_is_not_a_cap(cr):
     be enough, which is why the verb has to be near it."""
     assert not cr._is_usage_cap("The slug is truncated at Connect's 50-char limit.")
     assert not cr._is_usage_cap("I raised the limit in the config and re-ran it.")
+
+
+# ── the ACP executor's wording (investigation 5) ────────────────────────────
+
+@pytest.mark.parametrize("text", [
+    "runner error (acp): Authentication required",
+    "Failed to authenticate: OAuth session expired and could not be refreshed",
+])
+def test_an_expired_login_under_acp_is_auth_required(cr, text):
+    """cloud-ec2-2, 2026-10-15 (turn 9fbe2240): the box's only claude.ai login
+    could not refresh. The agent's last line was the second string, and the turn
+    failed with the first. Neither matched, so nobody was told the box needed a
+    person, and the note never said so either."""
+    assert cr._is_auth_required(text)
+    assert not cr._is_usage_cap(text)
+
+
+def test_authentication_required_in_prose_is_not_a_dead_token(cr):
+    """Only the runner's own ACP note counts. An agent describing an API that
+    answers "authentication required" must not mark the box dead."""
+    assert not cr._is_auth_required(
+        "The HQ endpoint returned 401 Authentication required, so I used the API key.")

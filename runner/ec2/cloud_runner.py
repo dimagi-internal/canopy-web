@@ -3322,7 +3322,20 @@ _AUTH_REQUIRED_MARKERS = (
     "auth token expired or invalid",
     "refresh token expired",
     "invalid api key",
+    # The CLI's wording when its stored claude.ai login can no longer refresh.
+    # cloud-ec2-2, 2026-10-15 (turn 9fbe2240, failure investigation 5): echo's
+    # scheduled turn died on exactly this, and none of the markers above matched.
+    # So the box sent no auth-required alert, the turn note never said "not signed
+    # in", and the only trace was a bare "Authentication required".
+    "oauth session expired",
 )
+
+#: The ACP executor's own failure note when the adapter refuses the session with
+#: ACP's `auth_required` error. It is matched with the runner's prefix, never as
+#: a bare phrase: "authentication required" is ordinary prose an agent writes
+#: about any API, and that must not mark a box dead. The prefixed form is written
+#: only by `_execute_once_acp`'s except branch, never by an agent (investigation 5).
+_ACP_AUTH_REQUIRED_NOTE = "runner error (acp): authentication required"
 
 
 def _is_usage_cap(text: str) -> bool:
@@ -3337,7 +3350,8 @@ def _is_auth_required(text: str) -> bool:
     disjoint and want opposite responses (wait vs. fetch a person).
     """
     low = (text or "").lower()
-    return any(m in low for m in _AUTH_REQUIRED_MARKERS)
+    return (any(m in low for m in _AUTH_REQUIRED_MARKERS)
+            or low.lstrip().startswith(_ACP_AUTH_REQUIRED_NOTE))
 
 
 #: turn id -> the reset (epoch s) the ACP adapter reported in `_claude/rateLimit`
