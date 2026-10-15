@@ -24,7 +24,7 @@ def _load_cloud_runner():
     spec.loader.exec_module(module)  # type: ignore[union-attr]
     # A turn for an agent with no clone bootstraps the box first; in a test that
     # would clone real private repos. Tests that exercise it set their own.
-    module._LAZY_BOOTSTRAPPER = lambda: None
+    module._LAZY_BOOTSTRAPPER = lambda slug: None
     return module
 
 

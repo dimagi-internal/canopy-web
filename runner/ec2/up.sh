@@ -25,6 +25,7 @@ VOLUME_SIZE=""
 INSTANCE_TYPE=""
 ALLOW_INSTANCE_CHANGE=0
 ALLOW_DIRTY=0
+PREPARE_ENGINE_ARG=""
 
 usage() {
   cat <<'USAGE'
@@ -39,6 +40,8 @@ usage: ./up.sh [options]
   --volume-size <GiB>       root volume (template default 40)
   --instance-type <type>    EC2 type (template default t3.medium)
   --base-url <url>          canopy-web (default https://canopy.dimagi.com)
+  --prepare-engine <e>      bash | canopy: how this box prepares each agent (template
+                            PrepareEngine; default: the code's). Drill `canopy` on a standby.
   --allow-instance-change   proceed when an UPDATE would stop/start or REPLACE the instance
                             (refused by default: on the live stack that is an outage)
   --allow-dirty             publish a seed from uncommitted runner code (its provenance stamp
@@ -57,6 +60,7 @@ while [[ $# -gt 0 ]]; do
     --volume-size) VOLUME_SIZE="$2"; shift 2 ;;
     --instance-type) INSTANCE_TYPE="$2"; shift 2 ;;
     --base-url) BASE_URL="${2%/}"; shift 2 ;;
+    --prepare-engine) PREPARE_ENGINE_ARG="$2"; shift 2 ;;
     --allow-instance-change) ALLOW_INSTANCE_CHANGE=1; shift ;;
     --allow-dirty) ALLOW_DIRTY=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -177,6 +181,7 @@ echo ">> validating template"
 PARAMS=("SshCidr=${MYIP}/32" "RunnerName=${NAME}")
 [[ -n "$VOLUME_SIZE" ]] && PARAMS+=("VolumeSize=${VOLUME_SIZE}")
 [[ -n "$INSTANCE_TYPE" ]] && PARAMS+=("InstanceType=${INSTANCE_TYPE}")
+[[ -n "$PREPARE_ENGINE_ARG" ]] && PARAMS+=("PrepareEngine=${PREPARE_ENGINE_ARG}")
 if [[ "$STANDBY" == "1" ]]; then
   PARAMS+=("RunnerProjects=" "RunnerSessions=0")
 fi

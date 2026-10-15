@@ -34,6 +34,13 @@ AGENT_REPO_ORG="${AGENT_REPO_ORG:-dimagi-internal}"
 PLUGIN_DEPS_ROOT="${PLUGIN_DEPS_ROOT:-$HOME/.claude/plugins/agent-deps}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 CANOPY_PLUGIN_URL="${CANOPY_PLUGIN_URL:-https://github.com/dimagi-internal/canopy.git}"
+# Which implementation prepares each agent (canopy docs/architecture/agent-setup-lifecycle.md,
+# phase 2). `canopy`: canopy's `canopy agent prepare --runner`, the ONE implementation shared
+# with laptops and with cloud_runner's lazy path — this script then keeps only what belongs
+# to the BOX (tooling, gog's keyring, the canopy plugin + CLI, caches). `bash`: this file's
+# own per-agent half (bootstrap_one_agent and the helpers above it), until the canopy engine
+# has been drilled on a standby box and becomes the default. Same name cloud_runner.py reads.
+PREPARE_ENGINE="${PREPARE_ENGINE:-bash}"
 
 log()  { printf '[bootstrap-agents] %s\n' "$*"; }
 ok()   { printf '[bootstrap-agents] OK: %s\n' "$*"; }
@@ -1444,6 +1451,35 @@ step3_agents() {
   done
 }
 
+# The canopy engine's step 3: each agent prepared by `canopy agent prepare --runner`, which
+# reads its credentials from canopy-web with this box's token (CANOPY_BASE_URL /
+# CANOPY_TOKEN from runner.env), posts its own readiness report and exits non-zero on any
+# problem. An agent counts as READY when its clone is on the box — the same bar as the bash
+# path, where a warning (no mailbox, no token) never made an agent unready.
+step3_agents_canopy() {
+  log "step 3: per-agent prepare via canopy (PREPARE_ENGINE=canopy)"
+  ensure_plugin_runtime
+  mkdir -p "$AGENT_ROOT"
+  local args=() slug
+  (( CREDENTIALS_ONLY )) && args+=(--credentials-only)
+  local slugs=(); IFS=',' read -ra slugs <<<"$AGENT_SLUGS"
+  for slug in "${slugs[@]}"; do
+    [[ -n "$slug" ]] || continue
+    log "── agent $slug ──"
+    if ! command -v canopy >/dev/null 2>&1; then
+      fail "$slug: canopy CLI not on PATH — cannot prepare (step 1 installs it)"
+      FAILED_AGENTS+=("$slug"); continue
+    fi
+    AGENT_ROOT="$AGENT_ROOT" canopy agent prepare --runner --slug "$slug" "${args[@]}" \
+      || warn "$slug: canopy agent prepare reported problems (its readiness report says which)"
+    if (( CREDENTIALS_ONLY )) || [[ -d "$AGENT_ROOT/$slug/.git" ]]; then
+      READY_AGENTS+=("$slug")
+    else
+      FAILED_AGENTS+=("$slug")
+    fi
+  done
+}
+
 # ── Step 4: claude plugins ───────────────────────────────────────────────────────
 # Claude Code itself. cloud-init installs it ONCE (`npm i -g` as root, into
 # /usr), and nothing updated it afterwards: a box's Claude Code was whatever was
@@ -1601,6 +1637,24 @@ for _arg in "$@"; do
 done
 
 main() {
+  if [[ "$PREPARE_ENGINE" == "canopy" ]]; then
+    # The canopy engine RUNS the CLI, so it is brought current first: an agent is prepared
+    # by the canopy that ships with the plugin its turns use (step 4 before step 3).
+    if (( CREDENTIALS_ONLY )); then
+      log "credentials-only pass via canopy (CLI sync, then gmail + readiness per agent)"
+      step2_gog_config
+      reinstall_cli_from_marketplace_clone
+      step3_agents_canopy
+      return 0
+    fi
+    step1_tooling
+    step2_gog_config
+    step4_claude_plugins
+    step3_agents_canopy
+    step4b_prune_caches
+    step5_summary
+    return
+  fi
   if (( CREDENTIALS_ONLY )); then
     log "credentials-only pass (client creds + gmail token + CLI sync + readiness report)"
     step2_gog_config
