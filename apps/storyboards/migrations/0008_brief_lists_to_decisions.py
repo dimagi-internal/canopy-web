@@ -12,7 +12,7 @@ from apps.storyboards.decisions import LEGACY_BRIEF_KEYS, from_legacy_brief, val
 
 def forwards(apps, schema_editor):
     Storyboard = apps.get_model("storyboards", "Storyboard")
-    Decision = apps.get_model("storyboards", "StoryboardDecision")
+    Decision = apps.get_model("storyboards", "StoryboardDecision")  # noqa: N806
     for board in Storyboard.objects.all():
         if not isinstance(board.brief, dict):
             continue
