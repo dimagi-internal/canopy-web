@@ -4,6 +4,7 @@ import {
   getStoryboard,
   getStoryboardNotes,
   leaveFeedback,
+  type LeaveFeedbackIn,
   type Note,
   type Storyboard,
 } from '@/api/storyboards'
@@ -12,6 +13,8 @@ import { useScopedPath } from '@/lib/scopedLinks'
 import { NoteComposer } from '@/components/storyboard/NoteComposer'
 import { NotesReturned, groupNotes } from '@/components/storyboard/NotesReturned'
 import { PublicHeader } from '@/components/PublicHeader'
+import { BriefPanel, Caveats } from '@/components/storyboard/DemoBrief'
+import { EntryCuts } from '@/components/storyboard/EntryCuts'
 
 /**
  * The shared arc — several DDD narratives as one link.
@@ -168,6 +171,10 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
           )}
         </header>
 
+        {/* Who it is for, the point to land, the data disclosure, and the order
+            to play it in. Absent on a board without a brief. */}
+        <BriefPanel board={board} />
+
         {board.acts.map((act, i) => (
           <section key={`${act.title}-${i}`} className="mt-11 flex flex-col gap-4">
             {/* A reel whose entries carry their own authored titles has nothing
@@ -205,6 +212,11 @@ function Board({ board, token }: { board: Storyboard; token: string | null }) {
             ))}
           </section>
         ))}
+
+        {/* What the demos assume, and where the script and data disagree —
+            the last thing read before a reviewer sends this on. Kept on a reel
+            too: a disclosure is not review furniture. */}
+        <Caveats board={board} />
 
         {!reel && grouped.loose.length > 0 && (
           <section className="mt-11 flex flex-col gap-4">
@@ -307,12 +319,69 @@ function EntryCard({
 }) {
   const { workspace = '' } = useParams()
   const scoped = useScopedPath()
+  const submit = (payload: LeaveFeedbackIn) =>
+    leaveFeedback(board.slug, payload, token, workspace).then(() => undefined)
+  // A recorded narrative is several cuts. Its card shows each one — video,
+  // words, notes, and a comment box — rather than a single hero thumbnail that
+  // hid every cut after the first.
+  const cuts = entry.cuts ?? []
+  if (cuts.length > 0) {
+    const cutAnchors = new Set(cuts.map((c) => c.anchor_id))
+    return (
+      <article
+        id={`entry-${entry.narrative_slug}`}
+        className="flex scroll-mt-6 flex-col gap-4 rounded-lg border border-border bg-card p-3.5 sm:p-5"
+      >
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-[17px] font-semibold text-foreground">{entry.title}</h3>
+            {!reel && (
+              <span className="rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[11px] tabular-nums text-info">
+                v{entry.version}
+              </span>
+            )}
+          </div>
+          {entry.lede && (
+            <p className="text-[13.5px] leading-relaxed text-foreground-secondary">{entry.lede}</p>
+          )}
+        </div>
+        <EntryCuts
+          entry={entry}
+          board={board}
+          notes={notes}
+          onSubmit={submit}
+        />
+        {!reel && (
+          <div className="flex flex-col gap-2 border-t border-border pt-3">
+            <Link
+              to={scoped(
+                `/narrative/${entry.narrative_slug}?b=${encodeURIComponent(board.slug)}${token ? `&t=${encodeURIComponent(token)}` : ''}`,
+              )}
+              className="text-[12.5px] font-medium text-primary hover:underline"
+            >
+              Read and edit the script, scene by scene →
+            </Link>
+            <NotesReturned notes={notes.filter((n) => !cutAnchors.has(n.anchor_id))} />
+            <NoteComposer
+              capability={board.capability}
+              anchorLabel={`On “${entry.title}” · v${entry.version}`}
+              cta="Leave a note on this demo as a whole"
+              seedText={entry.lede}
+              defaults={{ narrative_slug: entry.narrative_slug, target_version: entry.version }}
+              onSubmit={submit}
+            />
+          </div>
+        )}
+      </article>
+    )
+  }
   return (
     <article
+      id={`entry-${entry.narrative_slug}`}
       className={
         reel
-          ? 'flex flex-col gap-3 rounded-lg border border-border bg-card p-3.5'
-          : 'grid grid-cols-1 gap-4 rounded-lg border border-border bg-card p-3.5 sm:grid-cols-[168px_1fr]'
+          ? 'flex scroll-mt-6 flex-col gap-3 rounded-lg border border-border bg-card p-3.5'
+          : 'grid scroll-mt-6 grid-cols-1 gap-4 rounded-lg border border-border bg-card p-3.5 sm:grid-cols-[168px_1fr]'
       }
     >
       <div
@@ -413,9 +482,7 @@ function EntryCard({
             cta="Leave a note on this narrative"
             seedText={entry.lede}
             defaults={{ narrative_slug: entry.narrative_slug, target_version: entry.version }}
-            onSubmit={(payload) =>
-              leaveFeedback(board.slug, payload, token, workspace).then(() => undefined)
-            }
+            onSubmit={submit}
           />
         )}
       </div>

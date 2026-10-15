@@ -11,9 +11,10 @@ remove — and ``storyboards`` is product tier, so importing product is legal.
 """
 from __future__ import annotations
 
+from apps.reviews.models import ReviewRequest
 from apps.runs import aggregate
+from apps.storyboards import cuts as entry_cuts
 from apps.storyboards.models import Entry, Storyboard
-
 
 # A narrative's stored `title` is derived from the opening of its story, so on a
 # card it repeats the lede verbatim — the heading was a truncated copy of the
@@ -61,6 +62,10 @@ def _entry_payload(entry, workspace_slugs: set[str], *, is_member: bool) -> dict
             "video_url": None,
             "video_viewer_url": None,
             "published": False,
+            "cuts": [],
+            "assumptions": [],
+            "divergences": [],
+            "open_questions": [],
         }
 
     current = narrative.get("current_version") or {}
@@ -73,7 +78,23 @@ def _entry_payload(entry, workspace_slugs: set[str], *, is_member: bool) -> dict
     video_url = current.get("video_url")
     shared = is_member or _streamable_anonymously(video_url)
 
+    # The version's own request_json: the per-cut words the publisher wrote
+    # (screen notes, audience note, provenance) and the narrative's caveats.
+    request_json = {}
+    if current.get("review_id"):
+        request_json = (
+            ReviewRequest.objects.filter(pk=current["review_id"])
+            .values_list("request_json", flat=True)
+            .first()
+        ) or {}
+
     return {
+        **entry_cuts.caveats(request_json, entry.narrative_slug),
+        "cuts": entry_cuts.entry_cuts(
+            current.get("cuts") or [],
+            request_json,
+            playable=lambda url: is_member or _streamable_anonymously(url),
+        ),
         "narrative_slug": entry.narrative_slug,
         # An authored title/blurb wins over the derived one. The derivations
         # stay the default because most boards never need to say it twice.
@@ -147,6 +168,7 @@ def resolve_board(board: Storyboard, *, is_member: bool = False) -> dict:
         "slug": board.slug,
         "title": board.title,
         "lede": board.lede,
+        "brief": board.brief or {},
         "capability": board.capability,
         "layout": board.layout,
         # The page shows returning notes only to the people who sent the link.

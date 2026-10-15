@@ -27,7 +27,8 @@ import {
   useReviewEditor,
 } from '../components/reviews/ReviewEditorContext'
 import { ProductFindingsReview } from '../components/reviews/ProductFindingsReview'
-import { CutVideoList, groupScenesByCut } from '../components/ddd/CutVideoList'
+import { CutVideoList, groupScenesByCut, type CutMeta } from '../components/ddd/CutVideoList'
+import { CaveatsView } from '../components/storyboard/DemoBrief'
 
 // The cut grouping moved beside the cuts view it now also serves; re-exported
 // for the callers and tests that import it from here.
@@ -1252,6 +1253,51 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
   const canSubmit = !busy && (canSuggest || decisions.every((d) => !!choices[d.id]))
 
   const cutVideos = review.cut_videos ?? []
+  const cutMeta: Record<string, CutMeta> = Object.fromEntries(
+    (req.cuts ?? []).filter((c) => c && c.id).map((c) => [c.id, c]),
+  )
+  const provenanceById = new Map((req.narration ?? []).map((n) => [n.id, n.provenance ?? '']))
+
+  // What the demo's caveats are — the narrative's own, from request_json.
+  const caveats = (
+    <CaveatsView
+      assumptions={(req.assumptions ?? []).map((item) => ({ item, from: null }))}
+      divergences={(req.divergences ?? [])
+        .filter((d) => d && d.script)
+        .map((d) => ({
+          item: { script: d.script, data: d.data ?? '', resolution: d.resolution ?? '', narrative_slug: '' },
+          from: null,
+        }))}
+      questions={(req.open_questions ?? []).map((item) => ({ item, from: null }))}
+    />
+  )
+
+  /** The demo's beats, grouped the way a reviewer meets them: by the recorded
+   *  cut that plays them when there are cuts; by the cut named in the scene
+   *  titles ("Cut 3 · Deliver — …"); else one block per scene under its own
+   *  title. The last case used to run every scene together as one paragraph
+   *  (seven scenes, ~400 words, no boundaries). */
+  const demoGroups = (live: typeof effectiveScenes) => {
+    if (cutVideos.length > 0) {
+      const byScene = new Map<string, string>()
+      for (const c of cutVideos) for (const id of c.scene_ids) byScene.set(id, cutMeta[c.cut_id]?.title || c.title)
+      if (live.every((sc) => byScene.has(sc.id))) {
+        const groups: Array<{ cut: string | null; scenes: typeof live; perScene: boolean }> = []
+        for (const sc of live) {
+          const cut = byScene.get(sc.id) ?? null
+          const last = groups[groups.length - 1]
+          if (last && last.cut === cut) last.scenes.push(sc)
+          else groups.push({ cut, scenes: [sc], perScene: false })
+        }
+        return groups
+      }
+    }
+    const byTitle = groupScenesByCut(live)
+    if (byTitle.length === 1 && byTitle[0].cut === null) {
+      return live.map((sc) => ({ cut: sc.title || null, scenes: [sc], perScene: true }))
+    }
+    return byTitle.map((g) => ({ ...g, perScene: false }))
+  }
 
   // Video embed
   let videoElement: React.ReactNode = null
@@ -1287,7 +1333,12 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-start gap-3 flex-wrap">
           <div>
-            <h1 className="text-xl font-semibold text-foreground">
+            {/* What we are asking of you, then what this is. The demo's NAME is the
+                heading — a reviewer opening several of these needs to tell them
+                apart, and "Suggest edits to this demo story" on every one did not.
+                The name, not the run id: "chlorine-dispenser-walkthroughs-
+                2026-10-07-002" told a first-time reviewer nothing (canopy-web#1271). */}
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-primary">
               {canSuggest
                 ? 'Suggest edits to this demo story'
                 : req.gate === 'concept_change'
@@ -1297,10 +1348,9 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
                   : req.gate === 'product_findings'
                     ? 'Findings review'
                     : `Review: ${req.gate}`}
-            </h1>
-            {/* The narrative's name, not the run id — "chlorine-dispenser-walkthroughs-
-                2026-10-07-002" told a first-time reviewer nothing (canopy-web#1271). */}
-            <p className="text-sm text-muted-foreground mt-0.5">{review.title || req.run_id}</p>
+            </p>
+            <h1 className="text-xl font-semibold text-foreground mt-0.5">{review.title || req.run_id}</h1>
+            {req.purpose && <p className="text-sm text-foreground-secondary mt-1 max-w-2xl">{req.purpose}</p>}
           </div>
           {!canSuggest && overallScore != null && (
             <div className="mt-0.5">
@@ -1326,6 +1376,30 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
           </span>
         </div>
       </header>
+
+      {/* Who it is for, what the data is, and the set it belongs to — rendered
+          only from what the publisher sent. */}
+      {(req.audience || req.data_disclosure || req.storyboard_url) && (
+        <section aria-label="About this demo" className="rounded-lg border border-border bg-card p-4 space-y-2 text-sm">
+          {req.audience && (
+            <p>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mr-2">For</span>
+              <span className="text-foreground">{req.audience}</span>
+            </p>
+          )}
+          {req.data_disclosure && (
+            <p className="rounded-md border border-info/30 bg-info/10 px-3 py-2 text-foreground">{req.data_disclosure}</p>
+          )}
+          {req.storyboard_url && (
+            <p>
+              <span className="text-muted-foreground">Part of </span>
+              <a href={req.storyboard_url} className="font-medium text-primary hover:underline">
+                {req.storyboard_title || 'the full set of demos'} →
+              </a>
+            </p>
+          )}
+        </section>
+      )}
 
       {/* Undo bar */}
       {isDirty && !readOnly && (
@@ -1361,12 +1435,21 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
 
       {/* Cuts tab — the rendered demo cut; kept off the main view so it isn't distracting */}
       {tab === 'cuts' && cutVideos.length > 0 && (
-        <CutVideoList
-          cuts={cutVideos}
-          scenes={effectiveScenes
-            .filter((sc) => !sc.deleted)
-            .map((sc) => ({ id: sc.id, title: sc.title, text: sc.narration }))}
-        />
+        <>
+          <CutVideoList
+            cuts={cutVideos}
+            meta={cutMeta}
+            scenes={effectiveScenes
+              .filter((sc) => !sc.deleted)
+              .map((sc) => ({
+                id: sc.id,
+                title: sc.title,
+                text: sc.narration,
+                provenance: provenanceById.get(sc.id),
+              }))}
+          />
+          {caveats}
+        </>
       )}
       {tab === 'cuts' && cutVideos.length === 0 && (
         <section>
@@ -1416,13 +1499,23 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
                     </p>
                   )
                 }
-                // One paragraph per cut. Joining every beat into a single <p> ran a
-                // seven-cut demo together as ~450 unbroken words (canopy-web#1270).
+                // One block per cut (or per scene). Joining every beat into a single
+                // <p> ran a seven-cut demo together as ~450 unbroken words
+                // (canopy-web#1270).
                 let n = 0
-                return groupScenesByCut(liveScenes).map((group, gi) => (
+                return demoGroups(liveScenes).map((group, gi) => (
                   <div key={gi}>
                     {group.cut && (
-                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">
+                      <p
+                        className={
+                          group.perScene
+                            ? 'text-sm font-semibold text-foreground mb-0.5'
+                            : 'text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5'
+                        }
+                      >
+                        {group.perScene && (
+                          <span className="tabular-nums text-muted-foreground">{n + 1}. </span>
+                        )}
                         {group.cut}
                       </p>
                     )}
@@ -1724,6 +1817,8 @@ function ReviewEditorInner({ review, readOnly, canSuggest = false, onResolved }:
           frontierById={frontierById}
         />
       )}
+
+      {caveats}
 
       {/* Overall feedback */}
       {!readOnly && (

@@ -253,6 +253,7 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
             slug=payload.slug,
             title=payload.title,
             lede=payload.lede,
+            brief=payload.brief.model_dump(exclude_defaults=True) if payload.brief else {},
             capability=payload.capability,
             layout=payload.layout,
             workspace_id=workspace_slug,
@@ -285,6 +286,9 @@ def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn
             if value is not None:
                 setattr(board, name, value)
                 fields.append(name)
+        if payload.brief is not None:
+            board.brief = payload.brief.model_dump(exclude_defaults=True)
+            fields.append("brief")
         if fields:
             board.save(update_fields=[*fields, "updated_at"])
         if payload.acts is not None:

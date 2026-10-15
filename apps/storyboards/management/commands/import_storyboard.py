@@ -12,6 +12,14 @@ the source and this command stays safe to re-run in CI.
     lede: From the first purchase order to the child who recovered.
     capability: comment          # read | comment | suggest
     layout: review               # review (prose + scene links + notes) | reel (videos only)
+    brief:                       # optional — framing for the whole set (schemas.StoryboardBrief)
+      audience: Edesia and OES
+      purpose: One set of screens shows where every sachet is.
+      data_disclosure: All on-screen data is synthetic (Labs programme 10112).
+      short_version: {label: 3-minute version, items: [{narrative_slug: procurement-eoi, cut_id: overview}]}
+      assumptions: [...]
+      divergences: [{script: ..., data: ..., resolution: ...}]
+      open_questions: [...]
     acts:
       - title: Six weeks to a supply base
         key: supply-base        # optional; keeps act notes attached through a retitle
@@ -34,6 +42,7 @@ from django.db import transaction
 
 from apps.storyboards.act_keys import act_key
 from apps.storyboards.models import Act, Entry, Storyboard
+from apps.storyboards.schemas import StoryboardBrief
 
 
 class Command(BaseCommand):
@@ -53,6 +62,13 @@ class Command(BaseCommand):
         if not slug:
             raise CommandError("storyboard YAML needs a `slug`")
 
+        try:
+            brief = StoryboardBrief.model_validate(raw.get("brief") or {}).model_dump(
+                exclude_defaults=True
+            )
+        except Exception as e:  # pydantic.ValidationError — name the field
+            raise CommandError(f"storyboard `brief` is malformed: {e}") from e
+
         with transaction.atomic():
             board, created = Storyboard.objects.update_or_create(
                 workspace_id=opts["workspace"],
@@ -60,6 +76,7 @@ class Command(BaseCommand):
                 defaults={
                     "title": raw.get("title") or slug,
                     "lede": raw.get("lede") or "",
+                    "brief": brief,
                     "capability": raw.get("capability") or Storyboard.CAP_READ,
                     "layout": raw.get("layout") or Storyboard.LAYOUT_REVIEW,
                 },

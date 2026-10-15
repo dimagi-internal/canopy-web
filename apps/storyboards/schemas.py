@@ -10,6 +10,82 @@ Capability = Literal["read", "comment", "suggest"]
 Layout = Literal["review", "reel"]
 
 
+class CutRef(StrictModel):
+    """One cut of one narrative on the board — what a short version lists."""
+
+    narrative_slug: str
+    cut_id: str = ""
+    """Blank = the whole narrative."""
+
+
+class ShortVersion(StrictModel):
+    """A subset of the arc for when there is less time ("the 3-minute version")."""
+
+    label: str = ""
+    note: str = ""
+    items: list[CutRef] = []
+
+
+class Divergence(StrictModel):
+    """A place where what the script says and what the data shows disagree."""
+
+    script: str
+    data: str = ""
+    resolution: str = ""
+    narrative_slug: str = ""
+    """Which narrative it is about — set on the way out for a narrative's own
+    divergences; optional on a board-level one."""
+
+
+class StoryboardBrief(StrictModel):
+    """Optional framing for the whole set. Every field may be absent."""
+
+    audience: str = ""
+    """Who the demos are for — "Edesia and OES"."""
+    purpose: str = ""
+    """The one point the set must land."""
+    data_disclosure: str = ""
+    """What the reader must know about the data on screen — "All on-screen data
+    is synthetic; source: Labs programme 10112"."""
+    short_version: ShortVersion | None = None
+    assumptions: list[str] = []
+    divergences: list[Divergence] = []
+    open_questions: list[str] = []
+
+
+class CutSceneOut(StrictModel):
+    id: str
+    title: str
+    text: str
+
+
+class EntryCutOut(StrictModel):
+    """One recorded cut of an entry's current version, with what a reviewer
+    needs to judge it without a companion doc. Built from the cut's uploaded
+    video plus the optional ``cuts[]`` the publisher sent in the version's
+    request_json (``apps.storyboards.cuts``)."""
+
+    cut_id: str
+    anchor_id: str
+    """What a note on this cut anchors to: ``cut:<cut_id>``."""
+    title: str
+    recorded: bool
+    """False for a cut the publisher declared but no video is pinned to yet."""
+    video_url: str | None = None
+    video_viewer_url: str | None = None
+    poster_url: str | None = None
+    duration_sec: int | None = None
+    word_count: int = 0
+    scenes: list[CutSceneOut] = []
+    screen_notes: str = ""
+    """What is on screen and where the cursor goes."""
+    audience_note: str = ""
+    """Why this cut matters to the board's audience."""
+    provenance: str = ""
+    """Where the on-screen data comes from."""
+    optional: bool = False
+
+
 class EntryOut(StrictModel):
     narrative_slug: str
     title: str
@@ -18,6 +94,12 @@ class EntryOut(StrictModel):
     video_url: str | None
     video_viewer_url: str | None
     published: bool
+    cuts: list[EntryCutOut] = []
+    """A recorded narrative's cuts, in running order. Empty for an explainer."""
+    assumptions: list[str] = []
+    divergences: list[Divergence] = []
+    open_questions: list[str] = []
+    """The narrative's own caveats, from its version's request_json."""
 
 
 class ActOut(StrictModel):
@@ -33,6 +115,7 @@ class StoryboardOut(StrictModel):
     slug: str
     title: str
     lede: str
+    brief: StoryboardBrief = StoryboardBrief()
     capability: str
     layout: str
     is_member: bool = False
@@ -102,6 +185,7 @@ class StoryboardIn(StrictModel):
     slug: str
     title: str
     lede: str = ""
+    brief: StoryboardBrief | None = None
     capability: Capability = "read"
     layout: Layout = "review"
     acts: list[ActIn] = []
@@ -117,6 +201,8 @@ class StoryboardPatchIn(StrictModel):
 
     title: str | None = None
     lede: str | None = None
+    brief: StoryboardBrief | None = None
+    """Replaces the whole brief (send ``{}`` to clear it)."""
     capability: Capability | None = None
     layout: Layout | None = None
     acts: list[ActIn] | None = None
