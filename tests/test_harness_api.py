@@ -528,3 +528,26 @@ def test_the_new_name_wins_when_both_arrive(client, agent):
                        "session_key": "new", "emdash_task_id": "old"},
                       content_type="application/json")
     assert rec.json()["session_key"] == "new"
+
+
+def test_record_session_failure_logs_its_inputs(client, agent, caplog, monkeypatch):
+    """Failure investigation 3 (2026-10-15, turn 282f825e): a record-session 500 left
+    only the generic problem body. The raise must name the thread and runner."""
+    from apps.harness import services
+
+    rid = client.post("/api/harness/runners/",
+                      {"name": "rA", "kind": "emdash", "capabilities": {"agents": ["echo"]},
+                       "host": "jjA@mbp"}, content_type="application/json").json()["id"]
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(services, "record_session", boom)
+    client.raise_request_exception = False
+    with caplog.at_level("ERROR"):
+        r = client.post(f"/api/harness/runners/{rid}/record-session",
+                        {"agent_slug": "echo", "thread_key": "emdash:t-1", "session_key": "k"},
+                        content_type="application/json")
+    assert r.status_code == 500
+    assert any("record-session failed" in m and "emdash:t-1" in m and rid in m
+               for m in caplog.messages)
