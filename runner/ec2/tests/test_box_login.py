@@ -207,3 +207,23 @@ def test_the_relay_reports_a_box_login_without_a_token(cr, tmp_path, monkeypatch
     assert result == [result[0]] and result[0]["logged_in"] is True
     assert "token" not in result[0], "a box login is never sent off the box"
     assert cr._claude_cred_label() == "box-login"
+
+
+# ── what the credentials page reads ───────────────────────────────────────
+
+def test_the_health_check_says_signed_in_when_the_box_login_is_first(cr, tmp_path):
+    _store_login(tmp_path)
+    cr._CLAUDE_CREDS.extend(cr._cascade_from({"claude_token": "tok-1"}))
+    cr._credential_check()
+    assert cr._HEALTH["claude.login"]["status"] == "ok"
+
+
+def test_the_health_check_warns_on_backup_tokens_alone(cr):
+    """Plenty of credentials and none that sees a connector is the exact state
+    an operator mistook for signed in — so it is a warning, not silence."""
+    cr._CLAUDE_CREDS.extend(cr._cascade_from(
+        {"claude_token": "tok-1", "claude_token_secondary": "tok-2"}))
+    cr._credential_check()
+    assert cr._HEALTH["claude.credentials"]["status"] == "ok"
+    assert cr._HEALTH["claude.login"]["status"] == "warn"
+    assert "Sign in with Claude" in cr._HEALTH["claude.login"]["detail"]

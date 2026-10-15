@@ -300,8 +300,15 @@ rotates, so a copy anywhere else would break both. The runner reports only
 `logged_in`; nothing lands in the bundle. When the box holds a login with the
 `user:mcp_servers` scope, the cascade puts `box-login` FIRST and selecting it
 clears both auth env vars, so the CLI uses its stored login; a cap or a dead login
-falls through to the subscriptions as before. Settings → the runner's credentials
-→ **Full login on the box**. Tests: `runner/ec2/tests/test_box_login.py`,
+falls through to the backup tokens as before.
+
+**It is the ONLY sign-in.** The runner's credentials page has one **Sign in with
+Claude** button, and it does the full login; `POST …/mint` refuses `primary`/
+`secondary` (setup-token) sign-ins with a 422. Offered side by side, the two kinds
+were indistinguishable and an operator signed in on the wrong one (2026-10-14).
+Tokens already in those slots stay as cap backups. The runner reports a
+`claude.login` health check (ok = signed in on the box, warn = backup tokens only),
+which the page shows next to the button. Tests: `runner/ec2/tests/test_box_login.py`,
 `tests/test_runner_mint.py`.
 
 ## The runner software

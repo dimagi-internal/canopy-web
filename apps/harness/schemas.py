@@ -1250,7 +1250,10 @@ class RunnerMintOut(Schema):
 
 
 class RunnerMintStartIn(Schema):
-    slot: Literal["primary", "secondary", "box"] = "primary"
+    # `box` is the only sign-in offered. `primary`/`secondary` (setup-token
+    # mints) are still named so a request for one gets a clear refusal rather
+    # than a validation error — see api.start_runner_mint.
+    slot: Literal["primary", "secondary", "box"] = "box"
 
 
 class RunnerMintClaimOut(Schema):

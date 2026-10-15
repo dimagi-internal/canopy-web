@@ -23,7 +23,7 @@ const URL_ = 'https://claude.com/cai/oauth/authorize?code=true&client_id=x&state
 
 function mint(over: Partial<RunnerMint> = {}): RunnerMint {
   return {
-    id: 'm1', status: 'requested', authorize_url: '', detail: '',
+    id: 'm1', status: 'requested', slot: 'box', authorize_url: '', detail: '',
     created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     ...over,
   } as RunnerMint

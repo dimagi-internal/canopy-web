@@ -361,7 +361,12 @@ export function RunnerDetail({
           box RUNS AS could not sign it back in, because someone else had run
           the pairing command. */}
       {runner.can_administer && runner.kind === 'cloud' && (
-        <RunnerCredentials runnerId={runner.id} />
+        <RunnerCredentials
+          runnerId={runner.id}
+          signedIn={runner.health_checks?.['claude.login']
+            ? runner.health_checks['claude.login'].status === 'ok'
+            : null}
+        />
       )}
       {/* Who else may fix this box. Rendered for an administrator (who may read
           the list) as well as the owner (who may edit it) — the panel itself

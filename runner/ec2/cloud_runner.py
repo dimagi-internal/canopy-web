@@ -468,6 +468,15 @@ def _credential_check() -> None:
                    "one Claude credential: a usage cap stops every agent here with nothing to fail over to")
     else:
         _set_check("claude.credentials", "ok", f"{n} credentials in the fallback chain")
+    # Separate from the count on purpose: a box can have plenty of credentials
+    # and still none that sees a claude.ai connector. The credentials page reads
+    # this one check to say whether the runner is signed in.
+    if any(c[0] == BOX_LOGIN_LABEL for c in _CLAUDE_CREDS):
+        _set_check("claude.login", "ok", "signed in on this box — claude.ai connectors available")
+    else:
+        _set_check("claude.login", "warn",
+                   "not signed in on this box: turns run on backup tokens, which cannot use "
+                   "claude.ai connectors (Claude Docs). Sign in with Claude on the runner's credentials.")
 
 
 #: Root-volume thresholds (percent used). cloud-ec2-1 reached 100% on 2026-10-04 —
