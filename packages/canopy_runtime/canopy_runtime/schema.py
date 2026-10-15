@@ -3,19 +3,19 @@
 This is the *desired* runtime for one agent: which plugins it needs (canopy + ace +
 its own), which MCP servers and tools, which execution engine it prefers, which
 secrets it needs (**by reference name only — never a value**), and the preflight
-checks that define "ready". The reconciler (RS2) reads this from the agent's repo,
-diffs it against the current box, applies only the gaps, and runs the preflight.
+checks that define "ready". It was designed for a reconciler (RS2) that would
+provision a box from it; that was never wired in and was retired (2026-10-15) —
+canopy's `canopy agent prepare` prepares an agent. What reads it today: canopy-web's
+capability publish and its credentials screen's declared-secret counts.
 
-canopy-web does NOT parse this — it only points a runner at the repo (RS1). This
-module *defines and validates* the shape so the agent's PRs can be linted and the
-reconciler can load it with confidence.
+This module *defines and validates* the shape so the agent's PRs can be linted.
 
 Two hard rules encoded here:
   1. `extra="forbid"` everywhere — a typo'd key is a validation error in the
      agent's PR, not a silently-ignored field that never provisions.
   2. `secrets` is a list of reference *names*. There is no field anywhere that
      holds a secret value; the value is resolved from the env's store (1Password
-     on a laptop, Secrets Manager on a cloud box) by the reconciler.
+     vault) by canopy, never here.
 """
 from __future__ import annotations
 

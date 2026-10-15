@@ -248,8 +248,8 @@ jobs:
         run: uv run --extra drive --with pytest pytest
 
       # canopy_runtime defines + validates the agent runtime.yaml schema (the
-      # Agent Runtime Registry). The reconciler (RS2) loads it on a bare cloud box,
-      # so it's Django-free and installable; its guardrails — extra="forbid" and
+      # Agent Runtime Registry), Django-free so an agent deploy can publish capabilities;
+      # its guardrails — extra="forbid" and
       # "secrets are reference names, never values" — must actually execute.
       - name: Run canopy_runtime tests
         working-directory: packages/canopy_runtime
