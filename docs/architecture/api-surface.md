@@ -315,17 +315,22 @@ Framework tier, generic over its producer (`source` + `kind` strings). Where an 
 ### Capabilities (`apps/capabilities`) — machines an agent leases
 Framework tier. The agent declares `capability.yaml`s (published by `canopy-runtime publish-capabilities`), a workspace admin grants them, and canopy-web leases one fresh EC2 instance per lease with the permissions the agent's stack grants it. Contract and JSON shapes: `docs/architecture/capabilities.md`.
 - `GET /api/agents/{slug}/capabilities` — Declared capabilities with their stack Outputs, grant, effective limits and live leases, plus `retired` names (member, or the agent's own login).
-- `PUT /api/agents/{slug}/capabilities` — Publish the WHOLE list `{capabilities: [CapabilityManifest]}`; each stack's Outputs are read (DescribeStacks) and must meet the `ec2-ephemeral` contract (422 naming what is missing); a capability left out is retired and its live leases released. Agent owner/admins or the agent's own login. A setting.
+- `PUT /api/agents/{slug}/capabilities` — Publish the WHOLE list `{capabilities: [CapabilityManifest]}`; each stack's Outputs are read (DescribeStacks) and must meet the `ec2-ephemeral` contract (422 naming what is missing, a stack owned by another agent, an `exec.allow` the stack's `ExecAllow` will not run, or a `max_lease_s` above its `MaxInstanceLifetimeSeconds`); a capability left out is retired and its live leases released. Agent owner/admins or the agent's own login. A setting.
+- `POST /api/agents/{slug}/capabilities/{name}/refresh` — Re-read the stack's Outputs now and check them as a publish would (the sweep also does this about every 15 min); use it right after a stack update. 422 keeps the old Outputs. Owner/admins or the agent's own login.
+- `POST /api/agents/{slug}/capabilities/{name}/terminate-orphans` — The sweep's machine pass for one capability, now: terminates every instance tagged with it (launched by this deployment, `canopy:broker`) that has no live lease; ends ready leases whose machine is gone. Workspace admin or the agent's admins; 502 when EC2 cannot be asked.
 - `GET /api/capabilities/grants?agent=` — Grants in your workspaces.
 - `PUT /api/capabilities/grants` — Upsert `{agent, capability, max_concurrent?, max_lease_s?}` (`integrations`); limits may only lower the manifest's. A setting.
 - `DELETE /api/capabilities/grants/{id}` — Revoke; releases the live leases it allowed (`integrations`). A setting.
 - `POST /api/capabilities/leases` — Acquire `{agent, capability, params?, turn_id?}` → `provisioning` (RunInstances, `ClientToken=lease_id`) or `queued` with `position`. 422 undeclared / bad param; 403 no grant (names the grant). Editor+ or the agent's own login, as are all lease routes.
-- `GET /api/capabilities/leases/{id}` — Read + heartbeat; while provisioning, reads the machine's `ready.json`.
+- `GET /api/capabilities/leases?agent=&capability=&status=&since=&limit=` — Leases in your workspaces (or your own agent's), newest first; `status` is one or a comma list (`live` = queued,provisioning,ready); `limit` 1–500 (default 100), `truncated` when more exist. A read: no heartbeat.
+- `GET /api/capabilities/spend?since=&until=&agent=&capability=` — Machine-seconds per agent and capability over `[since, until)` (default the last 7 days): launch (`provisioning_at`) to `ended_at`, or now, clipped to the window; queued time is free.
+- `GET /api/capabilities/leases/{id}?wait_s=0..20` — Read + heartbeat; while provisioning, reads the machine's `ready.json`. `wait_s` long-polls until the status changes from what it was on arrival.
 - `DELETE /api/capabilities/leases/{id}` — Release (terminate). Idempotent.
-- `POST /api/capabilities/leases/{id}/exec` — `{argv[], timeout_s}`; `argv[0]` must be on `exec.allow` (422); shell-quoted, sent over SSM with output to `leases/<id>/exec/`; returns the CommandId as `exec_id`. 409 unless ready.
-- `GET /api/capabilities/leases/{id}/exec/{exec_id}` — Read back from SSM: `{status, done, exit_code, stdout_tail, stderr_tail, stdout_url, stderr_url}`.
-- `POST /api/capabilities/leases/{id}/uploads` — Presigned PUTs under `leases/<id>/in/` plus their `s3_uri`s.
-- `GET /api/capabilities/leases/{id}/artifacts?prefix=` — Presigned GETs (1 h) for `leases/<id>/out/<prefix>…`.
+- `POST /api/capabilities/leases/{id}/force-release` — `{reason}`: workspace admin or the agent's admins end the lease and terminate its machine, even if the lease already ended (for a machine a failed terminate left behind).
+- `POST /api/capabilities/leases/{id}/exec` — `{argv[], timeout_s}`; `argv[0]` must be on `exec.allow` (422); sent through the stack's exec document (pre-0.9.0 stack: shell-quoted into `AWS-RunShellScript`), output to the lease's `exec/` prefix; returns the CommandId as `exec_id`. 409 unless ready. A running exec keeps the lease from idling out.
+- `GET /api/capabilities/leases/{id}/exec/{exec_id}?wait_s=0..20` — Read back from SSM: `{status, done, exit_code, stdout_tail, stderr_tail, stdout_url, stderr_url}`; `wait_s` long-polls until done.
+- `POST /api/capabilities/leases/{id}/uploads` — Presigned PUTs (≤ 1 h) under the lease's `in/` plus their `s3_uri`s; 409 until the machine is launched (its prefix is per machine).
+- `GET /api/capabilities/leases/{id}/artifacts?prefix=` — Presigned GETs (≤ 1 h) for the lease's `out/<prefix>…`; readable after the lease ends until the bucket expires it (7 days).
 
 ### Inbound push (`apps/inbound`) — the doorbell
 Framework tier. Gmail push turns new mail into a turn in seconds instead of on the runner's 300s poll.

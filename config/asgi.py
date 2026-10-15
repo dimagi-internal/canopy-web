@@ -78,6 +78,20 @@ class _McpWithoutSlash:
         await self.app(scope, receive, send)
 
 
+import contextlib  # noqa: E402
+
+from apps.capabilities import scheduler as _capability_scheduler  # noqa: E402
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(app):
+    """The MCP session manager, and the cloud-capability sweep's own clock
+    (apps/capabilities/scheduler.py), for the life of the process."""
+    async with _mcp_app.lifespan(app):
+        async with _capability_scheduler.running():
+            yield
+
+
 application = Starlette(
     middleware=[Middleware(_McpWithoutSlash)],
     routes=[
@@ -89,8 +103,8 @@ application = Starlette(
         # Django + realtime WS handle everything else (mounted last as catch-all).
         Mount("/", app=_django_with_ws),
     ],
-    # Run the MCP session-manager lifespan for the whole process.
-    lifespan=_mcp_app.lifespan,
+    # Run the MCP session-manager lifespan (and the capability sweep) for the whole process.
+    lifespan=_lifespan,
 )
 
 

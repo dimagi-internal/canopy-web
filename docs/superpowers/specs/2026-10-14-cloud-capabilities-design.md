@@ -108,13 +108,17 @@ as the stack exposes the same contract.
   `canopy:owner=<agent>`.
 - **AMI pointer:** the AMI is resolved from SSM parameter `/canopy/capabilities/<agent>/<name>/ami`.
   A rebake writes the parameter; there is never an instance id or AMI id to re-pin.
-- **Self-termination:** `InstanceInitiatedShutdownBehavior: terminate`, plus an idle alarm whose
-  action is **terminate**.
+- **Self-termination:** `InstanceInitiatedShutdownBehavior: terminate`. (An idle alarm cannot
+  exist here — an alarm names one instance id, and these instances do not exist at deploy. The
+  stack-independent backstop is instead a stack-owned scheduled Lambda that terminates any of the
+  capability's instances older than `MaxInstanceLifetimeSeconds`; added in dimagi-canopy 0.9.0.)
 - **Broker permissions:** the stack grants the broker role (parameter `BrokerRoleName`, which
-  for canopy-web is `labs-jj-ecs-task-role`):
+  for canopy-web is its ECS task role — the shared `labs-jj-ecs-task-role`, which leaks the
+  grant to every service on that role, until canopy-web moves to its own `canopy-web-task-role`):
   - `ec2:RunInstances` from this launch template only, with those request tags;
-  - `ec2:TerminateInstances`, `ec2:DescribeInstances`, `ssm:SendCommand` and
-    `ssm:GetCommandInvocation` on instances carrying the tag;
+  - `ec2:TerminateInstances`, `ec2:DescribeInstances`, `ssm:SendCommand` (since 0.9.0, only
+    with the stack's own exec document, which runs an argv only if argv[0] is on `ExecAllow`)
+    and `ssm:GetCommandInvocation` on instances carrying the tag;
   - `iam:PassRole` on the instance role;
   - S3 on the bucket;
   - `cloudformation:DescribeStacks` on the stack.
@@ -129,10 +133,13 @@ as the stack exposes the same contract.
   - halt at `max_lifetime_s`;
   - put every allow-listed CLI on `PATH`.
 
-  The instance role may only write `vm/${aws:userid}/*` (for an instance-profile session,
-  `aws:userid` is `<role-id>:<instance-id>`). It may also read `leases/*/in/*` and write
-  `leases/*/out/*` and `leases/*/exec/*`, which is where SSM's agent uploads command output.
-  An instance role can't see its own tags, so the scoping is by session.
+  The instance role may only read and write `vm/${aws:userid}/*` (for an instance-profile
+  session, `aws:userid` is `<role-id>:<instance-id>`); since 0.9.0 a lease's `in/`, `out/` and
+  `exec/` (where SSM's agent uploads command output) live under
+  `vm/<role-id>:<instance-id>/lease/<lease-id>/`, so no machine reaches another lease's objects.
+  (Before 0.9.0 they were a shared `leases/<id>/`.) An instance role can't see its own tags, so
+  the scoping is by session. It carries the SSM agent's needs, not `AmazonSSMManagedInstanceCore`
+  (whose `ssm:GetParameter*` on `*` would let a lease machine decrypt the account's parameters).
 
 ### 3. Allowing: canopy-web
 
@@ -148,13 +155,18 @@ which covers Jon's laptop sessions.
 | Route | Does |
 |---|---|
 | `POST /api/capabilities/leases` `{agent, capability, params?, turn_id?}` | Validate params against the manifest. Under the cap: `RunInstances` with `ClientToken=lease_id` (a retry can never launch twice) → `provisioning`. Over the cap: `queued`. Returns `{lease_id, status, position?}` immediately. |
-| `GET /api/capabilities/leases/{id}` | Heartbeat. While provisioning, checks for `ready.json` (a `HeadObject`; no SSM, no worker). Returns `status`, `ready`, `instance_id`, `expires_at`. |
+| `GET /api/capabilities/leases/{id}` | Heartbeat. While provisioning, reads `ready.json` (one S3 read, plus one DescribeInstances while it is absent; no SSM, no worker). `?wait_s=` (≤ 20) long-polls. Returns `status`, `ready`, `instance_id`, `expires_at`. |
 | `DELETE /api/capabilities/leases/{id}` | Terminate → `released`. |
 | `POST /api/capabilities/leases/{id}/exec` `{argv[], timeout_s}` | `argv[0]` must be on the allowlist. `SendCommand` with the shell-quoted argv and output to `s3://…/leases/<id>/exec/`. Returns `{exec_id}` (the SSM CommandId). |
 | `GET /api/capabilities/leases/{id}/exec/{exec_id}` | `GetCommandInvocation`, returning `{status, exit_code, stdout_tail, stdout_url, stderr_url}`. |
 | `POST /api/capabilities/leases/{id}/uploads` `{names[]}` | Presigned PUT URLs under `leases/<id>/in/`, plus the `s3://` URIs to pass in argv. |
 | `GET /api/capabilities/leases/{id}/artifacts?prefix=` | Presigned GETs for `leases/<id>/out/<prefix>…` (1 h TTL). |
 | `GET /api/agents/{slug}/capabilities` | Declared capabilities, grant state, live leases. |
+
+(As built, since dimagi-canopy 0.9.0: a lease's `in/`, `out/` and `exec/` are under its machine's
+own `vm/<role-id>:<instance-id>/lease/<lease-id>/` rather than `leases/<id>/`, the argv goes
+through the stack's exec document rather than shell-quoted `AWS-RunShellScript`, and both GETs
+take `?wait_s=`. The current contract is `docs/architecture/capabilities.md`.)
 
 - **Lease states:** `queued → provisioning → ready → released`, with failure exits `failed`
   and `expired`.
@@ -165,20 +177,24 @@ which covers Jon's laptop sessions.
   canopy-web deploy mid-exec loses nothing.
 - **Turn binding:** with `turn_id` (the cloud runner exports `CANOPY_TURN_ID` to the turn's
   process), the lease is released when that turn reaches a terminal status
-  (`harness.signals.turn_status_changed`).
+  (`harness.signals.turn_events_appended`, a terminal `status` row; `turn_status_changed`
+  fires only on enqueue).
 
-### 5. Cost guard: four layers, any one of which suffices
+### 5. Cost guard: layers, each independent of the ones before it
 
 1. Explicit release.
 2. Turn terminal (with `turn_id`), or no heartbeat for `idle_release_s`.
-3. **Sweep** on harness's claim tick, next to `sweep_expired_leases()` (runners poll every
-   ~15 s). It:
+3. **Sweep**, off-request on its own clock in every web process (an asyncio task in the ASGI
+   lifespan, deduplicated fleet-wide through the cache, still run if the cache is down), with
+   the harness claim tick as a fallback trigger. (It first rode only the claim tick, after the
+   fleet-hold and offline-runner early returns, so a hold stopped every expiry.) It:
    - expires leases past `expires_at` and idles stale ones;
    - promotes the FIFO queue;
    - terminates any `canopy:capability`-tagged instance with no live lease (orphans from a
      crash between `RunInstances` and the DB write).
-4. Machine-side: halt-at-`max_lifetime_s`, shutdown = terminate, and an idle alarm that
-   terminates. These work while canopy-web itself is down.
+4. Machine-side: halt-at-`max_lifetime_s`, shutdown = terminate.
+5. Stack-side: the backstop Lambda (every 5 min, terminates tagged instances older than
+   `MaxInstanceLifetimeSeconds`). This and 4 work while canopy-web itself is down.
 
 ## canopy-web implementation
 

@@ -2,8 +2,9 @@
 
 Ported from ace-web's ``apps/mobile/ssm.py``. SSM rather than SSH so a
 caller can drive the EC2 instance over the AWS control plane with no
-inbound SG rules or key management; the instance role just needs
-``AmazonSSMManagedInstanceCore``.
+inbound SG rules or key management; the instance role needs the SSM agent's
+grants (``AmazonSSMManagedInstanceCore`` in persistent mode; an ephemeral
+capability stack carries the agent's needs without its ``ssm:GetParameter*``).
 
 Module is sync. Polling is a 1 s loop by default: commands return in
 hundreds of ms typically but may run for tens of seconds.
@@ -120,25 +121,37 @@ def send_command(
     output_bucket: str | None = None,
     output_prefix: str | None = None,
     comment: str | None = None,
+    document_name: str = "AWS-RunShellScript",
+    parameters: dict[str, list[str]] | None = None,
+    document_version: str | None = None,
 ) -> str:
-    """Send ``AWS-RunShellScript`` to ``instance_id`` and return the CommandId at once.
+    """Send a command document to ``instance_id`` and return the CommandId at once.
 
     The fire-and-forget half of ``run_command``: nothing is polled, so the
     command's state lives in SSM and a caller that restarts can read it back
     with ``get_command_invocation``. One retry on ``ThrottlingException``.
 
-    ``execution_timeout_s`` bounds the script on the instance (the document's
-    ``executionTimeout``); ``timeout_seconds`` is SSM's delivery timeout.
-    With ``output_bucket``, SSM's agent also writes the full stdout and stderr
-    to ``s3://<output_bucket>/<output_prefix>/<CommandId>/<instance-id>/...``
+    By default the document is ``AWS-RunShellScript`` with ``commands`` as its
+    script, and ``execution_timeout_s`` bounds the script on the instance (the
+    document's ``executionTimeout``). With ``parameters`` the call sends
+    ``document_name`` with exactly those parameters instead — ``commands`` and
+    ``execution_timeout_s`` are then ignored, since another document names its
+    own (e.g. a capability stack's exec document, which takes an argv and runs
+    it only if argv[0] is on its allow list). ``timeout_seconds`` is SSM's
+    delivery timeout either way. With ``output_bucket``, SSM's agent also writes
+    the full stdout and stderr to
+    ``s3://<output_bucket>/<output_prefix>/<CommandId>/<instance-id>/...``
     (the instance role needs ``s3:PutObject`` there).
     """
-    params: dict[str, list[str]] = {"commands": commands}
-    if execution_timeout_s is not None:
-        params["executionTimeout"] = [str(max(1, int(execution_timeout_s)))]
+    if parameters is not None:
+        params: dict[str, list[str]] = {k: [str(x) for x in v] for k, v in parameters.items()}
+    else:
+        params = {"commands": commands}
+        if execution_timeout_s is not None:
+            params["executionTimeout"] = [str(max(1, int(execution_timeout_s)))]
     kwargs: dict[str, Any] = {
         "InstanceIds": [instance_id],
-        "DocumentName": "AWS-RunShellScript",
+        "DocumentName": document_name,
         "Parameters": params,
         "TimeoutSeconds": max(30, min(timeout_seconds, 2592000)),
     }
@@ -146,6 +159,8 @@ def send_command(
         kwargs["OutputS3BucketName"] = output_bucket
         if output_prefix:
             kwargs["OutputS3KeyPrefix"] = output_prefix.strip("/")
+    if document_version:
+        kwargs["DocumentVersion"] = document_version
     if comment:
         kwargs["Comment"] = comment[:100]
     attempts = 0

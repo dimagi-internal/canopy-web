@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.8.1#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.9.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.8.1/dimagi_canopy-0.8.1-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.9.0/dimagi_canopy-0.9.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -256,6 +256,9 @@ aws cloudformation deploy --stack-name ondemand-<capability> \
 | `UserData` | `""` | base64 user data for the launch template |
 | `NestedVirtualization` | `"false"` | `"true"` adds `CpuOptions.NestedVirtualization: enabled` (KVM in the instance) |
 | `RootVolumeGb` | `30` | encrypted gp3 root volume |
+| `RootVolumeIops` | `""` | gp3 provisioned IOPS, 3000–80000; empty or `0` = unset (gp3 baseline 3000) |
+| `RootVolumeThroughput` | `""` | gp3 throughput in MiB/s, 125–2000; empty or `0` = unset (baseline 125). Above 750 needs more IOPS (≤ 0.25 MiB/s per IOPS) |
+| `RootVolumeInitializationRate` | `""` | EBS volume initialization rate, MiB/s, 100–300: pulls the AMI snapshot into a fresh volume at that rate instead of lazily on first read (billed per GiB). Empty or `0` = unset. Pays most in ephemeral mode, where every lease starts from a cold volume |
 
 Resources: an egress-only security group (443, DNS); an instance role with
 `AmazonSSMManagedInstanceCore` plus get/put on the artifacts bucket, and its
@@ -284,20 +287,30 @@ The same template with `Mode=ephemeral` creates **no instance**: a launch templa
 broker launches one fresh instance from per lease (`EphemeralInstance.launch`, with
 `ClientToken=<lease id>` so a retry never starts a second one) and terminates after.
 canopy-web's cloud capabilities are the broker; the whole contract — parameters
-(`Owner`, `BrokerRoleName`; `AmiId`, `ConsumerTaskRoleName`, `IdleStopMinutes` unused),
-the outputs, the SSM AMI parameter `/canopy/capabilities/<Owner>/<Capability>/ami`, the
-broker and instance-role scopes, and what the image must do — is
-`docs/architecture/capabilities.md` in canopy-web. There is no idle alarm in this mode
-(an alarm names one instance); a halt terminates the instance.
+(`Owner`, `BrokerRoleName`, `ExecAllow`, `MaxInstanceLifetimeSeconds`; `AmiId`,
+`ConsumerTaskRoleName`, `IdleStopMinutes` unused), the outputs, the SSM AMI parameter
+`/canopy/capabilities/<Owner>/<Capability>/ami`, the broker and instance-role scopes, and
+what the image must do — is `docs/architecture/capabilities.md` in canopy-web. In short,
+the stack guards itself: the instance role reaches only its own `vm/${aws:userid}/` prefix
+and is denied `ssm:GetParameter*` (no `AmazonSSMManagedInstanceCore`); the broker may send
+only the stack's exec document, which runs an argv only if argv[0] is on `ExecAllow`; and a
+stack-owned Lambda terminates any of the capability's instances older than
+`MaxInstanceLifetimeSeconds`, every 5 minutes. There is no idle alarm in this mode (an
+alarm names one instance); a halt terminates the instance.
 
 ```python
-from canopy_sdk.ondemand import EphemeralInstance
+from canopy_sdk.ondemand import TAG_BROKER, EphemeralInstance
 
 vm = EphemeralInstance(region="us-east-1", launch_template_id="lt-…",
                        capability="android-emulator", owner="ace")
-iid = vm.launch(lease_id=lease_id, user_data={"lease_id": lease_id, "params": {}, ...})
-cid = vm.run_async(iid, ["ace-mobile diagnose"], timeout_s=300,
-                   output_bucket=bucket, output_prefix=f"leases/{lease_id}/exec")
+iid = vm.launch(lease_id=lease_id, user_data={"lease_id": lease_id, "params": {}, ...},
+                tags={TAG_BROKER: "canopy.dimagi.com"})
+base = f"vm/{instance_role_id}:{iid}/lease/{lease_id}"          # the machine's own prefix
+cid = vm.run_document_async(iid, exec_document, {
+    "Argv": [b64_nul_terminated_argv], "LeaseId": [lease_id],
+    "LeaseIn": [f"s3://{bucket}/{base}/in/"], "LeaseOut": [f"s3://{bucket}/{base}/out/"],
+    "ExecutionTimeout": ["300"]}, timeout_s=300, output_bucket=bucket,
+    output_prefix=f"{base}/exec", document_version="$LATEST")
 vm.invocation(cid, iid)            # read back from SSM, from any process
 vm.list_tagged()                   # every live instance of this capability + owner
 vm.terminate(iid)

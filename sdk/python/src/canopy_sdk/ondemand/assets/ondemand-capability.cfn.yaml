@@ -20,12 +20,23 @@
 #       parameter and nothing is ever re-pinned;
 #     - a halt terminates the instance (InstanceInitiatedShutdownBehavior);
 #     - BrokerPolicy, attached to BrokerRoleName, is everything the broker may do,
-#       and only to instances carrying this capability's and owner's tags.
+#       and only to instances carrying this capability's and owner's tags;
+#     - the broker runs commands only through this stack's exec document
+#       (ExecDocument), which runs an argv only if argv[0] is on ExecAllow;
+#     - each instance reads and writes only its OWN prefix,
+#       vm/<InstanceRoleId>:<instance-id>/ (its aws:userid): ready.json, and each
+#       lease's in/, out/ and exec/ under lease/<lease-id>/ (LeaseObjectScope);
+#     - the instance role carries exactly what the SSM agent needs, and is
+#       explicitly denied ssm:GetParameter* (no reading the account's
+#       parameters, encrypted or not).
 #   There is no CloudWatch idle alarm in this mode: an alarm names one
 #   InstanceId, and these instances do not exist when the stack is deployed.
-#   The machine-side guards are the image's halt at max_lifetime_s and its idle
-#   watchdog, both of which terminate (shutdown behaviour), plus the broker's own
-#   sweep, which terminates any tagged instance without a live lease.
+#   Machine-side, the image halts at max_lifetime_s, and a halt terminates
+#   (shutdown behaviour). The broker's sweep terminates any tagged instance
+#   without a live lease. And BackstopFunction — a scheduled Lambda owned by
+#   this stack, so it works while the broker is down or gone — terminates every
+#   instance carrying this capability's and owner's tags that is older than
+#   MaxInstanceLifetimeSeconds, every 5 minutes.
 #
 # Either mode: no SSH key, no inbound security-group rule — the instance is
 # reached only through SSM.
@@ -50,7 +61,7 @@
 #     --template-file ondemand-capability.cfn.yaml --capabilities CAPABILITY_NAMED_IAM \
 #     --parameter-overrides Mode=ephemeral Capability=<capability> Owner=<agent-slug> \
 #       OwnerTag=<who-to-ask> InstanceType=... VpcId=vpc-... SubnetId=subnet-... \
-#       BrokerRoleName=<the broker's role, e.g. labs-jj-ecs-task-role>
+#       ExecAllow=<cli>[,<cli>...] BrokerRoleName=<the broker's role, e.g. canopy-web-task-role>
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   An on-demand capability runner (canopy_sdk.ondemand): a stopped-when-idle EC2
@@ -127,9 +138,30 @@ Parameters:
     Type: String
     Description: >
       ephemeral only: name of the broker's existing IAM role (for canopy-web,
-      labs-jj-ecs-task-role). This stack does not own it; it only attaches
-      BrokerPolicy to it.
+      its ECS task role). This stack does not own it; it
+      only attaches BrokerPolicy to it.
     Default: ""
+  ExecAllow:
+    Type: String
+    Description: >
+      ephemeral only: the commands an exec may run, comma-separated bare names on
+      the image's PATH (the manifest's exec.allow, e.g. "ace-mobile"). The exec
+      document refuses any argv whose argv[0] is not exactly one of them, so even
+      the broker's role cannot run anything else on these machines. canopy-web
+      refuses a publish whose manifest allows a command this list does not.
+    AllowedPattern: "^([A-Za-z0-9][A-Za-z0-9._+-]{0,63}(,[A-Za-z0-9][A-Za-z0-9._+-]{0,63})*)?$"
+    ConstraintDescription: empty, or comma-separated command names (letters, digits, . _ + -).
+    Default: ""
+  MaxInstanceLifetimeSeconds:
+    Type: Number
+    Description: >
+      ephemeral only: the stack's own backstop (BackstopFunction) terminates any of
+      this capability's instances older than this, whatever the broker thinks.
+      Keep it above the manifest's limits.max_lease_s (canopy-web refuses a
+      publish otherwise); the default is 4 h plus 30 min of slack.
+    MinValue: 600
+    MaxValue: 259200
+    Default: 16200
   UserData:
     Type: String
     Description: Base64-encoded EC2 user data for the launch template. Empty for none.
@@ -144,6 +176,37 @@ Parameters:
     Description: Root volume size in GiB (encrypted gp3).
     MinValue: 8
     Default: 30
+  RootVolumeIops:
+    Type: String
+    Description: >
+      Provisioned IOPS for the gp3 root volume (3000-80000). Empty or 0 leaves it
+      unset (gp3's baseline, 3000). Throughput above 750 MiB/s needs more IOPS
+      (gp3 allows at most 0.25 MiB/s per IOPS).
+    AllowedPattern: "^(|0|[3-9][0-9]{3}|[1-7][0-9]{4}|80000)$"
+    ConstraintDescription: empty, 0, or 3000-80000.
+    Default: ""
+  RootVolumeThroughput:
+    Type: String
+    Description: >
+      Provisioned throughput for the gp3 root volume, MiB/s (125-2000). Empty or 0
+      leaves it unset (gp3's baseline, 125).
+    AllowedPattern: "^(|0|12[5-9]|1[3-9][0-9]|[2-9][0-9]{2}|1[0-9]{3}|2000)$"
+    ConstraintDescription: empty, 0, or 125-2000.
+    Default: ""
+  RootVolumeInitializationRate:
+    Type: String
+    Description: >
+      EBS Provisioned Rate for Volume Initialization of the root volume, MiB/s
+      (100-300): how fast the AMI's snapshot blocks are pulled from S3 into a
+      fresh volume. A new volume is otherwise lazily hydrated, so first reads of
+      the image are slow; ephemeral instances start from a cold volume on every
+      lease, which is where this pays (measured on the Android emulator image:
+      300 here with RootVolumeThroughput 500 and RootVolumeIops 6000 cut
+      boot_completed from ~50 s to ~37 s). Billed per GiB initialized. Empty or 0
+      leaves it unset (the default rate).
+    AllowedPattern: "^(|0|1[0-9]{2}|2[0-9]{2}|300)$"
+    ConstraintDescription: empty, 0, or 100-300.
+    Default: ""
   IdleStopMinutes:
     Type: Number
     Description: >-
@@ -168,12 +231,18 @@ Rules:
         AssertDescription: ephemeral mode needs Owner (the agent's slug).
       - Assert: !Not [!Equals [!Ref BrokerRoleName, ""]]
         AssertDescription: ephemeral mode needs BrokerRoleName.
+      - Assert: !Not [!Equals [!Ref ExecAllow, ""]]
+        AssertDescription: ephemeral mode needs ExecAllow (the manifest's exec.allow, comma-separated).
 
 Conditions:
   WantsNestedVirtualization: !Equals [!Ref NestedVirtualization, "true"]
   HasUserData: !Not [!Equals [!Ref UserData, ""]]
   IsEphemeral: !Equals [!Ref Mode, ephemeral]
   IsPersistent: !Not [!Equals [!Ref Mode, ephemeral]]
+  # Root-volume performance: each is set only when given (empty or 0 = unset).
+  HasRootVolumeIops: !Not [!Or [!Equals [!Ref RootVolumeIops, ""], !Equals [!Ref RootVolumeIops, "0"]]]
+  HasRootVolumeThroughput: !Not [!Or [!Equals [!Ref RootVolumeThroughput, ""], !Equals [!Ref RootVolumeThroughput, "0"]]]
+  HasRootVolumeInitializationRate: !Not [!Or [!Equals [!Ref RootVolumeInitializationRate, ""], !Equals [!Ref RootVolumeInitializationRate, "0"]]]
 
 Resources:
   # No ingress rules. Access is via SSM only.
@@ -231,35 +300,84 @@ Resources:
             Principal:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+      # Ephemeral: NOT AmazonSSMManagedInstanceCore. That policy grants
+      # ssm:GetParameter(s) on "*", and with the account's default aws/ssm key
+      # policy any process on a lease machine could then decrypt every
+      # SecureString parameter in the account. ssm-agent below carries exactly
+      # what the agent needs instead.
+      ManagedPolicyArns: !If
+        - IsEphemeral
+        - !Ref "AWS::NoValue"
+        - - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
       Policies: !If
         - IsEphemeral
-        # Ephemeral: each instance writes only under its OWN prefix. An instance
-        # role cannot read its instance's tags, so the scope is the session:
-        # ${aws:userid} for an instance-profile session is
-        # "<role id>:<instance id>", and the broker reads ready.json at
-        # vm/<InstanceRoleId>:<instance id>/ready.json. Under leases/ the
-        # instance reads what the broker staged (in/), writes what it produced
-        # (out/), and the SSM agent writes each command's streams (exec/).
-        - - PolicyName: lease-artifacts
+        - - PolicyName: ssm-agent
             PolicyDocument:
               Version: "2012-10-17"
               Statement:
-                - Sid: OwnPrefixWrite
+                # AmazonSSMManagedInstanceCore (v2) minus ssm:GetParameter(s),
+                # ssm:GetDeployablePatchSnapshotForInstance (Patch Manager) and
+                # ssm:PutConfigurePackageResult (Distributor): registration, Run
+                # Command (ec2messages), Session Manager (ssmmessages), and the
+                # association / inventory calls the agent makes on its own.
+                - Sid: SsmAgentCore
                   Effect: Allow
-                  Action: [s3:PutObject, s3:AbortMultipartUpload]
+                  Action:
+                    - ssm:UpdateInstanceInformation
+                    - ssm:ListInstanceAssociations
+                    - ssm:DescribeAssociation
+                    - ssm:ListAssociations
+                    - ssm:GetDocument
+                    - ssm:DescribeDocument
+                    - ssm:GetManifest
+                    - ssm:PutInventory
+                    - ssm:PutComplianceItems
+                    - ssm:UpdateAssociationStatus
+                    - ssm:UpdateInstanceAssociationStatus
+                  Resource: "*"
+                - Sid: SsmAgentMessages
+                  Effect: Allow
+                  Action:
+                    - ec2messages:AcknowledgeMessage
+                    - ec2messages:DeleteMessage
+                    - ec2messages:FailMessage
+                    - ec2messages:GetEndpoint
+                    - ec2messages:GetMessages
+                    - ec2messages:SendReply
+                    - ssmmessages:CreateControlChannel
+                    - ssmmessages:CreateDataChannel
+                    - ssmmessages:OpenControlChannel
+                    - ssmmessages:OpenDataChannel
+                  Resource: "*"
+                # Explicit, so no later grant (a managed policy attached by hand,
+                # a broader statement) can hand a lease machine the account's
+                # parameters. The AMI parameter is resolved by EC2 for the
+                # broker at launch; the machine never needs it.
+                - Sid: NoParameterReads
+                  Effect: Deny
+                  Action:
+                    - ssm:GetParameter
+                    - ssm:GetParameters
+                    - ssm:GetParametersByPath
+                    - ssm:GetParameterHistory
+                  Resource: "*"
+          # Each instance reads and writes only its OWN prefix. An instance role
+          # cannot read its instance's tags, so the scope is the session:
+          # ${aws:userid} for an instance-profile session is
+          # "<role id>:<instance id>". Under it: ready.json (which the broker
+          # reads at vm/<InstanceRoleId>:<instance id>/ready.json) and, per
+          # lease, lease/<lease id>/in/ (what the broker staged), out/ (what the
+          # machine produced) and exec/ (each command's streams, written by the
+          # SSM agent). So one machine can neither read another lease's inputs
+          # nor overwrite its results.
+          - PolicyName: lease-artifacts
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Sid: OwnPrefixReadWrite
+                  Effect: Allow
+                  Action: [s3:PutObject, s3:GetObject, s3:AbortMultipartUpload]
                   Resource: !Sub "${ArtifactsBucket.Arn}/vm/${!aws:userid}/*"
-                - Sid: LeaseInputsRead
-                  Effect: Allow
-                  Action: [s3:GetObject]
-                  Resource: !Sub "${ArtifactsBucket.Arn}/leases/*/in/*"
-                - Sid: LeaseOutputsWrite
-                  Effect: Allow
-                  Action: [s3:PutObject, s3:AbortMultipartUpload]
-                  Resource:
-                    - !Sub "${ArtifactsBucket.Arn}/leases/*/out/*"
-                    - !Sub "${ArtifactsBucket.Arn}/leases/*/exec/*"
                 # The SSM agent checks the bucket's encryption before it uploads
                 # a command's output.
                 - Sid: BucketMetadata
@@ -365,6 +483,12 @@ Resources:
               VolumeType: gp3
               DeleteOnTermination: true
               Encrypted: true
+              Iops: !If [HasRootVolumeIops, !Ref RootVolumeIops, !Ref "AWS::NoValue"]
+              Throughput: !If [HasRootVolumeThroughput, !Ref RootVolumeThroughput, !Ref "AWS::NoValue"]
+              VolumeInitializationRate: !If
+                - HasRootVolumeInitializationRate
+                - !Ref RootVolumeInitializationRate
+                - !Ref "AWS::NoValue"
         MetadataOptions:
           HttpEndpoint: enabled
           HttpTokens: required # IMDSv2 only
@@ -632,10 +756,13 @@ Resources:
               StringEquals:
                 "aws:ResourceTag/canopy:capability": !Ref Capability
                 "aws:ResourceTag/canopy:owner": !Ref Owner
-          - Sid: SSMSendCommandDocument
+          # Only the stack's own exec document — never AWS-RunShellScript — so
+          # the broker's role can run nothing on these machines but an argv
+          # whose argv[0] is on ExecAllow.
+          - Sid: SSMSendCommandExecDocumentOnly
             Effect: Allow
             Action: [ssm:SendCommand]
-            Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}::document/AWS-RunShellScript"
+            Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${ExecDocument}"
           - Sid: SSMReadCommandResults
             Effect: Allow
             Action: [ssm:GetCommandInvocation]
@@ -659,6 +786,218 @@ Resources:
             Effect: Allow
             Action: [cloudformation:DescribeStacks]
             Resource: !Ref "AWS::StackId"
+
+  # The only command document the broker may send (BrokerPolicy). It takes the
+  # argv base64-encoded (each argument NUL-terminated), so no argument is ever
+  # substituted into the script as text, and runs it only if argv[0] is
+  # exactly one of ExecAllow. The lease's paths arrive as parameters whose
+  # allowedPatterns exclude every shell metacharacter. A NewVersion update
+  # keeps the name, so BrokerPolicy and the broker's stored output stay valid;
+  # the broker sends DocumentVersion $LATEST.
+  ExecDocument:
+    Type: AWS::SSM::Document
+    Condition: IsEphemeral
+    Properties:
+      Name: !Sub "canopy-cap-${Owner}-${Capability}-exec"
+      DocumentType: Command
+      UpdateMethod: NewVersion
+      Content:
+        schemaVersion: "2.2"
+        description: !Sub "Run one allow-listed command on a ${Capability} lease machine (canopy capability exec)."
+        parameters:
+          Argv:
+            type: String
+            description: The argv, base64-encoded, each argument NUL-terminated.
+            allowedPattern: "^[A-Za-z0-9+/]+={0,2}$"
+          LeaseId:
+            type: String
+            description: CANOPY_LEASE_ID.
+            allowedPattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          LeaseIn:
+            type: String
+            description: CANOPY_LEASE_IN, the lease's staged inputs (an s3:// prefix).
+            allowedPattern: "^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[A-Za-z0-9:._/-]*$"
+          LeaseOut:
+            type: String
+            description: CANOPY_LEASE_OUT, where the command writes artifacts (an s3:// prefix).
+            allowedPattern: "^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[A-Za-z0-9:._/-]*$"
+          ExecutionTimeout:
+            type: String
+            description: Seconds the command may run.
+            default: "3600"
+            allowedPattern: "^[0-9]{1,6}$"
+        mainSteps:
+          - action: aws:runShellScript
+            name: exec
+            inputs:
+              timeoutSeconds: "{{ ExecutionTimeout }}"
+              # The agent runs this with /bin/sh; the body needs bash (read -d ''),
+              # so it is handed to bash whole. No ${...} in it: CloudFormation's
+              # Sub would take it. {{ }} is SSM's own substitution, of values the
+              # allowedPatterns above have already restricted.
+              runCommand:
+                - !Sub
+                  - |
+                    canopy_exec=$(cat <<'CANOPY_EXEC'
+                    set -eu
+                    allow="${Allow}"
+                    argv_file=$(mktemp)
+                    trap 'rm -f "$argv_file"' EXIT
+                    printf '%s' '{{ Argv }}' | base64 -d > "$argv_file"
+                    set --
+                    while IFS= read -r -d '' arg; do set -- "$@" "$arg"; done < "$argv_file"
+                    rm -f "$argv_file"
+                    trap - EXIT
+                    if [ "$#" -lt 1 ]; then echo "canopy exec: empty argv" >&2; exit 126; fi
+                    ok=""
+                    for name in $allow; do if [ "$name" = "$1" ]; then ok=1; fi; done
+                    if [ -z "$ok" ]; then
+                      echo "canopy exec: '$1' is not on this capability's exec allow list ($allow)" >&2
+                      exit 126
+                    fi
+                    export CANOPY_LEASE_ID='{{ LeaseId }}'
+                    export CANOPY_LEASE_IN='{{ LeaseIn }}'
+                    export CANOPY_LEASE_OUT='{{ LeaseOut }}'
+                    exec "$@"
+                    CANOPY_EXEC
+                    )
+                    exec /bin/bash -c "$canopy_exec"
+                  - Allow: !Join [" ", !Split [",", !Ref ExecAllow]]
+      Tags:
+        - { Key: owner, Value: !Ref OwnerTag }
+        - { Key: capability, Value: !Ref Capability }
+        - { Key: managed-by, Value: cloudformation }
+
+  # The backstop that does not depend on the broker: every 5 minutes, terminate
+  # any instance tagged with this capability and owner that has lived longer
+  # than MaxInstanceLifetimeSeconds. It covers canopy-web being down, deleted,
+  # or wrong — a lease the broker forgot, a launch it never recorded, a sweep
+  # that stopped running. Its role can describe instances and terminate only
+  # this capability's and owner's.
+  BackstopLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: IsEphemeral
+    Properties:
+      RetentionInDays: 30
+
+  BackstopRole:
+    Type: AWS::IAM::Role
+    Condition: IsEphemeral
+    Properties:
+      Description: !Sub "Terminates ${Owner}'s ${Capability} instances older than MaxInstanceLifetimeSeconds."
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref "AWS::AccountId"
+      Policies:
+        - PolicyName: terminate-overdue
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Describe
+                Effect: Allow
+                Action: [ec2:DescribeInstances]
+                Resource: "*"
+              - Sid: TerminateThisCapabilitysInstances
+                Effect: Allow
+                Action: [ec2:TerminateInstances]
+                Resource: !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                Condition:
+                  StringEquals:
+                    "aws:ResourceTag/canopy:capability": !Ref Capability
+                    "aws:ResourceTag/canopy:owner": !Ref Owner
+              - Sid: WriteItsOwnLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt BackstopLogGroup.Arn
+      Tags:
+        - { Key: owner, Value: !Ref OwnerTag }
+        - { Key: capability, Value: !Ref Capability }
+        - { Key: managed-by, Value: cloudformation }
+
+  BackstopFunction:
+    Type: AWS::Lambda::Function
+    Condition: IsEphemeral
+    Properties:
+      Description: !Sub "Backstop: terminate ${Owner}'s ${Capability} instances older than ${MaxInstanceLifetimeSeconds}s."
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 60
+      MemorySize: 128
+      Role: !GetAtt BackstopRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref BackstopLogGroup
+        LogFormat: Text
+      Environment:
+        Variables:
+          CAPABILITY: !Ref Capability
+          OWNER: !Ref Owner
+          MAX_INSTANCE_LIFETIME_S: !Ref MaxInstanceLifetimeSeconds
+      Code:
+        ZipFile: |
+          """Terminate this capability's instances that have outlived MAX_INSTANCE_LIFETIME_S."""
+          import datetime
+          import json
+          import os
+
+          import boto3
+
+          LIVE = ["pending", "running", "stopping", "stopped"]
+
+
+          def overdue(instances, now, max_s):
+              return sorted(i["InstanceId"] for i in instances
+                            if (now - i["LaunchTime"]).total_seconds() > max_s)
+
+
+          def handler(event, context, ec2=None):
+              ec2 = ec2 or boto3.client("ec2")
+              max_s = int(os.environ["MAX_INSTANCE_LIFETIME_S"])
+              filters = [
+                  {"Name": "tag:canopy:capability", "Values": [os.environ["CAPABILITY"]]},
+                  {"Name": "tag:canopy:owner", "Values": [os.environ["OWNER"]]},
+                  {"Name": "instance-state-name", "Values": LIVE},
+              ]
+              instances = []
+              for page in ec2.get_paginator("describe_instances").paginate(Filters=filters):
+                  for res in page.get("Reservations", []):
+                      instances.extend(res.get("Instances", []))
+              now = datetime.datetime.now(datetime.timezone.utc)
+              ids = overdue(instances, now, max_s)
+              for start in range(0, len(ids), 500):
+                  ec2.terminate_instances(InstanceIds=ids[start:start + 500])
+              print(json.dumps({"checked": len(instances), "terminated": ids, "max_s": max_s}))
+              return {"checked": len(instances), "terminated": ids}
+      Tags:
+        - { Key: owner, Value: !Ref OwnerTag }
+        - { Key: capability, Value: !Ref Capability }
+        - { Key: managed-by, Value: cloudformation }
+
+  BackstopSchedule:
+    Type: AWS::Events::Rule
+    Condition: IsEphemeral
+    Properties:
+      Description: !Sub "Every 5 minutes: the ${Capability} capability's lifetime backstop."
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Id: backstop
+          Arn: !GetAtt BackstopFunction.Arn
+
+  BackstopInvokePermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsEphemeral
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref BackstopFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BackstopSchedule.Arn
 
 Outputs:
   InstanceId:
@@ -690,3 +1029,27 @@ Outputs:
     Condition: IsEphemeral
     Description: The owning agent's slug, as the instances are tagged (canopy:owner).
     Value: !Ref Owner
+  LeaseObjectScope:
+    Condition: IsEphemeral
+    Description: >-
+      Where a lease's objects live. "instance": under the machine's own prefix,
+      vm/<InstanceRoleId>:<instance-id>/lease/<lease-id>/{in,out,exec}/, the only
+      place its role may read or write. (Stacks before 0.9.0 have no such output:
+      leases/<lease-id>/..., shared by every machine.)
+    Value: instance
+  ExecDocumentName:
+    Condition: IsEphemeral
+    Description: The one command document the broker may send (runs only an ExecAllow argv[0]).
+    Value: !Ref ExecDocument
+  ExecAllow:
+    Condition: IsEphemeral
+    Description: The commands the exec document will run, comma-separated.
+    Value: !Ref ExecAllow
+  MaxInstanceLifetimeSeconds:
+    Condition: IsEphemeral
+    Description: The backstop terminates any of this capability's instances older than this.
+    Value: !Ref MaxInstanceLifetimeSeconds
+  BackstopFunctionName:
+    Condition: IsEphemeral
+    Description: The scheduled Lambda that enforces MaxInstanceLifetimeSeconds.
+    Value: !Ref BackstopFunction

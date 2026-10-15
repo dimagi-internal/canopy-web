@@ -43,7 +43,7 @@ def test_launch_uses_the_lease_as_client_token_and_tags_the_request():
     user_data = {"lease_id": LEASE, "params": {"state": "cc-2.63.0"}, "max_lifetime_s": 3600,
                  "bucket": "b"}
     expected = {
-        "LaunchTemplate": {"LaunchTemplateId": LT, "Version": "$Default"},
+        "LaunchTemplate": {"LaunchTemplateId": LT, "Version": "$Latest"},
         "MinCount": 1, "MaxCount": 1, "ClientToken": LEASE,
         "TagSpecifications": [{"ResourceType": "instance", "Tags": _tags()},
                               {"ResourceType": "volume", "Tags": _tags()}],
@@ -183,3 +183,31 @@ def test_invocation_of_an_unknown_command_is_none():
     sst.add_client_error("get_command_invocation", service_error_code="InvocationDoesNotExist")
     with sst:
         assert _inst(ec2, ssm).invocation(CMD, "i-1") is None
+
+
+def test_run_document_async_sends_the_stacks_exec_document_with_its_parameters():
+    ec2, _, ssm, sst = _clients()
+    params = {"Argv": ["YWNlLW1vYmlsZQA="], "LeaseId": [LEASE], "ExecutionTimeout": ["120"]}
+    sst.add_response("send_command", {"Command": {"CommandId": CMD}}, {
+        "InstanceIds": ["i-1"], "DocumentName": "canopy-cap-ace-android-emulator-exec",
+        "DocumentVersion": "$LATEST", "Parameters": params, "TimeoutSeconds": 120,
+        "OutputS3BucketName": "bkt", "OutputS3KeyPrefix": "vm/R:i-1/lease/L/exec",
+    })
+    with sst:
+        cid = _inst(ec2, ssm).run_document_async(
+            "i-1", "canopy-cap-ace-android-emulator-exec", params, timeout_s=120, output_bucket="bkt",
+            output_prefix="vm/R:i-1/lease/L/exec/", document_version="$LATEST")
+    assert cid == CMD
+
+
+def test_launch_carries_extra_tags_such_as_the_broker():
+    from canopy_sdk.ondemand import TAG_BROKER
+
+    ec2, st, ssm, _ = _clients()
+    tags = _tags() + [{"Key": TAG_BROKER, "Value": "canopy.dimagi.com"}]
+    st.add_response("run_instances", {"Instances": [{"InstanceId": "i-1"}]}, {
+        "LaunchTemplate": ANY, "MinCount": 1, "MaxCount": 1, "ClientToken": LEASE,
+        "TagSpecifications": [{"ResourceType": "instance", "Tags": tags},
+                              {"ResourceType": "volume", "Tags": tags}]})
+    with st:
+        assert _inst(ec2, ssm).launch(lease_id=LEASE, tags={TAG_BROKER: "canopy.dimagi.com"}) == "i-1"

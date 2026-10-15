@@ -7,11 +7,9 @@ by a fresh process), turn binding, and who may call what.
 from __future__ import annotations
 
 import datetime as dt
-import json
 
 import pytest
 from django.core.cache import cache
-from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
@@ -19,89 +17,11 @@ from apps.capabilities import aws, services
 from apps.capabilities.models import AgentCapability, CapabilityGrant, CapabilityLease
 from apps.events.models import Event
 from apps.harness.models import Turn
-from apps.tokens.models import PersonalToken
-from apps.workspaces.models import WorkspaceMembership as M
-from apps.workspaces.testing import a_member, a_user, a_workspace
 
-from .fakes import OUTPUTS, FakeAws, transient
+from .fakes import OUTPUTS, transient
+from .helpers import MANIFEST, _acquire, _as, _grant, _json, _kinds, _pat, _publish
 
 pytestmark = pytest.mark.django_db
-
-MANIFEST = {
-    "version": 1, "name": "android-emulator", "kind": "ec2-ephemeral",
-    "description": "Android 14 emulator driven by the ace-mobile CLI.",
-    "aws": {"region": "us-east-1", "stack": "canopy-cap-ace-android-emulator"},
-    "limits": {"max_concurrent": 4, "max_lease_s": 14400, "idle_release_s": 900, "ready_timeout_s": 900},
-    "params": {"state": {"type": "string", "default": "cc-2.63.0", "enum": ["cc-2.62.0", "cc-2.63.0"]}},
-    "exec": {"allow": ["ace-mobile"]},
-}
-
-
-@pytest.fixture()
-def world(monkeypatch):
-    w = FakeAws()
-    monkeypatch.setattr(aws, "get", lambda region: w.broker())
-    cache.delete(services.SWEEP_CACHE_KEY)
-    return w
-
-
-@pytest.fixture()
-def tenancy(world):
-    ws = a_workspace("connect")
-    owner = a_member(ws, email="jj@dimagi.com", role=M.OWNER)
-    editor = a_member(ws, email="ed@dimagi.com", role=M.EDITOR)
-    viewer = a_member(ws, email="vi@dimagi.com", role=M.VIEWER)
-    outsider_ws = a_workspace("elsewhere")
-    outsider = a_member(outsider_ws, email="out@example.com", role=M.OWNER)
-    bot = a_user("ace@dimagi-ai.com")  # the agent's own login; not a member at all
-    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner, user=bot)
-    return {"ws": ws, "owner": owner, "editor": editor, "viewer": viewer, "outsider": outsider,
-            "bot": bot, "agent": agent}
-
-
-def _as(user) -> Client:
-    c = Client()
-    c.force_login(user)
-    return c
-
-
-def _pat(user) -> Client:
-    raw, _ = PersonalToken.create_for_user(user=user, label="deploy")
-    return Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-
-
-def _json(c, method, path, body=None):
-    fn = getattr(c, method)
-    if body is None:
-        return fn(path)
-    return fn(path, data=json.dumps(body), content_type="application/json")
-
-
-def _publish(c, *manifests):
-    return _json(c, "put", "/api/agents/ace/capabilities", {"capabilities": list(manifests or [MANIFEST])})
-
-
-def _grant(c, **limits):
-    return _json(c, "put", "/api/capabilities/grants",
-                 {"agent": "ace", "capability": "android-emulator", **limits})
-
-
-def _acquire(c, **extra):
-    return _json(c, "post", "/api/capabilities/leases", {"agent": "ace", "capability": "android-emulator", **extra})
-
-
-@pytest.fixture()
-def ready_to_lease(tenancy):
-    c = _as(tenancy["owner"])
-    assert _publish(c).status_code == 200
-    assert _grant(c).status_code == 200
-    return c
-
-
-def _kinds(lease_id) -> list[str]:
-    return [e.kind for e in Event.objects.filter(source="capabilities").order_by("id")
-            if (e.payload or {}).get("lease_id") == str(lease_id)]
-
 
 # ---- publishing --------------------------------------------------------------
 
@@ -397,14 +317,6 @@ def test_an_aws_outage_in_the_sweep_skips_that_capability(ready_to_lease, world)
 
 
 # ---- exec, uploads, artifacts ------------------------------------------------
-
-@pytest.fixture()
-def ready_lease(ready_to_lease, world):
-    lease = _acquire(ready_to_lease).json()
-    world.ready(lease["instance_id"])
-    _json(ready_to_lease, "get", f"/api/capabilities/leases/{lease['lease_id']}")
-    return lease
-
 
 def test_exec_quotes_argv_and_sends_output_to_the_lease_prefix(ready_to_lease, ready_lease, world):
     lid = ready_lease["lease_id"]

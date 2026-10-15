@@ -4,6 +4,7 @@ Not imported by ``canopy_sdk`` itself, so the core stays importable without boto
 """
 from .ephemeral import (
     LIVE_STATES,
+    TAG_BROKER,
     TAG_CAPABILITY,
     TAG_LEASE,
     TAG_OWNER,
@@ -21,6 +22,6 @@ from .ssm import CommandResult, run_command, send_command
 __all__ = [
     "CommandResult", "Described", "EphemeralInstance", "InstanceGone", "Invocation", "Job",
     "JobStore", "LIVE_STATES", "LaunchFailed", "Lease", "OnDemandError", "OnDemandInstance",
-    "Running", "SSMFailure", "SSMTimeout", "Status", "TAG_CAPABILITY", "TAG_LEASE", "TAG_OWNER",
+    "Running", "SSMFailure", "SSMTimeout", "Status", "TAG_BROKER", "TAG_CAPABILITY", "TAG_LEASE", "TAG_OWNER",
     "run_command", "send_command",
 ]

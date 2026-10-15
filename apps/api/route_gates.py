@@ -642,6 +642,11 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_capability_exec": ("agent.work", "agent-login"),
     "create_capability_uploads": ("agent.work", "agent-login"),
     "list_capability_artifacts": ("agent.work", "agent-login"),
+    "list_capability_leases": ("member", "agent-login"),  # a read, scoped to the caller's workspaces
+    "capability_spend": ("member", "agent-login"),
+    "force_release_capability_lease": ("integrations", "agent-admin"),
+    "refresh_agent_capability": ("agent-admin", "agent-login"),
+    "terminate_capability_orphans": ("integrations", "agent-admin"),
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
 }
@@ -818,6 +823,8 @@ NOT_SETTINGS: dict[str, str] = {
     # cloud capabilities: a lease is a machine for one use, not configuration
     "acquire_capability_lease": "action", "release_capability_lease": "action",
     "exec_capability_lease": "action", "create_capability_uploads": "ephemeral-credential",
+    "force_release_capability_lease": "action", "terminate_capability_orphans": "action",
+    "refresh_agent_capability": "action",  # re-reads the stack; nobody chooses a value
     # person-data
     "add_person_fact": "person-data", "retract_person_fact": "person-data",
     "hcp_createEntry": "person-data", "hcp_addPreference": "person-data",
