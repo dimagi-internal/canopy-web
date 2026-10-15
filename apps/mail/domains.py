@@ -290,8 +290,8 @@ def save_route(domain: MailDomain, *, local_part: str, kind: str, agent_slug: st
 
 
 def set_share(domain: MailDomain, workspace, *, daily_send_cap: int | None = None, by=None) -> MailDomainShare:
-    if workspace.pk == domain.workspace_id:
-        raise DomainError(422, "a domain is always usable by its own workspace")
+    # A grant on the domain's own workspace is how its sub-workspaces get it: the owner
+    # needs no grant itself (share_for answers None for it), its descendants find this one.
     if daily_send_cap is not None and not 1 <= daily_send_cap <= 5000:
         raise DomainError(422, "daily_send_cap must be between 1 and 5000")
     share, created = MailDomainShare.objects.get_or_create(

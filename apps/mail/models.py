@@ -50,7 +50,8 @@ class MailDomain(models.Model):
 class MailDomainShare(models.Model):
     """A superuser's grant letting another workspace hold addresses on a domain.
 
-    Covers the named workspace AND every workspace below it. The domain's own workspace
+    Covers the named workspace AND every workspace below it; a grant on the domain's own
+    workspace shares it with that workspace's descendants. The domain's own workspace
     keeps DNS, the domain-wide cap and suspension; a sharing workspace only adds routes
     for its own agents and members, under its own `daily_send_cap`."""
     domain = models.ForeignKey(MailDomain, on_delete=models.CASCADE, related_name="shares")

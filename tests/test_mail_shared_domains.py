@@ -74,7 +74,18 @@ def test_only_a_superuser_shares_and_the_grant_covers_descendants(w):
     assert [(i["name"], i["owned"], i["owner_workspace"], i["records"]) for i in listed] == [
         ("dimagi.ai", False, "labs", [])]
     assert _c(w.cadmin).get("/api/mail/domains/acme").json()["items"] == []
-    assert _share(w, ws="labs").status_code == 422  # its own workspace needs no grant
+
+
+def test_sharing_with_the_owner_reaches_its_sub_workspaces(w):
+    child = Workspace.objects.create(slug="labs-sub", display_name="Sub", created_by=w.jj, parent=w.owner_ws)
+    WorkspaceMembership.objects.create(workspace=child, user=w.cadmin, role="admin")
+    assert _c(w.cadmin).get("/api/mail/domains/labs-sub").json()["items"] == []
+    assert _share(w, ws="labs").status_code == 200
+    [item] = _c(w.cadmin).get("/api/mail/domains/labs-sub").json()["items"]
+    assert item["owned"] is False and item["owner_workspace"] == "labs"
+    # the owner's own view is unchanged: still owned, still its DNS
+    [own] = _c(w.jj).get("/api/mail/domains/labs").json()["items"]
+    assert own["owned"] is True
 
 
 def test_shared_workspace_routes_its_agent_and_mail_lands_in_its_workspace(w, monkeypatch):
