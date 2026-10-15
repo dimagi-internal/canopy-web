@@ -5,7 +5,6 @@ canopy (`canopy agent prepare`, 2026-10-15)."""
 from __future__ import annotations
 
 import pathlib
-import shlex
 import shutil
 import subprocess
 
