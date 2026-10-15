@@ -162,6 +162,57 @@ def link_canopy_user(agent: Agent, user_id: int | None) -> Agent:
     return agent
 
 
+class AgentTokenRefused(Exception):
+    """The agent's canopy token cannot be minted by this caller; the message says why.
+    `status` is the HTTP answer."""
+
+    def __init__(self, message: str, status: int):
+        super().__init__(message)
+        self.status = status
+
+
+def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str = ""):
+    """Mint a PAT for the agent's OWN canopy login (`Agent.user`), creating that login
+    first when the agent has none (`agent_login.create_agent_login`). Returns
+    `(raw, token, user, created_user)`; the raw value exists only in this return — the
+    caller (`canopy agent vault`) writes it straight into the agent's vault.
+
+    The guard is impersonation: a token for `agent.user` signs in AS that user, so this
+    must never become "mint a token for a person". With no login it only ever CREATES one
+    (see agent_login). With one linked, it mints for it only while that login has never
+    signed in interactively (`last_login` is None — an account only tokens use); one that
+    has might be a person's, so only a workspace OWNER may, and a workspace owner can
+    already make themselves the agent's owner.
+
+    Non-expiring, like the agent's vault key: nothing watches either for expiry, and a
+    lapsed one fails every turn silently."""
+    from apps.tokens.models import PersonalToken
+    from apps.workspaces import permissions as perms
+
+    from .agent_login import AgentLoginRefused, create_agent_login
+
+    created = False
+    user = agent.user
+    if user is None:
+        address = (agent.email or email or "").strip().lower()
+        if "@" not in address:
+            raise AgentTokenRefused(
+                f"{agent.slug} has no mailbox address to name its canopy login — set the "
+                "agent's email first, or pass the address", 422)
+        try:
+            user = create_agent_login(agent, actor, address)
+        except AgentLoginRefused as exc:
+            raise AgentTokenRefused(str(exc), exc.status) from exc
+        created = True
+    elif user.last_login is not None and not perms.can(actor, agent.workspace, perms.OWN):
+        raise AgentTokenRefused(
+            f"{user.email} has signed in to canopy, so it may be a person's account; only a "
+            "workspace owner may mint a token for it", 403)
+    raw, token = PersonalToken.create_for_user(
+        user=user, label=(label or f"{agent.slug} agent").strip()[:100], ttl_days=0)
+    return raw, token, user, created
+
+
 def agent_detail(agent: Agent) -> dict:
     latest = agent.syncs.order_by("-period_end").first()
     return {
@@ -1318,6 +1369,8 @@ def runner_may_hold_agent(runner, agent) -> bool:
 def set_agent_vault(agent, *, vault=None, service_key=None):
     """Set the agent's vault name and/or its service-account token.
 
+    A change re-asks the agent's cloud boxes to bootstrap it (see below).
+
     Non-clobbering on the KEY specifically: renaming a vault must not silently
     wipe the credential that reads it, which is the shape of every other
     credential write here."""
@@ -1332,6 +1385,15 @@ def set_agent_vault(agent, *, vault=None, service_key=None):
         fields.append("op_sa_token_enc")
     if fields:
         agent.save(update_fields=[*fields, "updated_at"])
+        # What a box said about the OLD vault/key no longer describes this one: drop the
+        # verdict to "not reported" rather than leave a stale False (or True) on the
+        # checklist, and ask the cloud boxes that take its turns to re-run bootstrap,
+        # which is what produces a fresh one.
+        from .models import AgentBootstrapReport
+        from .setup import request_setup
+
+        AgentBootstrapReport.objects.filter(agent=agent).update(env_ok=None)
+        request_setup(agent)
     return agent_vault_status(agent)
 
 

@@ -44,6 +44,8 @@ from .schemas import (
     AgentSalesforceIn,
     AgentSalesforceOut,
     AgentCanopyUserIn,
+    AgentCanopyTokenIn,
+    AgentCanopyTokenOut,
     AgentGitHubOut,
     AgentCredentialAccessOut,
     AgentCredentialsResolveOut,
@@ -606,6 +608,30 @@ def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn
     except services.AgentUserLinkError as exc:
         raise HttpError(422, str(exc)) from exc
     return _detail(request, agent)
+
+
+# Returns a secret, once. Its caller is `canopy agent vault`, which writes it straight
+# into the agent's 1Password vault; a fleet-baseline rail keeps agents from calling the
+# MCP twin of this route, whose result would land in a transcript.
+@router.post("/{slug}/canopy-token", response={201: AgentCanopyTokenOut},
+             summary="Mint the agent's own canopy-web token (shown once)")
+def mint_agent_canopy_token(request: HttpRequest, slug: str, payload: AgentCanopyTokenIn) -> Status:
+    """For the agent's own login, creating it when the agent has none. See
+    `services.mint_agent_canopy_token` for who may, and why it never adopts an
+    existing account."""
+    from apps.tokens.middleware import minting_refusal
+
+    agent = _agent_for_admin(request, slug)
+    refused = minting_refusal(request)
+    if refused:
+        raise HttpError(403, refused)
+    try:
+        raw, token, user, created = services.mint_agent_canopy_token(
+            agent, request.user, email=payload.email, label=payload.label)
+    except services.AgentTokenRefused as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    return Status(201, AgentCanopyTokenOut(raw=raw, token_id=token.pk, label=token.label,
+                                           user_email=user.email, created_user=created))
 
 
 # The owner is whose GitHub grant the agent's GitHub-backed features read

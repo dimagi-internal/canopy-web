@@ -308,9 +308,10 @@ def _status(agent):
 
 def test_a_new_agent_has_everything_but_its_repo_left_to_do(editor, ws):
     steps = setup_steps(_agent(ws, editor))
-    assert [s["key"] for s in steps] == ["repo", "github", "mailbox", "runner", "job", "first_turn"]
+    assert [s["key"] for s in steps] == ["repo", "github", "mailbox", "vault", "runner", "job",
+                                         "first_turn"]
     assert {s["key"]: s["status"] for s in steps} == {
-        "repo": "done", "github": "todo", "mailbox": "todo", "runner": "todo",
+        "repo": "done", "github": "todo", "mailbox": "todo", "vault": "todo", "runner": "todo",
         "job": "todo", "first_turn": "todo"}
     job = next(s for s in steps if s["key"] == "job")
     assert job["where"] == "claude-code"
@@ -351,6 +352,37 @@ def test_the_runner_step_follows_routing_and_who_may_hold_the_agent(editor, ws):
     agent.owner = a_member(ws, email="z@dimagi.com", role=WorkspaceMembership.EDITOR)
     agent.save()
     assert _status(agent)["runner"] == "todo"
+
+
+def test_the_vault_step_is_one_terminal_command_and_reads_what_the_box_reported(editor, ws):
+    """Creating a vault needs a person's 1Password rights, which nothing here holds — so
+    the step is the command, not a link. Done means the box could READ it (`env_ok`), not
+    merely that a key is stored: a stored key that cannot read its vault is the failure
+    that sat in journald for two weeks (2026-09-22)."""
+    from apps.agents import services
+
+    agent = _agent(ws, editor)
+    vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
+    assert (vault["status"], vault["where"]) == ("todo", "terminal")
+    assert vault["command"] == "canopy agent vault --slug scout --workspace scouts --vault <vault name>"
+    assert "no 1Password vault" in vault["detail"]
+
+    services.set_agent_vault(agent, vault="Agent-Scout")
+    vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
+    assert "has no key stored here" in vault["detail"]
+    assert vault["command"] == "canopy agent vault --slug scout --workspace scouts"
+
+    AgentBootstrapReport.objects.create(agent=agent, runner_name="olive-cloud", env_ok=False,
+                                        detail="op inject: vault not found")
+    services.set_agent_vault(agent, service_key="ops_key")
+    # Storing a key wipes what a box said about the old one — not yet reported is not failed.
+    assert AgentBootstrapReport.objects.get(agent=agent).env_ok is None
+    assert _status(agent)["vault"] == "done"
+
+    AgentBootstrapReport.objects.filter(agent=agent).update(env_ok=False, detail="403 Forbidden")
+    vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
+    assert vault["status"] == "todo"
+    assert "olive-cloud could not read its secrets from Agent-Scout: 403 Forbidden" in vault["detail"]
 
 
 def test_the_setup_route_is_readable_by_any_member(editor, ws):

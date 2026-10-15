@@ -101,7 +101,7 @@ every box. `up.sh`/`wire.sh` check each before writing anything and print the fi
 | a live Claude login on some cloud runner (what new boxes copy) | `wire.sh` (prints its source) | `/supervisor` → Runners → the box → Claude login (a human `claude setup-token` per subscription) |
 | `canopy/cloud-runner/gog-keyring-password` | `up.sh` | any strong password, `./secrets.sh gog <file>` |
 | operator token `~/.claude/canopy/workbench-token` | `wire.sh`, `down.sh` | `/canopy:canopy-web-pat-mint` |
-| per agent: its vault + service-account key | `wire.sh` (refuses in `--standby`) | agent Settings → Credentials, or Ada's `bin/ada-vault-provision --slug <slug>` |
+| per agent: its vault + service-account key | `wire.sh` (refuses in `--standby`) | `canopy agent vault --slug <slug> --workspace <ws>` (the setup checklist's Vault step) |
 | per agent: GitHub delegation (owner's token) | `wire.sh` | agent Settings → Credentials → GitHub (the owner) |
 | per workspace: shared vault key | `wire.sh` | `/w/<ws>/settings/secrets` (workspace owner) |
 
@@ -152,9 +152,10 @@ The key is a 1Password service account scoped to that one vault, minted in
 admin (`_agent_for_admin`), by browser or PAT; the shared vault
 (`PUT /api/workspaces/<ws>/shared-vault`) is workspace-owner only. Never pass the
 key through an agent session's tool arguments or a file it can read — that lands
-it in the transcript. The safe agent-run path is Ada's `bin/ada-vault-provision
---slug <slug>`, which pipes the key from `op` straight into the API and never
-prints it (its raw alternatives are deny-railed in Ada's gating).
+it in the transcript. The one path is canopy's `canopy agent vault --slug <slug>`,
+which creates the vault, mints the agent's `canopy-pat` and its read-only key, pipes
+each from `op` / the API straight to where it lives and never prints one (the raw
+alternatives are deny-railed in the fleet gating baseline).
 
 Then press **Refresh** on the runner page; the next bootstrap materializes it.
 
@@ -387,25 +388,17 @@ their own canopy-web users, so a **per-agent PAT** gives per-agent attribution a
 per-agent revocation for free.
 
 This follows the normal fleet standard (`.env.tpl` + `op inject`) — no new auth
-primitive, and `bootstrap_agents.sh` already runs the injection successfully for
-all five agents. Three steps per agent, none of them automatable from a laptop
-(minting for another user needs a one-off task against prod):
+primitive. `canopy agent vault --slug <slug>` does it: it mints the agent's own token
+(`POST /api/agents/<slug>/canopy-token`, which creates the agent's canopy login if it has
+none — never adopts an existing account) and writes it to the vault item `canopy-pat`,
+field `credential`, without printing it. The agent's `.env.tpl` carries one line:
 
 ```bash
-# 1. Mint on labs, one per agent. 180d is the default; use --ttl-days 0 for a
-#    non-expiring token (see canopy-web PR #412 for the expiry model).
-uv run python manage.py create_token \
-  --email <slug>@dimagi-ai.com --label "cloud-ec2-1" --create-user
-
-# 2. Store the raw value in that agent's vault as item `canopy-pat`, field
-#    `credential` (kebab-case — item names with spaces/parens do NOT parse in
-#    an op:// reference).
-
-# 3. Add ONE line to the agent repo's tracked .env.tpl:
-#      CANOPY_WEB_PAT=op://<vault>/<item>/<field>
-#    op inject materializes it into ~/.<slug>/.env when the agent's next turn
-#    is claimed (and at every bootstrap).
+CANOPY_WEB_PAT=op://${AGENT_VAULT}/canopy-pat/credential
 ```
+
+`op inject` materializes it into `~/.<slug>/.env` when the agent's next turn is claimed
+(and at every bootstrap).
 
 `canopy_web.resolve_pat()` already reads `CANOPY_WEB_PAT` ahead of the token file,
 so nothing else has to change once the line is there.

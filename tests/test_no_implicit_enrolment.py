@@ -248,6 +248,10 @@ def test_ensure_member_is_no_longer_called_from_any_create_path():
         # never from the request — an owner configured it deliberately, and the
         # grant is audited. This is the door roles.md calls the fourth.
         "apps/tokens/exchange_api.py",
+        # An agent's OWN login, created for its canopy-pat (`canopy agent vault`). Takes a
+        # workspace admin or owner — the people who could invite it anyway — and makes a
+        # brand-new, password-less user linked to one agent. roles.md lists it.
+        "apps/agents/agent_login.py",
     }
     offenders = []
     for path in root.glob("apps/**/*.py"):

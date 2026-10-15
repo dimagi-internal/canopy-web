@@ -169,7 +169,7 @@ entry could be deleted with CI still green.
 
 ## How you get into a workspace
 
-Three ways (the full account, in the access glossary's words, is
+Four ways (the full account, in the access glossary's words, is
 `docs/architecture/access.md` → "Getting into a workspace"):
 
 - **An invite.** An admin or owner creates one at `/w/:workspace/settings/members`, at a
@@ -185,6 +185,12 @@ Three ways (the full account, in the access glossary's words, is
   request on the spot — `dimagi` is set to editor while it bootstraps; every other
   workspace is off. Auto-approved requests are ordinary request records and still email
   every admin and owner, who can change the role or remove the person.
+- **An agent's own login.** An agent acts in canopy as its own user (`Agent.user`). When
+  it has none, `POST /api/agents/{slug}/canopy-token` (run by `canopy agent vault`)
+  creates one: a brand-new, password-less user from the agent's mailbox address, made an
+  editor and linked to that one agent. Only a workspace admin or owner may — the people
+  who could invite it — and an address that is already a canopy user is refused, never
+  adopted (`apps/agents/agent_login.py`).
 - **Creating one.** Subject to `services.can_create_workspace`: an *invite-admitted* user
   holding no membership may not create a workspace, because otherwise invite-admission
   becomes transitively delegable — create a workspace, mint invites, and each new invitee

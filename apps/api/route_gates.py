@@ -97,6 +97,9 @@ GATES: dict[str, tuple[str, ...]] = {
     "agent_setup": ("member",),
     "get_agent": ("member",),
     "link_canopy_user": ("agent-admin",),
+    # + members.manage to CREATE the agent's login, own for one that has signed in
+    # (services.mint_agent_canopy_token / agents/agent_login.py)
+    "mint_agent_canopy_token": ("agent-admin",),
     "transfer_owner": ("agent-owner",),  # leaving it ownerless needs OWN
     "get_interface": ("member",),
     "publish_interface": ("agent-admin",),
@@ -694,7 +697,7 @@ SETTINGS: frozenset[str] = frozenset({
     # mail: workspace email domains and their routes
     "add_mail_domain", "update_mail_domain", "remove_mail_domain", "save_mail_route", "delete_mail_route",
     # agents: identity, ownership, access, integrations, credentials
-    "upsert_agent", "delete_agent", "transfer_owner", "link_canopy_user",
+    "upsert_agent", "delete_agent", "transfer_owner", "link_canopy_user", "mint_agent_canopy_token",
     "grant_admin", "revoke_admin",
     "publish_interface", "unpublish_interface",
     "set_credential_source", "set_agent_credentials", "delete_agent_credential", "set_agent_vault",

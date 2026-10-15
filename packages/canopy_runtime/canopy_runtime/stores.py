@@ -24,7 +24,7 @@ import subprocess
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-# Our scaffolded 1Password items (see deploy/secrets/bootstrap_1password.sh) store
+# Our scaffolded 1Password items (canopy's `canopy agent vault`) store
 # the value in a single password field labelled "credential", so a reference
 # resolves as op://<vault>/<name>/credential.
 CREDENTIAL_FIELD = "credential"
