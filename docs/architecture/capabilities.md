@@ -13,12 +13,13 @@ and the sweep. The agent's repo (or a shared repo it points at) owns everything 
 `capability.yaml`, the CloudFormation stack, the image and its bake, the boot hook and
 the CLI on the machine.
 
-**Whose AWS permissions.** canopy-web runs as its own ECS task role,
-`canopy-web-task-role` (`deploy/aws/canopy-web-task-role.cfn.yaml`, see `deploy.md`),
-which grants it nothing for capabilities. Every capability call is one the agent's stack
-grants that role — `BrokerPolicy`, attached through the stack's `BrokerRoleName` — scoped
-to that agent's tagged instances, its exec document, its bucket and its stack. No other
-service shares the role, so no other service gets the grant.
+**Whose AWS permissions.** canopy-web's ECS task role grants it nothing for
+capabilities. Every capability call is one the agent's stack grants that role —
+`BrokerPolicy`, attached through the stack's `BrokerRoleName` — scoped to that agent's
+tagged instances, its exec document, its bucket and its stack. Today that role is the
+shared `labs-jj-ecs-task-role`, so every labs service on it inherits the grant; canopy-web
+is moving to its own `canopy-web-task-role` (`deploy.md` § canopy-web's own task role),
+after which no other service gets it. Pass whichever role canopy-web's task runs as.
 
 ## 1. Declare it in your repo
 
@@ -84,7 +85,7 @@ aws cloudformation deploy --stack-name canopy-cap-<agent>-<capability> \
   --template-file ondemand-capability.cfn.yaml --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides Mode=ephemeral Capability=<capability> Owner=<agent-slug> \
     OwnerTag=<who-to-ask> InstanceType=m8i.xlarge VpcId=vpc-… SubnetId=subnet-… \
-    NestedVirtualization=true ExecAllow=<cli>[,<cli>…] BrokerRoleName=canopy-web-task-role
+    NestedVirtualization=true ExecAllow=<cli>[,<cli>…] BrokerRoleName=<canopy-web's task role>
 ```
 
 | Ephemeral parameter | |
@@ -93,7 +94,7 @@ aws cloudformation deploy --stack-name canopy-cap-<agent>-<capability> \
 | `Capability` | the manifest's `name` |
 | `Owner` | the agent's slug; tags instances `canopy:owner` and names the AMI parameter |
 | `OwnerTag` | the human-facing `owner` tag |
-| `BrokerRoleName` | the broker's IAM role; for canopy-web, `canopy-web-task-role` |
+| `BrokerRoleName` | the broker's IAM role: canopy-web's task role — `labs-jj-ecs-task-role` until the move to `canopy-web-task-role` (`deploy.md`) |
 | `ExecAllow` | **required** (0.9.0+): the manifest's `exec.allow`, comma-separated; the exec document runs nothing else |
 | `MaxInstanceLifetimeSeconds` | 0.9.0+, default 16200 (4 h + 30 min): the backstop terminates any of the capability's instances older than this. Keep it above `max_lease_s` |
 | `RootVolumeIops`, `RootVolumeThroughput`, `RootVolumeInitializationRate` | 0.9.0+, default empty (= unset; `0` too): gp3 IOPS (3000–80000), gp3 throughput MiB/s (125–2000), and the EBS volume initialization rate MiB/s (100–300) at which a fresh root volume pulls the AMI snapshot instead of hydrating lazily. Every lease starts from a cold volume, so this is the boot-time lever: `6000` / `500` / `300` took the Android emulator's `boot_completed` from ~50 s to ~37 s |

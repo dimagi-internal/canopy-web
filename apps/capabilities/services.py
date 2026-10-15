@@ -233,8 +233,7 @@ def _read_outputs(m: CapabilityManifest) -> dict:
         raise CapabilityError(422, (
             f"{m.name}: {e}. canopy-web reads the stack with the permissions the stack itself "
             "grants it (BrokerPolicy, via BrokerRoleName): is it deployed in that region with "
-            "Mode=ephemeral and canopy-web's task role (canopy-web-task-role) as "
-            "BrokerRoleName?")) from e
+            "Mode=ephemeral and canopy-web's task role as BrokerRoleName?")) from e
 
 
 def publish(agent, manifests: list[CapabilityManifest], *, by) -> tuple[list[AgentCapability], list[str]]:

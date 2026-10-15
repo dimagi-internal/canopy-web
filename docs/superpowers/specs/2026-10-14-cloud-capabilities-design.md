@@ -113,8 +113,8 @@ as the stack exposes the same contract.
   stack-independent backstop is instead a stack-owned scheduled Lambda that terminates any of the
   capability's instances older than `MaxInstanceLifetimeSeconds`; added in dimagi-canopy 0.9.0.)
 - **Broker permissions:** the stack grants the broker role (parameter `BrokerRoleName`, which
-  for canopy-web is its own task role, `canopy-web-task-role`; it was the shared
-  `labs-jj-ecs-task-role` until 0.9.0, which leaked the grant to every service on that role):
+  for canopy-web is its ECS task role — the shared `labs-jj-ecs-task-role`, which leaks the
+  grant to every service on that role, until canopy-web moves to its own `canopy-web-task-role`):
   - `ec2:RunInstances` from this launch template only, with those request tags;
   - `ec2:TerminateInstances`, `ec2:DescribeInstances`, `ssm:SendCommand` (since 0.9.0, only
     with the stack's own exec document, which runs an argv only if argv[0] is on `ExecAllow`)

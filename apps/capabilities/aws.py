@@ -4,9 +4,9 @@
 (`monkeypatch.setattr(aws, "get", lambda region: fake)`), so no test reaches AWS
 and no other module imports boto3 for capabilities.
 
-The credentials are canopy-web's own task role (`canopy-web-task-role`,
-deploy/aws/canopy-web-task-role.cfn.yaml), which grants NOTHING for capabilities
-itself: every call here is one an agent's capability stack granted that role
+The credentials are canopy-web's ECS task role, which grants NOTHING for
+capabilities itself (the shared labs-jj-ecs-task-role today; canopy-web's own
+canopy-web-task-role after the move in docs/architecture/deploy.md): every call here is one an agent's capability stack granted that role
 (`BrokerPolicy` in canopy_sdk's ondemand-capability template, attached through
 the stack's `BrokerRoleName`), scoped to that agent's tagged instances, its
 exec document, its bucket and its stack. EC2 and SSM go through
