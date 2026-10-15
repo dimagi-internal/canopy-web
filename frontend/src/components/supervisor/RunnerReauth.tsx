@@ -46,7 +46,7 @@ const POLL_MS = 3_000
  * of. So an outcome shows only when it happened in front of you, in this visit.
  */
 
-export function RunnerReauth({ runnerId, slot = 'primary', isSet = false, onSignedIn }: {
+export function RunnerReauth({ runnerId, slot = 'box', isSet = false, onSignedIn }: {
   runnerId: string
   /** The login this sign-in fills. */
   slot?: LoginSlot
@@ -173,7 +173,9 @@ export function RunnerReauth({ runnerId, slot = 'primary', isSet = false, onSign
           {!idle ? 'Start again' : isSet || outcomeIsFresh ? 'Sign in again' : 'Sign in with Claude'}
         </button>
         <span className="text-[11px] text-foreground-subtle">
-          {isSet ? 'replaces this login only' : 'fills this login'} &mdash; you open one link and paste one code back
+          {slot === 'box'
+            ? 'you open one link and paste one code back'
+            : <>{isSet ? 'replaces this login only' : 'fills this login'} &mdash; you open one link and paste one code back</>}
         </span>
       </div>
 

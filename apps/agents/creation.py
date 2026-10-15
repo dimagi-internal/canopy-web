@@ -19,7 +19,11 @@ Three things it does NOT do, each on purpose:
   audited, gated routes everything else uses — so this module holds no second copy of
   who may create an agent or lend it an identity.
 
-Retry-safe: a repo that already holds THIS agent's scaffold is adopted, not refused.
+Retry-safe, and safe over earlier work: a repo that already holds this agent's scaffold
+(an earlier run here, or `/canopy:create-agent` in a terminal) — or only GitHub's own
+starter files — gets just the template files it is MISSING, in one commit on top, and
+nothing in it is ever overwritten. A repo that is some other agent, or not an agent at
+all, is refused rather than written into.
 """
 from __future__ import annotations
 
@@ -52,16 +56,36 @@ class ScaffoldError(Exception):
         self.status = status
 
 
+#: What GitHub's "Initialize this repository with…" boxes add. A repo holding only
+#: these was made for the agent by someone who ticked one, so it is filled in, not refused.
+GITHUB_STARTER_FILES = {"README.md", "LICENSE", "LICENSE.md", ".gitignore"}
+
+
 @dataclass
 class RepoState:
     """What `repo` looks like through the person's token."""
 
     repo: str
-    #: ready — empty and writable; adopt — already this agent's scaffold;
-    #: not_empty — has someone else's commits; missing — the token cannot see it.
+    #: ready — empty; update — this agent's scaffold (or only GitHub starter files)
+    #: with template files missing; adopt — nothing missing; name_mismatch — the
+    #: scaffold of a DIFFERENT agent slug; not_empty — not an agent repo;
+    #: missing — the token cannot see it.
     state: str
     default_branch: str = "main"
     detail: str = ""
+    #: Template paths the repo lacks — what an `update` will add. Nothing else is written.
+    missing: tuple[str, ...] = ()
+    #: For name_mismatch: the slug this repo already names its agent.
+    suggested_slug: str = ""
+    head_sha: str = ""
+    base_tree: str = ""
+
+
+def expected_paths(slug: str) -> set[str]:
+    """Every path the factory writes for `slug` — from its own stamp table."""
+    from canopy_agent_factory import templates
+
+    return {p.replace("{{AGENT_SLUG}}", slug) for p in templates()}
 
 
 def parse_repo(raw: str) -> str:
@@ -95,6 +119,10 @@ def _send(token: str, method: str, path: str, body: dict) -> dict:
         raise ScaffoldError(
             f"GitHub refused the write ({resp.status_code}). The token needs Contents and "
             "Workflows: Read and write on this repository.")
+    if resp.status_code == 422 and "/git/refs/heads/" in path:
+        raise ScaffoldError(
+            "GitHub would not move the default branch — it is probably protected. Allow "
+            "the token to push to it, or push the scaffold on a branch yourself.")
     if not resp.ok:
         raise ScaffoldError(f"GitHub answered {resp.status_code}: {resp.text[:200]}", status=502)
     return resp.json()
@@ -117,17 +145,41 @@ def inspect_repo(token: str, repo: str, slug: str) -> RepoState:
     commits = _get(token, f"/repos/{repo}/commits?per_page=1")
     if commits.status_code == 409:  # "Git Repository is empty."
         return RepoState(repo, "ready", branch)
-    manifest = _get(token, f"/repos/{repo}/contents/{PLUGIN_MANIFEST}")
-    if manifest.ok:
-        try:
-            name = json.loads(base64.b64decode(manifest.json().get("content", ""))).get("name")
-        except (ValueError, TypeError):
-            name = None
-        if name == slug:
-            return RepoState(repo, "adopt", branch, detail=f"{repo} already holds {slug}'s scaffold.")
-    return RepoState(repo, "not_empty", branch, detail=(
-        f"{repo} already has commits. Use a new, empty repository — no README, licence or "
-        ".gitignore — so the scaffold is its first commit."))
+    commits.raise_for_status()
+    head = commits.json()[0]
+    head_sha, base_tree = head["sha"], head["commit"]["tree"]["sha"]
+    tree = _get(token, f"/repos/{repo}/git/trees/{base_tree}?recursive=1")
+    tree.raise_for_status()
+    existing = {e["path"] for e in tree.json().get("tree", []) if e.get("type") == "blob"}
+    name = _manifest_name(token, repo) if PLUGIN_MANIFEST in existing else None
+    if name and name != slug:
+        return RepoState(repo, "name_mismatch", branch, suggested_slug=name, detail=(
+            f"{repo} already holds the agent '{name}'. Use '{name}' as the slug to finish "
+            f"setting it up, or pick another repository."))
+    if not (name == slug or existing <= GITHUB_STARTER_FILES):
+        return RepoState(repo, "not_empty", branch, detail=(
+            f"{repo} already has other content and is not an agent repository. Use a new, "
+            "empty repository (or one that only has a README, licence or .gitignore)."))
+    missing = tuple(sorted(expected_paths(slug) - existing))
+    kept = len(expected_paths(slug) & existing)
+    if not missing:
+        return RepoState(repo, "adopt", branch, detail=f"{repo} already holds {slug}'s scaffold.")
+    return RepoState(repo, "update", branch, missing=missing, head_sha=head_sha, base_tree=base_tree,
+                     detail=(f"{repo} already has {len(existing)} file(s). Canopy will add the "
+                             f"{len(missing)} template file(s) it lacks"
+                             + (f" and keep its {kept} existing one(s) as they are." if kept else
+                                " and leave everything already there alone.")))
+
+
+def _manifest_name(token: str, repo: str) -> str | None:
+    """The `name` in the repo's `.claude-plugin/plugin.json` — the agent it already is."""
+    resp = _get(token, f"/repos/{repo}/contents/{PLUGIN_MANIFEST}")
+    if not resp.ok:
+        return None
+    try:
+        return json.loads(base64.b64decode(resp.json().get("content", ""))).get("name") or None
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def render(spec) -> dict[str, tuple[str, bool]]:
@@ -143,29 +195,44 @@ def render(spec) -> dict[str, tuple[str, bool]]:
         }
 
 
-def push(token: str, state: RepoState, files: dict[str, tuple[str, bool]], *, slug: str) -> str:
-    """Make the scaffold the repo's history: two commits, returns the head sha.
+def push(token: str, state: RepoState, files: dict[str, tuple[str, bool]], *, slug: str) -> int:
+    """Write the scaffold; returns how many files were written.
 
-    One commit is not possible on an empty repository — the Git Data API (the only way to
-    write many files and their modes at once) refuses until a commit exists, and the
-    Contents API that can make that first commit writes one file and no mode."""
+    `ready` (empty): two commits — the Git Data API (the only way to write many files
+    with their modes at once) refuses an empty repository, so the first commit comes
+    from the Contents API, which writes one file and no mode.
+    `update`: one commit on top of the branch with only `state.missing`; every file
+    already in the repo is left exactly as it is."""
+    if state.state not in ("ready", "update"):
+        raise ScaffoldError(f"nothing to push into a repository in state {state.state!r}")
     repo, branch = state.repo, state.default_branch
+    if state.state == "update":
+        todo = {p: files[p] for p in state.missing if p in files}
+        _commit(token, repo, branch, todo, parent=state.head_sha, base_tree=state.base_tree,
+                message=f"Add the canopy agent scaffold's missing files for {slug} ({len(todo)})")
+        return len(todo)
     readme, _ = files[FIRST_FILE]
     first = _send(token, "PUT", f"/repos/{repo}/contents/{FIRST_FILE}", {
         "message": f"Scaffold {slug}: README",
         "content": base64.b64encode(readme.encode("utf-8")).decode("ascii"),
     })["commit"]
+    rest = {p: f for p, f in files.items() if p != FIRST_FILE}
+    _commit(token, repo, branch, rest, parent=first["sha"], base_tree=first["tree"]["sha"],
+            message=f"Scaffold {slug} from the canopy agent factory")
+    return len(files)
+
+
+def _commit(token: str, repo: str, branch: str, files: dict[str, tuple[str, bool]], *,
+            parent: str, base_tree: str, message: str) -> str:
+    """One commit adding `files` (with their modes) on top of `parent`; moves `branch`."""
     tree = _send(token, "POST", f"/repos/{repo}/git/trees", {
-        "base_tree": first["tree"]["sha"],
+        "base_tree": base_tree,
         "tree": [
             {"path": path, "mode": "100755" if exe else "100644", "type": "blob", "content": text}
-            for path, (text, exe) in sorted(files.items()) if path != FIRST_FILE
+            for path, (text, exe) in sorted(files.items())
         ],
     })
-    commit = _send(token, "POST", f"/repos/{repo}/git/commits", {
-        "message": f"Scaffold {slug} from the canopy agent factory",
-        "tree": tree["sha"],
-        "parents": [first["sha"]],
-    })
+    commit = _send(token, "POST", f"/repos/{repo}/git/commits",
+                   {"message": message, "tree": tree["sha"], "parents": [parent]})
     _send(token, "PATCH", f"/repos/{repo}/git/refs/heads/{branch}", {"sha": commit["sha"]})
     return commit["sha"]

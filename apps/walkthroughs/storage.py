@@ -17,6 +17,9 @@ from django.conf import settings
 from apps.walkthroughs.drive_client import DriveNotConfigured, get_drive_client
 
 WALKTHROUGHS_FOLDER = "walkthroughs"
+# A DDD narrative's iteration sources (apps.walkthroughs.models.NarrativeSource):
+# narrative-sources/<source-uuid>/<role filename>.
+NARRATIVE_SOURCES_FOLDER = "narrative-sources"
 
 
 @dataclass(frozen=True)
@@ -38,11 +41,12 @@ def store_upload(
     filename: str,
     content_type: str,
     data: bytes,
+    folder: str = WALKTHROUGHS_FOLDER,
 ) -> StoredFile:
-    """Upload bytes under walkthroughs/<id>/<filename>; return ids."""
+    """Upload bytes under <folder>/<id>/<filename>; return ids."""
     root = _require_root()
     client = get_drive_client()
-    parent = client.find_or_create_folder(WALKTHROUGHS_FOLDER, root)
+    parent = client.find_or_create_folder(folder, root)
     subfolder = client.find_or_create_folder(str(walkthrough_id), parent)
     file_id = client.upload(
         parent_id=subfolder,

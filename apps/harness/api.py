@@ -1,6 +1,7 @@
 """Django Ninja router for /api/harness — runner registry + turn lifecycle."""
 from __future__ import annotations
 
+import logging
 import uuid
 
 from django.conf import settings
@@ -95,6 +96,8 @@ from .schemas import (
     TurnOut,
     TurnStartIn,
 )
+
+logger = logging.getLogger(__name__)
 
 router = Router(auth=session_auth, tags=["harness"])
 
@@ -730,12 +733,19 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
     Supersedes any unfinished mint rather than refusing — a stalled sign-in (a
     closed tab, a runner restart mid-flow) must not block every later attempt.
 
-    `slot` names which login the new token replaces — `primary` (the default)
-    or `secondary`, the fallback subscription.
+    There is ONE way to sign a runner in: `box` (the default), a full
+    `claude auth login` the runner keeps for itself — the only kind of login
+    that carries claude.ai connectors. The old setup-token sign-ins into the
+    `primary`/`secondary` slots are refused: offered side by side with this one
+    they were indistinguishable, and an operator signed in on the wrong one
+    (2026-10-14). Tokens already in those slots stay, as cap backups.
     """
     runner = _runner_admin_or_404(request, runner_id)
-    return services.start_runner_mint(runner, requested_by=request.user,
-                                      slot=payload.slot if payload else "primary")
+    slot = payload.slot if payload else "box"
+    if slot != "box":
+        raise HttpError(422, "Token sign-ins are retired. Sign in with Claude "
+                             "(slot 'box') — a full login kept on the runner.")
+    return services.start_runner_mint(runner, requested_by=request.user, slot=slot)
 
 
 @router.get("/runners/{runner_id}/mint", response=RunnerMintOut | None,
@@ -1446,6 +1456,25 @@ def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSe
     """Upsert the durable link and point its live-session hint at THIS runner/host,
     after a session was created or reused for the thread. Returns the fresh resolution."""
     runner = _runner_or_404(request, runner_id)
+    try:
+        return _record_session(request, runner, payload)
+    except HttpError:
+        raise
+    except Exception:
+        # Failure investigation 3 (2026-10-15, turn 282f825e): a transferred chat
+        # turn (ace, haldimagi-mbp-cdp) 500'd here on all four attempts, and the
+        # response is the generic problem body with nothing to tell which line
+        # raised. Name the inputs that pick the branch, then re-raise unchanged.
+        logger.exception(
+            "record-session failed: runner=%s agent=%s project=%r thread_key=%r "
+            "session_key=%r turn_id=%s",
+            runner.pk, payload.agent_slug, payload.project, payload.thread_key,
+            payload.session_key, payload.turn_id,
+        )
+        raise
+
+
+def _record_session(request: HttpRequest, runner: Runner, payload: RecordSessionIn):
     if payload.project:
         ws = _project_workspace_or_404(request, payload.workspace)
         try:

@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# canopy-web's OWN ECS task role, `canopy-web-task-role`.
+#
+# canopy-web runs today as `labs-jj-ecs-task-role`, which every labs container
+# shares (connect-labs, ace-web). Every grant canopy needs therefore reaches the
+# other apps too: any labs container can send as canopy.dimagi.com, read the
+# inbound-mail bucket, and — the reason this exists — drive every agent's cloud
+# capability (an ec2-ephemeral stack attaches its BrokerPolicy to the broker's
+# role: RunInstances, TerminateInstances, SSM SendCommand on that agent's
+# machines). This role is canopy-web's alone.
+#
+# What the task calls (inventoried from the code — the only boto3 clients in the
+# app are these):
+#   apps/common/email.py               sesv2 SendEmail as canopy.dimagi.com
+#                                      -> canopy-ses-send (canopy-email.cfn.yaml)
+#   apps/mail/ses.py                   sesv2 identities + sends, s3 on the inbound
+#                                      bucket -> canopy-mail (canopy-mail.cfn.yaml)
+#   apps/canopy_sessions/attachment_storage.py
+#                                      s3 on the attachments bucket -> the bucket
+#                                      policy in canopy-web.cfn.yaml (Principal =
+#                                      its TaskRoleArn) AND AttachmentsObjects here
+#   apps/capabilities/aws.py           ec2/ssm/s3/cloudformation on capability
+#                                      stacks -> each stack's BrokerPolicy
+#                                      (BrokerRoleName=canopy-web-task-role)
+#   ECS Exec (EnableExecuteCommand)    ssmmessages -> EcsExec here
+# Secrets and logs are the EXECUTION role's (labs-jj-ecs-task-execution-role),
+# not this one.
+#
+# Each grant keeps ONE owner. The SES and inbound-mail policies stay in the
+# stacks that own those resources and attach to this role through their
+# TaskRoleName parameter (a list, so both roles can hold them during the
+# cutover); capability stacks attach their BrokerPolicy through BrokerRoleName.
+# This stack owns only the role, the ECS Exec channel, and an identity grant on
+# the attachments bucket — the last so the role works the moment a task starts
+# with it, before the canopy-web stack update rewrites the bucket policy.
+#
+# Deployed by hand with a labs admin login, not by the Deploy to Labs workflow
+# (its role holds no iam:CreateRole). Rollout, in order:
+# docs/architecture/deploy.md § canopy-web's own task role.
+#
+#   aws cloudformation deploy --profile labs --stack-name canopy-web-task-role \
+#     --template-file deploy/aws/canopy-web-task-role.cfn.yaml --capabilities CAPABILITY_NAMED_IAM
+
+Description: >-
+  canopy-web's own ECS task role (canopy-web-task-role): ECS Exec and the
+  attachments bucket here; SES, inbound mail and capability brokering attach to
+  it from their own stacks.
+
+Parameters:
+  RoleName:
+    Type: String
+    Default: canopy-web-task-role
+    Description: >-
+      Named, because other stacks attach to it by name (canopy-email,
+      canopy-mail, every capability stack's BrokerRoleName).
+  AttachmentsBucketName:
+    Type: String
+    Default: labs-jj-canopy-web-attachments-858923557655
+    Description: canopy-web.cfn.yaml's AttachmentsBucket (CANOPY_ATTACHMENTS_BUCKET).
+
+Resources:
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: canopy-web's ECS task role (canopy.dimagi.com). Not shared with other labs apps.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+            # Only ECS in this account (the confused-deputy guard AWS recommends
+            # for task roles).
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*
+      Policies:
+        # `aws ecs execute-command` into the live container (the service sets
+        # EnableExecuteCommand). These four actions take no resource.
+        - PolicyName: ecs-exec
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: EcsExec
+                Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+        # Chat attachments (apps/canopy_sessions/attachment_storage.py): put,
+        # get and delete objects, nothing on the bucket itself. The bucket
+        # policy grants the same to the canopy-web stack's TaskRoleArn.
+        - PolicyName: attachments
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AttachmentsObjects
+                Effect: Allow
+                Action: [s3:PutObject, s3:GetObject, s3:DeleteObject]
+                Resource: !Sub arn:${AWS::Partition}:s3:::${AttachmentsBucketName}/*
+      Tags:
+        - {Key: owner, Value: canopy-web}
+        - {Key: managed-by, Value: cloudformation}
+
+Outputs:
+  TaskRoleArn:
+    Description: Pass to the canopy-web stack as TaskRoleArn.
+    Value: !GetAtt TaskRole.Arn
+  TaskRoleName:
+    Description: Pass to canopy-email / canopy-mail as TaskRoleName, and to capability stacks as BrokerRoleName.
+    Value: !Ref TaskRole

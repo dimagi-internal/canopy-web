@@ -300,8 +300,15 @@ rotates, so a copy anywhere else would break both. The runner reports only
 `logged_in`; nothing lands in the bundle. When the box holds a login with the
 `user:mcp_servers` scope, the cascade puts `box-login` FIRST and selecting it
 clears both auth env vars, so the CLI uses its stored login; a cap or a dead login
-falls through to the subscriptions as before. Settings → the runner's credentials
-→ **Full login on the box**. Tests: `runner/ec2/tests/test_box_login.py`,
+falls through to the backup tokens as before.
+
+**It is the ONLY sign-in.** The runner's credentials page has one **Sign in with
+Claude** button, and it does the full login; `POST …/mint` refuses `primary`/
+`secondary` (setup-token) sign-ins with a 422. Offered side by side, the two kinds
+were indistinguishable and an operator signed in on the wrong one (2026-10-14).
+Tokens already in those slots stay as cap backups. The runner reports a
+`claude.login` health check (ok = signed in on the box, warn = backup tokens only),
+which the page shows next to the button. Tests: `runner/ec2/tests/test_box_login.py`,
 `tests/test_runner_mint.py`.
 
 ## The runner software
@@ -314,7 +321,7 @@ A runner is an installed package, never a checkout, and updates itself to what i
 
 **Code provenance.** `code_sha` is the last commit touching that runner kind's own source (`runner/canopy_runner/…` or `runner/ec2/`), not repo HEAD. The server holds `RUNNER_CODE_SHA` / `RUNNER_CLOUD_CODE_SHA` (computed by the deploy workflow, `fetch-depth: 0`); `RunnerOut.expected_code_sha` serves the one matching the row's `kind`, and `/supervisor` alerts only when both sides are non-empty and differ (empty = unknown).
 
-**The cloud runner** (`runner/ec2/cloud_runner.py`) polls claim every 15s and drains the queue, executes via `claude -p` (or ACP with `RUNNER_EXECUTOR=acp`, default off), declares repos via `RUNNER_PROJECTS`, and runs the stream/backfill contract on a 3s clock. A cloud box learns of an agent only by bootstrapping, so registering one (or changing its repo) requests a refresh on the cloud boxes that will take its turns (`apps/agents/setup.py::request_setup`); until that box posts the agent's bootstrap report, the agent's setup checklist shows its runner step as waiting. `bootstrap_agents.sh` provisions the agent fleet (clones each `dimagi-internal/<slug>` into `/opt/agents`, installs the canopy plugin, `op inject`s env, maps gog OAuth clients); it runs from `main()` after the credential is staged and is not `set -e`, so one agent's failure does not stop the rest. Spec: `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
+**The cloud runner** (`runner/ec2/cloud_runner.py`) polls claim every 15s and drains the queue, executes via `claude -p` (or ACP with `RUNNER_EXECUTOR=acp`, default off), declares repos via `RUNNER_PROJECTS`, and runs the stream/backfill contract on a 3s clock. A cloud box learns of an agent only by bootstrapping, so registering one (or changing its repo) requests a refresh on the cloud boxes that will take its turns (`apps/agents/setup.py::request_setup`); until that box posts the agent's bootstrap report, the agent's setup checklist shows its runner step as waiting. And if a turn for an agent the box has no clone of arrives first, the box bootstraps before running it (`cloud_runner._ensure_agent_clone`, once per agent per `LAZY_BOOTSTRAP_RETRY`) rather than running it in a bare scratch dir. `bootstrap_agents.sh` provisions the agent fleet (clones each `dimagi-internal/<slug>` into `/opt/agents`, installs the canopy plugin, `op inject`s env, maps gog OAuth clients); it runs from `main()` after the credential is staged and is not `set -e`, so one agent's failure does not stop the rest. Spec: `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
 
 ## Runner readiness (the not-ready marker)
 

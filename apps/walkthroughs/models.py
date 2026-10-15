@@ -171,3 +171,67 @@ class Walkthrough(models.Model):
             and self.workspace_id in wsvc.request_member_slugs(request)
         )
         return member or self.token_matches(request.GET.get("t"))
+
+
+class NarrativeSource(models.Model):
+    """A file a DDD narrative needs in order to be ITERATED again, pinned to the
+    narrative version it was made for.
+
+    The story (narration, personas, why-brief) already lives on the version's
+    ``ReviewRequest`` and the rendered videos are ``Walkthrough`` rows. What
+    re-recording or re-rendering also needs — the recipe (``style``, ``cuts``,
+    actions, setup), the master recording and the capture report the cut specs
+    are derived from — used to live only in the machine that made the render,
+    so a narrative could be published with no way to keep iterating it from
+    anywhere else. This is where those files live instead: canopy pushes them
+    with every narrative post and video upload, and ``narrative pull`` restores
+    them into a fresh working directory.
+    """
+
+    ROLE_RECIPE = "recipe"
+    ROLE_INTENT = "intent"
+    ROLE_MASTER = "master"
+    ROLE_CAPTURE_REPORT = "capture_report"
+    ROLE_CAPTURE_MANIFEST = "capture_manifest"
+    # role -> (stored filename, content type). A closed set on purpose: these are
+    # the files the loop reads back, and each has exactly one meaning.
+    ROLES = {
+        ROLE_RECIPE: ("recipe.yaml", "application/yaml"),
+        ROLE_INTENT: ("intent.yaml", "application/yaml"),
+        ROLE_MASTER: ("master.mp4", "video/mp4"),
+        ROLE_CAPTURE_REPORT: ("capture-report.json", "application/json"),
+        ROLE_CAPTURE_MANIFEST: ("capture-manifest.json", "application/json"),
+    }
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(
+        "workspaces.Workspace", on_delete=models.PROTECT, related_name="narrative_sources",
+    )
+    narrative_slug = models.CharField(max_length=200, db_index=True)
+    # The narrative version (ReviewRequest.id) these files were made for.
+    narrative_review_id = models.UUIDField(db_index=True)
+    role = models.CharField(max_length=32)
+    content_type = models.CharField(max_length=64)
+    size_bytes = models.BigIntegerField()
+    # Hex sha256 of the bytes: lets the plugin skip re-uploading an unchanged
+    # master, and lets a pull verify what it restored.
+    sha256 = models.CharField(max_length=64)
+    drive_file_id = models.CharField(max_length=128, blank=True, default="")
+    drive_folder_id = models.CharField(max_length=128, blank=True, default="")
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="narrative_sources",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["narrative_slug", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.narrative_slug} {self.role} ({self.narrative_review_id})"
+
+    @property
+    def filename(self) -> str:
+        return self.ROLES[self.role][0]

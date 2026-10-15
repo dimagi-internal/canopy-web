@@ -81,8 +81,17 @@ def test_the_runner_is_given_nothing_while_the_human_is_signing_in(client, runne
     assert client.get(f"{_base(runner)}/claim").json()["mint"] is None
 
 
+def _legacy_mint(runner, slot=RunnerMint.PRIMARY):
+    """A setup-token sign-in already in flight when token sign-ins were retired.
+
+    New ones cannot be started (see test_token_sign_ins_are_refused), but a row
+    started before the deploy must still finish rather than strand its human —
+    so the finish path keeps its tests, on rows made directly."""
+    return RunnerMint.objects.create(runner=runner, slot=slot)
+
+
 def test_the_code_reaches_the_runner_and_the_token_lands_encrypted(client, runner):
-    _post(client, _base(runner))
+    _legacy_mint(runner)
     _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
     _post(client, f"{_base(runner)}/code", {"code": "  the-code  "})
 
@@ -223,7 +232,7 @@ def test_a_fresh_sign_in_is_not_expired(client, runner):
 # ── which login a sign-in fills, and whose it is ───────────────────────────
 
 def _sign_in(client, runner, *, slot=None, token):
-    _post(client, _base(runner), {"slot": slot} if slot else {})
+    _legacy_mint(runner, slot or RunnerMint.PRIMARY)
     _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
     _post(client, f"{_base(runner)}/code", {"code": "c"})
     client.get(f"{_base(runner)}/claim")
@@ -308,3 +317,19 @@ def test_a_box_sign_in_that_did_not_log_in_fails_with_the_reason(client, runner)
     r = _post(client, f"{_base(runner)}/result", {"detail": "OAuth error: invalid code"})
     assert r.json()["status"] == RunnerMint.FAILED
     assert "invalid code" in r.json()["detail"]
+
+
+def test_token_sign_ins_are_refused(client, runner):
+    """ONE way to sign a runner in. Offered beside the full login, a setup-token
+    sign-in was indistinguishable from it, and an operator used the wrong one
+    (2026-10-14) — so it cannot be started any more."""
+    for slot in ("primary", "secondary"):
+        r = _post(client, _base(runner), {"slot": slot})
+        assert r.status_code == 422, r.content
+        assert "retired" in r.content.decode()
+    assert not RunnerMint.objects.filter(runner=runner).exists()
+
+
+def test_a_sign_in_with_no_slot_is_the_full_login(client, runner):
+    r = _post(client, _base(runner))
+    assert r.json()["slot"] == "box"

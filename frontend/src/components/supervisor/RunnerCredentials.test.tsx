@@ -129,20 +129,31 @@ describe('RunnerCredentials', () => {
   })
   afterEach(cleanup)
 
-  it('offers a sign-in on EACH login, and each one fills its own slot', async () => {
-    // The defect: one "Start sign-in" above both logins, which always wrote the
-    // primary — so adding a fallback overwrote the login that was working.
-    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
-    api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'secondary' })
+  it('offers exactly ONE sign-in, and it is the full login on the box', async () => {
+    // The defect (2026-10-14): three "Sign in with Claude" buttons, two of which
+    // made inference-only setup-tokens. An operator signed in on one of those
+    // believing it was the full login, and the box still could not read a doc.
+    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
+    api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'box' })
     render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('runner-reauth-secondary')).toBeTruthy())
-    expect(screen.getByTestId('runner-reauth-primary')).toBeTruthy()
+    await waitFor(() => expect(screen.getByTestId('runner-reauth-box')).toBeTruthy())
+    expect(screen.queryByTestId('runner-reauth-primary')).toBeNull()
+    expect(screen.queryByTestId('runner-reauth-secondary')).toBeNull()
+    expect(screen.getAllByTestId('reauth-start')).toHaveLength(1)
 
-    const fallback = screen.getByTestId('runner-reauth-secondary')
     await act(async () => {
-      fireEvent.click(fallback.querySelector('[data-testid="reauth-start"]')!)
+      fireEvent.click(screen.getByTestId('reauth-start'))
     })
-    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'secondary')
+    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'box')
+  })
+
+  it('says whether the runner is signed in', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(NONE)
+    render(<RunnerCredentials runnerId="r1" signedIn />)
+    await waitFor(() => expect(screen.getByTestId('cred-box-state').textContent)
+      .toContain('signed in on this runner'))
+    // Signed in on the box with no backup tokens is a working box, not an alarm.
+    expect(screen.queryByTestId('runner-credentials-warning')).toBeNull()
   })
 
   it('names each login', async () => {

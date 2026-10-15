@@ -327,7 +327,7 @@ def _expire_if_stale(mint):
     return mint
 
 
-def start_runner_mint(runner, *, requested_by=None, slot="primary"):
+def start_runner_mint(runner, *, requested_by=None, slot="box"):
     """Ask a runner to begin a browser sign-in, superseding any unfinished one.
 
     Superseding rather than refusing: a mint that stalled (the operator closed

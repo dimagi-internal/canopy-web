@@ -468,6 +468,15 @@ def _credential_check() -> None:
                    "one Claude credential: a usage cap stops every agent here with nothing to fail over to")
     else:
         _set_check("claude.credentials", "ok", f"{n} credentials in the fallback chain")
+    # Separate from the count on purpose: a box can have plenty of credentials
+    # and still none that sees a claude.ai connector. The credentials page reads
+    # this one check to say whether the runner is signed in.
+    if any(c[0] == BOX_LOGIN_LABEL for c in _CLAUDE_CREDS):
+        _set_check("claude.login", "ok", "signed in on this box — claude.ai connectors available")
+    else:
+        _set_check("claude.login", "warn",
+                   "not signed in on this box: turns run on backup tokens, which cannot use "
+                   "claude.ai connectors (Claude Docs). Sign in with Claude on the runner's credentials.")
 
 
 #: Root-volume thresholds (percent used). cloud-ec2-1 reached 100% on 2026-10-04 —
@@ -2325,6 +2334,40 @@ def _guard_shared_clone(repo_dir: pathlib.Path) -> None:
         _log(f"warn: could not guard {repo_dir}: {exc}")
 
 
+#: One on-demand bootstrap at a time, and not again for the same agent within
+#: LAZY_BOOTSTRAP_RETRY seconds — an agent whose clone keeps failing must not make
+#: every one of its turns wait out a full bootstrap.
+_LAZY_BOOTSTRAP_LOCK = threading.Lock()
+_LAZY_BOOTSTRAP_TRIED: dict[str, float] = {}
+LAZY_BOOTSTRAP_RETRY = int(os.environ.get("LAZY_BOOTSTRAP_RETRY", "600"))
+
+
+def _ensure_agent_clone(slug: str) -> None:
+    """Set an agent up NOW if this box has no clone of it — before its turn runs.
+
+    A box clones agents only when it bootstraps (service start, or a refresh it
+    acts on when idle). An agent created since then had its turns run in a bare
+    scratch dir: none of its skills, hooks or persona, and the turn still reported
+    `done` (labs 2026-10-14: a new agent's first turn answered with the fleet's
+    plugins). canopy-web asks the box to refresh when an agent is registered
+    (apps/agents/setup.py::request_setup), but a turn can arrive first. Waiting a
+    bootstrap here is slower; running as nobody is wrong. It also stamps
+    `_BOOTSTRAPPED_AT`, which discharges that pending refresh."""
+    if not slug or _safe_session_dirname(slug) != slug:
+        return
+    if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir():
+        return
+    with _LAZY_BOOTSTRAP_LOCK:
+        # Re-checked under the lock: a concurrent turn may have just done it.
+        if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir():
+            return
+        if time.time() - _LAZY_BOOTSTRAP_TRIED.get(slug, 0.0) < LAZY_BOOTSTRAP_RETRY:
+            return
+        _LAZY_BOOTSTRAP_TRIED[slug] = time.time()
+        _log(f"agent {slug}: no clone on this box yet — bootstrapping before its turn runs")
+        _LAZY_BOOTSTRAPPER()
+
+
 def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path:
     """Where claude should run for this turn (runner/ec2 design spec §2:
     'agent turns execute in the agent's clone'). An AGENT turn whose slug has a
@@ -2348,13 +2391,16 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     A brand-new-per-turn scratch dir remains correct for project/agent turns
     (each is its own unit of work), just not for a session's ongoing thread.
 
-    Everything else (project turns, or an agent bootstrap hasn't reached yet)
-    keeps the original scratch-dir behavior.
+    An agent this box has no clone of yet is bootstrapped first
+    (`_ensure_agent_clone`). Everything else — project turns, or an agent whose
+    bootstrap failed — keeps the original scratch-dir behavior.
 
     `env` is the turn's own environment: its git fetches and pulls use the
     turn's GitHub identity, since this box holds none of its own."""
     session_id = _chat_session_id(turn)
     slug = _turn_agent_slug(turn)
+    if slug:
+        _ensure_agent_clone(slug)
     # A PROJECT turn (a repo, no agent) works in its own worktree of that repo, at
     # the same path it always had — an empty scratch dir until #1131, which is why
     # such turns went looking for /opt/canopy-web.
@@ -2835,6 +2881,11 @@ def bootstrap_agent_fleet() -> None:
         # Versions may have just moved (bootstrap updates Claude Code and the
         # canopy CLI): re-read them on the next beat rather than in 10 minutes.
         _HEALTH_SLOW_AT = 0.0
+
+
+#: What `_ensure_agent_clone` runs. A name of its own so the test loader can swap
+#: in a no-op: no test may start a real bootstrap (it clones private repos).
+_LAZY_BOOTSTRAPPER = bootstrap_agent_fleet
 
 
 #: This box's runner id, once paired — for the few calls made outside a loop

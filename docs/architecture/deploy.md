@@ -70,6 +70,22 @@ and check the feature is live (e.g. a new endpoint appears in `https://canopy.di
 
 `labs-jj-ecs-task-execution-role` is shared by every container in every labs app. It reads secrets only through scoped inline policies on four prefixes — `labs-jj-*`, `canopy-web/*`, `ace-web/*`, `labs/*` (`labs/SENTRY_DSN` is the one `labs-jj-*` does not match; connect-labs' Sentry needs it). Don't attach the AWS-managed `SecretsManagerReadWrite` (or any `secretsmanager:*` on `*`) to it — that lets any container read, overwrite or delete every secret in the account. The unprefixed legacy secrets stay as they are (no rename API, they span four apps, and ace-web/connect-labs reference pre-existing ARNs rather than declaring secrets in CFN).
 
+### canopy-web's own task role
+
+canopy-web runs as `labs-jj-ecs-task-role`, which every labs container shares — so connect-labs and ace-web can also send as canopy.dimagi.com, read inbound mail, and drive any agent's cloud capability (a capability stack attaches its `BrokerPolicy` to the broker's role). `deploy/aws/canopy-web-task-role.cfn.yaml` defines `canopy-web-task-role`, canopy-web's alone. Every grant keeps one owner: the role stack owns the role, ECS Exec (`ssmmessages`) and an identity grant on the attachments bucket; `canopy-email` (`canopy-ses-send`) and `canopy-mail` (`canopy-mail`) attach their policies through `TaskRoleName`, a comma-separated list so both roles hold them during the move; each capability stack attaches `BrokerPolicy` through `BrokerRoleName`; the attachments bucket policy names the canopy-web stack's `TaskRoleArn`. The code's AWS calls are exactly those (`apps/common/email.py`, `apps/mail/ses.py`, `apps/canopy_sessions/attachment_storage.py`, `apps/capabilities/aws.py`); secrets and logs are the execution role's. `tests/test_task_role_stack.py` pins the stacks and the deploy role's `PassOwnTaskRoleToEcs`.
+
+Not done by merging: the stacks are applied with a labs admin login, in this order (each step is safe to stop after):
+
+1. **Inventory the shared role** — `aws iam list-attached-role-policies` / `list-role-policies --role-name labs-jj-ecs-task-role`. Everything canopy uses must be one of the grants above; anything else canopy needs goes into the role stack first.
+2. **Create the role:** `aws cloudformation deploy --stack-name canopy-web-task-role --template-file deploy/aws/canopy-web-task-role.cfn.yaml --capabilities CAPABILITY_NAMED_IAM`.
+3. **Deploy role:** re-apply `deploy_roles.py` for canopy-web (`python deploy/aws/deploy_roles.py`, then `aws iam put-role-policy`), so the pipeline may `iam:PassRole` the new role.
+4. **Grants on both roles:** redeploy `canopy-web-email` and `canopy-web-mail` with `TaskRoleName=labs-jj-ecs-task-role,canopy-web-task-role`; attach every capability stack's `BrokerPolicy` to the new role too (`aws iam attach-role-policy --role-name canopy-web-task-role --policy-arn <the stack's BrokerPolicy ARN>` — out of band for now; step 7 makes it the stack's).
+5. **Move the task:** `aws cloudformation deploy --stack-name canopy-web --template-file deploy/aws/canopy-web.cfn.yaml --parameter-overrides TaskRoleArn=arn:aws:iam::858923557655:role/canopy-web-task-role ImageTag=<the live tag>` (admin: it also rewrites the attachments bucket policy, which the pipeline role cannot). Every later pipeline deploy carries `TaskRoleArn` forward.
+6. **Verify on the new role:** a notification email arrives (SES send); a workspace mail domain receives and an agent replies (inbound bucket + tenant send); a chat attachment uploads and downloads; a capability lease reaches `ready`, execs and releases; `aws ecs execute-command` opens a shell.
+7. **Drop the shared grants:** redeploy each capability stack with `BrokerRoleName=canopy-web-task-role` (ACE's `canopy-cap-ace-android-emulator` first), and `canopy-web-email` / `canopy-web-mail` with `TaskRoleName=canopy-web-task-role`. Then flip `TaskRoleArn`'s default in `canopy-web.cfn.yaml` and drop `labs-jj-ecs-task-role` from canopy-web's `PassSharedTaskRolesToEcs`.
+
+Rollback before step 7: redeploy `canopy-web` with the old `TaskRoleArn` — both roles still hold every grant.
+
 ## CI and merging
 
 CI (`.github/workflows/ci.yml`) runs on every PR, in the merge queue, and on push to `main`. Required checks: **Backend tests** (which also verifies `frontend/src/api/generated.ts` is fresh and the `dimagi-canopy` SDK version bump) and **Frontend build** (which also enforces the `canopy-ui`/`canopy-client` version bump).

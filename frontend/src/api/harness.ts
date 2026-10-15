@@ -128,7 +128,7 @@ export type RunnerMint = components['schemas']['RunnerMintOut']
  *  relay, and never holds the PKCE verifier. Supersedes any stalled attempt. */
 export type LoginSlot = RunnerMint['slot']
 
-export async function startRunnerMint(runnerId: string, slot: LoginSlot = 'primary'): Promise<RunnerMint> {
+export async function startRunnerMint(runnerId: string, slot: LoginSlot = 'box'): Promise<RunnerMint> {
   const res = await apiV2.POST('/api/harness/runners/{runner_id}/mint', {
     params: { path: { runner_id: runnerId } },
     body: { slot },

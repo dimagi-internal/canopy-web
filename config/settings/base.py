@@ -354,6 +354,12 @@ CANOPY_DRIVE_ROOT_FOLDER_ID = env("CANOPY_DRIVE_ROOT_FOLDER_ID", default="")
 WALKTHROUGH_MAX_UPLOAD_BYTES = env.int(
     "WALKTHROUGH_MAX_UPLOAD_BYTES", default=75 * 1024 * 1024,
 )
+# Max size of one DDD narrative source (apps.walkthroughs.models.NarrativeSource).
+# Sized for the master recording, the largest of them: one fresh capture of
+# every scene of a recorded narrative.
+NARRATIVE_SOURCE_MAX_UPLOAD_BYTES = env.int(
+    "NARRATIVE_SOURCE_MAX_UPLOAD_BYTES", default=150 * 1024 * 1024,
+)
 
 # --- Chat attachments (apps/canopy_sessions) -------------------------
 # S3 bucket holding chat attachment bytes. Empty string disables the feature

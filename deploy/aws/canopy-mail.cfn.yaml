@@ -11,7 +11,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 #     drops mail for any domain no workspace owns, so adding a domain never edits it
 #   * SNS topics + HTTPS subscriptions to canopy-web (inbound notifications, send events)
 #   * the configuration set `canopy-tenant-mail` every tenant send goes through
-#   * a policy on the shared ECS task role: create/inspect/delete tenant identities and
+#   * a policy on canopy-web's ECS task role (TaskRoleName): create/inspect/delete tenant identities and
 #     send. Its ses:FromAddress condition bars Dimagi addresses for THIS policy only —
 #     IAM allows are additive and canopy-ses-send grants unconditioned sends, so the
 #     real guard is app-level (agent_mail.send / forward only ever send from a
@@ -36,8 +36,12 @@ AWSTemplateFormatVersion: '2010-09-09'
 # (DeletionPolicy: Retain): once kept/ is no longer needed, empty and delete it by hand.
 Parameters:
   TaskRoleName:
-    Type: String
+    Type: CommaDelimitedList
     Default: labs-jj-ecs-task-role
+    Description: >-
+      The ECS task role(s) canopy-web runs as, comma-separated. Two during the move
+      to canopy-web-task-role (docs/architecture/deploy.md § canopy-web's own task
+      role), then canopy-web-task-role alone.
   CanopyBaseUrl:
     Type: String
     Default: https://canopy.dimagi.com
@@ -179,7 +183,7 @@ Resources:
     Type: AWS::IAM::Policy
     Properties:
       PolicyName: canopy-mail
-      Roles: [!Ref TaskRoleName]
+      Roles: !Ref TaskRoleName
       PolicyDocument:
         Version: '2012-10-17'
         Statement:

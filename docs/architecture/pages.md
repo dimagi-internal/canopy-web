@@ -63,7 +63,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   optional mailbox; then the GitHub owner + repo name and a fine-grained token,
   with links to GitHub's new-repo and new-token forms filled in (the token steps
   are `GitHubTokenSteps`, shared with Credentials → GitHub). Checked live
-  (`POST /api/agents/scaffold/check`) and on tab focus. **Create** pushes the
+  (`POST /api/agents/scaffold/check`) and on tab focus. A repo with an earlier
+  attempt at this agent (or just GitHub's README) is completed, not refused: only
+  missing template files are added. Another agent's repo offers its slug ("Use 'x'"). **Create** pushes the
   `canopy-agent-factory` scaffold with that token, registers the agent through the
   ordinary upsert (the creator becomes owner), saves the same token as its GitHub
   identity, and lands on Settings `?created=<repo>#setup` with a confirmation.
