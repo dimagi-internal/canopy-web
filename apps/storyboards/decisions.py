@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.text import slugify
 
 STATUSES = ("ai-default", "human-decided", "overridden", "deferred")
 REVIEW_ASKS = ("recommended-confirmation", "required-before")
@@ -340,3 +341,97 @@ def serialize(row, *, editable: bool = True) -> dict:
         "superseded_by": row.superseded_by,
         "editable": editable,
     }
+
+
+LEGACY_BRIEF_KEYS = ("assumptions", "divergences", "open_questions")
+
+
+def _key(prefix: str, text: str, taken: set[str]) -> str:
+    base = f"{prefix}-{slugify(text)[:60]}".rstrip("-") or prefix
+    key, n = base, 2
+    while key in taken:
+        key, n = f"{base}-{n}", n + 1
+    taken.add(key)
+    return key
+
+
+def _short_option(text: str) -> list[str]:
+    """A statement is its own single option when it fits the 1-8 word rule;
+    a longer one carries no options (an over-long label would fail validate,
+    and a migration must not fail on production prose)."""
+    return [text] if 0 < len(text.split()) <= _MAX_OPTION_WORDS else []
+
+
+def _texts(items) -> list[str]:
+    return [t.strip() for t in (items or []) if isinstance(t, str) and t.strip()]
+
+
+def from_legacy_brief(brief: dict, *, taken: set[str] | None = None, prefix: str = "") -> list[dict]:
+    """The old brief lists (#1501) as decision rows (spec B, "Migration from the brief")."""
+    taken = set() if taken is None else taken
+    rows: list[dict] = []
+    for text in _texts(brief.get("assumptions")):
+        opts = _short_option(text)
+        rows.append(
+            {
+                "id": _key(f"{prefix}assumption", text, taken),
+                "question": text,
+                "plain_question": text,
+                "options": opts,
+                "recommended": opts[0] if opts else "",
+                "status": "ai-default",
+                "evidence_basis": "inferred",
+                "review_ask": "",
+            }
+        )
+    for d in brief.get("divergences") or []:
+        if not isinstance(d, dict):
+            continue
+        script = (d.get("script") or "").strip()
+        if not script:
+            continue
+        data = (d.get("data") or "").strip()
+        resolution = (d.get("resolution") or "").strip()
+        opts = _short_option(resolution)
+        rows.append(
+            {
+                "id": _key(f"{prefix}divergence", script, taken),
+                "scope": (d.get("narrative_slug") or "").strip(),
+                "question": f"The script says: {script}. The data shows: {data}."
+                if data
+                else f"The script says: {script}.",
+                "plain_question": f"The script and the data disagree: {script}",
+                "options": opts,
+                "recommended": opts[0] if opts else "",
+                # A resolution too long to be an option label is kept as the reasoning.
+                "reasoning": resolution if not opts else "",
+                "evidence_basis": "conflicting",
+                "conflict_signals": [s for s in (f"Script: {script}", f"Data: {data}" if data else "") if s],
+                "status": "ai-default",
+                "review_ask": "recommended-confirmation",
+            }
+        )
+    for text in _texts(brief.get("open_questions")):
+        rows.append(
+            {
+                "id": _key(f"{prefix}question", text, taken),
+                "question": text,
+                "plain_question": text,
+                "options": [],
+                "recommended": "",
+                "status": "ai-default",
+                "evidence_basis": "inferred",
+                "review_ask": "recommended-confirmation",
+            }
+        )
+    return rows
+
+
+def from_narrative_caveats(caveats: dict, narrative_slug: str) -> list[dict]:
+    """A narrative version's own caveats (request_json), read-time only, scoped
+    to that narrative. Not stored: rendered read-only until the publisher sends
+    decisions[] instead (spec B)."""
+    rows = from_legacy_brief(caveats, prefix=f"{narrative_slug}--")
+    for r in rows:
+        r["scope"] = narrative_slug
+    return rows

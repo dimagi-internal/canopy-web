@@ -237,3 +237,95 @@ def test_edits_and_undo_on_a_superseded_row_are_409(board, owner):
         dsvc.apply_edit(old, action="undo", by_user=owner)
     with pytest.raises(dsvc.DecisionConflict, match="banner-v2"):
         dsvc.apply_edit(old, action="pick", value="Keep as is", by_user=owner)
+
+
+LEGACY = {
+    "audience": "Edesia and OES",
+    "assumptions": ["SQ-LNS is not in the demo data."],
+    "divergences": [
+        {
+            "script": "Four suppliers",
+            "data": "Three in tender 356",
+            "resolution": "Re-record cut 2",
+            "narrative_slug": "supply-rutf",
+        }
+    ],
+    "open_questions": ["Does OES want the forecast cut?"],
+}
+
+
+def test_from_legacy_brief_maps_each_list():
+    rows = dsvc.from_legacy_brief(LEGACY)
+    by_kind = {r["id"].split("-")[0]: r for r in rows}
+    a, d, q = by_kind["assumption"], by_kind["divergence"], by_kind["question"]
+    assert a["status"] == "ai-default" and a["evidence_basis"] == "inferred" and a["review_ask"] == ""
+    assert a["options"] == ["SQ-LNS is not in the demo data."]
+    assert a["recommended"] == "SQ-LNS is not in the demo data."
+    assert d["evidence_basis"] == "conflicting"
+    assert d["conflict_signals"] == ["Script: Four suppliers", "Data: Three in tender 356"]
+    assert d["recommended"] == "Re-record cut 2" and d["review_ask"] == "recommended-confirmation"
+    assert d["scope"] == "supply-rutf"
+    assert q["review_ask"] == "recommended-confirmation" and q["options"] == []
+    for r in rows:
+        dsvc.validate(r)
+
+
+def test_from_legacy_brief_long_text_stays_valid():
+    long = "The demo data has no SQ-LNS product line at all so every cut avoids it entirely."
+    rows = dsvc.from_legacy_brief(
+        {"assumptions": [long], "divergences": [{"script": "S", "data": "D", "resolution": long}]}
+    )
+    assert rows[0]["options"] == [] and rows[0]["question"] == long
+    assert rows[1]["options"] == [] and rows[1]["reasoning"] == long
+    for r in rows:
+        dsvc.validate(r)
+
+
+def test_from_legacy_brief_ids_are_stable_and_unique():
+    twice = {"assumptions": ["Same words.", "Same words."]}
+    ids = [r["id"] for r in dsvc.from_legacy_brief(twice)]
+    assert len(set(ids)) == 2
+    assert ids == [r["id"] for r in dsvc.from_legacy_brief(twice)]
+
+
+def test_create_converts_brief_lists_to_rows_and_strips_them(ws, owner):
+    from django.test import Client
+
+    c = Client()
+    c.force_login(owner)
+    resp = c.post(
+        "/api/w/connect/storyboards/", {"slug": "s1", "title": "S1", "brief": LEGACY}, content_type="application/json"
+    )
+    assert resp.status_code == 200, resp.content
+    body = resp.json()
+    assert "assumptions" not in body["brief"] or body["brief"]["assumptions"] == []
+    assert len(body["decisions"]) == 3
+    assert Storyboard.objects.get(slug="s1").brief == {"audience": "Edesia and OES"}
+
+
+def test_legacy_brief_migrates_once_and_patch_title_keeps_rows(ws, owner):
+    import importlib
+
+    from django.apps import apps as django_apps
+    from django.test import Client
+
+    b = Storyboard.objects.create(slug="old", title="Old", workspace=ws, brief=dict(LEGACY))
+    mig = importlib.import_module("apps.storyboards.migrations.0008_brief_lists_to_decisions")
+    mig.forwards(django_apps, None)
+    mig.forwards(django_apps, None)  # idempotent
+    b.refresh_from_db()
+    assert b.brief == {"audience": "Edesia and OES"}
+    assert b.decisions.count() == 3
+    c = Client()
+    c.force_login(owner)
+    resp = c.patch("/api/w/connect/storyboards/old", {"title": "New"}, content_type="application/json")
+    assert resp.status_code == 200
+    assert b.decisions.count() == 3
+
+
+def test_narrative_caveats_become_read_only_scoped_rows():
+    rows = dsvc.from_narrative_caveats(
+        {"assumptions": ["Programme 10112 stands in."], "divergences": [], "open_questions": []}, "supply-rutf"
+    )
+    assert rows[0]["scope"] == "supply-rutf"
+    assert rows[0]["id"].startswith("supply-rutf--assumption-")
