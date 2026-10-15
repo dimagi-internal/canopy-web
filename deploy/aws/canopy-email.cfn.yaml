@@ -40,11 +40,11 @@ Parameters:
     Default: canopy.dimagi.com
   TaskRoleName:
     Type: CommaDelimitedList
-    Default: labs-jj-ecs-task-role
+    Default: canopy-web-task-role
     Description: >-
       The ECS task role(s) canopy-web runs as, comma-separated. Referenced, never
-      owned. Two during the move to canopy-web-task-role (docs/architecture/deploy.md
-      § canopy-web's own task role), then canopy-web-task-role alone.
+      owned. canopy-web-task-role since the 2026-10-15 cutover
+      (docs/architecture/deploy.md § canopy-web's own task role).
   ConfigurationSetName:
     Type: String
     Default: labs-jj-email

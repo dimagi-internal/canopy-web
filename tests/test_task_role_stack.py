@@ -76,8 +76,15 @@ def test_the_canopy_web_deploy_role_may_pass_the_new_role():
     pol = mod.policy_for("canopy-web", mod.APPS["canopy-web"])
     passable = [r for s in pol["Statement"] if s["Action"] == "iam:PassRole" for r in s["Resource"]]
     assert f"arn:aws:iam::{mod.ACCT}:role/{ROLE}" in passable
-    # ...and still the shared ones, so a deploy before the cutover keeps working.
-    assert f"arn:aws:iam::{mod.ACCT}:role/labs-jj-ecs-task-role" in passable
+    # ...and NOT the shared task role any more: the cutover is done (2026-10-15),
+    # and a pipeline that could pass it could move canopy-web back onto it.
+    assert f"arn:aws:iam::{mod.ACCT}:role/labs-jj-ecs-task-role" not in passable
+    assert f"arn:aws:iam::{mod.ACCT}:role/labs-jj-ecs-task-execution-role" in passable
+    # The other apps still run as the shared task role and must keep passing it.
+    for app in ("ace-web", "connect-labs"):
+        other = mod.policy_for(app, mod.APPS[app])
+        other_pass = [r for s in other["Statement"] if s["Action"] == "iam:PassRole" for r in s["Resource"]]
+        assert f"arn:aws:iam::{mod.ACCT}:role/labs-jj-ecs-task-role" in other_pass, app
     # No other app may pass canopy-web's role.
     for app in ("ace-web", "connect-labs"):
         other = mod.policy_for(app, mod.APPS[app])
