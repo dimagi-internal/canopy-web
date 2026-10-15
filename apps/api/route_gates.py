@@ -194,6 +194,10 @@ GATES: dict[str, tuple[str, ...]] = {
     "pair_runner": ("member",),  # member of the explicit/default workspace; any role
     "set_runner_credential": ("runner-admin",),
     "swap_runner_logins": ("runner-admin",),
+    "add_runner_login": ("runner-admin",),
+    "remove_runner_login": ("runner-admin",),
+    "order_runner_logins": ("runner-admin",),
+    "report_runner_logins": ("runner",),
     "get_runner_credential_status": ("runner-admin",),
     "get_runner_credential": ("runner",),  # plaintext to the owner's token
     "turn_github_token": ("runner", "runner-holds-agent"),  # turn must be claimed by this box
@@ -706,6 +710,7 @@ SETTINGS: frozenset[str] = frozenset({
     "pair_runner", "retire_runner", "unretire_runner", "pause_runner", "unpause_runner",
     "grant_runner_admin", "revoke_runner_admin",
     "set_runner_credential", "swap_runner_logins", "set_runner_engine", "set_runner_flags",
+    "add_runner_login", "remove_runner_login", "order_runner_logins",
     "enroll_runner_workspace", "unenroll_runner_workspace",
     "hold_fleet", "release_fleet_hold",
     # workspaces: membership, access, structure
@@ -810,7 +815,7 @@ NOT_SETTINGS: dict[str, str] = {
     "claim_turn": "runner-protocol", "runner_heartbeat": "runner-protocol",
     "post_menu_answer_result": "runner-protocol", "post_runner_mint_result": "runner-protocol",
     "post_close_results": "runner-protocol",
-    "post_runner_mint_url": "runner-protocol", "record_session": "runner-protocol",
+    "post_runner_mint_url": "runner-protocol", "report_runner_logins": "runner-protocol", "record_session": "runner-protocol",
     "resolve_session": "runner-protocol", "post_session_backfill": "runner-protocol",
     "post_session_stream": "runner-protocol", "report_sessions": "runner-protocol",
     "post_sign_in_request": "runner-protocol", "turn_github_token": "runner-protocol",

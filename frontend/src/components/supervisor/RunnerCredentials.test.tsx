@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 //
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   boxLoginAccount,
   RunnerCredentials,
   SLOTS,
   credentialSummary,
+  moved,
   nextPayload,
   type CredentialStatus,
 } from './RunnerCredentials'
@@ -15,6 +16,9 @@ const api = vi.hoisted(() => ({
   getRunnerCredentialStatus: vi.fn(),
   setRunnerCredential: vi.fn(),
   swapRunnerLogins: vi.fn(),
+  addRunnerLogin: vi.fn(),
+  removeRunnerLogin: vi.fn(),
+  orderRunnerLogins: vi.fn(),
   getRunnerMint: vi.fn(),
   startRunnerMint: vi.fn(),
   submitRunnerMintCode: vi.fn(),
@@ -33,6 +37,7 @@ const NONE: CredentialStatus = {
   has_claude_api_key: false,
   claude_token_label: '',
   claude_token_secondary_label: '',
+  logins: [],
   updated_at: null,
 }
 const ONE_CLAUDE: CredentialStatus = { ...NONE, has_claude_token: true }
@@ -130,38 +135,91 @@ describe('RunnerCredentials', () => {
   })
   afterEach(cleanup)
 
-  it('offers exactly ONE sign-in, and it is the full login on the box', async () => {
+  const LOGINS = {
+    ...NONE,
+    logins: [
+      { key: 'default', account: 'a@dimagi.com', signed_in: true },
+      { key: 'bb', account: 'b@dimagi.com', signed_in: true },
+      { key: 'cc', account: '', signed_in: false },
+    ],
+  }
+
+  it('offers only full sign-ins on the box, one per login', async () => {
     // The defect (2026-10-14): three "Sign in with Claude" buttons, two of which
     // made inference-only setup-tokens. An operator signed in on one of those
     // believing it was the full login, and the box still could not read a doc.
-    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
-    api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'box' })
+    api.getRunnerCredentialStatus.mockResolvedValue({ ...TWO, logins: LOGINS.logins })
+    api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'box', login_key: 'bb' })
     render(<RunnerCredentials runnerId="r1" />)
-    await waitFor(() => expect(screen.getByTestId('runner-reauth-box')).toBeTruthy())
+    await waitFor(() => expect(screen.getByTestId('runner-reauth-box-bb')).toBeTruthy())
     expect(screen.queryByTestId('runner-reauth-primary')).toBeNull()
     expect(screen.queryByTestId('runner-reauth-secondary')).toBeNull()
-    expect(screen.getAllByTestId('reauth-start')).toHaveLength(1)
+    expect(screen.getAllByTestId('reauth-start')).toHaveLength(3)
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId('reauth-start'))
+      fireEvent.click(within(screen.getByTestId('runner-reauth-box-bb')).getByTestId('reauth-start'))
     })
-    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'box')
+    expect(api.startRunnerMint).toHaveBeenCalledWith('r1', 'box', 'bb')
   })
 
-  it('says whether the runner is signed in', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(NONE)
-    render(<RunnerCredentials runnerId="r1" signedIn />)
-    await waitFor(() => expect(screen.getByTestId('cred-box-state').textContent)
-      .toContain('signed in on this runner'))
-    // Signed in on the box with no backup tokens is a working box, not an alarm.
+  it('lists each login as the account the box reports, in order', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(LOGINS)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => expect(screen.getByTestId('cred-login-account-default').textContent)
+      .toBe('a@dimagi.com'))
+    expect(screen.getByTestId('cred-login-account-cc').textContent).toBe('not signed in yet')
+    const rows = screen.getAllByTestId(/^cred-login-(default|bb|cc)$/).map((el) => el.dataset.testid)
+    expect(rows).toEqual(['cred-login-default', 'cred-login-bb', 'cred-login-cc'])
+    // A signed-in login is a working box, not an alarm.
     expect(screen.queryByTestId('runner-credentials-warning')).toBeNull()
   })
 
-  it('names the account the box signed in as', async () => {
+  it('adds a login', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(NONE)
+    api.addRunnerLogin.mockResolvedValue({ ...NONE, logins: [{ key: 'dd', account: '', signed_in: false }] })
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => screen.getByTestId('cred-login-add'))
+    await act(async () => { fireEvent.click(screen.getByTestId('cred-login-add')) })
+    expect(api.addRunnerLogin).toHaveBeenCalledWith('r1')
+    expect(screen.getByTestId('cred-login-dd')).toBeTruthy()
+  })
+
+  it('removes a login after confirming, and the row goes', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(LOGINS)
+    api.removeRunnerLogin.mockResolvedValue({ ...LOGINS, logins: LOGINS.logins.filter((l) => l.key !== 'bb') })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => screen.getByTestId('cred-login-remove-bb'))
+    await act(async () => { fireEvent.click(screen.getByTestId('cred-login-remove-bb')) })
+    expect(api.removeRunnerLogin).toHaveBeenCalledWith('r1', 'bb')
+    expect(screen.queryByTestId('cred-login-bb')).toBeNull()
+    confirm.mockRestore()
+  })
+
+  it('moves a login up and down', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(LOGINS)
+    api.orderRunnerLogins.mockResolvedValue(LOGINS)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => screen.getByTestId('cred-login-up-cc'))
+    expect((screen.getByTestId('cred-login-up-default') as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => { fireEvent.click(screen.getByTestId('cred-login-up-cc')) })
+    expect(api.orderRunnerLogins).toHaveBeenCalledWith('r1', ['default', 'cc', 'bb'])
+    await act(async () => { fireEvent.click(screen.getByTestId('cred-login-down-default')) })
+    expect(api.orderRunnerLogins).toHaveBeenLastCalledWith('r1', ['bb', 'default', 'cc'])
+  })
+
+  it('computes a move', () => {
+    expect(moved(['a', 'b', 'c'], 'c', 0)).toEqual(['c', 'a', 'b'])
+    expect(moved(['a', 'b', 'c'], 'a', 2)).toEqual(['b', 'c', 'a'])
+    expect(moved(['a', 'b', 'c'], 'b', 9)).toEqual(['a', 'c', 'b'])
+  })
+
+  it('shows a box signed in before there was a list, as the account it reports', async () => {
     api.getRunnerCredentialStatus.mockResolvedValue(NONE)
     render(<RunnerCredentials runnerId="r1" signedIn signedInAs="ace@dimagi-ai.com" />)
-    await waitFor(() => expect(screen.getByTestId('cred-box-state').textContent)
-      .toContain('signed in as ace@dimagi-ai.com'))
+    await waitFor(() => expect(screen.getByTestId('cred-login-pending-adopt').textContent)
+      .toContain('ace@dimagi-ai.com'))
+    expect(screen.queryByTestId('runner-credentials-warning')).toBeNull()
   })
 
   it('reads the account out of the claude.login health check', () => {
@@ -181,6 +239,15 @@ describe('RunnerCredentials', () => {
     expect(confirm).toHaveBeenCalled()
     expect(api.setRunnerCredential).toHaveBeenCalledWith('r1', { claude_token: '', claude_token_label: '' })
     confirm.mockRestore()
+  })
+
+  it('shows no row for a backup token that is not set', async () => {
+    // Reported 2026-10-14: removing both tokens left two "not set" rows behind.
+    api.getRunnerCredentialStatus.mockResolvedValue(ONE_CLAUDE)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => expect(screen.getByTestId('cred-slot-claude_token')).toBeTruthy())
+    expect(screen.queryByTestId('cred-slot-claude_token_secondary')).toBeNull()
+    expect(screen.queryByTestId('runner-credentials-swap')).toBeNull()
   })
 
   it('does not remove a token when the confirm is declined', async () => {

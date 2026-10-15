@@ -65,6 +65,8 @@ from .schemas import (
     RunnerFlagsIn,
     RunnerEngineIn,
     RunnerCredentialStatusOut,
+    RunnerLoginOrderIn,
+    RunnerLoginReportIn,
     RunnerMintClaimOut,
     RunnerMintCodeIn,
     RunnerMintOut,
@@ -621,6 +623,52 @@ def swap_runner_logins(request: HttpRequest, runner_id: uuid.UUID):
     return services.runner_credential_status(runner)
 
 
+@router.post("/runners/{runner_id}/logins", response=RunnerCredentialStatusOut,
+             summary="Add a Claude login to a runner and start signing it in")
+def add_runner_login(request: HttpRequest, runner_id: uuid.UUID):
+    """A new full Claude login, last in the runner's cascade. The runner picks up
+    the sign-in on its next poll (see `get_runner_mint`); the login reads
+    "not signed in" until it finishes."""
+    runner = _runner_admin_or_404(request, runner_id)
+    services.add_runner_login(runner, by=request.user)
+    return services.runner_credential_status(runner)
+
+
+# The fixed paths are declared before `/logins/{key}`, which would match them.
+@router.put("/runners/{runner_id}/logins/order", response=RunnerCredentialStatusOut,
+            summary="Set the order a runner tries its Claude logins in")
+def order_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerLoginOrderIn):
+    """`keys` is every login on the runner, first to last. When the first hits
+    its usage cap the runner moves to the next."""
+    runner = _runner_admin_or_404(request, runner_id)
+    try:
+        services.order_runner_logins(runner, payload.keys)
+    except services.LoginOrderRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    return services.runner_credential_status(runner)
+
+
+@router.post("/runners/{runner_id}/logins/report", response=RunnerCredentialStatusOut,
+             summary="The runner reports which of its logins are signed in")
+def report_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerLoginReportIn):
+    """Which logins the box holds and as which account."""
+    runner = _runner_or_404(request, runner_id)
+    services.report_runner_logins(
+        runner, [r.dict() for r in payload.logins], adopt_default=payload.adopt_default)
+    return services.runner_credential_status(runner)
+
+
+@router.delete("/runners/{runner_id}/logins/{key}", response=RunnerCredentialStatusOut,
+               summary="Remove a Claude login from a runner")
+def remove_runner_login(request: HttpRequest, runner_id: uuid.UUID, key: str):
+    """The runner signs the login out on the box the next time it re-reads its
+    credentials, within a few minutes."""
+    runner = _runner_admin_or_404(request, runner_id)
+    if not services.remove_runner_login(runner, key):
+        raise HttpError(404, "no such login on this runner")
+    return services.runner_credential_status(runner)
+
+
 @router.get("/runners/{runner_id}/credential/status", response=RunnerCredentialStatusOut,
             summary="Which credential slots are set (masked — booleans, never values)")
 def get_runner_credential_status(request: HttpRequest, runner_id: uuid.UUID):
@@ -745,7 +793,11 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
     if slot != "box":
         raise HttpError(422, "Token sign-ins are retired. Sign in with Claude "
                              "(slot 'box') — a full login kept on the runner.")
-    return services.start_runner_mint(runner, requested_by=request.user, slot=slot)
+    login_key = payload.login_key if payload else ""
+    if login_key and not runner.logins.filter(key=login_key).exists():
+        raise HttpError(404, "no such login on this runner")
+    return services.start_runner_mint(runner, requested_by=request.user, slot=slot,
+                                      login_key=login_key)
 
 
 @router.get("/runners/{runner_id}/mint", response=RunnerMintOut | None,
@@ -817,7 +869,7 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
     if mint is None:
         raise HttpError(409, "no sign-in is in progress for this runner")
     return services.finish_runner_mint(mint, token=payload.token, detail=payload.detail,
-                                       logged_in=payload.logged_in)
+                                       logged_in=payload.logged_in, account=payload.account)
 
 
 @router.post("/runners/{runner_id}/sign-in-request", response=SignInRequestOut,

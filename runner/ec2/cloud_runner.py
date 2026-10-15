@@ -471,8 +471,9 @@ def _credential_check() -> None:
     # Separate from the count on purpose: a box can have plenty of credentials
     # and still none that sees a claude.ai connector. The credentials page reads
     # this one check to say whether the runner is signed in.
-    if any(c[0] == BOX_LOGIN_LABEL for c in _CLAUDE_CREDS):
-        who = box_login_account()
+    first = next((c[0] for c in _CLAUDE_CREDS if _is_login(c[0])), "")
+    if first:
+        who = box_login_account(key=_login_key_of(first))
         _set_check("claude.login", "ok",
                    f"signed in on this box as {who} — claude.ai connectors available" if who
                    else "signed in on this box — claude.ai connectors available")
@@ -3047,13 +3048,95 @@ _BUNDLE_SLOTS = (
 )
 
 
-def _claude_credentials_file() -> pathlib.Path:
+#: A box holds as many full logins as a person adds on its credentials page,
+#: each in ITS OWN config directory: the CLI keeps one login per directory, and
+#: turns run concurrently, so swapping one credentials file in and out would hand
+#: a running turn's refresh to the wrong account. `default` is the CLI's own
+#: directory (where the one login lived before there was a list); every other
+#: login is `~/.claude-logins/<key>`, with everything but its credentials and
+#: state symlinked back to the default directory, so transcripts, plugins and
+#: settings stay in one place whichever login a turn ran on.
+DEFAULT_LOGIN = "default"
+#: The CLI's own config dir as this process found it — the default login's home.
+#: Captured once: selecting a login rewrites CLAUDE_CONFIG_DIR in this process.
+_BASE_CONFIG_DIR = os.environ.get("CLAUDE_CONFIG_DIR", "")
+_LOGINS_ROOT = pathlib.Path(
+    os.environ.get("CLAUDE_LOGINS_ROOT") or (pathlib.Path.home() / ".claude-logins"))
+#: Written once canopy-web holds the default login in its list. After that, the
+#: default login missing from the list means a person REMOVED it — before, it
+#: means the list has not heard of it yet.
+_DEFAULT_ADOPTED_MARKER = ".default-adopted"
+_LOGIN_KEY_RE = re.compile(r"^[a-z0-9]{1,32}$")
+#: Not ours to link into a login's directory: its own login and its own state.
+_LOGIN_PRIVATE = (".credentials.json", ".claude.json")
+
+
+def _login_dir(key: str = DEFAULT_LOGIN) -> pathlib.Path:
+    if key == DEFAULT_LOGIN:
+        return pathlib.Path(_BASE_CONFIG_DIR) if _BASE_CONFIG_DIR else pathlib.Path.home() / ".claude"
+    return _LOGINS_ROOT / key
+
+
+def _login_config_env(key: str = DEFAULT_LOGIN) -> str:
+    """CLAUDE_CONFIG_DIR for a login; "" means unset (the CLI's own default,
+    whose state file sits BESIDE ~/.claude, not in it)."""
+    return _BASE_CONFIG_DIR if key == DEFAULT_LOGIN else str(_login_dir(key))
+
+
+def _login_label(key: str) -> str:
+    return BOX_LOGIN_LABEL if key == DEFAULT_LOGIN else f"{BOX_LOGIN_LABEL}:{key}"
+
+
+def _is_login(label: str) -> bool:
+    return label == BOX_LOGIN_LABEL or label.startswith(BOX_LOGIN_LABEL + ":")
+
+
+def _login_key_of(label: str) -> str:
+    return label.partition(":")[2] or DEFAULT_LOGIN
+
+
+def _claude_credentials_file(key: str = DEFAULT_LOGIN) -> pathlib.Path:
     """Where the CLI keeps a stored login on Linux (no keychain on the box)."""
-    root = os.environ.get("CLAUDE_CONFIG_DIR") or str(pathlib.Path.home() / ".claude")
-    return pathlib.Path(root) / ".credentials.json"
+    return _login_dir(key) / ".credentials.json"
 
 
-def box_login_ready(path: pathlib.Path | None = None) -> bool:
+def _prepare_login_dir(key: str) -> pathlib.Path:
+    """Make a login's directory: its own credentials and state, the rest linked.
+
+    Re-run on every reconcile, so something the default directory grows later (a
+    new plugin cache) shows up in every login. `projects` is made first: it is
+    where transcripts land, and a login that made its own would put a turn's
+    transcript where nothing reads it.
+    """
+    d = _login_dir(key)
+    if key == DEFAULT_LOGIN:
+        return d
+    base = _login_dir(DEFAULT_LOGIN)
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "projects").mkdir(exist_ok=True)
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for entry in base.iterdir():
+        link = d / entry.name
+        if entry.name in _LOGIN_PRIVATE or link.exists() or link.is_symlink():
+            continue
+        link.symlink_to(entry)
+    state = d / ".claude.json"
+    if not state.exists():
+        # Onboarding, trust and MCP config carry over; whose login it is does not.
+        try:
+            data = json.loads(_claude_state_file().read_text())
+        except (OSError, ValueError):
+            data = {}
+        if isinstance(data, dict):
+            data.pop("oauthAccount", None)
+        else:
+            data = {}
+        state.write_text(json.dumps(data))
+        state.chmod(0o600)
+    return d
+
+
+def box_login_ready(path: pathlib.Path | None = None, *, key: str = DEFAULT_LOGIN) -> bool:
     """True when this box holds a full Claude login that carries the connectors.
 
     Both halves matter: a refresh token (so it survives its first hour) and the
@@ -3061,7 +3144,7 @@ def box_login_ready(path: pathlib.Path | None = None) -> bool:
     and still not see Claude Docs, which is the only reason it is first).
     """
     try:
-        data = json.loads((path or _claude_credentials_file()).read_text())
+        data = json.loads((path or _claude_credentials_file(key)).read_text())
     except (OSError, ValueError):
         return False
     oauth = data.get("claudeAiOauth") if isinstance(data, dict) else None
@@ -3070,14 +3153,14 @@ def box_login_ready(path: pathlib.Path | None = None) -> bool:
     return _BOX_LOGIN_SCOPE in (oauth.get("scopes") or [])
 
 
-def _claude_state_file() -> pathlib.Path:
+def _claude_state_file(key: str = DEFAULT_LOGIN) -> pathlib.Path:
     """The CLI's state file: `$CLAUDE_CONFIG_DIR/.claude.json`, else `~/.claude.json`
     (beside `~/.claude/`, not in it)."""
-    root = os.environ.get("CLAUDE_CONFIG_DIR")
+    root = _login_config_env(key)
     return pathlib.Path(root) / ".claude.json" if root else pathlib.Path.home() / ".claude.json"
 
 
-def box_login_account(path: pathlib.Path | None = None) -> str:
+def box_login_account(path: pathlib.Path | None = None, *, key: str = DEFAULT_LOGIN) -> str:
     """The account the box's own login belongs to, as `claude auth login` recorded it.
 
     This is what the credentials page shows on the sign-in row INSTEAD of a name
@@ -3086,7 +3169,7 @@ def box_login_account(path: pathlib.Path | None = None) -> str:
     (2026-10-14). Empty when the CLI has not recorded one.
     """
     try:
-        data = json.loads((path or _claude_state_file()).read_text())
+        data = json.loads((path or _claude_state_file(key)).read_text())
     except (OSError, ValueError):
         return ""
     acct = data.get("oauthAccount") if isinstance(data, dict) else None
@@ -3094,11 +3177,34 @@ def box_login_account(path: pathlib.Path | None = None) -> str:
     return email.strip() if isinstance(email, str) else ""
 
 
+def _default_adopted() -> bool:
+    return (_LOGINS_ROOT / _DEFAULT_ADOPTED_MARKER).exists()
+
+
+def _login_keys(cred: dict | None) -> list[str]:
+    """The logins this box should use, in order.
+
+    From canopy-web's list. A bundle with no list at all is an older canopy-web:
+    the default login, as before. The default login missing from a list that
+    has never held it is one signed in before there was a list — kept first,
+    where it always sat, and reported so the list adopts it.
+    """
+    if not isinstance(cred, dict) or "logins" not in cred:
+        return [DEFAULT_LOGIN]
+    keys = [str(lg.get("key", "")) for lg in cred.get("logins") or [] if isinstance(lg, dict)]
+    keys = [k for k in keys if k == DEFAULT_LOGIN or _LOGIN_KEY_RE.match(k)]
+    if DEFAULT_LOGIN not in keys and not _default_adopted():
+        keys.insert(0, DEFAULT_LOGIN)
+    return keys
+
+
 def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
-    """The ordered credential list: the box's own full login first when it has
-    one (it is the only entry that sees claude.ai connectors), then the bundle."""
-    out: list[tuple[str, str, str]] = (
-        [(BOX_LOGIN_LABEL, "", "")] if box_login_ready() else [])
+    """The ordered credential list: the box's own full logins first, in the
+    order a person set (they are the only entries that see claude.ai
+    connectors), then the bundle's backup tokens."""
+    out: list[tuple[str, str, str]] = [
+        (_login_label(k), "CLAUDE_CONFIG_DIR", _login_config_env(k))
+        for k in _login_keys(cred) if box_login_ready(key=k)]
     for label, var, key in _BUNDLE_SLOTS:
         if (cred or {}).get(key):
             out.append((label, var, cred[key]))
@@ -3106,13 +3212,77 @@ def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
 
 
 def _adopt_box_login() -> bool:
-    """Put a freshly signed-in box login at the head of the live cascade."""
+    """Put a freshly signed-in DEFAULT login at the head of the live cascade
+    (an older canopy-web, which has no list to re-read it from)."""
     if not box_login_ready():
         return False
     if not any(c[0] == BOX_LOGIN_LABEL for c in _CLAUDE_CREDS):
-        _CLAUDE_CREDS.insert(0, (BOX_LOGIN_LABEL, "", ""))
+        _CLAUDE_CREDS.insert(0, (BOX_LOGIN_LABEL, "CLAUDE_CONFIG_DIR", _login_config_env()))
     _apply_claude_credential(0)
     return True
+
+
+#: What this box last told canopy-web about its logins, so an unchanged state
+#: is not re-posted every re-read.
+_LAST_LOGIN_REPORT: object = None
+#: The login a sign-in is filling right now — never cleaned up mid-sign-in.
+_MINT_LOGIN_KEY = ""
+
+
+def _reconcile_logins(runner_id: str, cred: dict | None) -> None:
+    """Make the box's logins match canopy-web's list, then say how they stand.
+
+    A login a person removed is signed out here: its directory is deleted (the
+    default login keeps its directory, which holds everything else, and loses
+    only its credentials). Then the box reports which listed logins are signed
+    in and as whom, which is all the credentials page knows about them.
+    """
+    global _LAST_LOGIN_REPORT
+    if not isinstance(cred, dict) or "logins" not in cred:
+        return  # an older canopy-web: no list to reconcile against
+    listed = [str(lg.get("key", "")) for lg in cred.get("logins") or [] if isinstance(lg, dict)]
+    listed = [k for k in listed if k == DEFAULT_LOGIN or _LOGIN_KEY_RE.match(k)]
+    try:
+        _LOGINS_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+        marker = _LOGINS_ROOT / _DEFAULT_ADOPTED_MARKER
+        if DEFAULT_LOGIN in listed:
+            marker.touch()
+        elif marker.exists() and _MINT_LOGIN_KEY != DEFAULT_LOGIN:
+            creds = _claude_credentials_file(DEFAULT_LOGIN)
+            if creds.exists():
+                creds.unlink()
+                _log("removed on canopy-web: signed the default login out of this box")
+        for d in _LOGINS_ROOT.iterdir():
+            if d.name.startswith(".") or d.name in listed or d.name == _MINT_LOGIN_KEY:
+                continue
+            if d.is_dir() and not d.is_symlink():
+                shutil.rmtree(d, ignore_errors=True)
+            else:
+                d.unlink()
+            _log(f"removed on canopy-web: signed login {d.name} out of this box")
+        for k in listed:
+            if k != DEFAULT_LOGIN and _login_dir(k).is_dir():
+                _prepare_login_dir(k)
+    except OSError as exc:
+        _log(f"warn: could not reconcile this box's logins ({exc})")
+    adopt = DEFAULT_LOGIN not in listed and not _default_adopted() and box_login_ready()
+    report = {
+        "adopt_default": adopt,
+        "logins": [{"key": k, "signed_in": box_login_ready(key=k),
+                    "account": box_login_account(key=k)}
+                   for k in ([DEFAULT_LOGIN] if adopt else []) + listed],
+    }
+    if report == _LAST_LOGIN_REPORT:
+        return
+    try:
+        status, _ = _api("POST", f"/runners/{runner_id}/logins/report", report)
+    except Exception as exc:  # noqa: BLE001 — a report is never worth a turn
+        _log(f"warn: could not report this box's logins ({exc})")
+        return
+    if status == 200:
+        _LAST_LOGIN_REPORT = report
+        if adopt:
+            (_LOGINS_ROOT / _DEFAULT_ADOPTED_MARKER).touch()
 
 #: A usage cap, matched by SHAPE rather than by phrase.
 #:
@@ -3239,7 +3409,13 @@ def _apply_claude_credential(index: int) -> None:
     label, var, value = _CLAUDE_CREDS[index]
     for other in _CLAUDE_AUTH_VARS:
         os.environ.pop(other, None)
-    if var:
+    # Every entry starts from the CLI's own directory; a login entry then points
+    # it at that login's. "" is the default directory, which means UNSET.
+    if _BASE_CONFIG_DIR:
+        os.environ["CLAUDE_CONFIG_DIR"] = _BASE_CONFIG_DIR
+    else:
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
+    if var and value:
         os.environ[var] = value
     _log(f"claude credential: using {label} ({var or 'the stored login on this box'})")
 
@@ -3274,8 +3450,8 @@ def _promote_working_subscription(turn_id: str = "") -> None:
 
     Subscriptions only. The API key is last on purpose and never promoted.
     """
-    # A box login at the head shifts the subscriptions down one place.
-    base = 1 if _CLAUDE_CREDS and _CLAUDE_CREDS[0][0] == BOX_LOGIN_LABEL else 0
+    # The box's logins at the head shift the subscriptions down.
+    base = sum(1 for c in _CLAUDE_CREDS if _is_login(c[0]))
     if (not _CLAUDE_CRED_RUNNER_ID or _CLAUDE_CRED_I != base + 1
             or len(_CLAUDE_CREDS) < base + 2):
         return
@@ -3380,6 +3556,7 @@ def _reload_claude_credentials() -> bool:
         return False
     if status != 200 or not cred:
         return False
+    _reconcile_logins(_CLAUDE_CRED_RUNNER_ID, cred)
     fresh = _cascade_from(cred)
     if not fresh or [(c[0], c[2]) for c in fresh] == before:
         return False
@@ -3399,8 +3576,10 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
     """
     while not _stop:
         status, cred = _api("GET", f"/runners/{runner_id}/credential")
-        if status == 200 and (box_login_ready() or (cred and (
-                cred.get("claude_token") or cred.get("claude_api_key")))):
+        if status == 200:
+            _reconcile_logins(runner_id, cred)
+        if status == 200 and (any(box_login_ready(key=k) for k in _login_keys(cred)) or (
+                cred and (cred.get("claude_token") or cred.get("claude_api_key")))):
             global _CLAUDE_CRED_RUNNER_ID
             _CLAUDE_CRED_RUNNER_ID = runner_id
             _CLAUDE_CREDS.clear()
@@ -3779,7 +3958,7 @@ LOGIN_ARGV = ("claude", "auth", "login", "--claudeai")
 _LOGIN_OK = re.compile(r"Login\s*successful", re.I)
 
 
-def _login_env() -> dict[str, str]:
+def _login_env(key: str = DEFAULT_LOGIN) -> dict[str, str]:
     """The environment for `claude auth login`: no inherited Claude identity.
 
     Either auth var set here would make the CLI treat itself as already signed
@@ -3789,6 +3968,12 @@ def _login_env() -> dict[str, str]:
     env = _child_safe_env()
     for var in _CLAUDE_AUTH_VARS:
         env.pop(var, None)
+    # Into THIS login's directory, whichever login the runner is using now.
+    config = _login_config_env(key)
+    if config:
+        env["CLAUDE_CONFIG_DIR"] = config
+    else:
+        env.pop("CLAUDE_CONFIG_DIR", None)
     return env
 
 
@@ -3803,8 +3988,10 @@ class LoginSession(MintSession):
     a login with the connector scope.
     """
 
-    def __init__(self) -> None:
-        super().__init__(argv=LOGIN_ARGV, env=_login_env())
+    def __init__(self, key: str = DEFAULT_LOGIN) -> None:
+        self.key = key
+        _prepare_login_dir(key)
+        super().__init__(argv=LOGIN_ARGV, env=_login_env(key))
 
     def submit_code(self, code: str, timeout: float = 90.0) -> str:
         if self._fd is None:
@@ -3818,13 +4005,13 @@ class LoginSession(MintSession):
         # The CLI prints its verdict after writing the file, but give the write
         # a moment rather than racing it.
         deadline = time.time() + 10
-        while said_ok and not box_login_ready() and time.time() < deadline:
+        while said_ok and not box_login_ready(key=self.key) and time.time() < deadline:
             time.sleep(0.5)
         self.close()
         if not said_ok:
             raise MintTimeout(
                 "claude auth login did not finish. What it said: " + (tail or "(nothing)"))
-        if not box_login_ready():
+        if not box_login_ready(key=self.key):
             raise MintTimeout(
                 "claude auth login said it succeeded, but this box has no stored "
                 "login with the claude.ai connector scope (user:mcp_servers) — "
@@ -3868,7 +4055,7 @@ def _drain_mint(runner_id: str) -> None:
     watching a spinner for a URL that is never coming, which is worse than the
     terminal they were trying to avoid.
     """
-    global _MINT_SESSION, _MINT_ID
+    global _MINT_SESSION, _MINT_ID, _MINT_LOGIN_KEY, _LAST_LOGIN_REPORT
     try:
         status, payload = _api("GET", f"/runners/{runner_id}/mint/claim")
         if status != 200 or not isinstance(payload, dict):
@@ -3881,6 +4068,7 @@ def _drain_mint(runner_id: str) -> None:
             if _MINT_SESSION is not None and not _MINT_ID:
                 _MINT_SESSION.close()
                 _MINT_SESSION = None
+            _MINT_LOGIN_KEY = ""
             return
         mint_id, state = mint.get("id", ""), mint.get("status", "")
 
@@ -3888,14 +4076,21 @@ def _drain_mint(runner_id: str) -> None:
             if _MINT_SESSION is not None:
                 _MINT_SESSION.close()
             box = mint.get("slot") == "box"
+            key = str(mint.get("login_key") or DEFAULT_LOGIN)
+            if key != DEFAULT_LOGIN and not _LOGIN_KEY_RE.match(key):
+                _api("POST", f"/runners/{runner_id}/mint/result",
+                     {"detail": f"this box cannot sign in a login named {key!r}"})
+                return
             _log(f"mint {mint_id[:8]}: starting "
-                 f"{'claude auth login (full login, kept on this box)' if box else 'claude setup-token'}")
-            _MINT_SESSION, _MINT_ID = (LoginSession() if box else MintSession()), mint_id
+                 f"{f'claude auth login for login {key} (kept on this box)' if box else 'claude setup-token'}")
+            _MINT_LOGIN_KEY = key if box else ""
             try:
+                _MINT_SESSION, _MINT_ID = (LoginSession(key) if box else MintSession()), mint_id
                 url = _MINT_SESSION.start()
             except Exception as exc:  # noqa: BLE001 — always tell the waiting human
                 _MINT_SESSION = None
                 _MINT_ID = ""
+                _MINT_LOGIN_KEY = ""
                 _api("POST", f"/runners/{runner_id}/mint/result",
                      {"detail": f"could not start the sign-in on this box: {exc}"})
                 return
@@ -3924,13 +4119,18 @@ def _drain_mint(runner_id: str) -> None:
             else:
                 if isinstance(_MINT_SESSION, LoginSession):
                     # Nothing to deliver: the login stays on this box (see
-                    # LoginSession). Report success, then put it first.
+                    # LoginSession). Report success and whose it is, then take
+                    # it into the cascade where the list puts it.
+                    key = _MINT_SESSION.key
                     _api("POST", f"/runners/{runner_id}/mint/result",
-                         {"logged_in": True,
+                         {"logged_in": True, "account": box_login_account(key=key),
                           "detail": "signed in on the box — full claude.ai login, "
                                     "claude.ai connectors available to turns here"})
-                    _log(f"mint {mint_id[:8]}: full login stored on this box")
-                    if _adopt_box_login():
+                    _log(f"mint {mint_id[:8]}: full login {key} stored on this box")
+                    _LAST_LOGIN_REPORT = None
+                    if _reload_claude_credentials():
+                        _log("picked up the new login in the credential cascade")
+                    elif key == DEFAULT_LOGIN and _adopt_box_login():
                         _log("box login is now first in the credential cascade")
                     return
                 # The token goes straight to canopy-web, which writes it into the
@@ -3947,6 +4147,7 @@ def _drain_mint(runner_id: str) -> None:
             finally:
                 _MINT_SESSION = None
                 _MINT_ID = ""
+                _MINT_LOGIN_KEY = ""
     except Exception as exc:  # noqa: BLE001 — never take the main loop down
         _log(f"mint drain error: {exc}")
 

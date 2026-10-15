@@ -1037,6 +1037,46 @@ class RunnerCredential(models.Model):
         return f"credential:{self.runner_id}"
 
 
+class RunnerLogin(models.Model):
+    """One full Claude login held ON a cloud runner, in its place in the cascade.
+
+    A full `claude auth login` is the only kind of login that carries claude.ai
+    connectors, and its refresh token rotates, so it can never live here — each
+    one lives on the box in its own config directory (`~/.claude-logins/<key>`;
+    `default` is the CLI's own `~/.claude`). What canopy-web holds is the LIST:
+    which logins the box should keep, in the order it falls through them when
+    one hits its usage cap. Adding a row starts a sign-in; deleting one makes the
+    box drop that login on its next re-read; reordering is the cascade order.
+
+    `account` and `signed_in` are what the BOX reports — it knows who it signed
+    in as, so nobody types a name that can disagree with the login it holds.
+    """
+
+    DEFAULT = "default"
+
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="logins")
+    #: Names the login's directory on the box. Short, opaque, never reused.
+    key = models.CharField(max_length=32)
+    position = models.PositiveIntegerField(default=0)
+    account = models.CharField(max_length=254, blank=True, default="")
+    signed_in = models.BooleanField(default=False)
+    reported_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["position", "created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["runner", "key"], name="uniq_runner_login_key"),
+        ]
+
+    def __str__(self) -> str:
+        return f"login:{self.runner_id}:{self.key}"
+
+
 class RunnerMint(models.Model):
     """One browser-driven re-authentication of a runner's Claude credential.
 
@@ -1091,6 +1131,9 @@ class RunnerMint(models.Model):
     runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="mints")
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=REQUESTED)
     slot = models.CharField(max_length=16, choices=SLOT_CHOICES, default=PRIMARY)
+    #: For a `box` sign-in: which `RunnerLogin` it signs in. Blank is the
+    #: box's default login (a mint from before there was a list).
+    login_key = models.CharField(max_length=32, blank=True, default="")
     authorize_url = models.TextField(blank=True, default="")
     # The single-use code a human pastes back. Cleared the moment the runner
     # takes it: it is spent on first use, and a code left lying in a row is a

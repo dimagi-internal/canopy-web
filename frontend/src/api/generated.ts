@@ -5504,6 +5504,90 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/logins": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add a Claude login to a runner and start signing it in
+         * @description A new full Claude login, last in the runner's cascade. The runner picks up
+         *     the sign-in on its next poll (see `get_runner_mint`); the login reads
+         *     "not signed in" until it finishes.
+         */
+        readonly post: operations["add_runner_login"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/logins/order": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set the order a runner tries its Claude logins in
+         * @description `keys` is every login on the runner, first to last. When the first hits
+         *     its usage cap the runner moves to the next.
+         */
+        readonly put: operations["order_runner_logins"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/logins/report": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * The runner reports which of its logins are signed in
+         * @description Which logins the box holds and as which account.
+         */
+        readonly post: operations["report_runner_logins"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/logins/{key}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove a Claude login from a runner
+         * @description The runner signs the login out on the box the next time it re-reads its
+         *     credentials, within a few minutes.
+         */
+        readonly delete: operations["remove_runner_login"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/credential/status": {
         readonly parameters: {
             readonly query?: never;
@@ -18781,8 +18865,33 @@ export interface components {
              * @default
              */
             readonly claude_token_secondary_label: string;
+            /**
+             * Logins
+             * @default []
+             */
+            readonly logins: readonly components["schemas"]["RunnerLoginOut"][];
             /** Updated At */
             readonly updated_at?: string | null;
+        };
+        /**
+         * RunnerLoginOut
+         * @description A full Claude login on the box, as the box last reported it.
+         */
+        readonly RunnerLoginOut: {
+            /** Key */
+            readonly key: string;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
+            /**
+             * Signed In
+             * @default false
+             */
+            readonly signed_in: boolean;
+            /** Reported At */
+            readonly reported_at?: string | null;
         };
         /**
          * RunnerCredentialIn
@@ -18821,8 +18930,59 @@ export interface components {
              * @default
              */
             readonly claude_api_key: string;
+            /**
+             * Logins
+             * @default []
+             */
+            readonly logins: readonly components["schemas"]["RunnerLoginRef"][];
             /** Updated At */
             readonly updated_at?: string | null;
+        };
+        /**
+         * RunnerLoginRef
+         * @description One full Claude login the box should keep, in cascade order.
+         */
+        readonly RunnerLoginRef: {
+            /** Key */
+            readonly key: string;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
+        };
+        /** RunnerLoginOrderIn */
+        readonly RunnerLoginOrderIn: {
+            /** Keys */
+            readonly keys: readonly string[];
+        };
+        /** RunnerLoginReportIn */
+        readonly RunnerLoginReportIn: {
+            /**
+             * Logins
+             * @default []
+             */
+            readonly logins: readonly components["schemas"]["RunnerLoginReportItem"][];
+            /**
+             * Adopt Default
+             * @default false
+             */
+            readonly adopt_default: boolean;
+        };
+        /** RunnerLoginReportItem */
+        readonly RunnerLoginReportItem: {
+            /** Key */
+            readonly key: string;
+            /**
+             * Signed In
+             * @default false
+             */
+            readonly signed_in: boolean;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
         };
         /**
          * TurnGitHubTokenOut
@@ -18907,6 +19067,11 @@ export interface components {
              * @enum {string}
              */
             readonly slot: "primary" | "secondary" | "box";
+            /**
+             * Login Key
+             * @default
+             */
+            readonly login_key: string;
             /** Authorize Url */
             readonly authorize_url: string;
             /** Detail */
@@ -18930,6 +19095,11 @@ export interface components {
              * @enum {string}
              */
             readonly slot: "primary" | "secondary" | "box";
+            /**
+             * Login Key
+             * @default
+             */
+            readonly login_key: string;
         };
         /**
          * RunnerMintClaimOut
@@ -18973,6 +19143,11 @@ export interface components {
              * @default false
              */
             readonly logged_in: boolean;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
         };
         /** SignInRequestOut */
         readonly SignInRequestOut: {
@@ -30334,6 +30509,103 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly add_runner_login: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly order_runner_logins: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerLoginOrderIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly report_runner_logins: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerLoginReportIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly remove_runner_login: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly key: string;
             };
             readonly cookie?: never;
         };

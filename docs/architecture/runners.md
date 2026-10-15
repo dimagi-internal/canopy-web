@@ -293,22 +293,40 @@ A cloud runner's bundle holds `claude setup-token` tokens (`subscription-1`,
 rest) for it — `[claudeai-mcp] Missing user:mcp_servers scope`. So a turn on one
 cannot read a Claude Doc however the doc is shared.
 
-The `box` sign-in slot fixes that. It runs `claude auth login --claudeai` on the
-box through the same browser relay (`RunnerMint`, URL out, code back), and the
-login **stays on the box** in `~/.claude/.credentials.json` — its refresh token
-rotates, so a copy anywhere else would break both. The runner reports only
-`logged_in`; nothing lands in the bundle. When the box holds a login with the
-`user:mcp_servers` scope, the cascade puts `box-login` FIRST and selecting it
-clears both auth env vars, so the CLI uses its stored login; a cap or a dead login
-falls through to the backup tokens as before.
+A full `claude auth login --claudeai` fixes that, and a box holds **a list of
+them** (`RunnerLogin`), tried in order before any backup token. Each is signed in
+through the browser relay (`RunnerMint` with `slot: box` and the login's
+`login_key`; URL out, code back) and **stays on the box** — its refresh token
+rotates, so a copy anywhere else would break both. canopy-web holds only the list:
+which logins, in what order, and what the box last reported about each
+(`signed_in`, `account`).
 
-**It is the ONLY sign-in.** The runner's credentials page has one **Sign in with
-Claude** button, and it does the full login; `POST …/mint` refuses `primary`/
-`secondary` (setup-token) sign-ins with a 422. Offered side by side, the two kinds
-were indistinguishable and an operator signed in on the wrong one (2026-10-14).
-Tokens already in those slots stay as cap backups. The runner reports a
-`claude.login` health check (ok = signed in on the box, warn = backup tokens only),
-which the page shows next to the button. Tests: `runner/ec2/tests/test_box_login.py`,
+- **On the box**, each login has its own config directory: `default` is the CLI's
+  own (`~/.claude`, state in `~/.claude.json`); every other login is
+  `~/.claude-logins/<key>`, holding its own `.credentials.json` and `.claude.json`
+  with everything else symlinked to `~/.claude` — so transcripts (`projects/`),
+  plugins and settings stay in one place whichever login a turn ran on. Selecting
+  a login sets `CLAUDE_CONFIG_DIR` (unset for `default`) and clears both auth env
+  vars; concurrent turns each keep the directory they started with. A login is
+  in the cascade only when its directory holds a login with the
+  `user:mcp_servers` scope; a usage cap falls through to the next login, then the
+  backup tokens.
+- **Add** (`POST …/logins`) appends a row and starts its sign-in; the row reads
+  "not signed in yet" until the box reports otherwise. **Remove**
+  (`DELETE …/logins/{key}`) drops the row; on its next bundle read (≤5 min) the
+  box deletes that login's directory (for `default`, only its `.credentials.json`).
+  **Reorder** (`PUT …/logins/order`) takes every key, first to last.
+- **The box reports** (`POST …/logins/report`) which listed logins are signed in
+  and as which account, whenever that changes. A default login the list has never
+  held (signed in before the list existed, or by hand) is reported with
+  `adopt_default` and joins the list first; `~/.claude-logins/.default-adopted`
+  then records that a missing `default` means removed.
+
+**It is the ONLY sign-in.** `POST …/mint` refuses `primary`/`secondary`
+(setup-token) sign-ins with a 422. Tokens already in those slots stay as cap
+backups, shown only while set. The runner reports a `claude.login` health check
+(ok = signed in on the box as the first login's account, warn = backup tokens
+only). Tests: `runner/ec2/tests/test_box_login.py`, `tests/test_runner_logins.py`,
 `tests/test_runner_mint.py`.
 
 ## The runner software
