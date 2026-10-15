@@ -9,7 +9,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 # its bounce/complaint SNS topic, account-level production access — and this one
 # reuses it rather than duplicating it. It adds only what is canopy's:
 #   * the SES domain identity canopy.dimagi.com, with Easy DKIM
-#   * a policy letting the shared ECS task role send AS that identity
+#   * a policy letting canopy-web's ECS task role send AS that identity
 #
 # Deployed by hand with an admin login, not by the Deploy to Labs workflow:
 # canopy-web's deploy role holds no ses:* or iam:CreatePolicy, and this stack
@@ -32,16 +32,19 @@ AWSTemplateFormatVersion: '2010-09-09'
 
 Description: >-
   canopy's SES sending identity (canopy.dimagi.com, Easy DKIM) and the policy
-  letting the shared ECS task role send as it through labs-jj-email.
+  letting canopy-web's ECS task role send as it through labs-jj-email.
 
 Parameters:
   SendingDomain:
     Type: String
     Default: canopy.dimagi.com
   TaskRoleName:
-    Type: String
+    Type: CommaDelimitedList
     Default: labs-jj-ecs-task-role
-    Description: Shared ECS task role canopy-web runs as. Referenced, never owned.
+    Description: >-
+      The ECS task role(s) canopy-web runs as, comma-separated. Referenced, never
+      owned. Two during the move to canopy-web-task-role (docs/architecture/deploy.md
+      § canopy-web's own task role), then canopy-web-task-role alone.
   ConfigurationSetName:
     Type: String
     Default: labs-jj-email
@@ -68,8 +71,7 @@ Resources:
     Properties:
       ManagedPolicyName: canopy-ses-send
       Description: Lets the labs ECS tasks send mail as canopy.dimagi.com.
-      Roles:
-        - !Ref TaskRoleName
+      Roles: !Ref TaskRoleName
       PolicyDocument:
         Version: '2012-10-17'
         Statement:

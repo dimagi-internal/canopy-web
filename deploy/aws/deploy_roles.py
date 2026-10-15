@@ -90,6 +90,11 @@ APPS = {
         "task_families": ["labs-jj-canopy-web"],
         "preflight": True,
         "metrics": True,
+        # canopy-web's OWN task role (canopy-web-task-role.cfn.yaml). The deploy
+        # passes it to ECS twice — CloudFormation registering the task definition
+        # and the migrate step registering a copy of the live one — so without
+        # this the first pipeline deploy after the cutover fails on iam:PassRole.
+        "task_roles": ["canopy-web-task-role"],
     },
     "ace-web": {
         "sub": "repo:dimagi-internal/ace-web:*",
@@ -241,6 +246,13 @@ def policy_for(app: str, cfg: dict) -> dict:
             f"arn:aws:iam::{ACCT}:role/labs-jj-ecs-task-role",
         ],
     })
+    if cfg.get("task_roles"):
+        st.append({
+            "Sid": "PassOwnTaskRoleToEcs",
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": [f"arn:aws:iam::{ACCT}:role/{r}" for r in cfg["task_roles"]],
+        })
     st.append({
         "Sid": "NetworkDescribesForRunTask",
         "Effect": "Allow",
@@ -348,9 +360,15 @@ def trust_for(cfg: dict) -> dict:
     }
 
 
-for app, cfg in APPS.items():
-    pol = policy_for(app, cfg)
-    json.dump(pol, open(f"/tmp/role-{app}-policy.json", "w"), indent=2)
-    json.dump(trust_for(cfg), open(f"/tmp/role-{app}-trust.json", "w"), indent=2)
-    n_star = sum(1 for s in pol["Statement"] if s["Resource"] == "*")
-    print(f"{app:14} {len(pol['Statement']):2} statements  ({n_star} on * — all documented)  sub={cfg['sub'][:52]}")
+def main() -> None:
+    for app, cfg in APPS.items():
+        pol = policy_for(app, cfg)
+        json.dump(pol, open(f"/tmp/role-{app}-policy.json", "w"), indent=2)
+        json.dump(trust_for(cfg), open(f"/tmp/role-{app}-trust.json", "w"), indent=2)
+        n_star = sum(1 for s in pol["Statement"] if s["Resource"] == "*")
+        print(f"{app:14} {len(pol['Statement']):2} statements  ({n_star} on * — all documented)  "
+              f"sub={cfg['sub'][:52]}")
+
+
+if __name__ == "__main__":
+    main()

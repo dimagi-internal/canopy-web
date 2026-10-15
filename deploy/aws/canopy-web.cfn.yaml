@@ -30,6 +30,15 @@ Parameters:
   ExecutionRoleArn:
     Type: String
     Default: arn:aws:iam::858923557655:role/labs-jj-ecs-task-execution-role
+  # canopy-web's own role, canopy-web-task-role (canopy-web-task-role.cfn.yaml),
+  # replaces the shared labs one. The default stays the shared role until the
+  # cutover, because a default naming a role that does not exist yet would break
+  # a fresh stack. The live stack is unaffected by the default either way: the
+  # pipeline's `aws cloudformation deploy` carries the stack's CURRENT value
+  # forward, so the switch is one admin deploy with
+  # TaskRoleArn=arn:aws:iam::858923557655:role/canopy-web-task-role, and every
+  # later pipeline deploy keeps it. Order: docs/architecture/deploy.md
+  # § canopy-web's own task role.
   TaskRoleArn:
     Type: String
     Default: arn:aws:iam::858923557655:role/labs-jj-ecs-task-role
@@ -549,9 +558,9 @@ Resources:
       HealthCheckGracePeriodSeconds: 60
       # ECS Exec (`aws ecs execute-command`) — a shell in the live container for
       # supported admin ops (`manage.py shell`) without a throwaway run-task. The
-      # task role already carries the SSM channel grant (`ecs-exec-ssm` inline
-      # policy on labs-jj-ecs-task-role). Stated here so a CFN deploy does not
-      # silently reset it after it was enabled by hand (2026-10-03).
+      # task role carries the SSM channel grant (canopy-web-task-role: its
+      # `ecs-exec` policy; the shared labs role: `ecs-exec-ssm`). Stated here so
+      # a CFN deploy does not silently reset it after it was enabled by hand.
       EnableExecuteCommand: true
 
 Outputs:
