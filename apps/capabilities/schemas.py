@@ -57,12 +57,17 @@ class CapabilityLeaseOut(StrictModel):
     idle_release_s: int
     #: Why it ended, or why its launch is being retried.
     reason: str
-    #: The machine's ready.json once read: {"ok", "reason"?, "timings"?, "cli_version"?}.
+    #: The machine's ready.json once read: {"ok", "reason"?, "timings"?, "cli_version"?};
+    #: for a pool lease, {"slot": "<name>"} once it holds one.
     ready_info: dict[str, Any]
+    #: A `pool` lease's slot once assigned (status ready; also `params.slot` and
+    #: `ready_info.slot`), else null — always null for an ec2-ephemeral lease.
+    slot: str | None
     #: Where the machine writes artifacts (the same value as CANOPY_LEASE_OUT in an
     #: exec), for an argv that needs it literally: s3://<bucket>/vm/<role-id>:<instance-id>/lease/<id>/out/
     #: on a current stack — under the machine's own prefix, so "" until the machine
     #: is launched — or s3://<bucket>/leases/<id>/out/ on a stack from before 0.9.0.
+    #: Always "" for a pool lease.
     out_prefix: str
 
 
@@ -100,6 +105,8 @@ class CapabilityGrantIn(StrictModel):
 class CapabilityLeaseIn(StrictModel):
     agent: str
     capability: str
+    #: The manifest's params. A pool takes only an optional `slot` (one of its
+    #: declared slots): wait for exactly that slot instead of the first free one.
     params: dict[str, Any] = Field(default_factory=dict)
     #: Bind the lease to a turn (CANOPY_TURN_ID): it is released when the turn ends.
     turn_id: str | None = None

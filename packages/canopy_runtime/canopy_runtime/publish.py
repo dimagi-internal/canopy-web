@@ -55,7 +55,11 @@ def load_manifests(spec_path: Path) -> list[CapabilityManifest]:
 
 
 def payload(manifests: list[CapabilityManifest]) -> dict:
-    return {"capabilities": [m.model_dump(mode="json") for m in manifests]}
+    # exclude_none: an unset optional (an ec2-ephemeral manifest's `slots`, a
+    # pool's `aws`/`exec`, a param's `default`/`enum`) is left out rather than
+    # sent as null, so an ec2-ephemeral body stays exactly what a canopy-web
+    # from before `pool` existed accepts (its manifest model forbids unknown keys).
+    return {"capabilities": [m.model_dump(mode="json", exclude_none=True) for m in manifests]}
 
 
 def put(base_url: str, agent: str, token: str, body: dict, *, timeout: float = 60.0) -> tuple[int, dict]:
@@ -109,7 +113,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     for cap in resp.get("capabilities", []):
         grant = "granted" if cap.get("grant") else "NOT granted (ask a workspace admin)"
-        print(f"published {args.agent}/{cap.get('name')} ({cap.get('kind')}, stack {cap.get('stack')}): {grant}")
+        where = (f"slots {', '.join((cap.get('manifest') or {}).get('slots') or [])}" if cap.get("kind") == "pool"
+                 else f"stack {cap.get('stack')}")
+        print(f"published {args.agent}/{cap.get('name')} ({cap.get('kind')}, {where}): {grant}")
     for name in resp.get("retired", []):
         print(f"retired {args.agent}/{name}")
     return 0

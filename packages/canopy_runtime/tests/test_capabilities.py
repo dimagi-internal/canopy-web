@@ -182,3 +182,96 @@ def test_dry_run_sends_nothing(tmp_path, canopy, capsys):
                      "--base-url", base, "--dry-run"]) == 0
     assert handler.seen == []
     assert json.loads(capsys.readouterr().out)["capabilities"][0]["name"] == "android-emulator"
+
+
+# ---- kind: pool --------------------------------------------------------------
+
+POOL = """
+version: 1
+name: test-worker
+kind: pool
+description: Connect test workers, one device session each.
+slots: [worker-1, worker-2, worker-3, worker-4]
+limits: {max_lease_s: 14400, idle_release_s: 900}
+"""
+
+
+def _pool(**edits) -> dict:
+    import yaml
+
+    data = yaml.safe_load(POOL)
+    data.update(edits)
+    return data
+
+
+def test_a_pool_validates_and_its_concurrency_is_its_slot_count():
+    m = load_capability_manifest(POOL)
+    assert (m.kind, m.slots, m.aws, m.exec) == ("pool", ["worker-1", "worker-2", "worker-3", "worker-4"],
+                                                None, None)
+    assert m.limits.max_concurrent == 4  # not the default 1: len(slots)
+    # Round-trips: what canopy-web stores re-validates to the same manifest.
+    assert CapabilityManifest.model_validate(m.model_dump(mode="json")) == m
+
+
+def test_a_pool_manifest_may_only_lower_its_concurrency():
+    lowered = CapabilityManifest.model_validate(_pool(limits={"max_concurrent": 2}))
+    assert lowered.limits.max_concurrent == 2
+    with pytest.raises(ValidationError, match="more than the pool's 4 slots"):
+        CapabilityManifest.model_validate(_pool(limits={"max_concurrent": 5}))
+
+
+@pytest.mark.parametrize("edits", [
+    {"slots": []},
+    {"slots": None},
+    {"slots": ["worker-1", "worker-1"]},                       # unique
+    {"slots": ["Worker 1"]},                                   # the capability-name pattern
+    {"slots": ["w1"]},                                         # too short for it
+    {"slots": [f"worker-{i}" for i in range(51)]},             # at most 50
+    {"aws": {"region": "us-east-1", "stack": "canopy-cap-x"}},  # no machine, no stack
+    {"exec": {"allow": ["ace-mobile"]}},
+    {"params": {"slot": {"type": "string"}}},                  # the broker owns `slot`
+    {"kind": "lottery"},
+])
+def test_invalid_pools_are_refused(edits):
+    with pytest.raises(ValidationError):
+        CapabilityManifest.model_validate(_pool(**edits))
+
+
+@pytest.mark.parametrize("edits", [
+    {"aws": None},
+    {"exec": None},
+    {"slots": ["worker-1"]},  # slots are for a pool
+])
+def test_an_ec2_ephemeral_manifest_keeps_its_shape(edits):
+    data = _manifest()
+    for k, v in edits.items():
+        if v is None:
+            data.pop(k)
+        else:
+            data[k] = v
+    with pytest.raises(ValidationError):
+        CapabilityManifest.model_validate(data)
+
+
+def test_a_pool_acquire_takes_only_an_optional_declared_slot():
+    m = load_capability_manifest(POOL)
+    assert m.resolve_params(None) == {} and m.resolve_params({}) == {}
+    assert m.resolve_params({"slot": "worker-3"}) == {"slot": "worker-3"}
+    with pytest.raises(ValueError, match="not one of this pool's slots"):
+        m.resolve_params({"slot": "worker-9"})
+    with pytest.raises(ValueError, match="not one of this pool's slots"):
+        m.resolve_params({"slot": 3})
+    with pytest.raises(ValueError, match="takes only 'slot'"):
+        m.resolve_params({"state": "x"})
+
+
+def test_an_ec2_publish_body_carries_no_pool_keys(tmp_path):
+    """An older canopy-web forbids unknown manifest keys: an ec2-ephemeral body
+    must not grow `slots: null`."""
+    from canopy_runtime.publish import payload
+
+    spec = _repo(tmp_path, {"e/capability.yaml": MANIFEST, "p/capability.yaml": POOL})
+    ec2, pool = payload(load_manifests(spec))["capabilities"]
+    assert "slots" not in ec2 and ec2["aws"]["stack"] == "canopy-cap-ace-android-emulator"
+    assert "aws" not in pool and "exec" not in pool and pool["slots"][0] == "worker-1"
+    assert CapabilityManifest.model_validate(ec2) and CapabilityManifest.model_validate(pool)

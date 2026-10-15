@@ -4213,10 +4213,13 @@ export interface paths {
         /**
          * Publish an agent's declared capabilities (its whole list)
          * @description The agent's deploy calls this (`canopy-runtime publish-capabilities`) with
-         *     every capability its runtime.yaml declares. Each stack's Outputs are read
-         *     now and must meet the ec2-ephemeral contract (422 naming what is missing).
-         *     Idempotent; a capability left out is retired and its live leases released.
-         *     For the agent's owner and admins, or the agent's own login.
+         *     every capability its runtime.yaml declares. Each ec2-ephemeral stack's
+         *     Outputs are read now and must meet the contract (422 naming what is
+         *     missing); a `pool` has no stack, only its `slots`. Idempotent; a capability
+         *     left out is retired and its live leases released. A pool's live leases
+         *     survive a change to its slots (one on a removed slot runs out; that slot is
+         *     not handed out again). For the agent's owner and admins, or the agent's own
+         *     login.
          */
         readonly put: operations["put_agent_capabilities"];
         readonly post?: never;
@@ -4342,6 +4345,12 @@ export interface paths {
          *     over it the lease waits its turn (`queued`, with `position`). Poll
          *     GET /leases/{id} until `ready`. 422 for an undeclared capability or a bad
          *     param; 403 naming the grant to ask for when the workspace has not granted it.
+         *
+         *     A `pool` capability leases a named slot, not a machine: with a slot free the
+         *     lease is `ready` at once with `slot` (also `params.slot` and
+         *     `ready_info.slot`); otherwise `queued` until a release frees one, oldest
+         *     first. `params` may name one slot (`{"slot": "worker-2"}`) to wait for
+         *     exactly that one.
          */
         readonly post: operations["acquire_capability_lease"];
         readonly delete?: never;
@@ -4443,7 +4452,8 @@ export interface paths {
          *     0.9.0: shell-quoted into AWS-RunShellScript), with its full output going to
          *     the lease's exec/ prefix. Returns the SSM CommandId as `exec_id` at once. The
          *     command sees CANOPY_LEASE_ID, CANOPY_LEASE_IN and CANOPY_LEASE_OUT. A
-         *     running exec keeps the lease from idling out until its timeout.
+         *     running exec keeps the lease from idling out until its timeout. 422 on a
+         *     `pool` lease: it holds a slot, not a machine.
          */
         readonly post: operations["exec_capability_lease"];
         readonly delete?: never;
@@ -4465,7 +4475,7 @@ export interface paths {
          *     exec survives a canopy-web deploy. Full streams are presigned once done.
          *
          *     `wait_s` (0-20) long-polls: the request returns as soon as the exec is done,
-         *     re-reading SSM about once a second, else after `wait_s`.
+         *     re-reading SSM about once a second, else after `wait_s`. 422 on a `pool` lease.
          */
         readonly get: operations["get_capability_exec"];
         readonly put?: never;
@@ -4490,7 +4500,8 @@ export interface paths {
          * @description Presigned PUT URLs (valid `expires_in_s`, up to 1 h) under the lease's in/,
          *     and the s3:// URI of each, to pass in an exec's argv. On a current stack in/
          *     is under the machine's own prefix, which no other machine can read — so
-         *     uploads need the machine launched (409 while `instance_id` is unset).
+         *     uploads need the machine launched (409 while `instance_id` is unset). 422 on
+         *     a `pool` lease (no machine).
          */
         readonly post: operations["create_capability_uploads"];
         readonly delete?: never;
@@ -4510,7 +4521,7 @@ export interface paths {
          * List a lease's artifacts as presigned links
          * @description Presigned GETs (valid `expires_in_s`, up to 1 h) for everything the machine
          *     wrote under the lease's out/<prefix> (`out_prefix`). Readable after the lease
-         *     ends, until the bucket expires it (7 days).
+         *     ends, until the bucket expires it (7 days). 422 on a `pool` lease (no machine).
          */
         readonly get: operations["list_capability_artifacts"];
         readonly put?: never;
@@ -17359,6 +17370,8 @@ export interface components {
             readonly ready_info: {
                 readonly [key: string]: unknown;
             };
+            /** Slot */
+            readonly slot: string | null;
             /** Out Prefix */
             readonly out_prefix: string;
         };
@@ -17411,6 +17424,10 @@ export interface components {
         /**
          * CapabilityManifest
          * @description `capability.yaml`, version 1 — what canopy-web brokers for the agent.
+         *
+         *     `ec2-ephemeral` needs `aws` and `exec` and takes no `slots`. `pool` needs
+         *     `slots` (1-50 unique names) and takes no `aws`, `exec` or `params`; its
+         *     `limits.max_concurrent` defaults to `len(slots)` and may only lower it.
          */
         readonly CapabilityManifest: {
             /**
@@ -17423,21 +17440,23 @@ export interface components {
             readonly name: string;
             /**
              * Kind
-             * @constant
+             * @enum {string}
              */
-            readonly kind: "ec2-ephemeral";
+            readonly kind: "ec2-ephemeral" | "pool";
             /**
              * Description
              * @default
              */
             readonly description: string;
-            readonly aws: components["schemas"]["CapabilityAws"];
+            readonly aws?: components["schemas"]["CapabilityAws"] | null;
             readonly limits?: components["schemas"]["CapabilityLimits"];
             /** Params */
             readonly params?: {
                 readonly [key: string]: components["schemas"]["CapabilityParam"];
             };
-            readonly exec: components["schemas"]["CapabilityExec"];
+            readonly exec?: components["schemas"]["CapabilityExec"] | null;
+            /** Slots */
+            readonly slots?: readonly string[] | null;
         };
         /**
          * CapabilityParam

@@ -158,7 +158,7 @@ def _lease_out(lease: CapabilityLease) -> CapabilityLeaseOut:
         created_at=lease.created_at, provisioning_at=lease.provisioning_at, ready_at=lease.ready_at,
         ended_at=lease.ended_at, expires_at=lease.expires_at, last_heartbeat_at=lease.last_heartbeat_at,
         idle_release_s=lease.idle_release_s, reason=lease.reason, ready_info=lease.ready_info or {},
-        out_prefix=services.out_prefix(lease),
+        slot=lease.slot or None, out_prefix=services.out_prefix(lease),
     )
 
 
@@ -207,10 +207,13 @@ def get_agent_capabilities(request: HttpRequest, slug: str) -> AgentCapabilities
                    summary="Publish an agent's declared capabilities (its whole list)")
 def put_agent_capabilities(request: HttpRequest, slug: str, payload: AgentCapabilitiesIn) -> AgentCapabilitiesOut:
     """The agent's deploy calls this (`canopy-runtime publish-capabilities`) with
-    every capability its runtime.yaml declares. Each stack's Outputs are read
-    now and must meet the ec2-ephemeral contract (422 naming what is missing).
-    Idempotent; a capability left out is retired and its live leases released.
-    For the agent's owner and admins, or the agent's own login."""
+    every capability its runtime.yaml declares. Each ec2-ephemeral stack's
+    Outputs are read now and must meet the contract (422 naming what is
+    missing); a `pool` has no stack, only its `slots`. Idempotent; a capability
+    left out is retired and its live leases released. A pool's live leases
+    survive a change to its slots (one on a removed slot runs out; that slot is
+    not handed out again). For the agent's owner and admins, or the agent's own
+    login."""
     agent = _agent(request, slug)
     if not (_is_agent_itself(request, agent) or agent.is_admin(request.user)):
         raise HttpError(403, f"publishing {slug}'s capabilities is for its owner or admins, "
@@ -317,7 +320,13 @@ def acquire_capability_lease(request: HttpRequest, payload: CapabilityLeaseIn) -
     the launch's ClientToken is the lease id, so a retry never launches twice);
     over it the lease waits its turn (`queued`, with `position`). Poll
     GET /leases/{id} until `ready`. 422 for an undeclared capability or a bad
-    param; 403 naming the grant to ask for when the workspace has not granted it."""
+    param; 403 naming the grant to ask for when the workspace has not granted it.
+
+    A `pool` capability leases a named slot, not a machine: with a slot free the
+    lease is `ready` at once with `slot` (also `params.slot` and
+    `ready_info.slot`); otherwise `queued` until a release frees one, oldest
+    first. `params` may name one slot (`{"slot": "worker-2"}`) to wait for
+    exactly that one."""
     agent = _agent_to_lease_for(request, payload.agent)
     try:
         lease = services.acquire(agent, payload.capability, params=payload.params,
@@ -412,7 +421,8 @@ def exec_capability_lease(request: HttpRequest, lease_id: str, payload: Capabili
     0.9.0: shell-quoted into AWS-RunShellScript), with its full output going to
     the lease's exec/ prefix. Returns the SSM CommandId as `exec_id` at once. The
     command sees CANOPY_LEASE_ID, CANOPY_LEASE_IN and CANOPY_LEASE_OUT. A
-    running exec keeps the lease from idling out until its timeout."""
+    running exec keeps the lease from idling out until its timeout. 422 on a
+    `pool` lease: it holds a slot, not a machine."""
     lease = _lease(request, lease_id)
     try:
         exec_id, timeout_s = services.exec_(lease, payload.argv, payload.timeout_s)
@@ -429,7 +439,7 @@ def get_capability_exec(request: HttpRequest, lease_id: str, exec_id: str,
     exec survives a canopy-web deploy. Full streams are presigned once done.
 
     `wait_s` (0-20) long-polls: the request returns as soon as the exec is done,
-    re-reading SSM about once a second, else after `wait_s`."""
+    re-reading SSM about once a second, else after `wait_s`. 422 on a `pool` lease."""
     lease = _lease(request, lease_id)
     try:
         st = services.exec_status(lease, exec_id, wait_s=wait_s)
@@ -445,7 +455,8 @@ def create_capability_uploads(request: HttpRequest, lease_id: str,
     """Presigned PUT URLs (valid `expires_in_s`, up to 1 h) under the lease's in/,
     and the s3:// URI of each, to pass in an exec's argv. On a current stack in/
     is under the machine's own prefix, which no other machine can read — so
-    uploads need the machine launched (409 while `instance_id` is unset)."""
+    uploads need the machine launched (409 while `instance_id` is unset). 422 on
+    a `pool` lease (no machine)."""
     lease = _lease(request, lease_id)
     try:
         ups, ttl = services.uploads(lease, payload.names)
@@ -459,7 +470,7 @@ def create_capability_uploads(request: HttpRequest, lease_id: str,
 def list_capability_artifacts(request: HttpRequest, lease_id: str, prefix: str = "") -> CapabilityArtifactsOut:
     """Presigned GETs (valid `expires_in_s`, up to 1 h) for everything the machine
     wrote under the lease's out/<prefix> (`out_prefix`). Readable after the lease
-    ends, until the bucket expires it (7 days)."""
+    ends, until the bucket expires it (7 days). 422 on a `pool` lease (no machine)."""
     lease = _lease(request, lease_id)
     try:
         arts, ttl = services.artifacts(lease, prefix)

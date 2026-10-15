@@ -2,13 +2,15 @@
 
 A **capability** is a machine an agent leases from canopy-web for exactly as long as it
 needs it: "give me my `android-emulator`", get a fresh EC2 instance booted from the
-agent's own image, drive it, release it, and it is terminated. Design record:
+agent's own image, drive it, release it, and it is terminated. A capability of kind
+`pool` leases a **named slot** instead — an exclusive checkout of one of a few fixed
+things (a test account, a seat), with no machine and no AWS call (§6). Design record:
 `docs/superpowers/specs/2026-10-14-cloud-capabilities-design.md`. Code: `apps/capabilities`
 (framework tier), `canopy_sdk.ondemand.EphemeralInstance`,
 `canopy_runtime.schema.CapabilityManifest`.
 
 **Who owns what.** canopy-web owns the generic half and nothing domain-specific: the
-manifest schema, the `ec2-ephemeral` kind, the grant, the lease lifecycle, caps, audit
+manifest schema, the `ec2-ephemeral` and `pool` kinds, the grant, the lease lifecycle, caps, audit
 and the sweep. The agent's repo (or a shared repo it points at) owns everything else:
 `capability.yaml`, the CloudFormation stack, the image and its bake, the boot hook and
 the CLI on the machine.
@@ -34,7 +36,7 @@ capabilities:
 ```yaml
 version: 1
 name: android-emulator            # [a-z0-9-]{3,40}, unique per agent (the shared template caps it at 31)
-kind: ec2-ephemeral               # the only kind v1 brokers
+kind: ec2-ephemeral               # or `pool` (§6)
 description: Android 14 emulator with CommCare + Maestro, driven by the ace-mobile CLI.
 aws:
   region: us-east-1
@@ -200,7 +202,8 @@ it (a laptop session). PAT-authenticated; every route is also an MCP tool.
 
 A **lease** is `{lease_id, agent, capability, status, ready, position, instance_id,
 params, turn_id, created_at, provisioning_at, ready_at, ended_at, expires_at,
-last_heartbeat_at, idle_release_s, reason, ready_info, out_prefix}`. `out_prefix` is the
+last_heartbeat_at, idle_release_s, reason, ready_info, slot, out_prefix}` (`slot`: a
+`pool` lease's slot, else null). `out_prefix` is the
 lease's `out/` as an `s3://` URI, the same value as `CANOPY_LEASE_OUT`, for a CLI that needs
 `--out` as a literal (argv is never shell-expanded, so `$CANOPY_LEASE_OUT` is not
 expanded). On a 0.9.0+ stack it names the machine, so it is `""` until `instance_id` is set
@@ -279,3 +282,52 @@ coalesced so a persistent failure is one row with a count), readable at
 5. Machine-side: halt at `max_lifetime_s`, shutdown = terminate.
 6. Stack-side: the backstop Lambda (§2), every 5 minutes. 5 and 6 work while canopy-web is
    down.
+
+## 6. The `pool` kind: an exclusive checkout of a named slot
+
+A `pool` capability brokers **one of a small fixed set of named things per lease** — no
+machine, no stack, no image, no AWS call anywhere (publish, acquire, release, sweep). Use
+it when two holders of the same thing at once break each other: ACE's Connect test
+workers, where a second device signing in as the same worker locks the first out.
+
+```yaml
+version: 1
+name: test-worker
+kind: pool
+description: Connect test workers, one device session each.
+slots: [worker-1, worker-2, worker-3, worker-4]   # 1-50, unique, [a-z0-9-]{3,40}; handed out in this order
+limits: {max_lease_s: 14400, idle_release_s: 900}
+```
+
+- **Manifest:** `slots` required; `aws`, `exec` and `params` are refused (the broker owns
+  the one acquire param, `slot`); `ready_timeout_s` is ignored. Concurrency is the slot
+  count: `limits.max_concurrent` defaults to `len(slots)` and, like a grant, may only lower
+  it. An `ec2-ephemeral` manifest may not carry `slots`.
+- **Publish:** the same `canopy-runtime publish-capabilities` / `PUT
+  /api/agents/{slug}/capabilities`; no stack is read (`stack`, `region` and
+  `stack_outputs` are empty). Changing `slots` never strands a live lease: one holding a
+  removed slot keeps it until it ends, and that slot is never handed out again; a queued
+  lease that asked for a removed slot fails. Changing a capability's kind ends its live
+  leases first, as the kind they were (an ec2-ephemeral machine is terminated).
+- **Acquire:** `POST /api/capabilities/leases {agent, capability, params?, turn_id?}`;
+  `params` takes only an optional `{"slot": "<one of slots>"}` (anything else is 422).
+  Under the capability's row lock, a free slot — one no live lease of this capability
+  holds — makes the lease **`ready` at once** (`queued → ready`; it never provisions):
+  `slot`, `params.slot` and `ready_info` (`{"slot": …}`) name it, `expires_at` is
+  `max_lease_s` from now, and `instance_id`/`out_prefix` stay empty. The requested slot,
+  else the first free one in declared order. With none free (or the requested one held)
+  the lease is `queued` with `position`.
+- **Promotion:** releasing (or expiring, idling, force-releasing, a turn ending, revoking
+  the grant) frees the slot and hands it on **in the same transaction**: oldest queued
+  first; a lease waiting for one particular slot gets exactly that slot and does not hold
+  up the leases behind it. The sweep promotes pools too (no AWS work for them), so a
+  promotion lost to a crash waits at most one sweep.
+- **Exclusivity is in the database:** a conditional unique constraint
+  (`cap_lease_one_live_per_slot`: one `(capability, slot)` among live leases), not only the
+  row lock.
+- **Everything else is the ec2-ephemeral contract:** grants, heartbeat and long-poll
+  (`wait_s` returns when a queued lease gets its slot), list (`slot` on every lease shows
+  who holds which), idle release, `max_lease_s` expiry, turn binding, events
+  (`capability.lease.ready` names the slot) and spend (slot-seconds from `ready_at`).
+- **No machine:** exec, exec status, uploads and artifacts on a pool lease are 422, and so
+  are `…/refresh` and `…/terminate-orphans` on a pool capability.
