@@ -328,6 +328,17 @@ def test_no_mailbox_is_optional_not_missing(editor, ws):
     assert _status(agent)["mailbox"] == "optional"
 
 
+def test_a_mailbox_a_box_has_proved_is_done_without_a_stored_token(editor, ws):
+    """Tokens minted by a laptop `gog login` live in the vault, not here; the box that runs
+    the turns is the one that knows the mailbox works (`turn_ready`)."""
+    agent = _agent(ws, editor)
+    AgentBootstrapReport.objects.create(agent=agent, runner_name="cloud-ec2-2", turn_ready=False)
+    assert _status(agent)["mailbox"] == "todo"
+    AgentBootstrapReport.objects.filter(agent=agent).update(turn_ready=True)
+    mailbox = next(s for s in setup_steps(agent) if s["key"] == "mailbox")
+    assert mailbox["status"] == "done" and "cloud-ec2-2 reads it for turns" in mailbox["detail"]
+
+
 def test_the_scaffolds_own_skills_are_not_a_job(editor, ws):
     agent = _agent(ws, editor)
     assert "turn" in scaffold_skill_names()
