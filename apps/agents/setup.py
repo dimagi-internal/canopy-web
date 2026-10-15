@@ -77,13 +77,17 @@ def _vault(agent: Agent, settings: str) -> dict:
     from .models import AgentBootstrapReport
 
     command = f"canopy agent vault --slug {agent.slug} --workspace {agent.workspace_id}"
+    if not agent.op_vault:
+        # The person creating it names the vault; it is never derived from the slug.
+        command += " --vault <vault name>"
     title = "Give it a vault"
     if not agent.op_vault or not agent.op_sa_token_enc:
         state = (f"Its vault, {agent.op_vault}, has no key stored here, so no runner can read it."
                  if agent.op_vault else "It has no 1Password vault yet.")
         return _step(
             "vault", title, TODO,
-            f"{state} Someone with 1Password rights runs this once: it creates the vault, mints "
+            f"{state} Someone with 1Password rights runs this once (naming the vault, if it has "
+            "none): it creates the vault, mints "
             "what can be minted, asks for what only a person knows, and stores a read-only key "
             "here for its runners.",
             where="terminal", command=command)

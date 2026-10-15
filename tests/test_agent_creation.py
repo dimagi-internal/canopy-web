@@ -364,12 +364,13 @@ def test_the_vault_step_is_one_terminal_command_and_reads_what_the_box_reported(
     agent = _agent(ws, editor)
     vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
     assert (vault["status"], vault["where"]) == ("todo", "terminal")
-    assert vault["command"] == "canopy agent vault --slug scout --workspace scouts"
+    assert vault["command"] == "canopy agent vault --slug scout --workspace scouts --vault <vault name>"
     assert "no 1Password vault" in vault["detail"]
 
     services.set_agent_vault(agent, vault="Agent-Scout")
-    assert "has no key stored here" in next(
-        s for s in setup_steps(agent) if s["key"] == "vault")["detail"]
+    vault = next(s for s in setup_steps(agent) if s["key"] == "vault")
+    assert "has no key stored here" in vault["detail"]
+    assert vault["command"] == "canopy agent vault --slug scout --workspace scouts"
 
     AgentBootstrapReport.objects.create(agent=agent, runner_name="olive-cloud", env_ok=False,
                                         detail="op inject: vault not found")
