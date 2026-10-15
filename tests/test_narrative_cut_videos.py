@@ -328,3 +328,52 @@ def test_the_demo_brief_round_trips_and_names_the_review():
     assert body["title"] == "Part 1 — RUTF stock at scale"  # not "Chlorine"
     for key, value in BRIEF.items():
         assert body["request_json"][key] == value
+
+
+# ---------------------------------------------------------------------------
+# The product screen behind each cut: its upload's ``reference`` links, so a
+# reviewer can open the live page the cut films and comment on the product.
+# ---------------------------------------------------------------------------
+
+LINKS = [
+    {"label": "Supply overview", "url": "https://labs.example/supply/overview/?program_id=1",
+     "kind": "reference"},
+    {"label": "Deck", "url": "https://canopy.example/w/x/walkthrough/1", "kind": "companion"},
+    {"label": "Leak", "url": "https://labs.example/${base}/x", "kind": "reference"},
+    {"label": "App", "url": "https://labs.example/", "kind": "reference"},
+    {"label": "Relative", "url": "/supply/map/", "kind": "reference"},
+    {"label": "Again", "url": "https://labs.example/supply/overview/?program_id=1",
+     "kind": "reference"},
+]
+
+
+def test_app_links_keep_only_real_product_screens():
+    from apps.walkthroughs.pinned import app_links
+
+    u = make_user()
+    w = make_walkthrough(u, kind="video", links=LINKS)
+    assert app_links(w) == [
+        {"label": "Supply overview", "url": "https://labs.example/supply/overview/?program_id=1"}
+    ], "companion, template leak, bare origin, relative and duplicate are all dropped"
+
+
+def test_a_guest_on_the_review_link_gets_each_cuts_product_screens():
+    u = make_user()
+    v = _version(u)
+    _cut(u, v, "register", ["c1-a"], at=_t(1), visibility="link", share_token="t", links=LINKS)
+    # A private cut still names the screen it films: a URL is not the video.
+    _cut(u, v, "decide", ["c2-a"], at=_t(2), links=[LINKS[0]])
+    cuts = Client().get(f"/api/reviews/{v.id}/").json()["cut_videos"]
+    assert cuts[0]["app_links"] == [
+        {"label": "Supply overview", "url": "https://labs.example/supply/overview/?program_id=1"}
+    ]
+    assert cuts[1]["video_url"] is None
+    assert cuts[1]["app_links"][0]["label"] == "Supply overview"
+
+
+def test_the_narrative_page_carries_each_cuts_product_screens():
+    u = make_user()
+    v = _version(u)
+    _cut(u, v, "register", ["c1-a"], at=_t(1), links=[LINKS[0]])
+    n = aggregate.build_narrative(SLUG, {v.workspace_id})
+    assert n["current_version"]["cuts"][0]["app_links"][0]["url"].endswith("program_id=1")

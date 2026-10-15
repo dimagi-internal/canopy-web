@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { withBase } from '@/lib/basePath'
+import { AppLinks, type AppLink } from './AppLinks'
 import { CutPlayer, countWords, fmtDuration } from './CutPlayer'
 
 /** One cut of a recorded narrative and the video pinned to it (canopy-web#1288).
@@ -14,6 +15,8 @@ export interface CutVideo {
   video_url: string | null
   video_viewer_url?: string | null
   duration_sec?: number | null
+  /** The live product screens the cut films, for the reviewer to open. */
+  app_links?: readonly AppLink[]
 }
 
 /** A scene's spoken words, keyed by its narration id. */
@@ -121,6 +124,7 @@ export function CutVideoList({
           [...new Set(row.words.map((s) => s.provenance).filter((p): p is string => !!p))].join('; ')
         const title = m.title || row.title
         const optional = /optional/i.test(title)
+        const appLinks = row.kind === 'video' ? (row.cut.app_links ?? []) : []
         return (
           <li key={row.kind === 'video' ? row.cut.cut_id : `missing-${row.title}`}>
             <section aria-label={title}>
@@ -174,8 +178,13 @@ export function CutVideoList({
                   )}
                 </div>
               </div>
-              {(m.screen_notes || m.audience_note || provenance) && (
+              {(m.screen_notes || m.audience_note || provenance || appLinks.length > 0) && (
                 <dl className="mt-3 grid gap-1.5 text-[13px]">
+                  {appLinks.length > 0 && (
+                    <CutDetail label="Try it live">
+                      <AppLinks links={appLinks} />
+                    </CutDetail>
+                  )}
                   {m.screen_notes && <CutDetail label="On screen">{m.screen_notes}</CutDetail>}
                   {m.audience_note && <CutDetail label="Why it matters">{m.audience_note}</CutDetail>}
                   {provenance && <CutDetail label="Data from">{provenance}</CutDetail>}

@@ -14,6 +14,7 @@ The hero (the narrative-level video) is, in order:
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -80,6 +81,28 @@ def pinned_video_rows(review_ids: Iterable, qs=None) -> dict[str, list[Walkthrou
         "created_at"
     ):
         out.setdefault(str(w.narrative_review_id), []).append(w)
+    return out
+
+
+def app_links(w: Walkthrough) -> list[dict]:
+    """The product screens this video films, as ``[{label, url}]``.
+
+    The uploader stores them as ``kind: "reference"`` links ("a destination
+    shown in the demo the viewer can go explore"). Only absolute http(s) URLs
+    with a real path survive: an unexpanded ``${var}`` or a bare origin is not
+    somewhere a reviewer can go. De-duped by URL, upload order kept.
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    for link in w.links or []:
+        if not isinstance(link, dict) or link.get("kind", "reference") != "reference":
+            continue
+        url = str(link.get("url") or "").strip()
+        m = re.match(r"^https?://[^/]+(/.*)?$", url)
+        if not m or "${" in url or (m.group(1) or "/") == "/" or url in seen:
+            continue
+        seen.add(url)
+        out.append({"label": str(link.get("label") or "").strip() or url, "url": url})
     return out
 
 

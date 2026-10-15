@@ -194,6 +194,7 @@ def _cut_payload(w: Walkthrough) -> dict:
         "video_url": _content_url(w),
         "video_viewer_url": _viewer_url(w),
         "duration_sec": w.duration_sec,
+        "app_links": pinned.app_links(w),
     }
 
 

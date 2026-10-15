@@ -5,6 +5,7 @@ from typing import Literal
 
 from apps.common.schemas import StrictModel
 from apps.feedback.schemas import ArtifactSignalsOut
+from apps.walkthroughs.schemas import CutAppLinkOut
 
 Capability = Literal["read", "comment", "suggest"]
 Layout = Literal["review", "reel"]
@@ -83,6 +84,8 @@ class EntryCutOut(StrictModel):
     """Why this cut matters to the board's audience."""
     provenance: str = ""
     """Where the on-screen data comes from."""
+    app_links: list[CutAppLinkOut] = []
+    """The live product screens this cut films, for the reviewer to open."""
     optional: bool = False
 
 

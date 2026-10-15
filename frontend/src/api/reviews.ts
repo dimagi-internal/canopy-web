@@ -285,6 +285,8 @@ export interface ReviewPinnedVideo {
   /** The video's own page, under the same rule as video_url. */
   video_viewer_url?: string | null
   duration_sec?: number | null
+  /** The live product screens the cut films, for the reviewer to open. */
+  app_links?: { label: string; url: string }[]
 }
 
 export interface ReviewDetail {

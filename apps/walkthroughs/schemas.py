@@ -20,6 +20,14 @@ WalkthroughVisibility = Literal["private", "link"]
 WalkthroughLinkKind = Literal["narrative", "companion", "reference"]
 
 
+class CutAppLinkOut(StrictModel):
+    """A live product screen a cut films (one of its ``reference`` links),
+    for the reviewer to open themselves (``pinned.app_links``)."""
+
+    label: str
+    url: str
+
+
 class WalkthroughLink(StrictModel):
     """One companion link rendered on the viewer page.
 

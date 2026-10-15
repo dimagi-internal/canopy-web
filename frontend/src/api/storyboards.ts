@@ -41,6 +41,8 @@ export interface EntryCut {
   audience_note: string
   /** Where the on-screen data comes from. */
   provenance: string
+  /** The live product screens the cut films, for the reviewer to open. */
+  app_links?: { label: string; url: string }[]
   optional: boolean
 }
 

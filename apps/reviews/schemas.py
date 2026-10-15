@@ -9,6 +9,7 @@ from pydantic import Field
 
 from apps.common.schemas import StrictModel
 from apps.feedback.schemas import ArtifactSignalsOut
+from apps.walkthroughs.schemas import CutAppLinkOut
 
 ReviewStatus = Literal["pending", "resolved"]
 ReviewVisibility = Literal["private", "link"]
@@ -30,6 +31,8 @@ class ReviewPinnedVideoOut(StrictModel):
     # The video's own page, under the same rule as video_url.
     video_viewer_url: str | None = None
     duration_sec: int | None = None
+    # The live product screens this cut films (the upload's reference links).
+    app_links: list[CutAppLinkOut] = []
 
 
 class ReviewRequestOut(ArtifactSignalsOut):

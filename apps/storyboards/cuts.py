@@ -126,6 +126,13 @@ def entry_cuts(
             "video_viewer_url": (video or {}).get("video_viewer_url") if can_play else None,
             "poster_url": _s(m.get("poster_url")) or None,
             "duration_sec": (video or {}).get("duration_sec") or _int(m.get("duration_sec")),
+            # The product screens the cut films. Plain URLs: shown even when
+            # the video itself is withheld from this reader.
+            "app_links": [
+                {"label": _s(a.get("label")) or _s(a.get("url")), "url": _s(a.get("url"))}
+                for a in ((video or {}).get("app_links") or [])
+                if isinstance(a, dict) and _s(a.get("url"))
+            ],
             "word_count": sum(word_count(s["text"]) for s in scenes),
             "scenes": scenes,
             "screen_notes": _s(m.get("screen_notes")),

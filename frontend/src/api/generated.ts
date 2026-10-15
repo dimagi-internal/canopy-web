@@ -10566,6 +10566,17 @@ export interface components {
             readonly turn_ids?: readonly string[];
         };
         /**
+         * CutAppLinkOut
+         * @description A live product screen a cut films (one of its ``reference`` links),
+         *     for the reviewer to open themselves (``pinned.app_links``).
+         */
+        readonly CutAppLinkOut: {
+            /** Label */
+            readonly label: string;
+            /** Url */
+            readonly url: string;
+        };
+        /**
          * CutRef
          * @description One cut of one narrative on the board — what a short version lists.
          */
@@ -10659,6 +10670,11 @@ export interface components {
              * @default
              */
             readonly provenance: string;
+            /**
+             * App Links
+             * @default []
+             */
+            readonly app_links: readonly components["schemas"]["CutAppLinkOut"][];
             /**
              * Optional
              * @default false
@@ -11972,6 +11988,11 @@ export interface components {
             readonly video_viewer_url?: string | null;
             /** Duration Sec */
             readonly duration_sec?: number | null;
+            /**
+             * App Links
+             * @default []
+             */
+            readonly app_links: readonly components["schemas"]["CutAppLinkOut"][];
         };
         /**
          * ReviewRequestOut
@@ -12185,6 +12206,11 @@ export interface components {
             readonly video_viewer_url: string;
             /** Duration Sec */
             readonly duration_sec?: number | null;
+            /**
+             * App Links
+             * @default []
+             */
+            readonly app_links: readonly components["schemas"]["CutAppLinkOut"][];
         };
         /** NarrativeDetailOut */
         readonly NarrativeDetailOut: {
