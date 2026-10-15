@@ -1,6 +1,10 @@
 # Storyboards as a feedback surface: decision rows and feedback rounds
 
-Date: 2026-10-15 · Status: design approved in conversation, spec awaiting review · Owner: Jonathan Jackson
+Date: 2026-10-15 · Status: approved by the owner 2026-10-15 (open questions answered; see "Owner decisions") · Owner: Jonathan Jackson
+
+Plans: `docs/superpowers/plans/2026-10-15-storyboard-decision-rows.md` (B) and
+`docs/superpowers/plans/2026-10-15-storyboard-feedback-rounds.md` (C, plus the
+plugin-side changes).
 
 ## Problem
 
@@ -143,11 +147,17 @@ The first three are edits. While a round is open, an edit is **staged** on the
 round, not on the row (section C), and shows as `pending`. It lands when the
 round closes. That makes the round's batch hold everything that changed, and two
 people disagreeing on one row is visible before anything is applied. If two
-staged edits on the same row conflict at close, the closer picks one. With no
-open round, an editor's edit applies immediately and goes into `history`.
+staged edits on the same row conflict at close, the closer picks one.
+
+**Outside a round, a member's edit applies immediately** (owner decision,
+2026-10-15): it is attributed to the signed-in member, recorded in `history`,
+and undoable. A link holder (no account) can edit only inside an open round,
+where the edit is staged; outside one, their edit is refused with 409 and the
+page tells them no round is open.
 
 Who may edit: workspace members, plus anyone holding the share link when the
-board's capability is `suggest`. Comments follow the `comment` grant.
+board's capability is `suggest` (inside a round only). Comments follow the
+`comment` grant.
 
 ### What is shared with ace-web
 
@@ -178,6 +188,15 @@ publisher must treat these as binding:
 
 A `FeedbackRound` belongs to one storyboard and links to the storyboard's
 `agent_project`. Opening a round requires that link.
+
+**Where the model lives.** `Feedback` is framework tier (`apps/feedback`) and
+`storyboards` is product tier; a framework model may not hold an FK to a product
+one (`tests/test_architecture_boundary.py`). So `FeedbackRound` lives in
+`apps/feedback`, generic over its target exactly like `Feedback`
+(`target_kind="storyboard"`, `target_ref=<slug>`, `workspace`), and
+`apps/storyboards` owns every route and the rules that make it a storyboard
+round. `staged_edits` is a JSON list for the same reason: the framework app
+stores them; the storyboard service applies them to `StoryboardDecision` rows.
 
 | Field | Meaning |
 |---|---|
@@ -261,9 +280,13 @@ starts.
 4. **Draft vN+1** of each affected narrative. The decision rulings are binding.
    Then re-render the cuts and publish through the normal path.
 5. **Record** the consumed feedback ids and the round number on the DDD run doc
-   (`put_run_doc_state`). Mark the round `consumed_by_run`.
-6. **Open the next round** on the new versions, if the owner set the board to
-   do so.
+   (`put_run_doc_state`). Mark the round consumed:
+   `POST /api/storyboards/<slug>/rounds/<n>/consume` with the run id.
+6. **The next round opens automatically** on the new versions (owner decision,
+   2026-10-15). The consume call opens round N+1 in the same transaction,
+   pinned to each narrative's current version — which is vN+1, because step 4
+   published it first. Nobody has to remember to reopen the board, and notes
+   left between rounds always have a round to land in.
 
 A note left in state `new` after the step fails the step. That makes the rule
 "every comment gets an answer" enforced, not prose.
@@ -312,14 +335,20 @@ different owner. This spec builds it for storyboards only.
 - Notifications beyond the existing suggestion email. A digest can come later.
 - Moving ace-web onto this model.
 
-## Open questions for the owner
+## Owner decisions (Jonathan Jackson, 2026-10-15)
 
-1. Should closing a round also open the next one automatically on the new
-   versions, or should the owner open each round by hand?
-2. Should an edit made by a member outside any open round apply immediately, as
-   proposed, or should every decision edit wait for a round?
-3. Is `external-share` / `next-run` the right `needed_by` vocabulary for a set
-   of demos, or should it reuse ace-web's stage names?
+The three open questions, answered:
+
+1. **The next round opens automatically.** When the agent consumes round N it
+   opens round N+1 on the new versions (section C, step 6). The owner opens only
+   the first round on a board.
+2. **A member's edit outside a round applies immediately**, attributed and
+   undoable (section B, "Actions on a row"). Inside a round, every edit is
+   staged until close.
+3. **`needed_by` keeps `external-share` / `next-run`.** ace-web's stage names
+   (`award`, `go-live`, `closeout`, `extension`) describe running a programme,
+   not a set of demos; the drift test pins canopy-web's own vocabulary and ACE's
+   shared ones (`status`, `review_ask`, `evidence_basis`) separately.
 
 ## Test plan
 
