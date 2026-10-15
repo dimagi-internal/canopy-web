@@ -3688,6 +3688,13 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
             _log("staged credential bundle from canopy-web (claude)")
             return True
         _log("waiting for this runner's credential bundle to be set on canopy-web…")
+        # The browser sign-in is how a person gives this box a credential, and it
+        # is served here too. A box whose only credential was its own login, and
+        # whose login expired, restarts into this loop (cloud-ec2-2, 2026-10-15:
+        # an auto-update restart left it dark for hours); if only the main loop
+        # drained sign-ins, the one fix would never reach it. A finished sign-in
+        # makes `box_login_ready` true, and the next pass stages it.
+        _drain_mint(runner_id)
         time.sleep(POLL_SECONDS)
     return False
 

@@ -371,3 +371,23 @@ def test_an_older_canopy_web_with_no_list_changes_nothing(cr, tmp_path, monkeypa
     assert _reconcile(cr, monkeypatch, {"claude_token": "tok-1"}) == []
     assert (tmp_path / ".credentials.json").exists()
     assert [c[0] for c in cr._cascade_from({"claude_token": "tok-1"})][0] == "box-login"
+
+
+def test_a_box_waiting_for_a_credential_still_serves_the_browser_sign_in(cr, tmp_path, monkeypatch):
+    """cloud-ec2-2, 2026-10-15: its only credential was its own login, the login
+    expired, and an auto-update restarted it into the credential wait. Sign-ins
+    were drained only by the main loop, so the browser sign-in — the one way to
+    give it a credential — never reached it. The wait must serve it, and a
+    finished sign-in must end the wait."""
+    drained = []
+
+    def drain(runner_id):
+        drained.append(runner_id)
+        _store_login(tmp_path)           # the person finished signing in
+
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {}))
+    monkeypatch.setattr(cr, "_drain_mint", drain)
+    monkeypatch.setattr(cr, "POLL_SECONDS", 0)
+    assert cr.fetch_and_stage_credential("rid") is True
+    assert drained == ["rid"]
+    assert cr._claude_cred_label() == "box-login"
