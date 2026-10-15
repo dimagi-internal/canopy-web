@@ -914,8 +914,12 @@ def fork_if_task_changed(binding, task_uid: str):
     old = Session.objects.select_for_update().get(pk=binding.session_id)
     old.metadata = {**(old.metadata or {}), TASK_UID_KEY: binding.task_uid}
     old.metadata.pop(REOPENED_KEY, None)
+    # `runner_binding__isnull` is a LEFT OUTER JOIN, and Postgres refuses to lock
+    # the nullable side of one ("FOR UPDATE cannot be applied to the nullable side
+    # of an outer join") — lock only the Session rows. SQLite ignores FOR UPDATE,
+    # so the suite never saw this; every forking report 500'd in production.
     previous = (
-        Session.objects.select_for_update()
+        Session.objects.select_for_update(of=("self",))
         .filter(runner_binding__isnull=True, workspace=old.workspace,
                 origin=old.origin, **{f"metadata__{TASK_UID_KEY}": task_uid})
         .order_by("-created_at").first()
