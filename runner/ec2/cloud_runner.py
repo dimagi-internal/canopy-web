@@ -2356,7 +2356,7 @@ def _ensure_agent_clone(slug: str) -> None:
             return
         _LAZY_BOOTSTRAP_TRIED[slug] = time.time()
         _log(f"agent {slug}: no clone on this box yet — bootstrapping before its turn runs")
-        bootstrap_agent_fleet()
+        _LAZY_BOOTSTRAPPER()
 
 
 def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path:
@@ -2872,6 +2872,11 @@ def bootstrap_agent_fleet() -> None:
         # Versions may have just moved (bootstrap updates Claude Code and the
         # canopy CLI): re-read them on the next beat rather than in 10 minutes.
         _HEALTH_SLOW_AT = 0.0
+
+
+#: What `_ensure_agent_clone` runs. A name of its own so the test loader can swap
+#: in a no-op: no test may start a real bootstrap (it clones private repos).
+_LAZY_BOOTSTRAPPER = bootstrap_agent_fleet
 
 
 #: This box's runner id, once paired — for the few calls made outside a loop

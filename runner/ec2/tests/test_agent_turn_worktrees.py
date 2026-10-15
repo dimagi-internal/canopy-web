@@ -100,7 +100,7 @@ def test_the_clones_ignored_state_is_linked_in_and_stays_ignored(box):
 def test_an_agent_whose_bootstrap_cannot_clone_it_keeps_the_scratch_dir(box, monkeypatch):
     mod, _, _, tmp = box
     tried = []
-    monkeypatch.setattr(mod, "bootstrap_agent_fleet", lambda: tried.append(1))
+    monkeypatch.setattr(mod, "_LAZY_BOOTSTRAPPER", lambda: tried.append(1))
     monkeypatch.setattr(mod, "_LAZY_BOOTSTRAP_TRIED", {})
     assert mod._turn_cwd(_turn("ada"), "aaaaaaaa-1") == tmp / "work" / "aaaaaaaa"
     # Tried once, and not again on its next turn: a broken clone must not make
@@ -118,7 +118,7 @@ def test_a_new_agent_is_set_up_before_its_first_turn_runs(box, monkeypatch):
     def bootstrap():
         _git("clone", "-q", str(origin), str(agents / "scout"), cwd=tmp)
 
-    monkeypatch.setattr(mod, "bootstrap_agent_fleet", bootstrap)
+    monkeypatch.setattr(mod, "_LAZY_BOOTSTRAPPER", bootstrap)
     monkeypatch.setattr(mod, "_LAZY_BOOTSTRAP_TRIED", {})
     cwd = mod._turn_cwd(_turn("scout"), "bbbbbbbb-1")
     assert (cwd / "CLAUDE.md").read_text() == "You are Hal.\n"
