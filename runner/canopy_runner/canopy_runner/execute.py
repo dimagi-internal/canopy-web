@@ -498,6 +498,33 @@ def _repoint(asked: str, got: str, turn: dict, envelope) -> None:
     caller.clear_pending(asked)
 
 
+def _project_missing(cfg, target: str) -> str:
+    """Is `target` (an agent slug or repo) an emdash project on this box? "" if yes,
+    or if emdash's DB cannot say; else a note for the caller to fail the turn with.
+
+    2026-10-15, turn f60e3ab4 (failure investigation 4): an email turn for `fizzy`
+    was claimed by shayoni-win-cdp, whose emdash had no `fizzy` project. The sidecar
+    searched the sidebar, failed with `project "fizzy" not found in the emdash
+    sidebar`, and the generic create-failure path marked the WHOLE runner not-ready
+    for 15 minutes (readiness.mark_failed) — a per-agent setup gap read as box
+    health, taking every other agent on that box out of routing with it. emdash's DB
+    is the truth (the same `projects` table the heartbeat reports), so ask it first
+    and say what to fix. A missing or unreadable DB proceeds as before: a read failure
+    must never read as "not here".
+    """
+    db = cfg.emdash_db or ""
+    if not target or not db or not Path(db).exists():
+        return ""
+    try:
+        projects = emdash.list_projects(db)
+    except emdash.EmdashReadError:
+        return ""
+    if target in projects:
+        return ""
+    return (f"'{target}' is not an emdash project on this runner — add the {target} "
+            f"repo to emdash here, or take this runner off {target}'s runner order")
+
+
 def _not_created(cfg, task: str, *, timeout: float = 10.0, poll: float = 0.5) -> str:
     """Did emdash actually create `task`? "" if yes (or if its DB cannot say), else a
     note for the caller to fail the turn with.
@@ -1041,6 +1068,14 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         # failing reuse means a NEW session per turn (cost). Investigate the task.
         logger.warning("REUSE FELL BACK to CREATE for thread=%s (agent=%s) — the linked "
                        "emdash session was unreachable; check for a stuck/gone task", thread_key, agent)
+    # Before anything is written for the session: a box without the agent's repo
+    # cannot create it, and that says nothing about the box's health — so no
+    # readiness.mark_failed here (see _project_missing).
+    missing_project = _project_missing(cfg, agent)
+    if missing_project:
+        logger.error("CREATE skipped turn=%s agent=%s: %s", turn_id, agent, missing_project)
+        client.fail_turn(turn_id, missing_project)
+        return f"failed:{turn_id}"
     name = _task_name(agent, turn)
     if not _confine(client, turn, name):
         return f"failed:{turn_id}"
