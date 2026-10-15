@@ -11,9 +11,24 @@ from canopy_runner import cdp_control
 
 
 def _fake_run(stdout, returncode=0, stderr=""):
-    def run(cmd, capture_output, text, timeout):
+    def run(cmd, capture_output, text, timeout, **kwargs):
         return SimpleNamespace(stdout=stdout, stderr=stderr, returncode=returncode)
     return run
+
+
+def test_sidecar_output_is_decoded_as_utf8_not_the_locale_code_page(monkeypatch):
+    """Node emits UTF-8 on every OS; under Windows' cp1252 default an em dash in a
+    sidecar error came back as "â€”" (2026-10-15)."""
+    seen = {}
+
+    def run(cmd, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(stdout=json.dumps({"ok": True}), stderr="", returncode=0)
+
+    monkeypatch.setattr(cdp_control.subprocess, "run", run)
+    cdp_control.list_tasks()
+    assert seen["encoding"] == "utf-8"
+    assert seen["errors"] == "replace"
 
 
 def test_list_tasks_parses(monkeypatch):
