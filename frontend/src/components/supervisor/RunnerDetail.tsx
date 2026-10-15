@@ -4,7 +4,7 @@ import { pauseRunner, retireRunner, setRunnerSessions, unpauseRunner, type Runne
 import type { AgentOut } from '@/api/agents'
 import { AgentRouting } from '@/components/agents/AgentRouting'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
-import { RunnerCredentials } from '@/components/supervisor/RunnerCredentials'
+import { boxLoginAccount, RunnerCredentials } from '@/components/supervisor/RunnerCredentials'
 import { RunnerAdmins } from '@/components/supervisor/RunnerAdmins'
 import { RunnerWorkspaces } from '@/components/supervisor/RunnerWorkspaces'
 import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
@@ -366,6 +366,7 @@ export function RunnerDetail({
           signedIn={runner.health_checks?.['claude.login']
             ? runner.health_checks['claude.login'].status === 'ok'
             : null}
+          signedInAs={boxLoginAccount(runner.health_checks?.['claude.login']?.detail)}
         />
       )}
       {/* Who else may fix this box. Rendered for an administrator (who may read

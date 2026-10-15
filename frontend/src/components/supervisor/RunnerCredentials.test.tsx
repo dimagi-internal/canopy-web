@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  boxLoginAccount,
   RunnerCredentials,
   SLOTS,
   credentialSummary,
@@ -154,6 +155,42 @@ describe('RunnerCredentials', () => {
       .toContain('signed in on this runner'))
     // Signed in on the box with no backup tokens is a working box, not an alarm.
     expect(screen.queryByTestId('runner-credentials-warning')).toBeNull()
+  })
+
+  it('names the account the box signed in as', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(NONE)
+    render(<RunnerCredentials runnerId="r1" signedIn signedInAs="ace@dimagi-ai.com" />)
+    await waitFor(() => expect(screen.getByTestId('cred-box-state').textContent)
+      .toContain('signed in as ace@dimagi-ai.com'))
+  })
+
+  it('reads the account out of the claude.login health check', () => {
+    expect(boxLoginAccount('signed in on this box as ace@dimagi-ai.com — claude.ai connectors available'))
+      .toBe('ace@dimagi-ai.com')
+    expect(boxLoginAccount('signed in on this box — claude.ai connectors available')).toBe('')
+    expect(boxLoginAccount(undefined)).toBe('')
+  })
+
+  it('removes a backup token and its name, after confirming', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
+    api.setRunnerCredential.mockResolvedValue(TWO)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => screen.getByTestId('cred-remove-claude_token'))
+    await act(async () => { fireEvent.click(screen.getByTestId('cred-remove-claude_token')) })
+    expect(confirm).toHaveBeenCalled()
+    expect(api.setRunnerCredential).toHaveBeenCalledWith('r1', { claude_token: '', claude_token_label: '' })
+    confirm.mockRestore()
+  })
+
+  it('does not remove a token when the confirm is declined', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(TWO)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<RunnerCredentials runnerId="r1" />)
+    await waitFor(() => screen.getByTestId('cred-remove-claude_token_secondary'))
+    await act(async () => { fireEvent.click(screen.getByTestId('cred-remove-claude_token_secondary')) })
+    expect(api.setRunnerCredential).not.toHaveBeenCalled()
+    confirm.mockRestore()
   })
 
   it('names each login', async () => {

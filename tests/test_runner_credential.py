@@ -171,3 +171,19 @@ def test_status_is_owner_gated_like_the_rest(runner):
     c = Client()
     c.force_login(other)
     assert c.get(_cred_url(runner) + "/status").status_code == 404
+
+
+def test_an_empty_value_removes_a_backup_token_and_its_name(client, runner):
+    """The credentials page's Remove button: an empty token clears the slot (the
+    runner's cascade skips an empty slot) and an empty label clears the name; the
+    other slot survives."""
+    services.set_runner_credential(runner, claude_token="C", claude_token_label="ACE",
+                                   claude_token_secondary="S", claude_token_secondary_label="JJ")
+    resp = client.post(_cred_url(runner), data={"claude_token": "", "claude_token_label": ""},
+                       content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    masked = resp.json()
+    assert masked["has_claude_token"] is False and masked["claude_token_label"] == ""
+    assert masked["has_claude_token_secondary"] is True and masked["claude_token_secondary_label"] == "JJ"
+    v = services.get_runner_credential(Runner.objects.get(pk=runner.pk))
+    assert v["claude_token"] == "" and v["claude_token_secondary"] == "S"
