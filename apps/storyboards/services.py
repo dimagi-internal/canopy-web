@@ -11,6 +11,8 @@ remove — and ``storyboards`` is product tier, so importing product is legal.
 """
 from __future__ import annotations
 
+import logging
+
 from apps.reviews.models import ReviewRequest
 from apps.runs import aggregate
 from apps.storyboards import cuts as entry_cuts
@@ -24,6 +26,8 @@ from apps.storyboards.models import Entry, Storyboard
 # treatment. A genuinely short title (a real one, should narratives ever carry
 # one) is still preferred.
 _MAX_CARD_TITLE = 70
+
+logger = logging.getLogger(__name__)
 
 
 def _card_title(narrative_slug: str, stored_title: str | None) -> str:
@@ -144,7 +148,12 @@ def board_decisions(board: Storyboard) -> list[dict]:
     for raw in _narrative_caveat_rows(board):
         if raw["id"] in taken:
             continue
-        clean = decision_rows.validate(raw)
+        try:
+            clean = decision_rows.validate(raw)
+        except decision_rows.DecisionInvalid as e:
+            # A malformed read-time caveat must never 500 the public read.
+            logger.warning("skipping narrative caveat row on %s: %s", board.slug, e)
+            continue
         unsaved = StoryboardDecision(storyboard=board, key=clean.pop("id"), **clean)
         read_only.append(decision_rows.serialize(unsaved, editable=False))
     return stored + read_only

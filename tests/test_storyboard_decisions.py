@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from django.contrib.auth.models import User
 from django.db import IntegrityError
+from django.test import Client
 
 from apps.storyboards import decisions as dsvc
 from apps.storyboards.models import Storyboard, StoryboardDecision
@@ -372,8 +373,6 @@ def test_long_resolution_is_still_the_recommendation_and_columns_hold():
         dsvc.validate(r)
 
 
-from django.test import Client  # noqa: E402
-
 
 @pytest.fixture()
 def member(owner):
@@ -459,3 +458,50 @@ def test_board_read_includes_narrative_caveats_read_only(board, member, monkeypa
     body = member.get(f"/api/w/connect/storyboards/{board.slug}").json()
     (d,) = body["decisions"]
     assert d["scope"] == "n1" and d["editable"] is False
+
+
+def test_member_with_bogus_token_still_needs_csrf(board, owner):
+    dsvc.publish(board, [_row()])
+    c = Client(enforce_csrf_checks=True)
+    c.force_login(owner)
+    resp = c.post(f"/api/storyboards/{board.slug}/decisions/banner/edit?t=bogus",
+                  {"action": "confirm"}, content_type="application/json")
+    assert resp.status_code == 403
+
+
+def test_resending_same_legacy_lists_is_idempotent(ws, member):
+    url = "/api/w/connect/storyboards/"
+    member.post(url, {"slug": "s9", "title": "S9"}, content_type="application/json")
+    for _ in range(2):
+        r = member.patch(f"{url}s9", {"brief": LEGACY}, content_type="application/json")
+        assert r.status_code == 200, r.content
+    assert len(r.json()["decisions"]) == 3
+
+
+def test_changed_legacy_divergence_updates_unruled_row(ws, member):
+    url = "/api/w/connect/storyboards/"
+    member.post(url, {"slug": "s10", "title": "S10"}, content_type="application/json")
+    member.patch(f"{url}s10", {"brief": LEGACY}, content_type="application/json")
+    changed = {**LEGACY, "divergences": [{**LEGACY["divergences"][0], "resolution": "Something new"}]}
+    r = member.patch(f"{url}s10", {"brief": changed}, content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert any("Something new" in (d["recommended"] + " ".join(d["options"])) for d in r.json()["decisions"])
+    assert len(r.json()["decisions"]) == 3
+
+
+def test_invalid_read_time_caveat_is_skipped_not_500(board, member, monkeypatch):
+    from apps.storyboards import services
+
+    monkeypatch.setattr(services, "_narrative_caveat_rows", lambda b: [{"id": "x", "question": ""}])
+    resp = member.get(f"/api/w/connect/storyboards/{board.slug}")
+    assert resp.status_code == 200 and resp.json()["decisions"] == []
+
+
+def test_patch_409_leaves_title_unchanged(board, member, owner):
+    (row,) = dsvc.publish(board, [_row()])
+    dsvc.apply_edit(row, action="pick", value="Keep as is", by_user=owner)
+    resp = member.patch(f"/api/w/connect/storyboards/{board.slug}",
+                        {"title": "New title", "decisions": [_row()]}, content_type="application/json")
+    assert resp.status_code == 409
+    board.refresh_from_db()
+    assert board.title == "Connect Supply"

@@ -7,7 +7,8 @@ BANNED = re.compile(r"(^|[_/-])(items?|work[_-]?products?|commands?|decisions?)(
 
 #: Pre-existing names elsewhere in the API that use one of the words in its
 #: ordinary sense, not as the retired task-system noun. Each needs a reason.
-#: Paths and operation ids have no exemptions; these are all schema names.
+#: Paths and operation ids may be exempted only where the word is used in its
+#: ordinary sense (never the retired task-system noun), each with a reason.
 ALLOWED: dict[str, str] = {
     "WalkthroughListItemOut": "walkthroughs: one row of a list, not a task-system item",
     "StoryboardListItemOut": "storyboards: one row of a list",

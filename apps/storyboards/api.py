@@ -180,10 +180,10 @@ def _write_decisions(board: Storyboard, payload) -> None:
         if legacy:
             if rows is None:  # keep what is on the board, add the converted lists
                 rows = [decision_rows.publishable(d) for d in board.decisions.all()]
-            # A publisher that re-sends the same lists must not collide with the
-            # rows they became on the first write (ids are deterministic).
-            have = {r["id"] for r in rows}
-            rows = rows + [r for r in legacy if r["id"] not in have]
+            # Ids are deterministic, so a re-sent list lands on the row it became
+            # on the first write; the converted row wins (publish still 409s on
+            # a ruled row whose value it would change).
+            rows = list(({r["id"]: r for r in rows} | {r["id"]: r for r in legacy}).values())
         board.brief = {k: v for k, v in brief_in.items() if k not in decision_rows.LEGACY_BRIEF_KEYS}
         board.save(update_fields=["brief", "updated_at"])
     if rows is not None:
@@ -429,7 +429,7 @@ def edit_storyboard_decision(
     if not _is_member(request, board):
         raise HttpError(403, "only a member can change a decision outside a feedback round")
     # auth=None skips Ninja's cookie-auth CSRF check, so a session caller re-runs it.
-    if not request.GET.get("t") and csrf_rejected(request):
+    if request.user.is_authenticated and csrf_rejected(request):
         raise HttpError(403, "CSRF verification failed")
     try:
         row = decision_rows.apply_edit(
