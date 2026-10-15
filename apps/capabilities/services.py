@@ -28,6 +28,14 @@ Rules this module keeps:
   than MaxInstanceLifetimeSeconds even with canopy-web gone.
 - **Every transition is an `events.record` row** (`capability.lease.<status>`),
   and so is every sweep failure (`capability.sweep.*`).
+
+A `pool` capability leases a NAMED SLOT instead of a machine (an exclusive
+checkout of one of a few fixed things — a test account, a seat): same grants,
+queue, heartbeat, idle/expiry/turn release and events, but no stack, no launch
+and no AWS call anywhere. A free slot makes the lease `ready` at once (queued →
+ready, `ready_info = {"slot": …}`); releasing it hands the slot to the oldest
+queued lease that can take it, in the same transaction. One live lease per slot
+is a database constraint (`cap_lease_one_live_per_slot`), not only a lock.
 """
 from __future__ import annotations
 
@@ -45,7 +53,7 @@ from canopy_runtime.schema import CapabilityManifest
 from canopy_sdk.ondemand import TAG_BROKER, LaunchFailed
 from django.conf import settings
 from django.core.cache import cache
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 from pydantic import ValidationError
@@ -57,6 +65,9 @@ logger = logging.getLogger(__name__)
 
 SOURCE = "capabilities"
 KIND = "ec2-ephemeral"
+POOL = "pool"
+#: The kinds an acquire may lease.
+KINDS = (KIND, POOL)
 #: The sweep runs at most once per this many seconds across the fleet (a cache
 #: key every web process and claim tick tries to add). A little under the
 #: scheduler's interval, so one process's tick is never skipped by its own key.
@@ -104,6 +115,18 @@ class CapabilityError(Exception):
 
 def manifest_of(cap: AgentCapability) -> CapabilityManifest:
     return CapabilityManifest.model_validate(cap.manifest)
+
+
+def is_pool(cap: AgentCapability) -> bool:
+    return cap.kind == POOL
+
+
+def _no_machine(lease: CapabilityLease, what: str) -> None:
+    """A pool lease holds a slot, not a machine: refuse what needs one (422)."""
+    if is_pool(lease.capability):
+        raise CapabilityError(422, (f"{lease.capability.name} is a pool capability: its leases hold a slot "
+                                    f"({lease.slot or 'none yet'}), not a machine, so there is nothing to "
+                                    f"{what}"))
 
 
 def target(cap: AgentCapability) -> aws.Target:
@@ -239,15 +262,26 @@ def _read_outputs(m: CapabilityManifest) -> dict:
 def publish(agent, manifests: list[CapabilityManifest], *, by) -> tuple[list[AgentCapability], list[str]]:
     """Replace the agent's declared capabilities with `manifests`.
 
-    Each stack's Outputs are read now (DescribeStacks) and checked against the
-    ec2-ephemeral contract; nothing is written unless every one passes. A
-    capability the list leaves out is retired and its live leases released.
-    Idempotent. Returns (the published rows, the names this call retired)."""
+    Each ec2-ephemeral stack's Outputs are read now (DescribeStacks) and checked
+    against the contract; nothing is written unless every one passes. A pool has
+    no stack: nothing is read. A capability the list leaves out is retired and
+    its live leases released; so are the live leases of one whose kind changed.
+    A pool whose slots changed keeps every live lease (one on a removed slot
+    runs out; that slot is never handed out again). Idempotent. Returns (the
+    published rows, the names this call retired)."""
     names = [m.name for m in manifests]
     dupes = sorted({n for n in names if names.count(n) > 1})
     if dupes:
         raise CapabilityError(422, f"capability names must be unique; repeated: {', '.join(dupes)}")
-    resolved = [(m, _resolve_outputs(agent, m, _read_outputs(m))) for m in manifests]
+    resolved = [(m, {} if m.is_pool else _resolve_outputs(agent, m, _read_outputs(m))) for m in manifests]
+    # A capability whose kind changes ends its live leases first, under the OLD
+    # kind — an ec2-ephemeral lease's machine must be terminated, which ending it
+    # as a pool lease would not do.
+    new_kind = {m.name: m.kind for m in manifests}
+    for old in AgentCapability.objects.filter(agent=agent, name__in=names).select_related("agent"):
+        if old.kind != new_kind[old.name]:
+            for lease in old.leases.filter(status__in=CapabilityLease.LIVE).select_related("capability", "agent"):
+                release(lease, reason=f"capability kind changed from {old.kind} to {new_kind[old.name]}")
 
     now = timezone.now()
     with transaction.atomic():
@@ -255,8 +289,9 @@ def publish(agent, manifests: list[CapabilityManifest], *, by) -> tuple[list[Age
         for m, outputs in resolved:
             row, _ = AgentCapability.objects.update_or_create(
                 agent=agent, name=m.name,
-                defaults={"kind": m.kind, "manifest": m.model_dump(mode="json"), "region": m.aws.region,
-                          "stack": m.aws.stack, "stack_outputs": outputs, "outputs_refreshed_at": now,
+                defaults={"kind": m.kind, "manifest": m.model_dump(mode="json"),
+                          "region": m.aws.region if m.aws else "", "stack": m.aws.stack if m.aws else "",
+                          "stack_outputs": outputs, "outputs_refreshed_at": None if m.is_pool else now,
                           "published_at": now,
                           "published_by": by if getattr(by, "is_authenticated", False) else None,
                           "retired_at": None},
@@ -270,7 +305,8 @@ def publish(agent, manifests: list[CapabilityManifest], *, by) -> tuple[list[Age
         for lease in cap.leases.filter(status__in=CapabilityLease.LIVE):
             release(lease, reason="capability retired: no longer declared by its agent")
     for row in rows:
-        _cap_event(row, "published", f"{agent.slug}/{row.name} published (stack {row.stack})")
+        where = (f"slots {', '.join(manifest_of(row).slots or [])}" if is_pool(row) else f"stack {row.stack}")
+        _cap_event(row, "published", f"{agent.slug}/{row.name} published ({row.kind}, {where})")
         promote(row)
     return rows, [c.name for c in retiring]
 
@@ -279,7 +315,12 @@ def refresh_outputs(cap: AgentCapability, *, why: str, strict: bool = False) -> 
     """Re-read the stack's Outputs (a stack update can change them: a 0.9.0
     upgrade adds the per-instance layout and the exec document). Keeps the old
     outputs, and records a warning, when the stack no longer meets the contract
-    (`strict`: and raises that CapabilityError). True when they changed."""
+    (`strict`: and raises that CapabilityError). True when they changed. A pool
+    has no stack (`strict`: 422)."""
+    if is_pool(cap):
+        if strict:
+            raise CapabilityError(422, f"{cap.name} is a pool capability: it has no stack to re-read")
+        return False
     m = manifest_of(cap)
     try:
         outputs = _resolve_outputs(cap.agent, m, _read_outputs(m))
@@ -309,8 +350,8 @@ def acquire(agent, name: str, *, params: dict | None, turn_id=None, by=None) -> 
         raise CapabilityError(422, (
             f"{agent.slug} declares no capability {name!r} (declared: {', '.join(declared) or 'none'}). "
             "Declare it in runtime.yaml and run `canopy-runtime publish-capabilities`."))
-    if cap.kind != KIND:
-        raise CapabilityError(422, f"capability kind {cap.kind!r} is not brokered (only {KIND!r})")
+    if cap.kind not in KINDS:
+        raise CapabilityError(422, f"capability kind {cap.kind!r} is not brokered (only {', '.join(KINDS)})")
     grant = grant_for(agent, name)
     if grant is None:
         raise CapabilityError(403, (
@@ -332,8 +373,9 @@ def acquire(agent, name: str, *, params: dict | None, turn_id=None, by=None) -> 
         max_lease_s=limits["max_lease_s"], idle_release_s=limits["idle_release_s"],
         ready_timeout_s=limits["ready_timeout_s"], last_heartbeat_at=now,
         # Knowable now only on an older stack (leases/<id>); a 0.9.0 stack's is
-        # set when the machine is recorded, since it names the machine.
-        s3_base=target(cap).lease_base(str(lease_id), ""),
+        # set when the machine is recorded, since it names the machine. A pool
+        # lease has no objects at all.
+        s3_base="" if is_pool(cap) else target(cap).lease_base(str(lease_id), ""),
     )
     _event(lease, "lease.queued", f"{agent.slug}/{name} lease requested", turn_id=str(turn.pk) if turn else None)
     promote(cap)
@@ -397,13 +439,21 @@ def promote(cap: AgentCapability) -> list[CapabilityLease]:
     then launch each. Safe to call any time, from any process: serialized per
     capability by a row lock, and EC2 is asked BEFORE the lock is taken — the
     count inside it reads holding leases from the DB, so a launch another
-    process made after our EC2 read is still counted."""
+    process made after our EC2 read is still counted. A pool assigns slots
+    instead (`_assign_slots`), with no AWS call."""
     if cap.retired_at is not None or not CapabilityLease.objects.filter(
             capability=cap, status=CapabilityLease.QUEUED).exists():
         return []
     grant = grant_for(cap.agent, cap.name)
     if grant is None:
         return []
+    if is_pool(cap):
+        with transaction.atomic():
+            locked = AgentCapability.objects.select_for_update().filter(pk=cap.pk).first()
+            if locked is None:
+                return []
+            done = _assign_slots(locked, grant)
+        return _slot_events(done)
     b, t = broker(cap), target(cap)
     tagged = _tagged(cap, b, t)
     if tagged is None:
@@ -425,6 +475,75 @@ def promote(cap: AgentCapability) -> list[CapabilityLease]:
     for lease in promoted:
         _launch(lease)
     return promoted
+
+
+def _assign_slots(cap: AgentCapability, grant: CapabilityGrant | None) -> list[tuple[CapabilityLease, str]]:
+    """A pool's promote. MUST run inside a transaction holding the capability's
+    row lock (`cap` is the row read under it, so its manifest is the current
+    one). Oldest queued first: a lease that asked for a slot gets exactly that
+    slot when it is free (and waits, without holding up the leases behind it,
+    while it is not); any other lease gets the first free slot in declared
+    order. A slot held by a live lease — even one a republish removed — is never
+    handed out; a queued lease asking for a removed slot fails. Returns
+    [(lease, "ready" | "failed")] for the events, which the caller records."""
+    if grant is None or cap.retired_at is not None:
+        return []
+    queued = list(CapabilityLease.objects.filter(capability=cap, status=CapabilityLease.QUEUED)
+                  .order_by("created_at"))
+    if not queued:
+        return []
+    declared = list(manifest_of(cap).slots or [])
+    held = set(CapabilityLease.objects.filter(capability=cap, status__in=CapabilityLease.LIVE)
+               .exclude(slot="").values_list("slot", flat=True))
+    room = effective_limits(cap, grant)["max_concurrent"] - len(held & set(declared))
+    free = [s for s in declared if s not in held]
+    now = timezone.now()
+    done: list[tuple[CapabilityLease, str]] = []
+    for lease in queued:
+        want = (lease.params or {}).get("slot")
+        if want and want not in declared:
+            reason = f"slot {want!r} is no longer one of this pool's slots ({', '.join(declared)})"
+            if CapabilityLease.objects.filter(pk=lease.pk, status=CapabilityLease.QUEUED).update(
+                    status=CapabilityLease.FAILED, ended_at=now, reason=reason[:500]):
+                lease.refresh_from_db()
+                done.append((lease, CapabilityLease.FAILED))
+            continue
+        if room <= 0 or not free:
+            continue
+        slot = want if want else free[0]
+        if slot not in free:
+            continue  # asked for a held slot: it waits; the leases behind it do not
+        try:
+            with transaction.atomic():  # a savepoint: the constraint is the last word
+                updated = CapabilityLease.objects.filter(pk=lease.pk, status=CapabilityLease.QUEUED).update(
+                    status=CapabilityLease.READY, slot=slot, params={**(lease.params or {}), "slot": slot},
+                    ready_info={"slot": slot}, provisioning_at=now, ready_at=now, reason="",
+                    expires_at=now + dt.timedelta(seconds=lease.max_lease_s))
+        except IntegrityError:
+            logger.warning("pool %s: slot %s is already held (constraint); lease %s stays queued",
+                           cap.pk, slot, lease.pk)
+            free.remove(slot)
+            continue
+        if updated:
+            free.remove(slot)
+            room -= 1
+            lease.refresh_from_db()
+            done.append((lease, CapabilityLease.READY))
+    return done
+
+
+def _slot_events(done: list[tuple[CapabilityLease, str]]) -> list[CapabilityLease]:
+    """Record the events of an `_assign_slots`; returns the leases made ready."""
+    ready = []
+    for lease, outcome in done:
+        cap = lease.capability
+        if outcome == CapabilityLease.READY:
+            ready.append(lease)
+            _event(lease, "lease.ready", f"{cap.agent.slug}/{cap.name} holds slot {lease.slot}", slot=lease.slot)
+        else:
+            _event(lease, "lease.failed", f"{cap.agent.slug}/{cap.name} lease failed: {lease.reason}",
+                   level="warn", reason=lease.reason)
+    return ready
 
 
 def _launch(lease: CapabilityLease) -> None:
@@ -588,7 +707,12 @@ def check_ready(lease: CapabilityLease, *, describe: bool = True) -> None:
 def end(lease: CapabilityLease, status: str, reason: str, *, terminate: bool = True,
         promote_next: bool = True) -> bool:
     """Move a live lease to a terminal status, terminate its machine, and let the
-    next queued lease in. False if it had already ended (idempotent)."""
+    next queued lease in. False if it had already ended (idempotent). A pool
+    lease frees its slot and the queue takes it in the SAME transaction, under
+    the capability's row lock (taken before the lease row, the order `promote`
+    uses, so the two cannot deadlock)."""
+    if is_pool(lease.capability):
+        return _end_pool(lease, status, reason, promote_next=promote_next)
     now = timezone.now()
     updated = CapabilityLease.objects.filter(pk=lease.pk, status__in=CapabilityLease.LIVE).update(
         status=status, ended_at=now, reason=reason[:500])
@@ -607,6 +731,24 @@ def end(lease: CapabilityLease, status: str, reason: str, *, terminate: bool = T
                            lease.pk, lease.instance_id, e)
     if promote_next:
         promote(lease.capability)
+    return True
+
+
+def _end_pool(lease: CapabilityLease, status: str, reason: str, *, promote_next: bool) -> bool:
+    with transaction.atomic():
+        cap = AgentCapability.objects.select_for_update().filter(pk=lease.capability_id).first()
+        updated = CapabilityLease.objects.filter(pk=lease.pk, status__in=CapabilityLease.LIVE).update(
+            status=status, ended_at=timezone.now(), reason=reason[:500])
+        done = (_assign_slots(cap, grant_for(cap.agent, cap.name))
+                if updated and promote_next and cap is not None else [])
+    lease.refresh_from_db()
+    if not updated:
+        return False
+    level = "warn" if status == CapabilityLease.FAILED else "info"
+    _event(lease, f"lease.{status}", f"{lease.agent.slug}/{lease.capability.name} lease {status}"
+           + (f" (slot {lease.slot} freed)" if lease.slot else "") + f": {reason}",
+           level=level, reason=reason, slot=lease.slot or None)
+    _slot_events(done)
     return True
 
 
@@ -702,7 +844,10 @@ def _base(lease: CapabilityLease) -> str:
 
 def out_prefix(lease: CapabilityLease) -> str:
     """s3://<bucket>/<base>/out/ — CANOPY_LEASE_OUT, as a literal for argv. ""
-    until it is knowable (a 0.9.0 stack's lease before its machine launches)."""
+    until it is knowable (a 0.9.0 stack's lease before its machine launches),
+    and always for a pool lease, which has no machine."""
+    if is_pool(lease.capability):
+        return ""
     base = _base(lease)
     return f"s3://{target(lease.capability).bucket}/{base}/out/" if base else ""
 
@@ -720,6 +865,7 @@ def exec_(lease: CapabilityLease, argv: list[str], timeout_s: int) -> tuple[str,
     ever script text), and the document checks argv[0] against the stack's own
     allow list as well; on an older stack it is shell-quoted into
     AWS-RunShellScript."""
+    _no_machine(lease, "exec on")
     if lease.status != CapabilityLease.READY:
         raise CapabilityError(409, f"lease {lease.pk} is {lease.status}; exec needs a ready lease")
     allow = manifest_of(lease.capability).exec.allow
@@ -792,6 +938,7 @@ def exec_status(lease: CapabilityLease, exec_id: str, *, wait_s: int = 0) -> Exe
     """Read an exec back from SSM — no process state, so it answers the same
     after a canopy-web deploy as before it. With `wait_s` (≤ MAX_WAIT_S) it
     re-reads about once a second and returns as soon as the exec is done."""
+    _no_machine(lease, "read an exec from")
     try:
         uuid.UUID(exec_id)
     except ValueError:
@@ -881,6 +1028,7 @@ def _ttl(b: aws.Broker) -> int:
 
 def uploads(lease: CapabilityLease, names: list[str]) -> tuple[list[dict], int]:
     """Presigned PUTs under the lease's in/. Returns (the uploads, their TTL)."""
+    _no_machine(lease, "upload to")
     if lease.status not in CapabilityLease.LIVE:
         raise CapabilityError(409, f"lease {lease.pk} is {lease.status}; nothing can be staged for it")
     if not names or len(names) > MAX_UPLOADS:
@@ -912,6 +1060,7 @@ def uploads(lease: CapabilityLease, names: list[str]) -> tuple[list[dict], int]:
 def artifacts(lease: CapabilityLease, prefix: str = "") -> tuple[list[dict], int]:
     """Presigned GETs for everything under the lease's out/<prefix>. Returns (the
     artifacts, their TTL)."""
+    _no_machine(lease, "list artifacts of")
     prefix = prefix or ""
     if len(prefix) > 200 or not _PREFIX.match(prefix) or ".." in prefix.split("/"):
         raise CapabilityError(422, f"prefix {prefix!r} must be a relative path (no '..')")
@@ -1104,7 +1253,7 @@ def sweep() -> dict:
     a failure in one lease or one capability's AWS calls is recorded as an event
     and skips that lease or capability, not the pass."""
     counts = {"expired": 0, "idle": 0, "turn_ended": 0, "checked": 0, "orphans": 0, "gone": 0,
-              "refreshed": 0, "errors": 0}
+              "refreshed": 0, "promoted": 0, "errors": 0}
     now = timezone.now()
     from apps.harness.models import Turn
 
@@ -1143,6 +1292,18 @@ def sweep() -> dict:
         except Exception as e:  # noqa: BLE001
             counts["errors"] += 1
             logger.exception("capability sweep: capability %s", cap.pk)
+            _cap_event(cap, "sweep.error", f"the sweep could not process {cap.agent.slug}/{cap.name}: {e}",
+                       level="error", key=f"sweep:cap:{cap.pk}", error=repr(e)[:1000])
+
+    # Pools: no stack, no machines, no AWS call — only the queue. (Their leases'
+    # expiry, idle and turn release ran in the lease pass above.)
+    for cap in AgentCapability.objects.filter(kind=POOL, retired_at__isnull=True).select_related(
+            "agent", "agent__workspace"):
+        try:
+            counts["promoted"] += len(promote(cap))
+        except Exception as e:  # noqa: BLE001
+            counts["errors"] += 1
+            logger.exception("capability sweep: pool %s", cap.pk)
             _cap_event(cap, "sweep.error", f"the sweep could not process {cap.agent.slug}/{cap.name}: {e}",
                        level="error", key=f"sweep:cap:{cap.pk}", error=repr(e)[:1000])
     return counts
@@ -1206,7 +1367,10 @@ def _sweep_machines(cap: AgentCapability) -> tuple[int, int]:
 
 def terminate_orphans_now(cap: AgentCapability) -> dict:
     """An admin's "terminate orphans now": the sweep's machine pass for one
-    capability, run at once. Raises CapabilityError(502) when EC2 cannot be listed."""
+    capability, run at once. Raises CapabilityError(502) when EC2 cannot be
+    listed, and 422 for a pool (it has no machines)."""
+    if is_pool(cap):
+        raise CapabilityError(422, f"{cap.name} is a pool capability: it has no machines")
     b, t = broker(cap), target(cap)
     try:
         b.list_tagged(t)

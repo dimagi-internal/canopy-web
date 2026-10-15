@@ -47,7 +47,8 @@ capabilities:
   - manifest: infra/capabilities/android-emulator/capability.yaml   # relative to runtime.yaml
 ```
 
-Each manifest is a `CapabilityManifest` (version 1, `kind: ec2-ephemeral`). Publish them as
+Each manifest is a `CapabilityManifest` (version 1, `kind: ec2-ephemeral` — a machine per
+lease — or `kind: pool` — one named `slots` entry per lease, no machine). Publish them as
 part of the agent's deploy:
 
 ```bash

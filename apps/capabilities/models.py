@@ -5,6 +5,10 @@ publishes, the workspace admin's grant, and the lease lifecycle over AWS — and
 nothing domain-specific: the stack, the image and the CLI on it are the agent's
 (docs/architecture/capabilities.md).
 
+Two kinds (`AgentCapability.kind`): `ec2-ephemeral`, one fresh EC2 instance per
+lease; and `pool`, one NAMED SLOT of a small fixed set per lease — an exclusive
+checkout with no machine and no AWS call (`CapabilityLease.slot`).
+
 Three rows:
 
 - ``AgentCapability``: what the agent DECLARED (its ``capability.yaml``, published
@@ -140,9 +144,21 @@ class CapabilityLease(models.Model):
     s3_base = models.CharField(max_length=300, blank=True, default="")
     #: Why it ended (or why a launch is being retried).
     reason = models.CharField(max_length=500, blank=True, default="")
+    #: A `pool` lease's slot, set when one is assigned (the lease goes straight
+    #: to ready); "" while queued and for an ec2-ephemeral lease. A queued pool
+    #: lease that asked for a particular slot carries it in `params.slot`.
+    slot = models.CharField(max_length=40, blank=True, default="")
 
     class Meta:
         ordering = ["created_at"]
+        constraints = [
+            # A slot is held by at most one live lease: the pool's exclusivity,
+            # enforced by the database and not only by `promote`'s row lock.
+            models.UniqueConstraint(
+                fields=["capability", "slot"], name="cap_lease_one_live_per_slot",
+                condition=models.Q(status__in=["queued", "provisioning", "ready"]) & ~models.Q(slot=""),
+            ),
+        ]
         indexes = [
             models.Index(fields=["capability", "status", "created_at"], name="cap_lease_queue_idx"),
             models.Index(fields=["status"], name="cap_lease_status_idx"),

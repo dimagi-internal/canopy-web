@@ -1,6 +1,6 @@
 [project]
 name = "canopy-runtime"
-version = "0.2.0"
+version = "0.3.0"
 description = "Django-free schema for an agent's declarative runtime spec (runtime.yaml): the plugins, MCP servers, tools, engine, secret REFERENCES, and preflight that define 'ready to run this agent'. Lives in the agent's repo; read + validated by the reconciler."
 readme = "README.md"
 requires-python = ">=3.11"

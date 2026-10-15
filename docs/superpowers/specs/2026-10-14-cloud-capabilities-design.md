@@ -276,3 +276,16 @@ take `?wait_s=`. The current contract is `docs/architecture/capabilities.md`.)
   warm pool is ever needed.
 - **Cap defaults:** these are guesses sized to a Phase 6 walk; revisit after a week of
   `capability.lease.*` events.
+
+## Addendum (2026-10-15): the `pool` kind
+
+ACE's Connect test workers (PersonalID demo accounts) are shared by every device session on
+every machine, and two sessions signing in as one worker lock each other out (newest device
+wins; ace#2934, ace#2955). What that needs is a fleet-wide EXCLUSIVE CHECKOUT of a named worker
+from a small fixed set — which the broker already has every part of (leases, per-capability
+FIFO queue, heartbeat/idle release, `max_lease_s` expiry, turn-bound release, grants, events,
+a fleet-visible list), except that `ec2-ephemeral` leases a machine. A second kind, `pool`,
+leases a **named slot** instead: `slots` in the manifest, no `aws`/`exec`/`params`, no stack,
+no AWS call; a free slot makes the lease ready at once, a release hands it to the queue in the
+same transaction, and one live lease per slot is a database constraint. Contract:
+`docs/architecture/capabilities.md` §6.

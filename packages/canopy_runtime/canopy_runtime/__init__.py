@@ -14,8 +14,10 @@ from canopy_runtime.reconcile import (
     reconcile,
 )
 from canopy_runtime.schema import (
+    POOL_SLOT_PARAM,
     CapabilityAws,
     CapabilityExec,
+    CapabilityKind,
     CapabilityLimits,
     CapabilityManifest,
     CapabilityParam,
@@ -41,8 +43,10 @@ from canopy_runtime.stores import (
 
 __all__ = [
     # schema
+    "POOL_SLOT_PARAM",
     "CapabilityAws",
     "CapabilityExec",
+    "CapabilityKind",
     "CapabilityLimits",
     "CapabilityManifest",
     "CapabilityParam",
