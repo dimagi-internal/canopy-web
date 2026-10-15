@@ -1027,6 +1027,36 @@ def _vault_fingerprint(tpl: pathlib.Path, env: dict, op_token: str) -> tuple[str
     return "|".join(parts), ""
 
 
+def _refresh_agent_env_canopy(slug: str, op_token: str, vault: str) -> None:
+    """The claim-time refresh with the canopy engine: canopy's `canopy cred sync` — the
+    function every agent session's start hook already runs, same fingerprint, same
+    `.env.stamp` — given the agent's own key and the vault this box was told. Run from the
+    agent's clone so it finds the template there. The copy below (`_vault_fingerprint` and
+    the inject) goes when the canopy engine becomes the default."""
+    env = {k: v for k, v in _child_safe_env().items()
+           if k not in _OP_PERSONAL_ENV_KEYS and not k.startswith(_OP_PERSONAL_ENV_PREFIXES)}
+    env.update(OP_SERVICE_ACCOUNT_TOKEN=op_token, AGENT_VAULT=vault, AGENT_SLUG=slug)
+    try:
+        res = subprocess.run([_canopy_cli(), "cred", "sync", "--agent", slug, "--ttl", "0"],
+                             env=env, cwd=str(pathlib.Path(AGENT_ROOT) / slug),
+                             capture_output=True, text=True,
+                             timeout=_AGENT_ENV_TIMEOUT_SECONDS + 200)
+        said = " ".join((res.stderr or res.stdout or "").split())[:300]
+        err = "" if res.returncode == 0 else (said or f"canopy cred sync exited {res.returncode}")
+    except subprocess.TimeoutExpired:
+        err, said = "canopy cred sync did not finish in time", ""
+    except OSError as exc:
+        err, said = f"canopy could not run ({exc})", ""
+    out = pathlib.Path.home() / f".{slug}" / ".env"
+    if err:
+        _log(f"warn: {slug}: could not refresh {out} from its vault — this turn uses the "
+             f"existing file, which may be stale: {err}")
+        _set_check(f"env.{slug}", "warn",
+                   f"vault refresh failed; turns run on the last good {out}: {err}")
+        return
+    _set_check(f"env.{slug}", "ok", f"{out}: {said.removeprefix(f'[canopy cred] {slug}: ')}")
+
+
 def _refresh_agent_env(slug: str, op_token: str, vault: str = "") -> None:
     """Bring `~/.<slug>/.env` up to date with the agent's vault, cheaply.
 
@@ -1056,6 +1086,9 @@ def _refresh_agent_env(slug: str, op_token: str, vault: str = "") -> None:
         if now - _AGENT_ENV_AT.get(slug, 0.0) < _AGENT_ENV_TTL_SECONDS:
             return
         _AGENT_ENV_AT[slug] = now
+        if PREPARE_ENGINE == "canopy":
+            _refresh_agent_env_canopy(slug, op_token, vault)
+            return
         out = pathlib.Path.home() / f".{slug}" / ".env"
         stamp = out.with_name(".env.stamp")
         tmp = out.with_name(".env.refresh")
