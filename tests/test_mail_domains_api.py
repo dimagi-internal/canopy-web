@@ -244,6 +244,14 @@ def test_forwarder_address_never_resolves(owner, ws):
     assert domains.resolve("canopy-forwarder@marshellis.com") == (d, None)
 
 
+def test_dmarc_reports_skip_the_catch_all(owner, ws):
+    d = MailDomain.objects.create(workspace=ws, name="marshellis.com", status="verified")
+    MailRoute.objects.create(domain=d, local_part="*", kind="forward", forward_to=owner)
+    assert domains.resolve("dmarc@marshellis.com") == (d, None)
+    explicit = MailRoute.objects.create(domain=d, local_part="dmarc", kind="forward", forward_to=owner)
+    assert domains.resolve("dmarc@marshellis.com") == (d, explicit)
+
+
 def test_local_part_length_and_punycode_tld(owner, ws):
     d = MailDomain.objects.create(workspace=ws, name="marshellis.com", status="verified")
     with pytest.raises(domains.DomainError):

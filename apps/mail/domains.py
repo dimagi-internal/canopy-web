@@ -261,4 +261,7 @@ def resolve(address: str) -> tuple[MailDomain | None, MailRoute | None]:
         return domain, None
     routes = {r.local_part: r for r in domain.routes.filter(
         local_part__in=[local, MailRoute.CATCH_ALL], enabled=True).select_related("agent", "forward_to")}
+    if local == settings.MAIL_DMARC_LOCAL_PART:
+        # DMARC aggregate reports: never swept up by the catch-all and forwarded to a person.
+        return domain, routes.get(local)
     return domain, routes.get(local) or routes.get(MailRoute.CATCH_ALL)

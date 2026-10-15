@@ -83,7 +83,7 @@ def expected_records(domain) -> list[DnsRecord]:
         DnsRecord("mail-from-mx", "MX", mail_from, f"feedback-smtp.{region}.amazonses.com", priority=10),
         DnsRecord("mail-from-spf", "TXT", mail_from, "v=spf1 include:amazonses.com -all"),
         DnsRecord("spf", "TXT", name, merged_spf(spf_now), found=spf_all),
-        DnsRecord("dmarc", "TXT", f"_dmarc.{name}", f"v=DMARC1; p=none; rua=mailto:dmarc@{name}"),
+        DnsRecord("dmarc", "TXT", f"_dmarc.{name}", f"v=DMARC1; p=none; rua=mailto:{settings.MAIL_DMARC_LOCAL_PART}@{name}"),
         DnsRecord("mx", "MX", name, settings.MAIL_INBOUND_MX, priority=10),
     ]
     return recs

@@ -684,6 +684,9 @@ MAIL_CONFIGURATION_SET = env("MAIL_CONFIGURATION_SET", default="canopy-tenant-ma
 MAIL_SES_AUTHSERV_ID = env("MAIL_SES_AUTHSERV_ID", default="amazonses.com")
 MAIL_INBOUND_MX = env("MAIL_INBOUND_MX", default="inbound-smtp.us-east-1.amazonaws.com")
 MAIL_FORWARDER_LOCAL_PART = "canopy-forwarder"
+# Where the DMARC record canopy asks for sends aggregate reports (rua). Daily machine mail
+# nobody reads: the catch-all never takes it, so only an explicit route on this address does.
+MAIL_DMARC_LOCAL_PART = "dmarc"
 # A domain still pending DNS after this many days no longer holds its name: adding it
 # again (from any workspace) releases the stale row and its SES identity first.
 MAIL_PENDING_DOMAIN_TTL_DAYS = env.int("MAIL_PENDING_DOMAIN_TTL_DAYS", default=7)
