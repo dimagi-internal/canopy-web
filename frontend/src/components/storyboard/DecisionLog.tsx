@@ -11,9 +11,10 @@ export function groupDecisions(rows: Decision[]): { title: string; open: boolean
   const live = rows.filter((d) => !d.superseded_by)
   const groups = [
     { title: 'Answer before sharing', open: true,
-      rows: live.filter((d) => d.status !== 'deferred' && d.review_ask === 'required-before') },
+      rows: live.filter((d) => d.status !== 'deferred' && d.review_ask === 'required-before' && d.needed_by === 'external-share') },
     { title: 'Please confirm', open: true,
-      rows: live.filter((d) => d.status !== 'deferred' && d.review_ask === 'recommended-confirmation') },
+      rows: live.filter((d) => d.status !== 'deferred' && d.review_ask !== '' &&
+        !(d.review_ask === 'required-before' && d.needed_by === 'external-share')) },
     { title: 'What the agent assumed', open: false,
       rows: live.filter((d) => d.status !== 'deferred' && !d.review_ask) },
     { title: 'Not needed now', open: false, rows: live.filter((d) => d.status === 'deferred') },
@@ -23,9 +24,9 @@ export function groupDecisions(rows: Decision[]): { title: string; open: boolean
 }
 
 function chip(d: Decision): string {
-  if (d.status === 'overridden') return `Changed by ${d.decided_by}`
-  if (d.confirmed) return `Confirmed by ${d.decided_by}`
-  if (d.status === 'deferred') return `Later: ${d.revisit_when}`
+  if (d.status === 'overridden') return d.decided_by ? `Changed by ${d.decided_by}` : 'Changed'
+  if (d.confirmed) return d.decided_by ? `Confirmed by ${d.decided_by}` : 'Confirmed'
+  if (d.status === 'deferred') return d.revisit_when ? `Later: ${d.revisit_when}` : 'Not needed now'
   return 'Recommended'
 }
 
@@ -121,7 +122,7 @@ export function DecisionLog({ board, token, ws, canEdit }: {
           </summary>
           <ul className="mt-3 flex flex-col gap-3">
             {g.rows.map((d) => (
-              <DecisionRow key={d.id} d={d} canEdit={canEdit}
+              <DecisionRow key={d.id} d={d} canEdit={canEdit && !d.superseded_by}
                 onEdit={async (body) => onChanged(await editDecision(board.slug, d.id, body, token, ws))} />
             ))}
           </ul>

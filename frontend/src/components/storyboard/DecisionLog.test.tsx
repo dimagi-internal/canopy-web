@@ -33,6 +33,15 @@ describe('groupDecisions', () => {
     expect(groups.map((g) => g.open)).toEqual([true, true, false, false, false])
   })
 
+  it('puts a required row not needed before sharing under Please confirm', () => {
+    const groups = groupDecisions([
+      row({ id: 'n', review_ask: 'required-before', needed_by: 'next-run' }),
+      row({ id: 'm', review_ask: 'required-before', needed_by: '' }),
+    ])
+    expect(groups.map((g) => g.title)).toEqual(['Please confirm'])
+    expect(groups[0].rows.map((r) => r.id)).toEqual(['n', 'm'])
+  })
+
   it('omits empty groups', () => {
     expect(groupDecisions([row({ id: 'a', review_ask: '', needed_by: '' })]).map((g) => g.title))
       .toEqual(['What the agent assumed'])
@@ -52,6 +61,11 @@ describe('DecisionRow', () => {
     render(<DecisionRow d={row({ status: 'overridden', override: 'Keep as is', value: 'Keep as is',
       decided_by: 'Lily' })} canEdit={false} onEdit={vi.fn()} />)
     expect(screen.getByText('Changed by Lily')).toBeTruthy()
+  })
+
+  it('falls back to plain chips when names are missing', () => {
+    render(<DecisionRow d={row({ confirmed: true, decided_by: '' })} canEdit={false} onEdit={vi.fn()} />)
+    expect(screen.getByText('Confirmed')).toBeTruthy()
   })
 
   it('confirms through onEdit', async () => {

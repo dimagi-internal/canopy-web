@@ -222,7 +222,7 @@ function Board({
           </section>
         ))}
 
-        {/* What the demos assume, and where the script and data disagree —
+        {/* The decision log: what must be answered, confirmed or was assumed —
             the last thing read before a reviewer sends this on. Kept on a reel
             too: a disclosure is not review furniture. */}
         <DecisionLog board={board} token={token} ws={workspace} canEdit={board.is_member} />

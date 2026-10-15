@@ -4,8 +4,8 @@ import { fmtDuration } from '@/components/ddd/CutPlayer'
 /**
  * The framing a set of demos needs and a title + lede cannot carry: who it is
  * for, the point to land, what is true about the data on screen, the order to
- * play it in and the short version, and — at the end — what we assumed and
- * where the script and the data disagree. All of it is optional; a board
+ * play it in and the short version. The set's assumptions and open questions live in the decision
+ * log (DecisionLog), not here. All of it is optional; a board
  * without a brief renders exactly as before.
  *
  * This existed as a Google Doc beside the board ("Connect Supply demos: scripts

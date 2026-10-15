@@ -69,7 +69,7 @@ function board(over: Partial<api.Storyboard> = {}): api.Storyboard {
       short_version: { label: '3-minute version', items: [{ narrative_slug: 'rutf', cut_id: 'buying' }] },
     },
     decisions: [
-      decision({ id: 'partner-store', plain_question: 'Name the partner store?', review_ask: 'required-before' }),
+      decision({ id: 'partner-store', plain_question: 'Name the partner store?', review_ask: 'required-before', needed_by: 'external-share' }),
       decision({ id: 'stand-in', plain_question: 'Programme 10112 stands in for the real programme.', review_ask: '' }),
     ],
     acts: [
