@@ -153,7 +153,13 @@ def _run(command: str, args: dict, *, node: str = "node", timeout: int = 90) -> 
     try:
         proc = subprocess.run(
             [node, str(SIDECAR), command, json.dumps(args)],
-            capture_output=True, text=True, timeout=timeout,
+            # Node writes UTF-8 whatever the OS. Decoding with the locale's code page
+            # (cp1252 on Windows) garbled every em dash in a sidecar error into "â€”"
+            # (2026-10-15, the first real Windows runner) and would raise outright on
+            # bytes cp1252 leaves unmapped (0x81/0x8D/0x8F/0x90/0x9D — inside many
+            # emoji) in a read-term screen.
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout,
         )
     except FileNotFoundError as exc:
         raise CDPError("node not found — install Node.js, then run "
