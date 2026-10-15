@@ -14,7 +14,10 @@ S3, so a caller that restarts mid-lease loses nothing — it reads it back.
   a timeout returns the SAME instance instead of starting a second one.
 - ``list_tagged`` is how a caller counts live machines and finds orphans: every
   instance carries ``canopy:capability`` and ``canopy:owner`` (from the launch
-  template and from the request) and ``canopy:lease``.
+  template and from the request) and ``canopy:lease``; canopy-web's broker also
+  tags ``canopy:broker`` (``TAG_BROKER``) with its deployment's id.
+- ``run_document_async`` sends the capability stack's own exec document, which
+  runs an argv only if argv[0] is on the stack's allow list.
 """
 from __future__ import annotations
 
@@ -33,6 +36,9 @@ from .ssm import send_command
 TAG_CAPABILITY = "canopy:capability"
 TAG_OWNER = "canopy:owner"
 TAG_LEASE = "canopy:lease"
+#: Which broker deployment launched the instance (a canopy-web's own id), so two
+#: brokers sharing one capability stack never count or kill each other's machines.
+TAG_BROKER = "canopy:broker"
 
 #: EC2 states of an instance that still costs money or is about to. Not
 #: ``shutting-down`` / ``terminated``: those are already on their way out.
@@ -217,6 +223,19 @@ class EphemeralInstance:
             self.ssm, instance_id, commands=commands, timeout_seconds=timeout_s,
             execution_timeout_s=timeout_s, output_bucket=output_bucket,
             output_prefix=output_prefix, comment=comment,
+        )
+
+    def run_document_async(self, instance_id: str, document: str, parameters: dict[str, list[str]], *,
+                           timeout_s: int = 600, output_bucket: str | None = None,
+                           output_prefix: str | None = None, comment: str | None = None,
+                           document_version: str | None = None) -> str:
+        """Send a named command document (e.g. the capability stack's exec
+        document) with ``parameters`` and return its SSM CommandId at once.
+        ``timeout_s`` is SSM's delivery timeout; the document bounds the run."""
+        return send_command(
+            self.ssm, instance_id, commands=[], timeout_seconds=timeout_s,
+            output_bucket=output_bucket, output_prefix=output_prefix, comment=comment,
+            document_name=document, parameters=parameters, document_version=document_version,
         )
 
     def invocation(self, command_id: str, instance_id: str) -> Invocation | None:

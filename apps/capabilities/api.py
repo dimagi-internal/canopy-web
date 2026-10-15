@@ -9,17 +9,24 @@ Who may call (the same doors as the rest of /api/agents, never a second rule):
 - the agent's OWN canopy login (`Agent.user`) — what an agent's PAT is; or
 - a member of the agent's workspace (non-members get the same 404 as a missing
   agent). Leasing a machine spends money, so a lease route also needs
-  `agent.work` (editor) unless the caller is the agent itself; publishing
-  needs the agent's owner/admins (`Agent.is_admin`) or the agent itself; a grant
-  needs `integrations` (a workspace admin).
+  `agent.work` (editor) unless the caller is the agent itself; publishing (and
+  re-reading a stack) needs the agent's owner/admins (`Agent.is_admin`) or the
+  agent itself; a grant needs `integrations` (a workspace admin); a
+  force-release and "terminate orphans now" need `integrations` or
+  `Agent.is_admin`.
+
+Long-poll: `GET /leases/{id}?wait_s=` and `GET /leases/{id}/exec/{exec_id}?wait_s=`
+(0-20) hold the request until the state changes, re-checking about once a second.
 """
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 
 from django.db.models import Q
 from django.http import HttpRequest
-from ninja import Router, Status
+from django.utils import timezone
+from ninja import Query, Router, Status
 from ninja.errors import HttpError
 
 from apps.agents import services as agent_services
@@ -38,10 +45,15 @@ from .schemas import (
     CapabilityExecIn,
     CapabilityExecOut,
     CapabilityExecStatusOut,
+    CapabilityForceReleaseIn,
     CapabilityGrantIn,
     CapabilityGrantOut,
     CapabilityLeaseIn,
+    CapabilityLeaseListOut,
     CapabilityLeaseOut,
+    CapabilityOrphansOut,
+    CapabilitySpendOut,
+    CapabilitySpendRow,
     CapabilityUploadsIn,
     CapabilityUploadsOut,
 )
@@ -73,6 +85,24 @@ def _agent_to_lease_for(request: HttpRequest, slug: str):
     return agent
 
 
+def _lease_visible(request: HttpRequest, lease_id: str) -> CapabilityLease:
+    """The lease, if the caller may see its agent at all (a member, or the agent
+    itself); else 404. The route then applies its own gate."""
+    try:
+        pk = uuid.UUID(lease_id)
+    except ValueError:
+        raise HttpError(404, f"lease '{lease_id}' not found") from None
+    lease = (CapabilityLease.objects.select_related("agent", "capability", "workspace")
+             .filter(pk=pk).first())
+    if lease is None:
+        raise HttpError(404, f"lease '{lease_id}' not found")
+    try:
+        _agent(request, lease.agent.slug)
+    except HttpError:
+        raise HttpError(404, f"lease '{lease_id}' not found") from None
+    return lease
+
+
 def _lease(request: HttpRequest, lease_id: str) -> CapabilityLease:
     try:
         pk = uuid.UUID(lease_id)
@@ -89,6 +119,28 @@ def _lease(request: HttpRequest, lease_id: str) -> CapabilityLease:
             raise HttpError(404, f"lease '{lease_id}' not found") from None
         raise
     return lease
+
+
+def _capability_admin(request: HttpRequest, agent) -> None:
+    if not (perms.can(request.user, agent.workspace_id, perms.INTEGRATIONS) or agent.is_admin(request.user)):
+        raise HttpError(403, f"this is for a workspace admin or one of {agent.slug}'s admins")
+
+
+def _own_agent_ids(request: HttpRequest) -> list[int]:
+    """Agents whose own login the caller IS (an agent's PAT sees its own leases)."""
+    from apps.agents.models import Agent
+
+    uid = getattr(request.user, "pk", None)
+    return list(Agent.objects.filter(user_id=uid).values_list("pk", flat=True)) if uid else []
+
+
+def _declared(request: HttpRequest, slug: str, name: str) -> AgentCapability:
+    agent = _agent(request, slug)
+    cap = (AgentCapability.objects.filter(agent=agent, name=name)
+           .select_related("agent", "agent__workspace").first())
+    if cap is None:
+        raise HttpError(404, f"{slug} declares no capability {name!r}")
+    return cap
 
 
 def _refusal(e: services.CapabilityError) -> HttpError:
@@ -174,6 +226,43 @@ def put_agent_capabilities(request: HttpRequest, slug: str, payload: AgentCapabi
     return _capabilities_out(agent, retired=retired)
 
 
+@agents_router.post("/{slug}/capabilities/{name}/refresh", response=AgentCapabilityOut,
+                    summary="Re-read a capability's stack Outputs")
+def refresh_agent_capability(request: HttpRequest, slug: str, name: str) -> AgentCapabilityOut:
+    """Reads the capability's stack Outputs again (DescribeStacks) and checks them
+    against the contract, as a publish would; the sweep also does this about every
+    15 minutes. Use it right after updating the stack. 422 naming what is wrong if
+    the stack no longer meets the contract (the old Outputs are kept). For the
+    agent's owner and admins, or the agent's own login."""
+    cap = _declared(request, slug, name)
+    if not (_is_agent_itself(request, cap.agent) or cap.agent.is_admin(request.user)):
+        raise HttpError(403, f"re-reading {slug}'s capabilities is for its owner or admins, "
+                             "or the agent's own login")
+    try:
+        services.refresh_outputs(cap, why=f"requested by {getattr(request.user, 'email', '') or 'the agent'}",
+                                 strict=True)
+    except services.CapabilityError as e:
+        raise _refusal(e) from e
+    cap.refresh_from_db()
+    return _capability_out(cap)
+
+
+@agents_router.post("/{slug}/capabilities/{name}/terminate-orphans", response=CapabilityOrphansOut,
+                    summary="Terminate a capability's orphaned instances now")
+def terminate_capability_orphans(request: HttpRequest, slug: str, name: str) -> CapabilityOrphansOut:
+    """Runs the sweep's machine pass for one capability at once: terminates every
+    instance tagged with it (and launched by this deployment) that has no live
+    lease, and ends every ready lease whose machine is gone. For a workspace admin
+    or the agent's admins. 502 when EC2 cannot be asked."""
+    cap = _declared(request, slug, name)
+    _capability_admin(request, cap.agent)
+    try:
+        out = services.terminate_orphans_now(cap)
+    except services.CapabilityError as e:
+        raise _refusal(e) from e
+    return CapabilityOrphansOut(agent=cap.agent.slug, capability=cap.name, **out)
+
+
 # ---- grants -------------------------------------------------------------------
 
 @router.get("/grants", response=list[CapabilityGrantOut], summary="List capability grants")
@@ -238,12 +327,58 @@ def acquire_capability_lease(request: HttpRequest, payload: CapabilityLeaseIn) -
     return _lease_out(lease)
 
 
+@router.get("/leases", response=CapabilityLeaseListOut, summary="List capability leases")
+def list_capability_leases(request: HttpRequest, agent: str | None = None, capability: str | None = None,
+                           status: str | None = None, since: dt.datetime | None = None,
+                           limit: int = Query(100, ge=1, le=500)) -> CapabilityLeaseListOut:
+    """Leases in the caller's workspaces (or of the agent whose own login the
+    caller is), newest first. `status` is one status or a comma-separated list
+    (`live` for queued,provisioning,ready); `since` filters on `created_at`. A
+    read: no heartbeat."""
+    statuses = None
+    if status:
+        statuses = []
+        for one in status.split(","):
+            one = one.strip()
+            statuses.extend(CapabilityLease.LIVE if one == "live" else [one])
+        bad = sorted(set(statuses) - {c for c, _ in CapabilityLease.STATUS_CHOICES})
+        if bad:
+            raise HttpError(422, f"unknown lease status {', '.join(bad)}")
+    rows = services.leases_for(wsvc.request_member_slugs(request), agent_ids=_own_agent_ids(request),
+                               agent=agent, capability=capability, statuses=statuses, since=since,
+                               limit=limit + 1)
+    return CapabilityLeaseListOut(leases=[_lease_out(r) for r in rows[:limit]], truncated=len(rows) > limit)
+
+
+@router.get("/spend", response=CapabilitySpendOut, summary="Machine time by agent and capability")
+def capability_spend(request: HttpRequest, since: dt.datetime | None = None, until: dt.datetime | None = None,
+                     agent: str | None = None, capability: str | None = None) -> CapabilitySpendOut:
+    """Machine-seconds per agent and capability over [since, until) (default: the
+    last 7 days), in the caller's workspaces. A lease counts from its launch
+    (`provisioning_at`) to `ended_at`, or now while it still holds a machine,
+    clipped to the window; time spent queued costs nothing."""
+    until = until or timezone.now()
+    since = since or until - dt.timedelta(days=7)
+    if since >= until:
+        raise HttpError(422, "since must be before until")
+    rows = services.spend(wsvc.request_member_slugs(request), agent_ids=_own_agent_ids(request),
+                          since=since, until=until, agent=agent, capability=capability)
+    return CapabilitySpendOut(since=since, until=until, rows=[CapabilitySpendRow(**r) for r in rows],
+                              total_machine_seconds=sum(r["machine_seconds"] for r in rows))
+
+
 @router.get("/leases/{lease_id}", response=CapabilityLeaseOut, summary="Read (and heartbeat) a lease")
-def get_capability_lease(request: HttpRequest, lease_id: str) -> CapabilityLeaseOut:
-    """The heartbeat: a lease nobody reads for `idle_release_s` is released.
-    While provisioning, it checks the machine's ready.json (an S3 read; no SSM)."""
+def get_capability_lease(request: HttpRequest, lease_id: str,
+                         wait_s: int = Query(0, ge=0, le=20)) -> CapabilityLeaseOut:
+    """The heartbeat: a lease nobody reads for `idle_release_s` (and that runs no
+    exec) is released. While provisioning, it reads the machine's ready.json (one
+    S3 read, plus one DescribeInstances while it is absent; no SSM).
+
+    `wait_s` (0-20) long-polls: the request returns as soon as the lease leaves
+    the status it had on arrival (queued → provisioning, provisioning → ready or
+    failed), re-reading ready.json about once a second, else after `wait_s`."""
     lease = _lease(request, lease_id)
-    return _lease_out(services.heartbeat(lease))
+    return _lease_out(services.wait_for_lease(lease, wait_s))
 
 
 @router.delete("/leases/{lease_id}", response=CapabilityLeaseOut, summary="Release a lease")
@@ -253,12 +388,31 @@ def release_capability_lease(request: HttpRequest, lease_id: str) -> CapabilityL
     return _lease_out(services.release(lease))
 
 
+@router.post("/leases/{lease_id}/force-release", response=CapabilityLeaseOut,
+             summary="Force-release a lease (admin)")
+def force_release_capability_lease(request: HttpRequest, lease_id: str,
+                                   payload: CapabilityForceReleaseIn) -> CapabilityLeaseOut:
+    """A workspace admin's (or the agent's admins') release: ends the lease if it
+    is live and terminates its machine — EVEN IF the lease already ended, for a
+    machine a failed terminate left behind. `reason` lands in the lease's reason
+    and the event log."""
+    lease = _lease_visible(request, lease_id)
+    _capability_admin(request, lease.agent)
+    try:
+        return _lease_out(services.force_release(lease, by=request.user, reason=payload.reason))
+    except services.CapabilityError as e:
+        raise _refusal(e) from e
+
+
 @router.post("/leases/{lease_id}/exec", response=CapabilityExecOut, summary="Run an allowed command on a lease")
 def exec_capability_lease(request: HttpRequest, lease_id: str, payload: CapabilityExecIn) -> CapabilityExecOut:
-    """`argv[0]` must be on the capability's `exec.allow` (422 otherwise); the
-    argv is shell-quoted and sent over SSM with its full output going to
-    s3://…/leases/<id>/exec/. Returns the SSM CommandId as `exec_id` at once.
-    The command sees CANOPY_LEASE_ID, CANOPY_LEASE_IN and CANOPY_LEASE_OUT."""
+    """`argv[0]` must be on the capability's `exec.allow` (422 otherwise). The
+    argv is sent over SSM through the capability stack's own exec document, which
+    runs it only if argv[0] is also on the stack's allow list (a stack from before
+    0.9.0: shell-quoted into AWS-RunShellScript), with its full output going to
+    the lease's exec/ prefix. Returns the SSM CommandId as `exec_id` at once. The
+    command sees CANOPY_LEASE_ID, CANOPY_LEASE_IN and CANOPY_LEASE_OUT. A
+    running exec keeps the lease from idling out until its timeout."""
     lease = _lease(request, lease_id)
     try:
         exec_id, timeout_s = services.exec_(lease, payload.argv, payload.timeout_s)
@@ -269,12 +423,16 @@ def exec_capability_lease(request: HttpRequest, lease_id: str, payload: Capabili
 
 @router.get("/leases/{lease_id}/exec/{exec_id}", response=CapabilityExecStatusOut,
             summary="Read an exec's status and output")
-def get_capability_exec(request: HttpRequest, lease_id: str, exec_id: str) -> CapabilityExecStatusOut:
+def get_capability_exec(request: HttpRequest, lease_id: str, exec_id: str,
+                        wait_s: int = Query(0, ge=0, le=20)) -> CapabilityExecStatusOut:
     """Read back from SSM every time (nothing is held in a web process), so an
-    exec survives a canopy-web deploy. Full streams are presigned once done."""
+    exec survives a canopy-web deploy. Full streams are presigned once done.
+
+    `wait_s` (0-20) long-polls: the request returns as soon as the exec is done,
+    re-reading SSM about once a second, else after `wait_s`."""
     lease = _lease(request, lease_id)
     try:
-        st = services.exec_status(lease, exec_id)
+        st = services.exec_status(lease, exec_id, wait_s=wait_s)
     except services.CapabilityError as e:
         raise _refusal(e) from e
     return CapabilityExecStatusOut(**st.__dict__)
@@ -284,27 +442,27 @@ def get_capability_exec(request: HttpRequest, lease_id: str, exec_id: str) -> Ca
              summary="Presign uploads for a lease's machine")
 def create_capability_uploads(request: HttpRequest, lease_id: str,
                               payload: CapabilityUploadsIn) -> CapabilityUploadsOut:
-    """Presigned PUT URLs (1 h) under s3://…/leases/<id>/in/, and the s3:// URI of
-    each, to pass in an exec's argv. The machine may read in/ and nothing else
-    of the lease's inputs."""
+    """Presigned PUT URLs (valid `expires_in_s`, up to 1 h) under the lease's in/,
+    and the s3:// URI of each, to pass in an exec's argv. On a current stack in/
+    is under the machine's own prefix, which no other machine can read — so
+    uploads need the machine launched (409 while `instance_id` is unset)."""
     lease = _lease(request, lease_id)
     try:
-        ups = services.uploads(lease, payload.names)
+        ups, ttl = services.uploads(lease, payload.names)
     except services.CapabilityError as e:
         raise _refusal(e) from e
-    return CapabilityUploadsOut(lease_id=str(lease.pk), uploads=ups, expires_in_s=services.PRESIGN_TTL_S)
+    return CapabilityUploadsOut(lease_id=str(lease.pk), uploads=ups, expires_in_s=ttl)
 
 
 @router.get("/leases/{lease_id}/artifacts", response=CapabilityArtifactsOut,
             summary="List a lease's artifacts as presigned links")
 def list_capability_artifacts(request: HttpRequest, lease_id: str, prefix: str = "") -> CapabilityArtifactsOut:
-    """Presigned GETs (1 h) for everything the machine wrote under
-    s3://…/leases/<id>/out/<prefix>. Readable after the lease ends, until the
-    bucket expires it (7 days)."""
+    """Presigned GETs (valid `expires_in_s`, up to 1 h) for everything the machine
+    wrote under the lease's out/<prefix> (`out_prefix`). Readable after the lease
+    ends, until the bucket expires it (7 days)."""
     lease = _lease(request, lease_id)
     try:
-        arts = services.artifacts(lease, prefix)
+        arts, ttl = services.artifacts(lease, prefix)
     except services.CapabilityError as e:
         raise _refusal(e) from e
-    return CapabilityArtifactsOut(lease_id=str(lease.pk), prefix=prefix, artifacts=arts,
-                                  expires_in_s=services.PRESIGN_TTL_S)
+    return CapabilityArtifactsOut(lease_id=str(lease.pk), prefix=prefix, artifacts=arts, expires_in_s=ttl)

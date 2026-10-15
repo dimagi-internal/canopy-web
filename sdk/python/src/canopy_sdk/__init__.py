@@ -17,6 +17,6 @@ Modules:
 """
 from .contract import CONTRACT_VERSION
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"
 
 __all__ = ["CONTRACT_VERSION", "__version__"]

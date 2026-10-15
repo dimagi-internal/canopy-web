@@ -59,8 +59,10 @@ class CapabilityLeaseOut(StrictModel):
     reason: str
     #: The machine's ready.json once read: {"ok", "reason"?, "timings"?, "cli_version"?}.
     ready_info: dict[str, Any]
-    #: s3://<bucket>/leases/<id>/out/ — where the machine writes artifacts (the same
-    #: value as CANOPY_LEASE_OUT in an exec), for an argv that needs it literally.
+    #: Where the machine writes artifacts (the same value as CANOPY_LEASE_OUT in an
+    #: exec), for an argv that needs it literally: s3://<bucket>/vm/<role-id>:<instance-id>/lease/<id>/out/
+    #: on a current stack — under the machine's own prefix, so "" until the machine
+    #: is launched — or s3://<bucket>/leases/<id>/out/ on a stack from before 0.9.0.
     out_prefix: str
 
 
@@ -117,6 +119,45 @@ class CapabilityExecOut(StrictModel):
     timeout_s: int
 
 
+class CapabilityLeaseListOut(StrictModel):
+    leases: list[CapabilityLeaseOut]
+    #: True when more leases matched than `limit` returned.
+    truncated: bool
+
+
+class CapabilitySpendRow(StrictModel):
+    agent: str
+    capability: str
+    #: Leases that held a machine at some point in the window.
+    leases: int
+    #: Seconds of machine time in the window: each lease from launch
+    #: (`provisioning_at`) to `ended_at`, or now while it still holds one.
+    machine_seconds: int
+    #: Of those leases, how many hold a machine now.
+    live: int
+
+
+class CapabilitySpendOut(StrictModel):
+    since: dt.datetime
+    until: dt.datetime
+    rows: list[CapabilitySpendRow]
+    total_machine_seconds: int
+
+
+class CapabilityForceReleaseIn(StrictModel):
+    #: Why, for the lease's `reason` and the audit trail.
+    reason: str = Field(default="", max_length=300)
+
+
+class CapabilityOrphansOut(StrictModel):
+    agent: str
+    capability: str
+    #: Tagged instances with no live lease, terminated now.
+    orphans: int
+    #: Ready leases whose machine was found gone, ended now.
+    gone: int
+
+
 class CapabilityExecStatusOut(StrictModel):
     exec_id: str
     #: SSM's own status: Pending | InProgress | Delayed | Success | Cancelled |
@@ -127,7 +168,8 @@ class CapabilityExecStatusOut(StrictModel):
     exit_code: int | None
     stdout_tail: str
     stderr_tail: str
-    #: Presigned GETs of the full streams (1 h), once done; else null.
+    #: Presigned GETs of the full streams (up to 1 h: never longer than canopy-web's
+    #: signing credentials last), once done; else null.
     stdout_url: str | None
     stderr_url: str | None
 
@@ -138,7 +180,7 @@ class CapabilityUploadsIn(StrictModel):
 
 class CapabilityUploadOut(StrictModel):
     name: str
-    #: Presigned PUT (1 h). Upload the file's bytes to it.
+    #: Presigned PUT (valid `expires_in_s`). Upload the file's bytes to it.
     put_url: str
     #: Where it lands, to pass in an exec's argv.
     s3_uri: str
@@ -147,14 +189,15 @@ class CapabilityUploadOut(StrictModel):
 class CapabilityUploadsOut(StrictModel):
     lease_id: str
     uploads: list[CapabilityUploadOut]
+    #: How long the URLs work: up to 3600, less when canopy-web's credentials expire sooner.
     expires_in_s: int
 
 
 class CapabilityArtifactOut(StrictModel):
-    #: Relative to leases/<id>/out/.
+    #: Relative to the lease's out/ prefix (`out_prefix`).
     path: str
     size: int
-    #: Presigned GET (1 h).
+    #: Presigned GET (valid `expires_in_s`).
     url: str
 
 
@@ -162,4 +205,5 @@ class CapabilityArtifactsOut(StrictModel):
     lease_id: str
     prefix: str
     artifacts: list[CapabilityArtifactOut]
+    #: How long the URLs work: up to 3600, less when canopy-web's credentials expire sooner.
     expires_in_s: int

@@ -524,7 +524,7 @@ def _capability_sweep() -> None:
     try:
         from apps.capabilities.services import sweep_tick
 
-        sweep_tick()
+        sweep_tick(trigger="claim")
     except Exception:  # noqa: BLE001
         import logging
 
@@ -533,6 +533,13 @@ def _capability_sweep() -> None:
 
 def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECONDS,
                     exclude_slugs: list[str] | None = None) -> Turn | None:
+    # Cloud-capability leases: an EXTRA trigger for their sweep, ABOVE every early
+    # return — a fleet hold or a paused runner stops turns, never a machine's
+    # expiry. The sweep has its own clock in every web process
+    # (apps/capabilities/scheduler.py); this runs it only when no sweep has
+    # finished for SWEEP_STALE_S (the clock is not keeping up), so normally it is
+    # one cache read and no AWS call rides the claim. It never raises.
+    _capability_sweep()
     # Covers the operator PAUSE too: `live_status` returns PAUSED for a parked
     # runner, so this one guard is the whole server-side enforcement. Spelled out
     # because it is easy to read this line as a pure liveness check and then
@@ -555,11 +562,6 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     if FleetHold.is_held():
         return None
     sweep_expired_leases()
-    # Cloud-capability leases ride the same tick (runners poll every ~15 s):
-    # expiry, idleness, the FIFO queue, and terminating any tagged instance with
-    # no live lease. Throttled to once per 30 s per process and it never raises,
-    # so an AWS outage cannot stop a turn being claimed.
-    _capability_sweep()
     # Lazy sweeps, both BEFORE the busy_agents read: a turn released here frees
     # its agent for the very claim we are about to make.
     release_stale_occurrence_turns_all()

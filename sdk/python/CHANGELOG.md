@@ -2,6 +2,44 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.9.0 — 2026-10-14
+
+`canopy_sdk.ondemand`, ephemeral capabilities: the stack guards itself, independent of the broker.
+
+- **The instance role no longer carries `AmazonSSMManagedInstanceCore`** in ephemeral mode. That
+  policy grants `ssm:GetParameter(s)` on `*`, so with the default `aws/ssm` key any process on a
+  lease machine could decrypt every SecureString parameter in the account. The role now carries
+  exactly what the SSM agent needs (registration, Run Command, Session Manager, associations,
+  inventory) and an explicit Deny on `ssm:GetParameter*`. Persistent mode is unchanged (the
+  render-equality test against 0.7.2 still holds).
+- **Per-machine object prefixes.** Each instance reads and writes only `vm/${aws:userid}/*`; a
+  lease's `in/`, `out/` and `exec/` live under `vm/<InstanceRoleId>:<instance-id>/lease/<lease-id>/`.
+  The `leases/*` grants are gone, so no machine can read another lease's inputs or overwrite its
+  results. New output `LeaseObjectScope: instance` tells the broker.
+- **An exec document** (`ExecDocument`, output `ExecDocumentName`), the only document
+  `BrokerPolicy` may send (no more `AWS-RunShellScript`): it takes the argv base64-encoded, NUL
+  per argument, and runs it only if argv[0] is on the new `ExecAllow` parameter. Every parameter
+  is pattern-restricted, so no argument is ever script text. `ExecAllow` is required in
+  ephemeral mode.
+- **A lifetime backstop** (`BackstopFunction`): a stack-owned Lambda, every 5 minutes, terminates
+  any instance tagged with the stack's capability and owner older than the new
+  `MaxInstanceLifetimeSeconds` (default 16200 = 4 h + 30 min). Its role can describe instances and
+  terminate only those. Outputs `MaxInstanceLifetimeSeconds`, `BackstopFunctionName`.
+- `send_command(..., document_name=, parameters=, document_version=)` and
+  `EphemeralInstance.run_document_async(...)`: send a named document with its own parameters.
+- `TAG_BROKER` (`canopy:broker`): the broker's deployment id, which canopy-web now tags on every
+  launch (`launch(tags=...)` already took extra tags); `BrokerPolicy` allows it.
+
+Upgrading an ephemeral stack needs `ExecAllow=<the manifest's exec.allow, comma-separated>`.
+Update it while no lease is live: a lease running under the old layout loses its `leases/`
+grants the moment the stack updates.
+
+## 0.8.1 — 2026-10-14
+
+`BrokerPolicy` may read the launch template's AMI parameter (`ssm:GetParameter(s)` on
+`/canopy/capabilities/<Owner>/<Capability>/ami`): EC2 resolves `resolve:ssm:` as the
+RunInstances caller, so every launch failed with SsmAccessDenied without it.
+
 ## 0.8.0 — 2026-10-14
 
 `canopy_sdk.ondemand`: ephemeral capabilities — one fresh instance per lease, terminated after.

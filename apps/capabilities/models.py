@@ -15,6 +15,11 @@ Three rows:
   lowering its limits. No grant, no lease.
 - ``CapabilityLease``: one machine for one use. Its id is the EC2 ClientToken,
   so a retried launch can never start a second instance.
+
+Deleting a lease row while it holds a machine (an agent, workspace or
+capability deleted under it, which CASCADE reaches) terminates the machine
+first: ``signals.py``'s ``pre_delete`` receiver. The stack's own backstop
+Lambda covers a terminate that fails.
 """
 from __future__ import annotations
 
@@ -32,9 +37,14 @@ class AgentCapability(models.Model):
     manifest = models.JSONField(default=dict)
     region = models.CharField(max_length=32)
     stack = models.CharField(max_length=128)
-    #: The stack's Outputs at publish time (DescribeStacks): LaunchTemplateId,
-    #: ArtifactsBucketName, InstanceRoleArn, InstanceRoleId, Capability, Owner.
+    #: The stack's Outputs (DescribeStacks): LaunchTemplateId, ArtifactsBucketName,
+    #: InstanceRoleArn, InstanceRoleId, Capability, Owner, and on a 0.9.0+ stack
+    #: LeaseObjectScope, ExecDocumentName, ExecAllow, MaxInstanceLifetimeSeconds,
+    #: BackstopFunctionName. Read at publish and re-read by the sweep, after a
+    #: ready-timeout, and on POST …/capabilities/{name}/refresh.
     stack_outputs = models.JSONField(default=dict)
+    #: When `stack_outputs` was last read from the stack.
+    outputs_refreshed_at = models.DateTimeField(null=True, blank=True)
     published_at = models.DateTimeField()
     published_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
                                      null=True, blank=True, related_name="+")
@@ -118,9 +128,16 @@ class CapabilityLease(models.Model):
     last_heartbeat_at = models.DateTimeField()
     #: The machine's ready.json, once read.
     ready_info = models.JSONField(default=dict, blank=True)
-    #: Every exec this lease sent: {SSM CommandId: ISO sent-at}. How exec status
-    #: tells "SSM has not materialised it yet" (Pending) from "not this lease's".
+    #: Every exec this lease sent: {SSM CommandId: {"sent_at": ISO, "timeout_s":
+    #: int, "done": bool}} (rows from before 0.9.0 hold a bare ISO sent-at). How
+    #: exec status tells "SSM has not materialised it yet" (Pending) from "not
+    #: this lease's", and how a running exec keeps its lease from going idle.
     execs = models.JSONField(default=dict, blank=True)
+    #: This lease's object prefix in the stack's bucket, no trailing slash:
+    #: vm/<InstanceRoleId>:<instance-id>/lease/<id> on a 0.9.0+ stack (set when
+    #: the instance is recorded), leases/<id> on an older one (set at acquire).
+    #: in/, out/ and exec/ live under it. Fixed for the lease's life.
+    s3_base = models.CharField(max_length=300, blank=True, default="")
     #: Why it ended (or why a launch is being retried).
     reason = models.CharField(max_length=500, blank=True, default="")
 
@@ -129,6 +146,7 @@ class CapabilityLease(models.Model):
         indexes = [
             models.Index(fields=["capability", "status", "created_at"], name="cap_lease_queue_idx"),
             models.Index(fields=["status"], name="cap_lease_status_idx"),
+            models.Index(fields=["workspace", "-created_at"], name="cap_lease_ws_created_idx"),
         ]
 
     def __str__(self) -> str:

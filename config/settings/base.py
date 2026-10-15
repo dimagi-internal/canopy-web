@@ -607,6 +607,15 @@ MCP_APPS_BACKGROUND_REFRESH = True
 CANOPY_A2A_PROVIDER_ORGANIZATION = env("CANOPY_A2A_PROVIDER_ORGANIZATION", default="Dimagi")
 CANOPY_A2A_PROVIDER_URL = env("CANOPY_A2A_PROVIDER_URL", default="https://www.dimagi.com")
 
+# --- Cloud capabilities (apps/capabilities) ---
+# Seconds between the capability sweep's off-request ticks (scheduler.py, started
+# in the ASGI lifespan of every web process; deduplicated fleet-wide). 0 = off.
+CAPABILITY_SWEEP_INTERVAL_S = env.int("CAPABILITY_SWEEP_INTERVAL_S", default=30)
+# This deployment's `canopy:broker` tag on every instance it launches; its sweep
+# and cap count ignore instances another broker tagged. Empty = the host of
+# CANOPY_IDENTITY_BASE_URL (canopy.dimagi.com in production), else "canopy-web".
+CAPABILITY_BROKER_ID = env("CAPABILITY_BROKER_ID", default="")
+
 # --- Content retention (apps/retention) ---
 # OFF. When true, the runner heartbeat purges chat, turn and shared-transcript
 # content past its RetentionRule's keep_days, at most hourly. Off means nothing
