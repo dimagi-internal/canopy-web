@@ -53,7 +53,14 @@ def test_roundtrip_with_field_key_set(with_field_key):
     assert decrypt_secret(ct) == "tok-set"
 
 
-def test_legacy_ciphertext_still_decrypts_with_field_key_set(with_field_key):
+def test_legacy_ciphertext_is_refused_once_the_field_key_is_set(with_field_key):
+    # The SECRET_KEY-derived key was retired after production re-encrypted every row.
+    with pytest.raises(InvalidToken):
+        decrypt_secret(_legacy_ciphertext(SECRET, "pre-existing"))
+
+
+def test_accept_legacy_is_the_emergency_switch(with_field_key, settings):
+    settings.FIELD_ENCRYPTION_ACCEPT_LEGACY = True
     assert decrypt_secret(_legacy_ciphertext(SECRET, "pre-existing")) == "pre-existing"
 
 

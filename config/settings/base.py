@@ -510,6 +510,11 @@ RUNNER_CLOUD_CODE_COMMITTED_AT = env.int("RUNNER_CLOUD_CODE_COMMITTED_AT", defau
 # under it and rows written under SECRET_KEY still decrypt (MultiFernet — see
 # apps/common/encryption.py), so setting it needs no re-encryption at deploy time.
 FIELD_ENCRYPTION_KEY = env("FIELD_ENCRYPTION_KEY", default="")
+# Read-only extra keys (apps/common/encryption.py `_keys`): the previous field key
+# during a rotation, and an emergency switch that re-admits the retired
+# SECRET_KEY-derived key. Both normally unset.
+FIELD_ENCRYPTION_PREVIOUS_KEY = env("FIELD_ENCRYPTION_PREVIOUS_KEY", default="")
+FIELD_ENCRYPTION_ACCEPT_LEGACY = env.bool("FIELD_ENCRYPTION_ACCEPT_LEGACY", default=False)
 
 # Canopy Vault KMS envelope encryption for AgentCredential values
 # (apps/common/kms_envelope.py, canopy-web#1538). Empty = off: values stay Fernet
