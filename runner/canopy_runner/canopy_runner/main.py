@@ -1251,6 +1251,12 @@ def main() -> None:
     _uc.log_startup_drift(cfg.emdash_db, home=Path.home(),
                           claude_home=Path.home() / ".claude" / "projects", log=logger)
 
+    # Canopy Vault (canopy#946): make sure this machine's device key exists and is
+    # registered for this runner; logs + notifies the approve URL while it is pending.
+    # Background and fail-open — it never delays or stops the loop.
+    from . import device_key as _device_key
+    _device_key.start(cfg)
+
     # Pause sentinel: the menu-bar app (or `touch ~/.canopy/PAUSED`) drops this file
     # to halt ALL token-spending work instantly without killing the process or fighting
     # launchd's KeepAlive. Paused = we still heartbeat (so the control plane sees the

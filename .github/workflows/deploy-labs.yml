@@ -168,7 +168,7 @@ jobs:
           # RUNNER_CODE_PATHS (tests/test_runner_code_paths.py): the menu-bar app and
           # its icons ship through the same auto-update as the package.
           # RUNNER_CODE, not *PATHS: the cloud step below owns `PATHS=` and its tests find it by that text.
-          RUNNER_CODE="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar assets/brand"
+          RUNNER_CODE="runner/canopy_runner/canopy_runner runner/canopy_runner/scripts runner/menubar runner/device-key assets/brand"
           SHA="$(git log -1 --format=%H -- $RUNNER_CODE)"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           # Committer epoch of the SAME commit, from the same command. A sha is an

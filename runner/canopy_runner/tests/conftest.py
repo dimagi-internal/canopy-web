@@ -21,6 +21,18 @@ def _isolate_host_pin(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_device_key_enrollment(monkeypatch, request):
+    """main() enrolls this machine's device key in the background by running the real
+    `canopy vault device --enroll` (Canopy Vault, canopy#946). A test that drives main()
+    must never register the developer's key with a real canopy-web; the module's own
+    tests opt out of this stub."""
+    if request.module.__name__.endswith("test_device_key"):
+        return
+    from canopy_runner import device_key
+    monkeypatch.setattr(device_key, "start", lambda cfg, **kw: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_desktop_runtime(monkeypatch, tmp_path):
     """The Claude desktop runtime keeps a session index under ~/.canopy/desktop. On a
     box that has run desktop sessions, a test reading the REAL index sees them: the

@@ -10,6 +10,7 @@ the web image (see `.dockerignore`); the server never imports it.
 | `ec2/` | The **cloud runner** — a stdlib-only single file (`cloud_runner.py`) delivered to the EC2 box via Secrets Manager (`up.sh` publishes it), plus its CloudFormation template and agent-fleet bootstrap. |
 | `canopy_acp/` | Django-free [Agent Client Protocol](https://github.com/agentclientprotocol) client — the cloud runner's ACP executor (`RUNNER_EXECUTOR=acp`). |
 | `menubar/` | Native macOS menu-bar control surface for the laptop runner (Swift/AppKit). |
+| `device-key/` | `canopy-device-key` — this Mac's Secure Enclave key for Canopy Vault's device proof (Swift CLI; installed to `~/.canopy/bin/`, enrolled by the laptop runner at start). |
 
 ## What deliberately does NOT live here
 
