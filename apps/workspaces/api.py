@@ -209,6 +209,10 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
     WorkspaceMembership.objects.create(
         workspace=ws, user=request.user, role=WorkspaceMembership.OWNER
     )
+    if not ws.parent_id:
+        # A root created by someone an org counts as its own: tell that org's
+        # owners (best-effort, never fails the create).
+        services.notify_root_created(ws, request.user)
     return Status(201, _out(ws, WorkspaceMembership.OWNER))
 
 

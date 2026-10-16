@@ -1516,6 +1516,75 @@ def notify_admins(req: WorkspaceAccessRequest) -> dict:
     return result
 
 
+def notify_root_created(ws: Workspace, by_user) -> dict:
+    """A new TOP-LEVEL workspace was created by someone an organisation counts as
+    its own: email that organisation's root owners, so a team does not quietly
+    end up outside its org's tree (Jonathan, 2026-10-16: two divisions' agents
+    turned out to live in root workspaces nobody meant to create, invisible to
+    the fleet conductor, who is an admin of the dimagi tree only).
+
+    "Its own" = the creator's email domain is on a root workspace's
+    `access_request_domains` (dimagi: dimagi.com, dimagi-associate.com). The
+    creator is never told about their own act. The email names both one-step
+    fixes: nest the workspace (`PUT /api/workspaces/<slug>/parent`, which needs
+    an owner of both ends — so the creator invites the org owner as an owner
+    first), or move its agents (`canopy agent register --slug <a> --workspace
+    <org>`, by the agent's owner).
+
+    BEST-EFFORT: never raises — a mail outage must not fail a create."""
+    result: dict = {"emailed": [], "failed": [], "orgs": []}
+    try:
+        if ws.parent_id:
+            return result
+        email = (getattr(by_user, "email", "") or "").lower()
+        _, _, domain = email.rpartition("@")
+        if not domain:
+            return result
+        orgs = [r for r in Workspace.objects.filter(parent__isnull=True).exclude(slug=ws.slug)
+                if domain in [str(d).lower().lstrip("@") for d in (r.access_request_domains or [])]]
+        who = _who(by_user)
+        for org in orgs:
+            result["orgs"].append(org.slug)
+            owners = [m.user for m in WorkspaceMembership.objects.filter(
+                workspace=org, role=WorkspaceMembership.OWNER).select_related("user")]
+            link = f"{_base_url()}/w/{ws.slug}"
+            subject = f"New top-level workspace '{ws.slug}' created outside {org.display_name} by {who}"
+            text = (f"{who} created the workspace '{ws.display_name}' ({ws.slug}) at the top level "
+                    f"of Canopy — not under {org.display_name}. Its agents and sessions are not "
+                    f"visible to {org.display_name}'s owners or admins.\n\n"
+                    f"To bring it in, either:\n"
+                    f"  - nest the workspace: they invite you as an owner of {ws.slug}, then you run "
+                    f"PUT /api/workspaces/{ws.slug}/parent {{\"parent\": \"{org.slug}\"}} "
+                    f"(canopy-web MCP: set_workspace_parent), or\n"
+                    f"  - move its agents: each agent's owner runs "
+                    f"`canopy agent register --slug <agent> --workspace {org.slug}`.\n\n"
+                    f"Workspace: {link}\n\nYou are getting this because you own "
+                    f"{org.display_name} on Canopy and {who} has a {domain} address.\n")
+            html = (f"<p>{escape(who)} created the workspace <strong>{escape(ws.display_name)}</strong> "
+                    f"({escape(ws.slug)}) at the top level of Canopy — not under "
+                    f"{escape(org.display_name)}. Its agents and sessions are not visible to "
+                    f"{escape(org.display_name)}'s owners or admins.</p>"
+                    f"<p>To bring it in, either:</p><ul>"
+                    f"<li><strong>nest the workspace</strong>: they invite you as an owner of "
+                    f"{escape(ws.slug)}, then you run <code>set_workspace_parent</code> "
+                    f"(parent: {escape(org.slug)}), or</li>"
+                    f"<li><strong>move its agents</strong>: each agent's owner runs "
+                    f"<code>canopy agent register --slug &lt;agent&gt; --workspace {escape(org.slug)}</code>.</li>"
+                    f"</ul>" + _button(link, "Open the workspace")
+                    + f'<p style="color:#78716c;font-size:13px">You are getting this because you own '
+                      f"{escape(org.display_name)} on Canopy and {escape(who)} has a "
+                      f"{escape(domain)} address.</p>")
+            for owner in owners:
+                if not owner.email or owner.pk == getattr(by_user, "pk", None):
+                    continue
+                status = _send(subject, text, html, owner.email, reply_to=email or None)
+                (result["emailed"] if status == "sent" else result["failed"]).append(owner.email)
+    except Exception:  # noqa: BLE001
+        _access_log.exception("notifying org owners of new root workspace %s failed", ws.slug)
+        result["error"] = True
+    return result
+
+
 def notify_requester(req: WorkspaceAccessRequest) -> str:
     """Tell the person who asked how it went — approved (with a link into the
     workspace) or denied (with the reason, if any). Best-effort; never raises."""
