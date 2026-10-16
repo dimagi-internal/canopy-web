@@ -22,11 +22,12 @@ hold three kinds of data:
 |-------|-------|--------------|
 | **agent repo** | the declarative spec (`runtime.yaml`) | ← defines + validates its shape |
 | **canopy-web** | repo pointer + secret *references* + tenant | serves `GET /api/agents/{slug}/runtime` |
-| **secret store** | the actual values (1Password / Secrets Manager) | resolved by the reconciler from a name |
+| **secret store** | the actual values (1Password) | filled into the agent's env by canopy (`canopy cred sync`) |
 
-canopy-web never parses the spec — the **reconciler** (RS2) reads it from the repo,
-which is why the schema is a standalone installable: the reconciler runs on a bare
-cloud box that never installs Django.
+The schema is a standalone installable so an agent's deploy can validate `runtime.yaml`
+and publish its capabilities without installing Django. (The package also held a
+"reconciler" that provisioned a box from the spec. No runner ever called it; canopy's
+`canopy agent prepare` is what prepares an agent, so it was retired on 2026-10-15.)
 
 ## Hard rules the schema enforces
 

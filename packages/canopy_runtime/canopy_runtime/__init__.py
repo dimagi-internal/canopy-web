@@ -1,18 +1,12 @@
 """Django-free schema for an agent's declarative runtime spec (`runtime.yaml`).
 
-The agent ships this file in its own repo; the reconciler reads + validates it to
-provision a box for the agent's turn. canopy-web only points a runner at the repo
-(it never parses the spec), so this library carries the shape both sides agree on.
+The agent ships this file in its own repo; canopy-web validates the capability
+manifests it declares (`canopy-runtime publish-capabilities`) and reads its declared
+secrets for the credentials screen. The schema is Django-free so an agent's deploy can
+validate it without installing canopy-web.
 """
 from __future__ import annotations
 
-from canopy_runtime.reconcile import (
-    Environment,
-    Gap,
-    LocalEnvironment,
-    ReconcileResult,
-    reconcile,
-)
 from canopy_runtime.schema import (
     POOL_SLOT_PARAM,
     CapabilityAws,
@@ -31,14 +25,6 @@ from canopy_runtime.schema import (
     ToolRef,
     load_capability_manifest,
     load_runtime_yaml,
-)
-from canopy_runtime.stores import (
-    CREDENTIAL_FIELD,
-    EnvVarStore,
-    OnePasswordStore,
-    SecretNotFoundError,
-    SecretStore,
-    SecretStoreError,
 )
 
 __all__ = [
@@ -60,17 +46,4 @@ __all__ = [
     "ToolRef",
     "load_capability_manifest",
     "load_runtime_yaml",
-    # stores
-    "CREDENTIAL_FIELD",
-    "EnvVarStore",
-    "OnePasswordStore",
-    "SecretNotFoundError",
-    "SecretStore",
-    "SecretStoreError",
-    # reconcile
-    "Environment",
-    "Gap",
-    "LocalEnvironment",
-    "ReconcileResult",
-    "reconcile",
 ]
