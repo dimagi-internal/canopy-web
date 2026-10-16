@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import uuid
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -304,6 +304,10 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
         raise HttpError(422, str(e))
     except decision_rows.DecisionConflict as e:
         raise HttpError(409, str(e))
+    except IntegrityError:
+        if Storyboard.objects.filter(workspace_id=workspace_slug, slug=payload.slug).exists():
+            raise HttpError(409, f"a storyboard named {payload.slug!r} already exists in this workspace")
+        raise
     return services.resolve_board(board, is_member=True, viewer=request.user)
 
 
@@ -326,8 +330,18 @@ def get_storyboard(request: HttpRequest, slug: str, ws: str = "") -> dict:
 @router.patch("/{slug}", response=StoryboardOut, auth=session_auth, summary="Edit a storyboard")
 def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn) -> dict:
     board = _editable_or_404(request, slug)
+    project = None
+    if (payload.agent_project or "").strip():
+        project = artifact_origin._explicit_project(payload.agent_project, user=request.user, turn=None)
+        if project is None:
+            raise HttpError(422, f"no such project: {payload.agent_project!r}")
+        if project.agent.workspace_id != board.workspace_id:
+            raise HttpError(422, "that project belongs to another workspace")
     try:
         with transaction.atomic():
+            if project is not None:
+                board.agent_project = project
+                board.save(update_fields=["agent_project", "updated_at"])
             fields = []
             for name in ("title", "lede", "capability", "layout"):
                 value = getattr(payload, name)

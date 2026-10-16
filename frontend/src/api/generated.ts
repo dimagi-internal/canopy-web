@@ -11256,6 +11256,8 @@ export interface components {
             readonly layout?: ("review" | "reel") | null;
             /** Acts */
             readonly acts?: readonly components["schemas"]["ActIn"][] | null;
+            /** Agent Project */
+            readonly agent_project?: string | null;
         };
         /** ShareTokenOut */
         readonly ShareTokenOut: {

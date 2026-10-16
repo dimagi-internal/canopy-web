@@ -488,3 +488,45 @@ def test_note_left_while_closed_is_adopted_by_the_next_round(world):
                       content_type="application/json")
     assert Feedback.objects.get(author_name="Late").round.number == 2
 
+
+# ------------------------------------------- create conflict, and linking a project
+
+
+def _board_body(slug="fresh", **extra):
+    return {"slug": slug, "title": "Fresh", "acts": [], **extra}
+
+
+def test_creating_an_existing_slug_is_409(world):
+    first = world["ace"].post("/api/storyboards/", _board_body(), content_type="application/json")
+    assert first.status_code == 200, first.content
+    again = world["ace"].post("/api/storyboards/", _board_body(), content_type="application/json")
+    assert again.status_code == 409
+
+
+def test_patch_links_an_existing_board_to_a_project(world):
+    world["board"].agent_project = None
+    world["board"].save(update_fields=["agent_project"])
+    resp = world["ace"].patch("/api/storyboards/supply", {"agent_project": "ace/P9"},
+                              content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    world["board"].refresh_from_db()
+    assert world["board"].agent_project_id == world["project"].pk
+
+
+def test_patch_unknown_project_is_422(world):
+    resp = world["ace"].patch("/api/storyboards/supply", {"agent_project": "ace/P404"},
+                              content_type="application/json")
+    assert resp.status_code == 422
+
+
+def test_patch_project_of_another_workspace_is_422(world):
+    other_ws = Workspace.objects.create(slug="other", display_name="Other",
+                                        created_by=world["users"]["owner"])
+    other_agent = Agent.objects.create(slug="zed", name="Zed", workspace=other_ws,
+                                       owner=world["users"]["owner"])
+    other = AgentProject.objects.create(agent=other_agent, ext_id="P1", name="x")
+    resp = world["ace"].patch("/api/storyboards/supply", {"agent_project": str(other.pk)},
+                              content_type="application/json")
+    assert resp.status_code == 422
+    world["board"].refresh_from_db()
+    assert world["board"].agent_project_id == world["project"].pk

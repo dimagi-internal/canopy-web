@@ -352,6 +352,8 @@ class StoryboardPatchIn(StrictModel):
     capability: Capability | None = None
     layout: Layout | None = None
     acts: list[ActIn] | None = None
+    agent_project: str | None = None
+    """Links the board to a project (a pk, ``P9`` or ``agent/P9``). Empty does nothing."""
 
 
 class ShareTokenOut(StrictModel):
