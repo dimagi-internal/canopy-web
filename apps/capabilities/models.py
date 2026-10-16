@@ -19,6 +19,9 @@ Three rows:
   lowering its limits. No grant, no lease.
 - ``CapabilityLease``: one machine for one use. Its id is the EC2 ClientToken,
   so a retried launch can never start a second instance.
+- ``CapabilitySlotData``: what a `pool` slot IS — e.g. a test worker's phone,
+  name, PIN and backup code — stored beside the lease that checks it out, its
+  secret half encrypted at rest and handed only to the holder of a ready lease.
 
 Deleting a lease row while it holds a machine (an agent, workspace or
 capability deleted under it, which CASCADE reaches) terminates the machine
@@ -171,3 +174,43 @@ class CapabilityLease(models.Model):
     @property
     def is_live(self) -> bool:
         return self.status in self.LIVE
+
+
+class CapabilitySlotData(models.Model):
+    """The details of one `pool` slot: a `public` map anyone who may see the
+    agent may read, and a `secret` map that is ENCRYPTED AT REST and delivered
+    only to the user who acquired a ready lease on that slot (docs/architecture/
+    capabilities.md § 6, "Slot data").
+
+    Keyed by the capability ROW and the slot NAME, not by the manifest, so a
+    republish (which rewrites `manifest`) never touches it; data for a slot the
+    manifest no longer declares is kept but never delivered.
+
+    Write-only for the secret half, like `agents.AgentCredential`: no route
+    returns a secret value except the lease read of its holder, and nothing —
+    `__str__`, events, errors, the settings audit — ever carries one.
+    """
+
+    capability = models.ForeignKey(AgentCapability, on_delete=models.CASCADE, related_name="slot_data")
+    slot = models.CharField(max_length=40)
+    #: {key: value} (str → str), readable by the agent's workspace members.
+    public = models.JSONField(default=dict, blank=True)
+    #: Fernet ciphertext (apps/common/encryption.py) of a JSON object {key: value}
+    #: (str → str). Never plaintext; "" when there is no secret half.
+    secret_enc = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["capability", "slot"], name="cap_slot_data_unique"),
+        ]
+        ordering = ["capability_id", "slot"]
+
+    def __str__(self) -> str:
+        # Never a value: names only.
+        return f"slot-data:{self.capability_id}/{self.slot}"
+
+    def __repr__(self) -> str:
+        return f"<CapabilitySlotData {self.capability_id}/{self.slot}>"

@@ -4380,6 +4380,60 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/capabilities/{name}/slots": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A pool capability's slots and their data (masked)
+         * @description Every declared slot of a `pool` capability: its `public` values, the NAMES
+         *     of its secret keys (never a value — to anyone, admins included), who last
+         *     changed it, and whether a live lease holds it. 422 on an ec2-ephemeral
+         *     capability.
+         */
+        readonly get: operations["list_capability_slot_data"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/capabilities/{name}/slots/{slot}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set a pool slot's data (per-key upsert; secret half write-only)
+         * @description Per key: a string writes it, null deletes it, a key left out is kept; a
+         *     section left out is untouched. `secret` is encrypted at rest and only ever
+         *     delivered on the lease read of the user holding a ready lease on this slot;
+         *     the response is the MASKED state. 422 unless the capability is a `pool` and
+         *     declares `slot`. For a workspace admin, or the agent's own login.
+         */
+        readonly put: operations["set_capability_slot_data"];
+        readonly post?: never;
+        /**
+         * Delete a pool slot's data
+         * @description Removes all of the slot's data, public and secret — also for a slot the
+         *     manifest no longer declares (such data is kept, never delivered, until
+         *     deleted here). Idempotent. 422 on an ec2-ephemeral capability. For a
+         *     workspace admin, or the agent's own login.
+         */
+        readonly delete: operations["delete_capability_slot_data"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/capabilities/grants": {
         readonly parameters: {
             readonly query?: never;
@@ -4502,6 +4556,10 @@ export interface paths {
          *     `wait_s` (0-20) long-polls: the request returns as soon as the lease leaves
          *     the status it had on arrival (queued → provisioning, provisioning → ready or
          *     failed), re-reading ready.json about once a second, else after `wait_s`.
+         *
+         *     A ready `pool` lease read by the user who acquired it carries `slot_data`
+         *     (the slot's public and decrypted secret data; each delivery of secret
+         *     values is an event). Null for anyone else, admins included.
          */
         readonly get: operations["get_capability_lease"];
         readonly put?: never;
@@ -17894,6 +17952,12 @@ export interface components {
             readonly slot: string | null;
             /** Out Prefix */
             readonly out_prefix: string;
+            /** Slot Data */
+            readonly slot_data?: {
+                readonly [key: string]: {
+                    readonly [key: string]: string;
+                };
+            } | null;
         };
         /**
          * AgentCapabilitiesIn
@@ -18009,6 +18073,56 @@ export interface components {
             readonly orphans: number;
             /** Gone */
             readonly gone: number;
+        };
+        /**
+         * CapabilitySlotDataOut
+         * @description A slot's data, MASKED: public values, secret key NAMES — never a secret value.
+         */
+        readonly CapabilitySlotDataOut: {
+            /** Slot */
+            readonly slot: string;
+            /** Declared */
+            readonly declared: boolean;
+            /** Public */
+            readonly public: {
+                readonly [key: string]: string;
+            };
+            /** Secret Keys */
+            readonly secret_keys: readonly string[];
+            /** Updated At */
+            readonly updated_at: string | null;
+            /** Updated By */
+            readonly updated_by: string | null;
+            /** Held */
+            readonly held: boolean;
+            /** Lease Id */
+            readonly lease_id: string | null;
+        };
+        /** CapabilitySlotsOut */
+        readonly CapabilitySlotsOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Capability */
+            readonly capability: string;
+            /** Slots */
+            readonly slots: readonly components["schemas"]["CapabilitySlotDataOut"][];
+        };
+        /**
+         * CapabilitySlotDataIn
+         * @description Per-key upsert of one pool slot's data. In each section a key set to a
+         *     string is written, a key set to null is deleted, and a key left out is kept;
+         *     a section left out is untouched. Values are non-blank strings (≤ 4096); keys
+         *     match [A-Za-z0-9_.-]{1,64}; a key is public or secret, never both.
+         */
+        readonly CapabilitySlotDataIn: {
+            /** Public */
+            readonly public?: {
+                readonly [key: string]: string | null;
+            } | null;
+            /** Secret */
+            readonly secret?: {
+                readonly [key: string]: string | null;
+            } | null;
         };
         /** CapabilityGrantIn */
         readonly CapabilityGrantIn: {
@@ -29829,6 +29943,79 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["CapabilityOrphansOut"];
                 };
+            };
+        };
+    };
+    readonly list_capability_slot_data: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilitySlotsOut"];
+                };
+            };
+        };
+    };
+    readonly set_capability_slot_data: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+                readonly slot: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CapabilitySlotDataIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["CapabilitySlotDataOut"];
+                };
+            };
+        };
+    };
+    readonly delete_capability_slot_data: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+                readonly slot: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

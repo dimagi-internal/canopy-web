@@ -13,7 +13,12 @@ Who may call (the same doors as the rest of /api/agents, never a second rule):
   re-reading a stack) needs the agent's owner/admins (`Agent.is_admin`) or the
   agent itself; a grant needs `integrations` (a workspace admin); a
   force-release and "terminate orphans now" need `integrations` or
-  `Agent.is_admin`.
+  `Agent.is_admin`; a pool slot's data is written by a workspace admin
+  (`integrations`) or the agent itself, and read MASKED by any member.
+
+A pool slot's SECRET data leaves canopy-web through exactly one door: the lease
+read (acquire response, GET /leases/{id}) of the user who acquired a ready lease
+on that slot (`slot_data.deliver`).
 
 Long-poll: `GET /leases/{id}?wait_s=` and `GET /leases/{id}/exec/{exec_id}?wait_s=`
 (0-20) hold the request until the state changes, re-checking about once a second.
@@ -35,7 +40,7 @@ from apps.events import audit
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import services
+from . import services, slot_data
 from .models import AgentCapability, CapabilityGrant, CapabilityLease
 from .schemas import (
     AgentCapabilitiesIn,
@@ -52,6 +57,9 @@ from .schemas import (
     CapabilityLeaseListOut,
     CapabilityLeaseOut,
     CapabilityOrphansOut,
+    CapabilitySlotDataIn,
+    CapabilitySlotDataOut,
+    CapabilitySlotsOut,
     CapabilitySpendOut,
     CapabilitySpendRow,
     CapabilityUploadsIn,
@@ -149,7 +157,9 @@ def _refusal(e: services.CapabilityError) -> HttpError:
 
 # ---- serialization ------------------------------------------------------------
 
-def _lease_out(lease: CapabilityLease) -> CapabilityLeaseOut:
+def _lease_out(lease: CapabilityLease, *, deliver_to=None) -> CapabilityLeaseOut:
+    """`deliver_to`: the caller of a single-lease read (acquire, GET). Only then,
+    and only if they acquired this ready pool lease, does it carry `slot_data`."""
     return CapabilityLeaseOut(
         lease_id=str(lease.pk), agent=lease.agent.slug, capability=lease.capability.name,
         status=lease.status, ready=lease.status == CapabilityLease.READY,
@@ -159,6 +169,7 @@ def _lease_out(lease: CapabilityLease) -> CapabilityLeaseOut:
         ended_at=lease.ended_at, expires_at=lease.expires_at, last_heartbeat_at=lease.last_heartbeat_at,
         idle_release_s=lease.idle_release_s, reason=lease.reason, ready_info=lease.ready_info or {},
         slot=lease.slot or None, out_prefix=services.out_prefix(lease),
+        slot_data=slot_data.deliver(lease, deliver_to) if deliver_to is not None else None,
     )
 
 
@@ -266,6 +277,77 @@ def terminate_capability_orphans(request: HttpRequest, slug: str, name: str) -> 
     return CapabilityOrphansOut(agent=cap.agent.slug, capability=cap.name, **out)
 
 
+# ---- pool slot data -----------------------------------------------------------
+
+def _slot_writer(request: HttpRequest, cap: AgentCapability) -> None:
+    if not (_is_agent_itself(request, cap.agent)
+            or perms.can(request.user, cap.agent.workspace_id, perms.INTEGRATIONS)):
+        raise HttpError(403, f"setting {cap.agent.slug}'s slot data is for a workspace admin, "
+                             "or the agent's own login")
+
+
+@agents_router.get("/{slug}/capabilities/{name}/slots", response=CapabilitySlotsOut,
+                   summary="A pool capability's slots and their data (masked)")
+def list_capability_slot_data(request: HttpRequest, slug: str, name: str) -> CapabilitySlotsOut:
+    """Every declared slot of a `pool` capability: its `public` values, the NAMES
+    of its secret keys (never a value — to anyone, admins included), who last
+    changed it, and whether a live lease holds it. 422 on an ec2-ephemeral
+    capability."""
+    cap = _declared(request, slug, name)
+    try:
+        rows = slot_data.listing(cap)
+    except services.CapabilityError as e:
+        raise _refusal(e) from e
+    return CapabilitySlotsOut(agent=cap.agent.slug, capability=cap.name,
+                              slots=[CapabilitySlotDataOut(**r) for r in rows])
+
+
+@agents_router.put("/{slug}/capabilities/{name}/slots/{slot}", response=CapabilitySlotDataOut,
+                   summary="Set a pool slot's data (per-key upsert; secret half write-only)")
+def set_capability_slot_data(request: HttpRequest, slug: str, name: str, slot: str,
+                             payload: CapabilitySlotDataIn) -> CapabilitySlotDataOut:
+    """Per key: a string writes it, null deletes it, a key left out is kept; a
+    section left out is untouched. `secret` is encrypted at rest and only ever
+    delivered on the lease read of the user holding a ready lease on this slot;
+    the response is the MASKED state. 422 unless the capability is a `pool` and
+    declares `slot`. For a workspace admin, or the agent's own login."""
+    cap = _declared(request, slug, name)
+    _slot_writer(request, cap)
+    try:
+        row, before = slot_data.put(cap, slot, public=payload.public, secret=payload.secret, by=request.user)
+    except services.CapabilityError as e:
+        raise _refusal(e) from e
+    # The masked state cannot show a secret VALUE changing (rotating a PIN keeps
+    # the key names), so the after-state also names the secret keys this write
+    # set — names only, never a value or a digest of one (a PIN's hash is the PIN).
+    after = slot_data.state(row)
+    written = sorted(k for k, v in (payload.secret or {}).items() if v is not None)
+    if written:
+        after = {**(after or {}), "secret_keys_written": written}
+    audit.note_change(scope=f"capability-slot:{cap.agent.slug}/{cap.name}/{slot}", before=before,
+                      after=after, workspace=cap.agent.workspace)
+    holder = slot_data.held_by(cap).get(slot)
+    return CapabilitySlotDataOut(**slot_data.masked(cap, slot, row, holder))
+
+
+@agents_router.delete("/{slug}/capabilities/{name}/slots/{slot}", response={204: None},
+                      summary="Delete a pool slot's data")
+def delete_capability_slot_data(request: HttpRequest, slug: str, name: str, slot: str):
+    """Removes all of the slot's data, public and secret — also for a slot the
+    manifest no longer declares (such data is kept, never delivered, until
+    deleted here). Idempotent. 422 on an ec2-ephemeral capability. For a
+    workspace admin, or the agent's own login."""
+    cap = _declared(request, slug, name)
+    _slot_writer(request, cap)
+    try:
+        before = slot_data.delete(cap, slot, by=request.user)
+    except services.CapabilityError as e:
+        raise _refusal(e) from e
+    audit.note_change(scope=f"capability-slot:{cap.agent.slug}/{cap.name}/{slot}", before=before,
+                      after=None, workspace=cap.agent.workspace)
+    return Status(204, None)
+
+
 # ---- grants -------------------------------------------------------------------
 
 @router.get("/grants", response=list[CapabilityGrantOut], summary="List capability grants")
@@ -333,7 +415,7 @@ def acquire_capability_lease(request: HttpRequest, payload: CapabilityLeaseIn) -
                                  turn_id=payload.turn_id, by=request.user)
     except services.CapabilityError as e:
         raise _refusal(e) from e
-    return _lease_out(lease)
+    return _lease_out(lease, deliver_to=request.user)
 
 
 @router.get("/leases", response=CapabilityLeaseListOut, summary="List capability leases")
@@ -385,9 +467,13 @@ def get_capability_lease(request: HttpRequest, lease_id: str,
 
     `wait_s` (0-20) long-polls: the request returns as soon as the lease leaves
     the status it had on arrival (queued → provisioning, provisioning → ready or
-    failed), re-reading ready.json about once a second, else after `wait_s`."""
+    failed), re-reading ready.json about once a second, else after `wait_s`.
+
+    A ready `pool` lease read by the user who acquired it carries `slot_data`
+    (the slot's public and decrypted secret data; each delivery of secret
+    values is an event). Null for anyone else, admins included."""
     lease = _lease(request, lease_id)
-    return _lease_out(services.wait_for_lease(lease, wait_s))
+    return _lease_out(services.wait_for_lease(lease, wait_s), deliver_to=request.user)
 
 
 @router.delete("/leases/{lease_id}", response=CapabilityLeaseOut, summary="Release a lease")
