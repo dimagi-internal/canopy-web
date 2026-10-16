@@ -103,6 +103,14 @@ Every browser-facing address canopy-web serves. The SPA route table is
     thread; HTML bodies render only in a `sandbox=""` iframe behind a no-network
     CSP, meta refreshes stripped; attachments are
     presigned download links. No address → points to Settings → Email.
+  - **Capabilities** (`capabilities`) — the cloud capabilities the agent
+    declares (`GET /api/agents/{slug}/capabilities`): kind, description,
+    region/stack or pool slots, effective limits (manifest lowered by the
+    grant), the grant (who, when, its limits) and live leases; retired names
+    collapse below. Workspace admins (`integrations`) get Grant / Limits /
+    Revoke (`PUT /api/capabilities/grants`, `DELETE /api/capabilities/grants/{id}`);
+    a grant may only lower the manifest's limits and the server's refusal is
+    shown verbatim. Everyone else reads it with a line saying an admin grants.
   - **Skills** — catalog, and **History** (`skills/history`): how each skill
     changed, read from the agent repo's git history with the owner's GitHub grant.
   - **Settings** — everything that configures the agent, grouped by question:

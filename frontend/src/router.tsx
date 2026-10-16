@@ -90,6 +90,9 @@ const SchedulesSection = lazySection(() =>
 const AgentSettingsSection = lazySection(() =>
   import('./pages/agents/AgentSettingsSection').then((m) => ({ default: m.AgentSettingsSection })),
 )
+const AgentCapabilitiesSection = lazySection(() =>
+  import('./pages/agents/AgentCapabilitiesSection').then((m) => ({ default: m.AgentCapabilitiesSection })),
+)
 const AgentSkillsSection = lazySection(() =>
   import('./pages/agents/AgentSkillsSection').then((m) => ({ default: m.AgentSkillsSection })),
 )
@@ -365,6 +368,8 @@ export const routeTable: RouteObject[] = [
           { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
           { path: 'huddles', element: <LazySection><AgentHuddlesSection /></LazySection> },
           { path: 'mail', element: <LazySection><AgentMailSection /></LazySection> },
+          // Cloud capabilities it declares, and the workspace admin's grants.
+          { path: 'capabilities', element: <LazySection><AgentCapabilitiesSection /></LazySection> },
           { path: 'settings', element: <LazySection><AgentSettingsSection /></LazySection> },
           // Credentials is a section of Settings now. Old links (and bookmarks)
           // keep working and keep their query, e.g. `?google=ok`.
