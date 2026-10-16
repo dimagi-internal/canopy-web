@@ -259,6 +259,23 @@ def test_a_valid_aws_proof_resolves_and_names_the_runner(fleet, sts):
     assert all(c["url"] == "https://sts.amazonaws.com/" for c in sts.calls)
 
 
+def test_the_runner_halfs_exact_shape_is_accepted(fleet, sts):
+    """canopy-web#1551's runner (runner/ec2/cloud_runner.py::aws_proof): an explicit
+    `Host` header, single-string values, compact JSON, standard base64."""
+    _bind(fleet)
+    _active_role(fleet, sts)
+    headers = {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+               "Host": "sts.amazonaws.com", "X-Canopy-Proof-Htu": HTU,
+               "X-Canopy-Proof-Iat": str(int(time.time()) - 2)}
+    req = AWSRequest(method="POST", url="https://sts.amazonaws.com/", data=BODY, headers=headers)
+    SigV4Auth(Credentials("AKIAFAKE", "fake-secret", "tok"), "sts", "us-east-1").add_auth(req)
+    signed = dict(req.headers.items())
+    assert "host;" in signed["Authorization"] and "x-canopy-proof-htu" in signed["Authorization"]
+    raw = {"method": "POST", "url": "https://sts.amazonaws.com/", "headers": signed, "body": BODY}
+    proof = base64.b64encode(json.dumps(raw, separators=(",", ":")).encode()).decode("ascii")
+    assert _resolve(fleet, proof).status_code == 200
+
+
 def test_the_htu_may_carry_the_refs_query(fleet, sts):
     _bind(fleet)
     _active_role(fleet, sts)
