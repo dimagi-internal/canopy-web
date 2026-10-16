@@ -205,7 +205,9 @@ function Board({
                   : ''}
                 .
               </span>{' '}
-              Your notes go to the team that sent you this, and to nobody else.
+              {board.round?.state === 'open'
+                ? 'A feedback round is open: everyone with this link sees every note, with the name you give (never your email).'
+                : 'Your notes go to the team that sent you this, and to nobody else.'}
             </p>
           )}
         </header>
