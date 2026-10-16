@@ -142,7 +142,10 @@ def board_decisions(board: Storyboard) -> list[dict]:
     """Stored rows, then each narrative's read-time caveats (unsaved, read-only)."""
     from apps.storyboards.models import StoryboardDecision
 
-    stored = [decision_rows.serialize(d) for d in board.decisions.all()]
+    from apps.storyboards import rounds  # rounds imports this module
+
+    pending = rounds.pending_by_key(rounds.current(board))
+    stored = [decision_rows.serialize(d, pending=pending.get(d.key)) for d in board.decisions.all()]
     taken = {d["id"] for d in stored}
     read_only = []
     for raw in _narrative_caveat_rows(board):
@@ -196,8 +199,12 @@ def board_feedback(board: Storyboard):
     )
 
 
-def resolve_board(board: Storyboard, *, is_member: bool = False) -> dict:
+def resolve_board(
+    board: Storyboard, *, is_member: bool = False, viewer=None, can_manage: bool = False
+) -> dict:
     """The read model for the shared page: acts → entries → current release."""
+    from apps.storyboards import rounds  # rounds imports this module
+
     workspace_slugs = {board.workspace_id}
 
     acts = []
@@ -230,7 +237,10 @@ def resolve_board(board: Storyboard, *, is_member: bool = False) -> dict:
         "layout": board.layout,
         # The page shows returning notes only to the people who sent the link.
         "is_member": is_member,
+        "can_manage": can_manage,
         "acts": acts,
+        "round": rounds.round_payload(board, rounds.current(board), viewer=viewer),
+        "previous_round": rounds.round_payload(board, rounds.latest_finished(board), viewer=viewer),
     }
 
 

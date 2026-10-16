@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import uuid
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -25,9 +25,10 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.common.csrf import csrf_rejected
 from apps.feedback import reactions
-from apps.feedback import services as feedback_services
+from apps.feedback import rounds as frounds
 from apps.harness import artifact_origin
 from apps.storyboards import decisions as decision_rows
+from apps.storyboards import rounds as board_rounds
 from apps.storyboards import services
 from apps.storyboards.act_keys import act_key
 from apps.storyboards.models import Act, Entry, Storyboard
@@ -37,6 +38,10 @@ from apps.storyboards.schemas import (
     DecisionOut,
     NarrativeReadOut,
     NotesOut,
+    RoundConsumeIn,
+    RoundDetailOut,
+    RoundCloseIn,
+    RoundOut,
     ShareTokenOut,
     StoryboardIn,
     StoryboardListOut,
@@ -77,6 +82,14 @@ def _is_member(request: HttpRequest, board: Storyboard) -> bool:
     )
 
 
+def _can_manage(request: HttpRequest, board: Storyboard) -> bool:
+    """May open and close rounds: a signed-in editor of the owning workspace."""
+    return bool(
+        request.user.is_authenticated
+        and perms.can(request.user, board.workspace_id, perms.CONTENT_WRITE)
+    )
+
+
 def _readable_or_404(request: HttpRequest, slug: str, ws: str = "") -> Storyboard:
     """A board the caller may READ, or 404.
 
@@ -88,8 +101,9 @@ def _readable_or_404(request: HttpRequest, slug: str, ws: str = "") -> Storyboar
     workspaces may each have a board with this slug, so `ws` also picks which.
     """
     boards = Storyboard.objects.filter(slug=slug)
-    if ws:
-        boards = boards.filter(workspace_id=ws)
+    # The `/api/w/<ws>/` pin (set only for a verified member) names it too.
+    for pin in {(ws or "").strip(), getattr(request, "workspace_slug", None) or ""} - {""}:
+        boards = boards.filter(workspace_id=pin)
     board = boards.first()
     if board is None:
         raise HttpError(404, "storyboard not found")
@@ -104,20 +118,28 @@ def _readable_or_404(request: HttpRequest, slug: str, ws: str = "") -> Storyboar
     raise HttpError(404, "storyboard not found")
 
 
-def _owned_or_404(request: HttpRequest, slug: str) -> Storyboard:
-    board = _member_boards(request).filter(slug=slug).first()
+def _owned_or_404(request: HttpRequest, slug: str, ws: str = "") -> Storyboard:
+    """A board in one of the caller's workspaces, or 404.
+
+    Two workspaces may each hold a board with this slug, so the workspace the
+    request names picks which: the `/api/w/<ws>/` pin (membership-checked by the
+    tenant middleware) and/or `?ws=`. Naming neither keeps the old lookup."""
+    boards = _member_boards(request).filter(slug=slug)
+    for pin in {(ws or "").strip(), getattr(request, "workspace_slug", None) or ""} - {""}:
+        boards = boards.filter(workspace_id=pin)
+    board = boards.first()
     if board is None:
         raise HttpError(404, "storyboard not found")
     return board
 
 
-def _editable_or_404(request: HttpRequest, slug: str) -> Storyboard:
+def _editable_or_404(request: HttpRequest, slug: str, ws: str = "") -> Storyboard:
     """A board the caller may CHANGE: editing its arc, minting or re-minting its
     share link. Membership first (404 to a non-member, so the role check never
     confirms a hidden board exists), then the author tier — a viewer reads the
     board and its notes but does not reshape what was sent, or kill the link
     everyone else was sent."""
-    board = _owned_or_404(request, slug)
+    board = _owned_or_404(request, slug, ws)
     if not perms.can(request.user, board.workspace_id, perms.CONTENT_WRITE):
         raise HttpError(403, "changing a storyboard requires the editor role in its workspace")
     return board
@@ -299,7 +321,13 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
         raise HttpError(422, str(e))
     except decision_rows.DecisionConflict as e:
         raise HttpError(409, str(e))
-    return services.resolve_board(board, is_member=True)
+    except IntegrityError:
+        if Storyboard.objects.filter(workspace_id=workspace_slug, slug=payload.slug).exists():
+            raise HttpError(409, f"a storyboard named {payload.slug!r} already exists in this workspace")
+        raise
+    return services.resolve_board(
+        board, is_member=True, viewer=request.user, can_manage=True
+    )
 
 
 @router.get(
@@ -313,14 +341,29 @@ def get_storyboard(request: HttpRequest, slug: str, ws: str = "") -> dict:
     `ws` is the workspace the page's URL names; a board elsewhere 404s."""
     board = _readable_or_404(request, slug, ws)
     reactions.record_view(request, reactions.STORYBOARD, board.pk)
-    return services.resolve_board(board, is_member=_is_member(request, board))
+    return services.resolve_board(
+        board,
+        is_member=_is_member(request, board),
+        viewer=request.user,
+        can_manage=_can_manage(request, board),
+    )
 
 
 @router.patch("/{slug}", response=StoryboardOut, auth=session_auth, summary="Edit a storyboard")
 def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn) -> dict:
     board = _editable_or_404(request, slug)
+    project = None
+    if (payload.agent_project or "").strip():
+        project = artifact_origin._explicit_project(payload.agent_project, user=request.user, turn=None)
+        # One message for "unknown" and "another workspace's": a caller must not be able
+        # to probe which project ids exist in other tenants.
+        if project is None or project.agent.workspace_id != board.workspace_id:
+            raise HttpError(422, f"no such project: {payload.agent_project!r}")
     try:
         with transaction.atomic():
+            if project is not None:
+                board.agent_project = project
+                board.save(update_fields=["agent_project", "updated_at"])
             fields = []
             for name in ("title", "lede", "capability", "layout"):
                 value = getattr(payload, name)
@@ -336,7 +379,9 @@ def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn
         raise HttpError(422, str(e))
     except decision_rows.DecisionConflict as e:
         raise HttpError(409, str(e))
-    return services.resolve_board(board, is_member=True)
+    return services.resolve_board(
+        board, is_member=True, viewer=request.user, can_manage=True
+    )
 
 
 @router.post(
@@ -397,6 +442,15 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
     if not payload.body.strip() and not payload.suggested_text.strip():
         raise HttpError(422, "a note needs some words")
 
+    rnd = board_rounds.current(board)
+    try:
+        board_rounds.check_anchor(board, payload.anchor_id)
+        author = board_rounds.author_for(
+            request.user, payload.author_name, member=is_member, in_round=rnd is not None
+        )
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
+
     item = {
         "target_kind": "narrative" if payload.narrative_slug else "storyboard",
         "target_ref": payload.narrative_slug or board.slug,
@@ -405,16 +459,101 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
         "kind": payload.kind,
         "body": payload.body,
         "suggested_text": payload.suggested_text,
-        "author_name": payload.author_name,
+        "author_name": author,
         "author_email": payload.author_email,
         "channel": "web",
         "source_ref": "",
     }
-    return feedback_services.ingest(
+    if is_member:
+        item["author_email"] = request.user.email or ""
+    result = frounds.ingest_into(
+        rnd,
         [item],
         workspace=board.workspace,
         submitted_by=request.user if request.user.is_authenticated else None,
     )
+    if is_member and rnd is not None:
+        board_rounds.link_participant(board, request.user)
+    return result
+
+
+@router.post(
+    "/{slug}/rounds",
+    response=RoundOut,
+    auth=session_auth,
+    summary="Open a feedback round on a storyboard",
+)
+def open_storyboard_round(request: HttpRequest, slug: str, ws: str = "") -> dict:
+    """Editors only. Pins every narrative's current version and adopts the notes
+    left since the last round. Needs the board linked to a project in its own
+    workspace. `ws` (or the `/api/w/<ws>/` pin) picks among same-slug boards."""
+    board = _editable_or_404(request, slug, ws)
+    try:
+        rnd = board_rounds.open_round(board, by_user=request.user)
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
+    return board_rounds.summary(rnd)
+
+
+@router.post(
+    "/{slug}/rounds/{number}/close",
+    response=RoundOut,
+    auth=session_auth,
+    summary="Close a feedback round and hand it to the project's agent",
+)
+def close_storyboard_round(
+    request: HttpRequest, slug: str, number: int, payload: RoundCloseIn, ws: str = ""
+) -> dict:
+    """Editors only. Applies staged decision edits, then creates one task on the
+    board's project and approves it — exactly one agent turn for the whole round.
+    A second close (another tab) gets 409; disagreements nobody picked get 409."""
+    board = _editable_or_404(request, slug, ws)
+    rnd = board_rounds.by_number(board, number)
+    if rnd is None:
+        raise HttpError(404, "no such round")
+    try:
+        rnd = board_rounds.close_round(board, rnd, by_user=request.user,
+                                       note=payload.close_note, picks=payload.picks)
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
+    return board_rounds.summary(rnd)
+
+
+@router.get(
+    "/{slug}/rounds/{number}",
+    response=RoundDetailOut,
+    auth=session_auth,
+    summary="Read a feedback round in full (members)",
+)
+def get_storyboard_round(request: HttpRequest, slug: str, number: int, ws: str = "") -> dict:
+    """The agent's read of a round. Members only; a token holder 404s."""
+    board = _owned_or_404(request, slug, ws)
+    rnd = board_rounds.by_number(board, number)
+    if rnd is None:
+        raise HttpError(404, "no such round")
+    return board_rounds.detail(board, rnd, viewer=request.user)
+
+
+@router.post(
+    "/{slug}/rounds/{number}/consume",
+    response=RoundOut,
+    auth=session_auth,
+    summary="Mark a closed round consumed and open the next one",
+)
+def consume_storyboard_round(
+    request: HttpRequest, slug: str, number: int, payload: RoundConsumeIn, ws: str = ""
+) -> dict:
+    """Editors only (the agent's PAT). Refuses while any note is unanswered;
+    opens round N+1 on each narrative's current version."""
+    board = _editable_or_404(request, slug, ws)
+    rnd = board_rounds.by_number(board, number)
+    if rnd is None:
+        raise HttpError(404, "no such round")
+    try:
+        nxt = board_rounds.consume_round(board, rnd, run_id=payload.run_id, by_user=request.user)
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
+    return board_rounds.summary(nxt)
 
 
 @router.post(
@@ -426,24 +565,41 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
 def edit_storyboard_decision(
     request: HttpRequest, slug: str, key: str, payload: DecisionEditIn, ws: str = ""
 ) -> dict:
-    # Self-enforcing like the read: a wrong token 404s. A member's edit applies
-    # immediately, attributed and undoable; a link holder may edit only inside
-    # an open feedback round, where it is staged (plan C).
+    # Self-enforcing like the read: a wrong token 404s. Inside an open feedback
+    # round every edit is staged (members too); outside one a member's edit
+    # applies immediately and a link holder's is refused.
     board = _readable_or_404(request, slug, ws)
     row = board.decisions.filter(key=key).first()
     if row is None:
         raise HttpError(404, "no such decision on this storyboard")
-    # Plan C replaces this refusal with staging inside an open round.
-    if not _is_member(request, board):
-        raise HttpError(403, "only a member can change a decision outside a feedback round")
+    member = _is_member(request, board)
+    token = request.GET.get("t")
     # auth=None skips Ninja's cookie-auth CSRF check, so a session caller re-runs it.
     if request.user.is_authenticated and csrf_rejected(request):
         raise HttpError(403, "CSRF verification failed")
+    rnd = board_rounds.current(board)
     try:
+        if rnd is not None:
+            if not member and not board.grants(Storyboard.CAP_SUGGEST, token):
+                raise HttpError(403, "this link does not grant changing decisions")
+            name = board_rounds.author_for(request.user, payload.author_name,
+                                           member=member, in_round=True)
+            decision_rows.check_edit(row, action=payload.action, value=payload.value)
+            board_rounds.stage(rnd, row, action=payload.action, value=payload.value,
+                               reasoning=payload.reasoning, by_name=name,
+                               by_user=request.user if member else None)
+            if member:
+                board_rounds.link_participant(board, request.user)
+            return decision_rows.serialize(row, pending=board_rounds.pending_for(board, row.key))
+        if not member:
+            raise HttpError(409, "No feedback round is open, so only a member can change a "
+                                 "decision right now.")
         row = decision_rows.apply_edit(
             row, action=payload.action, value=payload.value,
             reasoning=payload.reasoning, by_user=request.user,
         )
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
     except decision_rows.DecisionInvalid as e:
         raise HttpError(422, str(e))
     except decision_rows.DecisionConflict as e:
@@ -463,7 +619,9 @@ def list_notes(request: HttpRequest, slug: str) -> dict:
     Without this the loop had no closing half: a reviewer could leave notes and
     the people who sent them the link had no way to read them short of curl.
 
-    A token holder must not reach it. Seeing the other reviewers' notes would
+    Outside a round, a token holder must not reach it. (Inside one,
+    ``GET /{slug}`` shows the round's notes to everyone by design — spec C.)
+    Seeing the other reviewers' notes would
     bias exactly the independent read you asked for, and the rows carry names
     that were given to us rather than to each other — so this uses
     ``_owned_or_404`` (membership), not ``_readable_or_404`` (membership OR

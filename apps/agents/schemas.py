@@ -1040,7 +1040,7 @@ class ProjectParticipantOut(StrictModel):
     display_name: str
     email: str = ""
     role: str = Field(default="", description="Free text: the part they play. Blank when canopy linked them itself.")
-    source: Literal["fact", "turn", "manual", "summary"] = Field(
+    source: Literal["fact", "turn", "manual", "summary", "review"] = Field(
         description="How canopy first learned it: a fact filed against the project, a conversation "
                     "that raised one of its tasks, a person adding them, or an agent writing their "
                     "contributor page.")
@@ -1555,7 +1555,7 @@ class ContributorBriefOut(StrictModel):
     id: int
     display_name: str
     role: str = ""
-    source: Literal["fact", "turn", "manual", "summary", "idea"] = Field(
+    source: Literal["fact", "turn", "manual", "summary", "review", "idea"] = Field(
         description="How they joined (a participant row's source), or `idea`: not a participant, "
                     "but an idea's own evidence (its human why, or the turn that raised it) names them.")
     since: dt.datetime

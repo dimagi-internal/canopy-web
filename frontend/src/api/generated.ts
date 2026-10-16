@@ -1087,6 +1087,91 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/storyboards/{slug}/rounds": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Open a feedback round on a storyboard
+         * @description Editors only. Pins every narrative's current version and adopts the notes
+         *     left since the last round. Needs the board linked to a project in its own
+         *     workspace. `ws` (or the `/api/w/<ws>/` pin) picks among same-slug boards.
+         */
+        readonly post: operations["open_storyboard_round"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/storyboards/{slug}/rounds/{number}/close": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Close a feedback round and hand it to the project's agent
+         * @description Editors only. Applies staged decision edits, then creates one task on the
+         *     board's project and approves it — exactly one agent turn for the whole round.
+         *     A second close (another tab) gets 409; disagreements nobody picked get 409.
+         */
+        readonly post: operations["close_storyboard_round"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/storyboards/{slug}/rounds/{number}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read a feedback round in full (members)
+         * @description The agent's read of a round. Members only; a token holder 404s.
+         */
+        readonly get: operations["get_storyboard_round"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/storyboards/{slug}/rounds/{number}/consume": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Mark a closed round consumed and open the next one
+         * @description Editors only (the agent's PAT). Refuses while any note is unanswered;
+         *     opens round N+1 on each narrative's current version.
+         */
+        readonly post: operations["consume_storyboard_round"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/{slug}/decisions/{key}/edit": {
         readonly parameters: {
             readonly query?: never;
@@ -1118,7 +1203,9 @@ export interface paths {
          *     Without this the loop had no closing half: a reviewer could leave notes and
          *     the people who sent them the link had no way to read them short of curl.
          *
-         *     A token holder must not reach it. Seeing the other reviewers' notes would
+         *     Outside a round, a token holder must not reach it. (Inside one,
+         *     ``GET /{slug}`` shows the round's notes to everyone by design — spec C.)
+         *     Seeing the other reviewers' notes would
          *     bias exactly the independent read you asked for, and the rows carry names
          *     that were given to us rather than to each other — so this uses
          *     ``_owned_or_404`` (membership), not ``_readable_or_404`` (membership OR
@@ -10680,6 +10767,11 @@ export interface components {
             readonly superseded_by: string;
             /** Editable */
             readonly editable: boolean;
+            /**
+             * Pending
+             * @default []
+             */
+            readonly pending: readonly components["schemas"]["StagedEditOut"][];
         };
         /**
          * Divergence
@@ -10801,6 +10893,70 @@ export interface components {
              */
             readonly open_questions: readonly string[];
         };
+        /** RoundNoteOut */
+        readonly RoundNoteOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Body */
+            readonly body: string;
+            /** Suggested Text */
+            readonly suggested_text: string;
+            /** Author Name */
+            readonly author_name: string;
+            /** Anchor Id */
+            readonly anchor_id: string;
+            /** Target Kind */
+            readonly target_kind: string;
+            /** Target Ref */
+            readonly target_ref: string;
+            /** Target Version */
+            readonly target_version: number | null;
+            /** State */
+            readonly state: string;
+            /** Disposition Note */
+            readonly disposition_note: string;
+            /** Resolved In Version */
+            readonly resolved_in_version: number | null;
+            /** Created At */
+            readonly created_at: string;
+            /** Mine */
+            readonly mine: boolean;
+        };
+        /** RoundPayloadOut */
+        readonly RoundPayloadOut: {
+            /** Number */
+            readonly number: number;
+            /** State */
+            readonly state: string;
+            /** Opened At */
+            readonly opened_at: string;
+            /** Opened By */
+            readonly opened_by: string;
+            /** Closed At */
+            readonly closed_at: string | null;
+            /** Close Note */
+            readonly close_note: string;
+            /** Pinned Versions */
+            readonly pinned_versions: {
+                readonly [key: string]: number;
+            };
+            /** Note Count */
+            readonly note_count: number;
+            /** People Count */
+            readonly people_count: number;
+            /**
+             * Notes
+             * @default []
+             */
+            readonly notes: readonly components["schemas"]["RoundNoteOut"][];
+            /**
+             * Staged Edits
+             * @default []
+             */
+            readonly staged_edits: readonly components["schemas"]["StagedEditOut"][];
+        };
         /**
          * ShortVersion
          * @description A subset of the arc for when there is less time ("the 3-minute version").
@@ -10821,6 +10977,23 @@ export interface components {
              * @default []
              */
             readonly items: readonly components["schemas"]["CutRef"][];
+        };
+        /** StagedEditOut */
+        readonly StagedEditOut: {
+            /** Edit Id */
+            readonly edit_id: string;
+            /** Key */
+            readonly key: string;
+            /** Action */
+            readonly action: string;
+            /** Value */
+            readonly value: string;
+            /** Reasoning */
+            readonly reasoning: string;
+            /** By Name */
+            readonly by_name: string;
+            /** At */
+            readonly at: string;
         };
         /**
          * StoryboardBrief
@@ -10893,8 +11066,15 @@ export interface components {
              * @default false
              */
             readonly is_member: boolean;
+            /**
+             * Can Manage
+             * @default false
+             */
+            readonly can_manage: boolean;
             /** Acts */
             readonly acts: readonly components["schemas"]["ActOut"][];
+            readonly round?: components["schemas"]["RoundPayloadOut"] | null;
+            readonly previous_round?: components["schemas"]["RoundPayloadOut"] | null;
         };
         /** ActIn */
         readonly ActIn: {
@@ -11082,6 +11262,8 @@ export interface components {
             readonly layout?: ("review" | "reel") | null;
             /** Acts */
             readonly acts?: readonly components["schemas"]["ActIn"][] | null;
+            /** Agent Project */
+            readonly agent_project?: string | null;
         };
         /** ShareTokenOut */
         readonly ShareTokenOut: {
@@ -11136,6 +11318,113 @@ export interface components {
              * @default
              */
             readonly author_email: string;
+        };
+        /** RoundOut */
+        readonly RoundOut: {
+            /** Number */
+            readonly number: number;
+            /** State */
+            readonly state: string;
+            /** Opened At */
+            readonly opened_at: string;
+            /** Opened By */
+            readonly opened_by: string;
+            /** Closed At */
+            readonly closed_at: string | null;
+            /** Close Note */
+            readonly close_note: string;
+            /** Pinned Versions */
+            readonly pinned_versions: {
+                readonly [key: string]: number;
+            };
+            /** Note Count */
+            readonly note_count: number;
+            /** People Count */
+            readonly people_count: number;
+        };
+        /** RoundCloseIn */
+        readonly RoundCloseIn: {
+            /**
+             * Close Note
+             * @default
+             */
+            readonly close_note: string;
+            /**
+             * Picks
+             * @default {}
+             */
+            readonly picks: {
+                readonly [key: string]: string;
+            };
+        };
+        /** RoundDetailNoteOut */
+        readonly RoundDetailNoteOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Body */
+            readonly body: string;
+            /** Suggested Text */
+            readonly suggested_text: string;
+            /** Author Name */
+            readonly author_name: string;
+            /** Anchor Id */
+            readonly anchor_id: string;
+            /** Target Kind */
+            readonly target_kind: string;
+            /** Target Ref */
+            readonly target_ref: string;
+            /** Target Version */
+            readonly target_version: number | null;
+            /** State */
+            readonly state: string;
+            /** Disposition Note */
+            readonly disposition_note: string;
+            /** Resolved In Version */
+            readonly resolved_in_version: number | null;
+            /** Created At */
+            readonly created_at: string;
+            /** Mine */
+            readonly mine: boolean;
+            /** Author Email */
+            readonly author_email: string;
+        };
+        /** RoundDetailOut */
+        readonly RoundDetailOut: {
+            /** Number */
+            readonly number: number;
+            /** State */
+            readonly state: string;
+            /** Opened At */
+            readonly opened_at: string;
+            /** Opened By */
+            readonly opened_by: string;
+            /** Closed At */
+            readonly closed_at: string | null;
+            /** Close Note */
+            readonly close_note: string;
+            /** Pinned Versions */
+            readonly pinned_versions: {
+                readonly [key: string]: number;
+            };
+            /** Note Count */
+            readonly note_count: number;
+            /** People Count */
+            readonly people_count: number;
+            /** Notes */
+            readonly notes: readonly components["schemas"]["RoundDetailNoteOut"][];
+            /** Staged Edits */
+            readonly staged_edits: readonly components["schemas"]["StagedEditOut"][];
+            /** Decisions */
+            readonly decisions: readonly components["schemas"]["DecisionOut"][];
+            /** Board Url */
+            readonly board_url: string;
+        };
+        /** RoundConsumeIn */
+        readonly RoundConsumeIn: {
+            /** Run Id */
+            readonly run_id: string;
         };
         /** DecisionEditIn */
         readonly DecisionEditIn: {
@@ -15186,7 +15475,7 @@ export interface components {
              * @description How canopy first learned it: a fact filed against the project, a conversation that raised one of its tasks, a person adding them, or an agent writing their contributor page.
              * @enum {string}
              */
-            readonly source: "fact" | "turn" | "manual" | "summary";
+            readonly source: "fact" | "turn" | "manual" | "summary" | "review";
             /**
              * Since
              * Format: date-time
@@ -17036,7 +17325,7 @@ export interface components {
              * @description How they joined (a participant row's source), or `idea`: not a participant, but an idea's own evidence (its human why, or the turn that raised it) names them.
              * @enum {string}
              */
-            readonly source: "fact" | "turn" | "manual" | "summary" | "idea";
+            readonly source: "fact" | "turn" | "manual" | "summary" | "review" | "idea";
             /**
              * Since
              * Format: date-time
@@ -24967,6 +25256,113 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    readonly open_storyboard_round: {
+        readonly parameters: {
+            readonly query?: {
+                readonly ws?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoundOut"];
+                };
+            };
+        };
+    };
+    readonly close_storyboard_round: {
+        readonly parameters: {
+            readonly query?: {
+                readonly ws?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RoundCloseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoundOut"];
+                };
+            };
+        };
+    };
+    readonly get_storyboard_round: {
+        readonly parameters: {
+            readonly query?: {
+                readonly ws?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoundDetailOut"];
+                };
+            };
+        };
+    };
+    readonly consume_storyboard_round: {
+        readonly parameters: {
+            readonly query?: {
+                readonly ws?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly number: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RoundConsumeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoundOut"];
                 };
             };
         };

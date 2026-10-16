@@ -144,6 +144,16 @@ class DecisionHistoryOut(StrictModel):
     at: str
 
 
+class StagedEditOut(StrictModel):
+    edit_id: str
+    key: str
+    action: str
+    value: str
+    reasoning: str
+    by_name: str
+    at: str
+
+
 class DecisionOut(StrictModel):
     id: str
     scope: str
@@ -172,6 +182,8 @@ class DecisionOut(StrictModel):
     superseded_by: str
     editable: bool
     """False for a narrative's read-time caveat: shown, not yet a stored row."""
+    pending: list[StagedEditOut] = []
+    """Edits staged in the open round, applied when it closes."""
 
 
 class DecisionEditIn(StrictModel):
@@ -180,6 +192,61 @@ class DecisionEditIn(StrictModel):
     reasoning: str = ""
     author_name: str = ""
     """A guest's name (plan C, inside a round). Ignored for a signed-in member."""
+
+
+class RoundCloseIn(StrictModel):
+    close_note: str = ""
+    picks: dict[str, str] = {}
+    """`picks` maps a decision id to the staged edit chosen where people disagreed."""
+
+
+class RoundOut(StrictModel):
+    number: int
+    state: str
+    opened_at: str
+    opened_by: str
+    closed_at: str | None
+    close_note: str
+    pinned_versions: dict[str, int]
+    note_count: int
+    people_count: int
+
+
+class RoundNoteOut(StrictModel):
+    id: int
+    kind: str
+    body: str
+    suggested_text: str
+    author_name: str
+    anchor_id: str
+    target_kind: str
+    target_ref: str
+    target_version: int | None
+    state: str
+    disposition_note: str
+    resolved_in_version: int | None
+    created_at: str
+    mine: bool
+
+
+class RoundPayloadOut(RoundOut):
+    notes: list[RoundNoteOut] = []
+    staged_edits: list[StagedEditOut] = []
+
+
+class RoundDetailNoteOut(RoundNoteOut):
+    author_email: str
+
+
+class RoundDetailOut(RoundOut):
+    notes: list[RoundDetailNoteOut]
+    staged_edits: list[StagedEditOut]
+    decisions: list[DecisionOut]
+    board_url: str
+
+
+class RoundConsumeIn(StrictModel):
+    run_id: str
 
 
 class StoryboardOut(StrictModel):
@@ -194,7 +261,14 @@ class StoryboardOut(StrictModel):
     """True when the caller belongs to the owning workspace — i.e. is one of the
     people who SENT this link, not one of the people it was sent to. The only
     thing it changes is whether returning notes are shown."""
+    can_manage: bool = False
+    """True when the caller may open and close feedback rounds (editor or
+    above in the owning workspace). False for viewers and token holders."""
     acts: list[ActOut]
+    # Round notes are visible to every reader while the round is open (spec C,
+    # Visibility) — names only, never emails.
+    round: RoundPayloadOut | None = None
+    previous_round: RoundPayloadOut | None = None
 
 
 class NoteOut(StrictModel):
@@ -281,6 +355,8 @@ class StoryboardPatchIn(StrictModel):
     capability: Capability | None = None
     layout: Layout | None = None
     acts: list[ActIn] | None = None
+    agent_project: str | None = None
+    """Links the board to a project (a pk, ``P9`` or ``agent/P9``). Empty does nothing."""
 
 
 class ShareTokenOut(StrictModel):

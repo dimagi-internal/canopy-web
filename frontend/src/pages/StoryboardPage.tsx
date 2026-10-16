@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useSearchParams, Link } from 'react-router-dom'
 import {
   getStoryboard,
@@ -6,15 +6,18 @@ import {
   leaveFeedback,
   type LeaveFeedbackIn,
   type Note,
+  type RoundNote,
   type Storyboard,
 } from '@/api/storyboards'
 import { withBase } from '@/lib/basePath'
 import { useScopedPath } from '@/lib/scopedLinks'
-import { NoteComposer } from '@/components/storyboard/NoteComposer'
+import { NoteComposer, readReviewerName } from '@/components/storyboard/NoteComposer'
 import { NotesReturned, groupNotes } from '@/components/storyboard/NotesReturned'
 import { PublicHeader } from '@/components/PublicHeader'
 import { BriefPanel } from '@/components/storyboard/DemoBrief'
 import { DecisionLog } from '@/components/storyboard/DecisionLog'
+import { RoundBanner } from '@/components/storyboard/RoundBanner'
+import { MyNotes } from '@/components/storyboard/MyNotes'
 import { EntryCuts } from '@/components/storyboard/EntryCuts'
 
 /**
@@ -43,6 +46,10 @@ export default function StoryboardPage() {
   const [params] = useSearchParams()
   const token = params.get('t')
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
+  // Bumped to re-read the board in place (a round opened or closed) without
+  // the "Loading…" flash a first load gets.
+  const [reloads, setReloads] = useState(0)
+  const reload = useCallback(() => setReloads((n) => n + 1), [])
 
   useEffect(() => {
     let live = true
@@ -50,7 +57,7 @@ export default function StoryboardPage() {
       setState({ kind: 'not_found' })
       return
     }
-    setState({ kind: 'loading' })
+    if (reloads === 0) setState({ kind: 'loading' })
     getStoryboard(slug, token, workspace)
       .then((data) => live && setState({ kind: 'ready', data }))
       .catch((e: Error) => {
@@ -64,7 +71,7 @@ export default function StoryboardPage() {
     return () => {
       live = false
     }
-  }, [slug, token])
+  }, [slug, token, reloads])
 
   if (state.kind === 'loading') return <Centered>Loading…</Centered>
   if (state.kind === 'not_found')
@@ -84,7 +91,25 @@ export default function StoryboardPage() {
       </Centered>
     )
 
-  return <Board board={state.data} token={token} workspace={workspace} />
+  return <Board board={state.data} token={token} workspace={workspace} onChanged={reload} />
+}
+
+/** A round note in the shape the in-place note list renders. */
+function asNote(n: RoundNote): Note {
+  return {
+    id: n.id,
+    kind: n.kind === 'suggestion' ? 'suggestion' : 'comment',
+    body: n.body,
+    suggested_text: n.suggested_text,
+    author_name: n.author_name,
+    channel: 'web',
+    state: n.state === 'new' ? 'open' : n.state,
+    target_kind: n.target_kind,
+    target_ref: n.target_ref,
+    target_version: n.target_version,
+    anchor_id: n.anchor_id,
+    created_at: n.created_at,
+  }
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
@@ -102,10 +127,12 @@ function Board({
   board,
   token,
   workspace,
+  onChanged,
 }: {
   board: Storyboard
   token: string | null
   workspace?: string
+  onChanged: () => void
 }) {
   // A shared link gets bookmarked and sits among a dozen other tabs. "Canopy"
   // tells the reader nothing about which one this is.
@@ -128,7 +155,10 @@ function Board({
     }
   }, [board.is_member, board.slug])
 
-  const grouped = groupNotes(notes)
+  // While a round is open every reader sees every round note (names only), so
+  // the round's notes replace the member-only list.
+  const roundNotes = board.round ? board.round.notes.map(asNote) : null
+  const grouped = groupNotes(roundNotes ?? notes)
   const narrativeCount = board.acts.reduce((n, a) => n + a.entries.length, 0)
 
   // A reel is the finished product, sent to someone with nothing to do but
@@ -184,6 +214,8 @@ function Board({
             to play it in. Absent on a board without a brief. */}
         <BriefPanel board={board} />
 
+        <RoundBanner key={board.round?.number ?? 'none'} board={board} canManage={!!board.can_manage} ws={workspace} onChanged={onChanged} />
+
         {board.acts.map((act, i) => (
           <section key={`${act.title}-${i}`} className="mt-11 flex flex-col gap-4">
             {/* A reel whose entries carry their own authored titles has nothing
@@ -225,7 +257,19 @@ function Board({
         {/* The decision log: what must be answered, confirmed or was assumed —
             the last thing read before a reviewer sends this on. Kept on a reel
             too: a disclosure is not review furniture. */}
-        <DecisionLog board={board} token={token} ws={workspace} canEdit={board.is_member} />
+        <DecisionLog
+          board={board}
+          token={token}
+          ws={workspace}
+          canEdit={board.is_member}
+          inRound={!!board.round}
+          capability={board.capability}
+          notesByAnchor={grouped.byAnchor}
+        />
+
+        {board.previous_round && (
+          <MyNotes round={board.previous_round} viewerName={readReviewerName()} />
+        )}
 
         {!reel && grouped.loose.length > 0 && (
           <section className="mt-11 flex flex-col gap-4">

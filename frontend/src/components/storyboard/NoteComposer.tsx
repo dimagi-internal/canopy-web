@@ -16,7 +16,7 @@ import type { Capability, FeedbackKind, LeaveFeedbackIn } from '@/api/storyboard
  */
 const NAME_KEY = 'canopy.reviewer-name'
 
-function readReviewerName(): string {
+export function readReviewerName(): string {
   try {
     return localStorage.getItem(NAME_KEY) ?? ''
   } catch {
@@ -24,12 +24,17 @@ function readReviewerName(): string {
   }
 }
 
-function rememberReviewerName(value: string): void {
+/** Fired on `window` when a reviewer's name is saved, so every surface that
+ * shows guest controls (the decision log) sees it without a reload. */
+export const REVIEWER_NAME_EVENT = 'canopy:reviewer-name'
+
+export function rememberReviewerName(value: string): void {
   try {
     localStorage.setItem(NAME_KEY, value)
   } catch {
     /* not worth failing a note over */
   }
+  window.dispatchEvent(new Event(REVIEWER_NAME_EVENT))
 }
 
 export function NoteComposer({

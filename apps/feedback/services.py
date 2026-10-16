@@ -24,7 +24,7 @@ _INGEST_FIELDS = (
 )
 
 
-def ingest(items: list[dict], *, workspace, submitted_by=None) -> dict:
+def ingest(items: list[dict], *, workspace, submitted_by=None, round=None) -> dict:
     """Create feedback rows, skipping ones already ingested.
 
     Items with neither ``body`` nor ``suggested_text`` are skipped and counted
@@ -36,6 +36,8 @@ def ingest(items: list[dict], *, workspace, submitted_by=None) -> dict:
 
     ``workspace`` is required: every row belongs to the tenant of the thing it
     is about, and the caller (who resolved that thing) is the one who knows it.
+
+    ``round`` attaches every created note to that feedback round.
 
     The whole batch commits in one transaction, so a doc with forty comments
     lands atomically rather than half-ingesting on an error.
@@ -66,7 +68,9 @@ def ingest(items: list[dict], *, workspace, submitted_by=None) -> dict:
                 duplicate += 1
                 continue
 
-            fb = Feedback.objects.create(**data, workspace=workspace, submitted_by=submitted_by)
+            fb = Feedback.objects.create(
+                **data, workspace=workspace, submitted_by=submitted_by, round=round
+            )
             created_ids.append(fb.pk)
 
     return {

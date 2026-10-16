@@ -283,10 +283,36 @@ def _restore(row, snap: dict) -> None:
         setattr(row, name, value)
 
 
+def public_name(user) -> str:
+    """A member's name as other readers may see it — never an email address."""
+    for candidate in (user.get_full_name(), user.first_name, user.username):
+        candidate = (candidate or "").strip()
+        if candidate and "@" not in candidate:
+            return candidate
+    local = (user.email or "").split("@", 1)[0].strip()
+    return local or "A teammate"
+
+
 def _person_name(user, by_name: str) -> str:
     if user is not None and getattr(user, "is_authenticated", False):
-        return user.get_full_name() or user.first_name or user.email or user.username
+        return public_name(user)
     return (by_name or "").strip()
+
+
+def check_edit(row, *, action: str, value: str = "") -> None:
+    """Validate an edit that will be applied later (staged in a round)."""
+    if action not in EDIT_ACTIONS:
+        raise DecisionInvalid(f"action must be one of {list(EDIT_ACTIONS)}")
+    if action == "undo":
+        raise DecisionConflict("undo is available after the round closes")
+    value = (value or "").strip()
+    if action == "pick" and value not in row.options:
+        raise DecisionInvalid(f"{value!r} is not one of this decision's options")
+    if action == "write_in":
+        if not value:
+            raise DecisionInvalid("a write-in needs a value")
+        if len(value.split()) > _MAX_OPTION_WORDS:
+            raise DecisionInvalid(f"a write-in is at most {_MAX_OPTION_WORDS} words")
 
 
 def apply_edit(row, *, action: str, value: str = "", reasoning: str = "", by_user=None, by_name: str = ""):
@@ -356,7 +382,7 @@ def apply_edit(row, *, action: str, value: str = "", reasoning: str = "", by_use
         return row
 
 
-def serialize(row, *, editable: bool = True) -> dict:
+def serialize(row, *, editable: bool = True, pending: list[dict] | None = None) -> dict:
     """The row as the page and the publisher read it. Names, never user ids."""
     return {
         "id": row.key,
@@ -393,6 +419,7 @@ def serialize(row, *, editable: bool = True) -> dict:
         "supersedes": row.supersedes,
         "superseded_by": row.superseded_by,
         "editable": editable,
+        "pending": list(pending or []),
     }
 
 

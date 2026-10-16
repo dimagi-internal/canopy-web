@@ -234,6 +234,11 @@ Every browser-facing address canopy-web serves. The SPA route table is
   log: what must be answered before sharing, what to confirm, and what the
   agent assumed — one row per decision, each with a recommended option, who
   decided, and undo. Members' edits apply immediately.
+  When a feedback round is open, every reader sees every round note (names,
+  never emails) and a banner with the counts; editors open and close rounds.
+  Closing hands the round to the board project's agent as one task (one turn).
+  Decision edits during a round show as pending until close. After the agent
+  consumes a round, each person sees what happened to their notes.
 - **`/narrative/:slug?b=<storyboard>`** — the reviewer surface, one narrative
   scene by scene, gated by the storyboard's token (`b=`). Clean by default; a
   toggle by the version pill shows before/after on changed scenes and brings

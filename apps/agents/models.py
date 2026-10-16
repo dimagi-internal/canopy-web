@@ -702,12 +702,13 @@ class ProjectParticipant(models.Model):
     side of it).
     """
 
-    FACT, TURN, MANUAL, SUMMARY = "fact", "turn", "manual", "summary"
+    FACT, TURN, MANUAL, SUMMARY, REVIEW = "fact", "turn", "manual", "summary", "review"
     SOURCE_CHOICES = [
         (FACT, "A fact about them was filed against the project"),
         (TURN, "A conversation with them raised one of its tasks"),
         (MANUAL, "Added by a person"),
         (SUMMARY, "An agent wrote their contributor page from their own words"),
+        (REVIEW, "They commented in a feedback round on one of its storyboards"),
     ]
     ROLE_MAX = 80
 
@@ -743,8 +744,8 @@ class ProjectParticipant(models.Model):
         ordering = ["-created_at", "-pk"]
         constraints = [
             models.UniqueConstraint(fields=["project", "person"], name="one_participant_row_per_person"),
-            models.CheckConstraint(condition=models.Q(source__in=["fact", "turn", "manual", "summary"]),
-                                   name="project_participant_source_known_v2"),
+            models.CheckConstraint(condition=models.Q(source__in=["fact", "turn", "manual", "summary", "review"]),
+                                   name="project_participant_source_known_v3"),
         ]
 
     def __str__(self) -> str:  # pragma: no cover
