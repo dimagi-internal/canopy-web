@@ -386,6 +386,11 @@ Resources:
                 User=ubuntu
                 [Install]
                 WantedBy=multi-user.target
+            # needrestart must never restart the runner: it killed a turn
+            # mid-run on 2026-10-16 (update_runner.sh, which also lays this down).
+            - path: /etc/needrestart/conf.d/50-canopy-runner.conf
+              content: |
+                $nrconf{override_rc}->{qr(^canopy-runner)} = 0;
           runcmd:
             # Swap, so a memory spike slows a turn down instead of the kernel
             # killing one. A t3.medium has 3.8 GB and ships with none; 4 GB here

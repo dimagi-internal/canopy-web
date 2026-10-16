@@ -35,7 +35,8 @@
 # restart itself — and root git-ing around in a directory agent turns can write
 # would both trip git's dubious-ownership guard and hand root an attack surface for
 # no benefit. The one privileged step goes through a sudoers rule scoped to exactly
-# `systemctl restart canopy-runner.service`.
+# `systemctl restart canopy-runner.service`. (The exception is one config file that
+# keeps needrestart away from the runner. See ensure_needrestart_exclusion.)
 #
 # A SEPARATE unit from the runner, not a thread inside it: a runner that
 # crash-loops can never update itself — it never heartbeats, never learns it is
@@ -296,6 +297,38 @@ PY
   install_bytes "$tmp" "" 0 "secret:$CODE_SECRET"
 }
 
+# --- keep needrestart off the runner ----------------------------------------
+#
+# 2026-10-16 06:34Z, cloud-ec2-2 (turn 87680cb1, failure investigation 7):
+# apt-daily-upgrade's unattended-upgrades took a libsystemd0 update, and
+# needrestart (Ubuntu's default restarts services automatically) ran
+# `systemctl restart canopy-runner.service` with an ACE turn 25 minutes in. The
+# restart killed the turn's claude with the unit's cgroup, and the turn failed
+# with no reason. This updater refuses to restart a busy runner. needrestart does
+# not check, so it is told to skip the unit. The runner picks up a new library on
+# its next deliberate restart (an install above, or a reboot).
+#
+# The template bakes this file into new boxes. cloud-init never re-runs on the
+# boxes already up, so the updater lays it down on every tick. It is the one
+# write here besides the restart that needs root. It goes through `sudo -n`, is
+# skipped when the box has no needrestart, and never fails the tick.
+NEEDRESTART_CONF="${NEEDRESTART_CONF:-/etc/needrestart/conf.d/50-canopy-runner.conf}"
+PRIV_CMD="${PRIV_CMD-sudo -n}"
+NEEDRESTART_RULE='$nrconf{override_rc}->{qr(^canopy-runner)} = 0;'
+ensure_needrestart_exclusion() {
+  [ -d "$(dirname "$NEEDRESTART_CONF")" ] || return 0
+  grep -qsF "$NEEDRESTART_RULE" "$NEEDRESTART_CONF" && return 0
+  local tmp; tmp="$(mktemp)"
+  printf '# canopy: never let needrestart restart the runner mid-turn (canopy-web runner/ec2/update_runner.sh)\n%s\n' \
+    "$NEEDRESTART_RULE" > "$tmp"
+  if $PRIV_CMD install -m 0644 "$tmp" "$NEEDRESTART_CONF" 2>/dev/null; then
+    log "needrestart told to skip $SERVICE ($NEEDRESTART_CONF)"
+  else
+    log "could not write $NEEDRESTART_CONF; an unattended upgrade can still restart the runner mid-turn"
+  fi
+  rm -f "$tmp"
+}
+
 # --- main -------------------------------------------------------------------
 case "$MODE" in
   secret)
@@ -316,6 +349,8 @@ esac
 
 EXPECTED="$(expected_sha)"
 V="$(verdict "$EXPECTED")"
+
+[ "$MODE" = "check" ] || ensure_needrestart_exclusion
 
 if [ "$MODE" = "check" ]; then
   echo "$V expected=${EXPECTED:-<unknown>} installed=${INSTALLED_SHA:-<unknown>}"

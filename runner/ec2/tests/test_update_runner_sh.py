@@ -59,6 +59,8 @@ class Box:
         self.api_body.write_text("[]")
         self._write_stub("curl", f'echo "$@" >> "{self.curl_log}"\ncat "{self.api_body}"\n')
         self._write_stub("fake-restart", f'echo "$@" >> "{self.restart_log}"\n')
+        (tmp_path / "etc-needrestart" / "conf.d").mkdir(parents=True)
+        self.needrestart_conf = tmp_path / "etc-needrestart" / "conf.d" / "50-canopy-runner.conf"
         self.seed_repo(GOOD_RUNNER)
 
     def _write_stub(self, name: str, body: str) -> None:
@@ -125,6 +127,8 @@ class Box:
                 "CANOPY_WEB_REPO_DIR": str(self.repo),
                 "STATE_FILE": str(self.root / "state.json"),
                 "RESTART_CMD": str(self.bin / "fake-restart"),
+                "NEEDRESTART_CONF": str(self.needrestart_conf),
+                "PRIV_CMD": "",
             },
         )
 
@@ -400,3 +404,45 @@ def test_a_change_to_the_updater_alone_moves_the_deployed_sha(box):
                  "runner/ec2/cloud_runner.py", "runner/ec2/bootstrap_agents.sh",
                  "runner/ec2/update_runner.sh")
     assert after != before
+
+
+# --- needrestart ------------------------------------------------------------
+# 2026-10-16 06:34Z, cloud-ec2-2, turn 87680cb1 (failure investigation 7):
+# unattended-upgrades took a libsystemd0 update and needrestart restarted
+# canopy-runner.service 25 minutes into an ACE turn, killing it. Boxes already up
+# never re-run cloud-init, so the updater is what lays the exclusion down.
+NEEDRESTART_RULE = "$nrconf{override_rc}->{qr(^canopy-runner)} = 0;"
+
+
+def test_every_tick_tells_needrestart_to_skip_the_runner(box):
+    sha = box.seed_repo(GOOD_RUNNER)
+    box.stamp(sha)
+    box.expect(sha)
+    box.busy(count=1)  # mid-turn is exactly when it matters
+    assert box.run().returncode == 0
+    assert NEEDRESTART_RULE in box.needrestart_conf.read_text()
+
+
+def test_the_exclusion_is_written_once(box):
+    box.run()
+    box.needrestart_conf.write_text(NEEDRESTART_RULE + "\n# untouched\n")
+    box.run()
+    assert "# untouched" in box.needrestart_conf.read_text()
+
+
+def test_check_mode_writes_nothing(box):
+    box.run("--check")
+    assert not box.needrestart_conf.exists()
+
+
+def test_a_box_without_needrestart_is_left_alone(box):
+    box.needrestart_conf.parent.rmdir()
+    assert box.run().returncode == 0
+    assert not box.needrestart_conf.exists()
+
+
+def test_new_boxes_get_the_same_rule_from_the_template():
+    text = (SCRIPT.parent / "runner.cfn.yaml").read_text()
+    assert "path: /etc/needrestart/conf.d/50-canopy-runner.conf" in text
+    assert NEEDRESTART_RULE in text
+    assert NEEDRESTART_RULE in SCRIPT.read_text()
