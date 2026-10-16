@@ -19929,8 +19929,6 @@ export interface components {
             readonly workspace: string | null;
             /** Owner Email */
             readonly owner_email: string | null;
-            /** Paired By Email */
-            readonly paired_by_email?: string | null;
             /**
              * Can Manage
              * @default true
