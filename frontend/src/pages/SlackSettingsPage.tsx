@@ -33,7 +33,6 @@ export function SlackSettingsPage(): JSX.Element {
   // The allow-list form's draft.
   const [allowChannel, setAllowChannel] = useState('')
   const [allowAgent, setAllowAgent] = useState('')
-  const [allowFollow, setAllowFollow] = useState(false)
   const [allowNote, setAllowNote] = useState('')
 
   const load = useCallback(() => {
@@ -307,8 +306,7 @@ export function SlackSettingsPage(): JSX.Element {
         <section className="mt-8" data-testid="slack-channel-ingest">
           <h2 className="text-[15px] font-semibold text-foreground">Whole-channel reads</h2>
           <p className="mt-1 mb-3 text-[12px] text-muted-foreground">
-            Lets this workspace&apos;s agents <i>ask</i> to read a channel&apos;s entire history (and optionally keep
-            following it). Each ask posts an Approve / Decline message in that channel, and nothing is read until a
+            Lets this workspace&apos;s agents <i>ask</i> to read a channel&apos;s entire history, once. Each ask posts an Approve / Decline message in that channel, and nothing is read until a
             member of the channel who is an owner or admin here — or the channel&apos;s creator — approves it. canopy
             does the reading; the agent only gets the transcript, and any approver can revoke it. Workspace owners
             set this.
@@ -349,7 +347,7 @@ export function SlackSettingsPage(): JSX.Element {
                   <li key={a.id} className="flex items-center justify-between gap-3 py-2">
                     <span className="text-foreground">
                       <b>#{a.channel_name || a.channel}</b> for <b>{a.agent}</b>
-                      {a.follow ? ' — read and follow' : ' — read once'}
+                      {a.follow ? ' — read and follow' : ''}
                       <span className="block text-[11px] text-muted-foreground">
                         {a.note ? `${a.note} · ` : ''}added by {a.added_by_email || 'someone'}{' '}
                         {a.added_at ? relativeAge(a.added_at) : ''}
@@ -381,7 +379,7 @@ export function SlackSettingsPage(): JSX.Element {
                 const agent = allowAgent.trim()
                 if (!channel || !agent) return
                 void act(async () => {
-                  await allowSlackChannel(workspace, { agent, channel, follow: allowFollow, note: allowNote.trim() })
+                  await allowSlackChannel(workspace, { agent, channel, follow: false, note: allowNote.trim() })
                   setAllowChannel('')
                   setAllowNote('')
                   return `Allow-listed ${channel} for ${agent}.`
@@ -409,15 +407,6 @@ export function SlackSettingsPage(): JSX.Element {
                 aria-label="Why"
                 className="w-48 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground"
               />
-              <label className="flex items-center gap-1 text-[12px] text-foreground-secondary">
-                <input
-                  type="checkbox"
-                  checked={allowFollow}
-                  onChange={(e) => setAllowFollow(e.target.checked)}
-                  aria-label="Also follow new messages"
-                />
-                also follow
-              </label>
               <button
                 type="submit"
                 disabled={busy || !allowChannel.trim() || !allowAgent.trim()}
