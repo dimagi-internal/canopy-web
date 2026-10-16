@@ -102,6 +102,13 @@ class Feedback(models.Model):
         on_delete=models.SET_NULL,
         related_name="submitted_feedback",
     )
+
+    round = models.ForeignKey(
+        "feedback.FeedbackRound", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="notes",
+    )
+    """The feedback round this note was left in, when one was open. Null = left
+    between rounds; the next round adopts it when it opens."""
     """The authenticated CALLER, when there was one — the agent's PAT user for an
     ingested email, or the human for a logged-in submit. Never the external
     author, who has no account. Keep the two distinct: conflating them makes
@@ -182,3 +189,52 @@ class ArtifactView(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"view:{self.target_kind}:{self.target_ref}:{self.user_id}"
+
+
+class FeedbackRound(models.Model):
+    """A window in which several people comment, closed by one deliberate act
+    that hands the whole batch to an agent (spec C).
+
+    Framework tier and generic over its target by string, exactly like
+    Feedback — a round on a storyboard today, on something else later. The
+    product app that owns the target owns the routes and the rules.
+    """
+
+    OPEN, CLOSED, CONSUMED = "open", "closed", "consumed"
+    STATE_CHOICES = [(OPEN, "Open"), (CLOSED, "Closed"), (CONSUMED, "Consumed")]
+
+    target_kind = models.CharField(max_length=32)
+    target_ref = models.CharField(max_length=200)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="feedback_rounds")
+    number = models.PositiveIntegerField()
+    state = models.CharField(max_length=16, choices=STATE_CHOICES, default=OPEN)
+    pinned_versions = models.JSONField(default=dict, blank=True)
+    """{ref: version} frozen at open, so every note is about the same cut."""
+
+    opened_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                  on_delete=models.SET_NULL, related_name="+")
+    opened_at = models.DateTimeField(auto_now_add=True)
+    closed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                  on_delete=models.SET_NULL, related_name="+")
+    closed_at = models.DateTimeField(null=True, blank=True)
+    close_note = models.TextField(blank=True, default="")
+    staged_edits = models.JSONField(default=list, blank=True)
+    """Edits proposed during the round, applied by the owning app at close."""
+    task = models.ForeignKey("agents.AgentTask", null=True, blank=True,
+                             on_delete=models.SET_NULL, related_name="+")
+    consumed_by_run = models.CharField(max_length=200, blank=True, default="")
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-number"]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace", "target_kind", "target_ref", "number"],
+                                    name="uniq_round_number_per_target"),
+            models.UniqueConstraint(fields=["workspace", "target_kind", "target_ref"],
+                                    condition=models.Q(state="open"),
+                                    name="one_open_round_per_target"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"round:{self.target_kind}:{self.target_ref}:{self.number}:{self.state}"
