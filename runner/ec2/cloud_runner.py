@@ -1119,10 +1119,36 @@ def _write_device_key_cache(role_arn: str, status: dict) -> None:
     _write_private_text(d / "status.json", json.dumps(status, indent=1, sort_keys=True))
 
 
+def _ecdh_public_key() -> dict:
+    """This box's ECDH key for the zero-knowledge vault (canopy-web#1550), made by the
+    canopy CLI — this file stays stdlib-only, and making a P-256 key needs a crypto
+    library. The private half is canopy's 0600 `~/.canopy/device-key/ecdh.pem`; only
+    `{kind, jkt, jwk}` (public) comes back. {} when canopy cannot (older CLI, no CLI) —
+    the role is then enrolled exactly as before. Never raises."""
+    try:
+        res = subprocess.run([_canopy_cli(), "vault", "device", "--ecdh-jwk", "--kind",
+                              "aws-iam"], capture_output=True, text=True, timeout=60,
+                             env=_child_safe_env())
+        if res.returncode != 0:
+            why = " ".join((res.stderr or res.stdout or "").split())[-200:]
+            _log(f"device key: no ECDH key for the zero-knowledge vault ({why or res.returncode})")
+            return {}
+        out = json.loads((res.stdout or "").strip().splitlines()[-1])
+        jwk = out.get("jwk") if isinstance(out, dict) else None
+        if not isinstance(jwk, dict) or set(jwk) != {"kty", "crv", "x", "y"}:
+            _log("device key: canopy printed no public ECDH JWK")
+            return {}
+        return {"jwk": jwk, "jkt": str(out.get("jkt") or "")}
+    except Exception as exc:  # noqa: BLE001 — an ECDH key is an addition, never a failure
+        _log(f"device key: no ECDH key ({exc.__class__.__name__}: {exc})")
+        return {}
+
+
 def enroll_aws_device_key(runner_id: str) -> dict:
     """Register this box's instance role as its device key: `POST /api/runner-device-keys/`
-    {runner, kind: "aws-iam", role_arn, label, proof}. Idempotent on the server. Logs the
-    approve URL while pending. Returns the status, or {"error": …}; never raises."""
+    {runner, kind: "aws-iam", role_arn, label, proof, ecdh_public_jwk}. Idempotent on the
+    server. Logs the approve URL while pending. Returns the status, or {"error": …}; never
+    raises."""
     if os.environ.get("CANOPY_DEVICE_KEY", "1") == "0":
         return {"skipped": "CANOPY_DEVICE_KEY=0"}
     try:
@@ -1132,11 +1158,13 @@ def enroll_aws_device_key(runner_id: str) -> dict:
             return {"error": "no instance role"}
         role_arn = _aws_role_arn(creds)
         path = "/api/runner-device-keys/"
-        status, body = _api("POST", "/", {
-            "runner": runner_id, "kind": "aws-iam", "role_arn": role_arn,
-            "label": f"{RUNNER_NAME} (EC2 instance role)",
-            "proof": aws_proof(BASE_URL + path, creds=creds)},
-            prefix="/api/runner-device-keys")
+        ecdh = _ecdh_public_key()
+        payload = {"runner": runner_id, "kind": "aws-iam", "role_arn": role_arn,
+                   "label": f"{RUNNER_NAME} (EC2 instance role)",
+                   "proof": aws_proof(BASE_URL + path, creds=creds)}
+        if ecdh:
+            payload["ecdh_public_jwk"] = ecdh["jwk"]
+        status, body = _api("POST", "/", payload, prefix="/api/runner-device-keys")
     except Exception as exc:  # noqa: BLE001 — never take the runner down over its key
         _log(f"device key: aws-iam enrollment failed ({exc.__class__.__name__}: {exc})")
         return {"error": str(exc)}
@@ -1148,6 +1176,10 @@ def enroll_aws_device_key(runner_id: str) -> dict:
           "status": str(body.get("status") or "pending"),
           "approve_url": str(body.get("approve_url") or ""), "kind": "aws-iam",
           "runner": runner_id, "role_arn": role_arn, "checked_at": time.time()}
+    if ecdh:
+        # canopy's cache fields, so `canopy vault zk` and a ZK resolve on this box know
+        # which ECDH key is enrolled.
+        st.update(ecdh_jkt=ecdh["jkt"], ecdh_kind="software")
     try:
         _write_device_key_cache(role_arn, st)
     except OSError as exc:
@@ -1184,7 +1216,20 @@ def _agent_op_token(slug: str) -> str:
     try:
         status, payload = _api("GET", f"/{slug}/credentials/resolve", prefix="/api/agents",
                                headers={"X-Canopy-Turn-Id": turn_id, **proof})
-        if status == 200 and isinstance(payload, dict):
+        if status == 409 and isinstance(payload, dict) and payload.get("error") == "zk_wrap_missing":
+            # A zero-knowledge agent (canopy-web#1550) whose vault key was never wrapped to
+            # this box's ECDH key: nothing here can read its values until an admin grants it.
+            _log(f"{slug}: zero-knowledge vault — this box has no wrap of its key; ask an "
+                 f"admin to grant this runner's device ('Grant pending' on {slug}'s page)")
+            _set_check(f"zk.{slug}", "fail", "zero-knowledge vault: this device is not "
+                       "granted (zk_wrap_missing) — an admin must grant it")
+        elif status == 200 and isinstance(payload, dict):
+            if payload.get("zk"):
+                # Ciphertext only. This file never decrypts (stdlib-only): the canopy CLI
+                # on this box — `agent prepare --runner`, `cred sync` — unwraps with the
+                # box's ECDH key and writes the env, exactly as for a custodial agent.
+                _set_check(f"zk.{slug}", "ok", "zero-knowledge vault: values are opened "
+                           "by the canopy CLI on this box")
             token = str(payload.get("op_sa_token") or "")
             _AGENT_VAULT[slug] = str(payload.get("op_vault") or "").strip()
             _AGENT_SF[slug] = str(payload.get("salesforce_creds") or "")
