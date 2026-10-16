@@ -31,6 +31,15 @@ vi.mock('@/api/agents', () => ({
   getAgentSalesforce: () => new Promise(() => {}),
 }))
 
+// Device keys + the read log have their own tests (DeviceKeysTable.test.tsx).
+vi.mock('@/api/deviceKeys', () => ({
+  getAgentDeviceKeys: () => Promise.resolve([]),
+  setDeviceBinding: vi.fn(),
+  getCredentialReads: () => Promise.resolve([]),
+  approveRunnerDeviceKey: vi.fn(),
+  revokeRunnerDeviceKey: vi.fn(),
+}))
+
 const { AgentCredentialsPanel } = await import('./AgentCredentialsPanel')
 
 const AGENT = { slug: 'echo', workspace: 'connect' }

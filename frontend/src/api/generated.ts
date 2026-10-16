@@ -3141,6 +3141,30 @@ export interface paths {
         readonly patch: operations["set_credential_source"];
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/device-binding": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Require a runner device proof to resolve this agent's secrets
+         * @description Canopy Vault (canopy-web#1538). When on and `credential_source` is
+         *     `canopy-web`, `GET /credentials/resolve` answers 401
+         *     `{"error": "device_proof_required"}` unless the request carries a DPoP proof
+         *     from an ACTIVE runner device key on a runner this agent routes to, or one
+         *     owned by the agent's owner. Owner or admin only, like the credential source.
+         */
+        readonly patch: operations["set_device_binding"];
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/slack": {
         readonly parameters: {
             readonly query?: never;
@@ -3767,9 +3791,16 @@ export interface paths {
          *     service-account token (`op_sa_token` is ""): its values come from here, so
          *     the box has no reason to hold a key to its vault.
          *
+         *     **Device proof.** With `require_device_binding` on and `credential_source`
+         *     `canopy-web`, the request must also carry a `DPoP` header: an RFC 9449
+         *     proof (`typ: dpop+jwt`, `alg: ES256`, public `jwk` in the header; claims
+         *     `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
+         *     an ACTIVE runner device key on a runner this agent routes to or one its
+         *     owner owns. Otherwise: 401 `{"error": "device_proof_required"}`.
+         *
          *     **Read log.** Every ref handed out is recorded with the caller, the runner
-         *     when known (`X-Canopy-Runner: <runner id>`, honoured only for a runner the
-         *     caller owns) and `X-Canopy-Turn-Id` when sent.
+         *     when known (the proving device key's runner, else `X-Canopy-Runner: <runner
+         *     id>`, honoured only for a runner the caller owns) and `X-Canopy-Turn-Id`.
          *
          *     Two gates, both required:
          *
@@ -3979,6 +4010,50 @@ export interface paths {
         readonly post?: never;
         /** Remove one named secret */
         readonly delete: operations["delete_agent_credential"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/credentials/{name}/reads": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who read this credential's value, from which box and turn
+         * @description The read log (canopy-web#1538), newest first. Never the value. The
+         *     agent's owner or an admin — the same people who may set the value.
+         */
+        readonly get: operations["agent_credential_reads"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/device-keys": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Runner device keys that could prove themselves for this agent
+         * @description Every device key on a runner this agent routes to or its owner owns —
+         *     the keys `require_device_binding` would accept once active. `can_manage`
+         *     says whether the caller may approve or revoke each (the runner's owner or
+         *     an admin of it).
+         */
+        readonly get: operations["agent_device_keys"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -7526,6 +7601,75 @@ export interface paths {
          */
         readonly post: operations["resolve_failure_investigation"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/runner-device-keys/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List runner device keys
+         * @description Keys on one runner (`?runner=`), or on every runner the caller owns or
+         *     administers.
+         */
+        readonly get: operations["list_runner_device_keys"];
+        readonly put?: never;
+        /**
+         * Register a runner device key (pending until approved)
+         * @description The box registers the public half of a key it holds. It starts `pending`;
+         *     nothing it signs is accepted until a person approves it at `approve_url`.
+         *     Re-posting the same key returns the existing row (200) whatever its status —
+         *     a revoked key stays revoked.
+         */
+        readonly post: operations["register_runner_device_key"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/runner-device-keys/{key_id}/approve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve a pending device key (browser session + passkey step-up)
+         * @description `pending` → `active`. A revoked key cannot be revived (409); approving an
+         *     active key is a no-op.
+         */
+        readonly post: operations["approve_runner_device_key"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/runner-device-keys/{key_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Revoke a device key
+         * @description Immediate: the next proof signed by this key is refused. Idempotent.
+         */
+        readonly delete: operations["revoke_runner_device_key"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -14370,6 +14514,11 @@ export interface components {
              */
             readonly credential_source: "1password" | "canopy-web";
             /**
+             * Require Device Binding
+             * @default false
+             */
+            readonly require_device_binding: boolean;
+            /**
              * Op Vault
              * @default
              */
@@ -14686,6 +14835,11 @@ export interface components {
              */
             readonly credential_source: "1password" | "canopy-web";
             /**
+             * Require Device Binding
+             * @default false
+             */
+            readonly require_device_binding: boolean;
+            /**
              * Op Vault
              * @default
              */
@@ -14934,6 +15088,15 @@ export interface components {
              * @enum {string}
              */
             readonly credential_source: "1password" | "canopy-web";
+        };
+        /**
+         * DeviceBindingIn
+         * @description Require a device proof on resolve (only meaningful with credential_source
+         *     canopy-web). Owner/admin only, like CredentialSourceIn.
+         */
+        readonly DeviceBindingIn: {
+            /** Require Device Binding */
+            readonly require_device_binding: boolean;
         };
         /**
          * SlackEnabledOut
@@ -16547,6 +16710,13 @@ export interface components {
             readonly updated_at?: string | null;
             /** Updated By Email */
             readonly updated_by_email?: string | null;
+            /** Last Read At */
+            readonly last_read_at?: string | null;
+            /**
+             * Read Count
+             * @default 0
+             */
+            readonly read_count: number;
         };
         /**
          * AgentCredentialsIn
@@ -16638,6 +16808,18 @@ export interface components {
              * @default
              */
             readonly mailbox: string;
+        };
+        /**
+         * DeviceProofRequiredOut
+         * @description 401 from resolve: the agent requires a runner device proof (DPoP) and
+         *     the request carried none that verified against an active key.
+         */
+        readonly DeviceProofRequiredOut: {
+            /**
+             * Error
+             * @constant
+             */
+            readonly error: "device_proof_required";
         };
         /** AgentVaultOut */
         readonly AgentVaultOut: {
@@ -16833,6 +17015,100 @@ export interface components {
         readonly AgentSalesforceIn: {
             /** Lender */
             readonly lender: string;
+        };
+        /**
+         * AgentCredentialReadOut
+         * @description One read of a credential's value — who, which box, which turn, when.
+         */
+        readonly AgentCredentialReadOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * User Email
+             * @default
+             */
+            readonly user_email: string;
+            /**
+             * Runner
+             * @default
+             */
+            readonly runner: string;
+            /**
+             * Runner Name
+             * @default
+             */
+            readonly runner_name: string;
+            /**
+             * Via
+             * @default
+             */
+            readonly via: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /**
+         * RunnerDeviceKeyOut
+         * @description A device key and its state. Public material only — there is no secret.
+         */
+        readonly RunnerDeviceKeyOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Runner
+             * Format: uuid
+             */
+            readonly runner: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /** Jkt */
+            readonly jkt: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "secure-enclave" | "tpm" | "software";
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pending" | "active" | "revoked";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Approved At */
+            readonly approved_at?: string | null;
+            /**
+             * Approved By Email
+             * @default
+             */
+            readonly approved_by_email: string;
+            /** Revoked At */
+            readonly revoked_at?: string | null;
+            /** Last Used At */
+            readonly last_used_at?: string | null;
+            /**
+             * Can Manage
+             * @default false
+             */
+            readonly can_manage: boolean;
         };
         /** BootstrapReportOut */
         readonly BootstrapReportOut: {
@@ -21848,6 +22124,49 @@ export interface components {
              * @description What was wrong and what you changed to fix it.
              */
             readonly note: string;
+        };
+        /** RunnerDeviceKeyCreatedOut */
+        readonly RunnerDeviceKeyCreatedOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Jkt */
+            readonly jkt: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "pending" | "active" | "revoked";
+            /** Approve Url */
+            readonly approve_url: string;
+        };
+        /**
+         * RunnerDeviceKeyIn
+         * @description Register the PUBLIC half of a key the runner holds. Re-posting the same
+         *     key (same RFC 7638 thumbprint) is idempotent.
+         */
+        readonly RunnerDeviceKeyIn: {
+            /**
+             * Runner
+             * Format: uuid
+             */
+            readonly runner: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "secure-enclave" | "tpm" | "software";
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
         };
         /** HuddleSummaryOut */
         readonly HuddleSummaryOut: {
@@ -28651,6 +28970,32 @@ export interface operations {
             };
         };
     };
+    readonly set_device_binding: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DeviceBindingIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
     readonly set_slack_enabled: {
         readonly parameters: {
             readonly query?: never;
@@ -29586,6 +29931,15 @@ export interface operations {
                     readonly "application/json": components["schemas"]["AgentCredentialsResolveOut"];
                 };
             };
+            /** @description Unauthorized */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DeviceProofRequiredOut"];
+                };
+            };
         };
     };
     readonly get_agent_vault: {
@@ -29909,6 +30263,53 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentCredentialStatusOut"][];
+                };
+            };
+        };
+    };
+    readonly agent_credential_reads: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentCredentialReadOut"][];
+                };
+            };
+        };
+    };
+    readonly agent_device_keys: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerDeviceKeyOut"][];
                 };
             };
         };
@@ -34271,6 +34672,105 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["FailureInvestigationOut"];
+                };
+            };
+        };
+    };
+    readonly list_runner_device_keys: {
+        readonly parameters: {
+            readonly query?: {
+                readonly runner?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerDeviceKeyOut"][];
+                };
+            };
+        };
+    };
+    readonly register_runner_device_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerDeviceKeyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerDeviceKeyCreatedOut"];
+                };
+            };
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerDeviceKeyCreatedOut"];
+                };
+            };
+        };
+    };
+    readonly approve_runner_device_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerDeviceKeyOut"];
+                };
+            };
+        };
+    };
+    readonly revoke_runner_device_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerDeviceKeyOut"];
                 };
             };
         };

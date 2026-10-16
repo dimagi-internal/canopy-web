@@ -13,6 +13,7 @@ const row = (over: Partial<CredRow>): CredRow => ({
   source: 'unset',
   updated_at: null,
   updated_by_email: null,
+  read_count: 0,
   ...over,
 })
 

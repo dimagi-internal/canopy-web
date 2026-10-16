@@ -13,6 +13,8 @@ import { declaresMailbox, GOG_TOKEN_REF, mintOutcome } from '@/pages/agents/goog
 import { AgentGitHubSection } from '@/pages/agents/AgentGitHubSection'
 import { AgentSalesforceSection } from '@/pages/agents/AgentSalesforceSection'
 import { AgentVaultSection } from '@/pages/agents/AgentVaultSection'
+import { AgentDeviceKeysSection } from '@/pages/agents/AgentDeviceKeysSection'
+import { CredentialReadHistory } from '@/pages/agents/CredentialReadHistory'
 import { WorkbenchSkeleton } from 'canopy-ui'
 
 // "What is stopping this agent from running" — a question that on 2026-09-05
@@ -49,7 +51,14 @@ export function AgentCredentialsPanel({
   agent,
   canEdit = true,
 }: {
-  agent: { slug: string; name?: string; workspace?: string | null; email?: string | null }
+  agent: {
+    slug: string
+    name?: string
+    workspace?: string | null
+    email?: string | null
+    credential_source?: string | null
+    require_device_binding?: boolean | null
+  }
   /** Display hint: says who may change values when the viewer cannot. */
   canEdit?: boolean
 }) {
@@ -176,6 +185,7 @@ export function AgentCredentialsPanel({
           {r.updated_by_email ? ` · ${r.updated_by_email}` : ''}
         </span>
       )}
+      {r.set && <CredentialReadHistory slug={agent.slug} row={r} />}
 
       <input
         type="password"
@@ -283,6 +293,12 @@ export function AgentCredentialsPanel({
       <AgentVaultSection slug={agent.slug} workspace={agent.workspace} onStatus={onVault} />
       <AgentGitHubSection slug={agent.slug} onStatus={onGitHub} />
       <AgentSalesforceSection slug={agent.slug} onStatus={onSalesforce} />
+      <AgentDeviceKeysSection
+        slug={agent.slug}
+        credentialSource={agent.credential_source}
+        requireDeviceBinding={agent.require_device_binding}
+        canEdit={canEdit}
+      />
 
       {/* Zero refs is UNDECLARED, not provisioned: nothing to list. Saying
           "ready" would assert a box can run it, which nobody has established;

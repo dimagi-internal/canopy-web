@@ -434,6 +434,10 @@ class AgentOut(StrictModel):
     # Owner/admin-set via PATCH /credential-source; absent from AgentIn so the
     # self-publish upsert cannot move an agent's secrets.
     credential_source: Literal["1password", "canopy-web"] = "1password"
+    # Canopy Vault device binding (canopy-web#1538): with credential_source
+    # canopy-web, resolve also demands a DPoP proof from an approved runner
+    # device key. Owner/admin-set via PATCH /device-binding.
+    require_device_binding: bool = False
     # The INSTANCE's 1Password vault NAME (e.g. "Agent-Ace") — what a local
     # install bound to this instance sets itself up from. A name, not a secret:
     # the vault's service-account token (`op_sa_token_enc`) is never on this
@@ -1172,6 +1176,36 @@ class AgentCredentialStatusOut(StrictModel):
     source: str
     updated_at: dt.datetime | None = None
     updated_by_email: str | None = None
+    # The read log (canopy-web#1538): when a value was last handed out, and how
+    # often. History: GET …/credentials/{name}/reads.
+    last_read_at: dt.datetime | None = None
+    read_count: int = 0
+
+
+class AgentCredentialReadOut(StrictModel):
+    """One read of a credential's value — who, which box, which turn, when."""
+
+    name: str
+    user_email: str = ""
+    runner: str = ""
+    runner_name: str = ""
+    via: str = ""
+    turn_id: str = ""
+    created_at: dt.datetime
+
+
+class DeviceProofRequiredOut(StrictModel):
+    """401 from resolve: the agent requires a runner device proof (DPoP) and
+    the request carried none that verified against an active key."""
+
+    error: Literal["device_proof_required"]
+
+
+class DeviceBindingIn(StrictModel):
+    """Require a device proof on resolve (only meaningful with credential_source
+    canopy-web). Owner/admin only, like CredentialSourceIn."""
+
+    require_device_binding: bool
 
 
 class AgentCredentialAccessOut(StrictModel):

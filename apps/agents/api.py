@@ -9,7 +9,7 @@ from typing import Any
 import requests
 from django.db import transaction
 from django.db.models import Case, IntegerField, Q, When
-from django.http import HttpRequest
+from django.http import HttpRequest, JsonResponse
 from ninja import Router, Status
 from ninja.errors import HttpError
 
@@ -23,6 +23,7 @@ from apps.api.errors import (
     ProblemError,
 )
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.harness.schemas import RunnerDeviceKeyOut
 from apps.plugins import services as plugin_services
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
@@ -101,6 +102,9 @@ from .schemas import (
     TurnBriefOut,
     TurnModeIn,
     CredentialSourceIn,
+    AgentCredentialReadOut,
+    DeviceBindingIn,
+    DeviceProofRequiredOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -935,6 +939,20 @@ def set_credential_source(request: HttpRequest, slug: str,
     agent = _agent_for_admin(request, slug)
     agent.credential_source = payload.credential_source
     agent.save(update_fields=["credential_source", "updated_at"])
+    return _detail(request, agent)
+
+
+@router.patch("/{slug}/device-binding", response=AgentDetailOut,
+              summary="Require a runner device proof to resolve this agent's secrets")
+def set_device_binding(request: HttpRequest, slug: str, payload: DeviceBindingIn) -> AgentDetailOut:
+    """Canopy Vault (canopy-web#1538). When on and `credential_source` is
+    `canopy-web`, `GET /credentials/resolve` answers 401
+    `{"error": "device_proof_required"}` unless the request carries a DPoP proof
+    from an ACTIVE runner device key on a runner this agent routes to, or one
+    owned by the agent's owner. Owner or admin only, like the credential source."""
+    agent = _agent_for_admin(request, slug)
+    agent.require_device_binding = payload.require_device_binding
+    agent.save(update_fields=["require_device_binding", "updated_at"])
     return _detail(request, agent)
 
 
@@ -2009,7 +2027,8 @@ def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialA
     )
 
 
-@router.get("/{slug}/credentials/resolve", response=AgentCredentialsResolveOut,
+@router.get("/{slug}/credentials/resolve",
+            response={200: AgentCredentialsResolveOut, 401: DeviceProofRequiredOut},
             summary="PLAINTEXT — a runner stages this agent's secrets")
 def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None = None):
     """The one route that returns values, and it is not for a browser.
@@ -2025,9 +2044,16 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     service-account token (`op_sa_token` is ""): its values come from here, so
     the box has no reason to hold a key to its vault.
 
+    **Device proof.** With `require_device_binding` on and `credential_source`
+    `canopy-web`, the request must also carry a `DPoP` header: an RFC 9449
+    proof (`typ: dpop+jwt`, `alg: ES256`, public `jwk` in the header; claims
+    `htm`, `htu` without query, `iat` within ±120 s, single-use `jti`) signed by
+    an ACTIVE runner device key on a runner this agent routes to or one its
+    owner owns. Otherwise: 401 `{"error": "device_proof_required"}`.
+
     **Read log.** Every ref handed out is recorded with the caller, the runner
-    when known (`X-Canopy-Runner: <runner id>`, honoured only for a runner the
-    caller owns) and `X-Canopy-Turn-Id` when sent.
+    when known (the proving device key's runner, else `X-Canopy-Runner: <runner
+    id>`, honoured only for a runner the caller owns) and `X-Canopy-Turn-Id`.
 
     Two gates, both required:
 
@@ -2057,6 +2083,15 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     if via is None:
         raise HttpError(403, reason)
 
+    # Device proof (canopy-web#1538 Phase 1a). Verified whenever one is sent, so
+    # the read log can name the box that proved itself; REQUIRED only when the
+    # agent asks for it and resolves from canopy-web.
+    device_key = _device_key_from_proof(request, agent)
+    if (agent.require_device_binding and agent.credential_source == agent.CANOPY_WEB
+            and device_key is None):
+        return JsonResponse({"error": "device_proof_required"}, status=401,
+                            headers={"WWW-Authenticate": 'DPoP algs="ES256"'})
+
     wanted = _parse_refs(refs)
     values = services.resolve_agent_credentials(agent, wanted)
     vault, op_token = services.resolve_agent_vault(agent)
@@ -2078,7 +2113,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
         mailbox=agent.email or "",
     )
     read = list(values) + [n for n in RESOLVE_SECRET_EXTRAS if getattr(out, n)]
-    runner = _caller_runner(request)
+    runner = device_key.runner if device_key is not None else _caller_runner(request)
     turn_id = request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120]
     try:
         services.record_credential_reads(
@@ -2119,6 +2154,22 @@ def _parse_refs(refs: str | None) -> set[str] | None:
     if refs is None:
         return None
     return {r.strip() for r in refs.split(",") if r.strip()}
+
+
+def _device_key_from_proof(request: HttpRequest, agent):
+    """The ACTIVE RunnerDeviceKey whose DPoP proof this request carries, if the
+    proof verifies and its runner serves `agent`; else None. A bad proof is not
+    an error here — whether one is REQUIRED is the caller's decision."""
+    if not request.META.get("HTTP_DPOP"):
+        return None
+    from apps.harness import device_keys
+
+    try:
+        jkt = device_keys.verify_proof(request)
+    except device_keys.ProofError as exc:
+        logger.info("device proof refused for %s: %s", agent.slug, exc)
+        return None
+    return device_keys.active_key_for_agent(agent, jkt)
 
 
 def _caller_runner(request: HttpRequest):
@@ -2330,6 +2381,31 @@ def delete_agent_credential(request: HttpRequest, slug: str, name: str):
     agent = _agent_for_admin(request, slug)
     services.delete_agent_credential(agent, name)
     return services.agent_credential_status(agent)
+
+
+@router.get("/{slug}/credentials/{name}/reads", response=list[AgentCredentialReadOut],
+            summary="Who read this credential's value, from which box and turn")
+def agent_credential_reads(request: HttpRequest, slug: str, name: str, limit: int = 100):
+    """The read log (canopy-web#1538), newest first. Never the value. The
+    agent's owner or an admin — the same people who may set the value."""
+    agent = _agent_for_admin(request, slug)
+    return services.credential_reads(agent, name, limit=max(1, min(limit, 500)))
+
+
+@router.get("/{slug}/device-keys", response=list[RunnerDeviceKeyOut],
+            summary="Runner device keys that could prove themselves for this agent")
+def agent_device_keys(request: HttpRequest, slug: str):
+    """Every device key on a runner this agent routes to or its owner owns —
+    the keys `require_device_binding` would accept once active. `can_manage`
+    says whether the caller may approve or revoke each (the runner's owner or
+    an admin of it)."""
+    from apps.harness import device_keys
+    from apps.harness.api_device_keys import key_out
+    from apps.harness.runners import can_administer_runner
+
+    agent = _agent_for_admin(request, slug)
+    return [key_out(k, can_manage=can_administer_runner(request.user, k.runner))
+            for k in device_keys.keys_for_agent(agent)]
 
 
 @router.get("/{slug}/readiness", response=list[BootstrapReportOut],
