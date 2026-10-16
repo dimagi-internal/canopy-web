@@ -1,4 +1,5 @@
-"""Hierarchical workspaces: an org owner owns every division; nothing else flows down.
+"""Hierarchical workspaces: an org owner owns, and an org admin administers, every
+division; nothing else flows down.
 
 The narrowness is the point. The org workspace (`dimagi`) is self-join for the
 whole email domain, so if a parent's EDITORS inherited into children, every
@@ -67,6 +68,49 @@ def test_org_owner_owns_every_descendant(tree):
     assert services.member_role(u, "strat-team") == OWNER
     assert services.is_member(u, "strat-team")
     assert services.user_workspace_slugs(u) == {"dimagi", "strategy", "strat-team"}
+
+
+def test_org_admin_administers_every_descendant(tree):
+    u = _user("ops@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=tree["dimagi"], user=u, role=WorkspaceMembership.ADMIN)
+    assert services.member_role(u, "strategy") == WorkspaceMembership.ADMIN
+    assert services.member_role(u, "strat-team") == WorkspaceMembership.ADMIN
+    assert services.membership(u, "strategy").inherited is True
+    assert services.user_workspace_slugs(u) == {"dimagi", "strategy", "strat-team"}
+    assert services.member_roles(u) == {
+        "dimagi": WorkspaceMembership.ADMIN, "strategy": WorkspaceMembership.ADMIN,
+        "strat-team": WorkspaceMembership.ADMIN,
+    }
+    # Admin, not owner: the keys stay with the owners.
+    assert not services.has_role_at_least(u, "strategy", OWNER)
+    assert not services.is_member(u, "other")
+
+
+def test_inherited_admin_outranks_a_weaker_direct_row_and_yields_to_a_stronger(tree):
+    u = _user("ops@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=tree["dimagi"], user=u, role=WorkspaceMembership.ADMIN)
+    WorkspaceMembership.objects.create(workspace=tree["strategy"], user=u, role=VIEWER)
+    assert services.member_role(u, "strategy") == WorkspaceMembership.ADMIN
+    WorkspaceMembership.objects.filter(workspace=tree["strategy"], user=u).update(role=OWNER)
+    assert services.member_role(u, "strategy") == OWNER
+    assert services.member_role(u, "strat-team") == OWNER  # the stronger grant carries on down
+    assert services.member_roles(u)["strat-team"] == OWNER
+
+
+def test_org_admin_appears_in_a_divisions_members(tree):
+    u = _user("ops@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=tree["dimagi"], user=u, role=WorkspaceMembership.ADMIN)
+    rows = {m.user_id: m for m in services.effective_memberships(tree["strategy"])}
+    assert rows[u.pk].role == WorkspaceMembership.ADMIN and rows[u.pk].inherited
+    assert u.pk not in services.owner_user_ids(tree["strategy"])
+
+
+def test_demoting_an_org_admin_sweeps_the_divisions(tree):
+    u = _user("ops@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=tree["dimagi"], user=u, role=WorkspaceMembership.ADMIN)
+    services.set_member_role(workspace=tree["dimagi"], user_id=u.pk, role=EDITOR)
+    assert services.member_role(u, "strategy") is None
+    assert services.user_workspace_slugs(u) == {"dimagi"}
 
 
 def test_parent_editor_inherits_nothing(tree):

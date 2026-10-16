@@ -72,13 +72,16 @@ class Workspace(models.Model):
     settings = models.JSONField(default=dict, blank=True)
     # Workspaces form a TREE: an org (`dimagi`) sits above its divisions
     # (`connect`, `strategy`, …). What the tree grants is deliberately narrow —
-    # an OWNER of an ancestor is an owner of every descendant, and no other
-    # ACCESS flows down (the one config that does is the shared vault — see
-    # `shared_vault_source`; it grants no person anything). A parent's editors and viewers get no access to a child: the
-    # org workspace takes access requests from the whole email domain, so inheriting
-    # editor would hand every employee every division's agents, which is the
-    # exact isolation a division workspace exists to provide. Resolution lives
-    # in `services.membership` (the sole authorizer), not here.
+    # an OWNER or ADMIN of an ancestor is an owner or admin of every descendant
+    # (`WorkspaceMembership.INHERITS_DOWN`; admin since owner decision,
+    # Jonathan, 2026-10-16: "fix it so admin flows down"), and no other ACCESS
+    # flows down (the one config that does is the shared vault — see
+    # `shared_vault_source`; it grants no person anything). A parent's editors
+    # and viewers get no access to a child: the org workspace takes access
+    # requests from the whole email domain, so inheriting editor would hand
+    # every employee every division's agents, which is the exact isolation a
+    # division workspace exists to provide. Resolution lives in
+    # `services.membership` (the sole authorizer), not here.
     #
     # PROTECT: deleting a parent must not silently orphan (or cascade-delete)
     # its divisions; the delete endpoint names the children in the way.
@@ -183,7 +186,7 @@ class Workspace(models.Model):
         """The workspace whose shared vault this one uses: itself when it has
         one set, else its nearest ancestor that does, else None.
 
-        The ONE thing besides ownership that flows down the tree. A division is
+        The ONE thing besides the owner and admin roles that flows down the tree. A division is
         part of its org's tenant, and what the shared vault holds (the gog OAuth
         clients) is shared by definition, so inheriting it grants no person
         access to anything — unlike editor/viewer, which the tree deliberately
@@ -237,6 +240,10 @@ class WorkspaceMembership(models.Model):
     # the owner's keys: the shared vault, deleting or moving the workspace, the
     # Slack app itself, and agents' credentials.
     ROLE_RANK = {VIEWER: 0, EDITOR: 1, ADMIN: 2, OWNER: 3}
+    #: The roles the workspace tree carries down to every descendant (see
+    #: `Workspace.parent`). Never editor or viewer: those are what the org's
+    #: domain-wide access requests grant.
+    INHERITS_DOWN = (OWNER, ADMIN)
 
     workspace = models.ForeignKey(
         Workspace, on_delete=models.CASCADE, related_name="memberships"

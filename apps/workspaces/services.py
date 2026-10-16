@@ -144,31 +144,84 @@ def subtree(root: Workspace, visible=lambda _slug: True) -> list[tuple[Workspace
     return out
 
 
+def _better(a: str | None, b: str | None) -> str | None:
+    """The higher-ranked of two roles (either may be None)."""
+    rank = WorkspaceMembership.ROLE_RANK
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if rank[a] >= rank[b] else b
+
+
+def inherited_roles(user, direct: dict[str, str] | None = None) -> dict[str, str]:
+    """{slug: role} for every workspace `user` holds a role in BY INHERITANCE:
+    the descendants of a workspace where they are an owner or an admin
+    (`WorkspaceMembership.INHERITS_DOWN`), each at the best such role held on
+    any of its ancestors. What the tree grants — see `Workspace.parent`.
+
+    `direct` is the caller's {slug: role} rows when already in hand (saves the
+    query). Breadth-first, one query per level, bounded by `MAX_DEPTH` and a
+    seen-set so a corrupted cycle terminates."""
+    from .models import MAX_DEPTH
+
+    if direct is None:
+        direct = dict(WorkspaceMembership.objects.filter(user=user)
+                      .values_list("workspace_id", "role"))
+    # What each workspace passes to its children: its own inheriting role, or
+    # what it inherited, whichever ranks higher.
+    carry = {s: r for s, r in direct.items() if r in WorkspaceMembership.INHERITS_DOWN}
+    out: dict[str, str] = {}
+    frontier = dict(carry)
+    seen = set(frontier)
+    for _ in range(MAX_DEPTH):
+        if not frontier:
+            break
+        nxt: dict[str, str] = {}
+        for slug, parent in Workspace.objects.filter(parent_id__in=frontier).values_list("slug", "parent_id"):
+            if slug in seen:
+                continue
+            got = frontier[parent]
+            out[slug] = got
+            own = direct.get(slug)
+            nxt[slug] = _better(got, own if own in WorkspaceMembership.INHERITS_DOWN else None)
+        seen |= set(nxt)
+        frontier = nxt
+    return out
+
+
 def inherited_owner_slugs(user) -> set[str]:
     """Workspaces `user` OWNS by inheritance: descendants of a workspace they
-    directly own. The ONLY thing the tree grants — see `Workspace.parent`."""
-    return descendant_slugs(_direct_slugs(user, WorkspaceMembership.OWNER))
+    directly own."""
+    return {s for s, r in inherited_roles(user).items() if r == WorkspaceMembership.OWNER}
 
 
 def user_workspace_slugs(user) -> set[str]:
     """Every workspace `user` may act within: direct memberships plus the
-    descendants of workspaces they own."""
-    direct = _direct_slugs(user)
-    return direct | inherited_owner_slugs(user)
+    descendants of workspaces they own or administer."""
+    direct = dict(WorkspaceMembership.objects.filter(user=user)
+                  .values_list("workspace_id", "role"))
+    return set(direct) | set(inherited_roles(user, direct))
 
 
 def is_member(user, slug: str) -> bool:
     return membership(user, slug) is not None
 
 
-def _inherits_ownership(user, workspace_id: str) -> bool:
+def _inherited_role(user, workspace_id: str) -> str | None:
+    """The best role `user` holds on any ANCESTOR of `workspace_id` that flows
+    down (`INHERITS_DOWN`), or None."""
     ws = Workspace.objects.filter(slug=workspace_id).first()
     if ws is None or not ws.parent_id:
-        return False
-    ancestors = ws.ancestor_slugs()
-    return WorkspaceMembership.objects.filter(
-        user=user, workspace_id__in=ancestors, role=WorkspaceMembership.OWNER,
-    ).exists()
+        return None
+    roles = WorkspaceMembership.objects.filter(
+        user=user, workspace_id__in=ws.ancestor_slugs(),
+        role__in=WorkspaceMembership.INHERITS_DOWN,
+    ).values_list("role", flat=True)
+    best = None
+    for role in roles:
+        best = _better(best, role)
+    return best
 
 
 def membership(user, workspace):
@@ -192,15 +245,18 @@ def membership(user, workspace):
     )
     if row is not None and row.role == WorkspaceMembership.OWNER:
         return row
-    # An owner of any ancestor is an owner here (see `Workspace.parent`). This
-    # outranks a weaker DIRECT row — an org owner who also holds `viewer` on a
-    # division is still its owner. The returned row is SYNTHETIC and unsaved
-    # (`inherited = True`): callers read `.role` / `.workspace` off it, and
-    # anything that would persist or delete it must check `inherited` first —
-    # there is no row to change; the grant lives on the ancestor.
-    if _inherits_ownership(user, workspace_id):
+    # An owner or admin of any ancestor is an owner or admin here (see
+    # `Workspace.parent`). This outranks a weaker DIRECT row — an org admin who
+    # also holds `viewer` on a division is still its admin. The returned row is
+    # SYNTHETIC and unsaved (`inherited = True`): callers read `.role` /
+    # `.workspace` off it, and anything that would persist or delete it must
+    # check `inherited` first — there is no row to change; the grant lives on
+    # the ancestor.
+    up = _inherited_role(user, workspace_id)
+    rank = WorkspaceMembership.ROLE_RANK
+    if up is not None and (row is None or rank[up] > rank[row.role]):
         ws = row.workspace if row is not None else Workspace.objects.get(slug=workspace_id)
-        synthetic = WorkspaceMembership(workspace=ws, user=user, role=WorkspaceMembership.OWNER)
+        synthetic = WorkspaceMembership(workspace=ws, user=user, role=up)
         synthetic.inherited = True
         return synthetic
     return row
@@ -210,16 +266,17 @@ def member_roles(user) -> dict[str, str]:
     """`member_role` for EVERY workspace the user is in, at once: {slug: role}.
 
     The same answer `membership` gives one workspace at a time — a direct row's
-    role, except that owning any ancestor makes you an owner, outranking a weaker
-    direct row — from one query for the direct rows and one per tree level for the
-    inherited ownership, instead of several queries per workspace. Built for the
-    paths that ask it of every workspace on every poll (`runner_tenant_slugs`)."""
+    role, except that owning or administering any ancestor makes you that here,
+    outranking a weaker direct row — from one query for the direct rows and one
+    per tree level for the inherited roles, instead of several queries per
+    workspace. Built for the paths that ask it of every workspace on every poll
+    (`runner_tenant_slugs`)."""
     if not getattr(user, "is_authenticated", False) and not getattr(user, "pk", None):
         return {}
     roles = dict(WorkspaceMembership.objects.filter(user=user)
                  .values_list("workspace_id", "role"))
-    for slug in inherited_owner_slugs(user):
-        roles[slug] = WorkspaceMembership.OWNER
+    for slug, role in inherited_roles(user, roles).items():
+        roles[slug] = _better(roles.get(slug), role)
     return roles
 
 
@@ -526,14 +583,15 @@ def effective_memberships(ws) -> list[WorkspaceMembership]:
     """Everyone who is IN `ws`, as `membership()` would answer for each of them.
 
     The listing counterpart of `membership`: a workspace's own rows are only half
-    the answer, because an owner of any ancestor is an owner here too. Every
+    the answer, because an owner or admin of any ancestor is one here too. Every
     surface that listed `ws.memberships` directly — the members page, an agent's
     roster, who gets pushed, who hears a supervisor frame, the last-owner guard —
     silently left those inherited owners out, so the org's owners were invisible
     on, and unpushed by, every division they administer.
 
-    Direct rows come back as they are (user prefetched). An ancestor owner gets a
-    SYNTHETIC unsaved owner row — replacing a weaker direct row if they hold one,
+    Direct rows come back as they are (user prefetched). An ancestor owner or
+    admin gets a SYNTHETIC unsaved row at that role — replacing a weaker direct
+    row if they hold one,
     exactly as `membership()` answers for them. `inherited = True` marks it: there
     is nothing here to change or remove, the grant lives on the ancestor. Direct
     rows carry `inherited = False`.
@@ -546,25 +604,30 @@ def effective_memberships(ws) -> list[WorkspaceMembership]:
     if ancestors:
         upstream = (
             WorkspaceMembership.objects.filter(
-                workspace_id__in=ancestors, role=WorkspaceMembership.OWNER,
+                workspace_id__in=ancestors, role__in=WorkspaceMembership.INHERITS_DOWN,
             ).select_related("user").order_by("joined_at")
         )
+        best: dict[int, WorkspaceMembership] = {}
         for up in upstream:
-            mine = rows.get(up.user_id)
-            if mine is not None and mine.role == WorkspaceMembership.OWNER:
-                continue  # a direct owner row already says it, and can be acted on
+            held = best.get(up.user_id)
+            if held is None or _better(held.role, up.role) != held.role:
+                best[up.user_id] = up
+        for user_id, up in best.items():
+            mine = rows.get(user_id)
+            if mine is not None and _better(mine.role, up.role) == mine.role:
+                continue  # a direct row as strong already says it, and can be acted on
             # A copy, never the direct row mutated in place: a caller that saved
             # a row it was handed would otherwise persist an inherited grant.
             synthetic = WorkspaceMembership(
-                workspace=ws, user=up.user, role=WorkspaceMembership.OWNER, joined_at=up.joined_at,
+                workspace=ws, user=up.user, role=up.role, joined_at=up.joined_at,
             )
             synthetic.inherited = True
-            rows[up.user_id] = synthetic
+            rows[user_id] = synthetic
     return list(rows.values())
 
 
 def member_user_ids(ws) -> set[int]:
-    """User ids of everyone in `ws`, inherited owners included."""
+    """User ids of everyone in `ws`, inherited owners and admins included."""
     return {m.user_id for m in effective_memberships(ws)}
 
 
@@ -794,7 +857,7 @@ def set_member_role(*, workspace: Workspace, user_id, role: str, by=None) -> Wor
     that hangs off being here re-reads the role when it is used (an agent
     admin is checked against membership, editor gates against the role), and
     the person is still in the tenant. What a demotion CAN do is take an owner
-    out of the workspaces below this one, which they only reached by
+    or admin out of the workspaces below this one, which they only reached by
     inheritance — so those are swept exactly as a removal would sweep them
     (`departure.sweep`, which touches only workspaces they are no longer in).
     """
@@ -811,10 +874,10 @@ def set_member_role(*, workspace: Workspace, user_id, role: str, by=None) -> Wor
                 raise MemberError("system_role")
             if is_last_owner(m):
                 raise MemberError("last_owner")
-            was_owner = m.role == WorkspaceMembership.OWNER
+            carried_down = m.role in WorkspaceMembership.INHERITS_DOWN
             m.role = role
             m.save(update_fields=["role"])
-            if was_owner:
+            if carried_down:
                 from . import departure
 
                 departure.sweep(m.user, workspace.slug, by=by)

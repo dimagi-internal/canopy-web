@@ -17,8 +17,8 @@ what membership carries. Add to it when you add a grant that hangs off being
 in a workspace.
 
 Scope is every workspace the person is NO LONGER in after the change — the one
-they left, and any below it they only reached as an inherited owner (removing,
-or demoting, an org owner takes the divisions with it). A workspace they are
+they left, and any below it they only reached as an inherited owner or admin
+(removing, or demoting, an org owner or admin takes the divisions with it). A workspace they are
 still in through another path keeps their grants.
 """
 from __future__ import annotations

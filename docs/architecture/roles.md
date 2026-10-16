@@ -39,13 +39,19 @@ and can neither touch nor mint an admin or an owner. An admin is not an agent's 
 `Agent.is_admin` is the agent's owner, a workspace OWNER, or an explicit `AgentAdmin` grant —
 because running a workspace is not holding its agents' keys.
 
-## Workspaces nest — and only OWNERSHIP flows down
+## Workspaces nest — and only OWNER and ADMIN flow down
 
 A workspace may have a `parent` (`Workspace.parent`), so an org sits above its divisions:
 `dimagi` → `connect`, `strategy`, `operations`, `commcare`, `global-solutions`. The tree grants
-exactly one thing: **an owner of a workspace is an owner of every workspace below it.** Nothing
-else is inherited. A parent's editors and viewers have no access to a child, and a child's
-members have none to its parent or siblings.
+exactly this: **an owner of a workspace is an owner of every workspace below it, and an admin
+is an admin of every workspace below it** (`WorkspaceMembership.INHERITS_DOWN`). Nothing else is
+inherited. A parent's editors and viewers have no access to a child, and a child's members have
+none to its parent or siblings.
+
+Admin was added by owner decision (Jonathan, 2026-10-16: "fix it so admin flows down"): an org
+admin who could not see a division they were expected to run — ada@ was blind to `strategy`
+while administering `dimagi` — read as a bug, not a boundary. Admin still holds no keys
+(`permissions.OWN`), so an inherited admin runs a division without holding its agents' keys.
 
 The narrowness is the design. `dimagi` auto-approves an access request from every `@dimagi.com`
 address (`auto_approve_role = editor`), so if its
@@ -53,8 +59,8 @@ address (`auto_approve_role = editor`), so if its
 agents, which is precisely what a division workspace exists to prevent.
 
 - Resolved in `services.membership` (the sole authorizer): a direct `owner` row wins; otherwise
-  an owner of any ancestor gets an **unsaved** membership with `inherited = True` and role
-  `owner`, which outranks a weaker direct row. `is_member`, `member_role`,
+  the best owner/admin role held on any ancestor, if it outranks the direct row, comes back as
+  an **unsaved** membership with `inherited = True` at that role. `is_member`, `member_role`,
   `user_workspace_slugs` and the pinned `/api/w/{ws}/` gate all read through it.
 - Nesting is an owner's act on the **parent**: `POST /api/workspaces/` with `parent` requires
   owning the parent, and `PUT /api/workspaces/{slug}/parent` requires owning both the workspace
