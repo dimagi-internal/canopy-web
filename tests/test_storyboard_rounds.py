@@ -530,3 +530,48 @@ def test_patch_project_of_another_workspace_is_422(world):
     assert resp.status_code == 422
     world["board"].refresh_from_db()
     assert world["board"].agent_project_id == world["project"].pk
+
+
+# ------------------------------------------------- task 6 leftovers
+
+
+def test_close_then_consume_through_the_workspace_scoped_path(world):
+    from apps.feedback import services as fsvc
+
+    rnd = _closed_round_with_a_note(world)
+    for fb in rnd.notes.all():
+        fsvc.resolve(fb.pk, workspace_slugs=["connect"], state="declined", note="no")
+    resp = world["ace"].post("/api/w/connect/storyboards/supply/rounds/1/consume",
+                             {"run_id": "r1"}, content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    assert FeedbackRound.objects.get(number=1).state == "consumed"
+
+
+def test_consume_rolls_back_when_the_next_round_cannot_open(world):
+    from apps.feedback import services as fsvc
+
+    rnd = _closed_round_with_a_note(world)
+    for fb in rnd.notes.all():
+        fsvc.resolve(fb.pk, workspace_slugs=["connect"], state="declined", note="no")
+    world["board"].agent_project = None
+    world["board"].save(update_fields=["agent_project"])
+    resp = world["ace"].post("/api/storyboards/supply/rounds/1/consume", {"run_id": "r1"},
+                             content_type="application/json")
+    assert resp.status_code == 422
+    rnd.refresh_from_db()
+    assert rnd.state == "closed" and rnd.consumed_by_run == ""
+
+
+def test_patch_project_errors_do_not_reveal_other_tenants(world):
+    other_ws = Workspace.objects.create(slug="other2", display_name="Other2",
+                                        created_by=world["users"]["owner"])
+    other_agent = Agent.objects.create(slug="zed2", name="Zed2", workspace=other_ws,
+                                       owner=world["users"]["owner"])
+    other = AgentProject.objects.create(agent=other_agent, ext_id="P1", name="x")
+    foreign = world["ace"].patch("/api/storyboards/supply", {"agent_project": str(other.pk)},
+                                 content_type="application/json")
+    unknown = world["ace"].patch("/api/storyboards/supply", {"agent_project": "ace/P404"},
+                                 content_type="application/json")
+    assert foreign.status_code == unknown.status_code == 422
+    assert foreign.json()["detail"].split(":")[0] == unknown.json()["detail"].split(":")[0]
+    assert "workspace" not in foreign.json()["detail"]
