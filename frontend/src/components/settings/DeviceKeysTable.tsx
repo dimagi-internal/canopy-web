@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { approveRunnerDeviceKey, revokeRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { relativeAge } from '@/lib/relativeAge'
+import { grantPending, unlockVaultKey } from '@/vault/operations'
+import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 
 // Runner device keys (Canopy Vault, canopy-web#1538): the public half of a key a
 // box holds, which it signs a DPoP proof with when it reads an agent's secrets.
@@ -25,12 +27,37 @@ export function DeviceKeysTable({
 }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Zero-knowledge agents this key now waits on (canopy-web#1550): offered
+  // right after approving it, so the box can read them on its next turn.
+  const [grant, setGrant] = useState<{ key: string; agents: string[]; done: string[] } | null>(null)
+  const unlocker = useUnlockPrompt()
+
+  const grantAll = async () => {
+    if (!grant) return
+    setBusy('grant')
+    setError(null)
+    try {
+      const unlock = () => unlockVaultKey(unlocker.prompt)
+      let me: Awaited<ReturnType<typeof unlock>> | null = null
+      const once = async () => (me = me ?? (await unlock()))
+      for (const slug of grant.agents.filter((a) => !grant.done.includes(a))) {
+        await grantPending(slug, once)
+        setGrant((g) => (g ? { ...g, done: [...g.done, slug] } : g))
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not grant the vault key')
+    } finally {
+      setBusy(null)
+    }
+  }
 
   const act = async (id: string, fn: (id: string) => Promise<RunnerDeviceKeyOut>) => {
     setBusy(id)
     setError(null)
     try {
-      onChange(await fn(id))
+      const next = await fn(id)
+      onChange(next)
+      if (next.zk_pending_agents?.length) setGrant({ key: id, agents: [...next.zk_pending_agents], done: [] })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed')
     } finally {
@@ -83,6 +110,13 @@ export function DeviceKeysTable({
                 <span className={`rounded border px-1.5 py-0.5 text-[11px] ${STATUS_TONE[k.status] ?? ''}`}>
                   {k.status}
                 </span>
+                {k.status === 'pending' && k.reapproval && (
+                  // Not a new box: it added (or changed) the key zero-knowledge
+                  // agents' vault keys are wrapped to (canopy-web#1550).
+                  <span className="ml-2 text-[11px] text-muted-foreground" data-testid={`device-key-reapproval-${k.id}`}>
+                    re-approval: encryption key added
+                  </span>
+                )}
                 {k.status === 'active' && k.approved_by_email && (
                   <span className="ml-2 text-[11px] text-muted-foreground">by {k.approved_by_email}</span>
                 )}
@@ -118,6 +152,27 @@ export function DeviceKeysTable({
           ))}
         </tbody>
       </table>
+      {grant && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[12px]"
+             data-testid="device-key-zk-grant">
+          <span className="text-foreground">
+            {grant.done.length === grant.agents.length
+              ? `Granted: ${grant.agents.join(', ')} can now be read on this box.`
+              : `Zero-knowledge agents waiting on this key: ${grant.agents.join(', ')}.`}
+          </span>
+          {grant.done.length < grant.agents.length && (
+            <button type="button" onClick={() => void grantAll()} disabled={busy !== null}
+                    data-testid="device-key-zk-grant-button"
+                    className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0">
+              Grant the vault key
+            </button>
+          )}
+          <button type="button" onClick={() => setGrant(null)} className="text-muted-foreground hover:text-foreground">
+            Dismiss
+          </button>
+          {unlocker.element}
+        </div>
+      )}
       {error && (
         <p className="mt-2 text-[12px] text-destructive" data-testid="device-keys-error">
           {error}

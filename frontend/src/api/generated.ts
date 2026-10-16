@@ -3904,9 +3904,9 @@ export interface paths {
         /**
          * Turn on zero-knowledge: wraps + every value as ciphertext, atomically
          * @description `{kv: 1, wraps: [{kind, target, wrap}], values: [{name, value_zk}]}`.
-         *     Needs exactly one `recovery` wrap, at least one `member` wrap, and a wrap
-         *     the caller can open (their member wrap, or a device wrap on a runner they
-         *     administer). `values` must cover every stored credential; each one's
+         *     Needs exactly one `recovery` wrap and a wrap the caller can open (their
+         *     member wrap, or a device wrap on a runner they own — the CLI enabling as
+         *     its device; the owner's member wrap can be granted later). `values` must cover every stored credential; each one's
          *     custodial copy is wiped. Errors are problem+json with an `error` code.
          */
         readonly post: operations["enable_agent_zk"];
@@ -5392,8 +5392,10 @@ export interface paths {
         };
         /**
          * My zero-knowledge vault key (public half + seals)
-         * @description `exists: false` until set up. `prf_input` is what to pass as
-         *     `extensions.prf.eval.first` when asserting a passkey to open a seal.
+         * @description `{user_id, public_jwk, seals, prf_input, passkeys, …}`; 404 (problem+json,
+         *     `error: "no_vault_keyset"`) until set up — the 404 body still carries
+         *     `user_id`, `prf_input` and `passkeys` for the setup screen. `prf_input` is
+         *     what to pass as `extensions.prf.eval.first` to open a passkey seal.
          */
         readonly get: operations["get_vault_keyset"];
         /**
@@ -17236,6 +17238,11 @@ export interface components {
             readonly wrap?: {
                 readonly [key: string]: unknown;
             } | null;
+            /**
+             * Agent Id
+             * @default
+             */
+            readonly agent_id: string;
         };
         /**
          * DeviceProofRequiredOut
@@ -17341,6 +17348,10 @@ export interface components {
             readonly public_jwk: {
                 readonly [key: string]: unknown;
             };
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
             /**
              * Ecdh Jkt
              * @default
@@ -17400,6 +17411,10 @@ export interface components {
             readonly current: boolean;
             /** Public Jwk */
             readonly public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
                 readonly [key: string]: unknown;
             } | null;
             /** Wrap */
@@ -17741,6 +17756,11 @@ export interface components {
             readonly ecdh_public_jwk: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Reapproval
+             * @default false
+             */
+            readonly reapproval: boolean;
             /**
              * Status
              * @enum {string}

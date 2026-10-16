@@ -10,6 +10,8 @@ const { approveRunnerDeviceKey, revokeRunnerDeviceKey } = vi.hoisted(() => ({
   revokeRunnerDeviceKey: vi.fn(),
 }))
 vi.mock('@/api/deviceKeys', () => ({ approveRunnerDeviceKey, revokeRunnerDeviceKey }))
+const { grantPending } = vi.hoisted(() => ({ grantPending: vi.fn() }))
+vi.mock('@/vault/operations', () => ({ grantPending, unlockVaultKey: vi.fn() }))
 
 const { DeviceKeysTable } = await import('./DeviceKeysTable')
 
@@ -17,7 +19,7 @@ const KEY = {
   id: 'k1', runner: 'r1', runner_name: 'jj-mbp', jkt: 'abcdefghijklmnopqrstuvwxyz', kind: 'secure-enclave' as const,
   label: 'laptop', role_arn: '', status: 'pending' as const, created_at: '2026-10-16T00:00:00Z', approved_at: null,
   approved_by_email: '', revoked_at: null, last_used_at: null, can_manage: true,
-  ecdh_jkt: '', ecdh_public_jwk: {}, zk_pending_agents: [] as string[],
+  ecdh_jkt: '', ecdh_public_jwk: {}, zk_pending_agents: [] as string[], reapproval: false,
 }
 
 afterEach(() => {
@@ -33,6 +35,22 @@ describe('DeviceKeysTable', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...KEY, status: 'active' }))
     expect(approveRunnerDeviceKey).toHaveBeenCalledWith('k1')
+  })
+
+  it('offers the vault-key grant right after approving, for zero-knowledge agents (canopy-web#1550)', async () => {
+    approveRunnerDeviceKey.mockResolvedValue({ ...KEY, status: 'active', zk_pending_agents: ['eva'] })
+    grantPending.mockResolvedValue({})
+    render(<DeviceKeysTable keys={[KEY]} onChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    expect((await screen.findByTestId('device-key-zk-grant')).textContent).toContain('eva')
+    fireEvent.click(screen.getByTestId('device-key-zk-grant-button'))
+    await waitFor(() => expect(grantPending).toHaveBeenCalledWith('eva', expect.any(Function)))
+    expect((await screen.findByText(/Granted: eva/))).toBeTruthy()
+  })
+
+  it('says a re-approval is an encryption key added, not a new box', () => {
+    render(<DeviceKeysTable keys={[{ ...KEY, reapproval: true, ecdh_jkt: 'j' }]} onChange={vi.fn()} />)
+    expect(screen.getByTestId('device-key-reapproval-k1').textContent).toBe('re-approval: encryption key added')
   })
 
   it('revokes after confirming', async () => {

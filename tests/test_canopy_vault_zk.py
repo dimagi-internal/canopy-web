@@ -255,8 +255,10 @@ def test_shape_checks_refuse_a_malformed_recovery_wrap_or_seal():
 def test_keyset_get_names_the_prf_input_of_the_reference(client):
     user = get_user_model().objects.create_user(username="p", email="p@dimagi.com")
     client.force_login(user)
-    body = client.get("/api/vault/keyset").json()
-    assert body["exists"] is False and body["user_id"] == str(user.pk)
+    res = client.get("/api/vault/keyset")
+    assert res.status_code == 404
+    body = res.json()
+    assert body["error"] == "no_vault_keyset" and body["exists"] is False and body["user_id"] == str(user.pk)
     assert body["prf_input"] == ref.b64u(ref.prf_input(str(user.pk)))
 
 
@@ -358,7 +360,6 @@ def test_enable_is_audited_without_the_ciphertext(fleet):
 @pytest.mark.parametrize("wraps, code", [
     (lambda f: [member_wrap(f), device_wrap(f)], "zk_recovery_required"),
     (lambda f: [member_wrap(f), recovery_wrap(f), recovery_wrap(f)], "zk_invalid_shape"),
-    (lambda f: [device_wrap(f), recovery_wrap(f)], "zk_member_wrap_required"),
     (lambda f: [member_wrap(f), member_wrap(f), recovery_wrap(f)], "zk_invalid_shape"),
     (lambda f: [member_wrap(f) | {"wrap": {"alg": "ecdh-es"}}, recovery_wrap(f)], "zk_invalid_shape"),
     (lambda f: [member_wrap(f) | {"target": "99999"}, recovery_wrap(f)], "zk_invalid_target"),
@@ -415,6 +416,20 @@ def test_enable_by_token_with_only_a_device_wrap_the_caller_owns(fleet):
     wraps = [member_wrap(fleet, user=other, pub=o_priv.public_key()), device_wrap(fleet), recovery_wrap(fleet)]
     res = _enable(fleet, wraps=wraps, client=Client(), HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
     assert res.status_code == 200, res.content
+
+
+def test_enable_as_a_device_before_anyone_has_a_keyset(fleet):
+    # The CLI enables as its device (a runner the caller owns); the owner's
+    # member wrap is granted later.
+    UserVaultKeyset.objects.all().delete()
+    res = _enable(fleet, wraps=[device_wrap(fleet), recovery_wrap(fleet)], client=Client(),
+                  HTTP_AUTHORIZATION=f"Bearer {fleet.pat}")
+    assert res.status_code == 200, res.content
+    body = _resolve(fleet).json()
+    assert body["agent_id"] == _aid(fleet)
+    state = fleet.client.get(ZK).json()
+    dev = state["wraps"][0] if state["wraps"][0]["kind"] == "device" else state["wraps"][1]
+    assert dev["ecdh_public_jwk"] == ref.jwk(fleet.ecdh.public_key()) and dev["ecdh_jkt"] == fleet.device.ecdh_jkt
 
 
 def test_enable_refuses_a_set_the_caller_cannot_open(fleet):
@@ -658,7 +673,10 @@ def test_changing_the_ecdh_key_sends_an_active_key_back_to_pending(fleet):
     new_ecdh = ec.generate_private_key(ec.SECP256R1())
     key = _register(fleet, fleet.sign, new_ecdh)
     assert key.pk == fleet.device.pk and key.status == RunnerDeviceKey.PENDING
-    assert key.ecdh_jkt == ref.jkt(new_ecdh.public_key()) and key.approved_at is None
+    assert key.ecdh_jkt == ref.jkt(new_ecdh.public_key())
+    row = Client().get(f"/api/runner-device-keys/?runner={fleet.runner.pk}",
+                       HTTP_AUTHORIZATION=f"Bearer {fleet.pat}").json()[0]
+    assert row["status"] == "pending" and row["reapproval"] is True
     assert not AgentVaultWrap.objects.filter(kind="device").exists()
     res = fleet.client.post(f"/api/runner-device-keys/{key.pk}/approve")
     assert res.status_code == 200 and res.json()["zk_pending_agents"] == ["eva"]

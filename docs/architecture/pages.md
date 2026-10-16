@@ -120,8 +120,11 @@ Every browser-facing address canopy-web serves. The SPA route table is
     runs (turn mode + runners and source rules — see
     [`runners.md`](runners.md)); Credentials (secrets, the agent's own
     1Password vault + service account, GitHub delegation; for its admins,
-    device keys, canopy-pat rotation, read alerts and per-credential read
-    history).
+    device keys, canopy-pat rotation, read alerts, per-credential read
+    history, and Zero-knowledge — turn on / grant pending / rotate / recover
+    with code / turn off, every encryption in the browser, the one-time
+    recovery-code dialog, the stated trust caveat; on a ZK agent Save and
+    Reveal encrypt/decrypt locally — #1550).
   - Redirects (query kept): `work`, `items` → `tasks`; `inbox`, `needs-you` →
     `tasks?waiting=me`; `overview`, `work-products` → `projects`; `syncs` →
     `turns#status-reports`; `history` → `skills/history`; `credentials` →
@@ -322,7 +325,10 @@ Every browser-facing address canopy-web serves. The SPA route table is
   plus the MCP address and `claude mcp add` line), personal access tokens, and
   runner device keys (`#device-keys`, shown when you have any or arrive by a
   box's `approve_url` with `?device_key=<id>`, which marks that row; approve /
-  revoke — Canopy Vault, #1538).
+  revoke — Canopy Vault, #1538; approving one offers the vault-key grant for
+  zero-knowledge agents waiting on it, #1550), and your vault key
+  (`#vault-key`: set up with a PRF passkey or a passphrase + Secret Key with a
+  one-time Emergency Kit, add a passkey/passphrase, start a new one — #1550).
 - **`/sessions`** — your shared Claude Code transcripts (`/canopy:share-session`).
 - **`/system`** — capability catalog + Workflows view, read live from the
   canopy plugin.

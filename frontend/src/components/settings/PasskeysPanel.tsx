@@ -66,7 +66,7 @@ export function PasskeysPanel() {
       <div>
         <h2 className="text-sm font-semibold text-foreground">Passkeys</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          The confirmation canopy asks for — Touch ID, Windows Hello or your phone — before revealing or changing an
+          The confirmation canopy asks for — Touch ID, your device password or PIN, your phone, or a security key — before revealing or changing an
           agent&rsquo;s secret or approving a runner&rsquo;s device key. One confirmation covers five minutes. You still
           sign in with Google.
         </p>

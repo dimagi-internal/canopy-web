@@ -15,7 +15,7 @@ from django.http import HttpRequest
 from ninja import Router
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_CONFLICT, TYPE_VALIDATION, ProblemError
+from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.passkeys import stepup
 from apps.passkeys.models import Passkey, UserVaultKeyset
 from apps.passkeys.schemas import VaultKeysetIn, VaultKeysetOut, VaultKeysetPasskeyOut
@@ -44,9 +44,16 @@ def _out(user) -> VaultKeysetOut:
 
 @router.get("/keyset", response=VaultKeysetOut, summary="My zero-knowledge vault key (public half + seals)")
 def get_vault_keyset(request: HttpRequest) -> VaultKeysetOut:
-    """`exists: false` until set up. `prf_input` is what to pass as
-    `extensions.prf.eval.first` when asserting a passkey to open a seal."""
-    return _out(request.user)
+    """`{user_id, public_jwk, seals, prf_input, passkeys, …}`; 404 (problem+json,
+    `error: "no_vault_keyset"`) until set up — the 404 body still carries
+    `user_id`, `prf_input` and `passkeys` for the setup screen. `prf_input` is
+    what to pass as `extensions.prf.eval.first` to open a passkey seal."""
+    out = _out(request.user)
+    if not out.exists:
+        raise ProblemError(404, "No vault key", type_=TYPE_NOT_FOUND,
+                           detail="You have not set up a vault key (Settings → Vault key).",
+                           members={"error": "no_vault_keyset", **out.model_dump(mode="json")})
+    return out
 
 
 @router.put("/keyset", response=VaultKeysetOut, summary="Set up or extend my vault key (browser + passkey)")

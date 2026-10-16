@@ -2165,6 +2165,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
         salesforce_creds=delegations.salesforce_creds_for(agent) if extra("salesforce_creds") else "",
         mailbox=agent.email or "",
         zk=agent.zk_enabled, kv=agent.zk_kv if agent.zk_enabled else None, wrap=zk_wrap,
+        agent_id=str(agent.pk) if agent.zk_enabled else "",
     )
     read = list(values) + [n for n in RESOLVE_SECRET_EXTRAS if getattr(out, n)]
     runner = device_key.runner if device_key is not None else _caller_runner(request)
@@ -2330,9 +2331,9 @@ def get_agent_zk_state(request: HttpRequest, slug: str, values: bool = False) ->
              summary="Turn on zero-knowledge: wraps + every value as ciphertext, atomically")
 def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkStateOut:
     """`{kv: 1, wraps: [{kind, target, wrap}], values: [{name, value_zk}]}`.
-    Needs exactly one `recovery` wrap, at least one `member` wrap, and a wrap
-    the caller can open (their member wrap, or a device wrap on a runner they
-    administer). `values` must cover every stored credential; each one's
+    Needs exactly one `recovery` wrap and a wrap the caller can open (their
+    member wrap, or a device wrap on a runner they own — the CLI enabling as
+    its device; the owner's member wrap can be granted later). `values` must cover every stored credential; each one's
     custodial copy is wiped. Errors are problem+json with an `error` code."""
     from . import zk
 

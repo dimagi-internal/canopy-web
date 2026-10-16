@@ -36,12 +36,19 @@ export async function getStepUpStatus(): Promise<StepUpStatusOut> {
 /** Register a passkey on THIS device (Touch ID, Windows Hello, a phone…). */
 export async function registerThisDevice(label: string): Promise<PasskeyOut> {
   const begin = need(await apiV2.POST('/api/passkeys/register/begin'), 'Could not start registering a passkey')
-  const created = (await navigator.credentials.create({
-    publicKey: toCreationOptions(begin.options as Record<string, unknown>),
-  })) as PublicKeyCredential | null
+  const publicKey = toCreationOptions(begin.options as Record<string, unknown>)
+  // Ask for the PRF extension (canopy-web#1550): the answer, `prf.enabled`,
+  // says whether this passkey can seal a zero-knowledge vault key. Nothing is
+  // evaluated here, so no PRF output exists to leak.
+  publicKey.extensions = { ...(publicKey.extensions ?? {}), prf: {} } as AuthenticationExtensionsClientInputs
+  const created = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential | null
   if (!created) throw new Error('No passkey was created')
+  const credential = credentialToJSON(created)
+  const ext = credential.clientExtensionResults as { prf?: { enabled?: boolean } } | undefined
+  // Only `enabled` goes to the server — never a PRF result, should one appear.
+  credential.clientExtensionResults = ext?.prf ? { prf: { enabled: ext.prf.enabled === true } } : {}
   return need(
-    await apiV2.POST('/api/passkeys/register/finish', { body: { credential: credentialToJSON(created), label } }),
+    await apiV2.POST('/api/passkeys/register/finish', { body: { credential, label } }),
     'The passkey could not be registered',
   )
 }
