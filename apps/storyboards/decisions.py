@@ -212,7 +212,15 @@ def publish(board, rows: list[dict]):
         if r["id"] in seen:
             raise DecisionInvalid(f"duplicate decision id {r['id']!r}")
         seen.add(r["id"])
-    existing = {d.key: d for d in StoryboardDecision.objects.select_for_update().filter(storyboard=board)}
+    rows_qs = StoryboardDecision.objects.select_for_update().filter(storyboard=board)
+    # A review-gate row (apps.storyboards.review_gate) belongs to the server, not
+    # the publisher: a publish never sends it, so it must neither drop it nor 409
+    # on it once a person rules — and a publisher may not take its id.
+    gate_keys = set(rows_qs.filter(review__isnull=False).values_list("key", flat=True))
+    taken = sorted(seen & gate_keys)
+    if taken:
+        raise DecisionInvalid(f"{taken[0]}: that id is a review gate's row; use another id")
+    existing = {d.key: d for d in rows_qs.filter(review__isnull=True)}
     superseded = {r["supersedes"]: r["id"] for r in clean if r["supersedes"]}
 
     for key, old in existing.items():

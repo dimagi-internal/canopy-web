@@ -7,6 +7,7 @@ from django.urls import include, path, re_path
 from apps.api.api import api as api_v2
 from apps.api.views import redoc_docs, scalar_docs
 from apps.plugins import views as plugin_views
+from apps.reviews.views import review_page
 from apps.slack import views as slack_views
 from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
@@ -87,6 +88,10 @@ urlpatterns = [
         views_walkthrough_content,
         name="walkthrough-content",
     ),
+    # The retired review page: forwards to the review's storyboard (a findings
+    # review, which has no narrative, still gets the SPA). Before the SPA
+    # catch-all so a plain HTTP client follows the same redirect a browser does.
+    re_path(r"^w/(?P<ws>[^/]+)/review/(?P<rid>[^/]+)/?$", review_page, name="review-page"),
     # One personal catalog of agent plugins for Claude Code, `canopy-agents`
     # (docs/architecture/plugin-marketplace.md). Bare view: Claude Code fetches
     # this exact address, and it self-enforces auth (401). Not under /agents/,

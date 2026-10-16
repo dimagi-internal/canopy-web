@@ -227,9 +227,15 @@ Every browser-facing address canopy-web serves. The SPA route table is
   it without login. Bytes at `/walkthrough/:id/content`
   (`apps/walkthroughs/streaming.py`, a bare Django view — Range support,
   sandbox CSP).
-- **`/review/:id`** — editable DDD narrative review (approve / redraft before
-  build). Link-visibility reviews are readable by anyone with the URL;
-  submitting a decision requires a Dimagi login.
+- **`/review/:id`** — retired as a narrative surface: a narrative review is
+  read, commented on and decided on its **storyboard**, so this address
+  forwards there (`apps/reviews/views.py`, a bare 302 before the SPA; the SPA
+  route asks `GET /api/reviews/{rid}/destination` for in-app navigation) to
+  `#entry-<narrative>`. The review's own valid `?t=` lands on the board WITH
+  the board's share token; a member needs none; signed out with no valid token
+  → sign in; anyone else → 404 (no board token ever reaches someone without
+  the review's). A findings review (`product_findings`, no narrative) still
+  renders here.
 - **`/share/:token`** — chrome-less, light-themed read-only shared session
   (mounted outside `AppLayout`, own `ShareRouteErrorBoundary`). Shared sessions
   carry a workspace FK (`session_sharing/0005_workspace`).
@@ -242,6 +248,15 @@ Every browser-facing address canopy-web serves. The SPA route table is
   log: what must be answered before sharing, what to confirm, and what the
   agent assumed — one row per decision, each with a recommended option, who
   decided, and undo. Members' edits apply immediately.
+  Every narrative review has a board (`apps/storyboards/review_gate.py`): the
+  first board carrying the narrative, else a one-narrative `comment` board made
+  when the review is created (`manage.py backfill_review_storyboards` for older
+  ones). Its gate decisions (`request_json.decisions`, e.g. approve / redraft)
+  are server-owned decision rows — a publish never drops or 409s on them — and
+  an editor's ruling (or a round closing with it ruled) resolves the review
+  with the `response_json` `submit_review` writes, so the DDD loop's
+  `await_resolution` is unchanged. Review-page suggestions land in the board's
+  feedback pool / open round.
   When a feedback round is open, every reader sees every round note (names,
   never emails) and a banner with the counts; editors open and close rounds.
   Closing hands the round to the board project's agent as one task (one turn).

@@ -431,6 +431,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_reviews": ("member",),
     "create_review": ("content.write",),  # creation_workspace + CONTENT_WRITE
     "get_review": ("token-link",),  # auth=None; link review readable TOKENLESS by anyone, else member
+    "get_review_destination": ("token-link", "member"),  # auth=None; ?t= review token (board token handed on) or a member; may create the review's board
     "submit_review": ("content.write",),  # auth=None but handler requires editor + CSRF
     "suggest_review": ("token-link",),  # auth=None; ?t= share token on a link review; never resolves the gate
     "delete_review": ("content.write",),

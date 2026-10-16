@@ -47,6 +47,7 @@ from .models import ReviewRequest
 from .schemas import (
     ReviewCreateIn,
     ReviewCreateOut,
+    ReviewDestinationOut,
     ReviewListItemOut,
     ReviewRequestOut,
     ReviewSubmitIn,
@@ -471,7 +472,16 @@ def create_review(request: HttpRequest, payload: ReviewCreateIn) -> Status:
         workspace=ws,
     )
 
-    # Build the hosted-review URL, under the review's workspace.
+    # Every narrative review is read and decided on a storyboard: give it one
+    # (an existing board carrying the narrative, else a one-narrative board) and
+    # put its gate decision there as a row. Never refuses the create.
+    if _narrative_slug_of(review):
+        from apps.storyboards import review_gate
+
+        review_gate.ensure_for_review(review)
+
+    # Build the hosted-review URL, under the review's workspace. The page
+    # forwards to the review's storyboard (apps.reviews.views.review_page).
     url = review_path(review)
 
     # For a shareable (link) review, mint a per-review share token so an EXTERNAL
@@ -540,6 +550,52 @@ def get_review(request: HttpRequest, rid: UUID, ws: str = "") -> ReviewRequestOu
 
 
 # ---------------------------------------------------------------------------
+# Destination — where the retired review page now lives
+# ---------------------------------------------------------------------------
+
+
+def destination_for(request: HttpRequest, review: ReviewRequest) -> tuple[str, str | None]:
+    """(verdict, url) for opening a review's old page.
+
+    ``verdict`` is ``"go"`` (url is the storyboard, app-relative), ``"page"``
+    (no narrative: a findings review keeps its own page), ``"login"`` (signed
+    out, no valid token) or ``"missing"`` (404). The board's share token rides
+    along ONLY for a caller holding the review's own valid token — a member
+    reads the board on their session, and nobody else is handed a board token."""
+    from apps.storyboards import review_gate
+
+    if review_gate.narrative_of(review) is None:
+        return ("page", None) if _can_read(request, review) else ("missing", None)
+    token_ok = _token_ok(request, review)
+    member = request.user.is_authenticated and _in_caller_workspaces(request, review)
+    if not token_ok and not member:
+        return ("missing", None) if request.user.is_authenticated else ("login", None)
+    url = review_gate.destination(review, token_ok=token_ok)
+    return ("go", url) if url else ("missing", None)
+
+
+@router.get(
+    "/{rid}/destination",
+    response=ReviewDestinationOut,
+    auth=None,  # a valid ?t= review token, or a member of the review's workspace
+    summary="Where a review's page now lives (its narrative on a storyboard)",
+)
+def get_review_destination(request: HttpRequest, rid: UUID, ws: str = "") -> ReviewDestinationOut:
+    """The review page is retired: a narrative review is read and decided on a
+    storyboard. Returns that board's address at the narrative's entry — with the
+    board's share token only when the caller presented the review's own valid
+    token — or ``url: null`` for a review with no narrative (a findings review),
+    whose page stays. 404 when the caller may not open the review."""
+    review = _get_or_404(rid)
+    if ws and ws != review.workspace_id:
+        raise ProblemError(404, "Review request not found", type_=TYPE_NOT_FOUND)
+    verdict, url = destination_for(request, review)
+    if verdict in ("missing", "login"):
+        raise ProblemError(404, "Review request not found", type_=TYPE_NOT_FOUND)
+    return ReviewDestinationOut(url=url)
+
+
+# ---------------------------------------------------------------------------
 # Submit
 # ---------------------------------------------------------------------------
 
@@ -588,6 +644,10 @@ def submit_review(request: HttpRequest, rid: UUID, payload: ReviewSubmitIn) -> R
     review.status = ReviewRequest.STATUS_RESOLVED
     review.resolved_at = timezone.now()
     review.save(update_fields=["response_json", "status", "resolved_at"])
+    # The board's gate rows follow, so the storyboard no longer asks.
+    from apps.storyboards import review_gate
+
+    review_gate.mirror_submission(review, by_user=request.user)
 
     is_own = _is_owner(request, review)
     return ReviewRequestOut.model_validate(

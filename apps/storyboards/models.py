@@ -291,6 +291,15 @@ class StoryboardDecision(models.Model):
     supersedes = models.CharField(max_length=120, blank=True, default="")
     superseded_by = models.CharField(max_length=120, blank=True, default="")
 
+    review = models.ForeignKey(
+        "reviews.ReviewRequest", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="gate_rows",
+    )
+    """Set on a REVIEW GATE row: the narrative review whose gate decision this row
+    carries (``apps.storyboards.review_gate``). The server owns such a row — a
+    publish neither moves nor drops it — and a ruling on it resolves the review
+    with the ``response_json`` the DDD loop reads. Blank on every published row."""
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

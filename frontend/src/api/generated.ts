@@ -2202,6 +2202,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/reviews/{rid}/destination": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Where a review's page now lives (its narrative on a storyboard)
+         * @description The review page is retired: a narrative review is read and decided on a
+         *     storyboard. Returns that board's address at the narrative's entry — with the
+         *     board's share token only when the caller presented the review's own valid
+         *     token — or ``url: null`` for a review with no narrative (a findings review),
+         *     whose page stays. 404 when the caller may not open the review.
+         */
+        readonly get: operations["get_review_destination"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/reviews/{rid}/submit/": {
         readonly parameters: {
             readonly query?: never;
@@ -12683,6 +12707,14 @@ export interface components {
              * @default []
              */
             readonly cut_videos: readonly components["schemas"]["ReviewPinnedVideoOut"][];
+        };
+        /**
+         * ReviewDestinationOut
+         * @description Where a review's page now lives.
+         */
+        readonly ReviewDestinationOut: {
+            /** Url */
+            readonly url?: string | null;
         };
         /**
          * ReviewSubmitIn
@@ -26714,6 +26746,30 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly get_review_destination: {
+        readonly parameters: {
+            readonly query?: {
+                readonly ws?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly rid: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ReviewDestinationOut"];
+                };
             };
         };
     };
