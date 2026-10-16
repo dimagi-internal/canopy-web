@@ -90,8 +90,9 @@ from apps.events.audit import audited as _audited  # noqa: E402
 api.add_decorator(_audited)
 
 
-def _problem_response(request: HttpRequest, problem: Problem) -> HttpResponse:
-    body = problem.model_dump(exclude_none=True)
+def _problem_response(request: HttpRequest, problem: Problem, members: dict | None = None) -> HttpResponse:
+    # Extension members sit beside the standard ones and never replace them.
+    body = {**(members or {}), **problem.model_dump(exclude_none=True)}
     response = HttpResponse(
         content=OrjsonRenderer().render(request, body, response_status=problem.status),
         status=problem.status,
@@ -110,7 +111,7 @@ def _on_problem_error(request: HttpRequest, exc: ProblemError) -> HttpResponse:
         instance=request.path,
         extras=exc.problem_extras,
     )
-    return _problem_response(request, problem)
+    return _problem_response(request, problem, getattr(exc, "problem_members", None))
 
 
 @api.exception_handler(ValidationError)
@@ -230,6 +231,7 @@ from apps.tokens.contact_api import contact_router, contact_token_router  # noqa
 from apps.tokens.embed_api import embed_router
 from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
+from apps.passkeys.api import router as passkeys_router  # noqa: E402
 
 api.add_router("/issues", issues_router)
 api.add_router("", common_router)
@@ -274,6 +276,7 @@ api.add_router("/agents", schedules_router)  # recurring turns, under the agents
 api.add_router("/agents", contributors_router)  # ideas + contributor pages on a project (hal T69)
 api.add_router("/agents", agent_capabilities_router)  # what an agent declares it can lease
 api.add_router("/capabilities", capabilities_router)  # grants + leases (cloud capabilities)
+api.add_router("/passkeys", passkeys_router)  # a person's passkeys + the step-up (canopy-web#1538)
 # Fleet-wide task and project lists (/api/tasks/, /api/projects/) — the
 # per-agent filters across every agent the caller can see.
 api.add_router("", fleet_tasks_router)

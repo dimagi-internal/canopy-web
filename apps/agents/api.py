@@ -9,7 +9,7 @@ from typing import Any
 import requests
 from django.db import transaction
 from django.db.models import Case, IntegerField, Q, When
-from django.http import HttpRequest, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from ninja import Router, Status
 from ninja.errors import HttpError
 
@@ -24,6 +24,7 @@ from apps.api.errors import (
 )
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.harness.schemas import RunnerDeviceKeyOut
+from apps.passkeys import stepup
 from apps.plugins import services as plugin_services
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
@@ -52,6 +53,7 @@ from .schemas import (
     AgentGitHubOut,
     AgentCredentialAccessOut,
     AgentCredentialsResolveOut,
+    AgentCredentialRevealOut,
     AgentCredentialStatusOut,
     AgentDetailOut,
     AgentIn,
@@ -1966,10 +1968,16 @@ def mark_task_action_applied(request: HttpRequest, slug: str, action_id: int,
 def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredentialsIn):
     """Upsert. Non-clobbering: a ref absent from the body is untouched.
 
-    There is no read counterpart on purpose — the response is the MASKED status,
-    so even the caller who just wrote a value cannot read one back through the
-    browser."""
+    The response is the MASKED status. From a browser session this needs a
+    fresh passkey step-up (403 `step_up_required` otherwise); a token write —
+    `canopy vault import` — does not, and is recorded like every settings change."""
     agent = _agent_for_admin(request, slug)
+    # Step-up only for a person at a browser (canopy-web#1538): a stolen session
+    # cookie is the threat it closes. A PAT write has no browser to ask and is
+    # audited as a SettingChange like any other; requiring a passkey there would
+    # simply break `canopy vault import`.
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
     try:
         services.set_agent_credentials(agent, payload.values, user=request.user)
     except ValueError as exc:
@@ -2406,6 +2414,27 @@ def agent_device_keys(request: HttpRequest, slug: str):
     agent = _agent_for_admin(request, slug)
     return [key_out(k, can_manage=can_administer_runner(request.user, k.runner))
             for k in device_keys.keys_for_agent(agent)]
+
+
+@router.post("/{slug}/credentials/{name}/reveal", response=AgentCredentialRevealOut,
+             summary="PLAINTEXT — show one stored value to an admin who just confirmed a passkey")
+def reveal_agent_credential(request: HttpRequest, response: HttpResponse, slug: str, name: str):
+    """Owner/agent admin, at a browser, with a passkey step-up in the last five
+    minutes (403 `step_up_required` otherwise). Returns the value once and
+    records who saw it; tokens are refused — a machine reads values through
+    `/credentials/resolve`."""
+    # The one deliberate exception to "a browser never sees plaintext"
+    # (canopy-web#1538). What makes it safe is the conjunction: agent admin (who
+    # could already overwrite the value and route a box of their own to read it)
+    # AND a person present at the browser (step-up) AND a durable record.
+    agent = _agent_for_admin(request, slug)
+    stepup.require_recent_step_up(request)
+    value = services.reveal_agent_credential(agent, name, user=request.user)
+    if value is None:
+        raise ProblemError(404, "Credential not found", type_=TYPE_NOT_FOUND,
+                           detail=f"{agent.slug} has no value stored under {name!r}")
+    response["Cache-Control"] = "no-store"
+    return AgentCredentialRevealOut(name=name, value=value)
 
 
 @router.get("/{slug}/readiness", response=list[BootstrapReportOut],

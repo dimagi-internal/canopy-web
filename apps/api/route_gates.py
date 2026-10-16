@@ -167,6 +167,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "agent_credential_status": ("member",),
     "agent_credential_access": ("member",),  # no values; reports the resolve gate for the caller
     "resolve_agent_credentials": ("runner-holds-agent", "agent-admin"),  # bearer only
+    "reveal_agent_credential": ("agent-admin",),  # browser session + passkey step-up only (apps/passkeys)
     "get_agent_vault": ("member",),
     "set_agent_vault": ("agent-admin",),
     "list_sender_trust": ("member",),
@@ -688,6 +689,14 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_capability_slot_data": ("member", "agent-login"),
     "set_capability_slot_data": ("integrations", "agent-login"),
     "delete_capability_slot_data": ("integrations", "agent-login"),
+    # --- apps/passkeys/api.py  (the caller's OWN passkeys; ceremonies need a browser session)
+    "list_passkeys": ("self",),
+    "begin_passkey_registration": ("self",),  # a SECOND passkey also needs a fresh step-up
+    "finish_passkey_registration": ("self",),
+    "delete_passkey": ("self",),  # + a fresh step-up
+    "passkey_step_up_status": ("self",),
+    "begin_passkey_step_up": ("self",),
+    "finish_passkey_step_up": ("self",),
     "runner_topology": ("logs.read",),  # root + each descendant where the caller holds it
     "agent_topology": ("logs.read",),  # same; grant/revoke flags mirror _may_manage_admins
 }
@@ -783,6 +792,7 @@ SETTINGS: frozenset[str] = frozenset({
     "create_token", "revoke_token", "tokens_disconnect_app", "github_disconnect",
     "set_presence_preference", "set_session_workspace_preference", "set_preferences",
     "set_my_agent_memory", "set_my_grant_collection",
+    "finish_passkey_registration", "delete_passkey",  # the second factor a step-up asks for
     "create_my_memory_collection", "update_my_memory_collection", "delete_my_memory_collection",
     "grant_my_session_agent", "set_my_session_memory", "hcp_revokeGrant",
     "contact_hcp_policy", "contact_hcp_revoke", "contact_hcp_grant", "contact_hcp_opt_in",
@@ -894,5 +904,9 @@ NOT_SETTINGS: dict[str, str] = {
     "request_workspace_access": "request",
     # ephemeral-credential
     "contact_token": "ephemeral-credential", "embed_self_token": "ephemeral-credential",
+    # passkeys: a ceremony's challenge, and the five-minute step-up it earns
+    "begin_passkey_registration": "ephemeral-credential", "begin_passkey_step_up": "ephemeral-credential",
+    "finish_passkey_step_up": "ephemeral-credential",
+    "reveal_agent_credential": "action",  # reads one value; changes no configuration (recorded as an event)
     "embed_ws_ticket": "ephemeral-credential", "contact_ws_ticket": "ephemeral-credential",
 }

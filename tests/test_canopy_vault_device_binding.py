@@ -18,6 +18,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent, AgentCredentialRead
 from apps.harness.models import Runner, RunnerAdmin, RunnerAssignment, RunnerDeviceKey
+from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -58,6 +59,10 @@ def fleet(client):
                                    last_heartbeat_at=timezone.now(), capabilities={})
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
     client.force_login(jj)
+    # Browser credential writes and device-key approvals need a passkey step-up
+    # (apps/passkeys); tests/test_canopy_vault_device_binding.py's own step-up
+    # cases below expire or omit it on purpose.
+    grant_step_up(client)
     client.put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "pat-value"}},
                content_type="application/json")
     key = ec.generate_private_key(ec.SECP256R1())
@@ -161,6 +166,17 @@ def test_approve_needs_a_browser_session_not_a_token(fleet):
     assert RunnerDeviceKey.objects.get().status == "pending"
 
 
+def test_approve_without_a_fresh_passkey_step_up_is_refused(fleet):
+    """A signed-in browser session alone is not enough (canopy-web#1538)."""
+    body = _register(fleet).json()
+    grant_step_up(fleet["client"], seconds=-1)  # expired
+    res = _approve(fleet, body["id"])
+    assert res.status_code == 403 and res.json()["error"] == "step_up_required"
+    assert RunnerDeviceKey.objects.get().status == "pending"
+    grant_step_up(fleet["client"])
+    assert _approve(fleet, body["id"]).json()["status"] == "active"
+
+
 def test_owner_approves_from_the_browser(fleet):
     body = _register(fleet).json()
     res = _approve(fleet, body["id"])
@@ -173,6 +189,7 @@ def test_a_runner_admin_may_approve_but_a_stranger_may_not(fleet):
     stranger = get_user_model().objects.create_user(username="s", email="s@dimagi.com")
     c = Client()
     c.force_login(stranger)
+    grant_step_up(c)
     assert c.post(f"/api/runner-device-keys/{body['id']}/approve").status_code == 404
     RunnerAdmin.objects.create(runner=fleet["runner"], user=stranger)
     assert c.post(f"/api/runner-device-keys/{body['id']}/approve").status_code == 200
@@ -293,6 +310,7 @@ def test_a_key_on_a_runner_the_agent_does_not_use_is_refused(fleet):
     key = ec.generate_private_key(ec.SECP256R1())
     c = Client()
     c.force_login(other)
+    grant_step_up(c)
     body = Client().post("/api/runner-device-keys/",
                          data={"runner": str(theirs.pk), "public_jwk": _jwk(key), "kind": "software"},
                          content_type="application/json",

@@ -26,6 +26,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.events import audit
+from apps.passkeys import stepup
 
 from . import device_keys
 from .models import Runner, RunnerAdmin, RunnerDeviceKey
@@ -131,7 +132,10 @@ def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     if not _is_browser_session(request):
         raise HttpError(403, "approving a device key needs a browser session, not a token")
     key = _key_or_404(request, key_id)
-    # STEP-UP: apps.passkeys wires require_recent_step_up here (canopy-web#1538)
+    # A fresh passkey confirmation (canopy-web#1538): an active key unlocks an
+    # agent's secrets for that box, so a stolen session cookie must not suffice.
+    # 403 `step_up_required` → the SPA prompts for the passkey and retries.
+    stepup.require_recent_step_up(request)
     if key.status == RunnerDeviceKey.REVOKED:
         raise HttpError(409, "this key was revoked; register a new one")
     before = key.status

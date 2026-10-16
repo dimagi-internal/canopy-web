@@ -6,6 +6,7 @@ import { DeviceKeysTable } from '@/components/settings/DeviceKeysTable'
 import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
+import { PasskeysPanel } from '@/components/settings/PasskeysPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
 import { useMemoryVisible } from '@/auth/memoryRollout'
@@ -54,7 +55,7 @@ export function SettingsPage() {
       <div>
         <h1 className="text-lg font-semibold text-foreground">Settings</h1>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Your account: the runners you administer, presence, GitHub, connected apps and access tokens.
+          Your account: the runners you administer, presence, passkeys, GitHub, connected apps and access tokens.
         </p>
         {memoryVisible && (
           <p className="mt-1 text-xs">
@@ -99,6 +100,8 @@ export function SettingsPage() {
           </div>
         </div>
       </div>
+
+      <PasskeysPanel />
 
       <GitHubPanel />
 

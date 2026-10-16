@@ -115,6 +115,7 @@ INSTALLED_APPS = [
     "apps.admission",
     "apps.plugins",
     "apps.capabilities",
+    "apps.passkeys",
     # The canopy SDK's Django half (app label `canopy_host`): the single-use jti
     # table and the delegated-token table canopy-web uses as a HOST of its own
     # MCP (apps/tokens/self_host.py). Its own tables, never `tokens`' —
@@ -323,6 +324,14 @@ HCP_CONTACT_OPT_IN = env.bool("HCP_CONTACT_OPT_IN", default=False)
 
 # Whether LoginRequiredMiddleware enforces auth. Default on; toggle off during rollout.
 REQUIRE_AUTH = env.bool("REQUIRE_AUTH", default=True)
+
+# Passkey step-up (apps/passkeys, canopy-web#1538). Unset, the WebAuthn relying
+# party is the host the browser is on (canopy.dimagi.com in production,
+# localhost in dev) and the expected origin is that host's scheme+host. Pin them
+# only if a proxy hides the real host.
+PASSKEY_RP_ID = env("PASSKEY_RP_ID", default="")
+PASSKEY_ORIGINS = [o.strip() for o in env("PASSKEY_ORIGINS", default="").split(",") if o.strip()]
+PASSKEY_RP_NAME = env("PASSKEY_RP_NAME", default="Canopy")
 
 # Default lifetime for a newly minted Personal Access Token, in days. Applies
 # only when the mint call doesn't pass an explicit ttl_days; 0 there means

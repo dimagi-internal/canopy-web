@@ -1348,6 +1348,46 @@ def record_credential_reads(agent, names, *, user=None, runner=None, via="", tur
     ])
 
 
+def reveal_agent_credential(agent, name: str, *, user) -> str | None:
+    """PLAINTEXT of ONE stored value, for a person who stepped up — and the
+    record that they saw it. None when nothing is stored under `name`.
+
+    The record is written FIRST and its failure propagates: unlike a runner's
+    resolve (which must not be starved of secrets by an audit hiccup), a human
+    reveal that cannot be recorded does not happen.
+    """
+    from apps.agents.models import AgentCredential
+    from apps.common.encryption import decrypt_secret
+    from apps.events import services as events
+
+    cred = AgentCredential.objects.filter(agent=agent, name=name).first()
+    if cred is None:
+        return None
+    from apps.agents.models import AgentCredentialRead
+
+    who = getattr(user, "email", "") or str(getattr(user, "pk", ""))
+    # The credential's own read history (the same log /credentials/resolve
+    # writes), so Settings → Credentials shows a reveal beside a box's reads.
+    AgentCredentialRead.objects.create(
+        agent=agent, name=name, user=user if getattr(user, "is_authenticated", False) else None,
+        via="reveal",
+    )
+    events.record(
+        [{
+            "source": "agents.credentials",
+            "kind": "agent.credentials.revealed",
+            "level": "warn",
+            # Blank key: every reveal is its own row, never coalesced into a count.
+            "key": "",
+            "summary": f"{who} revealed {agent.slug}'s {name}",
+            "payload": {"agent": agent.slug, "name": name, "by": who,
+                        "user_id": getattr(user, "pk", None), "via": "browser+passkey"},
+        }],
+        workspace=agent.workspace,
+    )
+    return decrypt_secret(cred.value_enc)
+
+
 def caller_runs_agent(user, agent) -> bool:
     """True when `user` pairs a live runner that this agent's routing could
     actually send work to.

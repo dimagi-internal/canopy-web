@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
+  AgentApiError,
   deleteAgentCredential,
   getAgentCredentialStatus,
+  revealAgentCredential,
   setAgentCredentials,
   startGoogleMint,
   type AgentCredentialStatusOut,
@@ -22,10 +24,12 @@ import { WorkbenchSkeleton } from 'canopy-ui'
 // May under an OAuth client its own config warns against, and nothing surfaced
 // it until a readiness drill happened to run three weeks later.
 //
-// Values are write-only: the status route returns booleans and timestamps and
-// never plaintext, so this page can say "set" and "when" and cannot render a
-// secret. A blank field is not sent — the write is non-clobbering, and "" would
-// wipe a working credential.
+// The status route returns booleans and timestamps and never plaintext, so this
+// page can say "set" and "when" without holding a secret. The one exception is
+// Reveal (canopy-web#1538): an agent admin, behind a passkey step-up, one value
+// at a time, recorded server-side, and dropped from state after REVEAL_MS.
+// A blank field is not sent — the write is non-clobbering, and "" would wipe a
+// working credential.
 //
 // It LEADS with a status list (#1314): one line per credential — vault, GitHub,
 // Salesforce, Google mailbox — each reported up by its own detail section, so
@@ -47,6 +51,15 @@ const MARK: Record<CredStatus['tone'], string> = { success: '✓', warning: '!',
 
 type StatusKey = 'vault' | 'github' | 'salesforce'
 
+/** How long a revealed value stays on screen before it is dropped from state. */
+export const REVEAL_MS = 60_000
+
+/** The server's own reason (`detail`) when there is one, not the wrapper text. */
+function reason(e: unknown, fallback: string): string {
+  if (e instanceof AgentApiError && e.detail) return e.detail
+  return e instanceof Error ? e.message : fallback
+}
+
 export function AgentCredentialsPanel({
   agent,
   canEdit = true,
@@ -66,6 +79,9 @@ export function AgentCredentialsPanel({
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // At most ONE revealed value, and only for REVEAL_MS — a secret on screen is
+  // a secret in every screenshot and screen-share until it is gone.
+  const [revealed, setRevealed] = useState<{ name: string; value: string } | null>(null)
   const [params] = useSearchParams()
   const outcome = mintOutcome(params.get('google'))
   // Collapsed by DEFAULT. These rows are correct and need nothing; shown as a
@@ -97,6 +113,14 @@ export function AgentCredentialsPanel({
     }
   }, [agent.slug])
 
+  useEffect(() => {
+    if (!revealed) return
+    const t = window.setTimeout(() => setRevealed(null), REVEAL_MS)
+    return () => window.clearTimeout(t)
+  }, [revealed])
+
+  // Saving from the browser needs a passkey step-up; the API client prompts
+  // for it and retries, so this is written as a plain call.
   const save = async (name: string) => {
     const value = (draft[name] ?? '').trim()
     if (!value) return
@@ -107,7 +131,19 @@ export function AgentCredentialsPanel({
       // Never keep a secret in component state once it has landed.
       setDraft((d) => ({ ...d, [name]: '' }))
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save')
+      setError(reason(e, 'Failed to save'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const reveal = async (name: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      setRevealed({ name, value: await revealAgentCredential(agent.slug, name) })
+    } catch (e) {
+      setError(reason(e, 'Failed to reveal'))
     } finally {
       setBusy(false)
     }
@@ -204,6 +240,21 @@ export function AgentCredentialsPanel({
       >
         Save
       </button>
+      {r.set && canEdit && (
+        // The one way a value comes back into a browser: agent admins only,
+        // behind a passkey, recorded server-side (canopy-web#1538).
+        <button
+          type="button"
+          onClick={() => (revealed?.name === r.name ? setRevealed(null) : void reveal(r.name))}
+          disabled={busy}
+          aria-label={revealed?.name === r.name ? `Hide the value of ${r.name}` : `Reveal the value of ${r.name}`}
+          title="Shows the stored value once — needs your passkey, and is recorded"
+          data-testid={`reveal-${r.name}`}
+          className="min-h-11 rounded-md border border-input px-3 py-1 text-[12px] text-foreground hover:border-primary disabled:opacity-40 sm:min-h-0"
+        >
+          {revealed?.name === r.name ? 'Hide' : 'Reveal'}
+        </button>
+      )}
       {r.set && (
         // Destroys a secret nothing else holds — canopy-web is the store, so
         // there is no undo and no second copy to restore from. It was a 20×24
@@ -224,6 +275,20 @@ export function AgentCredentialsPanel({
         >
           ✕
         </button>
+      )}
+      {revealed?.name === r.name && (
+        <div className="flex w-full items-center gap-2" data-testid={`revealed-${r.name}`}>
+          <code className="min-w-0 flex-1 select-all break-all rounded border border-warning/30 bg-warning/10 px-2 py-1 font-mono text-[12px] text-foreground">
+            {revealed.value}
+          </code>
+          <button
+            type="button"
+            onClick={() => void navigator.clipboard?.writeText(revealed.value)}
+            className="min-h-11 rounded-md border border-input px-3 py-1 text-[12px] text-foreground hover:border-primary sm:min-h-0"
+          >
+            Copy
+          </button>
+        </div>
       )}
     </div>
   )
@@ -368,8 +433,9 @@ export function AgentCredentialsPanel({
       {/* The one note on how values are held; the vault and GitHub sections
           each used to repeat it. */}
       <p className="mt-4 text-[11px] text-muted-foreground" data-testid="credentials-note">
-        Every value here is write-only: encrypted at rest, handed only to a runner this agent routes to, and never
-        shown again.{!canEdit && <> Only {agent.name ?? agent.slug}&rsquo;s admins can change them.</>}
+        Every value here is encrypted at rest and handed only to a runner this agent routes to. Saving or revealing
+        one from the browser asks for your passkey, and every reveal is recorded.
+        {!canEdit && <> Only {agent.name ?? agent.slug}&rsquo;s admins can change or reveal them.</>}
       </p>
     </div>
   )

@@ -90,6 +90,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     # apps/mail/sns.py verifies SNS message signatures (RSA over the cert SNS publishes).
     "cryptography>=42",
+    "webauthn>=3.0.1,<4.0",
 ]
 
 [project.optional-dependencies]

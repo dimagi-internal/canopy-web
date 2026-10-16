@@ -3709,9 +3709,9 @@ export interface paths {
          * Set named secrets for an agent (write-only)
          * @description Upsert. Non-clobbering: a ref absent from the body is untouched.
          *
-         *     There is no read counterpart on purpose — the response is the MASKED status,
-         *     so even the caller who just wrote a value cannot read one back through the
-         *     browser.
+         *     The response is the MASKED status. From a browser session this needs a
+         *     fresh passkey step-up (403 `step_up_required` otherwise); a token write —
+         *     `canopy vault import` — does not, and is recorded like every settings change.
          */
         readonly put: operations["set_agent_credentials"];
         readonly post?: never;
@@ -4053,6 +4053,29 @@ export interface paths {
         readonly get: operations["agent_device_keys"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/credentials/{name}/reveal": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * PLAINTEXT — show one stored value to an admin who just confirmed a passkey
+         * @description Owner/agent admin, at a browser, with a passkey step-up in the last five
+         *     minutes (403 `step_up_required` otherwise). Returns the value once and
+         *     records who saw it; tokens are refused — a machine reads values through
+         *     `/credentials/resolve`.
+         */
+        readonly post: operations["reveal_agent_credential"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -5000,6 +5023,134 @@ export interface paths {
         readonly get: operations["list_capability_artifacts"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/passkeys/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** List my passkeys */
+        readonly get: operations["list_passkeys"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/passkeys/register/begin": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start registering a passkey for this device
+         * @description Returns the options for navigator.credentials.create(). Browser session
+         *     only; adding a SECOND passkey needs a fresh step-up with the first.
+         */
+        readonly post: operations["begin_passkey_registration"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/passkeys/register/finish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Finish registering a passkey
+         * @description Verifies the authenticator's response and stores its public key. The
+         *     registration required user verification, so it also opens a step-up window
+         *     — the person just proved themselves with this very passkey.
+         */
+        readonly post: operations["finish_passkey_registration"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/passkeys/{passkey_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Delete one of my passkeys */
+        readonly delete: operations["delete_passkey"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/passkeys/step-up": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Is a passkey step-up in force on this browser session? */
+        readonly get: operations["passkey_step_up_status"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/passkeys/step-up/begin": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Start a passkey step-up (options for navigator.credentials.get) */
+        readonly post: operations["begin_passkey_step_up"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/passkeys/step-up/finish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Finish a passkey step-up; opens a five-minute window */
+        readonly post: operations["finish_passkey_step_up"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -17110,6 +17261,16 @@ export interface components {
              */
             readonly can_manage: boolean;
         };
+        /**
+         * AgentCredentialRevealOut
+         * @description PLAINTEXT, once, to an agent admin at a browser who just confirmed a passkey.
+         */
+        readonly AgentCredentialRevealOut: {
+            /** Name */
+            readonly name: string;
+            /** Value */
+            readonly value: string;
+        };
         /** BootstrapReportOut */
         readonly BootstrapReportOut: {
             /**
@@ -19048,6 +19209,61 @@ export interface components {
             readonly artifacts: readonly components["schemas"]["CapabilityArtifactOut"][];
             /** Expires In S */
             readonly expires_in_s: number;
+        };
+        /** PasskeyOut */
+        readonly PasskeyOut: {
+            /** Id */
+            readonly id: number;
+            /** Label */
+            readonly label: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Last Used At */
+            readonly last_used_at?: string | null;
+            /** Backed Up */
+            readonly backed_up: boolean;
+        };
+        /** PasskeyOptionsOut */
+        readonly PasskeyOptionsOut: {
+            /** Options */
+            readonly options: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** PasskeyRegisterIn */
+        readonly PasskeyRegisterIn: {
+            /** Credential */
+            readonly credential: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+        };
+        /** StepUpStatusOut */
+        readonly StepUpStatusOut: {
+            /** Active */
+            readonly active: boolean;
+            /** Until */
+            readonly until?: string | null;
+            /** Has Passkey */
+            readonly has_passkey: boolean;
+            /** Browser */
+            readonly browser: boolean;
+            /** Window Seconds */
+            readonly window_seconds: number;
+        };
+        /** PasskeyAssertIn */
+        readonly PasskeyAssertIn: {
+            /** Credential */
+            readonly credential: {
+                readonly [key: string]: unknown;
+            };
         };
         /** WorkspaceOut */
         readonly WorkspaceOut: {
@@ -30314,6 +30530,29 @@ export interface operations {
             };
         };
     };
+    readonly reveal_agent_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentCredentialRevealOut"];
+                };
+            };
+        };
+    };
     readonly agent_readiness: {
         readonly parameters: {
             readonly query?: never;
@@ -31560,6 +31799,154 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CapabilityArtifactsOut"];
+                };
+            };
+        };
+    };
+    readonly list_passkeys: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["PasskeyOut"][];
+                };
+            };
+        };
+    };
+    readonly begin_passkey_registration: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PasskeyOptionsOut"];
+                };
+            };
+        };
+    };
+    readonly finish_passkey_registration: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PasskeyRegisterIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PasskeyOut"];
+                };
+            };
+        };
+    };
+    readonly delete_passkey: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly passkey_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly passkey_step_up_status: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StepUpStatusOut"];
+                };
+            };
+        };
+    };
+    readonly begin_passkey_step_up: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PasskeyOptionsOut"];
+                };
+            };
+        };
+    };
+    readonly finish_passkey_step_up: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PasskeyAssertIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["StepUpStatusOut"];
                 };
             };
         };
