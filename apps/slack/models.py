@@ -220,6 +220,11 @@ class SlackChannelIngest(models.Model):
     backfilled_at = models.DateTimeField(null=True, blank=True)
     followed_at = models.DateTimeField(null=True, blank=True)
     error = models.CharField(max_length=300, blank=True, default="")
+    #: How far the agent has read: the last `SlackIngestMessage` id it kept (0 = nothing yet).
+    #: A transcript read `after` it holds only what canopy stored since, so a recurring
+    #: turn catches up instead of re-reading the channel (`ingest.transcript`, `mark_read`).
+    read_mark = models.PositiveBigIntegerField(default=0)
+    read_at = models.DateTimeField(null=True, blank=True)
     #: Set when the read was granted by an owner's allow-list entry, not a click.
     allowance = models.ForeignKey(SlackChannelIngestAllow, on_delete=models.SET_NULL, null=True, blank=True,
                                   related_name="ingests")

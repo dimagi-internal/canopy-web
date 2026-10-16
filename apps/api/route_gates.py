@@ -618,6 +618,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "list_channel_ingests": ("agent-login", "agent-admin", "integrations"),
     "get_channel_ingest": ("agent-login", "agent-admin", "integrations"),
     "get_channel_ingest_transcript": ("agent-login",),  # nobody else, not even the owner
+    "mark_channel_ingest_read": ("agent-login",),  # the agent's own read position
     "revoke_channel_ingest": ("agent-login", "agent-admin", "integrations", "self"),  # self = its approver
     # --- apps/beta_requests/api.py
     "submit_beta_request": ("anonymous",),  # the public site's request-access form; grants nothing
@@ -845,6 +846,7 @@ NOT_SETTINGS: dict[str, str] = {
     "create_idea": "content",  # an idea is a task with kind=idea
     "check_scaffold_repo": "action",  # POST only to keep a token out of the URL; writes nothing
     "create_channel_ingest": "request",  # asks the channel; the approval click is the grant
+    "mark_channel_ingest_read": "action",  # moves the agent's own read position; grants nothing
     "scaffold_agent": "content",  # pushes code into the caller's own repo; registering is upsert_agent (a setting)
     "act_on_task": "content", "patch_contact": "content",
     "delete_narrative": "content", "move_narrative": "content", "delete_version": "content",
