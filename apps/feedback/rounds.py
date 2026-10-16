@@ -81,9 +81,14 @@ def ingest_into(rnd, items, *, workspace, submitted_by=None) -> dict:
         return services.ingest(items, workspace=workspace, submitted_by=submitted_by, round=live)
 
 
-def stage_edit(rnd, edit: dict) -> dict:
+def stage_edit(rnd, edit: dict, *, max_edits: int | None = None) -> dict:
+    """Append one staged edit under the round's lock. `max_edits` caps the list —
+    checked under the lock, so concurrent stagers cannot overshoot it."""
     with transaction.atomic():
         rnd = lock_open(rnd)
+        if max_edits is not None and len(rnd.staged_edits) >= max_edits:
+            raise RoundError(409, f"round {rnd.number} has too many staged edits "
+                                  f"({max_edits}); close it and continue in the next one")
         entry = {**edit, "edit_id": uuid.uuid4().hex[:12], "at": timezone.now().isoformat()}
         rnd.staged_edits = [*rnd.staged_edits, entry]
         rnd.save(update_fields=["staged_edits"])

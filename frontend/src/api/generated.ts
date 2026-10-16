@@ -1099,7 +1099,8 @@ export interface paths {
         /**
          * Open a feedback round on a storyboard
          * @description Editors only. Pins every narrative's current version and adopts the notes
-         *     left since the last round. Needs the board linked to a project.
+         *     left since the last round. Needs the board linked to a project in its own
+         *     workspace. `ws` (or the `/api/w/<ws>/` pin) picks among same-slug boards.
          */
         readonly post: operations["open_storyboard_round"];
         readonly delete?: never;
@@ -25261,7 +25262,9 @@ export interface operations {
     };
     readonly open_storyboard_round: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly ws?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
@@ -25283,7 +25286,9 @@ export interface operations {
     };
     readonly close_storyboard_round: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly ws?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
@@ -25310,7 +25315,9 @@ export interface operations {
     };
     readonly get_storyboard_round: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly ws?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
@@ -25333,7 +25340,9 @@ export interface operations {
     };
     readonly consume_storyboard_round: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly ws?: string;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;

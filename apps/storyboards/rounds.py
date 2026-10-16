@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 TARGET = "storyboard"
 _ANCHOR_PREFIXES = ("act:", "cut:", "decision:", "product:", "scene:")
 RoundError = frounds.RoundError
+#: A round's staged-edit list lives in one JSON column; cap it so it stays small.
+MAX_STAGED_EDITS = 500
+#: `AgentTask.title` is a CharField(max_length=300).
+_TASK_TITLE_MAX = 300
 
 
 def _where(board: Storyboard) -> dict:
@@ -50,10 +54,19 @@ def pinned_versions(board) -> dict[str, int]:
     return out
 
 
-def open_round(board, *, by_user):
+def _check_project(board, *, verb: str) -> None:
+    """The board's project must exist and sit in the board's own workspace: closing
+    starts that project's agent, which must never be another tenant's."""
     if board.agent_project_id is None:
-        raise RoundError(422, "Link this storyboard to a board project before opening a round: "
+        raise RoundError(422, f"Link this storyboard to a board project before {verb}: "
                               "closing the round hands it to that project's agent.")
+    if board.agent_project.agent.workspace_id != board.workspace_id:
+        raise RoundError(422, f"Link this storyboard to a board project in its own workspace "
+                              f"before {verb}: closing the round hands it to that project's agent.")
+
+
+def open_round(board, *, by_user):
+    _check_project(board, verb="opening a round")
     from apps.storyboards import services
 
     return frounds.open_round(
@@ -103,6 +116,12 @@ def link_participant(board, user) -> None:
         logger.exception("rounds: could not link %s to %s's project", user.pk, board.slug)
 
 
+def _people_count(rnd) -> int:
+    """Distinct named authors, counted by the name readers see (never an email)."""
+    names = rnd.notes.exclude(author_name="").values_list("author_name", flat=True)
+    return len({_display_name(n, "") for n in names} - {""})
+
+
 def summary(rnd) -> dict:
     notes = rnd.notes.all()
     return {
@@ -114,14 +133,15 @@ def summary(rnd) -> dict:
         "close_note": rnd.close_note,
         "pinned_versions": rnd.pinned_versions,
         "note_count": notes.count(),
-        "people_count": notes.exclude(author_name="").values("author_name").distinct().count(),
+        "people_count": _people_count(rnd),
     }
 
 
 def note_out(fb, *, viewer) -> dict:
     return {
         "id": fb.pk, "kind": fb.kind, "body": fb.body, "suggested_text": fb.suggested_text,
-        "author_name": fb.author_name or "Anonymous", "anchor_id": fb.anchor_id,
+        # An adopted pool note may carry an address as its name: show the local-part.
+        "author_name": _display_name(fb.author_name, "") or "Anonymous", "anchor_id": fb.anchor_id,
         "target_kind": fb.target_kind, "target_ref": fb.target_ref,
         "target_version": fb.target_version, "state": fb.state,
         "disposition_note": fb.disposition_note, "resolved_in_version": fb.resolved_in_version,
@@ -161,7 +181,7 @@ def stage(rnd, row, *, action, value, reasoning, by_name, by_user=None) -> dict:
         "key": row.key, "action": action, "value": value,
         "reasoning": reasoning, "by_name": by_name,
         "by_user_id": by_user.pk if getattr(by_user, "is_authenticated", False) else None,
-    })
+    }, max_edits=MAX_STAGED_EDITS)
 
 
 def pending_by_key(rnd) -> dict[str, list[dict]]:
@@ -223,16 +243,25 @@ def _skipped_text(skipped: list[dict]) -> str:
     """The staged edits a close could not apply, for the agent to rule on."""
     if not skipped:
         return ""
-    lines = ["Staged edits not applied \u2014 their decision was replaced or removed during "
+    lines = ["Staged edits not applied \u2014 their decision changed under them during "
              "the round; carry each into the next version or decline it:"]
     for e in skipped:
-        where = (f"replaced by {e['superseded_by']}" if e.get("superseded_by")
-                 else "removed by the publisher")
+        where = e.get("reason") or (f"replaced by {e['superseded_by']}" if e.get("superseded_by")
+                                    else "removed by the publisher")
         what = e.get("action", "")
         if e.get("value"):
             what += f" \u201c{e['value']}\u201d"
         lines.append(f"- {e['key']} ({where}): {e.get('by_name') or 'someone'} wanted {what}")
     return "\n".join(lines)
+
+
+def _task_title(number: int, board_title: str, tail: str) -> str:
+    """Fit the title column: shorten the board's title, never the counts."""
+    head = f"Feedback round {number} on \u201c"
+    rest = f"\u201d: {tail}"
+    room = _TASK_TITLE_MAX - len(head) - len(rest)
+    title = board_title if len(board_title) <= room else board_title[: max(room - 1, 0)].rstrip() + "\u2026"
+    return (head + title + rest)[:_TASK_TITLE_MAX]
 
 
 def _hand_to_agent(board, rnd, *, by_user, note: str, changed: int, skipped: list[dict]):
@@ -247,14 +276,14 @@ def _hand_to_agent(board, rnd, *, by_user, note: str, changed: int, skipped: lis
 
     project = board.agent_project
     notes = rnd.notes.count()
-    people = rnd.notes.exclude(author_name="").values("author_name").distinct().count()
+    people = _people_count(rnd)
     where = f"?ws={board.workspace_id}"
     body = "\n\n".join(p for p in ((note or "").strip(), _skipped_text(skipped)) if p)
     (task,) = agent_services.create_tasks(project.agent, [{
-        "title": f"Feedback round {rnd.number} on \u201c{board.title}\u201d: "
-                 f"{notes} {'note' if notes == 1 else 'notes'} from {people} "
-                 f"{'person' if people == 1 else 'people'}, "
-                 f"{changed} {'decision' if changed == 1 else 'decisions'} changed",
+        "title": _task_title(rnd.number, board.title,
+                             f"{notes} {'note' if notes == 1 else 'notes'} from {people} "
+                             f"{'person' if people == 1 else 'people'}, "
+                             f"{changed} {'decision' if changed == 1 else 'decisions'} changed"),
         "ask_kind": "review",
         "ask_body": body,
         "project": project.ext_id,
@@ -296,15 +325,16 @@ def close_round(board, rnd, *, by_user, note: str = "", picks: dict[str, str] | 
     with transaction.atomic():
         rnd = frounds.lock_open(rnd)
         board.refresh_from_db(fields=["agent_project"])
-        if board.agent_project_id is None:
-            raise RoundError(422, "Link this storyboard to a board project before closing the "
-                                  "round: closing hands it to that project's agent.")
+        _check_project(board, verb="closing the round")
         rows = {r.key: r for r in board.decisions.all()}
         live, skipped = [], []
         for e in rnd.staged_edits:
             row = rows.get(e["key"])
             if row is None or row.superseded_by:
                 skipped.append({**e, "superseded_by": row.superseded_by if row else ""})
+            elif e.get("action") == "pick" and e.get("value", "") not in row.options:
+                # A republish replaced an unruled row's options in place.
+                skipped.append({**e, "reason": "the value is no longer one of its options"})
             else:
                 live.append(e)
         changed = 0
@@ -312,12 +342,17 @@ def close_round(board, rnd, *, by_user, note: str = "", picks: dict[str, str] | 
             for e in _choose(board, live, picks or {}):
                 uid = e.get("by_user_id")
                 user = user_model.objects.filter(pk=uid).first() if uid else None
-                decision_rows.apply_edit(rows[e["key"]], action=e["action"], value=e.get("value", ""),
-                                         reasoning=e.get("reasoning", ""), by_user=user,
-                                         by_name=e.get("by_name", ""))
+                try:
+                    with transaction.atomic():
+                        decision_rows.apply_edit(
+                            rows[e["key"]], action=e["action"], value=e.get("value", ""),
+                            reasoning=e.get("reasoning", ""), by_user=user,
+                            by_name=e.get("by_name", ""))
+                except decision_rows.DecisionInvalid as exc:
+                    # Valid when staged, stale now: hand it to the agent, never block the close.
+                    skipped.append({**e, "reason": f"it no longer applies: {exc}"})
+                    continue
                 changed += 1
-        except decision_rows.DecisionInvalid as exc:
-            raise RoundError(422, str(exc)) from None
         except decision_rows.DecisionConflict as exc:
             raise RoundError(409, str(exc)) from None
         frounds.mark_closed(rnd, by_user=by_user, note=note)

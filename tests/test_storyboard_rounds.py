@@ -704,3 +704,166 @@ def test_can_manage_is_true_only_for_editors(world):
     assert read(world["ace"]) is True
     assert read(world["viewer"]) is False
     assert read(Client(), token=True) is False
+
+
+# ---- final review fixes -------------------------------------------------------
+
+
+def _twin_board(world):
+    """A second workspace with a same-slug board; ace (an editor) belongs to both."""
+    ws2 = Workspace.objects.create(slug="ws2", display_name="WS2", created_by=world["users"]["owner"])
+    for u, role in ((world["users"]["owner"], WorkspaceMembership.OWNER),
+                    (world["users"]["ace"], WorkspaceMembership.EDITOR)):
+        WorkspaceMembership.objects.create(workspace=ws2, user=u, role=role)
+    agent2 = Agent.objects.create(slug="ace2", name="ACE2", workspace=ws2,
+                                  owner=world["users"]["owner"])
+    project2 = AgentProject.objects.create(agent=agent2, ext_id="P1", name="WS2 demos")
+    board2 = Storyboard.objects.create(slug="supply", title="WS2 Supply", workspace=ws2,
+                                       capability=Storyboard.CAP_SUGGEST, agent_project=project2)
+    act = Act.objects.create(storyboard=board2, title="RUTF", position=0)
+    Entry.objects.create(act=act, narrative_slug="supply-rutf", position=0)
+    return ws2, board2
+
+
+@pytest.mark.parametrize("via", ["path", "query"])
+def test_round_routes_hit_the_named_workspaces_board(world, via):
+    """Two workspaces each hold a "supply" board and ace edits both. The NEWER one
+    (ws2) is what an unpinned slug lookup finds first, so naming the OLDER one's
+    workspace must still reach it — and never touch ws2's."""
+    from apps.feedback import services as fsvc
+
+    _twin_board(world)
+    ace = world["ace"]
+
+    def url(rest):
+        return (f"/api/w/connect/storyboards/supply{rest}" if via == "path"
+                else f"/api/storyboards/supply{rest}?ws=connect")
+
+    assert ace.post(url("/rounds")).status_code == 200
+    assert FeedbackRound.objects.get().workspace_id == "connect"
+    FeedbackRound.objects.create(workspace_id="ws2", target_kind="storyboard",
+                                 target_ref="supply", number=1)  # a decoy in ws2
+    resp = ace.post(url("/rounds/1/close"), {}, content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    rnd = FeedbackRound.objects.get(workspace_id="connect")
+    assert rnd.state == "closed" and rnd.task.project == world["project"]
+    assert FeedbackRound.objects.get(workspace_id="ws2").state == "open"
+    detail = ace.get(url("/rounds/1"))
+    assert detail.status_code == 200 and detail.json()["state"] == "closed"
+    for fb in rnd.notes.all():
+        fsvc.resolve(fb.pk, workspace_slugs=["connect"], state="declined", note="no")
+    consumed = ace.post(url("/rounds/1/consume"), {"run_id": "r1"}, content_type="application/json")
+    assert consumed.status_code == 200, consumed.content
+    assert FeedbackRound.objects.get(workspace_id="connect", number=1).state == "consumed"
+    assert FeedbackRound.objects.get(workspace_id="connect", number=2).state == "open"
+    assert FeedbackRound.objects.get(workspace_id="ws2").state == "open"
+
+
+def test_the_close_plan_names_the_boards_workspace(world):
+    _open(world)
+    assert _close(world).status_code == 200
+    plan = FeedbackRound.objects.get().task.plan
+    assert "/rounds/1?ws=connect" in plan and "/rounds/1/consume?ws=connect" in plan
+
+
+def test_an_adopted_note_with_an_email_for_a_name_never_shows_it(world):
+    from apps.feedback import services as fsvc
+
+    fsvc.ingest([{"target_kind": "storyboard", "target_ref": "supply", "kind": "comment",
+                  "body": "via the pool", "author_name": "x@y.org", "channel": "web"}],
+                workspace=world["ws"])
+    _open(world)
+    body = Client().get(f"/api/storyboards/supply?t={world['token']}").json()
+    assert body["round"]["notes"][0]["author_name"] == "x"
+    assert "@" not in str(body["round"])
+    assert body["round"]["people_count"] == 1
+
+
+def test_people_count_treats_an_email_and_its_local_part_as_one_person(world):
+    _open(world)
+    _note(world, author_name="sophie")
+    _note(world, author_name="Other")
+    Feedback.objects.filter(author_name="Other").update(author_name="sophie@example.org")
+    assert board_rounds.summary(FeedbackRound.objects.get())["people_count"] == 1
+
+
+def test_close_skips_a_pick_whose_option_was_republished_away(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    _edit(world, action="pick", value="Keep as is", author_name="Sophie")
+    # An unruled row's options are replaced in place by a republish.
+    dsvc.publish(world["board"], [{**ROW, "options": ["Rename and re-record", "Drop it"]}])
+    resp = _close(world, close_note="Done")
+    assert resp.status_code == 200, resp.content
+    row = world["board"].decisions.get(key="banner")
+    assert row.status == "ai-default" and row.override == ""
+    task = FeedbackRound.objects.get().task
+    assert "0 decisions changed" in task.title
+    assert "banner" in task.ask_body and "Keep as is" in task.ask_body
+    assert "no longer one of its options" in task.ask_body
+
+
+def test_a_stale_pick_does_not_force_a_conflict(world):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    _edit(world, action="pick", value="Keep as is", author_name="Sophie")
+    _edit(world, client=world["viewer"], token=False, action="confirm")
+    dsvc.publish(world["board"], [{**ROW, "options": ["Rename and re-record", "Drop it"]}])
+    resp = _close(world)
+    assert resp.status_code == 200, resp.content
+    assert world["board"].decisions.get(key="banner").confirmed is True
+
+
+def _foreign_project(world):
+    other_ws = Workspace.objects.create(slug="elsewhere", display_name="Elsewhere",
+                                        created_by=world["users"]["owner"])
+    agent = Agent.objects.create(slug="zed", name="Zed", workspace=other_ws,
+                                 owner=world["users"]["owner"])
+    return AgentProject.objects.create(agent=agent, ext_id="P1", name="theirs")
+
+
+def test_open_refuses_a_project_in_another_workspace(world):
+    world["board"].agent_project = _foreign_project(world)
+    world["board"].save()
+    resp = world["owner"].post("/api/storyboards/supply/rounds")
+    assert resp.status_code == 422 and "project" in resp.json()["detail"]
+    assert FeedbackRound.objects.count() == 0
+
+
+def test_close_refuses_a_project_in_another_workspace(world):
+    _open(world)
+    world["board"].agent_project = _foreign_project(world)
+    world["board"].save()
+    resp = _close(world)
+    assert resp.status_code == 422 and "project" in resp.json()["detail"]
+    assert FeedbackRound.objects.get().state == "open"
+    assert AgentTask.objects.count() == 0 and Turn.objects.count() == 0
+
+
+def test_a_long_board_title_still_fits_the_task_title(world):
+    from apps.agents.models import AgentTask as T
+
+    world["board"].title = "A very long storyboard title " * 10  # 290 chars
+    world["board"].save()
+    _open(world)
+    assert _close(world).status_code == 200
+    title = FeedbackRound.objects.get().task.title
+    max_len = T._meta.get_field("title").max_length
+    assert len(title) <= max_len and title.endswith("0 decisions changed")
+
+
+def test_a_round_caps_its_staged_edits(world, monkeypatch):
+    dsvc.publish(world["board"], [ROW])
+    _open(world)
+    monkeypatch.setattr(board_rounds, "MAX_STAGED_EDITS", 2)
+    assert _edit(world, action="confirm", author_name="A").status_code == 200
+    assert _edit(world, action="confirm", author_name="B").status_code == 200
+    third = _edit(world, action="confirm", author_name="C")
+    assert third.status_code == 409 and "too many staged edits" in third.json()["detail"]
+    assert len(FeedbackRound.objects.get().staged_edits) == 2
+
+
+def test_the_board_read_honours_the_workspace_path_pin(world):
+    _twin_board(world)
+    assert world["ace"].get("/api/w/connect/storyboards/supply").json()["title"] == "Connect Supply"
+    assert world["ace"].get("/api/w/ws2/storyboards/supply").json()["title"] == "WS2 Supply"
