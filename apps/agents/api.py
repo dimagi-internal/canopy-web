@@ -2011,8 +2011,23 @@ def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialA
 
 @router.get("/{slug}/credentials/resolve", response=AgentCredentialsResolveOut,
             summary="PLAINTEXT — a runner stages this agent's secrets")
-def resolve_agent_credentials(request: HttpRequest, slug: str):
+def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None = None):
     """The one route that returns values, and it is not for a browser.
+
+    **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
+    always was. With `refs`, `values` holds only the named refs that the
+    agent's runtime.yaml also declares, and the secret extras
+    (`op_sa_token`, `shared_op_sa_token`, `github_token`, `salesforce_creds`)
+    are included only when named in `refs` too. `op_vault`, `shared_op_vault`
+    and `mailbox` are not secrets and are always returned.
+
+    **`credential_source == "canopy-web"`** leaves out the agent's 1Password
+    service-account token (`op_sa_token` is ""): its values come from here, so
+    the box has no reason to hold a key to its vault.
+
+    **Read log.** Every ref handed out is recorded with the caller, the runner
+    when known (`X-Canopy-Runner: <runner id>`, honoured only for a runner the
+    caller owns) and `X-Canopy-Turn-Id` when sent.
 
     Two gates, both required:
 
@@ -2042,9 +2057,34 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
     if via is None:
         raise HttpError(403, reason)
 
-    values = services.resolve_agent_credentials(agent)
+    wanted = _parse_refs(refs)
+    values = services.resolve_agent_credentials(agent, wanted)
     vault, op_token = services.resolve_agent_vault(agent)
+    if agent.credential_source == agent.CANOPY_WEB:
+        op_token = ""
     shared_vault, shared_token = services.resolve_shared_vault(agent)
+
+    def extra(name: str) -> bool:
+        return wanted is None or name in wanted
+
+    delegation = delegations.delegation_for(agent) if extra("github_token") else None
+    out = AgentCredentialsResolveOut(
+        values=values, op_vault=vault,
+        op_sa_token=op_token if extra("op_sa_token") else "",
+        shared_op_vault=shared_vault,
+        shared_op_sa_token=shared_token if extra("shared_op_sa_token") else "",
+        github_token=delegations.decrypt_secret(delegation.secret_enc) if delegation else "",
+        salesforce_creds=delegations.salesforce_creds_for(agent) if extra("salesforce_creds") else "",
+        mailbox=agent.email or "",
+    )
+    read = list(values) + [n for n in RESOLVE_SECRET_EXTRAS if getattr(out, n)]
+    runner = _caller_runner(request)
+    turn_id = request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120]
+    try:
+        services.record_credential_reads(
+            agent, read, user=request.user, runner=runner, via=via, turn_id=turn_id)
+    except Exception:  # noqa: BLE001 - a log hiccup must not deny a runner its secrets
+        logger.exception("credential read log failed for %s", agent.slug)
     try:
         from apps.events import services as events
 
@@ -2055,20 +2095,47 @@ def resolve_agent_credentials(request: HttpRequest, slug: str):
                 "level": "info",
                 "key": f"{agent.slug}:{request.user.pk}",
                 "summary": f"{len(values)} secret(s) resolved for {agent.slug}",
-                "payload": {"agent": agent.slug, "count": len(values), "via": via},
+                "payload": {"agent": agent.slug, "count": len(values), "via": via,
+                            "refs": sorted(read), "scoped": wanted is not None,
+                            "runner": str(runner.pk) if runner else "",
+                            "turn_id": turn_id},
             }],
             workspace=agent.workspace,
         )
     except Exception:  # noqa: BLE001 - an audit hiccup must not deny a runner its secrets
         pass
-    delegation = delegations.delegation_for(agent)
-    return AgentCredentialsResolveOut(
-        values=values, op_vault=vault, op_sa_token=op_token,
-        shared_op_vault=shared_vault, shared_op_sa_token=shared_token,
-        github_token=delegations.decrypt_secret(delegation.secret_enc) if delegation else "",
-        salesforce_creds=delegations.salesforce_creds_for(agent),
-        mailbox=agent.email or "",
-    )
+    return out
+
+
+#: The secret fields of AgentCredentialsResolveOut beside `values`. A scoped
+#: resolve (`?refs=`) returns each only when it is named; the read log names
+#: each one handed out, like a ref.
+RESOLVE_SECRET_EXTRAS = ("op_sa_token", "shared_op_sa_token", "github_token", "salesforce_creds")
+
+
+def _parse_refs(refs: str | None) -> set[str] | None:
+    """`?refs=a,b` → {"a", "b"}; absent → None (unscoped). Present but empty
+    (`?refs=`) is a scope of nothing, never "everything"."""
+    if refs is None:
+        return None
+    return {r.strip() for r in refs.split(",") if r.strip()}
+
+
+def _caller_runner(request: HttpRequest):
+    """The runner named by `X-Canopy-Runner`, only when the caller owns it —
+    a header naming someone else's box is ignored rather than recorded."""
+    import uuid as _uuid
+
+    raw = request.META.get("HTTP_X_CANOPY_RUNNER", "").strip()
+    if not raw:
+        return None
+    try:
+        rid = _uuid.UUID(raw)
+    except ValueError:
+        return None
+    from apps.harness.models import Runner
+
+    return Runner.objects.filter(pk=rid, owner=request.user).first()
 
 
 @router.get("/{slug}/vault", response=AgentVaultOut,

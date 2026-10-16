@@ -3756,6 +3756,21 @@ export interface paths {
          * PLAINTEXT — a runner stages this agent's secrets
          * @description The one route that returns values, and it is not for a browser.
          *
+         *     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
+         *     always was. With `refs`, `values` holds only the named refs that the
+         *     agent's runtime.yaml also declares, and the secret extras
+         *     (`op_sa_token`, `shared_op_sa_token`, `github_token`, `salesforce_creds`)
+         *     are included only when named in `refs` too. `op_vault`, `shared_op_vault`
+         *     and `mailbox` are not secrets and are always returned.
+         *
+         *     **`credential_source == "canopy-web"`** leaves out the agent's 1Password
+         *     service-account token (`op_sa_token` is ""): its values come from here, so
+         *     the box has no reason to hold a key to its vault.
+         *
+         *     **Read log.** Every ref handed out is recorded with the caller, the runner
+         *     when known (`X-Canopy-Runner: <runner id>`, honoured only for a runner the
+         *     caller owns) and `X-Canopy-Turn-Id` when sent.
+         *
          *     Two gates, both required:
          *
          *     1. **Bearer only.** A session cookie is refused even for the owner. That is
@@ -29551,7 +29566,9 @@ export interface operations {
     };
     readonly resolve_agent_credentials: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly refs?: string | null;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;

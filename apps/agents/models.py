@@ -382,6 +382,67 @@ class AgentCredential(models.Model):
     def __str__(self) -> str:
         return f"{self.agent.slug}:{self.name}"
 
+    # ---- the one codec for `value_enc` (canopy-web#1538) ---------------------
+    # Fernet by default; `kms1:` envelope when settings.VAULT_KMS_KEY_ID is set
+    # (apps/common/kms_envelope.py). Every reader goes through `plaintext()` so
+    # both formats are always readable, whichever is being written today.
+
+    @staticmethod
+    def kms_context(agent, name: str) -> dict[str, str]:
+        return {"workspace": str(agent.workspace_id), "agent": str(agent.pk), "name": name}
+
+    @classmethod
+    def seal(cls, agent, name: str, plaintext: str) -> str:
+        from apps.common import kms_envelope
+        from apps.common.encryption import encrypt_secret
+
+        if kms_envelope.enabled():
+            return kms_envelope.encrypt(plaintext, context=cls.kms_context(agent, name))
+        return encrypt_secret(plaintext)
+
+    def plaintext(self) -> str:
+        from apps.common import kms_envelope
+        from apps.common.encryption import decrypt_secret
+
+        if kms_envelope.is_envelope(self.value_enc):
+            return kms_envelope.decrypt(
+                self.value_enc, expect=self.kms_context(self.agent, self.name))
+        return decrypt_secret(self.value_enc)
+
+
+class AgentCredentialRead(models.Model):
+    """One read of one agent credential's VALUE — the read log (canopy-web#1538).
+
+    Written by `/credentials/resolve`, one row per ref handed out, so "who read
+    `gog-token`, from which box, during which turn" is a query rather than a
+    trawl through the event log. `name` is a plain string, not a FK: deleting a
+    credential must not erase the record that it was read.
+    """
+
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="credential_reads")
+    name = models.CharField(max_length=120)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    #: The box the read came from, when known (the device key that proved it,
+    #: or an `X-Canopy-Runner` header naming a runner the caller owns).
+    runner = models.ForeignKey(
+        "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    #: `runner` (a box that runs the agent) or `admin` (a human resolving by hand).
+    via = models.CharField(max_length=16, blank=True, default="")
+    #: The `X-Canopy-Turn-Id` header, when the caller sent one.
+    turn_id = models.CharField(max_length=120, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["agent", "name", "-created_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.agent_id}:{self.name}@{self.created_at:%Y-%m-%d %H:%M}"
+
 
 class AgentDelegation(models.Model):
     """A PERSON lending their own identity on some service to ONE agent.

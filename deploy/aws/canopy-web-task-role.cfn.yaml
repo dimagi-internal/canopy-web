@@ -24,6 +24,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 #                                      stacks -> each stack's BrokerPolicy
 #                                      (BrokerRoleName=canopy-web-task-role)
 #   ECS Exec (EnableExecuteCommand)    ssmmessages -> EcsExec here
+#   apps/common/kms_envelope.py        kms GenerateDataKey/Decrypt on the Canopy
+#                                      Vault key -> that key's KEY POLICY in
+#                                      canopy-web.cfn.yaml (EnableVaultKms only)
 # Secrets and logs are the EXECUTION role's (labs-jj-ecs-task-execution-role),
 # not this one.
 #

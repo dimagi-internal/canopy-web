@@ -131,6 +131,22 @@ RESOURCE_ACTIONS: dict[str, dict[str, tuple[str, ...]]] = {
         "Modify": ("secretsmanager:UpdateSecret", "secretsmanager:TagResource"),
         "Remove": ("secretsmanager:DeleteSecret",),
     },
+    # Canopy Vault KMS key (canopy-web.cfn.yaml, behind EnableVaultKms). Granted
+    # by deploy_roles.py `VaultKmsKeyManagement` — which a human must apply
+    # BEFORE the condition is flipped; this mapping is what turns forgetting
+    # that into a named refusal instead of a mid-rollout 403.
+    "AWS::KMS::Key": {
+        "Add": ("kms:CreateKey", "kms:TagResource", "kms:EnableKeyRotation",
+                "kms:PutKeyPolicy", "kms:DescribeKey"),
+        "Modify": ("kms:PutKeyPolicy", "kms:EnableKeyRotation", "kms:UpdateKeyDescription",
+                   "kms:TagResource", "kms:UntagResource", "kms:DescribeKey"),
+        "Remove": ("kms:ScheduleKeyDeletion",),
+    },
+    "AWS::KMS::Alias": {
+        "Add": ("kms:CreateAlias",),
+        "Modify": ("kms:UpdateAlias",),
+        "Remove": ("kms:DeleteAlias",),
+    },
     "AWS::IAM::Policy": {
         # Never grantable to CI: iam:PutRolePolicy on its own role is a full
         # privilege escalation reachable by anyone who can merge. Mapped so the
