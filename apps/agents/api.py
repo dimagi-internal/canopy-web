@@ -30,6 +30,8 @@ from apps.workspaces import services as wsvc
 from . import delegations, services
 from . import skill_history as history
 from .schemas import (
+    AgentMoveIn,
+    AgentMoveOut,
     AgentScaffoldIn,
     AgentScaffoldOut,
     AgentSetupStepOut,
@@ -413,17 +415,14 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
 
         request_setup(agent)
     if explicit and agent.workspace_id != explicit:
-        # Explicit home: may MOVE an already-homed agent. A missing workspace
-        # and a non-member get the same 404 (no existence leak); moving also
-        # requires editor/owner in the DESTINATION — moving a tenant's agent
-        # is a reshape like everything else this tier gates.
-        ws = wsvc.Workspace.objects.filter(slug=explicit).first()
-        if ws is None or not wsvc.is_member(request.user, explicit):
-            raise HttpError(404, f"workspace '{explicit}' not found")
-        if not _can(request, ws, perms.AGENT_WORK):
-            raise HttpError(403, "moving an agent requires the editor role or above in the destination workspace")
-        agent.workspace = ws
-        agent.save(update_fields=["workspace"])
+        # Explicit home: MOVES an already-homed agent — the whole move, through
+        # the same operation as POST /{slug}/move, so its turns, sessions, mail
+        # and grants go with it. Setting the pointer alone left all of that in
+        # the old tenant (#1532). The gate is the move's own (`agent_move.check`):
+        # a missing workspace and a non-member get the same 404, and the
+        # destination needs editor or above. A refusal raises inside this
+        # route's transaction, so the fields written above roll back with it.
+        _move(request, agent, explicit)
     # No `ensure_member` here any more, and it is not an omission: since the
     # role gate above, every path that reaches this line has already required
     # editor-or-owner in `agent.workspace` — on a create, on an edit, and in the
@@ -431,6 +430,47 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # reading as though registration were a way to join a tenant. That shape is
     # exactly what `wsvc.creation_workspace`'s docstring is about.
     return Status(201, AgentOut.model_validate(agent))
+
+
+def _move(request: HttpRequest, agent, workspace: str, *, dry_run: bool = False) -> dict:
+    """Gate, then dry-run or carry out a move (apps/agents/move.py), reporting the
+    change to the settings audit. A dry run notes an unchanged value, so the audit
+    records nothing for it."""
+    from apps.events import audit
+
+    from . import move as agent_move
+
+    try:
+        dest = agent_move.check(agent, workspace, by=request.user)
+        source = agent.workspace
+        plan = (agent_move.plan if dry_run else agent_move.move)(agent, dest, by=request.user)
+    except agent_move.MoveError as exc:
+        raise HttpError(exc.status, str(exc)) from None
+    audit.note_change(scope="agent.workspace", before=source.slug,
+                      after=source.slug if dry_run else dest.slug, workspace=source,
+                      summary=f"{request.user.email} moved agent {agent.slug} from "
+                              f"'{source.slug}' to '{dest.slug}'")
+    return plan.as_dict(dry_run=dry_run)
+
+
+@router.post("/{slug}/move", response=AgentMoveOut,
+             summary="Move an agent, with its history, to another workspace")
+def move_agent(request: HttpRequest, slug: str, payload: AgentMoveIn, dry_run: bool = False):
+    """Re-home the agent and everything that is its history — turns, chat
+    sessions, mail threads and messages, mail routes the destination can hold,
+    capability grants and leases, agent-scoped admission and retention rules —
+    in one transaction, or change nothing.
+
+    `?dry_run=1` changes nothing and returns the same report: per-table row
+    counts, what is deliberately left behind (people records, a person's own
+    grants), and what will stop working (a mail address on a domain the
+    destination cannot use, runners that do not serve it, a different shared
+    vault or Slack). The move writes an event in both workspaces.
+
+    Who: the agent's owner or one of its admins, with the editor role or above
+    in the destination."""
+    agent = _get_agent_or_404(request, slug)
+    return _move(request, agent, payload.workspace, dry_run=dry_run)
 
 
 # ---- creating an agent from the browser (apps/agents/creation.py) ----

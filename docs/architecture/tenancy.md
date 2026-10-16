@@ -102,6 +102,13 @@ key outside that file — that pair is the signature of an access decision.
   workspace with 404, never 403 (`roles.md`).
 - Planned direction (shared definition, owned instance): see
   `docs/superpowers/specs/2026-09-12-agent-instances-and-the-acl-design.md`.
+- **Moving an agent is one operation** (`apps/agents/move.py`, `POST /api/agents/{slug}/move`;
+  the upsert's `workspace` goes through it too). Several agent-scoped tables carry their own
+  `workspace` FK, so changing `Agent.workspace` alone strands the agent's history in the old
+  tenant. A table that gains a `workspace` FK and belongs to an agent must add a move
+  participant (`move.register`; a product app registers from its `AppConfig.ready()`, as
+  `apps/mail/apps.py` does) — otherwise moved agents leave those rows behind. People records,
+  a person's grants and audit stay where they are, by design.
 
 ## Two principals: users and contacts
 

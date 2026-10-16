@@ -2660,6 +2660,38 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/move": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Move an agent, with its history, to another workspace
+         * @description Re-home the agent and everything that is its history — turns, chat
+         *     sessions, mail threads and messages, mail routes the destination can hold,
+         *     capability grants and leases, agent-scoped admission and retention rules —
+         *     in one transaction, or change nothing.
+         *
+         *     `?dry_run=1` changes nothing and returns the same report: per-table row
+         *     counts, what is deliberately left behind (people records, a person's own
+         *     grants), and what will stop working (a mail address on a domain the
+         *     destination cannot use, runners that do not serve it, a different shared
+         *     vault or Slack). The move writes an event in both workspaces.
+         *
+         *     Who: the agent's owner or one of its admins, with the editor role or above
+         *     in the destination.
+         */
+        readonly post: operations["move_agent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/scaffold/check": {
         readonly parameters: {
             readonly query?: never;
@@ -14123,6 +14155,61 @@ export interface components {
             } | null;
             /** Runner Preference */
             readonly runner_preference?: readonly string[] | null;
+        };
+        /** AgentMoveBreakOut */
+        readonly AgentMoveBreakOut: {
+            /** Kind */
+            readonly kind: string;
+            /** Detail */
+            readonly detail: string;
+        };
+        /** AgentMoveLeftOut */
+        readonly AgentMoveLeftOut: {
+            /** Table */
+            readonly table: string;
+            /** Rows */
+            readonly rows: number;
+            /** Why */
+            readonly why: string;
+        };
+        /**
+         * AgentMoveOut
+         * @description What a move carried (or, for a dry run, would carry), left and broke.
+         */
+        readonly AgentMoveOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Source */
+            readonly source: string;
+            /** Destination */
+            readonly destination: string;
+            /** Dry Run */
+            readonly dry_run: boolean;
+            /** Moved */
+            readonly moved: boolean;
+            /** Tables */
+            readonly tables: readonly components["schemas"]["AgentMoveTableOut"][];
+            /** Left Behind */
+            readonly left_behind: readonly components["schemas"]["AgentMoveLeftOut"][];
+            /** Stops Working */
+            readonly stops_working: readonly components["schemas"]["AgentMoveBreakOut"][];
+        };
+        /** AgentMoveTableOut */
+        readonly AgentMoveTableOut: {
+            /** Table */
+            readonly table: string;
+            /** Rows */
+            readonly rows: number;
+            /** How */
+            readonly how: string;
+        };
+        /**
+         * AgentMoveIn
+         * @description Where to move the agent: a workspace slug.
+         */
+        readonly AgentMoveIn: {
+            /** Workspace */
+            readonly workspace: string;
         };
         /** RepoCheckOut */
         readonly RepoCheckOut: {
@@ -27644,6 +27731,34 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentOut"];
+                };
+            };
+        };
+    };
+    readonly move_agent: {
+        readonly parameters: {
+            readonly query?: {
+                readonly dry_run?: boolean;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentMoveIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentMoveOut"];
                 };
             };
         };

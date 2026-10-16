@@ -34,8 +34,8 @@ class AgentIn(StrictModel):
     email: str = Field(default="", max_length=254)
     avatar_url: str = Field(default="", max_length=500)
     # Optional explicit home: a workspace slug. Setting it on an already-homed
-    # agent MOVES it (caller must be a member of the target). Empty → legacy
-    # behavior (default workspace for unhomed agents).
+    # agent MOVES it — the whole move, history included (apps/agents/move.py, the
+    # same operation as POST /{slug}/move). Empty → an existing agent stays put.
     workspace: str = Field(default="", max_length=64)
     # Runtime-registry fields (Agent Runtime Registry). All None-defaulted and
     # written only when present, so the plugin's frequent re-upserts (which omit
@@ -51,6 +51,45 @@ class AgentIn(StrictModel):
     runtime_sources: dict | None = None
     # Ordered runner-kind preference, e.g. ["cloud","emdash"]. None = leave unchanged.
     runner_preference: list[str] | None = None
+
+
+class AgentMoveIn(StrictModel):
+    """Where to move the agent: a workspace slug."""
+
+    workspace: str = Field(min_length=1, max_length=64)
+
+
+class AgentMoveTableOut(StrictModel):
+    table: str
+    rows: int
+    # "re-homed", or "follows the agent" for a table with no workspace of its own.
+    how: str
+
+
+class AgentMoveLeftOut(StrictModel):
+    table: str
+    rows: int
+    why: str
+
+
+class AgentMoveBreakOut(StrictModel):
+    # mail_route | runner | runner_order | shared_vault | slack | owner | admins |
+    # agent_login | person_grants | admission_rules | chat_participants | turns_in_flight
+    kind: str
+    detail: str
+
+
+class AgentMoveOut(StrictModel):
+    """What a move carried (or, for a dry run, would carry), left and broke."""
+
+    agent: str
+    source: str
+    destination: str
+    dry_run: bool
+    moved: bool
+    tables: list[AgentMoveTableOut]
+    left_behind: list[AgentMoveLeftOut]
+    stops_working: list[AgentMoveBreakOut]
 
 
 class AgentScaffoldIn(StrictModel):

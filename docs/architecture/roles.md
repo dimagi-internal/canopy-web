@@ -190,7 +190,9 @@ Four ways (the full account, in the access glossary's words, is
   creates one: a brand-new, password-less user from the agent's mailbox address, made an
   editor and linked to that one agent. Only a workspace admin or owner may — the people
   who could invite it — and an address that is already a canopy user is refused, never
-  adopted (`apps/agents/agent_login.py`).
+  adopted (`apps/agents/agent_login.py`). Moving the agent (`POST /api/agents/{slug}/move`)
+  brings that login into the destination as an editor on the same bar: only when the mover
+  holds `members.manage` there; otherwise the move reports it and adds nobody.
 - **Creating one.** Subject to `services.can_create_workspace`: an *invite-admitted* user
   holding no membership may not create a workspace, because otherwise invite-admission
   becomes transitively delegable — create a workspace, mint invites, and each new invitee
