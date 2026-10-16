@@ -274,6 +274,37 @@ def test_reencrypt_dry_run_then_apply_then_idempotent(fleet, settings):
     assert "rewrote 0 value(s)" in out.getvalue()
 
 
+@pytest.mark.django_db
+def test_existing_only_matches_the_full_list_on_a_migrated_database():
+    from apps.common.management.commands.reencrypt_secrets import secret_columns
+
+    assert secret_columns(existing_only=True) == secret_columns()
+
+
+def _migration_0053():
+    import importlib
+    return importlib.import_module("apps.agents.migrations.0053_reencrypt_secrets_under_field_key")
+
+
+def test_the_data_migration_is_a_noop_without_a_field_key(fleet, settings):
+    settings.FIELD_ENCRYPTION_KEY = ""
+    old = _legacy(settings.SECRET_KEY, "legacy-value")
+    AgentCredential.objects.create(agent=fleet["agent"], name="canopy-pat", value_enc=old)
+    _migration_0053().reencrypt(None, None)
+    assert AgentCredential.objects.get(name="canopy-pat").value_enc == old
+
+
+def test_the_data_migration_moves_legacy_rows_onto_the_field_key(fleet, settings):
+    settings.FIELD_ENCRYPTION_KEY = ""
+    old = _legacy(settings.SECRET_KEY, "legacy-value")
+    AgentCredential.objects.create(agent=fleet["agent"], name="canopy-pat", value_enc=old)
+    settings.FIELD_ENCRYPTION_KEY = "a-new-field-key"
+    _migration_0053().reencrypt(None, None)
+    row = AgentCredential.objects.get(name="canopy-pat")
+    new_key = base64.urlsafe_b64encode(hashlib.sha256(b"a-new-field-key").digest())
+    assert Fernet(new_key).decrypt(row.value_enc.encode()) == b"legacy-value"
+
+
 def test_reencrypt_moves_agent_credentials_onto_kms_when_on(fleet, kms):
     AgentCredential.objects.create(agent=fleet["agent"], name="gog-token",
                                    value_enc=encrypt_secret("g"))

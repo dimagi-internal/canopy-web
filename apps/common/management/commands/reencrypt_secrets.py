@@ -33,7 +33,11 @@ from apps.common import encryption, kms_envelope
 SUFFIXES = ("_enc", "_encrypted")
 
 
-def secret_columns() -> list[tuple[type[models.Model], str]]:
+def secret_columns(existing_only: bool = False) -> list[tuple[type[models.Model], str]]:
+    """Every (model, field) secret column. ``existing_only`` keeps just the columns
+    the database has right now — the data migration (agents 0053) runs at a fixed
+    point in the migration graph, where a model added or changed by a LATER
+    migration may not have its column yet; querying it would fail the migration."""
     found = []
     for model in apps.get_models():
         if model._meta.proxy or not model._meta.managed:
@@ -41,6 +45,18 @@ def secret_columns() -> list[tuple[type[models.Model], str]]:
         for f in model._meta.concrete_fields:
             if isinstance(f, models.TextField) and f.name.endswith(SUFFIXES):
                 found.append((model, f.name))
+    if existing_only:
+        from django.db import connection
+        # Describe only the tables that hold a secret column — describing every table
+        # trips SQLite's introspection on tables unrelated to this.
+        with connection.cursor() as cursor:
+            tables = set(connection.introspection.table_names(cursor))
+            columns = {
+                t: {c.name for c in connection.introspection.get_table_description(cursor, t)}
+                for t in {m._meta.db_table for m, _ in found} & tables
+            }
+        found = [(m, f) for m, f in found
+                 if m._meta.get_field(f).column in columns.get(m._meta.db_table, set())]
     return sorted(found, key=lambda mf: (mf[0]._meta.label, mf[1]))
 
 
@@ -49,8 +65,10 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--apply", action="store_true", help="Write the changes.")
+        parser.add_argument("--existing-only", action="store_true",
+                            help="Skip columns the database does not have yet (used by the data migration).")
 
-    def handle(self, *args, apply=False, **opts):
+    def handle(self, *args, apply=False, existing_only=False, **opts):
         keys = encryption._keys()
         primary = Fernet(keys[0])
         multi = encryption._fernet()
@@ -60,7 +78,7 @@ class Command(BaseCommand):
                               "off: every row is already under the write key. Nothing to do.")
 
         totals = {"rotated": 0, "to_kms": 0, "current": 0, "unreadable": 0}
-        for model, field in secret_columns():
+        for model, field in secret_columns(existing_only=existing_only):
             label = f"{model._meta.label}.{field}"
             counts = dict.fromkeys(totals, 0)
             is_agent_cred = model._meta.label == "agents.AgentCredential" and field == "value_enc"
