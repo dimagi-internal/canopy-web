@@ -19,6 +19,15 @@ class SlackApiError(Exception):
         self.error = error
 
 
+class RateLimited(Exception):
+    """Slack answered HTTP 429. `retry_after` is its Retry-After, in seconds."""
+
+    def __init__(self, method: str, retry_after: int):
+        super().__init__(f"{method}: rate limited, retry after {retry_after}s")
+        self.method = method
+        self.retry_after = retry_after
+
+
 def call(method: str, *, token: str = "", data: dict | None = None, json: dict | None = None,
          timeout: float = TIMEOUT) -> dict:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -26,6 +35,12 @@ def call(method: str, *, token: str = "", data: dict | None = None, json: dict |
         resp = requests.post(API + method, headers=headers, json=json, timeout=timeout)
     else:
         resp = requests.post(API + method, headers=headers, data=data or {}, timeout=timeout)
+    if getattr(resp, "status_code", 200) == 429:
+        try:
+            retry_after = int((getattr(resp, "headers", None) or {}).get("Retry-After") or 30)
+        except (TypeError, ValueError):
+            retry_after = 30
+        raise RateLimited(method, max(1, retry_after))
     resp.raise_for_status()
     body = resp.json()
     if not body.get("ok"):
@@ -145,6 +160,28 @@ def channel_name(token: str, channel: str, *, timeout: float = TIMEOUT) -> str:
                          data={"channel": channel}).get("channel") or {}).get("name") or "")
     except SlackApiError:
         return ""
+
+
+def channel_info(token: str, channel: str) -> dict:
+    """`conversations.info`'s channel (id, name, `creator`, …). Raises on failure."""
+    return call("conversations.info", token=token, data={"channel": channel}).get("channel") or {}
+
+
+def is_channel_member(token: str, channel: str, slack_user_id: str) -> bool:
+    """Whether this person is in the channel now — `conversations.members`, paged.
+
+    Being able to SEE a channel is not being in it: anyone in the Slack can
+    open a public channel and press a button there."""
+    cursor = ""
+    for _ in range(100):  # 100 pages x 1000 is far past any real channel
+        data = {"channel": channel, "limit": 1000, **({"cursor": cursor} if cursor else {})}
+        body = call("conversations.members", token=token, data=data)
+        if slack_user_id in (body.get("members") or []):
+            return True
+        cursor = (body.get("response_metadata") or {}).get("next_cursor") or ""
+        if not cursor:
+            return False
+    return False
 
 
 def user_email(token: str, slack_user_id: str) -> str:

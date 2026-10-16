@@ -19,6 +19,7 @@ from apps.workspaces.models import Workspace
 from . import commands, services
 from .models import SlackInstallation, SlackWorkspaceLink
 from .schemas import (
+    SlackChannelIngestSwitchIn,
     SlackConfigOut,
     SlackConfigTokenIn,
     SlackDeclareAgentOut,
@@ -84,6 +85,7 @@ def _out(ws: Workspace) -> dict:
             "max_minutes": link.history_max_minutes if link else
             SlackWorkspaceLink._meta.get_field("history_max_minutes").default,
         },
+        "channel_ingest": {"enabled": bool(link and link.channel_ingest_enabled)},
     }
 
 
@@ -123,6 +125,19 @@ def set_history(request: HttpRequest, workspace: str, payload: SlackHistoryIn) -
     _installation_or_409(ws)
     SlackWorkspaceLink.objects.filter(workspace=ws).update(
         history_enabled=payload.enabled, history_max_minutes=payload.max_minutes)
+    return _out(ws)
+
+
+@router.put("/{workspace}/channel-ingest", response=SlackConfigOut,
+            summary="Allow this workspace's agents to ask to read a whole channel (owner)")
+def set_channel_ingest(request: HttpRequest, workspace: str, payload: SlackChannelIngestSwitchIn) -> dict:
+    """The opt-in for permissioned whole-channel reads (`/api/slack-ingests/`).
+
+    On, an agent may ASK; every read still waits for an approval posted in the
+    channel itself. Off, new requests are refused and live reads stop."""
+    ws = _workspace_with(request.user, workspace, perms.OWN)
+    _installation_or_409(ws)
+    SlackWorkspaceLink.objects.filter(workspace=ws).update(channel_ingest_enabled=payload.enabled)
     return _out(ws)
 
 

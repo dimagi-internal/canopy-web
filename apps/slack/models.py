@@ -15,6 +15,8 @@ Two rows, and deliberately nothing that grants anything:
 """
 from __future__ import annotations
 
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -112,9 +114,101 @@ class SlackWorkspaceLink(models.Model):
     # the Slack settings page.
     history_enabled = models.BooleanField(default=True)
     history_max_minutes = models.PositiveIntegerField(default=120)
+    # A whole-channel read for an agent (apps/slack/ingest.py): whether this
+    # tenant's agents may ASK for one at all. Off until an owner opts in; every
+    # ingest still needs its own in-channel approval on top of this.
+    channel_ingest_enabled = models.BooleanField(default=False)
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.installation} -> {self.workspace_id}"
+
+
+class SlackChannelIngest(models.Model):
+    """An agent's permission to read one Slack channel whole — and the read.
+
+    Created PENDING by a request; nothing is read until a person eligible to
+    approve presses Approve on the message canopy posts in that channel
+    (`ingest.decide`). canopy then reads the channel itself, off-request
+    (`ingest.advance`), into `SlackIngestMessage` rows; the agent only ever
+    gets the rendered transcript, never a token. See apps/slack/ingest.py.
+    """
+
+    PENDING, READING, READY, DECLINED, REVOKED, FAILED = (
+        "pending", "reading", "ready", "declined", "revoked", "failed")
+    STATUS_CHOICES = [(s, s) for s in (PENDING, READING, READY, DECLINED, REVOKED, FAILED)]
+    #: Where the read is: paging the channel, paging the threads it found, or idle.
+    HISTORY, THREADS, IDLE = "history", "threads", "idle"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="slack_channel_ingests")
+    installation = models.ForeignKey(SlackInstallation, on_delete=models.CASCADE,
+                                     related_name="channel_ingests")
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="slack_channel_ingests")
+    channel_id = models.CharField(max_length=32)
+    channel_name = models.CharField(max_length=255, blank=True, default="")
+    purpose = models.TextField()
+    #: Keep reading new messages into the same transcript until revoked.
+    follow = models.BooleanField(default=False)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+                                     blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
+    #: The approval post in the channel — the only place a decision can come from.
+    approval_ts = models.CharField(max_length=32, blank=True, default="")
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+                                   blank=True, related_name="+")
+    decided_by_slack_id = models.CharField(max_length=32, blank=True, default="")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+                                   blank=True, related_name="+")
+    revoked_by_slack_id = models.CharField(max_length=32, blank=True, default="")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    # --- the read: resumable state ---------------------------------------
+    phase = models.CharField(max_length=10, default=HISTORY)
+    history_cursor = models.CharField(max_length=500, blank=True, default="")
+    #: `oldest` for the history pass in progress ("" = the whole channel).
+    history_oldest = models.CharField(max_length=32, blank=True, default="")
+    #: Threads still to read: [[parent_ts, oldest], …]; the head is in progress.
+    thread_queue = models.JSONField(default=list, blank=True)
+    thread_cursor = models.CharField(max_length=500, blank=True, default="")
+    #: A follow pass keeps only what is newer than this.
+    follow_since = models.CharField(max_length=32, blank=True, default="")
+    latest_ts = models.CharField(max_length=32, blank=True, default="")
+    #: Slack user id -> display name, fetched once per person.
+    names = models.JSONField(default=dict, blank=True)
+    messages = models.PositiveIntegerField(default=0)
+    batches = models.PositiveIntegerField(default=0)
+    #: Not before this: set from Slack's Retry-After, or a back-off after an error.
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    backfilled_at = models.DateTimeField(null=True, blank=True)
+    followed_at = models.DateTimeField(null=True, blank=True)
+    error = models.CharField(max_length=300, blank=True, default="")
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "next_attempt_at"], name="slack_ingest_due")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.agent_id} <- {self.channel_id} ({self.status})"
+
+
+class SlackIngestMessage(models.Model):
+    """One message of an ingested channel. Unique per (ingest, ts), so a page
+    re-read after a rate limit or a follow pass inserts nothing twice."""
+
+    ingest = models.ForeignKey(SlackChannelIngest, on_delete=models.CASCADE, related_name="lines")
+    ts = models.CharField(max_length=32)
+    #: The parent's ts for a reply; "" for a channel message.
+    thread_ts = models.CharField(max_length=32, blank=True, default="")
+    user = models.CharField(max_length=32, blank=True, default="")
+    name = models.CharField(max_length=255, blank=True, default="")
+    text = models.TextField(blank=True, default="")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["ingest", "ts"], name="slack_ingest_message_once"),
+        ]
 
 
 class SlackUserLink(models.Model):

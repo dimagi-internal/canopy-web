@@ -10,6 +10,7 @@ const base = {
   commands: { managed: false, app_id: 'A1', set_by_email: '', synced_at: '', error: '' },
   agent: { declared: false, declared_at: '' },
   history: { enabled: true, max_minutes: 120 },
+  channel_ingest: { enabled: false },
 }
 
 vi.mock('@/api/slack', async (orig) => ({
@@ -19,6 +20,7 @@ vi.mock('@/api/slack', async (orig) => ({
   setSlackHistory: vi.fn(async (_ws: string, enabled: boolean, max_minutes: number) => ({
     ...base, history: { enabled, max_minutes },
   })),
+  setSlackChannelIngest: vi.fn(async (_ws: string, enabled: boolean) => ({ ...base, channel_ingest: { enabled } })),
   declareSlackAgent: vi.fn(async () => ({
     status: 'declared', detail: 'Slack will draw its own working indicator once the app is re-installed.',
     changed: ['features.agent_view'], reinstall_required: true, install_url: 'https://canopy.test/i',
@@ -138,5 +140,18 @@ describe('SlackSettingsPage — channel history', () => {
     renderPage()
     fireEvent.change(await screen.findByLabelText('How far back, in minutes'), { target: { value: '2000' } })
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('SlackSettingsPage — whole-channel reads', () => {
+  afterEach(cleanup)
+
+  it('is off by default and an owner turns it on', async () => {
+    vi.mocked(slack.getSlackConfig).mockResolvedValue(base)
+    renderPage()
+    expect((await screen.findByTestId('slack-channel-ingest')).textContent).toContain('Off — agents cannot ask.')
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
+    expect((await screen.findByTestId('slack-note')).textContent).toContain('each read still needs an approval')
+    expect(slack.setSlackChannelIngest).toHaveBeenCalledWith('connect', true)
   })
 })

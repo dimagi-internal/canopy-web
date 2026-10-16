@@ -5,6 +5,7 @@ import {
   clearSlackConfigToken,
   declareSlackAgent,
   getSlackConfig,
+  setSlackChannelIngest,
   setSlackConfigToken,
   setSlackHistory,
   syncSlackCommands,
@@ -292,6 +293,39 @@ export function SlackSettingsPage(): JSX.Element {
               Save
             </button>
           </form>
+        </section>
+      )}
+
+      {config.connected && (
+        <section className="mt-8" data-testid="slack-channel-ingest">
+          <h2 className="text-[15px] font-semibold text-foreground">Whole-channel reads</h2>
+          <p className="mt-1 mb-3 text-[12px] text-muted-foreground">
+            Lets this workspace&apos;s agents <i>ask</i> to read a channel&apos;s entire history (and optionally keep
+            following it). Each ask posts an Approve / Decline message in that channel, and nothing is read until a
+            member of the channel who is an owner or admin here — or the channel&apos;s creator — approves it. canopy
+            does the reading; the agent only gets the transcript, and any approver can revoke it. Workspace owners
+            set this.
+          </p>
+          <div className="rounded-lg border border-border bg-card p-4 text-[13px]">
+            <p className="text-foreground">
+              {config.channel_ingest.enabled ? 'Agents may ask to read a channel.' : 'Off — agents cannot ask.'}
+            </p>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  const c = await setSlackChannelIngest(workspace, !config.channel_ingest.enabled)
+                  return c.channel_ingest.enabled
+                    ? 'Agents may now ask to read a channel — each read still needs an approval in the channel.'
+                    : 'Whole-channel reads are off; live reads stop.'
+                })
+              }
+              className="mt-3 rounded-md bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
+            >
+              {config.channel_ingest.enabled ? 'Turn off' : 'Turn on'}
+            </button>
+          </div>
         </section>
       )}
 

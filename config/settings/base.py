@@ -579,6 +579,13 @@ SLACK_HISTORY_MESSAGE_CEILING = env.int("SLACK_HISTORY_MESSAGE_CEILING", default
 # window are not handed to the agent unless their thread was active.
 SLACK_HISTORY_THREAD_LOOKBACK_HOURS = env.int("SLACK_HISTORY_THREAD_LOOKBACK_HOURS", default=168)
 SLACK_HISTORY_SCAN_CEILING = env.int("SLACK_HISTORY_SCAN_CEILING", default=1000)
+# A whole-channel read for an agent (apps/slack/ingest.py), done off-request by
+# apps/slack/ingest_scheduler.py: how often it ticks, how many Slack calls one
+# ingest may make per tick (a 429 parks it until Retry-After regardless), and
+# how often a `follow` ingest re-reads the channel for new messages.
+SLACK_INGEST_TICK_S = env.int("SLACK_INGEST_TICK_S", default=15)
+SLACK_INGEST_CALLS_PER_TICK = env.int("SLACK_INGEST_CALLS_PER_TICK", default=20)
+SLACK_INGEST_FOLLOW_INTERVAL_S = env.int("SLACK_INGEST_FOLLOW_INTERVAL_S", default=300)
 
 # This deployment's own externally-reachable base URL — no request context to derive
 # it from when services.py builds a callback URL for a drilled agent to POST back to

@@ -39,3 +39,5 @@ MCP_APPS_BACKGROUND_REFRESH = False
 # The capability sweep has no clock of its own in tests: they call sweep() /
 # sweep_tick() directly, and an ASGI lifespan a test enters must not start one.
 CAPABILITY_SWEEP_INTERVAL_S = 0
+# Likewise the Slack channel-ingest reader: tests call `ingest.tick()` / `advance()`.
+SLACK_INGEST_TICK_S = 0
