@@ -152,7 +152,8 @@ def move_refusal(user, session: Session) -> str | None:
     Independent of the target, so the UI can ask it once per session."""
     if session.agent_id is not None:
         return ("this is an agent's session; it belongs to the agent's workspace "
-                f"('{session.agent.workspace_id}') and cannot be moved")
+                f"('{session.agent.workspace_id}') and moves only with the agent "
+                f"(POST /api/agents/{session.agent.slug}/move)")
     if session.created_by_id is not None:
         if session.created_by_id == user.pk:
             return None
@@ -209,6 +210,31 @@ def move(session: Session, target_slug: str, *, by) -> dict:
     logger.info("session %s moved %s -> %s by user %s", session.pk, source, target.slug, by.pk)
     return {"moved": True, "from": source, "to": target.slug,
             "participants_removed": len(dropped)}
+
+
+def rehome_agent_sessions(sessions, target: Workspace, *, apply: bool) -> tuple[int, int]:
+    """Re-file an AGENT's sessions in `target`, as part of moving the agent
+    (`apps/agents/move.py`) — the one way an agent's session moves, since
+    `move_refusal` keeps it with its agent. Returns (sessions, participants
+    dropped); with `apply=False` it only counts.
+
+    Same tenant-first rule as `move`: a participant who is not a member of the
+    target can no longer read the chat, so their row goes. The caller owns the
+    transaction."""
+    sessions = sessions.exclude(workspace_id=target.slug)
+    target_members = wsvc.member_user_ids(target)
+    participants = SessionParticipant.objects.filter(session__in=sessions).exclude(
+        user_id__in=target_members)
+    if not apply:
+        return sessions.count(), participants.count()
+    sources = set(sessions.values_list("workspace_id", flat=True))
+    dropped_users = set(participants.values_list("user_id", flat=True))
+    dropped = participants.delete()[0]
+    moved = sessions.update(workspace=target)
+    for source in sources:
+        lost = (wsvc.member_user_ids(source) | dropped_users) - target_members
+        transaction.on_commit(lambda lost=lost, source=source: _recheck_sockets(lost, source))
+    return moved, dropped
 
 
 def _recheck_sockets(user_ids, old_slug: str) -> None:

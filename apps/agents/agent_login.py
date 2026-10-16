@@ -47,3 +47,19 @@ def create_agent_login(agent, actor, address: str):
         wsvc.ensure_member(agent.workspace, user)  # its default role: editor
         link_canopy_user(agent, user.pk)
     return user
+
+
+def follow_agent(agent, actor, dest) -> bool:
+    """Make the agent's EXISTING login a member of `dest`, the workspace the agent is
+    moving to (`apps/agents/move.py`) — the same membership `create_agent_login` gives
+    it at home. Same bar: the actor must be able to invite in `dest`. Returns whether
+    the login is (now) a member; False when there is no login or the actor may not."""
+    login = agent.user
+    if login is None:
+        return False
+    if wsvc.is_member(login, dest.slug):
+        return True
+    if not perms.can(actor, dest, perms.MEMBERS_MANAGE):
+        return False
+    wsvc.ensure_member(dest, login)  # its default role: editor
+    return True

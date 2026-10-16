@@ -5,3 +5,12 @@ class MailConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "apps.mail"
     label = "mail"
+
+    def ready(self):
+        # Moving an agent carries its mail (apps/agents/move.py). The move is
+        # framework tier and cannot import this app, so the app registers itself.
+        from apps.agents import move
+
+        from .agent_move import participant
+
+        move.register(participant)

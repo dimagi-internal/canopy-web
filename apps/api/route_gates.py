@@ -92,6 +92,7 @@ GATES: dict[str, tuple[str, ...]] = {
     # --- apps/agents/api.py
     "list_agents": ("member",),
     "upsert_agent": ("agent.work", "agent-admin"),  # editor in target ws; a MOVE also needs agent admin
+    "move_agent": ("agent-admin", "agent.work"),  # admin of the agent where it is + editor in the destination
     "check_scaffold_repo": ("agent.work",),  # editor in the target ws; reads GitHub with the caller's own token
     "scaffold_agent": ("agent.work", "agent-admin"),  # editor in target ws; re-pushing a taken slug needs its admin
     "agent_setup": ("member",),
@@ -714,7 +715,7 @@ SETTINGS: frozenset[str] = frozenset({
     "add_mail_domain", "update_mail_domain", "remove_mail_domain", "save_mail_route", "delete_mail_route",
     "share_mail_domain", "unshare_mail_domain",
     # agents: identity, ownership, access, integrations, credentials
-    "upsert_agent", "delete_agent", "transfer_owner", "link_canopy_user", "mint_agent_canopy_token",
+    "upsert_agent", "move_agent", "delete_agent", "transfer_owner", "link_canopy_user", "mint_agent_canopy_token",
     "grant_admin", "revoke_admin",
     "publish_interface", "unpublish_interface",
     "set_credential_source", "set_agent_credentials", "delete_agent_credential", "set_agent_vault",
