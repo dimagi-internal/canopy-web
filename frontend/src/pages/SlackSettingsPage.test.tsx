@@ -165,14 +165,15 @@ describe('SlackSettingsPage — whole-channel reads', () => {
     vi.mocked(slack.getSlackConfig).mockResolvedValue({ ...base, channel_ingest: { enabled: false, allowed: [entry] } })
     renderPage()
     const list = await screen.findByTestId('slack-channel-allowlist')
-    expect(list.textContent).toContain('#canopy-support for ada — read once')
+    expect(list.textContent).toContain('#canopy-support for ada')
+    // No follow option: there is nowhere to send a followed channel's new messages yet.
+    expect(screen.queryByLabelText('Also follow new messages')).toBeNull()
     fireEvent.change(screen.getByLabelText('Channel'), { target: { value: '#ai-champions' } })
     fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'ada' } })
-    fireEvent.click(screen.getByLabelText('Also follow new messages'))
     fireEvent.click(screen.getByRole('button', { name: 'Allow-list' }))
     expect((await screen.findByTestId('slack-note')).textContent).toContain('Allow-listed #ai-champions for ada.')
     expect(slack.allowSlackChannel).toHaveBeenCalledWith('connect', {
-      agent: 'ada', channel: '#ai-champions', follow: true, note: '',
+      agent: 'ada', channel: '#ai-champions', follow: false, note: '',
     })
     fireEvent.click(await screen.findByRole('button', { name: 'Remove #canopy-support for ada' }))
     expect((await screen.findByTestId('slack-note')).textContent).toContain('its reads were revoked')
