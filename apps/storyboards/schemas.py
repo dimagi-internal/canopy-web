@@ -220,6 +220,18 @@ class NotesOut(StrictModel):
     items: list[NoteOut]
 
 
+class RoundOut(StrictModel):
+    number: int
+    state: str
+    opened_at: str
+    opened_by: str
+    closed_at: str | None
+    close_note: str
+    pinned_versions: dict[str, int]
+    note_count: int
+    people_count: int
+
+
 class StoryboardListItemOut(ArtifactSignalsOut):
     slug: str
     title: str

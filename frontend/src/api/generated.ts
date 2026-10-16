@@ -1087,6 +1087,27 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/storyboards/{slug}/rounds": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Open a feedback round on a storyboard
+         * @description Editors only. Pins every narrative's current version and adopts the notes
+         *     left since the last round. Needs the board linked to a project.
+         */
+        readonly post: operations["open_storyboard_round"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/storyboards/{slug}/decisions/{key}/edit": {
         readonly parameters: {
             readonly query?: never;
@@ -11137,6 +11158,29 @@ export interface components {
              */
             readonly author_email: string;
         };
+        /** RoundOut */
+        readonly RoundOut: {
+            /** Number */
+            readonly number: number;
+            /** State */
+            readonly state: string;
+            /** Opened At */
+            readonly opened_at: string;
+            /** Opened By */
+            readonly opened_by: string;
+            /** Closed At */
+            readonly closed_at: string | null;
+            /** Close Note */
+            readonly close_note: string;
+            /** Pinned Versions */
+            readonly pinned_versions: {
+                readonly [key: string]: number;
+            };
+            /** Note Count */
+            readonly note_count: number;
+            /** People Count */
+            readonly people_count: number;
+        };
         /** DecisionEditIn */
         readonly DecisionEditIn: {
             /**
@@ -15186,7 +15230,7 @@ export interface components {
              * @description How canopy first learned it: a fact filed against the project, a conversation that raised one of its tasks, a person adding them, or an agent writing their contributor page.
              * @enum {string}
              */
-            readonly source: "fact" | "turn" | "manual" | "summary";
+            readonly source: "fact" | "turn" | "manual" | "summary" | "review";
             /**
              * Since
              * Format: date-time
@@ -17036,7 +17080,7 @@ export interface components {
              * @description How they joined (a participant row's source), or `idea`: not a participant, but an idea's own evidence (its human why, or the turn that raised it) names them.
              * @enum {string}
              */
-            readonly source: "fact" | "turn" | "manual" | "summary" | "idea";
+            readonly source: "fact" | "turn" | "manual" | "summary" | "review" | "idea";
             /**
              * Since
              * Format: date-time
@@ -24967,6 +25011,28 @@ export interface operations {
                     readonly "application/json": {
                         readonly [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    readonly open_storyboard_round: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoundOut"];
                 };
             };
         };

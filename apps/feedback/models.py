@@ -102,6 +102,10 @@ class Feedback(models.Model):
         on_delete=models.SET_NULL,
         related_name="submitted_feedback",
     )
+    """The authenticated CALLER, when there was one — the agent's PAT user for an
+    ingested email, or the human for a logged-in submit. Never the external
+    author, who has no account. Keep the two distinct: conflating them makes
+    "who said this" unanswerable for every piece of ingested feedback."""
 
     round = models.ForeignKey(
         "feedback.FeedbackRound", null=True, blank=True, on_delete=models.SET_NULL,
@@ -109,10 +113,6 @@ class Feedback(models.Model):
     )
     """The feedback round this note was left in, when one was open. Null = left
     between rounds; the next round adopts it when it opens."""
-    """The authenticated CALLER, when there was one — the agent's PAT user for an
-    ingested email, or the human for a logged-in submit. Never the external
-    author, who has no account. Keep the two distinct: conflating them makes
-    "who said this" unanswerable for every piece of ingested feedback."""
 
     # --------------------------------------------------------------- provenance
     channel = models.CharField(max_length=16, choices=CHANNEL_CHOICES, default=CHANNEL_WEB)

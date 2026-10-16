@@ -28,6 +28,7 @@ from apps.feedback import reactions
 from apps.feedback import services as feedback_services
 from apps.harness import artifact_origin
 from apps.storyboards import decisions as decision_rows
+from apps.storyboards import rounds as board_rounds
 from apps.storyboards import services
 from apps.storyboards.act_keys import act_key
 from apps.storyboards.models import Act, Entry, Storyboard
@@ -37,6 +38,7 @@ from apps.storyboards.schemas import (
     DecisionOut,
     NarrativeReadOut,
     NotesOut,
+    RoundOut,
     ShareTokenOut,
     StoryboardIn,
     StoryboardListOut,
@@ -397,6 +399,15 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
     if not payload.body.strip() and not payload.suggested_text.strip():
         raise HttpError(422, "a note needs some words")
 
+    rnd = board_rounds.current(board)
+    try:
+        board_rounds.check_anchor(board, payload.anchor_id)
+        author = board_rounds.author_for(
+            request.user, payload.author_name, member=is_member, in_round=rnd is not None
+        )
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
+
     item = {
         "target_kind": "narrative" if payload.narrative_slug else "storyboard",
         "target_ref": payload.narrative_slug or board.slug,
@@ -405,16 +416,39 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
         "kind": payload.kind,
         "body": payload.body,
         "suggested_text": payload.suggested_text,
-        "author_name": payload.author_name,
+        "author_name": author,
         "author_email": payload.author_email,
         "channel": "web",
         "source_ref": "",
     }
-    return feedback_services.ingest(
+    if is_member:
+        item["author_email"] = request.user.email or ""
+    result = feedback_services.ingest(
         [item],
         workspace=board.workspace,
         submitted_by=request.user if request.user.is_authenticated else None,
+        round=rnd,
     )
+    if is_member and rnd is not None:
+        board_rounds.link_participant(board, request.user)
+    return result
+
+
+@router.post(
+    "/{slug}/rounds",
+    response=RoundOut,
+    auth=session_auth,
+    summary="Open a feedback round on a storyboard",
+)
+def open_storyboard_round(request: HttpRequest, slug: str) -> dict:
+    """Editors only. Pins every narrative's current version and adopts the notes
+    left since the last round. Needs the board linked to a project."""
+    board = _editable_or_404(request, slug)
+    try:
+        rnd = board_rounds.open_round(board, by_user=request.user)
+    except board_rounds.RoundError as e:
+        raise HttpError(e.status, e.detail)
+    return board_rounds.summary(rnd)
 
 
 @router.post(

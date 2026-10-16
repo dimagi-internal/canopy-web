@@ -456,6 +456,7 @@ GATES: dict[str, tuple[str, ...]] = {
     "get_storyboard": ("token-link",),  # auth=None; member or ?t=
     "patch_storyboard": ("content.write",),
     "storyboards_rotate_token": ("content.write",),
+    "open_storyboard_round": ("content.write",),
     "edit_storyboard_decision": ("token-link", "member"),  # members apply immediately; a token holder only inside an open round (plan C)
     "ensure_token": ("content.write",),
     "leave_feedback": ("token-link", "member"),  # ?t= with comment/suggest grant; ANY member bypasses the grant
@@ -789,7 +790,7 @@ NOT_SETTINGS: dict[str, str] = {
     "upload_session": "content", "patch_session": "content", "delete_session": "content",
     "create_shareouts": "content", "clear_shareouts": "content",
     "create_storyboard": "content", "patch_storyboard": "content", "leave_feedback": "content",
-    "edit_storyboard_decision": "content",
+    "edit_storyboard_decision": "content", "open_storyboard_round": "content",
     "upload_walkthrough": "content", "patch_walkthrough": "content", "delete_walkthrough": "content",
     "ingest_feedback": "content", "resolve_feedback": "content",
     "open_thread": "content", "close_thread": "content",
